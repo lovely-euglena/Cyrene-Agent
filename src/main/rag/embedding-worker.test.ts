@@ -144,6 +144,40 @@ describe("EmbeddingWorkerClient", () => {
     expect(createWorker).not.toHaveBeenCalled();
   });
 
+  it("late exit/error from a replaced worker does not clobber the new worker", async () => {
+    const workers: ControlledWorker[] = [];
+    const client = new EmbeddingWorkerClient(() => {
+      const controlled = createControlledWorker();
+      workers.push(controlled);
+      return controlled.worker;
+    });
+
+    // 第一个请求：worker 0 完成
+    const first = client.embedTexts("bgem3", ["hello"]);
+    workers[0].emit({ type: "ready", requestId: 1 });
+    await flushMicrotasks();
+    workers[0].emit(makeResult(2, 4, 1));
+    await first;
+
+    // 切模型 → worker 1 启动并 ready
+    const second = client.embedTexts("bgem3-alt", ["world"]);
+    expect(workers[0].terminate).toHaveBeenCalled();
+    expect(workers).toHaveLength(2);
+    const initId = workers[1].posted[0].message.requestId;
+    workers[1].emit({ type: "ready", requestId: initId });
+    await flushMicrotasks();
+
+    // 旧 worker 的 exit 事件此刻才晚到（terminate 是异步的）：
+    // 新 worker 的 pending 与引用不能被误杀
+    workers[0].emitExit(0);
+
+    // 新 worker 正常完成请求
+    workers[1].emit(makeResult(workers[1].posted[1].message.requestId, 4, 1));
+    await expect(second).resolves.toHaveProperty("0.length", 4);
+    // 诊断仍显示 worker 1 在运行（未被 resetForRespawn 清掉）
+    expect(client.getWorkerDiagnostics().workerRunning).toBe(true);
+  });
+
   it("terminates the old worker and respawns when the model key changes", async () => {
     const workers: ControlledWorker[] = [];
     const client = new EmbeddingWorkerClient(() => {

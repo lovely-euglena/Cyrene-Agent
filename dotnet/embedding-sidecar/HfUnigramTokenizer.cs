@@ -52,7 +52,9 @@ public sealed class HfUnigramTokenizer
             idx++;
         }
 
-        int unkId = model.TryGetProperty("unk_id", out var unkEl) ? unkEl.GetInt32() : 0;
+        int unkId = model.TryGetProperty("unk_id", out var unkEl)
+            ? unkEl.GetInt32()
+            : vocab.GetValueOrDefault("<unk>", (0, 0f)).Item1;
         int bosId = vocab.GetValueOrDefault("<s>", (0, 0f)).Item1;
         int eosId = vocab.GetValueOrDefault("</s>", (0, 0f)).Item1;
 
@@ -114,18 +116,16 @@ public sealed class HfUnigramTokenizer
         if (n == 0) yield break;
 
         // best[i] = 覆盖前 i 个字符的最大 score；from[i] = 最优前驱长度
+        // （heap 数组而非 stackalloc：中文长段无空格，段长可达数十万字符，
+        //  stackalloc 大段会栈溢出——StackOverflowException 不可捕获）
         var best = new double[n + 1];
         var from = new int[n + 1];
-        Span<double> candidates = stackalloc double[n + 1];
 
         best[0] = 0.0;
         for (var i = 1; i <= n; i++)
         {
             double maxScore = double.NegativeInfinity;
             var maxLen = -1;
-            // 候选长度上界：Unigram 词表最长 token 约 60+ 字符，这里不做长度截断，
-            // 用 O(n²) 完整回溯（段长通常 < 32，成本可忽略）
-            var startLower = Math.Max(0, i - MaxTokenLength(segment, i));
             for (var start = i - 1; start >= 0; start--)
             {
                 var piece = segment.Substring(start, i - start);
@@ -134,7 +134,7 @@ public sealed class HfUnigramTokenizer
                     var score = best[start] + hit.Score;
                     if (score > maxScore) { maxScore = score; maxLen = i - start; }
                 }
-                // 长片段尽早剪枝：Unigram 单字覆盖所有常见字符，超过 20 字符的
+                // 长片段尽早剪枝：Unigram 单字覆盖所有常见字符，超过 24 字符的
                 // 无匹配前缀不可能再出现匹配（词表无超长中文 token）
                 if (i - start > 24) break;
             }
@@ -162,8 +162,6 @@ public sealed class HfUnigramTokenizer
             yield return pieces[i];
         }
     }
-
-    private static int MaxTokenLength(string segment, int end) => Math.Min(segment.Length, 32);
 
     /// <summary>
     /// NMT 风格 NFKC 近似归一化（全角→半角）。覆盖：

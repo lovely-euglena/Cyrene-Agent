@@ -91,10 +91,12 @@ async function readFrame() {
   if (!header.ok) throw new Error(`embed failed: ${header.error}`);
   if (header.count !== texts.length || header.dim !== dump.dims) throw new Error(`header mismatch: ${JSON.stringify(header)}`);
 
-  // 3) 校验向量
+  // 3) 校验向量（拷贝出对齐副本——byteOffset 未必 4 对齐，
+  //    直接 new Float32Array(buffer, offset, len) 会 RangeError）
   let worst = 1;
   for (let i = 0; i < texts.length; i++) {
-    const actual = new Float32Array(binary.buffer, binary.byteOffset + i * header.dim * 4, header.dim);
+    const copy = binary.buffer.slice(binary.byteOffset + i * header.dim * 4, binary.byteOffset + (i + 1) * header.dim * 4);
+    const actual = new Float32Array(copy);
     const expected = dump.vectors[i];
     let dot = 0, na = 0, nb = 0;
     for (let k = 0; k < header.dim; k++) {
@@ -106,12 +108,48 @@ async function readFrame() {
   }
   console.log(`[smoke] embed ${texts.length} texts in ${elapsed}ms, worst cosine=${worst.toFixed(8)}`);
 
-  // 4) 错误帧路径：发一个坏 JSON（帧头长度与内容不匹配的 JSON 由 server 忽略），
-  //    直接发 op 未知的不可能——协议只有 embed。改测：空 texts
+  // 3b) 大批量（64 texts × 4KB = 256KB 二进制段 > 单 chunk 64KB）：
+  //     响应必然跨多个 data 事件，验证 Electron 客户端的 mid-frame
+  //     状态机（复现 P0 帧失步 bug 的场景——本脚本自带同样的解析逻辑）
+  const bigTexts = Array.from({ length: 64 }, (_, i) => dump.texts[i % dump.texts.length]);
+  writeFrame({ id: 9, op: "embed", texts: bigTexts });
+  const t1 = performance.now();
+  const { header: bigHeader, binary: bigBinary } = await readFrame();
+  if (!bigHeader.ok || bigHeader.count !== 64) throw new Error(`big embed failed: ${JSON.stringify(bigHeader)}`);
+  let bigWorst = 1;
+  for (let i = 0; i < 64; i++) {
+    const copy = bigBinary.buffer.slice(
+      bigBinary.byteOffset + i * bigHeader.dim * 4,
+      bigBinary.byteOffset + (i + 1) * bigHeader.dim * 4,
+    );
+    const actual = new Float32Array(copy);
+    const expected = dump.vectors[i % dump.texts.length];
+    let dot = 0, na = 0, nb = 0;
+    for (let k = 0; k < bigHeader.dim; k++) {
+      dot += actual[k] * expected[k];
+      na += actual[k] * actual[k];
+      nb += expected[k] * expected[k];
+    }
+    bigWorst = Math.min(bigWorst, dot / (Math.sqrt(na) * Math.sqrt(nb)));
+  }
+  console.log(`[smoke] big embed 64 texts (${bigBinary.length / 1024 | 0}KB binary, ${(performance.now() - t1).toFixed(0)}ms), worst cosine=${bigWorst.toFixed(8)}`);
+
+  // 4) 错误帧路径：空 texts + 未知 op
   writeFrame({ id: 2, op: "embed", texts: [] });
   const { header: empty } = await readFrame();
   if (!empty.ok || empty.count !== 0) throw new Error(`empty embed failed: ${JSON.stringify(empty)}`);
   console.log(`[smoke] empty embed ok (count=0)`);
+
+  writeFrame({ id: 3, op: "frobnicate", texts: [] });
+  const { header: badOp } = await readFrame();
+  if (badOp.ok || !/unsupported op/.test(badOp.error || "")) throw new Error(`bad op not rejected: ${JSON.stringify(badOp)}`);
+  console.log(`[smoke] unsupported op rejected ok`);
+
+  // 4b) 大批量之后再做一次小请求：确认协议在跨 chunk 响应后不失步
+  writeFrame({ id: 4, op: "embed", texts: [dump.texts[0]] });
+  const { header: afterBig } = await readFrame();
+  if (!afterBig.ok || afterBig.count !== 1) throw new Error(`post-big embed failed: ${JSON.stringify(afterBig)}`);
+  console.log(`[smoke] post-big embed ok (protocol still in sync)`);
 
   // 5) EOF 退出
   child.stdin.end();

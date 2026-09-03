@@ -225,6 +225,11 @@ internal static class Server
                 continue;
             }
             if (request is null) continue;
+            if (request.Op != "embed")
+            {
+                WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = $"unsupported op: {request.Op}" });
+                continue;
+            }
 
             try
             {

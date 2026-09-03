@@ -182,7 +182,12 @@ export class EmbeddingWorkerClient {
     worker.unref(); // 不阻塞应用退出
     this.worker = worker;
 
+    // 身份校验：旧 worker 的 exit/error 事件晚到时（terminate 异步），
+    // 不能误杀新 worker 的 pending / 引用
+    const isCurrent = () => this.worker === worker;
+
     worker.on("message", (message: EmbeddingWorkerOutbound) => {
+      if (!isCurrent()) return;
       const pending = this.pending.get(message.requestId);
       if (!pending) return;
       this.pending.delete(message.requestId);
@@ -202,11 +207,13 @@ export class EmbeddingWorkerClient {
     });
 
     worker.on("error", (error: Error) => {
+      if (!isCurrent()) return;
       this.failAllPending(error);
       this.resetForRespawn();
     });
 
     worker.on("exit", (code: number) => {
+      if (!isCurrent()) return;
       this.failAllPending(new Error(`Embedding worker exited with code ${code}`));
       this.resetForRespawn();
     });
