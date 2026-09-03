@@ -15,6 +15,7 @@
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
+import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { pipeline, env } from "@xenova/transformers";
 
@@ -84,53 +85,43 @@ await pipe("warmup", { pooling: "mean", normalize: true });
   globalThis.__oldVectors = oldVectors;
 }
 
-// ── 2) 批量推理（新行为） ──
+// ── 2) 批量推理（新行为：dist 编译产物里的真实 runBatchedInference） ──
 {
-  const MAX_TEXTS = 8;
-  const MAX_CHARS = 6000;
-  const start = performance.now();
-  const newVectors = [];
-  let batch = [];
-  let batchChars = 0;
-  const flush = async () => {
-    if (batch.length === 0) return;
-    const result = await pipe(batch, { pooling: "mean", normalize: true });
-    const dims = result.dims;
-    const dim = dims[dims.length - 1];
-    const data = result.data;
-    if (data.length !== batch.length * dim) {
-      throw new Error(`shape mismatch: ${dims} vs data ${data.length}`);
-    }
-    for (let i = 0; i < batch.length; i++) {
-      newVectors.push(Float32Array.from(data.subarray(i * dim, (i + 1) * dim)));
-    }
-    batch = [];
-    batchChars = 0;
-  };
-  for (const text of texts) {
-    if (batch.length > 0 && (batch.length >= MAX_TEXTS || batchChars + text.length > MAX_CHARS)) {
-      await flush();
-    }
-    batch.push(text);
-    batchChars += text.length;
+  // 用 dist 的真实实现（排序组批 + 子批次切分），而不是在 bench 里复刻逻辑，
+  // 确保测到的就是发布代码路径
+  const pipelineUrl = pathToFileURL(
+    path.join(process.cwd(), "dist", "main", "main", "rag", "embedding-pipeline.js"),
+  ).href;
+  let runBatchedInference;
+  try {
+    const mod = await import(pipelineUrl);
+    // tsc 编译产物是 CJS：具名导出通常能被 cjs-module-lexer 识别，兜底走 default
+    runBatchedInference = mod.runBatchedInference ?? mod.default?.runBatchedInference;
+  } catch {
+    console.log("[bench] batched: dist/main/main/rag/embedding-pipeline.js 不存在，跳过（先 npm run build:main）");
+    globalThis.__newVectors = globalThis.__oldVectors;
   }
-  await flush();
-  const elapsed = ms(start);
-  console.log(`[bench] batched:    ${texts.length} texts in ${elapsed}ms (${(elapsed / texts.length).toFixed(1)}ms/text)`);
+  if (runBatchedInference) {
+    const start = performance.now();
+    const newVectors = await runBatchedInference(pipe, texts);
+    const elapsed = ms(start);
+    console.log(`[bench] batched:    ${texts.length} texts in ${elapsed}ms (${(elapsed / texts.length).toFixed(1)}ms/text)`);
 
-  // 一致性：批内 padding + mask-aware mean pooling 应与逐条结果一致
-  const oldVectors = globalThis.__oldVectors;
-  let worst = 1;
-  let maxDiff = 0;
-  for (let i = 0; i < texts.length; i++) {
-    worst = Math.min(worst, cosine(oldVectors[i], newVectors[i]));
-    for (let j = 0; j < oldVectors[i].length; j++) {
-      maxDiff = Math.max(maxDiff, Math.abs(oldVectors[i][j] - newVectors[i][j]));
+    // 一致性：批内 padding + mask-aware mean pooling 应与逐条结果一致
+    // （残差为 int8 量化噪声）
+    const oldVectors = globalThis.__oldVectors;
+    let worst = 1;
+    let maxDiff = 0;
+    for (let i = 0; i < texts.length; i++) {
+      worst = Math.min(worst, cosine(oldVectors[i], newVectors[i]));
+      for (let j = 0; j < oldVectors[i].length; j++) {
+        maxDiff = Math.max(maxDiff, Math.abs(oldVectors[i][j] - newVectors[i][j]));
+      }
     }
+    console.log(`[bench] consistency: worst cosine=${worst.toFixed(8)}, max |diff|=${maxDiff.toExponential(2)}`);
+    console.log(`[bench] dims: ${oldVectors[0].length}`);
+    globalThis.__newVectors = newVectors;
   }
-  console.log(`[bench] consistency: worst cosine=${worst.toFixed(8)}, max |diff|=${maxDiff.toExponential(2)}`);
-  console.log(`[bench] dims: ${oldVectors[0].length}`);
-  globalThis.__newVectors = newVectors;
 }
 
 // ── 3) worker 全链路（新架构） ──

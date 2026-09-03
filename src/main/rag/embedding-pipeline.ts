@@ -113,7 +113,13 @@ export const MAX_INFERENCE_BATCH_CHARS = 6000;
  *
  * feature-extraction pipeline 接受 string[] 输入，一次前向处理整批文本
  * （tokenizer 内部做 batch padding，mean pooling 基于 attention mask
- * 屏蔽 padding 位），比逐条推理少 (N-1) 次前向开销，快数倍。
+ * 屏蔽 padding 位），比逐条推理少 (N-1) 次前向开销。
+ *
+ * ⚠️ 批内文本会 padding 到最长文本的长度——长短文本混批时，短文本
+ * 的计算成本被放大到批内最长文本的量级（实测 48 条混合文本比逐条还
+ * 慢 3 倍）。因此先按长度排序再组批：相近长度的文本同批，批内
+ * padding 最小，短文本批（贴纸/场景描述）拿到真正的批量收益。
+ * 结果按原始输入顺序返回。
  *
  * 返回值与输入等长的 Float32Array 列表（每项为归一化后的向量）。
  * 超过 MAX_INFERENCE_BATCH_TEXTS / MAX_INFERENCE_BATCH_CHARS 时自动切子批次。
@@ -121,13 +127,21 @@ export const MAX_INFERENCE_BATCH_CHARS = 6000;
 export async function runBatchedInference(pipe: any, texts: string[]): Promise<Float32Array[]> {
   if (texts.length === 0) return [];
 
-  const out: Float32Array[] = [];
-  let batch: string[] = [];
+  // 按长度升序组批，记录原始下标，结束后还原顺序
+  const order = texts
+    .map((text, index) => ({ text, index, length: text.length }))
+    .sort((a, b) => a.length - b.length);
+
+  const results: Array<Float32Array | null> = new Array(texts.length).fill(null);
+  let batch: Array<{ text: string; index: number }> = [];
   let batchChars = 0;
 
   const flush = async (): Promise<void> => {
     if (batch.length === 0) return;
-    const result: any = await pipe(batch, { pooling: "mean", normalize: true });
+    const result: any = await pipe(
+      batch.map((item) => item.text),
+      { pooling: "mean", normalize: true },
+    );
     // 归一化后的输出 Tensor：dims = [batch.length, embeddingDim]
     const dims: number[] = result.dims as number[];
     const dim = dims[dims.length - 1];
@@ -141,23 +155,23 @@ export async function runBatchedInference(pipe: any, texts: string[]): Promise<F
     for (let i = 0; i < count; i++) {
       // subarray 是视图，new Float32Array(view) 拷贝出独立 buffer，
       // 后续才可安全跨 postMessage 传输
-      out.push(new Float32Array(data.subarray(i * dim, (i + 1) * dim)));
+      results[batch[i].index] = new Float32Array(data.subarray(i * dim, (i + 1) * dim));
     }
     batch = [];
     batchChars = 0;
   };
 
-  for (const text of texts) {
+  for (const item of order) {
     if (
       batch.length > 0 &&
-      (batch.length >= MAX_INFERENCE_BATCH_TEXTS || batchChars + text.length > MAX_INFERENCE_BATCH_CHARS)
+      (batch.length >= MAX_INFERENCE_BATCH_TEXTS || batchChars + item.length > MAX_INFERENCE_BATCH_CHARS)
     ) {
       await flush();
     }
-    batch.push(text);
-    batchChars += text.length;
+    batch.push({ text: item.text, index: item.index });
+    batchChars += item.length;
   }
   await flush();
 
-  return out;
+  return results as Float32Array[];
 }
