@@ -21,6 +21,17 @@ export type PluginCapability =
   | "scheduler"
   | "speech-input";
 
+/** 全部宿主能力的运行时清单；与 PluginCapability 类型一一对应，SDK 直接再导出。 */
+export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
+  "channels",
+  "llm",
+  "secrets",
+  "workspace",
+  "conversations",
+  "scheduler",
+  "speech-input",
+];
+
 export interface PluginManifest {
   /** Plugin API major version required by this plugin. */
   apiVersion: number;
@@ -568,7 +579,8 @@ export interface PluginHostError extends Error {
   code: PluginHostErrorCode;
 }
 
-const PLUGIN_HOST_ERROR_CODES: ReadonlySet<string> = new Set([
+/** 全部稳定错误码的运行时清单；SDK 直接再导出，供测试断言使用。 */
+export const PLUGIN_HOST_ERROR_CODES: ReadonlySet<string> = new Set([
   "E_CAPABILITY_UNAVAILABLE",
   "E_INVALID_ARGUMENT",
   "E_NOT_FOUND",
