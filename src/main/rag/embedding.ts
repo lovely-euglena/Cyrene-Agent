@@ -12,6 +12,7 @@ import {
   setCurrentModelKey,
 } from "./embedding-pipeline";
 import { disposeEmbeddingWorker, getEmbeddingWorkerClient } from "./embedding-worker";
+import { disposeEmbeddingSidecar, getEmbeddingSidecarClient } from "./embedding-sidecar";
 
 // ── 错误类型 ──
 export class EmbeddingDimensionMismatchError extends Error {
@@ -78,11 +79,28 @@ export interface EmbeddingProvider {
 // ── 本地推理入口 ──
 /**
  * 执行 local embedding 推理。
- * - 主进程：走专用 embedding worker，推理不再阻塞主进程事件循环；
+ * - 主进程 + sidecar 启用（CYRENE_EMBED_SIDECAR=1 且 exe 存在）：
+ *   走 .NET sidecar（ORT native，~4.3x 提速，数值与 WASM 逐位一致）；
+ * - 主进程（sidecar 关闭/不可用）：走专用 embedding worker，
+ *   推理不再阻塞主进程事件循环；
  * - 已在 worker 线程（document-index-worker）：直接用本线程 pipeline。
+ *
+ * sidecar 数值与 transformers.js 逐位一致（verify cosine=1.0），
+ * cacheIdentity 保持 "local" 不变，LanceDB 索引零迁移。
  */
 async function embedLocal(modelKey: string, texts: string[]): Promise<Float32Array[]> {
   if (isMainThread) {
+    const sidecar = getEmbeddingSidecarClient();
+    if (sidecar) {
+      try {
+        return await sidecar.embedTexts(modelKey, texts);
+      } catch (error) {
+        console.warn(
+          "[Embedding] sidecar failed, falling back to worker:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     return getEmbeddingWorkerClient().embedTexts(modelKey, texts);
   }
   const pipe = await getLocalPipeline(modelKey);
@@ -363,8 +381,9 @@ export function resetEmbeddingProvider(): void {
   cachedProvider = null;
   resetLocalPipelines();
   setCurrentModelKey(DEFAULT_MODEL_KEY);
-  // 连同 embedding worker 一起回收（下次 embed 时懒重启）
+  // 连同 embedding worker / sidecar 一起回收（下次 embed 时懒重启）
   disposeEmbeddingWorker("resetEmbeddingProvider");
+  void disposeEmbeddingSidecar("resetEmbeddingProvider");
 }
 
 export function getEmbeddingDiagnostics(): {
