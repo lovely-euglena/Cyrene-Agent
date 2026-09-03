@@ -199,3 +199,7 @@ sticker-descriptions/
 # 测试运行产物（Windows 风格路径目录名 + 权限策略 dump）
 C:\\cyrene-test-user-data/
 agent-permission.json
+
+# .NET sidecar 构建产物
+dotnet/*/bin/
+dotnet/*/obj/
