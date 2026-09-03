@@ -195,3 +195,7 @@ docs/superpowers/
 !docs/electron-33-to-43-upgrade-assessment.md
 PRODUCT.md
 sticker-descriptions/
+
+# 测试运行产物（Windows 风格路径目录名 + 权限策略 dump）
+C:\\cyrene-test-user-data/
+agent-permission.json
