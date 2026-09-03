@@ -338,31 +338,63 @@ async function runWorkerThread(): Promise<void> {
       const provider = createWorkerEmbeddingProvider(message.embedding);
       if (!provider) throw new Error("Embedding provider is not available");
       const batchSize = 16;
+      const totalChunks = prepared.totalChunks;
       let completedChunks = 0;
       let batch: Array<PreparedDocumentChunk & { embedding: number[] }> = [];
-      for (const chunk of iterateDocumentChunks(prepared.text, "doc_" + prepared.name)) {
-        if (isCancelled(cancellation)) {
-          prepared = null;
-          port.postMessage({ type: "cancelled" } satisfies WorkerOutboundMessage);
-          return;
+      let pendingTexts: string[] = [];
+      let pendingIndices: number[] = [];
+
+      const postCancelled = () => {
+        prepared = null;
+        port.postMessage({ type: "cancelled" } satisfies WorkerOutboundMessage);
+      };
+
+      // 逐条 embed 改为按批 embedBatch：一次前向处理整批文本
+      // （provider 内部还会按 token 量切子批次，防止 WASM 堆 OOM）
+      const flushEmbedding = async (): Promise<boolean> => {
+        if (pendingTexts.length === 0) return true;
+        const texts = pendingTexts;
+        const indices = pendingIndices;
+        pendingTexts = [];
+        pendingIndices = [];
+        const embeddings = await provider.embedBatch(texts);
+        if (embeddings.length !== texts.length) {
+          throw new Error(`Embedding batch size mismatch: sent ${texts.length}, got ${embeddings.length}`);
         }
-        const embedding = await provider.embed(chunk.text);
-        if (isCancelled(cancellation)) {
-          prepared = null;
-          port.postMessage({ type: "cancelled" } satisfies WorkerOutboundMessage);
-          return;
-        }
-        batch.push({ text: chunk.text, index: chunk.index, embedding });
-        completedChunks += 1;
-        if (batch.length === batchSize || completedChunks === prepared.totalChunks) {
-          port.postMessage({ type: "embedded-batch", chunks: batch } satisfies WorkerOutboundMessage);
-          batch = [];
+        if (isCancelled(cancellation)) return false;
+        for (let i = 0; i < texts.length; i++) {
+          batch.push({ text: texts[i], index: indices[i], embedding: embeddings[i] });
+          completedChunks += 1;
+          if (batch.length === batchSize || completedChunks === totalChunks) {
+            port.postMessage({ type: "embedded-batch", chunks: batch } satisfies WorkerOutboundMessage);
+            batch = [];
+          }
         }
         port.postMessage({
           type: "progress",
           completedChunks,
-          totalChunks: prepared.totalChunks,
+          totalChunks,
         } satisfies WorkerOutboundMessage);
+        return true;
+      };
+
+      for (const chunk of iterateDocumentChunks(prepared.text, "doc_" + prepared.name)) {
+        if (isCancelled(cancellation)) {
+          postCancelled();
+          return;
+        }
+        pendingTexts.push(chunk.text);
+        pendingIndices.push(chunk.index);
+        if (pendingTexts.length >= batchSize) {
+          if (!(await flushEmbedding())) {
+            postCancelled();
+            return;
+          }
+        }
+      }
+      if (!(await flushEmbedding())) {
+        postCancelled();
+        return;
       }
       prepared = null;
       port.postMessage({ type: "completed" } satisfies WorkerOutboundMessage);
