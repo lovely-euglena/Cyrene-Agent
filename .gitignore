@@ -203,3 +203,4 @@ agent-permission.json
 # .NET sidecar 构建产物
 dotnet/*/bin/
 dotnet/*/obj/
+scripts/diagnostics/embedding-verify-data.json
