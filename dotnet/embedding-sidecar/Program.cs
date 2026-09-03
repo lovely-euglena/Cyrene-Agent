@@ -172,11 +172,146 @@ internal static class Bench
 
 internal static class Server
 {
+    /// <summary>
+    /// stdio 帧协议（二进制安全，供 Electron 主进程 spawn）：
+    ///
+    ///   请求帧： [4B 小端 JSON 头长度][UTF-8 JSON 头]
+    ///     头：{"id":1,"op":"embed","texts":["a","b"]}
+    ///   响应帧：[4B 小端 JSON 头长度][UTF-8 JSON 头][二进制 float32 小端]
+    ///     成功头：{"id":1,"ok":true,"count":2,"dim":1024}
+    ///     二进制段长度 = count × dim × 4（由头推导，不另设长度字段）
+    ///     错误头：  {"id":1,"ok":false,"error":"..."}（无二进制段）
+    ///
+    ///   就绪通知（模型加载完成后发一帧，id=0）：
+    ///     {"id":0,"op":"ready","modelKey":"bgem3","dim":1024}
+    ///
+    /// stderr 只用于诊断日志（进程崩溃前的输出不受帧协议污染）。
+    /// </summary>
     public static void Run(string modelDir)
     {
-        // Phase B：stdio 帧协议（长度前缀 + JSON 请求 + 二进制 float 响应）
-        // 先实现 verify/bench，serve 骨架占位
-        Console.Error.WriteLine("[serve] protocol not implemented yet — Phase B");
-        Environment.Exit(2);
+        Console.Error.WriteLine($"[serve] model dir: {modelDir}");
+        var engine = EmbeddingEngine.Load(modelDir);
+        Console.Error.WriteLine("[serve] engine ready");
+
+        WriteFrame(new
+        {
+            id = 0,
+            op = "ready",
+            modelKey = engine.ModelKey,
+            dim = engine.Dimensions,
+        });
+
+        var stdin = Console.OpenStandardInput();
+        var stdout = Console.OpenStandardOutput();
+
+        while (true)
+        {
+            var headerJson = ReadFrame(stdin);
+            if (headerJson is null)
+            {
+                // stdin EOF：宿主退出，正常收尾
+                Console.Error.WriteLine("[serve] stdin EOF, exiting");
+                return;
+            }
+
+            RequestHeader? request;
+            try
+            {
+                request = System.Text.Json.JsonSerializer.Deserialize<RequestHeader>(headerJson, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[serve] bad request: {ex.Message}");
+                continue;
+            }
+            if (request is null) continue;
+
+            try
+            {
+                var vectors = engine.Embed(request.Texts ?? Array.Empty<string>());
+                // 响应头 + 二进制 float 拼接写出（count/dim 由头推导）
+                var header = new ResponseHeader { Id = request.Id, Ok = true, Count = vectors.Length, Dim = engine.Dimensions };
+                var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+                var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
+
+                var binaryLength = 0L;
+                foreach (var v in vectors) binaryLength += v.Length;
+                var binary = new byte[binaryLength * 4];
+                var offset = 0;
+                foreach (var v in vectors)
+                {
+                    System.Buffer.BlockCopy(v, 0, binary, offset, v.Length * 4);
+                    offset += v.Length * 4;
+                }
+
+                var lengthPrefix = BitConverter.GetBytes((int)headerBytes.Length);
+                stdout.Write(lengthPrefix, 0, 4);
+                stdout.Write(headerBytes, 0, headerBytes.Length);
+                if (binary.Length > 0) stdout.Write(binary, 0, binary.Length);
+                stdout.Flush();
+            }
+            catch (Exception ex)
+            {
+                WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = ex.Message });
+                Console.Error.WriteLine($"[serve] embed failed: {ex}");
+            }
+        }
+    }
+
+    /// <summary>协议 JSON 统一 camelCase（与 JS 侧约定一致）。</summary>
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private sealed class RequestHeader
+    {
+        public int Id { get; set; }
+        public string Op { get; set; } = "embed";
+        public string[]? Texts { get; set; }
+    }
+
+    private sealed class ResponseHeader
+    {
+        public int Id { get; set; }
+        public bool Ok { get; set; }
+        public int Count { get; set; }
+        public int Dim { get; set; }
+        public string? Error { get; set; }
+    }
+
+    /// <summary>读一帧：4B 小端长度 + JSON 头。EOF 返回 null。</summary>
+    private static string? ReadFrame(Stream stdin)
+    {
+        var prefix = new byte[4];
+        if (!ReadExact(stdin, prefix, 4)) return null;
+        var length = BitConverter.ToInt32(prefix, 0);
+        if (length is < 0 or > 64 * 1024 * 1024)
+        {
+            throw new IOException($"frame length out of range: {length}");
+        }
+        var payload = new byte[length];
+        if (!ReadExact(stdin, payload, length)) return null;
+        return System.Text.Encoding.UTF8.GetString(payload);
+    }
+
+    private static bool ReadExact(Stream stream, byte[] buffer, int count)
+    {
+        var read = 0;
+        while (read < count)
+        {
+            var n = stream.Read(buffer, read, count - read);
+            if (n <= 0) return false;
+            read += n;
+        }
+        return true;
+    }
+
+    private static void WriteFrame(object header)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        var stdout = Console.OpenStandardOutput();
+        var prefix = BitConverter.GetBytes((int)bytes.Length);
+        stdout.Write(prefix, 0, 4);
+        stdout.Write(bytes, 0, bytes.Length);
+        stdout.Flush();
     }
 }
