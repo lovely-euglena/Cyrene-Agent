@@ -88,7 +88,44 @@ export class EmbeddingSidecarClient {
   private child: ChildProcess | null = null;
   private pending = new Map<number, PendingRequest>();
   private nextId = 1;
-  private buffered = Buffer.alloc(0);
+  // 接收缓冲：chunk 队列 + 计数。
+  // 不用「单 buffer + Buffer.concat」累积：每 data 事件全量重拷贝是 O(n²)，
+  // 大响应（256KB+ 多 chunk）时 CPU/GC 浪费显著；且消费用 subarray 视图
+  // 会持有整个历史底层 buffer（跨帧滞留内存）。队列模型下每个视图最多
+  // 持有队头单个 chunk（64KB 级），消费即弃。
+  private chunks: Buffer[] = [];
+  private bufferedBytes = 0;
+
+  /**
+   * 从队列头取精确 n 字节。数据不足返回 null（调用方等下个 data）。
+   * 快路径（队头 chunk 足够）零拷贝返回视图；跨 chunk 时仅拼 n 字节。
+   */
+  private take(n: number): Buffer | null {
+    if (n === 0) return Buffer.alloc(0);
+    if (this.bufferedBytes < n) return null;
+    const first = this.chunks[0];
+    if (first.length >= n) {
+      const out = first.subarray(0, n);
+      if (first.length === n) this.chunks.shift();
+      else this.chunks[0] = first.subarray(n);
+      this.bufferedBytes -= n;
+      return out;
+    }
+    const out = Buffer.concat(this.chunks, n);
+    let consumed = 0;
+    while (consumed < n && this.chunks.length > 0) {
+      const chunk = this.chunks[0];
+      if (chunk.length <= n - consumed) {
+        consumed += chunk.length;
+        this.chunks.shift();
+      } else {
+        this.chunks[0] = chunk.subarray(n - consumed);
+        consumed = n;
+      }
+    }
+    this.bufferedBytes -= n;
+    return out;
+  }
   /** mid-frame 状态：header 已解析、二进制段未收齐（跨 chunk 状态机） */
   private frameState: { header: any; binaryLength: number } | null = null;
   private startup: Promise<void> | null = null;
@@ -155,7 +192,8 @@ export class EmbeddingSidecarClient {
         env: this.buildEnv(),
       });
       this.child = child;
-      this.buffered = Buffer.alloc(0);
+      this.chunks = [];
+      this.bufferedBytes = 0;
       this.frameState = null;
 
       // 身份校验：本 child 的退出事件晚到时（已被 dispose/替换），
@@ -194,7 +232,8 @@ export class EmbeddingSidecarClient {
       }
       stdout.on("data", (chunk: Buffer) => {
         if (!isCurrent()) return;
-        this.buffered = Buffer.concat([this.buffered, chunk]);
+        this.chunks.push(chunk);
+        this.bufferedBytes += chunk.length;
         this.drainFrames();
       });
 
@@ -269,28 +308,27 @@ export class EmbeddingSidecarClient {
       // 1) 二进制段收集中（mid-frame）
       if (this.frameState) {
         const { header, binaryLength } = this.frameState;
-        if (this.buffered.length < binaryLength) return; // 继续等数据
-        const binary = this.buffered.subarray(0, binaryLength);
-        this.buffered = this.buffered.subarray(binaryLength);
+        const binary = this.take(binaryLength);
+        if (!binary) return; // 继续等数据
         this.frameState = null;
         this.completeResponse(header, binary);
         continue;
       }
 
       // 2) 新帧：长度前缀
-      if (this.buffered.length < 4) return;
-      const headerLen = this.buffered.readInt32LE(0);
+      const prefix = this.take(4);
+      if (!prefix) return;
+      const headerLen = prefix.readInt32LE(0);
       if (headerLen < 0 || headerLen > MAX_HEADER_BYTES) {
         this.protocolFailure(`bad frame length ${headerLen}`);
         return;
       }
-      if (this.buffered.length < 4 + headerLen) return; // 帧头不完整
-      const headerJson = this.buffered.subarray(4, 4 + headerLen).toString("utf8");
-      this.buffered = this.buffered.subarray(4 + headerLen);
+      const headerBuf = this.take(headerLen);
+      if (!headerBuf) return; // 帧头不完整
 
       let header: any;
       try {
-        header = JSON.parse(headerJson);
+        header = JSON.parse(headerBuf.toString("utf8"));
       } catch {
         this.protocolFailure("frame header is not valid JSON");
         return;
@@ -361,6 +399,8 @@ export class EmbeddingSidecarClient {
     this.modelKey = null;
     this.onReadyFrame = null;
     this.frameState = null;
+    this.chunks = [];
+    this.bufferedBytes = 0;
   }
 
   private disposeSync(reason: string): void {

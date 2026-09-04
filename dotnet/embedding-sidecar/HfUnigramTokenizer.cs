@@ -14,16 +14,22 @@ namespace CyreneEmbedSidecar;
 public sealed class HfUnigramTokenizer
 {
     private readonly Dictionary<string, (int Id, float Score)> _vocab;
+    // span 查找视图：Viterbi 内循环用 ReadOnlySpan<char> 查词表，
+    // 消掉每个候选的 Substring 堆分配（内层是 O(n×24) 次查询）
+    private readonly Dictionary<string, (int Id, float Score)>.AlternateLookup<ReadOnlySpan<char>> _vocabLookup;
     private readonly int _unkId;
     private readonly int _bosId;   // <s>
     private readonly int _eosId;   // </s>
+    private readonly float _unkScore;
 
     private HfUnigramTokenizer(Dictionary<string, (int, float)> vocab, int unkId, int bosId, int eosId)
     {
         _vocab = vocab;
+        _vocabLookup = vocab.GetAlternateLookup<ReadOnlySpan<char>>();
         _unkId = unkId;
         _bosId = bosId;
         _eosId = eosId;
+        _unkScore = vocab.TryGetValue("<unk>", out var unk) ? unk.Item2 : -10.0f;
     }
 
     public int VocabSize => _vocab.Count;
@@ -66,58 +72,35 @@ public sealed class HfUnigramTokenizer
     {
         var ids = new List<int>(capacity: text.Length / 2 + 8);
         ids.Add(_bosId);
-        foreach (var piece in SplitUnigram(text))
+        // 全链路 span/ids 直出：不产生中间 piece 字符串
+        var normalized = NmtNormalize(text);
+        normalized = normalized.Replace(' ', '▁');
+        normalized = (normalized.Length > 0 && normalized[0] != '▁') ? "▁" + normalized : normalized;
+
+        var segments = normalized.Split('▁', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var raw in segments)
         {
-            ids.Add(_vocab.TryGetValue(piece, out var hit) ? hit.Id : _unkId);
+            if (raw.Length == 0) continue;
+            // segment = "▁" + raw：直接在原 string 上偏移 1 构造 span，避免拼接分配
+            AppendSegmentIds(ids, raw, prefixSpace: true);
         }
         ids.Add(_eosId);
         return ids.ToArray();
     }
 
     /// <summary>
-    /// Metaspace 预处理 + Unigram Viterbi。HF 的执行顺序是 pre-tokenize（按 ▁ 切段）
-    /// 后对每段独立做 Unigram 编码，段边界不参与 merge。
+    /// 对单个 segment（前导 "▁" 由 offset 表示，不实体化）做 Viterbi，
+    /// 直接把 token ids 追加进 ids。
     /// </summary>
-    private IEnumerable<string> SplitUnigram(string text)
+    private void AppendSegmentIds(List<int> ids, string raw, bool prefixSpace)
     {
-        // NFKC 归一化：近似复刻 HF Precompiled charsmap（sentencepiece NMT_NFKC）。
-        // 关键作用：全角标点（，：！）→ 半角、全角字母数字 → 半角。
-        // 实测差例：中文文本的 "，" 归一化后是半角 ","（vocab id=4），
-        // 不归一化则查表 miss 落 <unk>（id=3）——XLM-R vocab 无全角标点。
-        //
-        // 不用 string.Normalize(FormKC)：本工程 InvariantGlobalization=true
-        // （NativeAOT 部署不依赖 ICU），Invariant 模式下 Normalize 是 no-op。
-        // 手写全角→半角映射（U+FF01–FF5E 线性偏移 0xFEE0 + U+3000 全角空格），
-        // 覆盖中英文文本 NFKC 差异的 99%+；verify 模式 tokenIds 对账兜底。
-        var normalized = NmtNormalize(text);
-
-        // Metaspace: prepend "▁"（prepend_scheme=always），空格 → "▁"
-        normalized = normalized.Replace(' ', '▁');
-        normalized = (normalized.Length > 0 && normalized[0] != '▁') ? "▁" + normalized : normalized;
-
-        // Metaspace pre-tokenize：按 ▁ 切成段，每段保留前导 ▁
-        // （"▁a▁b" → ["▁a", "▁b"]：split 之后把前导 ▁ 还给每段）
-        var segments = normalized.Split('▁', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var raw in segments)
-        {
-            if (raw.Length == 0) continue;
-            var segment = "▁" + raw;
-            foreach (var piece in ViterbiSplit(segment))
-            {
-                yield return piece;
-            }
-        }
-    }
-
-    /// <summary>单段 Unigram Viterbi：score 和最大的切分路径。未知字符回退 <unk>。</summary>
-    private IEnumerable<string> ViterbiSplit(string segment)
-    {
-        var n = segment.Length;
-        if (n == 0) yield break;
+        // 逻辑段 = "▁" + raw；物理上用 span 视图 [^1, len+1) 表示
+        var n = raw.Length + 1;
+        Span<char> segment = n <= 512 ? stackalloc char[512] : new char[n];
+        segment[0] = '▁';
+        raw.AsSpan().CopyTo(segment[1..]);
 
         // best[i] = 覆盖前 i 个字符的最大 score；from[i] = 最优前驱长度
-        // （heap 数组而非 stackalloc：中文长段无空格，段长可达数十万字符，
-        //  stackalloc 大段会栈溢出——StackOverflowException 不可捕获）
         var best = new double[n + 1];
         var from = new int[n + 1];
 
@@ -128,8 +111,8 @@ public sealed class HfUnigramTokenizer
             var maxLen = -1;
             for (var start = i - 1; start >= 0; start--)
             {
-                var piece = segment.Substring(start, i - start);
-                if (_vocab.TryGetValue(piece, out var hit))
+                // span 切片查词表：零堆分配（原先每个候选 Substring 一次分配）
+                if (_vocabLookup.TryGetValue(segment.Slice(start, i - start), out var hit))
                 {
                     var score = best[start] + hit.Score;
                     if (score > maxScore) { maxScore = score; maxLen = i - start; }
@@ -140,27 +123,26 @@ public sealed class HfUnigramTokenizer
             }
             if (maxLen < 0)
             {
-                // 该位置无词表匹配：单字符走 <unk>（score 取 unk 概率的下界近似）
+                // 该位置无词表匹配：单字符走 <unk>
                 maxLen = 1;
-                maxScore = best[i - 1] + _vocab.GetValueOrDefault("<unk>").Score - 10.0;
+                maxScore = best[i - 1] + _unkScore - 10.0;
             }
             best[i] = maxScore;
             from[i] = maxLen;
         }
 
-        // 回溯
-        var pieces = new List<string>(n);
+        // 回溯：直接查 Id（不再构造 piece 字符串）
         var pos = n;
+        var stackStart = ids.Count;
         while (pos > 0)
         {
             var len = from[pos];
-            pieces.Add(segment.Substring(pos - len, len));
+            var pieceSpan = segment.Slice(pos - len, len);
+            ids.Add(_vocabLookup.TryGetValue(pieceSpan, out var hit) ? hit.Id : _unkId);
             pos -= len;
         }
-        for (var i = pieces.Count - 1; i >= 0; i--)
-        {
-            yield return pieces[i];
-        }
+        // 回溯顺序是反的，就地反转刚追加的区段
+        ids.Reverse(stackStart, ids.Count - stackStart);
     }
 
     /// <summary>

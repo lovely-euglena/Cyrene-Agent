@@ -191,7 +191,12 @@ internal static class Server
     {
         Console.Error.WriteLine($"[serve] model dir: {modelDir}");
         var engine = EmbeddingEngine.Load(modelDir);
-        Console.Error.WriteLine("[serve] engine ready");
+
+        // 预热：隐藏首次推理的 MLAS kernel lazy-init（实测 ~130ms），
+        // 代价是 ready 延迟同等毫秒数，换首个真实请求无毛刺
+        var warmupStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        engine.Embed(new[] { "warmup" });
+        Console.Error.WriteLine($"[serve] warmup in {System.Diagnostics.Stopwatch.GetElapsedTime(warmupStart).TotalMilliseconds:F0}ms");
 
         WriteFrame(new
         {
@@ -199,20 +204,87 @@ internal static class Server
             op = "ready",
             modelKey = engine.ModelKey,
             dim = engine.Dimensions,
+            idleExitSec = IdleExitSeconds,
         });
 
-        var stdin = Console.OpenStandardInput();
-        var stdout = Console.OpenStandardOutput();
+        RunAsync(engine, Console.OpenStandardInput(), Console.OpenStandardOutput()).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// 空闲自动退出（秒）。桌宠 24/7 场景 embedding 调用是间歇性的
+    /// （记忆写入 / 场景识别 / 贴纸索引），而 sidecar 常驻内存
+    /// ~776MB（int8 权重 570MB + 运行时/arena，且空闲不回落——
+    /// 实测 idle 10s RSS 无变化）。空闲 N 分钟自杀把「常驻 776MB」
+    /// 变成「峰值 776MB」：下次调用由宿主侧懒重启（模型加载 ~2.5s）。
+    /// CYRENE_EMBED_IDLE_EXIT_SEC 覆盖；0 = 永不退出。
+    /// </summary>
+    private static int IdleExitSeconds { get; } = ReadPositiveIntEnv("CYRENE_EMBED_IDLE_EXIT_SEC") ?? 600;
+
+    private static int? ReadPositiveIntEnv(string name)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        return int.TryParse(raw, out var v) && v >= 0 ? v : null;
+    }
+
+    private static async Task RunAsync(EmbeddingEngine engine, Stream stdin, Stream stdout)
+    {
+        // ⚠️ Console.OpenStandardInput() 的 ReadAsync 是 sync-over-async：
+        // 线程真阻塞在 pipe read(2) 上，CancellationToken 无法中断（实测
+        // 空闲超时永远不触发）。改用专用读线程同步读 + Channel 解耦：
+        // channel 的 ReadAsync 超时才是真正可取消的。
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<string>(
+            new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true });
+
+        var readerThread = new Thread(() =>
+        {
+            try
+            {
+                while (true)
+                {
+                    var frame = ReadFrameSync(stdin);
+                    if (frame is null || !channel.Writer.TryWrite(frame))
+                    {
+                        channel.Writer.TryComplete();
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                channel.Writer.TryComplete(ex);
+            }
+        })
+        { IsBackground = true, Name = "sidecar-stdin" };
+        readerThread.Start();
 
         while (true)
         {
-            var headerJson = ReadFrame(stdin);
-            if (headerJson is null)
+            // 读帧（带空闲超时）：超时 = 宿主不再需要本进程，礼貌退出；
+            // ChannelClosedException = stdin EOF（读线程发现管道关闭）
+            string? headerJson;
+            try
             {
-                // stdin EOF：宿主退出，正常收尾
+                if (IdleExitSeconds > 0)
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(IdleExitSeconds));
+                    headerJson = await channel.Reader.ReadAsync(timeout.Token);
+                }
+                else
+                {
+                    headerJson = await channel.Reader.ReadAsync();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Console.Error.WriteLine($"[serve] idle {IdleExitSeconds}s, exiting (RSS reclaimed; host lazily respawns)");
+                return;
+            }
+            catch (System.Threading.Channels.ChannelClosedException)
+            {
                 Console.Error.WriteLine("[serve] stdin EOF, exiting");
                 return;
             }
+            if (headerJson is null) return;
 
             RequestHeader? request;
             try
@@ -234,26 +306,7 @@ internal static class Server
             try
             {
                 var vectors = engine.Embed(request.Texts ?? Array.Empty<string>());
-                // 响应头 + 二进制 float 拼接写出（count/dim 由头推导）
-                var header = new ResponseHeader { Id = request.Id, Ok = true, Count = vectors.Length, Dim = engine.Dimensions };
-                var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
-                var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
-
-                var binaryLength = 0L;
-                foreach (var v in vectors) binaryLength += v.Length;
-                var binary = new byte[binaryLength * 4];
-                var offset = 0;
-                foreach (var v in vectors)
-                {
-                    System.Buffer.BlockCopy(v, 0, binary, offset, v.Length * 4);
-                    offset += v.Length * 4;
-                }
-
-                var lengthPrefix = BitConverter.GetBytes((int)headerBytes.Length);
-                stdout.Write(lengthPrefix, 0, 4);
-                stdout.Write(headerBytes, 0, headerBytes.Length);
-                if (binary.Length > 0) stdout.Write(binary, 0, binary.Length);
-                stdout.Flush();
+                WriteResponse(stdout, request.Id, vectors, engine.Dimensions);
             }
             catch (Exception ex)
             {
@@ -261,6 +314,29 @@ internal static class Server
                 Console.Error.WriteLine($"[serve] embed failed: {ex}");
             }
         }
+    }
+
+    /// <summary>
+    /// 响应分段写出：长度前缀 + JSON 头 + 每个向量的 float 数据逐段 Write。
+    /// 省去一次性拼接 byte[] 的整段拷贝（n 条 × dim×4B，大批量时省一倍
+    /// 峰值分配）。Stream.Write(ReadOnlySpan) 直接消费 engine 堆上的
+    /// float[]（无 Memory 包装/转换）；pipe 写入走用户态缓冲，一次 Flush。
+    /// </summary>
+    private static void WriteResponse(Stream stdout, int id, float[][] vectors, int dim)
+    {
+        var header = new ResponseHeader { Id = id, Ok = true, Count = vectors.Length, Dim = dim };
+        var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+        var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
+
+        var prefix = BitConverter.GetBytes((int)headerBytes.Length);
+        stdout.Write(prefix);
+        stdout.Write(headerBytes);
+        // float[] 的二进制布局即小端 float32，与协议一致，直接按段写出
+        foreach (var v in vectors)
+        {
+            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
+        }
+        stdout.Flush();
     }
 
     /// <summary>协议 JSON 统一 camelCase（与 JS 侧约定一致）。</summary>
@@ -282,8 +358,8 @@ internal static class Server
         public string? Error { get; set; }
     }
 
-    /// <summary>读一帧：4B 小端长度 + JSON 头。EOF 返回 null。</summary>
-    private static string? ReadFrame(Stream stdin)
+    /// <summary>读一帧：4B 小端长度 + JSON 头。EOF 返回 null。专用读线程内同步调用。</summary>
+    private static string? ReadFrameSync(Stream stdin)
     {
         var prefix = new byte[4];
         if (!ReadExact(stdin, prefix, 4)) return null;

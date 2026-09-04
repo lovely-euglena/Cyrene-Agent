@@ -14,6 +14,8 @@ public sealed class EmbeddingEngine : IDisposable
     private readonly InferenceSession _session;
     private readonly HfUnigramTokenizer _tokenizer;
     private readonly string _modelKey;
+    private readonly RunOptions _runOptions;
+    private readonly Dictionary<string, OrtValue> _inputTemplate = new(2);
     public int Dimensions { get; }
 
     public string ModelKey => _modelKey;
@@ -24,6 +26,7 @@ public sealed class EmbeddingEngine : IDisposable
         _tokenizer = tokenizer;
         _modelKey = modelKey;
         Dimensions = dims;
+        _runOptions = new RunOptions();
     }
 
     /// <summary>modelDir 指向 Xenova/bge-m3 布局（tokenizer.json + onnx/model_quantized.onnx）。</summary>
@@ -38,10 +41,20 @@ public sealed class EmbeddingEngine : IDisposable
 
         Console.Error.WriteLine($"[engine] loading onnx session: {onnxPath}");
         var options = new SessionOptions();
-        // CPU 推理；ORT 会自动用满物理核（弱机器上可用 IntraOpNumThreads 限流）
+        // 线程数：默认物理核一半（max 4）——桌宠场景 sidecar 满核推理会与
+        // Electron 渲染/Live2D 抢核；CYRENE_EMBED_THREADS 可覆盖（0 = ORT 默认全核）
+        var threads = ReadThreadsEnv();
+        if (threads > 0)
+        {
+            options.IntraOpNumThreads = Math.Min(threads, Environment.ProcessorCount);
+        }
+        else if (Environment.ProcessorCount > 1)
+        {
+            options.IntraOpNumThreads = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
+        }
         options.AppendExecutionProvider_CPU();
         var session = new InferenceSession(onnxPath, options);
-        Console.Error.WriteLine("[engine] session ready");
+        Console.Error.WriteLine($"[engine] session ready (intra-op threads={options.IntraOpNumThreads})");
 
         var dims = session.OutputMetadata["last_hidden_state"].Dimensions;
         // [batch, seq, dim] → 取最后一维
@@ -81,6 +94,14 @@ public sealed class EmbeddingEngine : IDisposable
         return results;
     }
 
+    private static readonly string[] OutputNames = { "last_hidden_state" };
+
+    private static int ReadThreadsEnv()
+    {
+        var raw = Environment.GetEnvironmentVariable("CYRENE_EMBED_THREADS");
+        return int.TryParse(raw, out var v) && v >= 0 ? v : -1;
+    }
+
     /// <summary>单条前向：tokenize 后的 ids → 归一化向量（n=1，无 padding）。</summary>
     private void RunSingle(int[] ids, float[] vector)
     {
@@ -98,15 +119,12 @@ public sealed class EmbeddingEngine : IDisposable
 
         using var inputIdsOrt = OrtValue.CreateTensorValueFromMemory(inputIds, new long[] { 1, seqLen });
         using var maskOrt = OrtValue.CreateTensorValueFromMemory(attentionMask, new long[] { 1, seqLen });
-        using var runOptions = new RunOptions();
+        var inputs = _inputTemplate;
+        inputs["input_ids"] = inputIdsOrt;
+        inputs["attention_mask"] = maskOrt;
 
-        var inputs = new Dictionary<string, OrtValue>
-        {
-            ["input_ids"] = inputIdsOrt,
-            ["attention_mask"] = maskOrt,
-        };
-
-        using var outputs = _session.Run(runOptions, inputs, new[] { "last_hidden_state" });
+        using var outputs = _session.Run(_runOptions, inputs, OutputNames);
+        inputs.Clear(); // 释放对 OrtValue 的引用（OrtValue 自身 using 释放）
         // ResultCollection：按 outputNames 顺序排列
         var hidden = outputs[0].GetTensorDataAsSpan<float>();
         // [1, seqLen, dim]
