@@ -214,4 +214,62 @@ describe("EmbeddingWorkerClient", () => {
     await expect(pending).rejects.toThrow(/Embedding worker disposed: test/);
     expect(client.getWorkerDiagnostics().workerRunning).toBe(false);
   });
+
+  it("terminates the worker after the idle timeout when no requests are pending", async () => {
+    // 真实短超时（不用 vi.useFakeTimers：测试里的 flushMicrotasks 本身依赖
+    // setTimeout，被 fake 后 promise 恢复会冻住——vitest 的 toFake 无法只
+    // 冻「产品代码」的定时器）
+    const workers: ControlledWorker[] = [];
+    const client = new EmbeddingWorkerClient(() => {
+      const controlled = createControlledWorker();
+      workers.push(controlled);
+      return controlled.worker;
+    }, 80);
+
+    const first = client.embedTexts("bgem3", ["hello"]);
+    workers[0].emit({ type: "ready", requestId: 1 });
+    await flushMicrotasks();
+    workers[0].emit(makeResult(2, 4, 1));
+    await first;
+    expect(workers[0].terminate).not.toHaveBeenCalled();
+
+    // 挂起中的请求会取消/推迟 idle 计时：发第二条，80ms 后仍活着
+    const hold = client.embedTexts("bgem3", ["hold"]);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(workers[0].terminate).not.toHaveBeenCalled();
+    workers[0].emit(makeResult(workers[0].posted[2].message.requestId, 4, 1));
+    await hold;
+
+    // 请求全部完成 → 80ms 空闲后回收
+    await new Promise((r) => setTimeout(r, 200));
+    expect(workers[0].terminate).toHaveBeenCalledTimes(1);
+    expect(client.getWorkerDiagnostics().workerRunning).toBe(false);
+
+    // 下次调用懒重启
+    const third = client.embedTexts("bgem3", ["again"]);
+    expect(workers).toHaveLength(2);
+    workers[1].emit({ type: "ready", requestId: workers[1].posted[0].message.requestId });
+    await flushMicrotasks();
+    workers[1].emit(makeResult(workers[1].posted[1].message.requestId, 4, 1));
+    await expect(third).resolves.toHaveProperty("0.length", 4);
+  }, 10_000);
+
+  it("idle timer disabled with 0 keeps the worker resident", async () => {
+    const workers: ControlledWorker[] = [];
+    const client = new EmbeddingWorkerClient(() => {
+      const controlled = createControlledWorker();
+      workers.push(controlled);
+      return controlled.worker;
+    }, 0);
+
+    const first = client.embedTexts("bgem3", ["hello"]);
+    workers[0].emit({ type: "ready", requestId: 1 });
+    await flushMicrotasks();
+    workers[0].emit(makeResult(2, 4, 1));
+    await first;
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(workers[0].terminate).not.toHaveBeenCalled();
+    expect(client.getWorkerDiagnostics().workerRunning).toBe(true);
+  });
 });

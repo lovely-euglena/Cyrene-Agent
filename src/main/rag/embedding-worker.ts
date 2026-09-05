@@ -98,6 +98,12 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+function readIdleDisposeMs(): number {
+  const raw = process.env.EMBEDDING_WORKER_IDLE_MS;
+  if (raw && /^\d+$/.test(raw)) return Number(raw);
+  return 600_000; // 10 分钟，与 sidecar CYRENE_EMBED_IDLE_EXIT_SEC 默认对齐
+}
+
 export class EmbeddingWorkerClient {
   private worker: EmbeddingWorkerPort | null = null;
   private workerBoot: Promise<EmbeddingWorkerPort> | null = null;
@@ -106,8 +112,20 @@ export class EmbeddingWorkerClient {
   private nextRequestId = 1;
   private readonly createWorkerPort: () => EmbeddingWorkerPort;
 
-  constructor(createWorkerPort?: () => EmbeddingWorkerPort) {
+  /**
+   * 空闲自动回收（ms）。worker 加载 bge-m3 WASM 后常驻 ~700MB，
+   * 桌宠 24/7 场景下 embedding 调用是间歇性的（记忆写入/场景识别/
+   * 贴纸索引），空闲即回收把常驻变峰值——与 .NET sidecar 的
+   * CYRENE_EMBED_IDLE_EXIT_SEC（默认 600s）语义对齐。
+   * terminate 后下次调用懒重启（模型加载 2-3s）。
+   * EMBEDDING_WORKER_IDLE_MS 覆盖；0 = 永不回收。
+   */
+  private readonly idleDisposeMs: number;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(createWorkerPort?: () => EmbeddingWorkerPort, idleDisposeMs = readIdleDisposeMs()) {
     this.createWorkerPort = createWorkerPort ?? (() => new Worker(__filename) as unknown as EmbeddingWorkerPort);
+    this.idleDisposeMs = idleDisposeMs;
   }
 
   /**
@@ -116,13 +134,40 @@ export class EmbeddingWorkerClient {
    */
   async embedTexts(modelKey: string, texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
+    this.cancelIdleTimer();
     const worker = await this.ensureActiveWorker(modelKey);
 
     const requestId = this.nextRequestId++;
-    return new Promise<Float32Array[]>((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
-      worker.postMessage({ type: "embed", requestId, texts });
-    });
+    try {
+      return await new Promise<Float32Array[]>((resolve, reject) => {
+        this.pending.set(requestId, { resolve, reject });
+        worker.postMessage({ type: "embed", requestId, texts });
+      });
+    } finally {
+      // 请求结束（含 reject）：无后续排队时排定空闲回收
+      if (this.pending.size === 0) this.scheduleIdleDispose();
+    }
+  }
+
+  /** 排定空闲回收计时。 */
+  private scheduleIdleDispose(): void {
+    if (this.idleDisposeMs <= 0) return;
+    this.cancelIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      if (this.pending.size > 0) return; // 又有请求进来，保活
+      if (this.idleDisposeMs <= 0) return;
+      this.idleTimer = null;
+      console.log(`[EmbeddingWorker] idle ${this.idleDisposeMs / 1000}s, terminating (model memory reclaimed; lazy respawn on next call)`);
+      this.dispose("idle-timeout");
+    }, this.idleDisposeMs);
+    this.idleTimer.unref?.();
+  }
+
+  private cancelIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
   }
 
   /**
@@ -141,8 +186,9 @@ export class EmbeddingWorkerClient {
     throw lastError ?? new Error("Embedding worker unavailable");
   }
 
-  /** 停掉 worker（换模型 / reset provider / 应用退出时调用） */
+  /** 停掉 worker（换模型 / reset provider / 空闲回收 / 应用退出时调用） */
   dispose(reason: string): void {
+    this.cancelIdleTimer();
     const worker = this.worker;
     this.worker = null;
     this.workerBoot = null;

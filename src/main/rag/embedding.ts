@@ -99,6 +99,11 @@ async function embedLocal(modelKey: string, texts: string[]): Promise<Float32Arr
           "[Embedding] sidecar failed, falling back to worker:",
           error instanceof Error ? error.message : String(error),
         );
+        // 兜底走 worker（其自身带 10min 空闲回收，不会双模型常驻）
+        const vectors = await getEmbeddingWorkerClient().embedTexts(modelKey, texts);
+        // sidecar 恢复期已用 worker 完成本次请求；若 sidecar 下次调用重启
+        // 成功，worker 会因空闲超时自动卸载（两套模型不同时常驻 >10min）
+        return vectors;
       }
     }
     return getEmbeddingWorkerClient().embedTexts(modelKey, texts);
