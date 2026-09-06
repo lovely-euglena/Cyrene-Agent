@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>CyreneNative</RootNamespace>
+    <AssemblyName>cyrene-native</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 侧车进程：崩溃由宿主重启，不弹 WER 对话框 -->
+    <DisableWinExeOutputInDebug>true</DisableWinExeOutputInDebug>
+    <!-- Linux CI 上做编译验证 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF+WinForms 同工程：WinForms SDK 的全局 using（System.Drawing/
+         System.Windows.Forms）会污染 WPF 文件的类型解析（Color/Button/
+         Image 等 20+ 二义性）。移除全局引入，Forms 文件显式 using。 -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 状态/心情图标：sidebar 窗口按名加载 -->
+    <Content Include="assets\status\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\feeling\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\loading.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
