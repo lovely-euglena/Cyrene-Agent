@@ -34,6 +34,8 @@ export interface ShellDependencies {
   createWindowManager(): WindowManager;
   /** 创建未加载页面的聊天窗口壳；load() 留给 core 阶段。 */
   createChatShell(windowManager: WindowManager): ReactChatWindowHandle;
+  /** 初始化 native 三件套窗口桥接（灰度开关关闭时 no-op）。 */
+  initializeNativeWindows(windowManager: WindowManager): void;
   registerProtocolHandlers(): void;
   /** 壳安全 IPC：仅注册依赖在壳阶段已就绪的处理器。 */
   registerShellIpc(input: ShellIpcRegistrationInput): void;
@@ -74,6 +76,9 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
   const ipc = deps.createIpcScope();
   const windowManager = deps.createWindowManager();
   const chat = deps.createChatShell(windowManager);
+  // native 三件套（splash 的 win.shown 经桥接层回 onShown）：
+  // 必须在 createSplashWindow 之后（native spawn 已在窗口创建函数里触发）
+  deps.initializeNativeWindows?.(windowManager);
 
   const live2dWindowLifecycle = createWindowLifecycleTracker<TrackedBrowserWindowLike>("live2d-main", {
     onClosed: () => { /* 桌宠关闭即清理，不影响聊天窗口生命周期 */ },

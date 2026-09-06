@@ -5,6 +5,7 @@ import { isDev } from "../env";
 import { computeLayout } from "../window-layout";
 import { stopCall, setCallWindow } from "../call/call-manager";
 import { attachExternalLinkHandler } from "./external-link";
+import { isNativeWindowActive, spawnNativeWindow } from "./native-windows-bridge";
 import {
   callWindow,
   getCurrentAppIconPath,
@@ -124,6 +125,15 @@ export function dispatchOrQueueReactSession(sessionId: string): void {
  * 创建/复用侧边状态面板窗口。
  */
 export function createSidebarWindow(): void {
+  // 灰度开关：native 窗口进程路径（CYRENE_NATIVE_WINDOWS=1 且 exe 就位）
+  if (isNativeWindowActive("sidebar")) {
+    const layout = computeLayout();
+    void spawnNativeWindow("sidebar", { sidebar: layout.sidebar }).then((ok) => {
+      if (!ok) console.warn("[Sidebar] native spawn failed — fallback unavailable until next call");
+    });
+    return;
+  }
+
   if (sidebarWindow && !sidebarWindow.isDestroyed()) {
     sidebarWindow.show();
     sidebarWindow.focus();
@@ -176,6 +186,15 @@ export function createSidebarWindow(): void {
  * 创建/复用今日日程窗口。
  */
 export function createTasksWindow(): void {
+  // 灰度开关：native 窗口进程路径
+  if (isNativeWindowActive("tasks")) {
+    const layout = computeLayout();
+    void spawnNativeWindow("tasks", { tasks: layout.tasks }).then((ok) => {
+      if (!ok) console.warn("[Tasks] native spawn failed — fallback unavailable until next call");
+    });
+    return;
+  }
+
   if (tasksWindow && !tasksWindow.isDestroyed()) {
     tasksWindow.show();
     tasksWindow.focus();

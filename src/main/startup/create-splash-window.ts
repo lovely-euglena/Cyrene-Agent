@@ -1,5 +1,6 @@
 import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
+import { isNativeWindowActive, spawnNativeSplash } from "../windows/native-windows-bridge";
 
 export interface CreateSplashWindowContext {
   isDev: boolean;
@@ -14,8 +15,18 @@ const SPLASH_SIZE = 520;
 /**
  * 创建 Loading（splash）窗口。创建失败返回 null（启动编排器会跳过最短展示时长，
  * 继续以聊天核心就绪条件推进），不让 Loading 问题阻塞启动。
+ *
+ * 灰度开关 CYRENE_NATIVE_WINDOWS=1 时走 cyrene-native 进程的 WPF splash
+ * （onShown 经 native 桥接层回调，语义对齐）。
  */
 export function createSplashWindow(ctx: CreateSplashWindowContext): BrowserWindow | null {
+  // native 路径：win.shown 事件到达时桥接层调用 ctx.onShown
+  if (isNativeWindowActive("splash")) {
+    void spawnNativeSplash(ctx).then((ok) => {
+      if (!ok) console.warn("[Splash] native spawn failed — 启动流程继续（无 splash）");
+    });
+    return null; // 启动编排器对 null 已有降级路径
+  }
   try {
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
 

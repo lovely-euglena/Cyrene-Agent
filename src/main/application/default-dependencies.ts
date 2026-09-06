@@ -31,7 +31,7 @@ import {
   settingsWindow,
   tasksWindow,
 } from "../windows/window-state";
-import { loadModelSettings, saveModelSettings } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings, getPublicModelConfig } from "../settings/model-settings";
 import { registerSettingsIpc } from "../settings/settings-ipc";
 import {
   applyGeneralSettings,
@@ -105,6 +105,10 @@ import { installSingleInstanceGuard } from "../single-instance";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
 import { createSplashWindow } from "../startup/create-splash-window";
+import {
+  initNativeWindowsBridge,
+  relayAuxBroadcast,
+} from "../windows/native-windows-bridge";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { bootstrapMusicService } from "../music/bootstrap";
 import { resolveMusicPaths } from "../music/paths";
@@ -134,6 +138,8 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
       win.webContents.send(channel, payload);
     }
   }
+  // native 三件套旁路（开关关闭时 no-op）：同一数据双路推送
+  relayAuxBroadcast(channel, payload);
 }
 
 async function reconcileUserMemoryIndex(): Promise<void> {
@@ -210,6 +216,22 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         persistPetWindowPosition: ({ x, y }) => saveGeneralSettings({ petWindowX: x, petWindowY: y }),
       }),
       createChatShell: (windowManager) => windowManager.createReactChatWindowShell(),
+      // native 三件套窗口（CYRENE_NATIVE_WINDOWS=1 灰度）：动作转发回
+      // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
+      initializeNativeWindows: (windowManager) => {
+        initNativeWindowsBridge({
+          openSettings: (section?: string) => windowManager.createSettingsWindow(section),
+          openChatWindow: () => windowManager.createReactChatWindowShell(),
+          openCallWindow: () => windowManager.createCallWindow(),
+          toggleSidebarPin: () => windowManager.createSidebarWindow(),
+          cycleModelProvider: () => {
+            // 模型切换：复用 modelConfig 变更广播路径（具体切换逻辑
+            // 在 settings IPC 域，此处仅触发 UI 侧可见的下一 provider）
+            broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
+          },
+          onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
+        });
+      },
       registerProtocolHandlers,
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
         registerWindowSystemIpc({ ipc, windowManager });
