@@ -103,9 +103,6 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
         case "settings":
           windowManager.createSettingsWindow(request.section);
           break;
-        case "music":
-          windowManager.createMusicPlayerWindow();
-          break;
       }
     },
   });

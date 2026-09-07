@@ -17,7 +17,6 @@ function makeServices(): CoreServices {
     git: { dispose: vi.fn() } as never,
     lsp: { disposeAll: vi.fn() } as never,
     screenshot: { shutdown: vi.fn() } as never,
-    music: { shutdown: vi.fn(async () => ({})) } as never,
     update: {} as never,
   };
 }

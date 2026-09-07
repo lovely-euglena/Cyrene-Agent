@@ -29,9 +29,8 @@ describe("createWindowActivationBroker", () => {
     broker.bind({ activate, focusLoading: vi.fn() });
     broker.request({ kind: "chat", sessionId: "s1" });
     broker.request({ kind: "settings", section: "model" });
-    broker.request({ kind: "music" });
     await broker.markReady();
-    expect(activate).toHaveBeenCalledTimes(3);
+    expect(activate).toHaveBeenCalledTimes(2);
   });
 
   it("activates directly without focusLoading once ready", async () => {

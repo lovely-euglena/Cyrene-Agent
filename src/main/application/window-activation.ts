@@ -10,7 +10,6 @@ export type WindowActivationRequest =
   | { kind: "chat"; sessionId?: string }
   | { kind: "sidebar" }
   | { kind: "settings"; section?: string }
-  | { kind: "music" };
 
 export interface WindowActivationActions {
   /** 激活被延迟到启动完成时，向用户提示“加载中”。 */

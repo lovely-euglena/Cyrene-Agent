@@ -13,7 +13,6 @@ import {
   showReactChatWindow,
 } from "./create-aux-windows";
 import { CHAT_READY_TIMEOUT_MS, loadWindowForStartup } from "./startup-window-load";
-import { createMusicPlayerWindow } from "./create-music-player-window";
 import { broadcastToAllWindows } from "./broadcast";
 import { PetWindowMoveController } from "../pet-window-movement";
 
@@ -35,7 +34,6 @@ export interface WindowManager {
   createTasksWindow(): void;
   createStickerManagerWindow(): void;
   createCallWindow(): void;
-  createMusicPlayerWindow(): void;
 
   showPetWindow(): void;
   hidePetWindow(): void;
@@ -169,7 +167,6 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     createTasksWindow,
     createStickerManagerWindow,
     createCallWindow,
-    createMusicPlayerWindow,
 
     showPetWindow(): void {
       getUsablePetWindow()?.show();

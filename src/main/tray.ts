@@ -21,10 +21,6 @@ export function buildTrayMenuTemplate(deps: CreateTrayDependencies): MenuItemCon
       click: () => { deps.requestActivation({ kind: "sidebar" }); },
     },
     {
-      label: "打开音乐播放器",
-      click: () => { deps.requestActivation({ kind: "music" }); },
-    },
-    {
       label: "设置",
       click: () => { deps.requestActivation({ kind: "settings" }); },
     },

@@ -37,13 +37,11 @@ describe("buildTrayMenuTemplate", () => {
 
     clicks.get("打开聊天窗口")!();
     clicks.get("打开状态面板")!();
-    clicks.get("打开音乐播放器")!();
     clicks.get("设置")!();
 
     expect(requests).toEqual([
       { kind: "chat" },
       { kind: "sidebar" },
-      { kind: "music" },
       { kind: "settings" },
     ]);
   });

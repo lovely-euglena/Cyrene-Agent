@@ -22,7 +22,6 @@ import type { ProactiveLifecycle } from "../proactive/proactive-lifecycle";
 import type { GitService } from "../code-git/git-service";
 import type { LspManager } from "../lsp/manager";
 import type { ScreenshotService } from "../screenshot/screenshot-lifecycle";
-import type { MusicBootstrap } from "../music/bootstrap";
 import type { AppUpdateService } from "../updater/app-update-service";
 import type { LlmClient } from "../services/llm/llm-client";
 import type { CitaService } from "../cita";
@@ -44,7 +43,6 @@ export interface CoreServices {
   git: GitService;
   lsp: LspManager;
   screenshot: ScreenshotService;
-  music: MusicBootstrap;
   update: AppUpdateService;
 }
 
@@ -111,7 +109,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     readiness.markDegraded({ capability: "skills", message: degradedMessage(error), at: Date.now(), error });
   }
 
-  // 低成本服务（runtimeState/tts/embedding/proactive/git/lsp/screenshot/music/update）
+  // 低成本服务（runtimeState/tts/embedding/proactive/git/lsp/screenshot/update）
   const services = deps.createLowCostServices();
 
   // SRT 沙箱：失败不阻塞启动（fallback 到直接 spawn）
@@ -197,12 +195,6 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     phase: "stopLocalResources",
     dispose: async () => { await services.git.dispose(); },
   });
-  shutdown.register({
-    id: "music",
-    phase: "stopLocalResources",
-    dispose: async () => { await services.music.shutdown(); },
-  });
-
   readiness.transition("core-ready");
 
   // 等待最短展示剩余时长 → 关 Loading → 显示聊天 → 放行 pending 辅助窗口

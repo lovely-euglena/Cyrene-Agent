@@ -9,7 +9,6 @@ import type { DocumentIndexProgress } from "../main/rag/document-index-queue";
 import type { AguiRunAck } from "../shared/run-terminal";
 import type { ReviewSnapshot } from "../shared/review-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
-import { exposeMusicApi } from "./music";
 import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 
@@ -796,4 +795,3 @@ const ttsApi = {
 };
 contextBridge.exposeInMainWorld("tts", ttsApi);
 
-exposeMusicApi();

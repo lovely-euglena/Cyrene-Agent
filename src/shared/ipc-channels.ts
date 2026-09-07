@@ -358,51 +358,11 @@ export const IPC = {
   CHANNELS_LOG_GET: "channels:log:get",
   CHANNELS_LOG_CLEAR: "channels:log:clear",
 
-  // Music
-  MUSIC_GET_STATUS: "music:get-status",
-  MUSIC_BEGIN_LOGIN: "music:begin-login",
-  MUSIC_CANCEL_LOGIN: "music:cancel-login",
-  MUSIC_LOGOUT: "music:logout",
-  MUSIC_GET_DAILY: "music:get-daily",
-  MUSIC_SEARCH: "music:search",
-  MUSIC_PLAY_TRACK: "music:play-track",
-  MUSIC_PLAY_PLAYLIST: "music:play-playlist",
-  MUSIC_DETECT_PLAYER: "music:detect-player",
-  MUSIC_GET_OPENAPI_CONFIG: "music:get-openapi-config",
-  MUSIC_SAVE_OPENAPI_CONFIG: "music:save-openapi-config",
-  MUSIC_STATE_CHANGED: "music:state-changed",
-  // mpv playback control (renderer → main)
-  MUSIC_PLAYBACK_PLAY: "music:playback:play",
-  MUSIC_PLAYBACK_PAUSE: "music:playback:pause",
-  MUSIC_PLAYBACK_TOGGLE: "music:playback:toggle",
-  MUSIC_PLAYBACK_SEEK: "music:playback:seek",
-  MUSIC_PLAYBACK_VOLUME: "music:playback:volume",
-  MUSIC_PLAYBACK_STOP: "music:playback:stop",
-  MUSIC_PLAYBACK_NEXT: "music:playback:next",
-  MUSIC_PLAYBACK_PREV: "music:playback:prev",
-  MUSIC_PLAYBACK_STATE: "music:playback:state", // main → renderer push
-  MUSIC_GET_PLAYBACK_SESSION: "music:playback-session:get",
-  MUSIC_PLAY_SESSION_TRACK: "music:playback-session:play",
-  MUSIC_SYNC_PLAYBACK_SESSION: "music:playback-session:sync",
-  MUSIC_PLAYBACK_SESSION_CHANGED: "music:playback-session:changed",
   // UI direct connect (renderer → main, not via AI tool layer)
-  MUSIC_GET_LYRICS: "music:get-lyrics",
-  MUSIC_TOGGLE_FAVORITE: "music:toggle-favorite",
   // 用户歌单（播放器窗口顶部 chips + loadPlaylist）
-  MUSIC_GET_MY_PLAYLISTS: "music:get-my-playlists",
-  MUSIC_GET_PLAYLIST_DETAIL: "music:get-playlist-detail",
   // 打开/关闭播放器窗口（renderer → main）
-  MUSIC_OPEN_PLAYER: "music:open-player",
-  MUSIC_OPEN_SETTINGS: "music:open-settings",
-  MUSIC_PLAYER_CLOSE: "music:player:close",
-  MUSIC_PLAYER_MINIMIZE: "music:player:minimize",
   // 本地缓存歌单（边播边存 + 用户导入）
-  MUSIC_GET_CACHED_TRACKS: "music:get-cached-tracks",
-  MUSIC_REMOVE_CACHED_TRACK: "music:remove-cached-track",
-  MUSIC_IMPORT_LOCAL_TRACKS: "music:import-local-tracks",
-  MUSIC_IMPORT_LOCAL_FOLDER: "music:import-local-folder",
   // main → renderer：缓存索引变化（下载完成/删除/导入）广播
-  MUSIC_CACHE_UPDATED: "music:cache-updated",
 
   // screenshot
   SCREENSHOT_START: "screenshot:start",
