@@ -147,8 +147,13 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
   deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
 
-  // 全部处理器就绪后才加载聊天页面；页面加载失败属于致命错误（向上抛出）
-  await shell.chat.load();
+  // 聊天页面加载：按需启动（CYRENE_LAZY_CHAT_WINDOW=1，默认）时跳过
+  // 启动加载——首次激活（tray/桌宠/会话打开）时经 openReactChatWindow
+  // 触发 windowManager.openReactChatWindow 的 load+show 链；急切模式
+  // （=0）维持原行为：全部处理器就绪后立即加载，失败是致命错误。
+  if (!shell.chat.isLazy || process.env.CYRENE_LAZY_CHAT_WINDOW === "0") {
+    await shell.chat.load();
+  }
 
   // 桌宠：仅在设置开启时创建（不创建后隐藏、不闪现）；辅助窗口按设置创建
   const generalSettings = deps.loadGeneralSettings();
@@ -198,9 +203,12 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   readiness.transition("core-ready");
 
   // 等待最短展示剩余时长 → 关 Loading → 显示聊天 → 放行 pending 辅助窗口
+  // 按需启动（CYRENE_LAZY_CHAT_WINDOW≠0）：chatWindow 传 null——reveal 不
+  // 物化聊天窗（桌面只留桌宠），首次激活时经 openReactChatWindow 建窗。
+  const lazyChat = process.env.CYRENE_LAZY_CHAT_WINDOW !== "0";
   await deps.revealStartupWindows({
     splashWindow: shell.splashWindow,
-    chatWindow: shell.chat.window,
+    chatWindow: lazyChat && !shell.chat.isMaterialized?.() ? null : shell.chat.window,
     loadingShownAt: shell.loadingShownAt,
     minimumDurationMs: deps.minimumSplashMs,
   });

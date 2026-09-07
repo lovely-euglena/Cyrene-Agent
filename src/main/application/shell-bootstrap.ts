@@ -60,6 +60,8 @@ export interface ShellResult {
   live2dWindowLifecycle: Live2dWindowLifecycle;
 }
 
+const lazySessionEndListeners: Array<{ event: string; listener: () => void }> = [];
+
 export async function startShell(deps: ShellDependencies): Promise<ShellResult> {
   const { readiness, activation, shutdown } = deps;
 
@@ -147,11 +149,31 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
   });
   shutdown.registerEmergencyFlush("token-usage", () => deps.flushTokenUsage());
 
-  // Windows 会话结束（关机/重启/注销）：聊天主窗口上绑定同步紧急落盘
+  // Windows 会话结束（关机/重启/注销）：聊天主窗口上绑定同步紧急落盘。
+  // 惰性聊天窗（按需启动）：窗口尚未物化时，绑定延迟到首次物化——
+  // 经由 window getter 访问即触发创建，故挂载点包在轻量代理里。
   attachWindowsSessionEndHandlers({
-    window: chat.window as unknown as Parameters<typeof attachWindowsSessionEndHandlers>[0]["window"],
+    window: (chat.isLazy
+      ? {
+          // 惰性代理：session-end 事件只可能来自已物化的窗口；未物化时
+          // （窗口不存在）无事件可收，listener 挂在 no-op 对象上安全。
+          on: (event: string, listener: () => void) => {
+            lazySessionEndListeners.push({ event, listener });
+          },
+          removeListener: () => undefined,
+        }
+      : chat.window) as unknown as Parameters<typeof attachWindowsSessionEndHandlers>[0]["window"],
     coordinator: shutdown,
   });
+  // 物化钩子：由 openReactChatWindow 首次创建窗口后调用
+  if (chat.isLazy) {
+    chat.onMaterialized?.((window) => {
+      for (const { event, listener } of lazySessionEndListeners) {
+        window.on(event as never, listener as never);
+      }
+      lazySessionEndListeners.length = 0;
+    });
+  }
 
   // 10. 推进 shell-ready
   readiness.transition("shell-ready");

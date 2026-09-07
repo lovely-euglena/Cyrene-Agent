@@ -7,8 +7,9 @@ export interface StartupWindowLike {
 export interface RevealStartupWindowsOptions {
   /** Loading 窗口；创建失败时为 null，跳过关闭与最短展示等待。 */
   splashWindow: StartupWindowLike | null;
-  /** 聊天窗口（主窗口）；reveal 只负责显示，不加载页面。 */
-  chatWindow: StartupWindowLike;
+  /** 聊天窗口（主窗口）；reveal 只负责显示，不加载页面。
+   * null = 按需启动模式且窗口未物化：reveal 跳过（桌面只留桌宠）。 */
+  chatWindow: StartupWindowLike | null;
   /** Loading 实际 show() 的单调时钟时刻；undefined 表示未记录（跳过最短等待）。 */
   loadingShownAt?: number;
   minimumDurationMs: number;
@@ -35,7 +36,7 @@ export async function revealStartupWindows(options: RevealStartupWindowsOptions)
   if (options.splashWindow && !options.splashWindow.isDestroyed()) {
     options.splashWindow.close();
   }
-  if (!options.chatWindow.isDestroyed()) {
+  if (options.chatWindow && !options.chatWindow.isDestroyed()) {
     options.chatWindow.show();
   }
 }

@@ -4,6 +4,7 @@ import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, type Pe
 import {
   createCallWindow,
   createReactChatWindowShell,
+  createLazyReactChatWindowHandle,
   createSettingsWindow,
   createSidebarWindow,
   createStickerManagerWindow,
@@ -127,29 +128,22 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     },
 
     createReactChatWindowShell(): ReactChatWindowHandle {
-      if (chatShell && !chatShell.window.isDestroyed()) return chatShell;
-      const window = createReactChatWindowShell();
-      const handle: ReactChatWindowHandle = {
-        window,
-        load(sessionId?: string): Promise<void> {
-          // load() 缓存同一个 Promise：重复调用不会二次加载；
-          // sessionId 通过 show() 分发，而非重新加载页面。
-          if (!chatLoadPromise || window.isDestroyed()) {
-            chatLoadPromise = loadWindowForStartup({
-              window,
-              load: () => loadReactChatWindowPage(window, sessionId),
-              timeoutMs: CHAT_READY_TIMEOUT_MS,
-            }).catch((error) => {
-              console.error("[WindowManager] chat page load failed:", error);
-              throw error;
-            });
-          }
-          return chatLoadPromise;
-        },
-        show(sessionId?: string): void {
-          showReactChatWindow(sessionId);
-        },
-      };
+      if (chatShell && !chatShell.isLazy && !chatShell.window.isDestroyed()) return chatShell;
+      // 惰性 handle：BrowserWindow 在首次 load/show/window 访问时才创建
+      // （load Promise 缓存语义与急切版一致：同一窗口只加载一次）
+      const handle = createLazyReactChatWindowHandle((win) => {
+        if (!chatLoadPromise || win.isDestroyed()) {
+          chatLoadPromise = loadWindowForStartup({
+            window: win,
+            load: () => loadReactChatWindowPage(win),
+            timeoutMs: CHAT_READY_TIMEOUT_MS,
+          }).catch((error) => {
+            console.error("[WindowManager] chat page load failed:", error);
+            throw error;
+          });
+        }
+        return chatLoadPromise;
+      });
       chatShell = handle;
       chatLoadPromise = null;
       return handle;

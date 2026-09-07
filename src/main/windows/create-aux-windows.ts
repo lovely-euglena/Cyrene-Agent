@@ -32,6 +32,79 @@ export interface ReactChatWindowHandle {
   window: BrowserWindow;
   load(sessionId?: string): Promise<void>;
   show(sessionId?: string): void;
+  /** 惰性 handle：true 表示窗口尚未物化、load/show 会触发创建。 */
+  isLazy?: boolean;
+  /** 惰性 handle 专属：窗口首次物化时回调（如 session-end 事件延迟绑定）。 */
+  onMaterialized?(handler: (window: BrowserWindow) => void): void;
+  /** 惰性 handle 专属：窗口是否已物化（未创建/已销毁 = false）。 */
+  isMaterialized?(): boolean;
+}
+
+/**
+ * 惰性聊天窗口 handle：首次真正需要窗口时才创建 BrowserWindow。
+ *
+ * 按需启动模式（CYRENE_LAZY_CHAT_WINDOW=1，默认开启）下，启动流程
+ * 只拿到代理对象——shell 阶段的 attachWindowsSessionEndHandlers、
+ * core 阶段的 chat.load()、reveal 阶段的 chatWindow.show() 全部经
+ * ensureCreated() 物化。触发点：
+ *   - 启动 reveal（默认行为不变：splash 结束即显示聊天）
+ *   - 激活请求（tray「打开聊天窗口」/ 协议 / 会话分发）
+ *   - chat-ui-ipc 的 openReactChatWindow
+ * 窗口关闭后再次访问 → 重建（与 createReactChatWindowShell 语义一致）。
+ *
+ * ⚠️ window 是 getter：消费方持有的 handle.window 引用在窗口重建后
+ * 失效，必须每次经由 handle.window 取当前实例（现有调用点均如此）。
+ */
+export function createLazyReactChatWindowHandle(
+  ensureLoaded: (window: BrowserWindow) => Promise<void>,
+): ReactChatWindowHandle & { isMaterialized(): boolean } {
+  let current: BrowserWindow | null = null;
+  let loadPromise: Promise<void> | null = null;
+  const materializedHandlers: Array<(window: BrowserWindow) => void> = [];
+  const ensureCreated = (): BrowserWindow => {
+    if (!current || current.isDestroyed()) {
+      current = createReactChatWindowShell();
+      loadPromise = null; // 新窗口 → 重新加载
+      for (const handler of materializedHandlers) {
+        try { handler(current); } catch (err) { console.error("[ChatWindow] materialized handler failed:", err); }
+      }
+    }
+    return current;
+  };
+  return {
+    get window(): BrowserWindow {
+      return ensureCreated();
+    },
+    load(sessionId?: string): Promise<void> {
+      ensureCreated();
+      // 缓存在 handle 侧：同一窗口的重复 load 复用同一 Promise
+      if (!loadPromise) {
+        loadPromise = ensureLoaded(current!).then(() => {
+          if (sessionId) dispatchOrQueueReactSession(sessionId);
+        });
+      } else if (sessionId) {
+        // 已加载：sessionId 不重载，仅在完成后分发
+        loadPromise = loadPromise.then(() => {
+          dispatchOrQueueReactSession(sessionId!);
+        });
+      }
+      return loadPromise;
+    },
+    show(sessionId?: string): void {
+      const window = ensureCreated();
+      window.show();
+      window.focus();
+      if (sessionId) dispatchOrQueueReactSession(sessionId);
+    },
+    isMaterialized(): boolean {
+      return current !== null && !current.isDestroyed();
+    },
+    isLazy: true,
+    onMaterialized(handler: (window: BrowserWindow) => void): void {
+      materializedHandlers.push(handler);
+      if (current && !current.isDestroyed()) handler(current);
+    },
+  };
 }
 
 /**
