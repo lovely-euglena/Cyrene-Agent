@@ -64,6 +64,8 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
   let petWindow: BrowserWindow | null = null;
   let chatShell: ReactChatWindowHandle | null = null;
   let chatLoadPromise: Promise<void> | null = null;
+  // chatLoadPromise 归属的窗口实例：重建窗口后旧 Promise 不可复用（P0 白屏修复）
+  let chatLoadedWindow: BrowserWindow | null = null;
   const readyHandlers: Array<(win: BrowserWindow) => void> = [];
   const closedHandlers: Array<() => void> = [];
   const movedHandlers: Array<(position: { x: number; y: number }) => void> = [];
@@ -128,11 +130,22 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     },
 
     createReactChatWindowShell(): ReactChatWindowHandle {
-      if (chatShell && !chatShell.isLazy && !chatShell.window.isDestroyed()) return chatShell;
+      // 懒 handle 永远复用：窗口销毁→重建由 handle 的 ensureCreated 内部
+      // 处理（重挂 materialized 回调、重置 load 缓存）。若每次新建 handle，
+      // shell 阶段注册在首个 handle 上的物化回调（session-end 紧急落盘）
+      // 会永久失联——这是引入懒窗时的高危点。
+      if (chatShell) {
+        if (chatShell.isLazy) return chatShell;
+        if (!chatShell.window.isDestroyed()) return chatShell;
+      }
       // 惰性 handle：BrowserWindow 在首次 load/show/window 访问时才创建
       // （load Promise 缓存语义与急切版一致：同一窗口只加载一次）
       const handle = createLazyReactChatWindowHandle((win) => {
-        if (!chatLoadPromise || win.isDestroyed()) {
+        // 窗口身份比对：旧窗口销毁后 handle 会物化新窗口，此时旧
+        // chatLoadPromise（resolved）不能复用——否则新窗口永远不加载
+        // 页面（白屏）。以 chatLoadedWindow === win 判定缓存归属。
+        if (chatLoadedWindow !== win || !chatLoadPromise) {
+          chatLoadedWindow = win;
           chatLoadPromise = loadWindowForStartup({
             window: win,
             load: () => loadReactChatWindowPage(win),
@@ -146,6 +159,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       });
       chatShell = handle;
       chatLoadPromise = null;
+      chatLoadedWindow = null;
       return handle;
     },
 

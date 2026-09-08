@@ -2,7 +2,6 @@
 import "../ui/base.css";
 import "./settings.css";
 import "../ui/theme";
-import neteaseLogoUrl from "./assets/netease-logo.svg?url";
 import {
   normalizeChatSocialContextEnabled,
   normalizeDefaultChatMode,
@@ -27,7 +26,6 @@ import {
 import { applyWindowCornerRadius } from "../ui/window-corner-radius";
 import { getCitaUiState } from "./cita-settings-state";
 import { type ReasoningPreference } from "../../shared/reasoning";
-import { type LoginFlowState } from "../../shared/music-types";
 import { resolveApiEndpoint, type ApiTransport } from "../../shared/api-endpoint";
 import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
 import type { ChatStoreApi } from "../react/features/chat/pages/chat-page-bridge";
@@ -55,8 +53,6 @@ import type {
   ScheduledTask,
   ScheduledTaskHistoryEntry,
 } from "./scheduler/types";
-import { musicState } from "./music/state";
-import { musicHomeView, musicReturnBtn, musicSearchForm, musicSearchHint, musicQrStatus, musicProfileAvatar, musicLoginBtn, musicCancelBtn, musicDisconnectBtn, musicQrImg, musicQrTip, musicQrBox, musicFeedbackEl, musicAccountStatusText, musicSearchInput, musicSearchBtn, musicSearchResults, musicToggle, musicAccordionCard, musicAccordionBody } from "./music/dom";
 import { channelsState } from "./channels/state";
 import { channelsWechatEnabledEl, channelsFeishuEnabledEl, channelsWechatStatusEl, channelsFeishuStatusEl, channelsRateUserEl, channelsRateChannelEl, channelsTtsEl, channelsStickerEl, channelsMirrorEl, channelsToolSandboxOffEl, channelsToolSandboxAllEl, channelsFeishuAppIdEl, channelsFeishuAppSecretEl, channelsFeishuAppSecretRevealBtn, channelsFeishuSaveBtn, channelsWechatLoginBtn, channelsWechatRestartBtn, channelsWechatFeedbackEl, channelsFeishuFeedbackEl, channelsLogListEl, channelsLogRefreshBtn, channelsLogClearBtn } from "./channels/dom";
 import { memoryState } from "./memory/state";
@@ -73,7 +69,7 @@ import { visionBaseUrlInput, visionApiKeyInput, visionModelInput, visionFieldsWr
 import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, assistantBubbleEnabledInput, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput } from "./appearance/dom";
 import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, citaEnabledInput, citaEngineSelect, clearChatHistoryBtn, customStyleSamplingBtn, customStylePromptBtn } from "./general/dom";
 import { minBtn, closeBtn, preferencesForm, sectionTitle, sectionHint, placeholderPanel, cyrenePanel, disclaimerPanel, pluginsPanel, placeholderIcon, placeholderTitle, placeholderCopy, saveStatus, runtimeSaveStatus, preferencesSaveStatus, cyreneSaveStatus, openStickerManagerBtn, addStickerBtn } from "./shared/shell";
-import { pluginAddBtn, neteaseDetailView, permissionBlocksWrap, permissionNote } from "./plugins/dom";
+import { pluginAddBtn, permissionBlocksWrap, permissionNote } from "./plugins/dom";
 import { preferencesState } from "./preferences/state";
 import { stickerEnabledInput, stickerSizeSelect, stickerThresholdInput, stickerThresholdVal, stickerAddOverlay, stickerAddPickBtn, stickerAddFileName, stickerAddId, stickerAddDesc, stickerAddPhrases, stickerAddError, stickerAddConfirm, stickerAddCancel } from "./preferences/dom";
 import { diversityDriverOf, diversityValueOf } from "./preferences/style-utils";
@@ -110,8 +106,6 @@ import {
   saveSchedulerTask, toggleSchedulerTask, fireSchedulerTask,
   deleteSchedulerTask, toggleSchedulerHistory,
 } from "./scheduler/panel";
-import { loadMusicPanel, disposeMusicPanel } from "./music/panel";
-import { initLocalMusicPanel } from "./music/local-panel";
 import { loadChannelsPanel } from "./channels/panel";
 import { renderProactiveDeliveryAvailability } from "./channels/panel";
 import "./asr/panel";  // 副作用导入：执行事件绑定 + 初始加载
@@ -273,10 +267,6 @@ if (!window.cyreneScheduler) {
     getTools: async () => ({ ok: true, value: [] }),
   };
 }
-
-document.querySelectorAll<HTMLImageElement>("[data-music-logo]").forEach((image) => {
-  image.src = neteaseLogoUrl;
-});
 
 
 
@@ -1552,7 +1542,6 @@ function switchSection(section: string): void {
   const isChannels = section === "channels";
   const isTts = section === "tts";
   const isAsr = section === "asr";
-  const isMusic = section === "music";
   apiForm.classList.toggle("is-hidden", !isApi);
   apiRuntimeForm.classList.toggle("is-hidden", !isApiAdvanced);
   appearanceForm.classList.toggle("is-hidden", !isAppearance);
@@ -1577,13 +1566,9 @@ function switchSection(section: string): void {
   if (ttsPanel) ttsPanel.classList.toggle("is-hidden", !isTts);
   const asrPanel = document.getElementById("asr-panel");
   if (asrPanel) asrPanel.classList.toggle("is-hidden", !isAsr);
-  const musicPanel = document.getElementById("music-panel");
-  if (musicPanel) musicPanel.classList.toggle("is-hidden", !isMusic);
-  if (isMusic) void loadMusicPanel();
-  else disposeMusicPanel();
   placeholderPanel.classList.toggle(
     "is-hidden",
-    isApi || isApiAdvanced || isAppearance || isGeneral || isPreferences || isCyrene || isDisclaimer || isMemory || isUser || isTasks || isPlugins || isTokens || isChannels || isTts || isAsr || isMusic,
+    isApi || isApiAdvanced || isAppearance || isGeneral || isPreferences || isCyrene || isDisclaimer || isMemory || isUser || isTasks || isPlugins || isTokens || isChannels || isTts || isAsr,
   );
 
   if (
@@ -1602,7 +1587,6 @@ function switchSection(section: string): void {
     !isChannels &&
     !isTts &&
     !isAsr &&
-    !isMusic &&
     !isFeaturePlugins
   ) {
 	    placeholderIcon.innerHTML = label.emoji;
@@ -1657,10 +1641,6 @@ window.settings?.onChannelsStatusChanged((status) => {
 // （也可以在用户展开 details 时再拉，但保持简单直接拉）
 void loadChannelsPanel();
 
-// ===== 音乐工具面板 =====
-// 备注：window.music.* 已在 preload 中通过 contextBridge 暴露。
-// 由于 renderer 走 Vite 打包、main/preload 走 esbuild，两端类型不互通，
-// 这里直接用 (window as any).music 做弱类型化调用，避免给 global.d.ts 加一堆 cross-bundle 类型。
 
 
 
@@ -1753,25 +1733,7 @@ memoryImportedList?.addEventListener("click", async (event) => {
 void loadMemoryPanel();
 
 
-// ── 音乐工具手风琴 ─────────────────────────────────────────
-musicToggle?.addEventListener("click", () => {
-  const expanded = musicToggle?.getAttribute("aria-expanded") === "true";
-  musicToggle?.setAttribute("aria-expanded", String(!expanded));
-  musicAccordionCard?.classList.toggle("is-expanded", !expanded);
-  musicAccordionBody?.classList.toggle("is-collapsed", expanded);
-});
 
-// ── 音乐工具路由 ──────────────────────────────────────────────
-initLocalMusicPanel();
-
-document.getElementById("music-platform-netease")?.addEventListener("click", () => {
-  switchSection("music");
-  musicHomeView?.classList.add("is-hidden");
-  neteaseDetailView?.classList.remove("is-hidden");
-});
-musicReturnBtn?.addEventListener("click", () => {
-	  switchSection("plugins");
-	});
 
 
 

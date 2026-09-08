@@ -342,7 +342,11 @@ public sealed class TasksWindow : NativeWindow
 
     public override void ShowWindow() => _form.Show();
     public override void Activate() => _form.Activate();
-    public override void Close() => _form.Invoke(_form.Close);
+    // 路由调用全部在 WPF Dispatcher（UI 线程）上：Form.Close 直接调。
+    // 不用 Form.Invoke——WinForms 控件寄宿在 WPF Dispatcher 线程时无
+    // WinForms SynchronizationContext，Invoke 会抛
+    // InvalidOperationException（句柄未创建/无 marshaling 上下文）。
+    public override void Close() => _form.Close();
 
     public override void ApplyLayout(JsonElement layout)
     {

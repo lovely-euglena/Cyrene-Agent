@@ -482,14 +482,12 @@ body {
   box-shadow: 0 0 12px var(--rb-border-soft);
 }
 
-
 /* ── 模型参数 ── */
 .api-section-divider {
   border: none;
   border-top: 1px solid rgba(255, 182, 220, 0.12);
   margin: 16px 0 20px;
 }
-
 
 .model-params-hint {
   font-size: 12px;
@@ -578,7 +576,6 @@ body {
 .field-note.is-hidden {
   display: none;
 }
-
 
 .settings-list {
   display: grid;
@@ -715,7 +712,6 @@ body {
   justify-content: flex-start;
 }
 
-
 .language-options,
 .option-blocks {
   display: grid;
@@ -756,7 +752,6 @@ body {
   cursor: not-allowed;
   opacity: 0.46;
 }
-
 
 .option-blocks {
   grid-template-columns: repeat(3, minmax(80px, 1fr));
@@ -980,7 +975,6 @@ body {
   min-width: 260px;
 }
 
-
 .switch {
   position: relative;
   display: inline-flex;
@@ -1039,7 +1033,6 @@ body {
   border-color: rgba(255, 182, 220, 0.34);
 }
 
-
 .disclaimer-content {
   display: grid;
   gap: 12px;
@@ -1084,7 +1077,6 @@ body {
   padding-left: 18px;
 }
 
-
 .disclaimer-section a {
   color: #ffd6ec;
   text-decoration: none;
@@ -1096,7 +1088,6 @@ body {
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.80);
 }
-
 
 /* ?? ???? ?? */
 .agent-settings-grid {
@@ -1205,7 +1196,6 @@ body {
   }
 }
 
-
 .agent-setting-card .ghost-btn {
   margin-top: 12px;
 }
@@ -1228,7 +1218,6 @@ body {
 #cyrene-panel .field-note.is-hidden {
   display: none;
 }
-
 
 .agent-setting-subgroup {
   display: grid;
@@ -1803,7 +1792,6 @@ body {
   background: var(--rb-pink-50);
   border-color: var(--rb-pink-200);
 }
-
 
 /* 插件面板 */
 .plugin-panel-heading {
@@ -3613,7 +3601,6 @@ body {
 .panel-hint { font-size: 13px; color: var(--rb-text-muted); margin: 4px 0 16px; }
 .empty-hint { font-size: 13px; color: rgba(235, 229, 245, 0.5); padding: 24px 0; text-align: center; }
 
-
 /* ============================================================
    Scheduler / scheduled tasks panel
    ============================================================ */
@@ -4222,48 +4209,6 @@ body {
   line-height: 1.4;
 }
 
-/* ===== Music Tools redesign ===== */
-.plugin-card--music .plugin-card__icon img,
-.music-platform .plugin-card__icon img { width: 32px; height: 38px; object-fit: contain; }
-.music-platform-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-.music-platform { text-align:left; cursor:pointer; font:inherit; color:inherit; }
-.music-platform span { display:block; margin-top:6px; font-size:12px; color:var(--rb-text-muted); }
-#music-platform-status.is-connected { color: rgba(74, 222, 128, 0.95); }
-.music-return-btn { border:0; background:transparent; color:var(--rb-text-muted); padding:4px 0; cursor:pointer; }
-.music-detail-header { display:flex; align-items:center; gap:16px; margin:18px 0; }
-.music-detail-header img { width:48px; height:56px; object-fit:contain; }
-.music-detail-header h1 { margin:0; }
-.music-detail-header p { margin:5px 0 0; color:var(--rb-text-muted); }
-.music-status-card { margin-top:0; }
-.music-status-main { display:flex; align-items:center; gap:8px; }
-.music-status-main strong { font-size:18px; }
-.music-status-dot { width:10px; height:10px; border-radius:50%; flex:0 0 auto; background:rgba(248,113,113,0.85); box-shadow:0 0 8px rgba(248,113,113,0.6); }
-.music-status-dot.is-connected { background:rgba(74,222,128,0.95); box-shadow:0 0 8px rgba(74,222,128,0.65); }
-.music-diagnostics { margin-top:16px; color:var(--rb-text-muted); font-size:12px; }
-.music-diagnostics summary { cursor:pointer; }
-.music-qr { display:grid; grid-template-columns:220px 1fr; align-items:center; gap:20px; margin-top:14px; padding:16px; border:1px solid rgba(255,182,220,.14); border-radius:14px; background:rgba(255,255,255,.04); }
-.music-qr__img { width:220px; height:220px; padding:8px; background:#fff; border-radius:8px; }
-.music-qr p { color:var(--rb-text-muted); }
-.music-profile { background:transparent; border:0; padding:12px 0; }
-.music-profile__avatar { width:42px; height:42px; border-radius:50%; object-fit:cover; }
-.music-search-card { margin-top:14px; }
-@media (max-width:600px) { .music-qr { grid-template-columns:1fr; } .music-qr__img { width:200px; height:200px; } }
-.music-platform-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.music-platform {
-  text-align: left;
-  cursor: pointer;
-  border: 1px solid rgba(255, 182, 220, 0.18);
-  font: inherit;
-  color: inherit;
-}
-.music-platform:hover {
-  border-color: rgba(236, 72, 153, 0.45);
-  background: rgba(255, 255, 255, 0.05);
-}
 .plugin-placeholder-tag {
   align-self: center;
   font-size: 10px;
@@ -4278,249 +4223,8 @@ body {
 .plugin-card__body {
   min-width: 0;
 }
-/* 卡片按内容高度排列，避免一张高卡把同行的矮卡拉成一片空白。 */
-.music-platform-grid {
-  align-items: start;
-  /* 窄窗口下先收成单列。原来写死两列，窗口一窄每列只剩 ~200px，
-     中文会被折成一列一个字。
-     用 auto-fit 试过，但宽窗口下会自动排到三四列，卡片反而更窄——
-     两列才是这组卡片的设计意图，所以用断点显式控制。 */
-  grid-template-columns: 1fr;
-}
-@media (min-width: 720px) {
-  .music-platform-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 /* 本地曲库为空时隐藏数量角标。 */
 .plugin-placeholder-tag.is-hidden {
   display: none;
 }
 
-/* 本地音乐卡片操作区。 */
-.music-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-.music-card-btn {
-  min-width: 30px;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: 8px;
-  border: 1px solid var(--rb-border-soft);
-  background: var(--rb-bg-2);
-  color: var(--rb-text-default);
-  font-size: 13px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.music-card-btn:hover { border-color: var(--rb-border-strong); }
-.music-card-btn:active { background: var(--rb-bg-1); }
-.music-card-btn--text { font-size: 11px; }
-
-.music-card {
-  margin-top: 18px;
-  padding: 16px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 182, 220, 0.14);
-}
-.music-card__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.music-card__header h2 {
-  margin: 0;
-  font-size: 16px;
-}
-
-/* OpenAPI 配置卡片表单 */
-.music-openapi-card .music-card__body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.music-openapi-card .form-label {
-  font-size: 12px;
-  color: var(--rb-text-muted);
-  margin-top: 4px;
-}
-.music-openapi-card .form-input--wide,
-.music-openapi-card .form-textarea {
-  width: 100%;
-  padding: 8px 10px;
-  font-size: 13px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  border: 1px solid var(--rb-border, #d0d0d0);
-  border-radius: 6px;
-  background: var(--rb-surface, #fff);
-  color: var(--rb-text, #111);
-  box-sizing: border-box;
-}
-.music-openapi-card .form-textarea {
-  resize: vertical;
-  min-height: 64px;
-  line-height: 1.4;
-}
-.music-openapi-card .form-input--wide:focus,
-.music-openapi-card .form-textarea:focus {
-  outline: none;
-  border-color: var(--rb-primary, #2b6cff);
-}
-.music-status {
-  font-size: 12px;
-  color: var(--rb-text-muted);
-}
-
-.music-state-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.music-state-row {
-  display: grid;
-  grid-template-columns: 60px 16px 1fr;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 12px;
-}
-.music-state-row__label {
-  color: var(--rb-text-muted);
-}
-.music-state-row__dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  display: inline-block;
-  background: #888;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4) inset;
-}
-.music-state-row__dot[data-color="green"] { background: #4ade80; }
-.music-state-row__dot[data-color="red"] { background: #f87171; }
-.music-state-row__dot[data-color="yellow"] { background: #facc15; }
-.music-state-row__dot[data-color="gray"] { background: #888; }
-.music-state-row__value {
-  font-family: var(--rb-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
-  color: var(--rb-text-strong);
-}
-
-.music-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.music-actions .btn-primary,
-.music-actions .btn-secondary {
-  margin: 0;
-}
-
-.music-profile {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(74, 222, 128, 0.08);
-  border: 1px solid rgba(74, 222, 128, 0.32);
-  margin-bottom: 14px;
-}
-.music-profile__avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-}
-.music-profile__name {
-  font-weight: 600;
-  font-size: 14px;
-}
-.music-profile__hint {
-  font-size: 11px;
-  color: var(--rb-text-muted);
-}
-
-.music-qr {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  margin-bottom: 14px;
-}
-.music-qr__img {
-  width: 180px;
-  height: 180px;
-  background: #fff;
-  border-radius: 8px;
-  padding: 6px;
-}
-.music-qr__tip {
-  margin: 0;
-  font-size: 12px;
-  color: var(--rb-text-muted);
-}
-
-.music-feedback {
-  font-size: 12px;
-  min-height: 18px;
-  color: var(--rb-text-muted);
-}
-.music-feedback--info { color: var(--rb-text-muted); }
-.music-feedback--ok { color: #4ade80; }
-.music-feedback--err { color: #f87171; }
-
-.music-search-results {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.music-search-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-}
-.music-search-row__main {
-  min-width: 0;
-}
-.music-search-row__name {
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.music-search-row__meta {
-  font-size: 11px;
-  color: var(--rb-text-muted);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.music-search-row__play {
-  margin: 0;
-}

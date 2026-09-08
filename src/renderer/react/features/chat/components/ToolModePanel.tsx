@@ -27,19 +27,6 @@ const BASE_TABS: Array<{ key: TabKey; label: string }> = [
  *  播放类是闲聊刚需故全放（input-control 级仍受权限档位门控）；
  *  只读类无副作用。写入后完全由用户接管，后续开关不再覆盖。 */
 const CHAT_TOOL_WHITELIST = [
-  // 音乐工具（全量）
-  "music_search",
-  "music_get_daily_recommendations",
-  "music_get_playback_status",
-  "music_my_playlists",
-  "music_playlist_detail",
-  "music_play_track",
-  "music_play_playlist",
-  "music_stop_playback",
-  "music_create_playlist",
-  "music_add_to_playlist",
-  "music_toggle_favorite",
-  "music_remove_from_playlist",
   // 幂等只读
   "weather",
   "web_search",
