@@ -165,13 +165,13 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
       : chat.window) as unknown as Parameters<typeof attachWindowsSessionEndHandlers>[0]["window"],
     coordinator: shutdown,
   });
-  // 物化钩子：由 openReactChatWindow 首次创建窗口后调用
+  // 物化钩子：窗口每次物化（首次创建 + 关闭后重建）都重新挂载——
+  // 旧窗口销毁时其 listeners 一并消亡，数组保留供重建窗口复绑
   if (chat.isLazy) {
     chat.onMaterialized?.((window) => {
       for (const { event, listener } of lazySessionEndListeners) {
         window.on(event as never, listener as never);
       }
-      lazySessionEndListeners.length = 0;
     });
   }
 
