@@ -107,6 +107,7 @@ import { createTray } from "../tray";
 import { createSplashWindow } from "../startup/create-splash-window";
 import {
   initNativeWindowsBridge,
+  bindNativeDataProviders,
   relayAuxBroadcast,
 } from "../windows/native-windows-bridge";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
@@ -411,6 +412,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         return pluginManager;
       },
 
+      bindNativeData: (providers) => bindNativeDataProviders(providers),
+      getPublicModelConfig: () => getPublicModelConfig(),
       createScheduler: (runtime) => createSchedulerSubsystem({
         agentRuntime: runtime,
         getReactChatWindow: () => reactChatWindow,

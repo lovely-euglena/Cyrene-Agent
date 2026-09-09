@@ -12,6 +12,7 @@
 
 import { NativeWindowsClient, getNativeWindowsClient, type NativeWindowsHost } from "./native-windows-host";
 import { IPC } from "../../shared/ipc-channels";
+import { getUsageReport } from "../token-usage-store";
 
 // ── 宿主动作注入点（由 default-dependencies 装配时提供） ──
 export interface NativeBridgeActions {
@@ -55,6 +56,34 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
   return client;
 }
 
+// ── 数据提供者（core 阶段绑定；shell 阶段 scheduler/runtimeState 尚未建） ──
+export interface NativeDataProviders {
+  getRuntimeState(): unknown;
+  getModelConfig(): unknown;
+  getTasks(): Promise<unknown[]>;
+}
+
+let dataProviders: NativeDataProviders | null = null;
+
+/**
+ * core 阶段绑定数据源（default-dependencies 在 startCore 编排里调用）。
+ * 未启用 native 窗口时 no-op。绑定后 scheduler 变更旁路与 tasks 窗
+ * spawn 初始快照才有数据可推。
+ */
+export function bindNativeDataProviders(providers: NativeDataProviders): void {
+  dataProviders = providers;
+}
+
+/** scheduler 变更旁路：拉快照推 native（scheduler-ipc 的 broadcastChanged 调用）。 */
+export function pushSchedulerSnapshotToNative(): void {
+  // native 未启用/未初始化时直接短路：拉快照有成本（scheduler store
+  // 读取 + usage 聚合），无消费方就不该拉
+  if (!dataProviders || !activeClient()) return;
+  void dataProviders.getTasks()
+    .then((tasks) => activeClient()?.pushTasks(tasks, getUsageReport(7)))
+    .catch((error) => console.warn("[NativeWindows] scheduler snapshot push failed:", error));
+}
+
 function activeClient(): NativeWindowsClient | null {
   // 未初始化（单测环境）或开关关闭 → null
   return initialized ? client : null;
@@ -94,6 +123,17 @@ export async function spawnNativeWindow(
   if (!c) return false;
   try {
     await c.spawnWindow(kind, layout);
+    // 初始快照：BrowserWindow 路径由渲染页加载时主动拉
+    // （cyreneScheduler.list / tokenUsage.get / runtimeState.get）；
+    // native 窗没有 IPC 通道，宿主 spawn 后立即推送，避免空窗
+    if (kind === "sidebar" && dataProviders) {
+      void c.pushRuntimeState(dataProviders.getRuntimeState()).catch(() => undefined);
+      void c.pushModelConfig(dataProviders.getModelConfig()).catch(() => undefined);
+    } else if (kind === "tasks" && dataProviders) {
+      void dataProviders.getTasks()
+        .then((tasks) => c.pushTasks(tasks, getUsageReport(7)))
+        .catch((error) => console.warn("[NativeWindows] tasks snapshot push failed:", error));
+    }
     return true;
   } catch (error) {
     console.warn(`[NativeWindows] spawn ${kind} failed:`, error instanceof Error ? error.message : error);
@@ -157,11 +197,10 @@ export function relayAuxBroadcast(channel: string, payload: unknown): void {
     case IPC.MODEL_CONFIG_CHANGED:
       pushModelConfigToNative(payload);
       break;
-    case IPC.SCHEDULER_CHANGED:
-      // scheduler 变更 → native 侧需要重拉任务列表（数据经
-      // scheduler:list IPC 获取，此处只发触发信号）
-      pushTasksToNative({ refetch: true }, undefined);
-      break;
+    // SCHEDULER_CHANGED 不在此处理：native 侧无 IPC 通道可"重拉"，
+    // {refetch:true} 会被 C# ApplyState 当成空数据清空任务列表。
+    // 改由 scheduler-ipc.broadcastChanged 调 pushSchedulerSnapshotToNative
+    // （数据就近原则，store.getTasks() 在广播点直接可取）。
     default:
       // TOKEN_USAGE_CHANGED 等低频数据在窗口 spawn 时一次性拉取推送
       break;

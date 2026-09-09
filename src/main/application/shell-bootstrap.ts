@@ -68,19 +68,23 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
   // 1. banner + 启动日志
   deps.writeStartupLog();
 
+  // 3-5. IPC Scope / WindowManager / native 桥接 / 未加载页面的聊天窗口壳
+  const ipc = deps.createIpcScope();
+  const windowManager = deps.createWindowManager();
+  // native 三件套桥接必须在 createSplashWindow 之前初始化：splash 的
+  // native 分支在 createSplashWindow 内查询 isNativeWindowActive——
+  // 初始化晚于 splash 创建会导致 native 分支永远不生效（splash 仍走
+  // BrowserWindow 路径）。native spawn 本身是惰性异步（win.spawn 帧），
+  // 此处只完成 actions 绑定，不阻塞启动。
+  deps.initializeNativeWindows?.(windowManager);
+
   // 2. 尽快创建并显示 Loading；最短展示时长从实际 show() 时刻起算
   let loadingShownAt: number | undefined;
   const splashWindow = deps.createSplashWindow({
     onShown: (at) => { loadingShownAt = at; },
   });
 
-  // 3-5. IPC Scope / WindowManager / 未加载页面的聊天窗口壳
-  const ipc = deps.createIpcScope();
-  const windowManager = deps.createWindowManager();
   const chat = deps.createChatShell(windowManager);
-  // native 三件套（splash 的 win.shown 经桥接层回 onShown）：
-  // 必须在 createSplashWindow 之后（native spawn 已在窗口创建函数里触发）
-  deps.initializeNativeWindows?.(windowManager);
 
   const live2dWindowLifecycle = createWindowLifecycleTracker<TrackedBrowserWindowLike>("live2d-main", {
     onClosed: () => { /* 桌宠关闭即清理，不影响聊天窗口生命周期 */ },

@@ -13,6 +13,8 @@ import {
   notifyNativeSplashShown,
   closeNativeWindow,
   disposeNativeWindowsBridge,
+  bindNativeDataProviders,
+  pushSchedulerSnapshotToNative,
 } from "./native-windows-bridge";
 
 const IPC = {
@@ -71,5 +73,32 @@ describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () 
       disposeNativeWindowsBridge("a");
       disposeNativeWindowsBridge("b");
     }).not.toThrow();
+  });
+
+  it("pushSchedulerSnapshotToNative is a no-op without data providers or client", async () => {
+    // 未绑定 providers：直接短路（不拉数据、不推送）
+    expect(() => pushSchedulerSnapshotToNative()).not.toThrow();
+
+    // 绑定 providers 但 native 未启用：getTasks 不应被调用（拉取有成本）
+    const getTasks = vi.fn(async () => [{ name: "t" }]);
+    bindNativeDataProviders({
+      getRuntimeState: vi.fn(),
+      getModelConfig: vi.fn(),
+      getTasks,
+    });
+    pushSchedulerSnapshotToNative();
+    await Promise.resolve();
+    expect(getTasks).not.toHaveBeenCalled();
+  });
+
+  it("bindNativeDataProviders stores providers without side effects when disabled", () => {
+    expect(() => {
+      bindNativeDataProviders({
+        getRuntimeState: () => ({ status: "陪伴中" }),
+        getModelConfig: () => ({ shortName: "x" }),
+        getTasks: async () => [],
+      });
+    }).not.toThrow();
+    expect(isNativeWindowActive("tasks")).toBe(false);
   });
 });

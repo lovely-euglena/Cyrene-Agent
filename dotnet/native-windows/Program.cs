@@ -25,6 +25,9 @@ public static class Program
             (id, element) => RequestRouter.Handle(app, id, element),
             element => RequestRouter.OnEvent(app, element));
         RequestRouter.Protocol = protocol;
+        // ready 握手：宿主 launch() 阻塞等待此帧（15s 超时回收）。
+        // 必须在读线程就位后尽快发——WPF 就绪与否与协议就绪无关
+        protocol.NotifyReady();
 
         app.Run();
         protocol.Dispose();

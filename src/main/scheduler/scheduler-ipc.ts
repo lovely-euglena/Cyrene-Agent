@@ -1,6 +1,7 @@
 import { BrowserWindow } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
+import { pushSchedulerSnapshotToNative } from "../windows/native-windows-bridge";
 import type { ToolDefinition } from "../orchestrator/tools/registry/tool-registry";
 import type { SchedulerEngine } from "./scheduler-engine";
 import type { NewScheduledTaskInput, ScheduledTaskPatch, SchedulerIpcResult } from "./types";
@@ -29,6 +30,10 @@ function broadcastChanged(): void {
       try { win.webContents.send(IPC.SCHEDULER_CHANGED); } catch { /* ignore */ }
     }
   }
+  // native 三件套旁路（CYRENE_NATIVE_WINDOWS）：拉快照直接推
+  // state.tasks 帧（native 窗无 IPC 通道，不能只发"变更了"信号——
+  // 空帧会被 C# ApplyState 当成清空任务列表）
+  pushSchedulerSnapshotToNative();
 }
 
 let schedulerIpcRegistered = false;

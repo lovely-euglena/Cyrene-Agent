@@ -50,6 +50,14 @@ public sealed class HostProtocol : IDisposable
         _readerThread.Start();
     }
 
+    /// <summary>
+    /// 发送 ready 握手帧（{"id":0,"op":"ready"}）。必须在读线程启动后、
+    /// 宿主首个请求前调用——宿主侧 launch() 会阻塞等待此帧（15s 超时
+    /// 后整体回收进程）。语义：协议层就绪（进程活着、帧收发可用），
+    /// 不代表 WPF 就绪（窗口创建在首个 win.spawn 时才发生）。
+    /// </summary>
+    public void NotifyReady() => WriteFrame(new { id = 0, op = "ready" });
+
     public event Action<Exception>? ProtocolError;
 
     private void ReadLoop()

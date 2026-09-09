@@ -80,6 +80,10 @@ export interface CoreDependencies {
   /** 必须在内置渠道适配器注册完成后调用。 */
   startPlugins(services: CoreServices): Promise<PluginManager>;
   createScheduler(runtime: AgentRuntime, services: CoreServices): SchedulerSubsystem;
+  /** native 三件套数据源绑定（core 阶段；未启用时 no-op）。 */
+  bindNativeData?(providers: import("../windows/native-windows-bridge").NativeDataProviders): void;
+  /** 公开模型配置（getPublicModelConfig；native sidebar 快照用）。 */
+  getPublicModelConfig?(): unknown;
   registerCoreIpc(input: RegisterCoreIpcInput): void;
   loadGeneralSettings(): GeneralSettings;
   /** 启动期一次性应用通用设置（登录项同步、桌宠偏好等）。 */
@@ -143,6 +147,15 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   const scheduler = deps.createScheduler(runtime, services);
   scheduler.initialize();
+  // native 三件套数据源（scheduler store + runtimeState + modelConfig）：
+  // core 阶段才可绑定——shell 阶段 initializeNativeWindows 只注入窗口
+  // 动作。绑定后 sidebar/tasks 窗 spawn 初始快照与 scheduler 变更旁路
+  // 才有数据可推。
+  deps.bindNativeData?.({
+    getRuntimeState: () => services.runtimeState.getState(),
+    getModelConfig: () => deps.getPublicModelConfig?.() ?? null,
+    getTasks: async () => scheduler.store.getTasks() as unknown[],
+  });
 
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
   deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
