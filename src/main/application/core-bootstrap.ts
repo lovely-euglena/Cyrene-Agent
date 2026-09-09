@@ -13,6 +13,7 @@ import type { ShutdownCoordinator } from "./shutdown";
 import type { WindowActivationBroker } from "./window-activation";
 import type { ShellResult } from "./shell-bootstrap";
 import type { RevealStartupWindowsOptions } from "../startup/startup-window-reveal";
+import { closeNativeWindow } from "../windows/native-windows-bridge";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -221,6 +222,9 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const lazyChat = process.env.CYRENE_LAZY_CHAT_WINDOW !== "0";
   await deps.revealStartupWindows({
     splashWindow: shell.splashWindow,
+    // native splash（CYRENE_NATIVE_WINDOWS=1 时 shell.splashWindow 为 null）
+    // 在 reveal 同点关闭；bridge 未启用时 no-op（closeNativeWindow 短路）
+    closeSplashWindow: () => { void closeNativeWindow("splash"); },
     chatWindow: lazyChat && !shell.chat.isMaterialized?.() ? null : shell.chat.window,
     loadingShownAt: shell.loadingShownAt,
     minimumDurationMs: deps.minimumSplashMs,

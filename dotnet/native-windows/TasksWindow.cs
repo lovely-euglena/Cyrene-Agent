@@ -352,8 +352,10 @@ public sealed class TasksWindow : NativeWindow
     {
         if (layout.ValueKind != JsonValueKind.Object) return;
         if (!layout.TryGetProperty("tasks", out var tasks)) return;
-        if (tasks.TryGetProperty("x", out var x) && x.TryGetInt32(out var xi)) _form.StartPosition = FormStartPosition.Manual;
-        if (tasks.TryGetProperty("x", out var x2) && x2.TryGetInt32(out var x2i)) _form.Location = new System.Drawing.Point(x2i, _form.Location.Y);
-        if (tasks.TryGetProperty("y", out var y) && y.TryGetInt32(out var yi)) _form.Location = new System.Drawing.Point(_form.Location.X, yi);
+        // 构造已设 StartPosition=Manual；此处只更新坐标（x/y 各自独立生效）
+        if (tasks.TryGetProperty("x", out var x) && x.TryGetInt32(out var xi))
+            _form.Location = new System.Drawing.Point(xi, _form.Location.Y);
+        if (tasks.TryGetProperty("y", out var y) && y.TryGetInt32(out var yi))
+            _form.Location = new System.Drawing.Point(_form.Location.X, yi);
     }
 }

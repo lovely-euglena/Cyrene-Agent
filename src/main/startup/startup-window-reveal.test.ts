@@ -39,6 +39,33 @@ describe("revealStartupWindows", () => {
     expect(chatWindow.state.visible).toBe(true);
   });
 
+  it("invokes the native splash close hook at the same reveal point", async () => {
+    // native 模式（CYRENE_NATIVE_WINDOWS=1）：splashWindow 为 null，
+    // reveal 必须经 closeSplashWindow 关闭 native 进程里的 splash
+    const closeSplashWindow = vi.fn();
+    const chatWindow = createFakeWindow(false);
+
+    await revealStartupWindows({
+      splashWindow: null,
+      closeSplashWindow,
+      chatWindow,
+      minimumDurationMs: 0,
+    });
+
+    expect(closeSplashWindow).toHaveBeenCalledTimes(1);
+    expect(chatWindow.state.visible).toBe(true);
+  });
+
+  it("skips the native close hook when absent (backwards compatible)", async () => {
+    const splashWindow = createFakeWindow(true);
+    await revealStartupWindows({
+      splashWindow,
+      chatWindow: createFakeWindow(false),
+      minimumDurationMs: 0,
+    });
+    expect(splashWindow.state.destroyed).toBe(true);
+  });
+
   it("waits only the remaining duration since Loading was actually shown", async () => {
     vi.useFakeTimers();
     try {

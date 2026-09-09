@@ -74,6 +74,26 @@ export function bindNativeDataProviders(providers: NativeDataProviders): void {
   dataProviders = providers;
 }
 
+// ── native 显窗门控（window-state.markStartupPhaseReady 的 native 版） ──
+const pendingNativeShows = new Set<string>();
+let nativeWindowsStartupReady = false;
+
+/**
+ * 启动就绪后统一显示 native 辅助窗（default-dependencies 的
+ * markStartupWindowsReady 处调用，与 markStartupPhaseReady 同点）。
+ * 启动后再 spawn 的窗口不经 pending（spawn 即 show）。
+ */
+export function markNativeWindowsStartupReady(): void {
+  if (nativeWindowsStartupReady) return;
+  nativeWindowsStartupReady = true;
+  const c = activeClient();
+  const kinds = [...pendingNativeShows];
+  pendingNativeShows.clear();
+  for (const kind of kinds) {
+    void c?.showWindow(kind).catch(() => undefined);
+  }
+}
+
 /** scheduler 变更旁路：拉快照推 native（scheduler-ipc 的 broadcastChanged 调用）。 */
 export function pushSchedulerSnapshotToNative(): void {
   // native 未启用/未初始化时直接短路：拉快照有成本（scheduler store
@@ -123,6 +143,16 @@ export async function spawnNativeWindow(
   if (!c) return false;
   try {
     await c.spawnWindow(kind, layout);
+    // 显窗时机（对齐 showWindowWhenStartupReady 语义）：
+    // splash 无门控（本来就是启动期首帧）；sidebar/tasks 在
+    // startup 阶段先 pending，markStartupPhaseReady 后统一 win.show
+    if (kind === "splash") {
+      await c.showWindow("splash");
+    } else if (nativeWindowsStartupReady) {
+      await c.showWindow(kind);
+    } else {
+      pendingNativeShows.add(kind);
+    }
     // 初始快照：BrowserWindow 路径由渲染页加载时主动拉
     // （cyreneScheduler.list / tokenUsage.get / runtimeState.get）；
     // native 窗没有 IPC 通道，宿主 spawn 后立即推送，避免空窗

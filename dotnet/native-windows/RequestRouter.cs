@@ -111,15 +111,6 @@ public static class RequestRouter
                 });
                 break;
             }
-            case "splash.close":
-            {
-                app.Dispatcher.Invoke(() =>
-                {
-                    if (Windows.TryGetValue("splash", out var w)) w.Close();
-                    Protocol?.ReplyOk(id);
-                });
-                break;
-            }
             default:
                 Protocol?.ReplyError(id, $"unsupported op: {op}");
                 break;

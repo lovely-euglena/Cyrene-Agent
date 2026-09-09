@@ -126,11 +126,13 @@ public sealed class SplashWindow : NativeWindow
     public override void ShowWindow()
     {
         _window.Show();
-        // 首帧渲染完成：对齐 Electron ready-to-show → show → onShown
+        // 首帧渲染完成：cmd 事件（action=shown）驱动宿主侧 onShown —— 与
+        // Electron ready-to-show → show → onShown 语义对齐。只发 cmd 帧
+        // （win.shown 事件帧已删：宿主 handleFrame 对无 action 的事件帧
+        // 走 default 分支，只会产生 unhandled warn 噪声）
         _window.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
             RequestRouter.SendCommand("splash", "shown");
-            RequestRouter.Protocol?.SendEvent(new { op = "event", name = "win.shown", kind = "splash" });
         });
     }
 

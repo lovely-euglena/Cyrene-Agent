@@ -109,6 +109,7 @@ import {
   initNativeWindowsBridge,
   bindNativeDataProviders,
   relayAuxBroadcast,
+  markNativeWindowsStartupReady,
 } from "../windows/native-windows-bridge";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
@@ -250,7 +251,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       activation,
       shutdown,
       minimumSplashMs: SPLASH_MIN_MS,
-      markStartupWindowsReady: () => markStartupPhaseReady(),
+      markStartupWindowsReady: () => {
+        markStartupPhaseReady();
+        // native 三件套与 BrowserWindow 同点放行（pending 的 sidebar/tasks）
+        markNativeWindowsStartupReady();
+      },
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行

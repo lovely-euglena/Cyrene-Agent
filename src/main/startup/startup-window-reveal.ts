@@ -7,6 +7,12 @@ export interface StartupWindowLike {
 export interface RevealStartupWindowsOptions {
   /** Loading 窗口；创建失败时为 null，跳过关闭与最短展示等待。 */
   splashWindow: StartupWindowLike | null;
+  /**
+   * native splash 关闭旁路（CYRENE_NATIVE_WINDOWS=1 时 splashWindow 为
+   * null，reveal 必须走此回调关闭 native 进程里的 splash——否则启动屏
+   * 永远挂着）。未启用 native 时 no-op。
+   */
+  closeSplashWindow?: () => void;
   /** 聊天窗口（主窗口）；reveal 只负责显示，不加载页面。
    * null = 按需启动模式且窗口未物化：reveal 跳过（桌面只留桌宠）。 */
   chatWindow: StartupWindowLike | null;
@@ -36,6 +42,8 @@ export async function revealStartupWindows(options: RevealStartupWindowsOptions)
   if (options.splashWindow && !options.splashWindow.isDestroyed()) {
     options.splashWindow.close();
   }
+  // native splash（存在时）与 BrowserWindow splash 同点关闭
+  options.closeSplashWindow?.();
   if (options.chatWindow && !options.chatWindow.isDestroyed()) {
     options.chatWindow.show();
   }
