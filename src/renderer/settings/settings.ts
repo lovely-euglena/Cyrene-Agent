@@ -1309,7 +1309,7 @@ const WORK_FLOW_COMPAT_MD = `
     <tr><td>Claude</td><td>⚠️ 文档适配</td><td>A</td><td>-</td><td>已完成官方协议适配，等待实测。</td></tr>
     <tr><td>豆包</td><td>✅ 已实测</td><td>A</td><td>Seed 2.1 Turbo / Pro</td><td>推荐使用，完整 Work 流程稳定。</td></tr>
     <tr><td>Kimi</td><td>✅ 已实测</td><td>A</td><td>K2.6、K2.7 Code</td><td>推荐普通 API，Coding 端点不建议用于 Work。</td></tr>
-    <tr><td>DeepSeek</td><td>✅ 已实测</td><td>B</td><td>V4 Flash、V4 Pro</td><td>推荐，速度快、稳定。</td></tr>
+    <tr><td>DeepSeek</td><td>✅ 已实测</td><td>B</td><td>V4.1 Flash、V4 Pro</td><td>推荐，速度快、稳定。</td></tr>
     <tr><td>Qwen</td><td>✅ 已实测</td><td>B</td><td>Qwen3.7 Max</td><td>推荐，表现稳定。</td></tr>
     <tr><td>GLM</td><td>✅ 已实测</td><td>B</td><td>GLM 5.1、5.2</td><td>推荐，4.7 不建议。</td></tr>
     <tr><td>MiMo</td><td>✅ 已实测</td><td>B</td><td>MiMo 2.5、2.5 Pro</td><td>推荐，表现稳定。</td></tr>
