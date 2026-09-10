@@ -25,6 +25,22 @@ files:
   - "!vendor/cloud-music-mcp/**/*"
   - "!vendor/cyrene-skills/**/*"
   - "!models/**/*"
+  # 平台裁剪（Linux 构建机交叉打 win 包：node_modules 装的是 linux 变体，
+  # win 变体经 npm install --no-save 显式补装；两套并存故必须显式排除）
+  - "!**/node_modules/@lancedb/lancedb-linux-*/**"
+  - "!**/node_modules/@lancedb/lancedb-darwin*/**"
+  - "!**/node_modules/@lancedb/lancedb-android*/**"
+  - "!**/node_modules/@lancedb/lancedb-freebsd*/**"
+  - "!**/node_modules/@node-rs/jieba-linux-*/**"
+  - "!**/node_modules/@node-rs/jieba-darwin*/**"
+  - "!**/node_modules/@node-rs/jieba-android*/**"
+  - "!**/node_modules/@node-rs/jieba-freebsd*/**"
+  - "!**/node_modules/@ast-grep/napi-linux-*/**"
+  - "!**/node_modules/@ast-grep/napi-darwin*/**"
+  - "!**/node_modules/onnxruntime-node/bin/napi-v3/darwin/**"
+  - "!**/node_modules/onnxruntime-node/bin/napi-v3/linux/**"
+  - "!**/node_modules/sharp/build/**"
+  - "!**/node_modules/@img/**"
   # prompts / skills 作为安装目录根下的独立文件夹，方便用户修改
 extraFiles:
   - from: prompts
@@ -40,6 +56,11 @@ extraResources:
     to: mingit
   - from: resources/components
     to: components
+  # .NET 10 原生三件套窗口进程（framework-dependent：用户需安装
+  # .NET 10 Desktop Runtime；文件缺失/未装运行时时 CYRENE_NATIVE_WINDOWS
+  # 开关不生效，走 BrowserWindow 路径）
+  - from: dotnet/native-windows/bin/Release/net10.0-windows/win-x64/publish
+    to: native-windows
   # 第三方 skills 快照归档：首启解压到 userData/skills（见 src/main/skills/snapshot-install.ts）
   - from: vendor/cyrene-skills
     to: cyrene-skills
