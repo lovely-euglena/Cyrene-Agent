@@ -156,6 +156,18 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     getRuntimeState: () => services.runtimeState.getState(),
     getModelConfig: () => deps.getPublicModelConfig?.() ?? null,
     getTasks: async () => scheduler.store.getTasks() as unknown[],
+    // native 设置窗快照：通用/外观/关于子集（键名与 C# 白名单对齐）
+    getSettingsSnapshot: async () => {
+      const gs = deps.loadGeneralSettings();
+      return {
+        launchAtLogin: gs.launchAtLogin,
+        petVisible: gs.petVisible,
+        petAlwaysOnTop: gs.petAlwaysOnTop,
+        uiTheme: gs.uiTheme,
+        language: gs.language,
+        version: process.env.npm_package_version ?? "1.1.9",
+      };
+    },
   });
 
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()

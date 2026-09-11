@@ -237,6 +237,8 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
 
   // reactChatWindow → main：声明 ChatPage 已挂好 IPC 监听
   ipc.on(IPC.CHATS_REACT_READY, (event) => {
+    console.info(`[ChatPerf] react-ready (renderer init + bundle + store hydrate)`);
+
     const win = reactChatWindow;
     if (!win || win.isDestroyed()) return;
     if (event.sender !== win.webContents) return;

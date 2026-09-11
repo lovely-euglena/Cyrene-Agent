@@ -8,7 +8,7 @@
 // Agent 的 Observable 是内存流、跨不过进程边界。
 // 因此主进程统一持有运行并仅把事件发送给 Renderer。
 import * as fs from "fs";
-import { app, IpcMainInvokeEvent, WebContents } from "electron";
+import { app, BrowserWindow, IpcMainInvokeEvent, WebContents } from "electron";
 import { getHarnessRunStore } from "./orchestrator/harness/run-store";
 import { IPC } from "../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "./application/ipc-scope";
@@ -22,6 +22,7 @@ import {
 } from "./orchestrator/cyrene-agent";
 import { RunSettlementGate } from "./orchestrator/run-settlement";
 import type { AguiRunAck, CyreneRunTerminalResult } from "../shared/run-terminal";
+import { createAguiStreamThrottle } from "./orchestrator/agui-stream-throttle";
 import { indexConversationTurn } from "./orchestrator/tools/history-tools";
 import type { RelationshipChannel } from "./relationship/relationship-log";
 import { createThinkFilter, type ThinkStreamFilter, type ThinkFilterMode } from "./chat/think-filter";
@@ -340,10 +341,22 @@ export function registerAgUiIpc(
     const sender = event.sender;
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+    // 流式内容事件按固定 0.1s 批量吐 token（LLM 单 token 事件频率可达
+    // 每 tick 数十次，逐条 IPC → 渲染层全列表重渲染是"聊天窗口卡"的主因）；
+    // 控制类/工具/错误事件不攒立即发。窗口不可见（最小化/后台）时攒批
+    // 暂不 flush，可见时一次性补发——避免为看不见的输出烧渲染。
+    const throttled = createAguiStreamThrottle();
+
     const send = (baseEvent: unknown): void => {
-      // CyreneAgent 的 RUN_STARTED / RUN_FINISHED 自带 runId，但 ChatLoop 等内部
-      // AgentLoopEvent 经 toAguiEvent 转换后没有。渲染端用 runId 隔离并发会话，
-      // 因此所有桥层发出的事件都必须带 canonical runId，不能只给终态事件补上。
+      // 内容事件进攒批（runId 在 deliverEvent 统一补）；控制类事件立即投递
+      if (throttled.offer(baseEvent)) {
+        // 已入批。flush 由 100ms 定时器或 run 终态触发
+        return;
+      }
+      deliverEvent(baseEvent);
+    };
+
+    const deliverEvent = (baseEvent: unknown): void => {
       const eventWithRunId = baseEvent && typeof baseEvent === "object"
         ? { ...(baseEvent as Record<string, unknown>), runId: (baseEvent as { runId?: unknown }).runId ?? runId }
         : baseEvent;
@@ -361,6 +374,24 @@ export function registerAgUiIpc(
         }
       }
     };
+
+    const targetVisible = (): boolean => {
+      // 不可见（隐藏/最小化）：攒批不 flush。sender 优先；聊天窗兜底目标
+      for (const wc of [sender, getChatWindowFn()?.webContents]) {
+        if (!wc || wc.isDestroyed()) continue;
+        const win = BrowserWindow.fromWebContents(wc);
+        if (win && !win.isVisible()) return false;
+      }
+      return true;
+    };
+
+    // 不可见谓词：flush 定时器到期时窗口不可见 → 本轮不吐（数据留在
+    // 攒批缓冲，下一条内容事件到达时定时器重启；run 终态强制 flush
+    // 保证数据完整性）
+    throttled.setTargetVisible(targetVisible);
+    throttled.setDeliver((events: unknown[]) => {
+      for (const e of events) deliverEvent(e);
+    });
 
     // ── 顶层模式分流：读取 ChatSession.mode（唯一可信来源） ──
     const sessionId = input.sessionId;
@@ -641,6 +672,8 @@ export function registerAgUiIpc(
         send(baseEvent);
       },
       error: (err) => {
+        throttled.flush();
+        throttled.dispose();
         endEmbeddedReasoning();
         thinkFilter = null; // 错误时丢弃残留 filter 状态
         pendingTextStart = null;
@@ -681,6 +714,9 @@ export function registerAgUiIpc(
       },
       complete: async () => {
         perf.mark("agent_run_complete");
+        // 兜底 flush：不可见期间攒下的 delta 与终态前最后一窗数据
+        throttled.flush();
+        throttled.dispose();
         cleanupRunState();
         // complete 路径下 settlement 应已由 next(RUN_FINISHED) 写入。
         // 若 upstream 走裸 complete（没有 RUN_FINISHED），必须补发一个合成的 RUN_FINISHED，

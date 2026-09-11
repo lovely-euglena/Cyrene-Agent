@@ -22,6 +22,10 @@ export interface NativeBridgeActions {
   toggleSidebarPin(): void;
   cycleModelProvider(): void;
   onSplashShown(): void;
+  /** native 设置窗写入设置键（白名单在宿主侧执行）。 */
+  setSetting?(key: string, value: unknown): void;
+  /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
+  openChannelsWindow?(): void;
 }
 
 let client: NativeWindowsClient | null = null;
@@ -46,6 +50,15 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           actions.onSplashShown();
           notifyNativeSplashShown();
           break;
+        case "set":
+          // native 设置窗写设置：{"action":"set","key":...,"value":...}
+          if (typeof frame.key === "string") {
+            actions.setSetting?.(frame.key, frame.value);
+          }
+          break;
+        case "openChannels":
+          actions.openChannelsWindow?.();
+          break;
         default:
           console.warn(`[NativeWindows] unhandled cmd action: ${action}`);
       }
@@ -61,6 +74,8 @@ export interface NativeDataProviders {
   getRuntimeState(): unknown;
   getModelConfig(): unknown;
   getTasks(): Promise<unknown[]>;
+  /** native 设置窗快照（general settings 的通用/外观/关于子集）。 */
+  getSettingsSnapshot?(): Promise<unknown>;
 }
 
 let dataProviders: NativeDataProviders | null = null;
@@ -110,7 +125,7 @@ function activeClient(): NativeWindowsClient | null {
 }
 
 /** 是否走 native 路径（调用方据此跳过对应 BrowserWindow 创建）。 */
-export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks"): boolean {
+export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings"): boolean {
   const c = activeClient();
   return c !== null;
 }
@@ -136,7 +151,7 @@ export function pushLayoutToNative(layout: unknown): void {
 // ── 窗口生命周期（替代 BrowserWindow 创建） ──
 
 export async function spawnNativeWindow(
-  kind: "splash" | "sidebar" | "tasks",
+  kind: "splash" | "sidebar" | "tasks" | "settings",
   layout?: unknown,
 ): Promise<boolean> {
   const c = activeClient();
@@ -159,6 +174,10 @@ export async function spawnNativeWindow(
     if (kind === "sidebar" && dataProviders) {
       void c.pushRuntimeState(dataProviders.getRuntimeState()).catch(() => undefined);
       void c.pushModelConfig(dataProviders.getModelConfig()).catch(() => undefined);
+    } else if (kind === "settings" && dataProviders) {
+      void dataProviders.getSettingsSnapshot?.()
+        .then((settings) => c.pushSettings(settings))
+        .catch((error) => console.warn("[NativeWindows] settings snapshot push failed:", error));
     } else if (kind === "tasks" && dataProviders) {
       void dataProviders.getTasks()
         .then((tasks) => c.pushTasks(tasks, getUsageReport(7)))

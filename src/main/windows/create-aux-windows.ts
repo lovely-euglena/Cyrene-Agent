@@ -168,6 +168,20 @@ export function loadReactChatWindowPage(window: BrowserWindow, sessionId?: strin
   const search = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : undefined;
   const indexPath = path.join(app.getAppPath(), "dist", "renderer", "react", "index.html");
 
+  // [ChatPerf] 打开卡顿诊断链（用户报"打开就卡"）：
+  //   t0 load 开始 → t1 dom-ready → t2 did-finish-load → t3 渲染层 CHATS_REACT_READY
+  // 渲染层脚本初始化耗时（t2→t3）+ 加载耗时（t0→t2）分段定位卡在哪段。
+  const t0 = Date.now();
+  const once = (wc: Electron.WebContents): void => {
+    wc.once("dom-ready", () => {
+      console.info(`[ChatPerf] dom-ready +${Date.now() - t0}ms`);
+    });
+    wc.once("did-finish-load", () => {
+      console.info(`[ChatPerf] did-finish-load +${Date.now() - t0}ms`);
+    });
+  };
+  once(window.webContents);
+
   if (isDev) {
     return window.loadURL(`http://localhost:5173/react/${search ?? ""}`);
   }
@@ -358,6 +372,7 @@ export function createSettingsWindow(section?: string): void {
 
   attachExternalLinkHandler(window);
 
+  // 保留不动（设置窗路径）
   const hash = section ? `#${section}` : "";
   if (isDev) {
     window.loadURL("http://localhost:5173/settings/" + hash);

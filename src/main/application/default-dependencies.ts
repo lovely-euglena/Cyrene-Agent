@@ -111,6 +111,7 @@ import {
   bindNativeDataProviders,
   relayAuxBroadcast,
   markNativeWindowsStartupReady,
+  spawnNativeWindow,
 } from "../windows/native-windows-bridge";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
@@ -221,7 +222,15 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
       initializeNativeWindows: (windowManager) => {
         initNativeWindowsBridge({
-          openSettings: (section?: string) => windowManager.createSettingsWindow(section),
+          // native 模式：设置窗走 .NET（spawn native settings）；
+          // 渠道 section 例外（保持 Electron，用户指定）→ 直接弹 Electron 设置窗
+          openSettings: (section?: string) => {
+            if (section === "channels") {
+              windowManager.createSettingsWindow(section);
+              return;
+            }
+            void spawnNativeWindow("settings");
+          },
           openChatWindow: () => windowManager.createReactChatWindowShell(),
           openCallWindow: () => windowManager.createCallWindow(),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),
@@ -231,6 +240,15 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
           },
           onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
+          // native 设置窗写键（白名单与 C# 侧一致）：写盘 + 既有联动
+          setSetting: (key, value) => {
+            const allowed = new Set(["launchAtLogin", "petVisible", "petAlwaysOnTop", "uiTheme", "language"]);
+            if (!allowed.has(key)) return;
+            // petVisible 关闭走既有 toggle 联动（hide），直接写盘不走窗口管理
+            saveGeneralSettings({ [key]: value } as Partial<import("../settings/general-settings").GeneralSettings>);
+          },
+          // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
+          openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
         });
       },
       registerProtocolHandlers,

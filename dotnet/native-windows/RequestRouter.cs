@@ -30,6 +30,7 @@ public static class RequestRouter
                         var layout = element.TryGetProperty("layout", out var layoutEl) ? layoutEl : default;
                         NativeWindow window = kind switch
                         {
+                            "settings" => new SettingsWindow(layout),
                             "splash" => new SplashWindow(),
                             "sidebar" => new SidebarWindow(layout),
                             "tasks" => new TasksWindow(layout),
@@ -111,6 +112,26 @@ public static class RequestRouter
                 });
                 break;
             }
+            case "state.settings":
+            {
+                var settings = element.TryGetProperty("settings", out var sEl) ? sEl : default;
+                app.Dispatcher.Invoke(() =>
+                {
+                    if (Windows.TryGetValue("settings", out var w) && w is SettingsWindow settingsWindow)
+                        settingsWindow.ApplySettings(settings);
+                    Protocol?.ReplyOk(id);
+                });
+                break;
+            }
+            case "settings.set":
+            {
+                // native 设置窗 → 宿主：写设置键（白名单在 SendSettingForwarded）
+                var key = element.TryGetProperty("key", out var kEl) ? kEl.GetString() : null;
+                var value = element.TryGetProperty("value", out var vEl) ? (JsonElement?)vEl : null;
+                SendSettingForwarded(key, value);
+                Protocol?.ReplyOk(id);
+                break;
+            }
             default:
                 Protocol?.ReplyError(id, $"unsupported op: {op}");
                 break;
@@ -121,6 +142,36 @@ public static class RequestRouter
     public static void OnEvent(System.Windows.Application app, JsonElement element)
     {
         // 宿主→native 目前无 event 帧（事件都是 native→host 方向）
+    }
+
+    /// <summary>
+    /// 设置窗写入设置键（宿主负责落盘与联动生效）。
+    /// 走 cmd 事件通道（{"op":"event","name":"cmd","kind":"settings",
+    /// "action":"set","key":...,"value":...}）——与 SendCommand 同链路，
+    /// 避免与宿主请求/响应的 id 空间冲突（host.ts 的 handleFrame 把带
+    /// id 的非 event 帧一律当响应处理）。
+    /// </summary>
+    public static void SendSetting(string key, object? value)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["op"] = "event",
+            ["name"] = "cmd",
+            ["kind"] = "settings",
+            ["action"] = "set",
+            ["key"] = key,
+            ["value"] = value,
+        };
+        Protocol?.SendEvent(payload);
+    }
+
+    /// <summary>settings.set 帧的宿主侧转发（cmd 事件通道 + 白名单）。</summary>
+    private static void SendSettingForwarded(string? key, JsonElement? value)
+    {
+        // 白名单：native 设置窗一期只允许这几个键
+        var allowed = new HashSet<string> { "autoStart", "trayResident", "petVisible", "theme" };
+        if (string.IsNullOrEmpty(key) || !allowed.Contains(key)) return;
+        SendSetting(key, value.HasValue ? value.Value : null);
     }
 
     /// <summary>窗口请求宿主动作（openSettings 等）。</summary>

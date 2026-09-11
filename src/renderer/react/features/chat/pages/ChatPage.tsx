@@ -352,6 +352,10 @@ export function ChatPage() {
         // cold-start 全程完成才标记 bootstrap 完成；只有该标志置位后
         // mode 切换 effect 才会触发 refreshSessions
         setBootstrapCompleted(true);
+        // [ChatPerf] 渲染侧冷启动结束（bundle 加载 + store 初始化 + 会话
+        // 列表 hydrate 全部完成）——与主进程 [ChatPerf] 日志对读
+        performance.mark("chat-react-bootstrap-done");
+        console.info("[ChatPerf] renderer bootstrap done (store hydrate + session list)");
         if (!disposed) store.notifyReactReady?.();
     });
 

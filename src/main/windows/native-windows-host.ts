@@ -262,7 +262,7 @@ export class NativeWindowsClient {
 
   // ── 公开 API：窗口生命周期 + 状态推送 ──
 
-  async spawnWindow(kind: "splash" | "sidebar" | "tasks", layout?: unknown): Promise<void> {
+  async spawnWindow(kind: "splash" | "sidebar" | "tasks" | "settings", layout?: unknown): Promise<void> {
     await this.ensureStarted();
     await this.request({ op: "win.spawn", kind, layout: layout ?? {} });
   }
@@ -285,6 +285,11 @@ export class NativeWindowsClient {
 
   async pushModelConfig(config: unknown): Promise<void> {
     await this.request({ op: "state.model", config });
+  }
+
+  async pushSettings(settings: unknown): Promise<void> {
+    await this.ensureStarted();
+    await this.request({ op: "state.settings", settings: settings ?? {} });
   }
 
   async pushTasks(tasks: unknown, usage: unknown): Promise<void> {

@@ -99,6 +99,10 @@ describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () 
     }).not.toThrow();
   });
 
+  it("spawnNativeWindow with settings kind is a safe no-op when disabled", async () => {
+    await expect(spawnNativeWindow("settings")).resolves.toBe(false);
+  });
+
   it("bindNativeDataProviders stores providers without side effects when disabled", () => {
     expect(() => {
       bindNativeDataProviders({
