@@ -31,6 +31,21 @@ function clickByLabel(template: ReturnType<typeof buildTrayMenuTemplate>): Map<s
 }
 
 describe("buildTrayMenuTemplate", () => {
+  it("drag-mode toggle routes through setPetDragMode with checkbox sync", () => {
+    const { deps } = makeDeps();
+    const setPetDragMode = vi.fn((enabled: boolean) => enabled);
+    deps.setPetDragMode = setPetDragMode;
+    const template = buildTrayMenuTemplate(deps);
+    const dragItem = template.find((item) => item.label === "桌宠拖动模式");
+    expect(dragItem).toBeDefined();
+    expect(dragItem?.type).toBe("checkbox");
+
+    // menuItem.checked 读写由 electron 维护——用桩模拟
+    const state = { checked: true };
+    dragItem?.click?.({ checked: state.checked, ...state } as Electron.MenuItem, null as never, null as never);
+    expect(setPetDragMode).toHaveBeenCalledWith(true);
+  });
+
   it("maps window menu items to activation requests", () => {
     const { deps, requests } = makeDeps();
     const clicks = clickByLabel(buildTrayMenuTemplate(deps));

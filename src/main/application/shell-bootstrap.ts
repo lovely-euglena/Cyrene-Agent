@@ -14,6 +14,7 @@ import type { StartupReadiness } from "./readiness";
 import type { ShutdownCoordinator } from "./shutdown";
 import type { WindowActivationBroker, WindowActivationRequest } from "./window-activation";
 import type { ReactChatWindowHandle } from "../windows/create-aux-windows";
+import type { TrayLike } from "../tray-detached";
 import type { WindowManager } from "../windows/window-manager";
 
 export type Live2dWindowLifecycle = ReturnType<typeof createWindowLifecycleTracker<TrackedBrowserWindowLike>>;
@@ -39,11 +40,15 @@ export interface ShellDependencies {
   registerProtocolHandlers(): void;
   /** 壳安全 IPC：仅注册依赖在壳阶段已就绪的处理器。 */
   registerShellIpc(input: ShellIpcRegistrationInput): void;
-  /** 托盘：窗口类入口走激活请求；桌宠开关立即执行。 */
+  /** 托盘：窗口类入口走激活请求；桌宠开关立即执行。
+   *  返回类型含分离托盘的 duck-type（CYRENE_DETACHED_TRAY 模式），
+   *  消费点只依赖 isDestroyed/destroy/setImage/setToolTip。 */
   createTray(input: {
     requestActivation(request: WindowActivationRequest): void;
     togglePetWindow(): void;
-  }): Tray;
+    /** 桌宠拖动模式兜底（Windows 透明窗 forward 竞态保险）。 */
+    setPetDragMode?(enabled: boolean): boolean;
+  }): Tray | import("../tray-detached").TrayLike;
   flushTokenUsage(): void;
   /** banner + 启动日志；测试可覆盖避免控制台噪声。 */
   writeStartupLog(): void;
@@ -56,7 +61,7 @@ export interface ShellResult {
   loadingShownAt: number | undefined;
   windowManager: WindowManager;
   chat: ReactChatWindowHandle;
-  tray: Tray;
+  tray: Tray | TrayLike;
   live2dWindowLifecycle: Live2dWindowLifecycle;
 }
 
@@ -118,9 +123,10 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
   deps.registerShellIpc({ ipc, windowManager, live2dWindowLifecycle });
 
   // 8. 托盘：所有功能窗口入口经过激活代理，退出菜单在应用层处理
-  const tray = deps.createTray({
+  const tray: Tray | TrayLike = deps.createTray({
     requestActivation: (request) => activation.request(request),
     togglePetWindow: () => windowManager.togglePetWindow(),
+    setPetDragMode: (enabled) => windowManager.setPetDragMode(enabled),
   });
 
   // 9. 注册已创建资源的退出清理（固定阶段）

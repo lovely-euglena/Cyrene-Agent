@@ -164,7 +164,7 @@ if (!window.settings) {
         mode: "auto",
         provider: "DeepSeek",
         baseUrl: "https://api.deepseek.com",
-        model: "deepseek-v4-pro",
+        model: "deepseek-flash",
         apiKey: "",
         runtimeSync: "off",
         stickerEnabled: true,

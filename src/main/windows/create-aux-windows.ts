@@ -342,11 +342,10 @@ export function createSettingsWindow(section?: string): void {
     minHeight: 580,
     title: "昔涟 · 设置",
     icon: getCurrentAppIconPath(),
-    backgroundColor: "#00000000",
+    backgroundColor: "#F2F2F7",
     autoHideMenuBar: true,
     show: false,
     frame: false,
-    transparent: true,
     resizable: true,
     webPreferences: {
       preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),

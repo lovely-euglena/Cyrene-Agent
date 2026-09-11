@@ -117,7 +117,11 @@ const manager = new Live2DManager({
     focus.focusCenter(true);
 
     clickThrough = new ClickThroughController(canvas, manager, {
-      onInteractive: (interactive) => void window.cyrene.setInteractive(interactive),
+      onInteractive: (interactive) => {
+        // 鼠标扫过窗面（无论命中模型与否）都是活跃信号 → 回满帧率
+        manager.markActivity();
+        void window.cyrene.setInteractive(interactive);
+      },
     });
 
     // Apply the persisted zoom on load and track future changes. The main

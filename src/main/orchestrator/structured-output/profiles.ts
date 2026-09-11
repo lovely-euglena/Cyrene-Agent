@@ -60,7 +60,7 @@ const DEFINITIONS: readonly ProfileDefinition[] = [
     id: "deepseek-json-object",
     provider: "deepseek",
     transport: "openai",
-    modelPattern: /^deepseek-v4-(?:pro|flash)$/i,
+    modelPattern: /^deepseek-(?:v4(?:\.\d+)?-)?(?:pro|flash)$/i,
     tier: "B",
     mode: "provider_json_object",
     verification: "official",

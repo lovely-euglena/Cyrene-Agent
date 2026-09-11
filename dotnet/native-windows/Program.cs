@@ -3,18 +3,30 @@ using WpfApplication = System.Windows.Application;
 namespace CyreneNative;
 
 /// <summary>
-/// cyrene-native 进程入口：承载 splash / sidebar / tasks 三个原生窗口，
-/// 取代对应的 Electron BrowserWindow（-3 Chromium 渲染进程）。
+/// cyrene-native 进程入口。
 ///
 /// 命令行：
-///   cyrene-native [serve]
-/// 协议见 HostProtocol。stdin EOF（宿主退出）→ 全窗口安全关闭。
+///   cyrene-native [serve]      窗口宿主模式（默认）：承载 splash /
+///                              sidebar / tasks 三个原生窗口，协议见
+///                              HostProtocol。stdin EOF（宿主退出）→
+///                              全窗口安全关闭。
+///   cyrene-native --tray       分离托盘模式：NotifyIcon 常驻 +
+///                              named pipe cyrene-tray + spawn/管理
+///                              Electron 主程序（见 TrayHost）。托盘
+///                              独立于 Electron 生死——Electron 全退
+///                              后仅托盘驻留（~20MB vs 主进程 ~150MB）。
 /// </summary>
 public static class Program
 {
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--tray")
+        {
+            TrayHost.Run(TrayHost.ResolveElectronExe());
+            return 0;
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,

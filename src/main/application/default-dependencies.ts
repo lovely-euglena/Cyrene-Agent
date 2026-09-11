@@ -104,6 +104,7 @@ import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
+import { connectDetachedTray } from "../tray-detached";
 import { createSplashWindow } from "../startup/create-splash-window";
 import {
   initNativeWindowsBridge,
@@ -237,11 +238,25 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerWindowSystemIpc({ ipc, windowManager });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
-      createTray: (input) => createTray({
-        togglePetWindow: input.togglePetWindow,
-        requestActivation: input.requestActivation,
-        quit: () => app.quit(),
-      }),
+      createTray: (input) => {
+        // 分离托盘（CYRENE_DETACHED_TRAY=1 + .NET 托盘进程在跑）：
+        // 连 pipe 成功 → 外部托盘；失败 → 回退内置 Electron Tray
+        if (process.env.CYRENE_DETACHED_TRAY === "1") {
+          const detached = connectDetachedTray({
+            requestActivation: input.requestActivation,
+            togglePetWindow: input.togglePetWindow,
+            setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
+            quit: () => app.quit(),
+          });
+          if (detached) return detached;
+        }
+        return createTray({
+          togglePetWindow: input.togglePetWindow,
+          requestActivation: input.requestActivation,
+          setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
+          quit: () => app.quit(),
+        });
+      },
       flushTokenUsage,
     }),
 

@@ -132,6 +132,7 @@ export class Live2DManager {
       resolution: Math.min(window.devicePixelRatio || 1, 2),
       autoDensity: true,
     });
+    this.startIdleFpsWatch();
     try {
       await this.loadModel();
     } catch (err) {
@@ -305,8 +306,56 @@ export class Live2DManager {
     this.app.ticker.start();
   }
 
+  // ── Idle 帧率降频 ─────────────────────────────────────────
+  // 呼吸/眨眼是低频动画，60fps 恒渲烧 GPU 带宽并让光栅化缓存持续膨胀
+  // （Windows 任务管理器"桌宠"组的 0.5-0.7GB 主要构成之一）。
+  // 分档：满帧 60 → 空闲 60s 后 24fps → 300s 后 12fps；鼠标进入窗
+  // （forward mousemove 驱动 hit-test 轮询）即回满帧。
+  private static readonly IDLE_FPS_TIERS = [
+    { afterMs: 0, fps: 60 },
+    { afterMs: 60_000, fps: 24 },
+    { afterMs: 300_000, fps: 12 },
+  ] as const;
+
+  private lastActivityAt = performance.now();
+  private idleFpsTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** 互动信号（mousemove/hit-test/交互）：回满帧并重置空闲计时。 */
+  markActivity(): void {
+    this.lastActivityAt = performance.now();
+    this.setIdleFps(60);
+  }
+
+  private setIdleFps(fps: number): void {
+    if (!this.app) return;
+    if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps;
+  }
+
+  private startIdleFpsWatch(): void {
+    if (this.idleFpsTimer !== null) return;
+    this.idleFpsTimer = setInterval(() => {
+      if (!this.app) return;
+      const idleFor = performance.now() - this.lastActivityAt;
+      // 从最深档往回找第一个已达到的档位
+      for (let i = Live2DManager.IDLE_FPS_TIERS.length - 1; i >= 0; i--) {
+        if (idleFor >= Live2DManager.IDLE_FPS_TIERS[i].afterMs) {
+          this.setIdleFps(Live2DManager.IDLE_FPS_TIERS[i].fps);
+          break;
+        }
+      }
+    }, 5_000);
+  }
+
+  private stopIdleFpsWatch(): void {
+    if (this.idleFpsTimer !== null) {
+      clearInterval(this.idleFpsTimer);
+      this.idleFpsTimer = null;
+    }
+  }
+
     dispose(): void {
     this.disposed = true;
+    this.stopIdleFpsWatch();
     if (this.model) {
       this.model.destroy();
       this.model = null;

@@ -33,7 +33,7 @@ export const PROVIDER_CAPABILITIES = [
     baseUrl: "https://api.deepseek.com",
     authStyle: "bearer",
     anthropicAuthStyle: "x-api-key",
-    defaultModel: "deepseek-v4-pro",
+    defaultModel: "deepseek-flash",
     supportsTools: true,
     supportsThinking: true,
     thinkingField: "reasoning_content",

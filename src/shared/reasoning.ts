@@ -179,7 +179,7 @@ export const MODEL_REASONING_RULES: readonly ModelReasoningRule[] = [
   // thinking 默认开启可关闭；effort 三档 low/high/max（官方 2026-08-13 起）。
   // auto 映射 high：服务端 auto 会给带工具的 agent 请求自动上 max，
   // 与 GLM-5.3 同款的思考爆炸陷阱（2026-08-27 多轮循环场景）。
-  { providerId: "deepseek", modelPattern: /^deepseek-v4/i, capability: {
+  { providerId: "deepseek", modelPattern: /^deepseek-(?:v4|flash)/i, capability: {
     control: "toggle-effort",
     supportedEfforts: ["low", "high", "max"],
     defaultEffort: "high",

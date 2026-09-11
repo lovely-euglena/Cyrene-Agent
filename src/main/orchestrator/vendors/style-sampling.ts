@@ -56,7 +56,7 @@ const MODEL_SAMPLING_RULES: readonly ModelSamplingRule[] = [
   },
   {
     providerId: "deepseek",
-    modelPattern: /^deepseek-v4-(?:pro|flash)$/i,
+    modelPattern: /^deepseek-(?:v4(?:\.\d+)?-)?(?:pro|flash)$/i,
     diversity: true,
     requiresReasoningOff: true,
   },

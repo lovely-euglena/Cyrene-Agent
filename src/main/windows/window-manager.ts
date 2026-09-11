@@ -43,6 +43,8 @@ export interface WindowManager {
   setPetWindowAlwaysOnTop(alwaysOnTop: boolean): void;
   setPetWindowInteractive(interactive: boolean): void;
   setPetWindowDragging(isDragging: boolean): void;
+  /** 桌宠拖动模式（托盘兜底）：整窗交互态，穿透关闭；返回切换结果。 */
+  setPetDragMode(enabled: boolean): boolean;
   movePetWindowRelative(dx: number, dy: number): void;
   movePetWindowTo(x: number, y: number): void;
   applyPetWindowZoom(zoom: number): void;
@@ -208,6 +210,21 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         win.setOpacity(isDragging ? 0.99 : 1.0);
       } catch (error) {
         console.warn("[WindowManager] Failed to update pet window dragging opacity:", error);
+      }
+    },
+    setPetDragMode(enabled: boolean): boolean {
+      const win = getUsablePetWindow();
+      if (!win) return false;
+      try {
+        // 拖动模式 = 整窗吃鼠标（关穿透）。渲染侧 hit-test 自动恢复时
+        // 会再次 setInteractive(true)——与本模式兼容（都是关穿透）；
+        // 退出拖动模式时交还渲染侧 hit-test 控制（设回穿透，等下一
+        // 次 mousemove 命中再切换）。
+        win.setIgnoreMouseEvents(!enabled, { forward: true });
+        return enabled;
+      } catch (error) {
+        console.warn("[WindowManager] setPetDragMode failed:", error);
+        return false;
       }
     },
     movePetWindowRelative(dx: number, dy: number): void {

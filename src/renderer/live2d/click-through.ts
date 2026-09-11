@@ -94,6 +94,12 @@ export class ClickThroughController {
     if (!point) return;
 
     const interactive = this.hitTestAlpha(point.x, point.y);
+    // 诊断日志（拖不动排查用）：interactive 状态翻转时输出。
+    // 持续翻转抖动 = alpha 阈值/坐标换算问题；永不翻转 = forward 断流
+    // 或 hitTestAlpha 恒 false（DPR 映射错误）。
+    console.debug(
+      `[ClickThrough] interactive=${interactive} @ ${point.x.toFixed(0)},${point.y.toFixed(0)} (was ${this.currentState})`,
+    );
     if (interactive === this.currentState) return; // idempotent: avoid IPC spam
     this.currentState = interactive;
     this.onInteractive?.(interactive);

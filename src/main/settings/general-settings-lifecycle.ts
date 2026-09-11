@@ -16,7 +16,7 @@ import { syncLaunchAtLogin } from "./launch-at-login";
 
 export interface GeneralSettingsLifecycleDependencies {
   get windowManager(): WindowManager | null;
-  get tray(): Tray | null;
+  get tray(): Tray | import("../tray-detached").TrayLike | null;
   get screenshotService(): { replaceHotkey: (hotkey: string) => { ok: boolean } | null } | null;
   get proactiveLifecycle(): { getProactiveChatService: () => { invalidate: () => void } | null };
   broadcastToAuxWindows(channel: string, payload: unknown): void;
