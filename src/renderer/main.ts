@@ -215,6 +215,21 @@ let pendingPosition: { x: number; y: number } | null = null;
 let rafId: number | null = null;
 let dragOverlay: HTMLImageElement | null = null;
 let dragToken = 0;
+// 拖动抖动修复：
+//   1) pointerId 过滤——setInteractive(true) 的 IPC 往返延迟窗口内，
+//      move 走「穿透 forward 合成事件」路径；落地后走 capture 路径。
+//      两条路径在 DPI≠100% 时的 screenX 单位可能不同（Chromium Windows
+//      已知差异），双流交替 = 目标位置交替 = 左下↔右上抖动。只信
+//      setPointerCapture 成功的那个 pointerId。
+//   2) 自适应单位系数 k——screenX 是物理像素还是 DIP 在不同 Chromium
+//      版本/缩放设置下不一致，硬编码 DPR 换算不可靠。拖动首个反馈帧
+//      用「目标位置 vs window.screenX 实测」校准 k，之后增量按 k 缩放，
+//      对任何单位/DPR 组合收敛。
+let dragPointerId = -1;
+let dragUnitScale = 1;
+let dragBaseScreen = { x: 0, y: 0 };
+let dragBaseWin = { x: 0, y: 0 };
+let dragCalibrated = false;
 
 let dragOverlayUrl: string | null = null;
 
@@ -341,8 +356,16 @@ addTrackedEventListener(canvas, "canvas:pointerdown", "pointerdown", (e) => {
   isDragging = true;
   dragToken += 1;
   const token = dragToken;
+  dragPointerId = event.pointerId;
+  dragCalibrated = false;
+  dragUnitScale = 1;
+  dragBaseScreen = { x: event.screenX, y: event.screenY };
+  dragBaseWin = { x: window.screenX, y: window.screenY };
   dragOffsetX = event.screenX - window.screenX;
   dragOffsetY = event.screenY - window.screenY;
+  console.info(
+    `[PetDrag] down screen=(${event.screenX},${event.screenY}) win=(${window.screenX},${window.screenY}) dpr=${window.devicePixelRatio}`,
+  );
   cancelPendingMove();
   clickThrough?.pause();
   focus?.pause(true);
@@ -358,13 +381,50 @@ addTrackedEventListener(canvas, "canvas:pointerdown", "pointerdown", (e) => {
 addTrackedEventListener(canvas, "canvas:pointermove", "pointermove", (e) => {
   const event = e as PointerEvent;
   if (!isDragging) return;
-  scheduleMoveTo(event.screenX, event.screenY);
+  // 双流过滤：只信 capture 的 pointerId（forward 合成的 move 不驱动拖动）
+  if (dragPointerId !== -1 && event.pointerId !== dragPointerId) return;
+
+  // 单位校准（首个反馈帧）：上一帧发的目标位置 vs 窗口实际落位
+  if (!dragCalibrated) {
+    const expectedX = dragBaseWin.x + (event.screenX - dragBaseScreen.x) * dragUnitScale;
+    const expectedY = dragBaseWin.y + (event.screenY - dragBaseScreen.y) * dragUnitScale;
+    const actualX = window.screenX;
+    const actualY = window.screenY;
+    if (Math.abs(expectedX - actualX) > 2 || Math.abs(expectedY - actualY) > 2) {
+      // screenX 单位与 window.screenX 不一致：按实测比修正
+      const kx = Math.abs(expectedX - dragBaseWin.x) > 8
+        ? (actualX - dragBaseWin.x) / (expectedX - dragBaseWin.x)
+        : dragUnitScale;
+      const ky = Math.abs(expectedY - dragBaseWin.y) > 8
+        ? (actualY - dragBaseWin.y) / (expectedY - dragBaseWin.y)
+        : dragUnitScale;
+      const k = Math.min(3, Math.max(0.25, (kx + ky) / 2));
+      console.info(
+        `[PetDrag] calibrate k=${k.toFixed(3)} (expected=(${expectedX.toFixed(0)},${expectedY.toFixed(0)}) actual=(${actualX},${actualY}))`,
+      );
+      dragUnitScale = k;
+      dragBaseScreen = { x: event.screenX, y: event.screenY };
+      dragBaseWin = { x: actualX, y: actualY };
+    } else {
+      dragCalibrated = true;
+    }
+  }
+
+  const dx = (event.screenX - dragBaseScreen.x) * dragUnitScale;
+  const dy = (event.screenY - dragBaseScreen.y) * dragUnitScale;
+  scheduleMoveTo(dragBaseWin.x + dx + dragOffsetX, dragBaseWin.y + dy + dragOffsetY);
 });
 
 addTrackedEventListener(canvas, "canvas:pointerup", "pointerup", (e) => {
   const event = e as PointerEvent;
   if (!isDragging) return;
-  scheduleMoveTo(event.screenX, event.screenY);
+  if (dragPointerId !== -1 && event.pointerId !== dragPointerId) return;
+  dragPointerId = -1;
+  console.info(`[PetDrag] up win=(${window.screenX},${window.screenY}) k=${dragUnitScale.toFixed(3)}`);
+  // up 的落点与 move 同坐标系（Δ×k + 基准），避免最后一次跳变
+  const dx = (event.screenX - dragBaseScreen.x) * dragUnitScale;
+  const dy = (event.screenY - dragBaseScreen.y) * dragUnitScale;
+  scheduleMoveTo(dragBaseWin.x + dx + dragOffsetX, dragBaseWin.y + dy + dragOffsetY);
   if (rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
