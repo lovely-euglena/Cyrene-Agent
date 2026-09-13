@@ -7,6 +7,7 @@ import { IPC } from "../shared/ipc-channels";
 
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
+  listeners: new Map<string, (...args: any[]) => void>(),
   getSession: vi.fn(),
   runCyreneAgent: vi.fn(),
   requestUserClarification: vi.fn(),
@@ -28,6 +29,10 @@ vi.mock("electron", () => ({
     handle: vi.fn((channel: string, handler: (...args: any[]) => unknown) => {
       mocks.handlers.set(channel, handler);
     }),
+    on: vi.fn((channel: string, listener: (...args: any[]) => void) => {
+      mocks.listeners.set(channel, listener);
+    }),
+    removeListener: vi.fn(),
   },
 }));
 
@@ -152,6 +157,74 @@ describe("agui-bridge sticker event ordering", () => {
         runId: ack.runId,
       },
     );
+  });
+
+  it("桌面轮次事件走协调器：开始登记、终态结算、落盘确认后发布一次", async () => {
+    vi.resetModules();
+    mocks.handlers.clear();
+    mocks.listeners.clear();
+    mocks.getSession.mockReturnValue({ id: "chat-pending", mode: "chat" });
+    const { registerAgUiIpc } = await import("./agui-bridge");
+    const { createPendingTurnLifecycle } = await import("./plugin-host/pending-turn-lifecycle");
+    const publisher = {
+      publishTurnStarted: vi.fn(),
+      publishTurnFinished: vi.fn(),
+      publishSchedulerFinished: vi.fn(),
+    };
+    // 真实协调器全链路：beginTurn（桥内）→ settleTerminal（complete 路径）→ confirmPersistence（落盘确认 IPC）
+    const pendingTurns = createPendingTurnLifecycle({ publisher: publisher as never, now: () => 0 });
+    registerAgUiIpc(async () => ({
+      options: {
+        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+        messages: [],
+        timeoutMs: 1000,
+        toolSystemContent: "TOOL",
+        soulSystemBaseContent: "SOUL",
+      },
+      latestUserText: "你好",
+    }), async () => ({}), () => null, undefined, undefined, pendingTurns);
+
+    const handler = mocks.handlers.get(IPC.AGUI_RUN);
+    const persistListener = mocks.listeners.get(IPC.AGUI_RUN_PERSISTED);
+    if (!handler || !persistListener) throw new Error("AGUI_RUN / AGUI_RUN_PERSISTED 未注册");
+    const sender = {
+      isDestroyed: () => false,
+      send: () => {},
+      once: vi.fn(),
+      removeListener: vi.fn(),
+    };
+    const ack = await handler({ sender }, {
+      messages: [{ role: "user", content: "你好" }],
+      sessionId: "chat-pending",
+      userTurnId: "msg-user-1",
+      assistantTurnId: "msg-assistant-1",
+    }) as { runId: string };
+
+    // turn:started 立即发布；终态结算后等待落盘确认（条目仍待结算）
+    expect(publisher.publishTurnStarted).toHaveBeenCalledTimes(1);
+    expect(publisher.publishTurnStarted).toHaveBeenCalledWith({
+      source: "desktop",
+      runId: ack.runId,
+      mode: "chat",
+      conversationId: "chat-pending",
+      inputMessageId: "msg-user-1",
+    });
+    await vi.waitFor(() => expect(pendingTurns.pendingCount()).toBe(1));
+    expect(publisher.publishTurnFinished).not.toHaveBeenCalled();
+
+    // 渲染端落盘确认（单向通知）→ 终态 + 落盘确认双条件满足，发布一次
+    persistListener({}, { runId: ack.runId, finalMessageId: "msg-assistant-1" });
+    await vi.waitFor(() => expect(publisher.publishTurnFinished).toHaveBeenCalledTimes(1));
+    expect(publisher.publishTurnFinished).toHaveBeenCalledWith(expect.objectContaining({
+      source: "desktop",
+      runId: ack.runId,
+      mode: "chat",
+      conversationId: "chat-pending",
+      inputMessageId: "msg-user-1",
+      finalMessageId: "msg-assistant-1",
+      status: "success",
+    }));
+    expect(pendingTurns.pendingCount()).toBe(0);
   });
 
   it("routes structured Ask cards to the AG-UI run sender", async () => {
@@ -279,6 +352,82 @@ describe("agui-bridge sticker event ordering", () => {
       expect(sent[choiceIndex]?.value).toMatchObject({
         sessionId: "code-plan-review",
         interactionId: "plan-choice-1",
+      });
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("计划审批卡超时结算会广播 cyrene.choice.dismiss 清卡", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-plan-dismiss-"));
+    try {
+      vi.resetModules();
+      mocks.handlers.clear();
+      mocks.agentEvents = [];
+      mocks.runCyreneAgent.mockClear();
+      mocks.requestUserClarification.mockReset();
+      mocks.getSession.mockReturnValue({
+        id: "code-plan-dismiss",
+        mode: "code",
+        workspaceBinding: { workspaceRoot: tempRoot, displayName: "workspace", boundAt: 1 },
+      });
+      mocks.requestUserClarification.mockImplementation(async (_card, send, onSettled, identity) => {
+        send({
+          interactionId: "plan-choice-dismiss",
+          runId: identity.runId,
+          revision: identity.revision,
+          mode: "semantic_clarification",
+          intro: "计划已生成",
+          questions: [{
+            id: "plan_decision",
+            prompt: "是否批准此计划？",
+            required: true,
+            multiple: false,
+            options: [
+              { id: "approve", label: "批准计划，开始执行" },
+              { id: "supplement", label: "我要修改 / 补充" },
+            ],
+            customInput: { enabled: false },
+          }],
+        });
+        // 模拟超时路径：pending 被结算时必须通过 onSettled 通知渲染端清卡
+        onSettled({ id: "plan-choice-dismiss", runId: identity.runId, revision: identity.revision, reason: "timeout" });
+        return { requestId: "plan-choice-dismiss", answers: [] };
+      });
+
+      const planMode = await import("./orchestrator/plan-mode");
+      planMode.enterPlanDiscussing("code-plan-dismiss", tempRoot);
+      planMode.markPlanWritten("code-plan-dismiss");
+      const planPath = planMode.getPlanPath("code-plan-dismiss");
+      fs.mkdirSync(path.dirname(planPath), { recursive: true });
+      fs.writeFileSync(planPath, "# 测试计划\n", "utf8");
+
+      const { registerAgUiIpc } = await import("./agui-bridge");
+      const sent: Array<{ type?: string; name?: string; runId?: string; value?: Record<string, unknown> }> = [];
+      registerAgUiIpc(async () => ({
+        options: {
+          settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+          messages: [], timeoutMs: 1000, toolSystemContent: "TOOL", soulSystemBaseContent: "SOUL",
+        },
+        latestUserText: "写好计划",
+      }), async () => {}, () => null);
+
+      const handler = mocks.handlers.get(IPC.AGUI_RUN);
+      if (!handler) throw new Error("AGUI_RUN handler was not registered");
+      await handler(
+        { sender: { isDestroyed: () => false, send: (_channel: string, event: typeof sent[number]) => sent.push(event) } },
+        { messages: [{ role: "user", content: "写好计划" }], sessionId: "code-plan-dismiss" },
+      );
+      await expect.poll(() => sent.find((event) => event.name === "cyrene.choice.dismiss")).toBeTruthy();
+
+      // dismiss 必须携带与审批卡一致的 runId / revision 身份，渲染端 shouldDismissAsk 才能匹配清卡
+      const dismiss = sent.find((event) => event.name === "cyrene.choice.dismiss");
+      const runId = sent.find((event) => event.type === "RUN_STARTED")?.runId;
+      expect(dismiss?.value).toMatchObject({
+        id: "plan-choice-dismiss",
+        runId,
+        revision: 1,
+        reason: "timeout",
       });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });

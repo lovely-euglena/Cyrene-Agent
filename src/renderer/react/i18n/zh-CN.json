@@ -91,7 +91,21 @@
     "attachmentDirect": "已交给主模型查看",
     "attachmentDone": "视觉分析完成",
     "editLastMessageAria": "编辑最后一条消息",
-    "saveAndRegenerate": "保存并重新生成"
+    "saveAndRegenerate": "保存并重新生成",
+    "mermaidPending": "图表生成中…",
+    "mermaidFallback": "该图类型暂不支持或内容过长，已降级为源码显示",
+    "svgCardPending": "卡片生成中…",
+    "svgCardFallback": "SVG 内容无效或过长，已降级为源码显示",
+    "diagramPreview": "图表预览",
+    "diagramZoomHint": "点击放大查看",
+    "channelSource": {
+      "wechat": "微信",
+      "feishu": "飞书",
+      "qq": "QQ",
+      "qqbot": "QQ Bot",
+      "unknown": "外部渠道",
+      "sameConversation": "{{channels}} · 同一对话"
+    }
   },
   "contextRing": {
     "categorySystemPrompt": "系统提示词",
@@ -215,6 +229,9 @@
   "pluginPanel": {
     "title": "功能插件",
     "subtitle": "管理已安装的功能插件；新导入的插件默认停用，请确认来源可信后再启用。",
+    "registryPrefix": "Cyrene 收录仓库:",
+    "registryLink": "Cyrene-Plugins",
+    "registrySuffix": "；昔涟已经配套具体的 SDK 与 Skill，可以直接让她帮你开发。",
     "searchPlaceholder": "搜索插件名称、描述或开发者…",
     "refresh": "刷新插件",
     "add": "添加插件",
@@ -243,6 +260,27 @@
       "running": "运行中",
       "stopping": "停用中",
       "failed": "启动失败"
+    },
+    "market": {
+      "title": "插件市场",
+      "subtitle": "从官方收录仓库在线安装插件；安装后默认停用，可返回插件列表启用。",
+      "toggle": "插件市场",
+      "back": "返回插件管理",
+      "install": "安装",
+      "update": "更新",
+      "installing": "安装中…",
+      "installed": "已安装 v{{version}}",
+      "installedLocalNewer": "已安装 v{{version}}（本地版本更高）",
+      "replaceInstall": "替换安装",
+      "replaceHint": "已存在同 ID 的本地插件，点击后将弹出替换确认",
+      "emptyHint": "市场暂无插件",
+      "downloads": "{{downloads}} 次下载",
+      "loadFailed": "获取插件列表失败：{{error}}",
+      "installFailed": "安装失败：{{error}}",
+      "installSuccess": "“{{name}}”安装成功，默认停用中，可返回插件列表启用。",
+      "sourceUsed": "数据源",
+      "sourceStandby": "可用",
+      "sourceDead": "已死"
     }
   },
   "toolPanel": {
@@ -325,7 +363,26 @@
     "workspaceLabel": "工作区",
     "targetLabel": "目标",
     "deny": "拒绝",
-    "allow": "允许"
+    "allow": "允许",
+    "quizTitle": "昔涟的突击抽查",
+    "quizGradedTitle": "抽查结果",
+    "quizSubmit": "提交作答",
+    "quizSubmitting": "判分中…",
+    "quizSkip": "跳过抽查",
+    "quizTrueLabel": "正确",
+    "quizFalseLabel": "错误",
+    "quizShortAnswerLabel": "你的回答",
+    "quizShortAnswerPlaceholder": "写下你的回答…",
+    "quizObjectiveLabel": "考察知识点",
+    "quizGradedCorrect": "答对了",
+    "quizGradedIncorrect": "答错了",
+    "quizGradedPending": "待讲评",
+    "quizYourAnswer": "你的回答",
+    "quizCorrectAnswer": "正确答案",
+    "quizPendingHint": "这题 Cyrene 稍后逐字讲评。",
+    "quizIncompleteError": "还有题目没答完，答完再提交哦。",
+    "quizInvalidError": "作答内容好像有点问题，调整一下再试试。",
+    "quizNotFoundError": "这次抽查已经结束啦。"
   },
   "review": {
     "kindModified": "修改",
@@ -339,7 +396,13 @@
     "binaryHint": "二进制文件，无法显示差异",
     "largeTextHint": "文件过大，未生成行级差异",
     "renamedHint": "文件已重命名，内容无变更",
-    "noDiffHint": "无行级差异"
+    "noDiffHint": "无行级差异",
+    "restoreButton": "恢复到本次运行前",
+    "restoreConfirm": "确认恢复？之后的改动会被覆盖",
+    "restoreRunning": "正在恢复…",
+    "restoreDone": "已恢复 {{count}} 个文件",
+    "restorePartial": "恢复 {{restored}} 个，跳过 {{skipped}} 个，失败 {{failed}} 个",
+    "restoreFailed": "恢复失败：{{reason}}"
   },
   "planReview": {
     "noteReview": "请审阅计划内容后在对话中的卡片里决定",
@@ -537,9 +600,63 @@
     "tools": "工具",
     "skills": "技能",
     "plugins": "插件",
+    "moments": "动态",
     "modelNotConnected": "模型未连接",
     "userAlt": "用户",
     "settings": "设置",
     "newButton": "新建"
+  },
+  "moments": {
+    "title": "动态",
+    "subtitle": "记录你和昔涟的生活瞬间",
+    "postCount": "{{count}} 条动态",
+    "composerTitlePlaceholder": "标题（可选）",
+    "composerPlaceholder": "分享此刻…",
+    "addImages": "添加图片",
+    "imagesCount": "{{count}}/9",
+    "publish": "发表",
+    "publishing": "发表中…",
+    "publishFailed": "发布失败，请稍后重试",
+    "empty": "还没有动态，来发第一条吧",
+    "loadFailed": "动态加载失败",
+    "apiUnavailable": "动态服务暂不可用",
+    "cyreneName": "昔涟",
+    "userFallbackName": "我",
+    "like": "赞",
+    "comment": "评论",
+    "commentPlaceholder": "评论…",
+    "replyPlaceholder": "回复 {{name}}…",
+    "send": "发送",
+    "cancel": "取消",
+    "delete": "删除",
+    "confirmDelete": "确定删除这条动态吗？评论和点赞会一起删除。",
+    "replyPrefix": "回复",
+    "mention": {
+      "pickerEmpty": "没有匹配的名字",
+      "cyreneOptionLabel": "昔涟"
+    },
+    "notice": {
+      "title": "消息",
+      "bellTitle": "互动消息",
+      "empty": "还没有互动消息",
+      "actionLike": " 赞了你的动态",
+      "actionComment": " 评论了你的动态",
+      "actionReply": " 回复了你"
+    },
+    "time": {
+      "justNow": "刚刚",
+      "minutesAgo": "{{count}} 分钟前",
+      "yesterday": "昨天"
+    },
+    "error": {
+      "invalid_input": "内容为空或超出长度限制",
+      "too_many_images": "最多添加 9 张图片",
+      "image_too_large": "图片过大或为空（单张不超过 15MB）",
+      "unsupported_mime": "仅支持 PNG / JPEG / WebP 图片",
+      "post_not_found": "这条动态已不存在",
+      "reply_to_not_found": "要回复的评论已不存在",
+      "reaction_exists": "已经赞过了",
+      "moments_disabled": "动态功能已关闭"
+    }
   }
 }

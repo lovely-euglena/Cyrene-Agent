@@ -182,6 +182,7 @@ describe("createContext", () => {
     const ctx = createContext("demo", tmp, runtime(), {
       on: () => () => { throw new Error("unsubscribe failed"); },
       emit: async () => {},
+      emitLifecycleBarrier: async () => {},
     });
     ctx.events.on("host:runtime:ready", () => {});
     ctx.onDispose(cleanup);
@@ -293,6 +294,49 @@ describe("createContext", () => {
     ]);
     expect(result).toBe("模型结果");
     expect(calls).toEqual(["你好"]);
+  });
+
+  it("声明 llm 但宿主未提供该服务时，注册前直接失败", () => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), "cyrene-ctx-test-"));
+    // 声明的依赖是硬约束：宿主没有该服务时在 createContext 就抛错，
+    // 走激活回滚，而不是注入 undefined 让插件误判服务可用。
+    expect(() => createTestContext(runtime(), ["llm"])).toThrow(/宿主未提供已声明的依赖: llm/);
+  });
+
+  it("宿主服务工厂提供的服务按 manifest 声明注入", () => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), "cyrene-ctx-test-"));
+    const marker = vi.fn();
+    const rt = runtime();
+    rt.hostServices = {
+      createForPlugin: ({ pluginId, trackResource }) => {
+        expect(pluginId).toBe("demo");
+        expect(trackResource).toBeDefined();
+        return {
+          secrets: {
+            get: async () => "value",
+            set: async () => marker("set"),
+            delete: async () => true,
+          },
+        };
+      },
+    };
+    const ctx = createTestContext(rt, ["secrets"]);
+    expect(ctx.deps.llm).toBeUndefined();
+    void ctx.deps.secrets?.set("k", "v");
+    expect(marker).toHaveBeenCalledWith("set");
+  });
+
+  it("包装 llm 服务时保留宿主提供的 runGoal", () => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), "cyrene-ctx-test-"));
+    const rt = runtime();
+    const runGoal = vi.fn();
+    rt.llm = {
+      generateText: async () => "text",
+      runGoal,
+    } as unknown as NonNullable<PluginRuntime["llm"]>;
+
+    const ctx = createTestContext(rt, ["llm"]);
+    expect((ctx.deps.llm as { runGoal?: unknown } | undefined)?.runGoal).toBe(runGoal);
   });
 
   it("dispose 返回 Promise 并等待渠道注销完成", async () => {

@@ -105,12 +105,21 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   citaEnabled: boolean;
   citaSemanticEngine: "remote" | "local";
   chatSocialContextEnabled: boolean;
+  momentsEnabled: boolean;
+  chatMomentsContextEnabled: boolean;
+  cyreneMomentsPostingEnabled: boolean;
+  cyreneMomentsReactionsEnabled: boolean;
+  momentsCharacterReactionsEnabled: boolean;
+  /** 朋友圈热闹程度：抽签人数分布与角色日调用上限联动档位 */
+  momentsLiveliness: "quiet" | "natural" | "lively";
   petAlwaysOnTop: boolean;
   petVisible: boolean;
   petZoom: number;
   disableGpuElectron?: boolean;
   sidebarVisible: boolean;
   tasksVisible: boolean;
+  /** 提醒中心音效总开关：关闭后所有 toast 静音 */
+  toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   language: "zh-CN";
   uiTheme: UiTheme;
@@ -291,6 +300,20 @@ export interface SettingsApi {
   channelsQqBotTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;
   channelsLogGet: (limit?: number) => Promise<unknown[]>;
   channelsLogClear: () => Promise<{ ok: boolean }>;
+  channelsContextBindingsGet: () => Promise<{
+    externalChats: Array<{
+      sessionId: string;
+      channel: string;
+      chatId: string;
+      chatType: "private" | "group";
+      senderName?: string;
+      lastAt: number;
+    }>;
+    bindings: Array<{ sessionId: string; conversationId: string; updatedAt: number }>;
+    conversations: Array<{ id: string; title: string; mode: string; updatedAt: number }>;
+  }>;
+  channelsContextBind: (payload: { sessionId: string; conversationId: string }) => Promise<{ ok: boolean; error?: string }>;
+  channelsContextUnbind: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
   onChannelsInstallProgress: (callback: (progress: { channel: string; phase: string; pct: number }) => void) => (() => void) | void;
   onChannelsWechatQrcode: (callback: (dataUrl: string) => void) => (() => void) | void;
   onChannelsWechatLoginDone: (callback: (payload: { ok: boolean; botId?: string; error?: string }) => void) => (() => void) | void;

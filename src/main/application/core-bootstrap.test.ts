@@ -33,17 +33,21 @@ function makeCoreDeps(calls: string[], overrides: Partial<CoreDependencies> = {}
   const activation = createWindowActivationBroker();
   const chatLoad = vi.fn(async () => { calls.push("chat-load"); });
   let petWindowCreated = false;
+  const petShowOnReadyArgs: boolean[] = [];
   const chatWindow = { isDestroyed: () => false, show: vi.fn() };
   const petWindow = { isDestroyed: () => false };
 
-  const deps: CoreDependencies = {
+  const deps: CoreDependencies & { petShowOnReadyArgs: boolean[] } = {
+    wireToastCenter: vi.fn(),
+    petShowOnReadyArgs,
     shell: {
       ipc: { handle: vi.fn(), on: vi.fn(), dispose: vi.fn() },
       splashWindow: null,
       loadingShownAt: 100,
       windowManager: {
-        createPetWindow: vi.fn(() => {
+        createPetWindow: vi.fn((showOnReady: boolean) => {
           petWindowCreated = true;
+          petShowOnReadyArgs.push(showOnReady);
           return petWindow;
         }),
         onPetWindowReady: vi.fn(),
@@ -171,7 +175,10 @@ describe("startCore", () => {
       loadGeneralSettings: () => ({ petVisible: false, sidebarVisible: false, tasksVisible: false }) as never,
     });
     await startCore(hidden);
-    expect(hidden.petWindowCreated).toBe(false);
+    // 上游语义（c2a14d75）：窗口始终创建，petVisible 只决定是否显示——
+    // 托盘「显示/隐藏桌宠」与设置开关随时可救回
+    expect(hidden.petWindowCreated).toBe(true);
+    expect(hidden.petShowOnReadyArgs.at(-1)).toBe(false);
     expect(hidden.shell.windowManager.createSidebarWindow).not.toHaveBeenCalled();
     expect(hidden.shell.windowManager.createTasksWindow).not.toHaveBeenCalled();
   });

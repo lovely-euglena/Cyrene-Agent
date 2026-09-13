@@ -2,15 +2,26 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
 import type { StartTtsRequest, TtsSessionEvent, TtsStartResult } from "../shared/tts-session";
 import type { ScreenshotInsertPayload } from "../shared/ipc-channels";
+import type {
+  SpeechInputCommitRequest,
+  SpeechInputCommitResult,
+} from "../shared/ipc-channels";
 import type { UiTheme } from "../shared/ui-theme";
 import type { UiFont } from "../shared/ui-font";
+import type { PluginPanelApi } from "../shared/plugin-management";
 import type { ReasoningPreference } from "../shared/reasoning";
 import type { DocumentIndexProgress } from "../main/rag/document-index-queue";
 import type { AguiRunAck } from "../shared/run-terminal";
-import type { ReviewSnapshot } from "../shared/review-types";
+import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
+import type { ConversationMode } from "../shared/chat-types";
+import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
+
+// 渲染目标标识：preload 每次加载（即每次页面初始化/重新加载）生成一次，
+// 随活动会话一并上报主进程；同一页面内切换会话不改变该标识。
+const rendererTargetId = crypto.randomUUID();
 
 const cyreneApi = {
   minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
@@ -57,7 +68,7 @@ const chatApi = {
   isMaximized: () => ipcRenderer.invoke(IPC.CHAT_IS_MAXIMIZED),
   getEnabledStickers: () => ipcRenderer.invoke(IPC.STICKERS_GET_ENABLED),
   /** 从 dataTransfer.files 或 fileInput.files 提取路径后批量摄入。
-   *  路径提取在 preload（webUtils.getPathForFile），避免 Electron 33 中 File.path 不可用的问题。 */
+   *  路径提取在 preload（webUtils.getPathForFile），避免新版 Electron 中 File.path 不可用的问题。 */
   ingestDroppedFiles: async (files: File[]): Promise<unknown[]> => {
     const paths: string[] = [];
     for (const f of files) {
@@ -140,6 +151,11 @@ const aguiApi = {
     return () => ipcRenderer.off(IPC.AGUI_EVENT, listener);
   },
   cancel: (runId?: string) => ipcRenderer.invoke(IPC.AGUI_CANCEL, runId),
+  // 落盘确认（单向通知）：本轮 run 的终态消息已写入会话存储，
+  // 主进程据此发布桌面轮次结束事件（插件生命周期观察）。
+  reportRunPersisted: (payload: { runId: string; finalMessageId?: string }) => {
+    ipcRenderer.send(IPC.AGUI_RUN_PERSISTED, payload);
+  },
   getInterruptedRun: (sessionId: string) => ipcRenderer.invoke(IPC.HARNESS_GET_INTERRUPTED_RUN, sessionId) as Promise<{
     runId: string; rounds: number; todoCount: number; updatedAt: number;
   } | null>,
@@ -202,6 +218,43 @@ const tasksApi = {
 
 contextBridge.exposeInMainWorld("sidebar", sidebarApi);
 contextBridge.exposeInMainWorld("tasks", tasksApi);
+
+// 注意力 Toast 中心 API：渲染页纯表现层。
+// 点击/关闭只上报 toast id，跳转目标由主进程查权威状态解析；高度上报服务于高度协议。
+const toastApi: import("../shared/toast-types").ToastRendererApi = {
+  getAll: () => ipcRenderer.invoke(IPC.TOAST_GET_ALL) as Promise<ToastItem[]>,
+  clicked: (id: string) => ipcRenderer.send(IPC.TOAST_CLICKED, id),
+  dismissed: (id: string) => ipcRenderer.send(IPC.TOAST_DISMISSED, id),
+  reportHeight: (height: number) => ipcRenderer.send(IPC.TOAST_RESIZE, height),
+  onPush: (callback: (payload: ToastPushPayload) => void) => {
+    const handler = (_e: unknown, payload: ToastPushPayload) => callback(payload);
+    ipcRenderer.on(IPC.TOAST_PUSH, handler);
+    return () => ipcRenderer.removeListener(IPC.TOAST_PUSH, handler);
+  },
+  onRemove: (callback: (id: string) => void) => {
+    const handler = (_e: unknown, id: string) => callback(id);
+    ipcRenderer.on(IPC.TOAST_REMOVE, handler);
+    return () => ipcRenderer.removeListener(IPC.TOAST_REMOVE, handler);
+  },
+};
+contextBridge.exposeInMainWorld("toast", toastApi);
+
+// Moments（动态 / 朋友圈）API：renderer 只能提交内容字段，author/id/createdAt 由主进程强制生成
+const momentsApi: import("../shared/moments-types").MomentsApi = {
+  list: (options) => ipcRenderer.invoke(IPC.MOMENTS_LIST, options),
+  getPost: (postId) => ipcRenderer.invoke(IPC.MOMENTS_GET_POST, postId),
+  createPost: (input) => ipcRenderer.invoke(IPC.MOMENTS_CREATE_POST, input),
+  deletePost: (postId) => ipcRenderer.invoke(IPC.MOMENTS_DELETE_POST, postId),
+  createComment: (input) => ipcRenderer.invoke(IPC.MOMENTS_CREATE_COMMENT, input),
+  toggleLike: (postId) => ipcRenderer.invoke(IPC.MOMENTS_TOGGLE_LIKE, postId),
+  listCharacters: () => ipcRenderer.invoke(IPC.MOMENTS_LIST_CHARACTERS),
+  onChanged: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on(IPC.MOMENTS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.MOMENTS_CHANGED, handler);
+  },
+};
+contextBridge.exposeInMainWorld("moments", momentsApi);
 
 // 通话窗口 API
 const callApi = {
@@ -378,6 +431,10 @@ const settingsApi = {
   // 消息日志
   channelsLogGet: (limit?: number) => ipcRenderer.invoke(IPC.CHANNELS_LOG_GET, limit ?? 100),
   channelsLogClear: () => ipcRenderer.invoke(IPC.CHANNELS_LOG_CLEAR),
+  channelsContextBindingsGet: () => ipcRenderer.invoke(IPC.CHANNELS_CONTEXT_BINDINGS_GET),
+  channelsContextBind: (payload: { sessionId: string; conversationId: string }) =>
+    ipcRenderer.invoke(IPC.CHANNELS_CONTEXT_BIND, payload),
+  channelsContextUnbind: (sessionId: string) => ipcRenderer.invoke(IPC.CHANNELS_CONTEXT_UNBIND, sessionId),
   onChannelsInstallProgress: (callback: (p: { channel: string; phase: string; pct: number }) => void) => {
     const listener = (_e: unknown, progress: { channel: string; phase: string; pct: number }) => callback(progress);
     ipcRenderer.on(IPC.CHANNELS_INSTALL_PROGRESS, listener);
@@ -439,6 +496,28 @@ const settingsApi = {
     ipcRenderer.on(IPC.PERMISSION_APPROVAL_SETTLED, listener);
     return () => ipcRenderer.removeListener(IPC.PERMISSION_APPROVAL_SETTLED, listener);
   },
+  // pop_quiz 抽查卡片（learn 模式）：主进程推送卡片（10s 幂等重播，同 quizId 覆盖）
+  onPopQuizRequest: (
+    cb: (card: { quizId: string; runId: string; intro: string; questions: unknown[] }) => void
+  ): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, card: Parameters<typeof cb>[0]) => cb(card);
+    ipcRenderer.on(IPC.POP_QUIZ_REQUEST, listener);
+    return () => ipcRenderer.removeListener(IPC.POP_QUIZ_REQUEST, listener);
+  },
+  // 提交作答：返回值带主进程本地判分详情，渲染端据此切展示态
+  resolvePopQuiz: (submission: unknown): Promise<{ ok: boolean; error?: string; graded?: unknown[] }> =>
+    ipcRenderer.invoke(IPC.POP_QUIZ_RESOLVE, submission),
+  // 跳过整次抽查
+  skipPopQuiz: (quizId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.POP_QUIZ_SKIP, { quizId }),
+  // 抽查结算广播：提交/跳过/run 取消后主进程广播，渲染端据此清卡
+  onPopQuizSettled: (
+    cb: (settlement: { quizId: string; runId?: string; reason: "submitted" | "skipped" | "cancelled" }) => void
+  ): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, settlement: Parameters<typeof cb>[0]) => cb(settlement);
+    ipcRenderer.on(IPC.POP_QUIZ_SETTLED, listener);
+    return () => ipcRenderer.removeListener(IPC.POP_QUIZ_SETTLED, listener);
+  },
   // 截图热键捕获（设置页临时挂起全局快捷键）
   beginScreenshotHotkeyCapture: () => ipcRenderer.invoke(IPC.SCREENSHOT_HOTKEY_CAPTURE_START),
   endScreenshotHotkeyCapture: () => ipcRenderer.invoke(IPC.SCREENSHOT_HOTKEY_CAPTURE_END),
@@ -454,9 +533,20 @@ const pluginsApi = {
   rescan: () => ipcRenderer.invoke(IPC.PLUGINS_RESCAN),
   importZip: () => ipcRenderer.invoke(IPC.PLUGINS_IMPORT_ZIP),
   uninstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_UNINSTALL, id),
+  marketList: () => ipcRenderer.invoke(IPC.PLUGINS_MARKET_LIST),
+  marketInstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_INSTALL, id),
 };
 
 contextBridge.exposeInMainWorld("plugins", pluginsApi);
+
+// 设置面板桥的统一转发通道：只暴露单一 invoke，pluginId 由设置页宿主
+// 按 iframe 归属填入；主进程侧还会校验 sender 窗口身份
+const pluginPanelApi: PluginPanelApi = {
+  invoke: (pluginId, channel, args) =>
+    ipcRenderer.invoke(IPC.PLUGINS_PANEL_INVOKE, pluginId, channel, args),
+};
+
+contextBridge.exposeInMainWorld("pluginPanel", pluginPanelApi);
 
 const schedulerApi = {
   list: () => ipcRenderer.invoke(IPC.SCHEDULER_LIST),
@@ -613,9 +703,13 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_OPEN_WORKSPACE, workspaceRoot),
   migrateLegacy: (messages: unknown[]) =>
     ipcRenderer.invoke(IPC.CHATS_MIGRATE_LEGACY, messages),
-  // 聊天窗口加载 / 切换 session 时上报；其他窗口可查询/订阅
-  setActiveSession: (sessionId: string | null) =>
-    ipcRenderer.invoke(IPC.CHATS_SET_ACTIVE_SESSION, sessionId),
+  // 聊天窗口加载 / 切换 session 时上报；附带本页面的渲染目标标识与会话模式，
+  // 主进程据此维护语音输入租约冻结的活动目标；其他窗口可查询/订阅
+  setActiveSession: (sessionId: string | null, mode?: ConversationMode) =>
+    ipcRenderer.invoke(
+      IPC.CHATS_SET_ACTIVE_SESSION,
+      sessionId ? { sessionId, mode, rendererTargetId } : null,
+    ),
   getActiveSession: () => ipcRenderer.invoke(IPC.CHATS_GET_ACTIVE_SESSION),
   onActiveSessionChanged: (callback: (sessionId: string | null) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, sessionId: string | null) => callback(sessionId);
@@ -656,6 +750,20 @@ const chatStoreApi = {
   },
   // reactChatWindow → main：ChatPage 已挂好 IPC 监听，允许 flush pending sessionId
   notifyReactReady: () => ipcRenderer.send(IPC.CHATS_REACT_READY),
+  // 本页面的渲染目标标识（页面初始化时生成一次；语音提交桥据此识别过期请求）
+  getRendererTargetId: () => rendererTargetId,
+  // main → ChatPage：外部语音文本提交请求（携带租约冻结的目标）
+  onSpeechInputCommitRequest: (callback: (request: SpeechInputCommitRequest) => void) => {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      request: SpeechInputCommitRequest,
+    ) => callback(request);
+    ipcRenderer.on(IPC.SPEECH_INPUT_COMMIT_REQUEST, listener);
+    return () => ipcRenderer.removeListener(IPC.SPEECH_INPUT_COMMIT_REQUEST, listener);
+  },
+  // ChatPage → main：提交结果（必须回显 requestId 与 rendererTargetId）
+  sendSpeechInputCommitResult: (result: SpeechInputCommitResult) =>
+    ipcRenderer.send(IPC.SPEECH_INPUT_COMMIT_RESULT, result),
 };
 
 contextBridge.exposeInMainWorld("chatStore", chatStoreApi);
@@ -663,6 +771,8 @@ contextBridge.exposeInMainWorld("chatStore", chatStoreApi);
 // Review 快照：获取指定 Run 的不可变文件变更审查数据
 const reviewApi = {
   get: (runId: string) => ipcRenderer.invoke(IPC.REVIEW_GET, runId) as Promise<ReviewSnapshot | null>,
+  // 把本次 Run 修改过的文件恢复到运行前状态（基于 before/ 基线）
+  restore: (runId: string) => ipcRenderer.invoke(IPC.REVIEW_RESTORE, runId) as Promise<ReviewRestoreOutcome>,
 };
 
 contextBridge.exposeInMainWorld("review", reviewApi);

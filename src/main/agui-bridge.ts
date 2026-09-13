@@ -8,7 +8,7 @@
 // Agent 的 Observable 是内存流、跨不过进程边界。
 // 因此主进程统一持有运行并仅把事件发送给 Renderer。
 import * as fs from "fs";
-import { app, BrowserWindow, IpcMainInvokeEvent, WebContents } from "electron";
+import { app, IpcMainInvokeEvent, WebContents } from "electron";
 import { getHarnessRunStore } from "./orchestrator/harness/run-store";
 import { IPC } from "../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "./application/ipc-scope";
@@ -21,8 +21,8 @@ import {
   type CyreneRunResult,
 } from "./orchestrator/cyrene-agent";
 import { RunSettlementGate } from "./orchestrator/run-settlement";
+import { toastEvents } from "./toast/toast-events";
 import type { AguiRunAck, CyreneRunTerminalResult } from "../shared/run-terminal";
-import { createAguiStreamThrottle } from "./orchestrator/agui-stream-throttle";
 import { indexConversationTurn } from "./orchestrator/tools/history-tools";
 import type { RelationshipChannel } from "./relationship/relationship-log";
 import { createThinkFilter, type ThinkStreamFilter, type ThinkFilterMode } from "./chat/think-filter";
@@ -33,10 +33,17 @@ import { registerObsidianTools, unregisterObsidianTools } from "./learn/obsidian
 import { getAdapterForConfig } from "./orchestrator/vendors";
 import { perf } from "./perf-trace";
 import type { StyleId } from "../shared/style-sampling";
+import type { PendingTurnLifecycle } from "./plugin-host/pending-turn-lifecycle";
 import * as chatsStore from "./chats/chats-store";
 import type { ConversationMode } from "../shared/chat-types";
-import { requestUserClarification, cancelPendingChoicesForRun } from "./user-choice";
+import {
+  requestUserClarification,
+  cancelPendingChoicesForRun,
+  type ChoiceCardData,
+  type ChoiceSettlement,
+} from "./user-choice";
 import { cancelPendingApprovalsForRun } from "./permission";
+import { cancelPendingQuizzesForRun, takeQuizEvidenceForRun } from "./orchestrator/pop-quiz";
 import { approvePlan, getPlanPath, moveToReview, supplementPlan } from "./orchestrator/plan-mode";
 import { buildPlanReviewCard, buildPlanSupplementCard } from "./orchestrator/harness/plan-tools";
 import type { AskUserAnswer } from "../shared/ask-clarification";
@@ -91,8 +98,14 @@ export interface AguiRunInput {
   /** 本轮表达风格，与 executionMode 正交。 */
   styleId?: StyleId | string;
   sessionId?: string;    // 会话 ID；桌面运行模式只信任该会话持久化的 mode
+  /** 主进程内部使用：为共享上下文指定工作区绑定来源；null 表示本轮不加载任何工作区。 */
+  workspaceBindingSessionId?: string | null;
   /** 外部渠道入口。桌面聊天不传；微信/飞书用于注入渠道语气规则。 */
   channel?: RelationshipChannel;
+  /** 仅主进程内部使用：插件无头 Agent 指定提示词 Provider 场景；缺省为 conversation。 */
+  promptSource?: "conversation" | "plugin-agent";
+  /** 仅主进程内部使用：传给插件提示词 Provider 的逻辑渠道，不参与内置渠道规则。 */
+  promptChannel?: string;
   /** @deprecated 仅保留 Renderer 兼容；主进程按 ChatSession.mode 分流并忽略该值。 */
   executionMode?: ConversationMode | "soul-only" | "collaboration";
   /** 主进程内部使用：由 ChatSession.mode 注入，用于选择对应模式的 system prompt。 */
@@ -224,6 +237,23 @@ function startPlanReviewFlow(params: {
   send: (event: unknown) => void;
 }): void {
   const { sessionId, threadId, runId, send } = params;
+  // 计划审批卡与补充卡共用同一收发通道：run 已结束，渲染端靠持久监听器收卡。
+  // 卡片与结算（超时/取消）都带同一 runId 身份，结算事件让渲染端立即清卡，
+  // 不留点不出结果的僵尸卡（与 run 内 ask_user 卡同机制）。
+  const sendPlanCard = (cardData: ChoiceCardData): void => send({
+    type: "CUSTOM",
+    name: "cyrene.choice",
+    value: { ...cardData, sessionId },
+    threadId,
+    runId,
+  });
+  const sendPlanDismiss = (settlement: ChoiceSettlement): void => send({
+    type: "CUSTOM",
+    name: "cyrene.choice.dismiss",
+    value: settlement,
+    threadId,
+    runId,
+  });
   void (async () => {
     if (!moveToReview(sessionId)) return;
     console.log("[AgUiBridge][Plan] run finished with write_plan, entering PLAN_REVIEW");
@@ -242,16 +272,13 @@ function startPlanReviewFlow(params: {
       threadId,
       runId,
     });
+    // 注意力提醒：计划进入审批，先于审批卡发布（ToastService 据此把同 runId 的
+    // choice 卡归类为 plan-review，避免双弹）
+    toastEvents.publishPlanReview({ sessionId, runId });
     const answer = await requestUserClarification(
       buildPlanReviewCard(planPath),
-      (cardData) => send({
-        type: "CUSTOM",
-        name: "cyrene.choice",
-        value: { ...cardData, sessionId },
-        threadId,
-        runId,
-      }),
-      undefined,
+      sendPlanCard,
+      sendPlanDismiss,
       { runId, revision: 1 },
     ) as AskUserAnswer;
     const decision = answer.answers.find((a) => a.field === "plan_decision");
@@ -259,6 +286,8 @@ function startPlanReviewFlow(params: {
       console.log("[AgUiBridge][Plan] plan approved, entering EXECUTING");
       // 渲染端对此事件做持久监听（run 订阅此时已解除），按 sessionId 匹配后自动发送执行消息。
       send({ type: "CUSTOM", name: "cyrene.plan.approved", value: { planPath, sessionId }, threadId, runId });
+      // 注意力提醒：计划已批准，ToastService 清去重记忆与残留 toast
+      toastEvents.publishPlanApproved({ sessionId, runId });
       return;
     }
     // 非批准（含超时空答案）：统一拉回讨论态
@@ -268,14 +297,8 @@ function startPlanReviewFlow(params: {
     console.log("[AgUiBridge][Plan] user wants to supplement, asking for details");
     const supplementAnswer = await requestUserClarification(
       buildPlanSupplementCard(),
-      (cardData) => send({
-        type: "CUSTOM",
-        name: "cyrene.choice",
-        value: { ...cardData, sessionId },
-        threadId,
-        runId,
-      }),
-      undefined,
+      sendPlanCard,
+      sendPlanDismiss,
       { runId, revision: 2 },
     ) as AskUserAnswer;
     const supplementText = supplementAnswer.answers
@@ -295,6 +318,8 @@ function startPlanReviewFlow(params: {
   })().catch((err) => {
     console.warn("[AgUiBridge][Plan] review flow failed:", err);
     supplementPlan(sessionId);
+    // 注意力提醒：流程异常终止，同样要清理（幂等，与既有结算清理重合无副作用）
+    toastEvents.publishPlanReviewEnded({ sessionId, runId });
   });
 }
 
@@ -304,6 +329,7 @@ function startPlanReviewFlow(params: {
  * @param buildOptions 把渲染进程输入转成 agent options（含上下文构建）
  * @param onRunFinished agent 跑完的副作用（记忆/sticker 等）
  * @param getChatWindow 聊天窗口（事件要发到这里）
+ * @param pendingTurns 桌面轮次生命周期协调器；缺省不发布轮次事件（测试与早期装配）
  */
 export function registerAgUiIpc(
   buildOptions: BuildOptionsFn,
@@ -311,10 +337,25 @@ export function registerAgUiIpc(
   getChatWindow: GetChatWindowFn,
   lifecycle?: AguiConversationLifecycle,
   ipcOption?: IpcScope,
+  pendingTurns?: PendingTurnLifecycle,
 ): void {
   const ipc = ipcOption ?? createIpcScope();
   buildOptionsFn = buildOptions;
   getChatWindowFn = getChatWindow;
+
+  // 渲染端落盘确认（单向通知）：ChatPage 在 checkpointRun("terminal", true) 成功后上报。
+  // 协调器据此在"终态 + 落盘确认"双条件满足时发布桌面 turn:finished。
+  if (pendingTurns) {
+    ipc.on(IPC.AGUI_RUN_PERSISTED, (_event, payload: unknown) => {
+      const ack = payload as { runId?: unknown; finalMessageId?: unknown };
+      if (typeof ack?.runId !== "string" || !ack.runId) return;
+      pendingTurns.confirmPersistence(ack.runId, {
+        ...(typeof ack.finalMessageId === "string" && ack.finalMessageId
+          ? { finalMessageId: ack.finalMessageId }
+          : {}),
+      });
+    });
+  }
 
   ipc.handle(IPC.HARNESS_GET_INTERRUPTED_RUN, (_event, conversationId: unknown) => {
     if (typeof conversationId !== "string" || !conversationId) return null;
@@ -340,23 +381,12 @@ export function registerAgUiIpc(
     // 事件转发目标：优先用 invoke 的 sender（发起 run 的窗口），兜底用聊天窗口
     const sender = event.sender;
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    // 流式内容事件按固定 0.1s 批量吐 token（LLM 单 token 事件频率可达
-    // 每 tick 数十次，逐条 IPC → 渲染层全列表重渲染是"聊天窗口卡"的主因）；
-    // 控制类/工具/错误事件不攒立即发。窗口不可见（最小化/后台）时攒批
-    // 暂不 flush，可见时一次性补发——避免为看不见的输出烧渲染。
-    const throttled = createAguiStreamThrottle();
+    const turnStartedAt = Date.now();
 
     const send = (baseEvent: unknown): void => {
-      // 内容事件进攒批（runId 在 deliverEvent 统一补）；控制类事件立即投递
-      if (throttled.offer(baseEvent)) {
-        // 已入批。flush 由 100ms 定时器或 run 终态触发
-        return;
-      }
-      deliverEvent(baseEvent);
-    };
-
-    const deliverEvent = (baseEvent: unknown): void => {
+      // CyreneAgent 的 RUN_STARTED / RUN_FINISHED 自带 runId，但 ChatLoop 等内部
+      // AgentLoopEvent 经 toAguiEvent 转换后没有。渲染端用 runId 隔离并发会话，
+      // 因此所有桥层发出的事件都必须带 canonical runId，不能只给终态事件补上。
       const eventWithRunId = baseEvent && typeof baseEvent === "object"
         ? { ...(baseEvent as Record<string, unknown>), runId: (baseEvent as { runId?: unknown }).runId ?? runId }
         : baseEvent;
@@ -374,24 +404,6 @@ export function registerAgUiIpc(
         }
       }
     };
-
-    const targetVisible = (): boolean => {
-      // 不可见（隐藏/最小化）：攒批不 flush。sender 优先；聊天窗兜底目标
-      for (const wc of [sender, getChatWindowFn()?.webContents]) {
-        if (!wc || wc.isDestroyed()) continue;
-        const win = BrowserWindow.fromWebContents(wc);
-        if (win && !win.isVisible()) return false;
-      }
-      return true;
-    };
-
-    // 不可见谓词：flush 定时器到期时窗口不可见 → 本轮不吐（数据留在
-    // 攒批缓冲，下一条内容事件到达时定时器重启；run 终态强制 flush
-    // 保证数据完整性）
-    throttled.setTargetVisible(targetVisible);
-    throttled.setDeliver((events: unknown[]) => {
-      for (const e of events) deliverEvent(e);
-    });
 
     // ── 顶层模式分流：读取 ChatSession.mode（唯一可信来源） ──
     const sessionId = input.sessionId;
@@ -513,6 +525,29 @@ export function registerAgUiIpc(
     const threadId = `thread-${Date.now()}`;
     const agent = new CyreneAgent({ threadId, description: "Cyrene 主聊天" });
 
+    // 桌面轮次事件：run 真正开跑时登记协调器（立即发布 turn:started）。
+    // turn:finished 由协调器在"终态 + 渲染端落盘确认"双条件满足后发布一次。
+    let detachPendingTurnWatchers: (() => void) | null = null;
+    if (pendingTurns) {
+      pendingTurns.beginTurn({
+        runId,
+        conversationId: sessionId,
+        mode,
+        inputMessageId: input.userTurnId ?? "",
+        ...(input.assistantTurnId ? { assistantMessageId: input.assistantTurnId } : {}),
+        startedAt: turnStartedAt,
+        runTimeoutMs: options.timeoutMs,
+      });
+      // 发起 run 的渲染进程销毁 / 重载 / 导航后，落盘确认永远不会到达，直接清理
+      const disposePendingTurn = (): void => { pendingTurns?.disposeEntry(runId); };
+      sender.once("destroyed", disposePendingTurn);
+      sender.once("did-start-navigation", disposePendingTurn);
+      detachPendingTurnWatchers = () => {
+        sender.removeListener("destroyed", disposePendingTurn);
+        sender.removeListener("did-start-navigation", disposePendingTurn);
+      };
+    }
+
     let pendingRunFinishedEvent: unknown | null = null;
     // exactly-once settlement gate。
     // complete / error 两条 RxJS 回调都会先 trySettle，只有第一次进入的那条会真正发出终态事件。
@@ -526,6 +561,9 @@ export function registerAgUiIpc(
       activeRuns.delete(runId);
       cancelPendingChoicesForRun(runId);
       cancelPendingApprovalsForRun(runId);
+      cancelPendingQuizzesForRun(runId);
+      detachPendingTurnWatchers?.();
+      detachPendingTurnWatchers = null;
     };
     const endLifecycle = (): void => {
       if (lifecycleEnded) return;
@@ -672,8 +710,6 @@ export function registerAgUiIpc(
         send(baseEvent);
       },
       error: (err) => {
-        throttled.flush();
-        throttled.dispose();
         endEmbeddedReasoning();
         thinkFilter = null; // 错误时丢弃残留 filter 状态
         pendingTextStart = null;
@@ -703,10 +739,23 @@ export function registerAgUiIpc(
             send(pendingRunFinishedEvent);
             pendingRunFinishedEvent = null;
           }
+          // 终态在 next(RUN_FINISHED) 已结算（success/cancelled/timeout），complete 可能不再被调用
+          const settled = settlementGate.get();
+          if (settled) {
+            pendingTurns?.settleTerminal(runId, {
+              status: settled.status,
+              durationMs: Date.now() - turnStartedAt,
+            });
+          }
           cleanupRunState();
           endLifecycle();
           return;
         }
+        // 桌面轮次终态登记（协调器内幂等：首个终态生效）
+        pendingTurns?.settleTerminal(runId, {
+          status: "runtime_error",
+          durationMs: Date.now() - turnStartedAt,
+        });
         // 补发 RUN_ERROR 事件，渲染端据此收尾（invoke 早已 resolve，靠事件驱动）
         send({ type: "RUN_ERROR", message, code, threadId, runId });
         cleanupRunState();
@@ -714,9 +763,6 @@ export function registerAgUiIpc(
       },
       complete: async () => {
         perf.mark("agent_run_complete");
-        // 兜底 flush：不可见期间攒下的 delta 与终态前最后一窗数据
-        throttled.flush();
-        throttled.dispose();
         cleanupRunState();
         // complete 路径下 settlement 应已由 next(RUN_FINISHED) 写入。
         // 若 upstream 走裸 complete（没有 RUN_FINISHED），必须补发一个合成的 RUN_FINISHED，
@@ -737,6 +783,13 @@ export function registerAgUiIpc(
         }
         const settlement = settlementGate.get();
         const isSuccessfulCompletion = settlement?.status === "success";
+        // 桌面轮次终态登记：complete 与 error 双路径都会调用，协调器只认首个终态
+        if (settlement) {
+          pendingTurns?.settleTerminal(runId, {
+            status: settlement.status,
+            durationMs: Date.now() - turnStartedAt,
+          });
+        }
         try {
           // cancelled / timeout / runtime_error 不跑成功收尾副作用
           // （sticker / memory / learn-progress / 历史召回）。
@@ -774,6 +827,8 @@ export function registerAgUiIpc(
                 model: options.settings.model,
                 apiKey: options.settings.apiKey,
               });
+              // 取走本轮抽查的实测作答（take 语义：取后即清，避免重复计入）
+              const quizEvidence = takeQuizEvidenceForRun(runId);
               void runLearnPostTurnHook({
                 adapter,
                 cfg: {
@@ -785,6 +840,7 @@ export function registerAgUiIpc(
                 systemPrompt: options.soulSystemBaseContent ?? "",
                 userMessage: latestUserText,
                 assistantMessage: lastResult.reply,
+                quizEvidence: quizEvidence.length > 0 ? quizEvidence : undefined,
               });
             }
           }
@@ -830,10 +886,11 @@ export function registerAgUiIpc(
       if (run && !run.abortController.signal.aborted) {
         run.abortController.abort();
       }
-      // 清理该 run 关联的 pending permission / ask_user 卡片。
+      // 清理该 run 关联的 pending permission / ask_user / pop_quiz 卡片。
       // 渲染端通过 RUN_FINISHED(result.status="cancelled") 自然收到卡片关闭信号。
       cancelPendingChoicesForRun(id);
       cancelPendingApprovalsForRun(id);
+      cancelPendingQuizzesForRun(id);
     };
     if (runId) {
       abortRun(runId);

@@ -15,7 +15,7 @@ vi.mock("electron", () => ({
   app: { getAppPath: () => "/app", isPackaged: false },
   BrowserWindow: class {
     destroyed = false;
-    webContents = { on: () => undefined, send: () => undefined, isDestroyed: () => false };
+    webContents = { on: () => undefined, send: () => undefined, isDestroyed: () => false, setWindowOpenHandler: () => undefined };
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; }
     show() { calls.push("show"); }

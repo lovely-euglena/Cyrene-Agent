@@ -24,6 +24,9 @@ export const MODEL_PRESETS: ModelPreset[] = [
     // DeepSeek：v1 vendor adapter 不为它做协议层强制，仅作为 OpenAI 兼容厂商列出。
     // 已确认（来自官方定价文档）：支持 Tool Calls / JSON Output；后端原生缓存（命中后输入价跌至 1/50~1/120）。
     // 缓存能力等 v2 vendor adapter 接入时再利用，v1 不动。
+    // V4.1 Flash（2026-09-10 发布）：模型名 deepseek-flash，原生多模态视觉；
+    // 旧名 v4-flash / v4-flash-vision-exp 是它的别名；v4-pro 官方将于 2026-09-14
+    // 起路由到 V4.1 Flash，保留在列表里供存量配置参考。
     providerName: "DeepSeek（深度求索）",
     shortName: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
@@ -82,8 +85,9 @@ export const MODEL_PRESETS: ModelPreset[] = [
     // 官方主推 Responses（o 系列完整思考摘要仅此协议有），新建档案默认预填 responses。
     transport: "responses",
     // 官方入口只推荐已纳入结构化输出 Profile 的型号；代理与自定义型号走“自定义端点”。
-    // gpt-5.6 为别名，路由到旗舰 Sol；terra/luna 为平衡与低成本档。
-    mainModels: ["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
+    // gpt-6-astra 为 2026-09-03 新旗舰（API 正在分批开放中）；gpt-5.6 为别名，
+    // 路由到旗舰 Sol；terra/luna 为平衡与低成本档。
+    mainModels: ["gpt-6-astra", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
     iconUrl: "../icons/providers/openai.svg",
     websiteUrl: "https://platform.openai.com/",
   },

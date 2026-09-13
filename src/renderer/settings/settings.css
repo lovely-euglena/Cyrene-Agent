@@ -114,10 +114,19 @@ body {
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
-.nav-item span {
+.nav-item > span:first-child {
+  flex: 0 0 18px;
   width: 18px;
   text-align: center;
   filter: drop-shadow(0 0 5px rgba(236, 72, 153, 0.35));
+}
+
+.nav-item > [data-i18n] {
+  min-width: 0;
+  width: auto;
+  white-space: nowrap;
+  text-align: left;
+  filter: none;
 }
 
 .nav-item svg.nav-item__icon {
@@ -476,6 +485,16 @@ body {
   color: rgba(255, 182, 220, 0.85);
   box-shadow: none;
   border: 1px solid rgba(255, 182, 220, 0.32);
+}
+
+#custom-style-sampling-btn,
+#custom-style-prompt-btn {
+  color: #fff;
+}
+
+#custom-style-sampling-btn > span,
+#custom-style-prompt-btn > span {
+  color: #fff;
 }
 .save-btn--ghost:hover:not(:disabled) {
   background: rgba(255, 110, 199, 0.10);
@@ -4067,6 +4086,29 @@ body {
 .channels-feedback--ok { color: rgba(74, 222, 128, 0.95); }
 .channels-feedback--err { color: rgba(248, 113, 113, 0.92); }
 .channels-feedback--info { color: rgba(250, 204, 21, 0.92); }
+.channels-context-bindings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.channels-context-binding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(254, 247, 255, 0.78);
+  font-size: 12px;
+}
+.channels-context-binding > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 微信扫码登录 QR 弹窗（modal overlay） */
 .channels-qr-modal {
@@ -4228,3 +4270,264 @@ body {
   display: none;
 }
 
+/* 本地音乐卡片操作区。 */
+.music-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.music-card-btn {
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--rb-border-soft);
+  background: var(--rb-bg-2);
+  color: var(--rb-text-default);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.music-card-btn:hover { border-color: var(--rb-border-strong); }
+.music-card-btn:active { background: var(--rb-bg-1); }
+.music-card-btn--text { font-size: 11px; }
+
+.music-card {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 182, 220, 0.14);
+}
+.music-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.music-card__header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* OpenAPI 配置卡片表单 */
+.music-openapi-card .music-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.music-openapi-card .form-label {
+  font-size: 12px;
+  color: var(--rb-text-muted);
+  margin-top: 4px;
+}
+.music-openapi-card .form-input--wide,
+.music-openapi-card .form-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border: 1px solid var(--rb-border, #d0d0d0);
+  border-radius: 6px;
+  background: var(--rb-surface, #fff);
+  color: var(--rb-text, #111);
+  box-sizing: border-box;
+}
+.music-openapi-card .form-textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.4;
+}
+.music-openapi-card .form-input--wide:focus,
+.music-openapi-card .form-textarea:focus {
+  outline: none;
+  border-color: var(--rb-primary, #2b6cff);
+}
+.music-status {
+  font-size: 12px;
+  color: var(--rb-text-muted);
+}
+
+.music-state-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.music-state-row {
+  display: grid;
+  grid-template-columns: 60px 16px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+}
+.music-state-row__label {
+  color: var(--rb-text-muted);
+}
+.music-state-row__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  background: #888;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4) inset;
+}
+.music-state-row__dot[data-color="green"] { background: #4ade80; }
+.music-state-row__dot[data-color="red"] { background: #f87171; }
+.music-state-row__dot[data-color="yellow"] { background: #facc15; }
+.music-state-row__dot[data-color="gray"] { background: #888; }
+.music-state-row__value {
+  font-family: var(--rb-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--rb-text-strong);
+}
+
+.music-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.music-actions .btn-primary,
+.music-actions .btn-secondary {
+  margin: 0;
+}
+
+.music-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  margin-bottom: 14px;
+}
+.music-profile__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+.music-profile__name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.music-profile__hint {
+  font-size: 11px;
+  color: var(--rb-text-muted);
+}
+
+.music-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 14px;
+}
+.music-qr__img {
+  width: 180px;
+  height: 180px;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px;
+}
+.music-qr__tip {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rb-text-muted);
+}
+
+.music-feedback {
+  font-size: 12px;
+  min-height: 18px;
+  color: var(--rb-text-muted);
+}
+.music-feedback--info { color: var(--rb-text-muted); }
+.music-feedback--ok { color: #4ade80; }
+.music-feedback--err { color: #f87171; }
+
+.music-search-results {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.music-search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.music-search-row__main {
+  min-width: 0;
+}
+.music-search-row__name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-search-row__meta {
+  font-size: 11px;
+  color: var(--rb-text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-search-row__play {
+  margin: 0;
+}
+
+/* ===== 插件设置面板（动态挂载的 sandbox iframe 卡片） ===== */
+.plugin-panels {
+  display: grid;
+  gap: 18px;
+}
+.plugin-panel-card {
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 182, 220, 0.12);
+}
+.plugin-panel-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.plugin-panel-card__header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: rgba(254, 247, 255, 0.92);
+}
+.plugin-panel-card__version {
+  font-size: 12px;
+  color: rgba(254, 247, 255, 0.5);
+}
+.plugin-panel-card__frame {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  transition: height 180ms ease;
+}

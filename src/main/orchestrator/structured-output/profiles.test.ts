@@ -6,11 +6,13 @@ import {
 
 describe("resolveStructuredOutputProfile", () => {
   test.each([
+    ["chatgpt", "gpt-6-astra", "openai", "provider_json_schema"],
     ["chatgpt", "gpt-5.6", "openai", "provider_json_schema"],
     ["claude", "claude-sonnet-4-6", "anthropic", "provider_json_schema"],
     ["kimi", "kimi-k3", "openai", "provider_json_schema"],
     ["kimi", "kimi-for-coding", "openai", "provider_json_schema"],
     ["doubao", "doubao-seed-2-1-pro-260628", "openai", "provider_json_schema"],
+    ["deepseek", "deepseek-flash", "openai", "provider_json_object"],
     ["deepseek", "deepseek-v4-pro", "openai", "provider_json_object"],
     ["qwen", "qwen3.7-plus", "openai", "provider_json_object"],
     ["glm", "glm-5.3", "openai", "provider_json_object"],

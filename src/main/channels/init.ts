@@ -17,13 +17,20 @@ import {
   saveChannelsSettings,
 } from "./settings-store";
 import { channelManager } from "./manager";
-import { channelDispatcher } from "./dispatcher";
+import type { MessageHandler } from "./types";
+import { getChannelConversationBindingStore } from "./conversation-binding-store";
+import { listSessions, getSession } from "../chats/chats-store";
+import {
+  bindContextConversation,
+  getContextBindingSnapshot,
+  unbindContextConversation,
+} from "./conversation-binding-api";
 import { startInboundServer, stopInboundServer } from "./inbound-server";
 import { FeishuAdapter } from "./adapters/feishu";
 import { ILinkBotAdapter, loadCredentials } from "./adapters/wechat/ilink-bot-adapter";
 import { NapCatAdapter } from "./adapters/qq/napcat-adapter";
 import { QqBotAdapter } from "./adapters/qqbot/qqbot-adapter";
-import { getRecentLog, clearLog } from "./message-log";
+import { getRecentLog, clearLog, reloadLogFromDisk } from "./message-log";
 import { logger, LogTag } from "../logger";
 
 const LOG = "[ChannelsInit]";
@@ -44,6 +51,12 @@ let wxAdapter: ILinkBotAdapter | null = null;
 let qqAdapter: NapCatAdapter | null = null;
 let qqBotAdapter: QqBotAdapter | null = null;
 
+export interface InitializeChannelsOptions {
+  ipc?: IpcScope;
+  handleIncoming: MessageHandler;
+  reloadDispatcherSettings: () => void;
+}
+
 function getPublicChannelsSettings(): Record<string, unknown> {
   const settings = loadChannelsSettings();
   return {
@@ -60,17 +73,18 @@ function getPublicChannelsSettings(): Record<string, unknown> {
     },
   };
 }
-/** app 启动编排（core 阶段）调一次。只做装配，无网络副作用。idempotent。 */
-export function initializeChannels(ipcOption?: IpcScope): void {
+/** 应用启动编排在核心阶段调用一次。只做装配，无网络副作用，并且可重复调用。 */
+export function initializeChannels(options: InitializeChannelsOptions): void {
   if (initialized) return;
   initialized = true;
+  reloadLogFromDisk();
 
-  // 注入 dispatcher 到 manager
+  // 将当前子系统的消息入口注入渠道管理器。
   channelManager.setDispatcher(async (msg) => {
     conversationLifecycle?.onUserMessage();
     conversationLifecycle?.onConversationStarted();
     try {
-      return await channelDispatcher.handleIncoming(msg);
+      return await options.handleIncoming(msg);
     } finally {
       conversationLifecycle?.onConversationEnded();
     }
@@ -80,7 +94,7 @@ export function initializeChannels(ipcOption?: IpcScope): void {
   registerAdapters();
 
   // 注册全局 IPC
-  registerChannelsIpc(ipcOption);
+  registerChannelsIpc(options.ipc, options.reloadDispatcherSettings);
 
   logger.info(LogTag.Channels, "channels module initialized");
 }
@@ -136,14 +150,17 @@ export async function shutdownChannels(): Promise<void> {
   started = false;
 }
 
-/** IPC 注册 */
-function registerChannelsIpc(ipcOption?: IpcScope): void {
+/** 注册进程间通信处理器。 */
+function registerChannelsIpc(
+  ipcOption: IpcScope | undefined,
+  reloadDispatcherSettings: () => void,
+): void {
   const ipc = ipcOption ?? createIpcScope();
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
   ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
     saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
-    channelDispatcher.reloadSettings();
+    reloadDispatcherSettings();
     return getPublicChannelsSettings();
   });
 
@@ -292,6 +309,22 @@ function registerChannelsIpc(ipcOption?: IpcScope): void {
   ipc.handle(IPC.CHANNELS_LOG_CLEAR, () => {
     clearLog();
     return { ok: true };
+  });
+
+  ipc.handle(IPC.CHANNELS_CONTEXT_BINDINGS_GET, () => {
+    return getContextBindingSnapshot(getChannelConversationBindingStore(), listSessions());
+  });
+
+  ipc.handle(IPC.CHANNELS_CONTEXT_BIND, (_e, payload: unknown) => {
+    return bindContextConversation(
+      getChannelConversationBindingStore(),
+      payload,
+      (conversationId) => getSession(conversationId) !== null,
+    );
+  });
+
+  ipc.handle(IPC.CHANNELS_CONTEXT_UNBIND, (_e, sessionId: unknown) => {
+    return unbindContextConversation(getChannelConversationBindingStore(), sessionId);
   });
 }
 

@@ -12,6 +12,7 @@ import type { ToolDefinition } from "../tools/registry/tool-registry";
 import type { CyreneRunTerminalResult } from "../../../shared/run-terminal";
 import type { TodoItem } from "../../../shared/task-session";
 import type { ToolErrorCategory } from "../tools/registry/tool-execution-error";
+import type { ToolRiskLevel } from "../../permission-policy";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../shared/context-usage";
 import type { ToolOutputRef, ToolOutputStore } from "./tool-output/tool-output-store";
@@ -75,6 +76,11 @@ export interface UncertainEffect {
 export interface AgentState {
   todoItems: TodoItem[];
   uncertainEffects: UncertainEffect[];
+  /**
+   * 同工具连续失败计数（熔断用）：failure 递增、success 清零、not_executed/unknown 不动。
+   * 可选字段：旧持久化状态无此字段，运行时按需创建。
+   */
+  toolFailureStreaks?: Record<string, number>;
 }
 
 export type HarnessCacheEpochReason =
@@ -112,6 +118,8 @@ export const INITIAL_HARNESS_CACHE_STATE: HarnessCacheState = {
 export interface HarnessConfig {
   /** 已声明为安全的工具最多可同时执行几个；1 表示串行。 */
   maxParallelToolCalls: number;
+  /** 工具轮上限；0 表示不限。达到上限后不再发起下一次模型请求。 */
+  maxRounds: number;
   /** 总超时（毫秒） */
   totalTimeoutMs: number;
   /** 用户等待超时（毫秒，ask_user 等待期间不计入执行超时） */
@@ -133,6 +141,7 @@ export interface HarnessConfig {
 
 export const DEFAULT_HARNESS_CONFIG: HarnessConfig = {
   maxParallelToolCalls: 4,
+  maxRounds: 0,
   totalTimeoutMs: 0,
   userWaitTimeoutMs: 120_000,
   contextWindowTokens: 256_000,
@@ -168,6 +177,21 @@ export interface HarnessToolLifecycleEvent {
   toolName: string;
   toolSideEffect: SideEffectKind;
   status: "started" | "committed" | "unknown" | "not_executed";
+}
+
+/**
+ * 工具完成观察事件：工具结果已确定后的只读通知。
+ * 只携带稳定元数据（不含参数、输出与内部异常正文），供宿主旁路转发给插件；
+ * 观察者不得参与权限判断、重试、提交或恢复。
+ */
+export interface HarnessToolFinishedEvent {
+  toolId: string;
+  toolCallId: string;
+  runId: string;
+  status: ToolCallOutcome;
+  risk: ToolRiskLevel;
+  /** 工具开始执行到结果确定的耗时；未真正执行（not_executed）时不存在。 */
+  durationMs?: number;
 }
 
 /** 压缩事务边界；只有 committed 才表示 transcript 已被替换。 */
@@ -244,6 +268,8 @@ export interface HarnessInput {
   onCheckpoint?: (checkpoint: HarnessCheckpoint) => void;
   /** 工具执行前与模型可见结果提交后的持久化边界。 */
   onToolLifecycle?: (event: HarnessToolLifecycleEvent) => void;
+  /** 工具结果确定后的只读观察回调；只读稳定元数据，不参与执行决策。 */
+  onToolFinished?: (event: HarnessToolFinishedEvent) => void;
   /** 压缩前后持久化事务边界。 */
   onCompactionLifecycle?: (event: HarnessCompactionLifecycleEvent) => void;
   /** 每次模型请求前的非敏感缓存结构诊断。 */
@@ -274,7 +300,7 @@ export interface HarnessResult {
   /** 是否因超时退出（兼容字段；新消费方请改用 terminal.status） */
   terminated: boolean;
   /** 终止原因（兼容字段；新消费方请改用 terminal.reason） */
-  terminateReason?: "timeout" | "cancelled" | "error";
+  terminateReason?: "max_rounds" | "timeout" | "cancelled" | "error";
   /**
    * Canonical 终态结算（exactly-once，见 run-settlement.ts）。
    *

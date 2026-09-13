@@ -5,6 +5,16 @@ import type {
   ConversationMode,
   ToolFileChange,
 } from "../../../../../shared/chat-types";
+import type {
+  SpeechInputCommitRequest,
+  SpeechInputCommitResult,
+} from "../../../../../shared/ipc-channels";
+import type {
+  PopQuizCard,
+  PopQuizResolveResponse,
+  PopQuizSettledPayload,
+  PopQuizSubmission,
+} from "../../../../../shared/pop-quiz";
 
 export interface ChatStoreApi {
   list: (options?: { mode?: ConversationMode }) => Promise<ChatSessionMeta[]>;
@@ -22,10 +32,18 @@ export interface ChatStoreApi {
   setWorkspace: (sessionId: string, workspaceRoot: string) => Promise<{ ok: boolean; error?: string; isEmpty?: boolean }>;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;
   openWorkspace: (workspaceRoot: string) => Promise<{ ok: boolean; error?: string }>;
-  setActiveSession: (sessionId: string | null) => Promise<unknown>;
+  setActiveSession: (sessionId: string | null, mode?: ConversationMode) => Promise<unknown>;
   onChanged: (callback: () => void) => () => void;
   onReactSwitchSession: (callback: (sessionId: string) => void) => () => void;
   notifyReactReady: () => void;
+  // 本页面的渲染目标标识；语音提交桥据此识别过期请求
+  getRendererTargetId: () => string;
+  // main → ChatPage：外部语音文本提交请求（携带租约冻结的目标）
+  onSpeechInputCommitRequest: (
+    callback: (request: SpeechInputCommitRequest) => void,
+  ) => () => void;
+  // ChatPage → main：提交结果（必须回显 requestId 与 rendererTargetId）
+  sendSpeechInputCommitResult: (result: SpeechInputCommitResult) => void;
 }
 
 export interface SidebarApi {
@@ -63,6 +81,8 @@ export interface AguiApi {
   }) => Promise<{ success: boolean; runId: string; error?: string }>;
   onEvent: (callback: (event: AguiEvent) => void) => () => void;
   cancel: (runId?: string) => Promise<unknown>;
+  // 落盘确认（单向通知）：终态消息写入会话存储后上报，供插件轮次事件使用
+  reportRunPersisted?: (payload: { runId: string; finalMessageId?: string }) => void;
   getInterruptedRun?: (sessionId: string) => Promise<{ runId: string; rounds: number; todoCount: number; updatedAt: number } | null>;
 }
 
@@ -90,6 +110,11 @@ export interface SettingsApprovalApi {
   onPermissionApprovalRequest: (callback: (request: PermissionApprovalRequest) => void) => () => void;
   resolvePermissionApproval: (id: string, allowed: boolean) => Promise<{ ok: boolean }>;
   onPermissionApprovalSettled: (callback: (settlement: PermissionApprovalSettled) => void) => () => void;
+  // pop_quiz 抽查卡片（learn 模式）：请求推送 / 提交作答 / 跳过 / 结算广播
+  onPopQuizRequest: (callback: (card: PopQuizCard) => void) => () => void;
+  resolvePopQuiz: (submission: PopQuizSubmission) => Promise<PopQuizResolveResponse>;
+  skipPopQuiz: (quizId: string) => Promise<{ ok: boolean; error?: string }>;
+  onPopQuizSettled: (callback: (settlement: PopQuizSettledPayload) => void) => () => void;
 }
 
 export interface PublicModelConfig {

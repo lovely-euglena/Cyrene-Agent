@@ -27,6 +27,19 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   citaSemanticEngine: "remote";
   /** Chat 模式的轻量社交上下文；默认关闭，开启后每轮最多多一次异步抽取调用。 */
   chatSocialContextEnabled: boolean;
+  /** 朋友圈功能总开关：关闭后 UI 隐藏、Chat 上下文不注入、昔涟不反应不发帖。 */
+  momentsEnabled: boolean;
+  /** Chat 模式注入近期朋友圈动态背景；默认开启（只读本地数据，无额外 LLM 调用）。 */
+  chatMomentsContextEnabled: boolean;
+  /** 昔涟主动发帖；默认关闭（审慎，与 proactiveChatMode 默认 off 一致）。 */
+  cyreneMomentsPostingEnabled: boolean;
+  /** 昔涟对朋友圈动态的点赞/评论反应；默认开启（Feed 内被动行为，不打扰）。 */
+  cyreneMomentsReactionsEnabled: boolean;
+  /** 角色对朋友圈动态的点赞/评论/互聊；默认开启（有独立日调用上限兜底成本）。 */
+  momentsCharacterReactionsEnabled: boolean;
+  /** 朋友圈热闹程度：控制每条动态的抽签人数分布与角色日调用上限。
+   *  quiet=现状（冷场常见），natural=冷场减半，lively=上限 5 人冷场罕见。 */
+  momentsLiveliness: "quiet" | "natural" | "lively";
   petAlwaysOnTop: boolean;
   petVisible: boolean;
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */
@@ -38,6 +51,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   disableGpuElectron?: boolean;
   sidebarVisible: boolean;
   tasksVisible: boolean;
+  /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
+  toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   language: "zh-CN";
   uiTheme: UiTheme;
@@ -65,6 +80,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   ttsAutoRead: boolean;
   ttsSpeed: number;
   ttsVolume: number;
+  /** 自动语音早播的文本切分是否开启：关闭时不再流式切分，收完整条回复再整段朗读。 */
+  ttsEarlyReadSplitEnabled: boolean;
+  /** 自动语音早播的文本切分方式：sentence=一句一切（默认，现状）；paragraph=一段一切（仅空行段落切分）。 */
+  ttsEarlyReadSplitMode: "sentence" | "paragraph";
   // MiniMax
   ttsMinimaxKey: string;
   ttsMinimaxVoiceId: string;

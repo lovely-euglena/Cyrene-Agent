@@ -1,9 +1,9 @@
 .cy-side-action {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  height: 34px;
+  height: 38px;
   padding: 0 10px;
   background: transparent;
   border: none;
@@ -22,8 +22,9 @@
 }
 
 .cy-side-action-icon {
-  width: 18px;
-  height: 18px;
+  position: relative;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -39,4 +40,16 @@
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
+}
+
+/* 侧栏动作按钮的未读红点：不显示数字，贴在图标右上角的小圆点 */
+.cy-side-action-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff3b5c;
+  pointer-events: none;
 }

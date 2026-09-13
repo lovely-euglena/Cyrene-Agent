@@ -19,6 +19,8 @@ import {
   commitPreparedPlugin,
   discardPreparedPlugin,
   preparePluginZip,
+  readHostMetadataSync,
+  removeHostMetadata,
 } from "./installer";
 import type {
   CyrenePlugin,
@@ -43,6 +45,12 @@ export interface PluginManagerOptions {
   saveEnabledMap: (map: Record<string, boolean>) => void;
   selectPluginZip?: () => Promise<string | undefined>;
   confirmPluginReplace?: (plugin: { id: string; name: string; version: string }) => Promise<boolean>;
+  /**
+   * 用户真正卸载插件时清理其拥有的持久化宿主资源（如插件创建的定时任务）。
+   * 抛错会中止卸载：宁可保留插件目录等用户重试，也不能留下仍会执行的孤儿任务。
+   * 热重载、扫描更新、启停和安装替换都不调用。
+   */
+  cleanupPersistentResources?: (pluginId: string) => Promise<void>;
   onListChanged?: () => void;
 }
 
@@ -96,6 +104,8 @@ export class PluginManager {
   private scanIssues: PluginScanIssue[] = [];
   private enabledMap: Record<string, boolean>;
   private started = false;
+  /** 宿主模块订阅的插件运行状态监听器（调度引擎等）。 */
+  private runningStateListeners = new Set<(pluginId: string, running: boolean) => void>();
   /** All lifecycle mutations are serialized to prevent enable/disable/rescan races. */
   private operationTail: Promise<void> = Promise.resolve();
 
@@ -104,11 +114,16 @@ export class PluginManager {
   }
 
   list(): PluginListEntry[] {
+    const userRoot = this.opts.scanRoots.find((root) => root.source === "user")?.path;
     return Array.from(this.records.values())
       .map((record) => {
         const id = record.manifest.id;
         const plugin = this.instances.get(id);
         const status = this.statuses.get(id) ?? "disabled";
+        // 来源以宿主侧安装记录为准：有市场记录即为 market，否则视为本地（含内置）
+        const origin = userRoot && record.source === "user" && readHostMetadataSync(userRoot, id)
+          ? "market" as const
+          : "local" as const;
         return {
           id,
           name: record.manifest.name,
@@ -118,6 +133,7 @@ export class PluginManager {
           entry: record.manifest.entry,
           apiVersion: record.manifest.apiVersion,
           source: record.source,
+          origin,
           path: record.dir,
           defaultEnabled: record.manifest.defaultEnabled,
           configuredEnabled: this.isConfiguredEnabled(record),
@@ -127,6 +143,9 @@ export class PluginManager {
           hasUnregister: typeof plugin?.unregister === "function",
           canOpen: typeof plugin?.open === "function",
           icon: readIconDataUrl(record),
+          // 面板字段仅对已启用插件透出（渲染端不挂载禁用插件的面板）
+          settingsPanel: this.isConfiguredEnabled(record) ? record.manifest.settingsPanel : undefined,
+          settingsSection: this.isConfiguredEnabled(record) ? record.manifest.settingsSection : undefined,
         };
       })
       .sort((a, b) => {
@@ -139,9 +158,55 @@ export class PluginManager {
     return { plugins: this.list(), issues: [...this.scanIssues] };
   }
 
-  /** 发布宿主事件并补全 host: 前缀；单个监听器失败不会中断其余监听器。 */
+  /**
+   * 设置面板协议的访问查询：仅「已启用且声明了合法 settingsPanel」的插件
+   * 返回其目录，禁用或未声明面板的插件返回 undefined（协议层对应 404）。
+   */
+  getSettingsPanelDir(pluginId: string): string | undefined {
+    const record = this.records.get(pluginId);
+    if (!record?.manifest.settingsPanel) return undefined;
+    if (!this.isConfiguredEnabled(record)) return undefined;
+    return record.dir;
+  }
+
+  /**
+   * 发布普通宿主事件（旁路）：监听器在后续宏任务中派发，发布方不等待任何第三方监听器。
+   * 单个监听器同步抛错或异步失败只记录日志，不影响其余监听器。
+   */
   publishHostEvent<T = unknown>(event: string, payload: T): Promise<void> {
     return this.eventBus.emit(qualifyHostEvent(event), payload);
+  }
+
+  /**
+   * 发布插件系统启动/停止屏障事件：顺序等待每个监听器完成（含单个超时）后才返回。
+   * 仅用于 plugins:ready / plugins:stopping，其余宿主事件必须走旁路发布。
+   */
+  publishHostLifecycleBarrier<T = unknown>(event: string, payload: T): Promise<void> {
+    return this.eventBus.emitLifecycleBarrier(qualifyHostEvent(event), payload);
+  }
+
+  /** 插件当前是否处于运行状态（已完成注册激活）。 */
+  isRunning(pluginId: string): boolean {
+    return this.instances.has(pluginId);
+  }
+
+  /**
+   * 订阅插件运行状态变化（激活完成 → running，停用完成 → 非 running）。
+   * 调度引擎据此暂停/恢复插件任务；单个监听器失败只告警不中断。
+   */
+  onRunningStateChange(listener: (pluginId: string, running: boolean) => void): () => void {
+    this.runningStateListeners.add(listener);
+    return () => { this.runningStateListeners.delete(listener); };
+  }
+
+  private notifyRunningState(pluginId: string, running: boolean): void {
+    for (const listener of this.runningStateListeners) {
+      try {
+        listener(pluginId, running);
+      } catch (error) {
+        console.warn(`[plugins] 运行状态监听器执行失败 (${pluginId})`, error);
+      }
+    }
   }
 
   start(): Promise<void> {
@@ -181,7 +246,7 @@ export class PluginManager {
         return this.uninstall(id);
       });
       await this.doRescan(false);
-      await this.publishHostEvent("plugins:ready", {
+      await this.publishHostLifecycleBarrier("plugins:ready", {
         pluginIds: this.list().filter((plugin) => plugin.enabled).map((plugin) => plugin.id),
       });
       this.opts.onListChanged?.();
@@ -252,14 +317,24 @@ export class PluginManager {
     });
   }
 
-  installZip(zipPath: string): Promise<PluginImportResult> {
+  installZip(
+    zipPath: string,
+    opts: {
+      /** 市场安装时传入：校验插件包身份与市场登记一致，并落市场来源记录 */
+      expectedIdentity?: { id: string; version: string };
+      origin?: "market";
+      registryId?: string;
+    } = {},
+  ): Promise<PluginImportResult> {
     return this.enqueueOperation(async () => {
       const userRoot = this.opts.scanRoots.find((root) => root.source === "user")?.path;
       if (!userRoot) return { ok: false, error: "未配置用户插件目录" };
 
       let prepared;
       try {
-        prepared = await preparePluginZip(zipPath, userRoot);
+        prepared = await preparePluginZip(zipPath, userRoot, {
+          expectedIdentity: opts.expectedIdentity,
+        });
       } catch (error) {
         return { ok: false, error: `插件包校验失败: ${errorMessage(error)}` };
       }
@@ -305,11 +380,23 @@ export class PluginManager {
       }
 
       try {
-        await commitPreparedPlugin(prepared, userRoot, replacing);
+        await commitPreparedPlugin(prepared, userRoot, replacing, {
+          marketOrigin: opts.origin === "market"
+            ? { registryId: opts.registryId ?? "cyrene-official" }
+            : undefined,
+        });
       } catch (error) {
         await this.doRescan(false);
         this.opts.onListChanged?.();
         return { ok: false, error: `安装插件失败: ${errorMessage(error)}` };
+      }
+      if (opts.origin !== "market") {
+        // 本地 ZIP 覆盖了市场安装的同 id 插件：清除市场来源记录
+        try {
+          await removeHostMetadata(userRoot, plugin.id);
+        } catch (error) {
+          console.warn(`[plugins] 清理插件 ${plugin.id} 市场来源记录失败:`, error);
+        }
       }
 
       await this.doRescan(false);
@@ -325,6 +412,8 @@ export class PluginManager {
       if (record.source !== "user") {
         return { ok: false, error: `内置插件不能卸载: ${id}` };
       }
+      const userRoot = this.opts.scanRoots.find((root) => root.source === "user")?.path;
+      if (!userRoot) return { ok: false, error: "未配置用户插件目录" };
 
       try {
         await this.assertSafeUserPluginDirectory(record);
@@ -351,14 +440,23 @@ export class PluginManager {
       try {
         // unregister() 属于第三方代码，执行后再次校验，避免它在清理阶段替换目标目录。
         await this.assertSafeUserPluginDirectory(record);
+        await this.opts.cleanupPersistentResources?.(id);
         clearPluginModuleCache(record.dir);
         await rm(record.dir, { recursive: true, force: false });
       } catch (error) {
-        const message = `删除插件目录失败: ${errorMessage(error)}`;
+        // 任务清理失败与目录删除失败同一处理：插件保持停用、目录保留，
+        // 避免出现"程序已删、定时任务还在跑"的孤儿状态。
+        const message = `卸载插件失败（目录未删除）: ${errorMessage(error)}`;
         this.statuses.set(id, "disabled");
         this.errors.set(id, message);
         this.opts.onListChanged?.();
         return { ok: false, error: message };
+      }
+
+      try {
+        await removeHostMetadata(userRoot, id);
+      } catch (error) {
+        console.warn(`[plugins] 清理插件 ${id} 市场来源记录失败:`, error);
       }
 
       await this.doRescan(false);
@@ -370,7 +468,7 @@ export class PluginManager {
   stop(): Promise<void> {
     return this.enqueueOperation(async () => {
       if (!this.started) return;
-      await this.publishHostEvent("plugins:stopping", undefined);
+      await this.publishHostLifecycleBarrier("plugins:stopping", undefined);
       for (const id of Array.from(this.instances.keys())) {
         await this.deactivate(id);
       }
@@ -563,6 +661,7 @@ export class PluginManager {
       this.instances.set(id, plugin);
       this.contexts.set(id, ctx);
       this.statuses.set(id, "running");
+      this.notifyRunningState(id, true);
       console.log(`[plugins] 已启用 ${id}@${record.manifest.version}`);
     } catch (error) {
       const message = errorMessage(error);
@@ -595,6 +694,7 @@ export class PluginManager {
       }
     }
     this.statuses.set(id, "disabled");
+    this.notifyRunningState(id, false);
     console.log(`[plugins] 已禁用 ${id}`);
   }
 }

@@ -1,8 +1,9 @@
 // Global type augmentations for renderer
 
-import type { ReviewSnapshot } from "../shared/review-types";
+import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-types";
 import type { AppUpdateApi } from "../shared/app-update";
-import type { PluginManagementApi } from "../shared/plugin-management";
+import type { PluginManagementApi, PluginPanelApi } from "../shared/plugin-management";
+import type { MomentsApi } from "../shared/moments-types";
 
 interface SystemApi {
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -10,6 +11,8 @@ interface SystemApi {
 
 interface ReviewApi {
   get: (runId: string) => Promise<ReviewSnapshot | null>;
+  /** 把本次 Run 修改过的文件恢复到运行前状态 */
+  restore: (runId: string) => Promise<ReviewRestoreOutcome>;
 }
 
 declare global {
@@ -18,6 +21,9 @@ declare global {
     review?: ReviewApi;
     appUpdate?: AppUpdateApi;
     plugins?: PluginManagementApi;
+    pluginPanel?: PluginPanelApi;
+    moments?: MomentsApi;
+    toast?: ToastRendererApi;
   }
 }
 

@@ -6,7 +6,7 @@
  * 本文件内的闭包只做构造与委托；任何长期任务都必须由对应启动阶段显式启动。
  */
 
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, screen } from "electron";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
 
@@ -44,6 +44,7 @@ import { runDocumentIndexJob } from "../rag/document-index-worker";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
+import { momentsService, registerMomentsMediaMatcher } from "../moments/moments-service";
 import {
   addL2MemoryVector,
   deleteUserMemoryVectors,
@@ -79,7 +80,12 @@ import {
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { registerChatsIpc } from "../chats/chats-ipc";
-import { registerChatUiIpc } from "../chats/chat-ui-ipc";
+import { registerMomentsIpc } from "../moments/moments-ipc";
+import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
+import { createToastWindowController } from "../toast/toast-window";
+import { createToastService } from "../toast/toast-service";
+import { toastEvents } from "../toast/toast-events";
+import { createToastWindowShell } from "../windows/create-toast-window";
 import * as chatsStore from "../chats/chats-store";
 import { flush as flushTokenUsage } from "../token-usage-store";
 import { TtsSessionService } from "../tts/tts-session-service";
@@ -92,6 +98,8 @@ import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
 import { createSchedulerSubsystem } from "../scheduler/bootstrap";
 import { createChannelsSubsystem } from "../channels/bootstrap";
+import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
+import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime } from "../plugin-runtime";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
@@ -99,13 +107,11 @@ import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
 import { createCitaService } from "../services/cita/cita-service";
 import { createSocialContextService } from "../services/social-context/social-context-service";
 import { createGitService } from "../code-git/git-service";
-import { resolveGitExecutable } from "../code-git/git-executable";
+import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/git-executable";
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
-import { connectDetachedTray } from "../tray-detached";
-import { createSplashWindow } from "../startup/create-splash-window";
 import {
   initNativeWindowsBridge,
   bindNativeDataProviders,
@@ -113,10 +119,13 @@ import {
   markNativeWindowsStartupReady,
   spawnNativeWindow,
 } from "../windows/native-windows-bridge";
+import { connectDetachedTray } from "../tray-detached";
+import { createSplashWindow } from "../startup/create-splash-window";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
 import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
+import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
 
 import { createIpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -140,8 +149,6 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
       win.webContents.send(channel, payload);
     }
   }
-  // native 三件套旁路（开关关闭时 no-op）：同一数据双路推送
-  relayAuxBroadcast(channel, payload);
 }
 
 async function reconcileUserMemoryIndex(): Promise<void> {
@@ -165,6 +172,23 @@ async function reconcileUserMemoryIndex(): Promise<void> {
 export function createDefaultApplicationDependencies(): ApplicationDependencies {
   // Agent Runtime 早于插件管理器构造；通过窄闭包在运行期转发宿主事件，避免反转启动顺序。
   let pluginManager: PluginManager | undefined;
+  // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
+  const lifecyclePublisher = createLifecyclePublisher({
+    publish: (event, payload) => pluginManager
+      ? pluginManager.publishHostEvent(event, payload)
+      : Promise.resolve(),
+  });
+  // 桌面轮次协调器：turn:finished 等待"终态 + 渲染端落盘确认"双条件；
+  // 计时器均 unref，应用退出前统一清理，不发布任何事件
+  const pendingTurnLifecycle = createPendingTurnLifecycle({
+    publisher: lifecyclePublisher,
+    onAbandon: (runId, reason) => {
+      console.warn(`[plugins] 桌面轮次事件放弃发布: runId=${runId} reason=${reason}`);
+    },
+  });
+  app.on("will-quit", () => {
+    pendingTurnLifecycle.disposeAll();
+  });
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
@@ -218,6 +242,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         persistPetWindowPosition: ({ x, y }) => saveGeneralSettings({ petWindowX: x, petWindowY: y }),
       }),
       createChatShell: (windowManager) => windowManager.createReactChatWindowShell(),
+      registerProtocolHandlers,
+      registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
+        registerWindowSystemIpc({ ipc, windowManager });
+        registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
+      },
       // native 三件套窗口（CYRENE_NATIVE_WINDOWS=1 灰度）：动作转发回
       // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
       initializeNativeWindows: (windowManager) => {
@@ -251,12 +280,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
         });
       },
-      registerProtocolHandlers,
-      registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
-        registerWindowSystemIpc({ ipc, windowManager });
-        registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
-      },
-      createTray: (input) => {
+
+createTray: (input) => {
         // 分离托盘（CYRENE_DETACHED_TRAY=1 + .NET 托盘进程在跑）：
         // 连 pipe 成功 → 外部托盘；失败 → 回退内置 Electron Tray
         if (process.env.CYRENE_DETACHED_TRAY === "1") {
@@ -284,11 +309,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       activation,
       shutdown,
       minimumSplashMs: SPLASH_MIN_MS,
-      markStartupWindowsReady: () => {
-        markStartupPhaseReady();
-        // native 三件套与 BrowserWindow 同点放行（pending 的 sidebar/tasks）
-        markNativeWindowsStartupReady();
-      },
+      markStartupWindowsReady: () => markStartupPhaseReady(),
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行
@@ -308,6 +329,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         const llmClient = createLlmClient();
         const ttsSynthesisService = createTtsSynthesisService();
         const embeddingIndexService = createEmbeddingIndexService();
+        // Moments 配图：贴图 embedding 索引 getter 晚绑定给 moments-service 模块单例（索引未就绪时纯文字降级）
+        registerMomentsMediaMatcher({
+          getStickerIndex: () => embeddingIndexService.getStickerEmbeddingIndex(),
+        });
         const citaService = createCitaService({ llmClient });
         const socialContextService = createSocialContextService({ llmClient, enqueueLLMTask });
         const proactiveLifecycle = createProactiveLifecycle({ loadGeneralSettings });
@@ -338,14 +363,20 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         setLive2dWindowSender((channel, payload) => shell.windowManager.sendToPetWindow(channel, payload));
 
         // Git：服务对象预创建；仓库监听只在打开仓库后启动
+        // 探测结果在进程内缓存：成功过一次就不再重复探测，避免启动高峰期
+        // 偶发超时导致 Git 面板误报"未检测到可用 Git"；探测失败不缓存，下次自动重试
+        let resolvedGit: ResolvedGitExecutable | null = null;
         const git = createGitService({
           getSession: chatsStore.getSession,
-          resolveExecutable: () => resolveGitExecutable({
-            systemCommand: "git",
-            bundledPath: app.isPackaged
-              ? path.join(process.resourcesPath, "mingit", "cmd", "git.exe")
-              : path.join(app.getAppPath(), "resources", "mingit", "cmd", "git.exe"),
-          }),
+          resolveExecutable: async () => {
+            resolvedGit ??= await resolveGitExecutable({
+              systemCommand: "git",
+              bundledPath: app.isPackaged
+                ? path.join(process.resourcesPath, "mingit", "cmd", "git.exe")
+                : path.join(app.getAppPath(), "resources", "mingit", "cmd", "git.exe"),
+            });
+            return resolvedGit;
+          },
         });
 
         // LSP：管理器预创建；具体语言服务进程按需启动
@@ -361,6 +392,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           capturePetWindow: () => shell.windowManager.capturePetWindow(),
           ipc: shell.ipc,
         });
+
 
         // 应用更新服务（检查/下载按需；安装必须先走受控退出）
         const update = createGitHubAppUpdateService({
@@ -433,6 +465,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         publishPluginHostEvent: (event, payload) => pluginManager
           ? pluginManager.publishHostEvent(event, payload)
           : Promise.resolve(),
+        publishToolFinished: (event) => lifecyclePublisher.publishToolFinished(event),
       }),
 
       createChannels: (runtime, services) => createChannelsSubsystem({
@@ -440,22 +473,32 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         ttsSynthesisService: services.tts,
         getReactChatWindow: () => reactChatWindow,
         ipc: shell.ipc,
+        publishLifecycle: lifecyclePublisher,
       }),
 
-      startPlugins: async (services) => {
+      startPlugins: async (services, scheduler, runtime) => {
         pluginManager = await startPluginRuntime({
           llmClient: services.llm,
           ipc: shell.ipc,
+          schedulerStore: scheduler.store,
+          agentRuntime: runtime,
+          // 插件启停后让调度引擎重新归一化逾期任务并重排计时器（不补跑）。
+          onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
+          // 面板宿主窗口（首版=设置窗口）：settingsWindow 为 CJS live-binding，
+          // 必须在请求时刻读取
+          getPanelHostWebContents: () => settingsWindow?.webContents ?? null,
         });
         return pluginManager;
       },
 
-      bindNativeData: (providers) => bindNativeDataProviders(providers),
-      getPublicModelConfig: () => getPublicModelConfig(),
       createScheduler: (runtime) => createSchedulerSubsystem({
         agentRuntime: runtime,
         getReactChatWindow: () => reactChatWindow,
         ipc: shell.ipc,
+        publishLifecycle: lifecyclePublisher,
+        // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
+        canRunTask: (task) => !task.ownerPluginId
+          || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
       }),
 
       registerCoreIpc: ({ ipc, runtime, services }) => {
@@ -496,6 +539,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
         registerChatsIpc(ipc);
+        registerMomentsIpc(ipc);
         registerCodeGitIpc({ ipc, service: services.git });
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传
@@ -505,6 +549,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           () => reactChatWindow,
           services.proactive.proactiveConversationLifecycle,
           ipc,
+          pendingTurnLifecycle,
         );
 
         // 应用更新 IPC：安装走受控退出；autoUpdater 兜底路径进入同一协调器
@@ -548,6 +593,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         // 权限模块：磁盘加载 + 权限/选择卡片 IPC（必须在 createWindow 之后、任意工具调用之前）
         bootstrapPermission(ipc);
+        // pop_quiz 抽查工具：IPC（提交/跳过）与工具注册（learn 模式可见）
+        registerPopQuizIpc(ipc);
+        registerPopQuizTool();
         registerCallIpc(ipc);
       },
 
@@ -559,6 +607,42 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         proactiveLifecycle: services.proactive,
         broadcastToAuxWindows,
       }),
+      wireToastCenter: ({ ipc, windowManager }) => {
+        // 提醒中心组合根：窗口控制器 + 生命周期权威服务 + 事件总线订阅
+        const toastWindowController = createToastWindowController({
+          createWindow: createToastWindowShell,
+          getChatWindow: () => reactChatWindow,
+          getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
+          getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+        });
+        const toastService = createToastService({
+          bus: toastEvents,
+          window: toastWindowController,
+          activate: (request) => { activation.request(request); },
+          openTasksWindow: () => { windowManager.createTasksWindow(); },
+          // 音效总开关：设置页可关；每次弹窗时读取，改动即时生效
+          isSoundEnabled: () => loadGeneralSettings().toastSoundEnabled,
+          shouldSuppressNotify: (event) => {
+            // 焦点抑制三条件：事件带会话 + 聊天窗口聚焦 + 激活会话一致。
+            // 调度任务结果落在任务历史（无会话落点），恒不抑制。
+            if (!event.sessionId) return false;
+            const chat = reactChatWindow;
+            if (!chat || chat.isDestroyed() || !chat.isFocused()) return false;
+            return getActiveChatSessionId() === event.sessionId;
+          },
+        });
+        toastService.registerIpc(ipc);
+        // 预创建隐藏窗口，提前加载渲染页，首次弹出零延迟
+        toastWindowController.preload();
+        shutdown.register({
+          id: "toast-center",
+          phase: "stopLocalResources",
+          dispose: async () => {
+            toastService.dispose();
+            toastWindowController.dispose();
+          },
+        });
+      },
       revealStartupWindows,
     }),
 
@@ -613,6 +697,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       startProactiveTrigger: async () => {
         core.services.proactive.initializeProactiveTrigger();
         return { dispose: () => core.services.proactive.stopProactiveTrigger() };
+      },
+      startMomentsReactionScanner: async () => {
+        // 启动即补扫一轮：重启前已逾期的反应任务尽快续上，不等第一个扫描周期
+        momentsService.startReactionScanner();
+        return { dispose: () => momentsService.stopReactionScanner() };
       },
     }),
 

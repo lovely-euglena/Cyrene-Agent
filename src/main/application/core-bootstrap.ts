@@ -30,6 +30,7 @@ import type { SocialContextService } from "../services/social-context/social-con
 import type { ChannelsSubsystem } from "../channels/bootstrap";
 import type { SchedulerSubsystem } from "../scheduler/bootstrap";
 import type { GeneralSettings } from "../settings/general-settings";
+import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
 
 export interface CoreServices {
@@ -78,14 +79,16 @@ export interface CoreDependencies {
   initRag(): Promise<void>;
   createRuntime(services: CoreServices): AgentRuntime;
   createChannels(runtime: AgentRuntime, services: CoreServices): ChannelsSubsystem;
-  /** 必须在内置渠道适配器注册完成后调用。 */
-  startPlugins(services: CoreServices): Promise<PluginManager>;
+  /** 必须在内置渠道适配器注册完成后调用；scheduler 先于本步完成 initialize。 */
+  startPlugins(services: CoreServices, scheduler: SchedulerSubsystem, runtime: AgentRuntime): Promise<PluginManager>;
   createScheduler(runtime: AgentRuntime, services: CoreServices): SchedulerSubsystem;
   /** native 三件套数据源绑定（core 阶段；未启用时 no-op）。 */
   bindNativeData?(providers: import("../windows/native-windows-bridge").NativeDataProviders): void;
   /** 公开模型配置（getPublicModelConfig；native sidebar 快照用）。 */
   getPublicModelConfig?(): unknown;
   registerCoreIpc(input: RegisterCoreIpcInput): void;
+  /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、预创建隐藏窗口。 */
+  wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
   /** 启动期一次性应用通用设置（登录项同步、桌宠偏好等）。 */
   applyGeneralSettings(settings: GeneralSettings, services: CoreServices): void;
@@ -100,6 +103,17 @@ function degradedMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// 启动耗时埋点：无条件打印各阶段耗时与结束时刻（相对进程启动），供启动性能排查
+async function timedStep<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
+  const start = performance.now();
+  try {
+    return await fn();
+  } finally {
+    const end = performance.now();
+    console.log(`[StartupTiming] core/${name} ${Math.round(end - start)}ms (at ${Math.round(end)}ms)`);
+  }
+}
+
 export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const { shell, readiness, activation, shutdown } = deps;
 
@@ -108,7 +122,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   // Skill 系统：失败只降级，不阻塞聊天
   try {
-    await deps.initSkills();
+    await timedStep("initSkills", () => deps.initSkills());
   } catch (error) {
     console.error("[Core] initSkills failed:", error);
     readiness.markDegraded({ capability: "skills", message: degradedMessage(error), at: Date.now(), error });
@@ -119,7 +133,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   // SRT 沙箱：失败不阻塞启动（fallback 到直接 spawn）
   try {
-    await deps.initSandbox();
+    await timedStep("initSandbox", () => deps.initSandbox());
   } catch (error) {
     console.error("[Core] initSandbox failed at startup:", error);
     readiness.markDegraded({ capability: "sandbox", message: degradedMessage(error), at: Date.now(), error });
@@ -130,7 +144,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   // RAG：失败记录降级，聊天仍允许启动
   try {
-    await deps.initRag();
+    await timedStep("initRag", () => deps.initRag());
   } catch (error) {
     console.error("[Core] RAG init FAILED:", error);
     readiness.markDegraded({ capability: "rag", message: degradedMessage(error), at: Date.now(), error });
@@ -140,12 +154,13 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   // channels 只装配并同步注册内置 adapter；网络启动仍在 background 阶段。
   const channels = deps.createChannels(runtime, services);
-  channels.initialize();
-  await channels.adaptersRegistered;
+  await timedStep("channels-adapters", async () => {
+    channels.initialize();
+    await channels.adaptersRegistered;
+  });
 
-  // 插件严格晚于内置 adapter id 预留，避免插件抢占 feishu/wechat/qq 等内置 id。
-  const plugins = await deps.startPlugins(services);
-
+  // scheduler store 先加载并注册 IPC，再启动插件：插件调度服务写入的是
+  // 已加载的 store，不会覆盖磁盘任务；插件启停联动也在此时接线。
   const scheduler = deps.createScheduler(runtime, services);
   scheduler.initialize();
   // native 三件套数据源（scheduler store + runtimeState + modelConfig）：
@@ -170,9 +185,13 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     },
   });
 
+  // 插件严格晚于内置 adapter id 预留，避免插件抢占 feishu/wechat/qq 等内置 id。
+  const plugins = await timedStep("startPlugins", () => deps.startPlugins(services, scheduler, runtime));
+
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
   deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
 
+  deps.wireToastCenter({ ipc: shell.ipc, windowManager: shell.windowManager });
   // 聊天页面加载：按需启动（CYRENE_LAZY_CHAT_WINDOW=1，默认）时跳过
   // 启动加载——首次激活（tray/桌宠/会话打开）时经 openReactChatWindow
   // 触发 windowManager.openReactChatWindow 的 load+show 链；急切模式
@@ -181,22 +200,25 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     await shell.chat.load();
   }
 
-  // 桌宠：仅在设置开启时创建（不创建后隐藏、不闪现）；辅助窗口按设置创建
+  // （lazy-chat 模式下 load 已在上方分支处理：急切模式立即加载，
+  //  lazy 模式留待首启激活。页面加载失败是致命错误。）
+
+  // 桌宠：窗口始终创建，petVisible 只决定是否显示（隐藏时不闪现）。
+  // 始终创建是为了保证托盘"显示/隐藏桌宠"与设置面板开关随时能把窗口救回来，
+  // 且 alwaysOnTop / zoom / live2d 生命周期在隐藏状态下同样完成接线。
   const generalSettings = deps.loadGeneralSettings();
-  // 启动期一次性应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
+  // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
   deps.applyGeneralSettings(generalSettings, services);
-  if (generalSettings.petVisible) {
-    // showOnReady=true：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-    shell.windowManager.createPetWindow(true);
-    shell.windowManager.onPetWindowReady((win) => {
-      shell.live2dWindowLifecycle.attach(win);
-    });
-    shell.windowManager.onPetWindowClosed(() => {
-      shell.live2dWindowLifecycle.clear();
-    });
-    shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
-    shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
-  }
+  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
+  shell.windowManager.createPetWindow(generalSettings.petVisible);
+  shell.windowManager.onPetWindowReady((win) => {
+    shell.live2dWindowLifecycle.attach(win);
+  });
+  shell.windowManager.onPetWindowClosed(() => {
+    shell.live2dWindowLifecycle.clear();
+  });
+  shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
+  shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
   if (generalSettings.sidebarVisible) shell.windowManager.createSidebarWindow();
   if (generalSettings.tasksVisible) shell.windowManager.createTasksWindow();
 
@@ -241,10 +263,13 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     loadingShownAt: shell.loadingShownAt,
     minimumDurationMs: deps.minimumSplashMs,
   });
+  // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
+  console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
   deps.markStartupWindowsReady();
 
   // 主窗口可激活：消费启动期间排队的激活请求
   await activation.markReady();
+  console.log(`[StartupTiming] core/startCore-total ${Math.round(performance.now())}ms`);
 
   return { runtime, services, channels, plugins, scheduler };
 }

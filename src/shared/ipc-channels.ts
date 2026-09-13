@@ -8,6 +8,26 @@ export interface ScreenshotInsertPayload {
   hasAnnotations: boolean;
 }
 
+/** 语音输入提交请求（main → 聊天窗口渲染页）：把外部识别文本提交到冻结的会话。 */
+export interface SpeechInputCommitRequest {
+  /** 本次提交的关联标识；结果必须原样回显。 */
+  requestId: string;
+  /** 租约冻结的渲染目标标识；页面据此识别过期请求。 */
+  rendererTargetId: string;
+  sessionId: string;
+  mode: "chat" | "work" | "learn" | "code";
+  text: string;
+}
+
+/** 语音输入提交结果（渲染页 → main）：必须回显 requestId 与 rendererTargetId。 */
+export interface SpeechInputCommitResult {
+  requestId: string;
+  rendererTargetId: string;
+  ok: boolean;
+  /** ok 为 false 时的稳定错误码（PluginHostErrorCode 之一）与说明。 */
+  error?: { code: string; message: string };
+}
+
 export const IPC = {
   // pet window
   WINDOW_MINIMIZE: "window:minimize",
@@ -49,8 +69,21 @@ export const IPC = {
   AGUI_RUN: "agui:run",
   AGUI_EVENT: "agui:event",
   AGUI_CANCEL: "agui:cancel",
+  // 渲染端→主进程单向通知：本轮 run 的终态消息已写入会话存储（插件轮次事件的落盘确认）
+  AGUI_RUN_PERSISTED: "agui:run-persisted",
   HARNESS_GET_INTERRUPTED_RUN: "harness:get-interrupted-run",
   SCHEDULER_EVENT: "scheduler:event",
+
+  // 注意力 Toast 中心（右下角提醒弹窗；main 为生命周期唯一权威，渲染页纯表现层）
+  // main → toast 窗口：推送/更新条目（同 id 覆盖）、移除条目（关闭回执/点击消隐/通知档超时/结算清退）
+  TOAST_PUSH: "toast:push",
+  TOAST_REMOVE: "toast:remove",
+  // toast 窗口 → main：页面加载/重载后恢复当前显示列表；用户点击与关闭只带 toast id，
+  // 跳转目标由主进程查权威状态解析；resize 上报内容区实际高度（高度协议）
+  TOAST_GET_ALL: "toast:get-all",
+  TOAST_CLICKED: "toast:clicked",
+  TOAST_DISMISSED: "toast:dismissed",
+  TOAST_RESIZE: "toast:resize",
 
   // Code 模式 Git 工作台（renderer 只能读取结构化状态）
   CODE_GIT_STATUS: "code-git:status",
@@ -72,6 +105,17 @@ export const IPC = {
   // tasks window (read-only display, no per-element interactions)
   TASKS_CLOSE: "tasks:close",
   TASKS_MINIMIZE: "tasks:minimize",
+
+  // Moments（动态 / 朋友圈）
+  MOMENTS_LIST: "moments:list",
+  MOMENTS_GET_POST: "moments:get-post",
+  MOMENTS_CREATE_POST: "moments:create-post",
+  MOMENTS_DELETE_POST: "moments:delete-post",
+  MOMENTS_CREATE_COMMENT: "moments:create-comment",
+  MOMENTS_TOGGLE_LIKE: "moments:toggle-like",
+  MOMENTS_CHANGED: "moments:changed",
+  // 点名名单：@ 选择框数据源（昔涟 + 全部入驻角色）
+  MOMENTS_LIST_CHARACTERS: "moments:list-characters",
 
   // settings window
   SETTINGS_MINIMIZE: "settings:minimize",
@@ -151,6 +195,12 @@ export const IPC = {
   // main → 所有窗口：活跃 sessionId 变化时广播
   CHATS_ACTIVE_SESSION_CHANGED: "chats:active-session-changed",
 
+  // 语音输入提交桥（主进程 ↔ 聊天窗口渲染页，仅供宿主内部使用，插件不直接接触）
+  // main → reactChatWindow：要求把外部语音识别文本提交到租约冻结的会话
+  SPEECH_INPUT_COMMIT_REQUEST: "speech-input:commit-request",
+  // reactChatWindow → main：提交结果（必须回显 requestId 与 rendererTargetId）
+  SPEECH_INPUT_COMMIT_RESULT: "speech-input:commit-result",
+
   // 对话工作区绑定
   // renderer → main：设置当前对话的工作区目录
   CHATS_SET_WORKSPACE: "chats:set-workspace",
@@ -168,6 +218,8 @@ export const IPC = {
   // Review 快照（不可变文件变更审查）
   // renderer → main：获取指定 Run 的 ReviewSnapshot（不存在时按 halted 补生成）
   REVIEW_GET: "review:get",
+  // renderer → main：把指定 Run 修改过的文件恢复到运行前状态（基于 before/ 基线）
+  REVIEW_RESTORE: "review:restore",
 
 // sticker manager window
 	  STICKERS_MINIMIZE: "stickers:minimize",
@@ -315,6 +367,17 @@ export const IPC = {
   // renderer → main：回传用户选择
   CHOICE_RESOLVE: "choice:resolve",
 
+  // pop_quiz 抽查测试（learn 模式）
+  // 与审批流同构：不设超时、10s 幂等重播、结算统一广播
+  // main → renderer：推送抽查卡片（重复推送同 id 覆盖，用于渲染端恢复）
+  POP_QUIZ_REQUEST: "pop-quiz:request",
+  // renderer → main：提交作答（返回值带判分结果，渲染端切展示态）
+  POP_QUIZ_RESOLVE: "pop-quiz:resolve",
+  // renderer → main：跳过整次抽查
+  POP_QUIZ_SKIP: "pop-quiz:skip",
+  // main → renderer：结算广播（提交/跳过/run 取消），渲染端据此清卡
+  POP_QUIZ_SETTLED: "pop-quiz:settled",
+
   // call window (voice call)
   CALL_OPEN: "call:open",                 // sidebar → main：打开通话窗口
   CALL_START: "call:start",               // renderer → main：开始通话（初始化 ASR）
@@ -357,6 +420,10 @@ export const IPC = {
   // 消息日志
   CHANNELS_LOG_GET: "channels:log:get",
   CHANNELS_LOG_CLEAR: "channels:log:clear",
+  // 渠道上下文绑定：设置页选择外部聊天继续使用某个桌面会话
+  CHANNELS_CONTEXT_BINDINGS_GET: "channels:context-bindings:get",
+  CHANNELS_CONTEXT_BIND: "channels:context-bindings:bind",
+  CHANNELS_CONTEXT_UNBIND: "channels:context-bindings:unbind",
 
   // UI direct connect (renderer → main, not via AI tool layer)
   // 用户歌单（播放器窗口顶部 chips + loadPlaylist）
@@ -378,6 +445,10 @@ export const IPC = {
   PLUGINS_RESCAN: "plugins:rescan",
   PLUGINS_IMPORT_ZIP: "plugins:import-zip",
   PLUGINS_UNINSTALL: "plugins:uninstall",
+  /** 设置面板桥的统一转发通道：仅面板宿主窗口可用，pluginId 由宿主侧绑定 */
+  PLUGINS_PANEL_INVOKE: "plugins:panel:invoke",
+  PLUGINS_MARKET_LIST: "plugins:market:list",
+  PLUGINS_MARKET_INSTALL: "plugins:market:install",
 
 } as const;
 

@@ -35,8 +35,17 @@ const READY_TIMEOUT_MS = 15_000;
 
 let cachedExePath: string | null | undefined;
 
+/**
+ * 原生窗口默认启用（v2.0.0 起从灰度转正）。
+ *
+ * 语义：
+ *   - 默认启用（exe 就位即走 .NET 窗口路径）
+ *   - 显式回退：CYRENE_NATIVE_WINDOWS=0 强制走 Electron BrowserWindow
+ *     （排障开关；exe 缺失/运行时未装时自动回退，无需手动设置）
+ */
 export function isNativeWindowsEnabled(): boolean {
-  return process.env.CYRENE_NATIVE_WINDOWS === "1";
+  if (process.env.CYRENE_NATIVE_WINDOWS === "0") return false;
+  return true;
 }
 
 export function resolveNativeWindowsExe(): string | null {

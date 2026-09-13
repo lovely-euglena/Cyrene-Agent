@@ -41,11 +41,18 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   citaEnabled: false,
   citaSemanticEngine: "remote",
   chatSocialContextEnabled: false,
+  momentsEnabled: true,
+  chatMomentsContextEnabled: true,
+  cyreneMomentsPostingEnabled: false,
+  cyreneMomentsReactionsEnabled: true,
+  momentsCharacterReactionsEnabled: true,
+  momentsLiveliness: "quiet",
   petAlwaysOnTop: true,
   petVisible: true,
   petZoom: 1,
   sidebarVisible: true,
   tasksVisible: true,
+  toastSoundEnabled: true,
   launchAtLogin: false,
   language: "zh-CN",
   uiTheme: "pearl-white",
@@ -64,6 +71,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   ttsAutoRead: true,
   ttsSpeed: 1,
   ttsVolume: 1,
+  ttsEarlyReadSplitEnabled: true,
+  ttsEarlyReadSplitMode: "sentence",
   ttsMinimaxKey: "",
   ttsMinimaxVoiceId: "",
   ttsMinimaxModel: "speech-2.8-turbo",
@@ -179,6 +188,25 @@ export function normalizeGeneralSettings(
     citaEnabled: cita.enabled,
     citaSemanticEngine: cita.semanticEngine,
     chatSocialContextEnabled: normalizeChatSocialContextEnabled(input?.chatSocialContextEnabled),
+    momentsEnabled: input?.momentsEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.momentsEnabled
+      : Boolean(input.momentsEnabled),
+    chatMomentsContextEnabled: input?.chatMomentsContextEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.chatMomentsContextEnabled
+      : Boolean(input.chatMomentsContextEnabled),
+    cyreneMomentsPostingEnabled: input?.cyreneMomentsPostingEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.cyreneMomentsPostingEnabled
+      : Boolean(input.cyreneMomentsPostingEnabled),
+    cyreneMomentsReactionsEnabled: input?.cyreneMomentsReactionsEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.cyreneMomentsReactionsEnabled
+      : Boolean(input.cyreneMomentsReactionsEnabled),
+    momentsCharacterReactionsEnabled: input?.momentsCharacterReactionsEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.momentsCharacterReactionsEnabled
+      : Boolean(input.momentsCharacterReactionsEnabled),
+    // 热闹程度只认三个合法档位，非法值回落默认档（旧配置无此字段也走默认）
+    momentsLiveliness: ["quiet", "natural", "lively"].includes(input?.momentsLiveliness as string)
+      ? (input?.momentsLiveliness as GeneralSettings["momentsLiveliness"])
+      : DEFAULT_GENERAL_SETTINGS.momentsLiveliness,
     petAlwaysOnTop: input?.petAlwaysOnTop === undefined
       ? DEFAULT_GENERAL_SETTINGS.petAlwaysOnTop
       : Boolean(input.petAlwaysOnTop),
@@ -197,6 +225,9 @@ export function normalizeGeneralSettings(
     disableGpuElectron: input?.disableGpuElectron,
     sidebarVisible: windowVisibility.sidebarVisible,
     tasksVisible: windowVisibility.tasksVisible,
+    toastSoundEnabled: input?.toastSoundEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.toastSoundEnabled
+      : Boolean(input.toastSoundEnabled),
     launchAtLogin: Boolean(input?.launchAtLogin),
     language: "zh-CN",
     uiTheme: normalizeUiTheme(input?.uiTheme),
@@ -223,6 +254,12 @@ export function normalizeGeneralSettings(
     ttsVolume: typeof input?.ttsVolume === "number"
       ? Math.max(0, Math.min(1, input.ttsVolume))
       : DEFAULT_GENERAL_SETTINGS.ttsVolume,
+    ttsEarlyReadSplitEnabled: typeof input?.ttsEarlyReadSplitEnabled === "boolean"
+      ? input.ttsEarlyReadSplitEnabled
+      : DEFAULT_GENERAL_SETTINGS.ttsEarlyReadSplitEnabled,
+    ttsEarlyReadSplitMode: ["sentence", "paragraph"].includes(String(input?.ttsEarlyReadSplitMode))
+      ? (input!.ttsEarlyReadSplitMode as "sentence" | "paragraph")
+      : DEFAULT_GENERAL_SETTINGS.ttsEarlyReadSplitMode,
     ttsMinimaxKey: typeof input?.ttsMinimaxKey === "string" ? input.ttsMinimaxKey : "",
     ttsMinimaxVoiceId: typeof input?.ttsMinimaxVoiceId === "string" ? input.ttsMinimaxVoiceId : "",
     ttsMinimaxModel: input?.ttsMinimaxModel === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo",

@@ -1,10 +1,11 @@
 import { Bubble, CodeHighlighter, Think, ThoughtChain, type BubbleItemType } from "@ant-design/x";
 import { XMarkdown, type ComponentProps } from "@ant-design/x-markdown";
 import Latex from "@ant-design/x-markdown/plugins/Latex";
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
+import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
 import { t, useTranslation } from "../../../i18n";
+import { normalizeModelMarkdown } from "./markdown-normalize";
 import { resolveAsset } from "../../../../../shared/renderer-base";
-import type { AgentRoundRecord, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
+import type { AgentRoundRecord, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
@@ -34,6 +35,8 @@ import { countRoundChangedFiles, describeToolExecution, resolveAgentRoundTitle }
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 import { ReviewPanel } from "./ReviewPanel";
+import { MermaidBlock } from "./MermaidBlock";
+import { SvgCardBlock } from "./SvgCardBlock";
 
 export interface ChatMessageItem {
   id: string;
@@ -63,6 +66,9 @@ export interface ChatMessageItem {
   weather?: WeatherData;
   /** 上下文容量快照：运行中为每轮 preRequest 实时值，run 结束后为终态快照。 */
   contextUsage?: ContextUsageSnapshot;
+  /** 渠道群聊的发送者/引用等隐藏模型上下文；不直接渲染。 */
+  modelContext?: string;
+  channelSource?: ChatMessageChannelSource;
 }
 
 export interface ChatMessageAttachment {
@@ -96,11 +102,23 @@ interface ChatMessageListProps {
 const markdownConfig = { extensions: Latex() };
 const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
 
+// 消息是否正在流式输出。code 渲染器收不到 MarkdownContent 的 props，用 context 传下去，
+// mermaid 块靠它在流式期间显示占位而不是渲染半截语法
+const MessageStreamingContext = createContext(false);
+
 function MarkdownCode({ children, lang, block }: ComponentProps<{ children?: ReactNode }>) {
+  const streaming = useContext(MessageStreamingContext);
   if (!block) return <code>{children}</code>;
+  const source = String(children ?? "").replace(/\n$/, "");
+  if ((lang ?? "").split(/\s+/)[0] === "mermaid") {
+    return <MermaidBlock code={source} streaming={streaming} />;
+  }
+  if ((lang ?? "").split(/\s+/)[0] === "svg") {
+    return <SvgCardBlock code={source} streaming={streaming} />;
+  }
   return (
     <CodeHighlighter lang={(lang ?? "text").split(/\s+/)[0]} prismLightMode={false}>
-      {String(children ?? "").replace(/\n$/, "")}
+      {source}
     </CodeHighlighter>
   );
 }
@@ -134,18 +152,23 @@ class MarkdownRenderBoundary extends Component<{
   }
 }
 
-export function MarkdownContent({ content }: { content: string; streaming?: boolean }) {
+export function MarkdownContent({ content, streaming }: { content: string; streaming?: boolean }) {
+  // 模型偶尔输出畸形 Markdown（# 后缺空格、标题粘正文、围栏粘句子），
+  // 渲染前先做机械归一化；归一化与 XMarkdown 解析都在同一 memo 周期内完成
+  const normalized = useMemo(() => normalizeModelMarkdown(content), [content]);
   return (
-    <MarkdownRenderBoundary content={content}>
-      <XMarkdown
-        content={content}
-        config={markdownConfig}
-        components={markdownComponents}
-        openLinksInNewTab
-        escapeRawHtml
-        rootClassName="cy-message-markdown"
-        streaming={completedMarkdownOptions}
-      />
+    <MarkdownRenderBoundary content={normalized}>
+      <MessageStreamingContext.Provider value={Boolean(streaming)}>
+        <XMarkdown
+          content={normalized}
+          config={markdownConfig}
+          components={markdownComponents}
+          openLinksInNewTab
+          escapeRawHtml
+          rootClassName="cy-message-markdown"
+          streaming={completedMarkdownOptions}
+        />
+      </MessageStreamingContext.Provider>
     </MarkdownRenderBoundary>
   );
 }
@@ -165,18 +188,67 @@ function AssistantContent({
   content,
   streaming,
   stickerUrl,
+  channelSource,
 }: {
   content: string;
   streaming: boolean;
   stickerUrl?: string;
+  channelSource?: ChatMessageChannelSource;
 }) {
   const { t } = useTranslation();
   return (
     <div className="cy-message__assistant-body">
+      {channelSource && <ChannelSourceLabel source={channelSource} direction="outgoing" />}
       {content && <MarkdownContent content={content} streaming={streaming} />}
       {stickerUrl && <img className="cy-message__sticker" src={stickerUrl} alt={t("messageList.assistantStickerAlt")} draggable={false} />}
     </div>
   );
+}
+
+const channelNameKeys: Record<ChatMessageChannelSource["channel"], string> = {
+  wechat: "messageList.channelSource.wechat",
+  feishu: "messageList.channelSource.feishu",
+  qq: "messageList.channelSource.qq",
+  qqbot: "messageList.channelSource.qqbot",
+};
+
+function ChannelSourceLabel({
+  source,
+  direction,
+}: {
+  source: ChatMessageChannelSource;
+  direction: "incoming" | "outgoing";
+}) {
+  const label = formatChannelSourceLabel(source, direction);
+  return label ? <span className="cy-message__channel-source">{label}</span> : null;
+}
+
+export function formatChannelSourceLabel(
+  source: ChatMessageChannelSource,
+  direction: "incoming" | "outgoing",
+): string {
+  if (direction === "outgoing" || source.chatType !== "group") return "";
+  return source.senderName?.trim() ?? "";
+}
+
+function channelName(channel: ChatMessageChannelSource["channel"]): string {
+  const key = channelNameKeys[channel];
+  return key ? t(key) : t("messageList.channelSource.unknown");
+}
+
+/** 把逐条来源提示收拢为会话级提示，避免每个气泡都像日志。 */
+export function resolveChannelConversationLabel(
+  messages: readonly Pick<ChatMessageItem, "channelSource">[],
+): string | null {
+  const channels = Array.from(new Set(
+    messages
+      .map((message) => message.channelSource?.channel)
+      .filter((channel): channel is ChatMessageChannelSource["channel"] => Boolean(channel)),
+  ));
+  if (channels.length === 0) return null;
+  return t("messageList.channelSource.sameConversation", {
+    channels: channels.map(channelName).join("、"),
+  });
 }
 
 function DotSpinner() {
@@ -563,9 +635,19 @@ function UserAttachments({ attachments }: { attachments: ChatMessageAttachment[]
 
 function AttachmentImage({ attachment }: { attachment: ChatMessageAttachment }) {
   const [src, setSrc] = useState(attachment.previewUrl);
+  // blob: 预览 URL 只在当前页面有效，聊天记录持久化后刷新必失效；只允许一次磁盘重读兜底
+  const diskFallbackTriedRef = useRef(false);
+
+  function readFromDisk(): void {
+    if (!attachment.filePath) return;
+    void window.chat?.getImagePreview?.(attachment.filePath).then((result) => {
+      if (result.ok && result.dataUrl) setSrc(result.dataUrl);
+    });
+  }
 
   useEffect(() => {
     setSrc(attachment.previewUrl);
+    diskFallbackTriedRef.current = false;
     if ((!attachment.previewUrl || attachment.previewUrl.startsWith("file:")) && attachment.filePath) {
       let active = true;
       void window.chat?.getImagePreview?.(attachment.filePath).then((result) => {
@@ -577,21 +659,31 @@ function AttachmentImage({ attachment }: { attachment: ChatMessageAttachment }) 
     }
   }, [attachment.filePath, attachment.previewUrl]);
 
-  return <img src={src} alt={attachment.name} draggable={false} />;
+  // 历史 blob: URL 加载失败时从磁盘重读，修复刷新后的存量裂图
+  function handleImageError(): void {
+    if (diskFallbackTriedRef.current) return;
+    diskFallbackTriedRef.current = true;
+    readFromDisk();
+  }
+
+  return <img src={src} alt={attachment.name} draggable={false} onError={handleImageError} />;
 }
 
 function UserContent({
   content,
   stickerUrl,
   attachments = [],
+  channelSource,
 }: {
   content: string;
   stickerUrl?: string;
   attachments?: ChatMessageAttachment[];
+  channelSource?: ChatMessageChannelSource;
 }) {
   const { t } = useTranslation();
   return (
     <div className="cy-message__user-body">
+      {channelSource && <ChannelSourceLabel source={channelSource} direction="incoming" />}
       <UserAttachments attachments={attachments} />
       {content && <MarkdownContent content={content} />}
       {stickerUrl && <img className="cy-message__sticker" src={stickerUrl} alt={t("messageList.userStickerAlt")} draggable={false} />}
@@ -678,7 +770,7 @@ function createRoles(
     variant: "filled" as const,
     rootClassName: "cy-message cy-message--user",
     avatar: <UserMessageAvatar src={userAvatarUrl} />,
-    contentRender: (content: string, info: { extraInfo?: { messageId?: string; stickerUrl?: string; attachments?: ChatMessageAttachment[] } }) => (
+    contentRender: (content: string, info: { extraInfo?: { messageId?: string; stickerUrl?: string; attachments?: ChatMessageAttachment[]; channelSource?: ChatMessageChannelSource } }) => (
       info.extraInfo?.messageId === editingMessageId
         ? <LastUserMessageEditor
             value={editDraft}
@@ -691,6 +783,7 @@ function createRoles(
             content={content}
             stickerUrl={info.extraInfo?.stickerUrl}
             attachments={info.extraInfo?.attachments}
+            channelSource={info.extraInfo?.channelSource}
           />
     ),
     footer: (content: string, info: { extraInfo?: { messageId?: string } }) => {
@@ -716,11 +809,12 @@ function createRoles(
     variant: "filled" as const,
     rootClassName: "cy-message cy-message--assistant",
     avatar: <CyreneMessageAvatar />,
-    contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string } }) => (
+    contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string; channelSource?: ChatMessageChannelSource } }) => (
       <AssistantContent
         content={content}
         streaming={Boolean(info.extraInfo?.streaming)}
         stickerUrl={info.extraInfo?.stickerUrl}
+        channelSource={info.extraInfo?.channelSource}
       />
     ),
     footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean; ttsCacheKey?: string } }) => {
@@ -859,6 +953,7 @@ export function createMessageItems(messages: ChatMessageItem[], enabledStickers:
           stickerUrl: stickerId ? resolveStickerUrl(stickerId, enabledStickers) : undefined,
           attachments: message.attachments,
           messageId: message.id,
+          channelSource: message.channelSource,
         },
       }];
     }
@@ -936,6 +1031,7 @@ export function createMessageItems(messages: ChatMessageItem[], enabledStickers:
           streaming: message.streaming,
           ttsCacheKey: message.ttsCacheKey,
           stickerUrl: message.sticker ? resolveStickerUrl(message.sticker, enabledStickers) : undefined,
+          channelSource: message.channelSource,
         },
       });
     }
@@ -1075,6 +1171,7 @@ export function ChatMessageList({
   }, []);
 
   const items = createMessageItems(messages, enabledStickers);
+  const channelConversationLabel = resolveChannelConversationLabel(messages);
 
   return (
     <div
@@ -1083,6 +1180,12 @@ export function ChatMessageList({
       aria-live="polite"
       onScroll={updateScrollState}
     >
+      {channelConversationLabel && (
+        <div className="cy-message-list__channel-context" role="note" aria-label={channelConversationLabel}>
+          <span className="cy-message-list__channel-dot" aria-hidden="true" />
+          <span>{channelConversationLabel}</span>
+        </div>
+      )}
       <Bubble.List items={items} role={roles} autoScroll />
     </div>
   );

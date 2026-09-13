@@ -122,6 +122,30 @@ describe("PluginManager", () => {
     expect(readFileSync(marker, "utf8")).toBe("core");
   });
 
+  it("普通宿主事件旁路发布，不等待监听器的未决 Promise", async () => {
+    const h = harness();
+    const marker = path.join(tmp, "slow-listener-entered");
+    writeFileSync(
+      path.join(tmp, "demo", "index.cjs"),
+      `const fs = require("node:fs");
+      module.exports = { register(ctx) {
+        ctx.events.on("host:runtime:ready", () => {
+          fs.writeFileSync(${JSON.stringify(marker)}, "entered");
+          return new Promise(() => {});
+        });
+      } };`,
+      "utf8",
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+
+    // 监听器返回永不兑现的 Promise：若发布路径等待监听器，这里会一直挂起
+    await mgr.publishHostEvent("runtime:ready", { phase: "core" });
+
+    expect(readFileSync(marker, "utf8")).toBe("entered");
+  });
+
   it("在插件仍可接收时发布插件系统 ready 和 stopping 事件", async () => {
     const h = harness();
     const marker = path.join(tmp, "lifecycle-events");
@@ -474,6 +498,45 @@ describe("PluginManager", () => {
     expect(mgr.list()).toEqual([]);
   });
 
+  it("卸载时通过持久化资源清理钩子删除插件名下的定时任务", async () => {
+    const cleaned: string[] = [];
+    const h = harness({
+      loadEnabledMap: () => ({ demo: true }),
+      cleanupPersistentResources: async (pluginId) => {
+        cleaned.push(pluginId);
+      },
+    });
+    h.options.scanRoots = [{ path: path.dirname(fixturePlugin("demo")), source: "user" }];
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+
+    const result = await mgr.uninstall("demo");
+
+    expect(result.ok).toBe(true);
+    expect(cleaned).toEqual(["demo"]);
+    expect(existsSync(path.join(tmp, "demo"))).toBe(false);
+  });
+
+  it("插件任务清理失败时卸载中止并保留目录，避免留下孤儿任务", async () => {
+    const h = harness({
+      loadEnabledMap: () => ({ demo: true }),
+      cleanupPersistentResources: async () => {
+        throw new Error("task file locked");
+      },
+    });
+    h.options.scanRoots = [{ path: path.dirname(fixturePlugin("demo")), source: "user" }];
+    const pluginDir = path.join(tmp, "demo");
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+
+    const result = await mgr.uninstall("demo");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("卸载插件失败（目录未删除）");
+    expect(existsSync(pluginDir)).toBe(true);
+    expect(mgr.list()).toContainEqual(expect.objectContaining({ id: "demo" }));
+  });
+
   it("拒绝卸载内置插件", async () => {
     const h = harness();
     const pluginDir = path.join(tmp, "demo");
@@ -568,5 +631,116 @@ describe("PluginManager", () => {
     await expect(mgr.start()).resolves.toBeUndefined();
     expect(mgr.overview().plugins).toEqual([]);
     expect(mgr.overview().issues[0]?.message).toMatch(/无法扫描插件目录/);
+  });
+
+  it("getSettingsPanelDir：仅已启用且声明合法面板的插件返回目录", async () => {
+    const h = harness(); // 先初始化 tmp 再建 fixture
+    const panelPluginDir = path.join(tmp, "panel-plugin");
+    mkdirSync(panelPluginDir, { recursive: true });
+    writeFileSync(
+      path.join(panelPluginDir, "manifest.json"),
+      JSON.stringify({
+        apiVersion: 1,
+        id: "panel-plugin",
+        name: "面板插件",
+        version: "1.0.0",
+        description: "d",
+        author: "a",
+        entry: "index.cjs",
+        settingsPanel: "ui.html",
+        defaultEnabled: true,
+      }),
+      "utf8",
+    );
+    writeFileSync(path.join(panelPluginDir, "index.cjs"), "module.exports = { register() {} };", "utf8");
+    writeFileSync(path.join(panelPluginDir, "ui.html"), "<p>panel</p>", "utf8");
+
+    // demo 未声明面板；panel-plugin 声明面板（builtin + defaultEnabled，默认启用）
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+    expect(mgr.getSettingsPanelDir("demo")).toBeUndefined();
+    expect(mgr.getSettingsPanelDir("panel-plugin")).toBe(panelPluginDir);
+    expect(mgr.getSettingsPanelDir("nobody")).toBeUndefined();
+
+    // 用户禁用后立即失效（协议层对应 404）
+    await mgr.setEnabled("panel-plugin", false);
+    expect(mgr.getSettingsPanelDir("panel-plugin")).toBeUndefined();
+  });
+});
+
+describe("marketplace origin bookkeeping", () => {
+  const importedManifest = {
+    apiVersion: 1 as const,
+    id: "zip-demo",
+    name: "ZIP Demo",
+    version: "1.0.0",
+    description: "d",
+    author: "a",
+    entry: "index.cjs",
+    defaultEnabled: true,
+  };
+
+  /** 伪造一个已通过 ZIP 校验的 staging 目录，让真实 commit 流程可执行 */
+  function fakePrepared(userRoot: string, version = "1.0.0") {
+    const stagingDir = path.join(userRoot, ".staging");
+    const pluginDir = path.join(stagingDir, "package");
+    mkdirSync(pluginDir, { recursive: true });
+    const manifest = { ...importedManifest, version };
+    writeFileSync(path.join(pluginDir, "manifest.json"), JSON.stringify(manifest));
+    writeFileSync(path.join(pluginDir, "index.cjs"), "module.exports={register(){}}");
+    return { stagingDir, pluginDir, manifest };
+  }
+
+  it("市场安装落来源记录，列表 origin 标记为 market", async () => {
+    const h = harness();
+    const userRoot = path.join(tmp, "user-plugins");
+    h.options.scanRoots.push({ path: userRoot, source: "user" });
+    const prepared = fakePrepared(userRoot);
+    vi.spyOn(installer, "preparePluginZip").mockResolvedValue(prepared);
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+
+    const result = await mgr.installZip(path.join(tmp, "plugin.zip"), {
+      origin: "market",
+      expectedIdentity: { id: "zip-demo", version: "1.0.0" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mgr.list().find((e) => e.id === "zip-demo")?.origin).toBe("market");
+  });
+
+  it("本地 ZIP 覆盖市场安装的同 id 插件后，origin 回到 local", async () => {
+    const h = harness();
+    const userRoot = path.join(tmp, "user-plugins");
+    h.options.scanRoots.push({ path: userRoot, source: "user" });
+    h.options.confirmPluginReplace = async () => true;
+    const first = fakePrepared(userRoot, "1.0.0");
+    vi.spyOn(installer, "preparePluginZip").mockResolvedValueOnce(first);
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+    await mgr.installZip(path.join(tmp, "plugin.zip"), { origin: "market" });
+
+    const second = fakePrepared(userRoot, "2.0.0");
+    vi.spyOn(installer, "preparePluginZip").mockResolvedValueOnce(second);
+    const localResult = await mgr.installZip(path.join(tmp, "plugin.zip"));
+
+    expect(localResult.ok).toBe(true);
+    expect(mgr.list().find((e) => e.id === "zip-demo")?.origin).toBe("local");
+  });
+
+  it("卸载市场安装的插件时同步清除来源记录", async () => {
+    const h = harness();
+    const userRoot = path.join(tmp, "user-plugins");
+    h.options.scanRoots.push({ path: userRoot, source: "user" });
+    const prepared = fakePrepared(userRoot);
+    vi.spyOn(installer, "preparePluginZip").mockResolvedValue(prepared);
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+    await mgr.installZip(path.join(tmp, "plugin.zip"), { origin: "market" });
+
+    const result = await mgr.uninstall("zip-demo");
+
+    expect(result.ok).toBe(true);
+    expect(installer.readHostMetadataSync(userRoot, "zip-demo")).toBeUndefined();
   });
 });

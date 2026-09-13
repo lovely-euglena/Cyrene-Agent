@@ -22,6 +22,10 @@
 }
 
 .plugin-panel__heading {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 14px;
+  align-items: center;
   min-width: 0;
 }
 
@@ -37,6 +41,54 @@
   color: var(--cy-text-muted, #6e6e73);
   font-size: 12px;
 }
+
+/* 收录仓库链接行：链接用强调色，普通点击与辅助键点击均由主进程转交系统浏览器打开 */
+.plugin-panel__registry {
+  margin-top: 4px;
+}
+
+.plugin-panel__registry-link {
+  color: var(--cy-accent, #ff5b8a);
+  text-decoration: none;
+}
+
+.plugin-panel__registry-link:hover {
+  text-decoration: underline;
+}
+
+/* 市场数据源状态徽章：头部图标只跨 3 行，徽章行需显式落在第 2 列 */
+.plugin-panel__market-sources {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.plugin-panel__source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--cy-border, #e5e5ea);
+  border-radius: 999px;
+  color: var(--cy-text-muted, #6e6e73);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* 数据源（当前提供列表的源）用强调色 */
+.plugin-panel__source-badge.is-used {
+  border-color: var(--cy-accent, #ff5b8a);
+  color: var(--cy-accent, #ff5b8a);
+}
+
+/* 探测失败（已死）的源标红并划线 */
+.plugin-panel__source-badge.is-dead {
+  border-color: var(--cy-danger, #e5484d);
+  color: var(--cy-danger, #e5484d);
+  text-decoration: line-through;
+}
+
 
 .plugin-panel__header-actions {
   display: flex;
@@ -314,4 +366,27 @@
   .plugin-panel__grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.plugin-panel__heading-icon {
+  grid-row: span 3;
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+}
+
+/* 插件市场入口按钮内的小人图标 */
+.plugin-panel__market-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+/* 市场卡片元信息分隔符与下载量强调色 */
+.plugin-card-ui__meta-sep {
+  color: var(--cy-text-muted, #6e6e73);
+}
+
+.plugin-card-ui__downloads {
+  color: var(--cy-accent, #ff5b8a);
 }

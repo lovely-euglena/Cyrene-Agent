@@ -64,7 +64,7 @@ import { runCyreneHarness } from "./cyrene-harness";
 import { getAdapterForConfig } from "../vendors";
 import { dispatchToolCall } from "./tool-dispatcher";
 import type { ToolDispatchResult } from "./tool-dispatcher";
-import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent } from "./types";
+import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent, HarnessToolFinishedEvent } from "./types";
 import type { ChatMessage, ChatResponse, ToolCall } from "../vendors/types";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import { projectCacheRelevantChatRequest } from "../prompt-layers";
@@ -497,6 +497,63 @@ describe("CyreneHarness completion", () => {
     expect(fetchMock).toHaveBeenCalledTimes(52);
   });
 
+  it("stops at maxRounds before issuing the next model request", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ toolCalls: [mutationToolCall("call-2")] }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockedDispatch.mockResolvedValue(successDispatchResult());
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a bounded test agent",
+      messages: [{ role: "user", content: "执行受轮次限制的任务" }],
+      tools: [],
+      vendorConfig,
+      config: { maxRounds: 1 },
+    });
+
+    expect(result.rounds).toBe(1);
+    expect(result.terminateReason).toBe("max_rounds");
+    expect(result.finalAnswer).toContain("工具轮次上限");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("同工具连续失败达到阈值后熔断：不再 dispatch,合成 not_executed 引导模型换方案", async () => {
+    // 模型连续 6 轮调用同一 write_file 工具,dispatch 每次都失败(semantic_failure 不重试)
+    const toolRounds = Array.from({ length: 6 }, (_, index) => (
+      assistantResponse({ toolCalls: [mutationToolCall(`call-${index + 1}`)] })
+    ));
+    const { fn: fetchMock } = fakeFetchSequencer([
+      ...toolRounds,
+      assistantResponse({ text: "换方案完成。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockedDispatch.mockResolvedValue({
+      outcome: "failure",
+      category: "semantic_failure",
+      tool: "write_file",
+      message: "E_INVALID_ARGS: 缺少 filename",
+    });
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "反复调用同一个失败工具" }],
+      tools: [mutationTool()],
+      vendorConfig,
+    });
+
+    expect(result.finalAnswer).toBe("换方案完成。");
+    // 前 5 次真实 dispatch,第 6 次被熔断拦截(不再进入 dispatch)
+    expect(mockedDispatch).toHaveBeenCalledTimes(5);
+    // 第 6 轮工具结果为合成的 not_executed:最后一次模型请求里能看到熔断提示
+    const lastRequest = fakeStreamChatWithSdk.mock.calls[6]?.[0].request as { messages: ChatMessage[] };
+    const lastToolMessage = lastRequest.messages.filter((message) => message.role === "tool").at(-1);
+    expect(lastToolMessage?.toolCallId).toBe("call-6");
+    expect(String(lastToolMessage?.content)).toContain("not_executed");
+    expect(String(lastToolMessage?.content)).toContain("熔断");
+  });
+
   it("persists a structured compaction checkpoint before the next model request", async () => {
     const { fn: fetchMock } = fakeFetchSequencer([
       assistantResponse({ text: "## 原始任务与意图\n- 完成历史任务\n\n## 下一步\n- 继续回答" }),
@@ -810,6 +867,72 @@ describe("CyreneHarness completion", () => {
       expect.objectContaining({ toolCallId: "durable-call", status: "started", toolSideEffect: "idempotent_mutation" }),
       expect.objectContaining({ toolCallId: "durable-call", status: "committed", toolSideEffect: "idempotent_mutation" }),
     ]);
+  });
+
+  it("emits a read-only tool finished observation after the model-visible result is committed", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("obs-call")] }),
+      assistantResponse({ text: "完成。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockedDispatch.mockResolvedValue(successDispatchResult("obs-call"));
+    const finished: HarnessToolFinishedEvent[] = [];
+
+    await runCyreneHarness({
+      systemPrompt: "test",
+      messages: [{ role: "user", content: "写入文件" }],
+      tools: [{ ...mutationTool(), risk: "fs-write" }],
+      vendorConfig,
+      runId: "obs-run",
+      onToolFinished: (event) => finished.push(event),
+    });
+
+    expect(finished).toHaveLength(1);
+    expect(finished[0]).toMatchObject({
+      toolId: "write_file",
+      toolCallId: "obs-call",
+      runId: "obs-run",
+      status: "success",
+      risk: "fs-write",
+    });
+    expect(finished[0].durationMs).toBeGreaterThanOrEqual(0);
+    // 不携带参数与输出正文：事件字段集合是稳定白名单
+    expect(Object.keys(finished[0]).sort()).toEqual(
+      ["durationMs", "risk", "runId", "status", "toolCallId", "toolId"],
+    );
+  });
+
+  it("emits not_executed tool finished observations for calls displaced by ask_user", async () => {
+    const askCall: ToolCall = { id: "ask-1", name: "ask_user", arguments: JSON.stringify({ question: "继续吗" }) };
+    const readCall: ToolCall = { id: "read-1", name: "read_file", arguments: "{}" };
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [askCall, readCall] }),
+      assistantResponse({ text: "好的，继续。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockedDispatch.mockResolvedValue({
+      outcome: "success",
+      tool: "ask_user",
+      message: "继续",
+    } as ToolDispatchResult);
+    const finished: HarnessToolFinishedEvent[] = [];
+
+    await runCyreneHarness({
+      systemPrompt: "test",
+      messages: [{ role: "user", content: "执行任务" }],
+      tools: [safeReadTool("read_file")],
+      vendorConfig,
+      runId: "obs-run-2",
+      onToolFinished: (event) => finished.push(event),
+    });
+
+    // read_file 被 ask_user 排他挤掉：not_executed 且无耗时；ask_user 正常完成带耗时
+    expect(finished).toEqual([
+      expect.objectContaining({ toolId: "read_file", toolCallId: "read-1", status: "not_executed", risk: "safe" }),
+      expect.objectContaining({ toolId: "ask_user", toolCallId: "ask-1", status: "success", risk: "safe" }),
+    ]);
+    expect("durationMs" in finished[0]).toBe(false);
+    expect(finished[1].durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it("settles as a runtime error when a required checkpoint cannot be persisted", async () => {
