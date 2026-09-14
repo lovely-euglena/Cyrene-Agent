@@ -9,6 +9,11 @@ directories:
 asar: true
 asarUnpack:
   - "**/vendor/srt-win/**"
+  # LanceDB native（win32 msvc 补装的 .node 必须落磁盘真实路径）
+  - "**/node_modules/@lancedb/lancedb-win32-x64-msvc/**"
+  - "**/node_modules/@lancedb/lancedb-linux-x64-gnu/**"
+  - "**/node_modules/onnxruntime-node/**"
+  - "**/node_modules/@node-rs/jieba/**"
   - "**/node_modules/@ast-grep/**"
   # Playwright MCP 以 ELECTRON_RUN_AS_NODE 模式运行，读不了 asar 虚拟路径，
   # 需真实磁盘文件（cli.js + 其依赖的 playwright / playwright-core）
