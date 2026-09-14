@@ -18,7 +18,7 @@ interface PluginModePanelProps {
 }
 
 // Cyrene 官方插件收录仓库（Gitee 镜像，GitHub 账号申诉期间作为分发源），面板内展示并可在系统浏览器打开
-const PLUGIN_REGISTRY_URL = "https://gitee.com/playa0/cyrene-plugins";
+const PLUGIN_REGISTRY_URL = "https://gitee.com/Ygwill2022/cyrene-plugins";
 
 /** 从索引源地址推导展示名：认识的源给友好名，其余直接显示主机名 */
 function marketSourceLabel(url: string): string {

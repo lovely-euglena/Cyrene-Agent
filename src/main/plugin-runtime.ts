@@ -50,6 +50,14 @@ export interface PluginRuntimeDeps {
   getPanelHostWebContents?: () => Electron.WebContents | null;
 }
 
+// .NET 插件管理桥用：market 服务随 startPluginRuntime 创建后存此处
+let marketService: ReturnType<typeof createPluginMarketplaceService> | null = null;
+
+/** 取插件市场服务（仅 startPluginRuntime 之后可用；.NET 插件窗宿主侧用）。 */
+export function getPluginMarketService(): ReturnType<typeof createPluginMarketplaceService> | null {
+  return marketService;
+}
+
 export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<PluginManager> {
   const userPluginRoot = path.join(app.getPath("userData"), "plugins");
   const pluginDataRoot = path.join(app.getPath("userData"), "plugin-data");
@@ -149,6 +157,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     cacheDir: path.join(app.getPath("userData"), "plugin-market-cache"),
     installZip: (zipPath, opts) => manager.installZip(zipPath, opts),
   });
+  marketService = market;
   deps.ipc.handle(IPC.PLUGINS_MARKET_LIST, () => market.listMarket());
   deps.ipc.handle(IPC.PLUGINS_MARKET_INSTALL, (_event, id: unknown) => {
     if (typeof id !== "string" || !id) {

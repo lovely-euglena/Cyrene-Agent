@@ -19,7 +19,7 @@ export const MARKET_REGISTRY_URLS = [
 ] as const;
 
 /** 插件包只允许来自官方仓库 zips/ 目录的直链，防止索引被篡改后下载任意来源的包 */
-export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/";
+export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/Ygwill2022/cyrene-plugins/raw/main/zips/";
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;

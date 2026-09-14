@@ -31,6 +31,7 @@ public static class RequestRouter
                         NativeWindow window = kind switch
                         {
                             "settings" => new SettingsWindow(layout),
+                            "plugins" => new PluginManagerWindow(layout),
                             "splash" => new SplashWindow(),
                             "sidebar" => new SidebarWindow(layout),
                             "tasks" => new TasksWindow(layout),
@@ -108,6 +109,17 @@ public static class RequestRouter
                 {
                     if (Windows.TryGetValue("tasks", out var w) && w is TasksWindow tasksWindow)
                         tasksWindow.ApplyState(tasks, usage);
+                    Protocol?.ReplyOk(id);
+                });
+                break;
+            }
+            case "state.plugins":
+            {
+                var payload = element.TryGetProperty("plugins", out var pEl) ? pEl : default;
+                app.Dispatcher.Invoke(() =>
+                {
+                    if (Windows.TryGetValue("plugins", out var w) && w is PluginManagerWindow pluginsWindow)
+                        pluginsWindow.ApplyState(payload);
                     Protocol?.ReplyOk(id);
                 });
                 break;

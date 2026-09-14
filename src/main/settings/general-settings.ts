@@ -21,6 +21,12 @@ import type { LspServerOverride } from "../lsp/types";
 export interface GeneralSettings extends ChatAppearanceSettings {
   /** 功能插件开关表：pluginId -> enabled */
   plugins: Record<string, boolean>;
+  /**
+   * 插件运行时总开关（默认关闭省内存）：false 时启动跳过插件系统
+   * （PluginManager + 市场服务不构造，IPC 不注册）；运行期可在设置/
+   * 插件管理窗动态启停。
+   */
+  pluginRuntimeEnabled?: boolean;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
   maxParallelToolCalls: number;
   citaEnabled: boolean;

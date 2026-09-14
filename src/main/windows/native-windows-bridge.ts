@@ -26,6 +26,12 @@ export interface NativeBridgeActions {
   setSetting?(key: string, value: unknown): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
+  /**
+   * 插件操作（.NET 插件管理窗 → 主进程）：
+   * enable/disable/uninstall/install/openPanel/refresh。install 为异步
+   * （下载+校验+解压），完成后由宿主重推 state.plugins 快照。
+   */
+  pluginAction?(action: string, id?: string): Promise<void> | void;
 }
 
 let client: NativeWindowsClient | null = null;
@@ -40,6 +46,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
     onCommand(frame) {
       const action = String(frame.action ?? "");
       const section = typeof frame.section === "string" ? frame.section : undefined;
+      const frameKind = typeof frame.kind === "string" ? frame.kind : "";
       switch (action) {
         case "openSettings": actions.openSettings(section); break;
         case "openChat": actions.openChatWindow(); break;
@@ -59,6 +66,19 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "openChannels":
           actions.openChannelsWindow?.();
           break;
+        case "enable-runtime":
+        case "disable-runtime":
+        case "enable":
+        case "disable":
+        case "uninstall":
+        case "install":
+        case "openPanel":
+        case "refresh":
+          // 插件管理窗操作：{"kind":"plugins","action":"install","id":...}
+          if (frameKind === "plugins") {
+            void actions.pluginAction?.(action, typeof frame.id === "string" ? frame.id : undefined);
+          }
+          break;
         default:
           console.warn(`[NativeWindows] unhandled cmd action: ${action}`);
       }
@@ -76,6 +96,8 @@ export interface NativeDataProviders {
   getTasks(): Promise<unknown[]>;
   /** native 设置窗快照（general settings 的通用/外观/关于子集）。 */
   getSettingsSnapshot?(): Promise<unknown>;
+  /** .NET 插件管理窗快照（已装 + 市场列表）。 */
+  getPluginsSnapshot?(): Promise<unknown>;
 }
 
 let dataProviders: NativeDataProviders | null = null;
@@ -85,6 +107,27 @@ let dataProviders: NativeDataProviders | null = null;
  * 未启用 native 窗口时 no-op。绑定后 scheduler 变更旁路与 tasks 窗
  * spawn 初始快照才有数据可推。
  */
+/**
+ * 重推插件快照到 .NET 插件管理窗（操作完成后调用；窗未开时 no-op）。
+ * 快照组装需要 manager/market——由调用方闭包提供以避免本模块依赖插件系统。
+ */
+export async function pushPluginsSnapshotToNative(
+  build?: () => Promise<unknown> | null,
+): Promise<void> {
+  const c = activeClient();
+  if (!c) return;
+  let payload: unknown = null;
+  if (build) {
+    payload = await build();
+  }
+  if (payload === null) return;
+  try {
+    await c.pushPlugins(payload);
+  } catch {
+    /* 窗口未开/进程未起：正常路径，不报错 */
+  }
+}
+
 export function bindNativeDataProviders(providers: NativeDataProviders): void {
   dataProviders = providers;
 }
@@ -125,7 +168,7 @@ function activeClient(): NativeWindowsClient | null {
 }
 
 /** 是否走 native 路径（调用方据此跳过对应 BrowserWindow 创建）。 */
-export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings"): boolean {
+export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins"): boolean {
   const c = activeClient();
   return c !== null;
 }
@@ -151,7 +194,7 @@ export function pushLayoutToNative(layout: unknown): void {
 // ── 窗口生命周期（替代 BrowserWindow 创建） ──
 
 export async function spawnNativeWindow(
-  kind: "splash" | "sidebar" | "tasks" | "settings",
+  kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins",
   layout?: unknown,
 ): Promise<boolean> {
   const c = activeClient();
@@ -178,6 +221,10 @@ export async function spawnNativeWindow(
       void dataProviders.getSettingsSnapshot?.()
         .then((settings) => c.pushSettings(settings))
         .catch((error) => console.warn("[NativeWindows] settings snapshot push failed:", error));
+    } else if (kind === "plugins" && dataProviders) {
+      void dataProviders.getPluginsSnapshot?.()
+        .then((snapshot) => c.pushPlugins(snapshot))
+        .catch((error) => console.warn("[NativeWindows] plugins snapshot push failed:", error));
     } else if (kind === "tasks" && dataProviders) {
       void dataProviders.getTasks()
         .then((tasks) => c.pushTasks(tasks, getUsageReport(7)))

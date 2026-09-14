@@ -52,7 +52,7 @@ export interface CoreResult {
   runtime: AgentRuntime;
   services: CoreServices;
   channels: ChannelsSubsystem;
-  plugins: PluginManager;
+  plugins: PluginManager | null;
   scheduler: SchedulerSubsystem;
 }
 
@@ -73,6 +73,8 @@ export interface CoreDependencies {
   initSkills(): void | Promise<void>;
   /** 低成本服务与配置 getter；只构造，不建立网络连接。 */
   createLowCostServices(): CoreServices;
+  /** .NET 插件管理窗快照（已装+市场索引；插件系统就绪前可缺省）。 */
+  getPluginsSnapshot?(): Promise<unknown>;
   initSandbox(): void | Promise<void>;
   initPlanMode(): void;
   registerAllTools(services: CoreServices): void;
@@ -80,7 +82,7 @@ export interface CoreDependencies {
   createRuntime(services: CoreServices): AgentRuntime;
   createChannels(runtime: AgentRuntime, services: CoreServices): ChannelsSubsystem;
   /** 必须在内置渠道适配器注册完成后调用；scheduler 先于本步完成 initialize。 */
-  startPlugins(services: CoreServices, scheduler: SchedulerSubsystem, runtime: AgentRuntime): Promise<PluginManager>;
+  startPlugins(services: CoreServices, scheduler: SchedulerSubsystem, runtime: AgentRuntime): Promise<PluginManager | null>;
   createScheduler(runtime: AgentRuntime, services: CoreServices): SchedulerSubsystem;
   /** native 三件套数据源绑定（core 阶段；未启用时 no-op）。 */
   bindNativeData?(providers: import("../windows/native-windows-bridge").NativeDataProviders): void;
@@ -171,6 +173,8 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     getRuntimeState: () => services.runtimeState.getState(),
     getModelConfig: () => deps.getPublicModelConfig?.() ?? null,
     getTasks: async () => scheduler.store.getTasks() as unknown[],
+    // .NET 插件管理窗快照：已装 + 市场索引（manager/market 由运行期闭包提供）
+    getPluginsSnapshot: async () => deps.getPluginsSnapshot?.(),
     // native 设置窗快照：通用/外观/关于子集（键名与 C# 白名单对齐）
     getSettingsSnapshot: async () => {
       const gs = deps.loadGeneralSettings();
@@ -186,6 +190,8 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   });
 
   // 插件严格晚于内置 adapter id 预留，避免插件抢占 feishu/wechat/qq 等内置 id。
+  // pluginRuntimeEnabled=false（默认）时 startPlugins 返回 null：插件系统
+  // 整体不构造（省内存），管理窗经 cmd 动态启动。
   const plugins = await timedStep("startPlugins", () => deps.startPlugins(services, scheduler, runtime));
 
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
@@ -226,7 +232,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   shutdown.register({
     id: "plugins",
     phase: "stopActiveWork",
-    dispose: async () => { await plugins.stop(); },
+    dispose: async () => { await plugins?.stop(); },
   });
   shutdown.register({
     id: "channels",

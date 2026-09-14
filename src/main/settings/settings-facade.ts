@@ -37,6 +37,7 @@ import {
 
 const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   plugins: {},
+  pluginRuntimeEnabled: false,
   maxParallelToolCalls: 4,
   citaEnabled: false,
   citaSemanticEngine: "remote",

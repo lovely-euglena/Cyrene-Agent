@@ -93,7 +93,7 @@ public sealed class SettingsWindow : NativeWindow
 
     private void BuildSections(StackPanel nav)
     {
-        void AddSection(string id, string label, bool native, string? legacyHash = null)
+        void AddSection(string id, string label, bool native, string? legacyHash = null, bool pluginManager = false)
         {
             var btn = new RadioButton
             {
@@ -111,7 +111,9 @@ public sealed class SettingsWindow : NativeWindow
             var host = new StackPanel { Visibility = Visibility.Collapsed };
             _sectionHosts[id] = host;
             _sections.Children.Add(host);
-            host.Children.Add(native ? BuildNativeSection(id) : BuildLegacySection(id, label, legacyHash ?? id));
+            host.Children.Add(native
+                ? BuildNativeSection(id)
+                : BuildLegacySection(id, label, legacyHash ?? id, pluginManager));
             if (id == "general") { btn.IsChecked = true; }
         }
 
@@ -121,7 +123,7 @@ public sealed class SettingsWindow : NativeWindow
         AddSection("memory", "记忆", native: false, legacyHash: "memory");
         AddSection("tts", "语音合成 TTS", native: false, legacyHash: "tts");
         AddSection("asr", "语音识别 ASR", native: false, legacyHash: "asr");
-        AddSection("plugins", "插件", native: false, legacyHash: "plugins");
+        AddSection("plugins", "插件", native: false, legacyHash: "plugins", pluginManager: true);
         AddSection("user", "用户", native: false, legacyHash: "user");
         AddSection("tasks", "定时任务", native: false, legacyHash: "tasks");
         AddSection("channels", "渠道配置", native: false, legacyHash: "channels");
@@ -188,20 +190,21 @@ public sealed class SettingsWindow : NativeWindow
 
     // ── 占位 section ──
 
-    private FrameworkElement BuildLegacySection(string id, string label, string hash)
+    private FrameworkElement BuildLegacySection(string id, string label, string hash, bool pluginManager = false)
     {
         var panel = new StackPanel();
         panel.Children.Add(MakeHeader(label));
         panel.Children.Add(MakeHint("该分区暂未迁移到原生窗口——点下方按钮在原版设置页中打开。"));
-        panel.Children.Add(MakeLegacyButton(hash));
+        panel.Children.Add(MakeLegacyButton(hash, pluginManager));
         return panel;
     }
 
-    private Button MakeLegacyButton(string section)
+    private Button MakeLegacyButton(string section, bool pluginManager = false)
     {
         var btn = new Button
         {
-            Content = section == "channels" ? "打开渠道配置（独立窗口）" : "在旧版设置中打开",
+            Content = pluginManager ? "打开插件管理（原生窗口）"
+              : section == "channels" ? "打开渠道配置（独立窗口）" : "在旧版设置中打开",
             Width = 220,
             Height = 32,
             Margin = new Thickness(0, 14, 0, 0),
@@ -211,7 +214,16 @@ public sealed class SettingsWindow : NativeWindow
             BorderThickness = new Thickness(1),
             Cursor = System.Windows.Input.Cursors.Hand,
         };
-        btn.Click += (_, _) => RequestRouter.SendCommand("settings", "open-legacy", section);
+        if (pluginManager)
+        {
+            // 插件管理 = .NET PluginManagerWindow（cmd kind:plugins）
+            btn.Click += (_, _) => RequestRouter.SendCommand("plugins", "open");
+        }
+        else
+        {
+            // 其余占位 section 回 Electron 旧版设置页（带 hash 定位）
+            btn.Click += (_, _) => RequestRouter.SendCommand("settings", "open-legacy", section);
+        }
         return btn;
     }
 

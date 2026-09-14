@@ -17,6 +17,7 @@ export let reactChatWindow: BrowserWindow | null = null;
 export let sidebarWindow: BrowserWindow | null = null;
 export let tasksWindow: BrowserWindow | null = null;
 export let settingsWindow: BrowserWindow | null = null;
+export let pluginManagerWindow: BrowserWindow | null = null;
 export let stickerManagerWindow: BrowserWindow | null = null;
 export let callWindow: BrowserWindow | null = null;
 export let musicPlayerWindow: BrowserWindow | null = null;
@@ -40,6 +41,10 @@ export function setSidebarWindow(win: BrowserWindow | null): void {
 
 export function setTasksWindow(win: BrowserWindow | null): void {
   tasksWindow = win;
+}
+
+export function setPluginManagerWindow(win: BrowserWindow | null): void {
+  pluginManagerWindow = win;
 }
 
 export function setSettingsWindow(win: BrowserWindow | null): void {

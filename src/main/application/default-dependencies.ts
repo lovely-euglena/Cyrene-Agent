@@ -100,7 +100,8 @@ import { createSchedulerSubsystem } from "../scheduler/bootstrap";
 import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
-import { startPluginRuntime } from "../plugin-runtime";
+import { startPluginRuntime, getPluginMarketService } from "../plugin-runtime";
+import { pushPluginsSnapshotToNative } from "../windows/native-windows-bridge";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -127,13 +128,13 @@ import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
 
-import { createIpcScope } from "./ipc-scope";
+import { createIpcScope, type IpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
 import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
 import { prepareBeforeReady } from "./pre-ready";
 import { startShell } from "./shell-bootstrap";
-import { startCore } from "./core-bootstrap";
+import { startCore, type CoreServices, type CoreDependencies } from "./core-bootstrap";
 import { startBackground } from "./background";
 import { installUpdateShutdownFallback, type UpdateLifecycleLike } from "./electron-lifecycle";
 import type { ApplicationDependencies } from "./application";
@@ -172,6 +173,40 @@ async function reconcileUserMemoryIndex(): Promise<void> {
 export function createDefaultApplicationDependencies(): ApplicationDependencies {
   // Agent Runtime 早于插件管理器构造；通过窄闭包在运行期转发宿主事件，避免反转启动顺序。
   let pluginManager: PluginManager | undefined;
+  // 插件运行时动态启动用：startPlugins 首次调用的实参（core 阶段保存）
+  let lastPluginArgs: Parameters<CoreDependencies["startPlugins"]> | null = null;
+  // ipc holder：startCore 装配时填充（shell.ipc 生命周期跟随应用）
+  let shellIpc: IpcScope | null = null;
+  const shellIpcRef = (): IpcScope => shellIpc ?? createIpcScope();
+
+  // 插件运行时启动实现（startPlugins 装配与运行期动态启用共用；幂等）
+  const startPluginsImpl = async (
+    services: CoreServices,
+    scheduler: Parameters<CoreDependencies["startPlugins"]>[1],
+    runtime: Parameters<CoreDependencies["startPlugins"]>[2],
+  ): Promise<PluginManager | null> => {
+    if (pluginManager) return pluginManager;
+    pluginManager = await startPluginRuntime({
+      llmClient: services.llm,
+      ipc: shellIpcRef(),
+      schedulerStore: scheduler.store,
+      agentRuntime: runtime,
+      onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
+      getPanelHostWebContents: () => settingsWindow?.webContents ?? null,
+    });
+    return pluginManager;
+  };
+
+  // 插件快照（.NET 管理窗 state.plugins payload；含运行时开关态）
+  const buildPluginSnapshot = async (): Promise<unknown> => {
+    const mkt = getPluginMarketService();
+    return {
+      runtimeEnabled: Boolean(pluginManager),
+      plugins: pluginManager ? pluginManager.overview().plugins : [],
+      market: pluginManager && mkt ? await mkt.listMarket() : [],
+    };
+  };
+
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({
     publish: (event, payload) => pluginManager
@@ -278,6 +313,47 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
+          // .NET 插件管理窗操作：manager/market 运行期引用（startPlugins 之后可用）
+          pluginAction: async (action, id) => {
+            const manager = pluginManager;
+            const market = getPluginMarketService();
+            // 运行时总开关动态起停（.NET 管理窗「未启用」提示条触发）
+            if (action === "enable-runtime" || action === "disable-runtime") {
+              if (action === "disable-runtime" && manager) {
+                await manager.stop();
+                pluginManager = undefined;
+              }
+              if (action === "enable-runtime" && !manager && lastPluginArgs) {
+                const [svcs, sched, rt] = lastPluginArgs;
+                pluginManager = await startPluginsImpl(svcs, sched, rt) ?? undefined;
+              }
+              await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
+              return;
+            }
+            if (!manager) return;
+            try {
+              if (action === "enable" && id) await manager.setEnabled(id, true);
+              else if (action === "disable" && id) await manager.setEnabled(id, false);
+              else if (action === "uninstall" && id) await manager.uninstall(id);
+              else if (action === "install" && id) await market?.installFromMarket(id);
+              else if (action === "openPanel") {
+                // 插件运行时面板归 Electron（首版宿主=设置窗插件 section）
+                windowManager.createSettingsWindow("plugins");
+                return;
+              }
+              // refresh：仅重拉市场索引
+            } catch (err) {
+              console.warn("[PluginNative] action failed:", action, id, err);
+            }
+            // 完成后重推快照（installed ± market 索引）
+            await pushPluginsSnapshotToNative(async () => {
+              const mkt = getPluginMarketService();
+              return {
+                plugins: manager.overview().plugins,
+                market: mkt ? await mkt.listMarket() : [],
+              };
+            });
+          },
         });
       },
 
@@ -477,18 +553,14 @@ createTray: (input) => {
       }),
 
       startPlugins: async (services, scheduler, runtime) => {
-        pluginManager = await startPluginRuntime({
-          llmClient: services.llm,
-          ipc: shell.ipc,
-          schedulerStore: scheduler.store,
-          agentRuntime: runtime,
-          // 插件启停后让调度引擎重新归一化逾期任务并重排计时器（不补跑）。
-          onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
-          // 面板宿主窗口（首版=设置窗口）：settingsWindow 为 CJS live-binding，
-          // 必须在请求时刻读取
-          getPanelHostWebContents: () => settingsWindow?.webContents ?? null,
-        });
-        return pluginManager;
+        // 插件运行时总开关（默认关）：跳过整个插件系统（manager/market/IPC
+        // 均不构造）。lastPluginArgs 供运行期动态启动（管理窗 cmd）。
+        lastPluginArgs = [services, scheduler, runtime];
+        if (!loadGeneralSettings().pluginRuntimeEnabled) {
+          logger.info(LogTag.Runtime, "plugin runtime disabled by settings, skipping");
+          return null;
+        }
+        return startPluginsImpl(services, scheduler, runtime);
       },
 
       createScheduler: (runtime) => createSchedulerSubsystem({
