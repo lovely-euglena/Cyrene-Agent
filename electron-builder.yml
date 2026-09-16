@@ -14,6 +14,7 @@ asarUnpack:
   - "**/node_modules/@lancedb/lancedb-linux-x64-gnu/**"
   - "**/node_modules/onnxruntime-node/**"
   - "**/node_modules/@node-rs/jieba/**"
+  - "**/node_modules/@node-rs/jieba-win32-x64-msvc/**"
   - "**/node_modules/@ast-grep/**"
   # Playwright MCP 以 ELECTRON_RUN_AS_NODE 模式运行，读不了 asar 虚拟路径，
   # 需真实磁盘文件（cli.js + 其依赖的 playwright / playwright-core）
