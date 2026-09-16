@@ -20,6 +20,14 @@
     "author": {
       "type": "string"
     },
+    "runtime": {
+      "type": "string",
+      "enum": [
+        "node",
+        "dotnet"
+      ],
+      "description": "插件运行时类型（双轨制）：   - \"node\"（默认）：entry = .cjs/.js/.mjs，宿主进程内 require 加载，     共享主进程生命周期（存量生态，行为不变）   - \"dotnet\"：entry = 插件自带 .exe（framework-dependent，依赖     .NET 10 Desktop Runtime），宿主以独立子进程运行并经 stdio     JSON 行协议通信——进程级隔离、崩溃不影响主进程、工具调用     走 IPC。性能敏感/系统级插件（采样、本地推理）推荐此轨。"
+    },
     "entry": {
       "type": "string"
     },

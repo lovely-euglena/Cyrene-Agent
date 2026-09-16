@@ -4,6 +4,11 @@
 JavaScript 入口”交付，可注册工具、插件私有 IPC、渠道 adapter，并按声明使用 Cyrene
 提供的 LLM 服务。
 
+> **双轨制（v2.0.0+）**：插件系统支持两种运行时——本文的 **Node 轨**（默认，
+> 进程内加载，适合 IO/网络/渠道型插件）与 **.NET 轨**（独立子进程 + stdio 协议，
+> 适合性能敏感/系统级插件）。manifest 声明 `"runtime": "dotnet"` 即走 .NET 轨，
+> 详见 [.NET 插件开发指南](./dotnet-plugins.md)。两轨共用启停/面板/市场/权限体系。
+
 ## 安全与信任边界
 
 > 插件入口在 Electron Main Process 中执行，拥有与 Cyrene 相同的本机权限。它不是

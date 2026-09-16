@@ -130,8 +130,14 @@ export function inspectPluginDir(dir: string): ManifestInspection {
     }
     if (typeof input.entry !== "string" || !input.entry) return { manifest: null, error: "entry 不能为空" };
     if (path.basename(input.entry) !== input.entry) return { manifest: null, error: "entry 必须是插件目录内的裸文件名" };
-    if (!ENTRY_EXTENSIONS.has(path.extname(input.entry).toLowerCase())) {
-      return { manifest: null, error: "entry 扩展名仅支持 .cjs/.js/.mjs" };
+    // 双轨制：runtime 归一化（缺省 node），entry 扩展名按轨校验
+    const runtime = input.runtime === "dotnet" ? "dotnet" : "node" as const;
+    const entryExt = path.extname(input.entry).toLowerCase();
+    if (runtime === "node" && !ENTRY_EXTENSIONS.has(entryExt)) {
+      return { manifest: null, error: "node 插件 entry 扩展名仅支持 .cjs/.js/.mjs" };
+    }
+    if (runtime === "dotnet" && entryExt !== ".exe") {
+      return { manifest: null, error: "dotnet 插件 entry 必须是插件目录内的 .exe（framework-dependent 发布）" };
     }
     // deps 枚举合法性已由 Schema 保证，这里只做去重归一化。
     const deps: PluginCapability[] | undefined = input.deps
@@ -160,6 +166,7 @@ export function inspectPluginDir(dir: string): ManifestInspection {
       description: input.description.trim(),
       author: input.author.trim(),
       entry: input.entry,
+      runtime,
       icon: resolveIcon(dir, input.icon),
       settingsPanel,
       settingsSection: settingsPanel ? input.settingsSection : undefined,
@@ -237,6 +244,11 @@ export function clearPluginModuleCache(pluginDir: string): void {
 
 /** 动态加载插件入口（.cjs/.js/.mjs 均可），归一化 default/named export */
 export async function loadPlugin(record: PluginRecord): Promise<CyrenePlugin> {
+  // 双轨分流：dotnet 插件不走 require——以独立子进程 + stdio 协议运行
+  if (record.manifest.runtime === "dotnet") {
+    const { DotnetPluginAdapter } = await import("./dotnet-adapter");
+    return new DotnetPluginAdapter(record);
+  }
   const entry = path.join(record.dir, record.manifest.entry);
   const ext = path.extname(entry).toLowerCase();
   let mod: Record<string, unknown>;

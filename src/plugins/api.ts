@@ -50,6 +50,8 @@ export interface PluginManifest {
   author: string;
   /** Bare file name inside the plugin directory. */
   entry: string;
+  /** 双轨运行时类型；归一化后必有（缺省 "node"）。语义见 PluginManifestInput.runtime。 */
+  runtime: "node" | "dotnet";
   /** Optional bare icon file name inside the plugin directory (png/jpg/webp/svg). */
   icon?: string;
   /** 插件目录内的设置面板 HTML 裸文件名；声明后宿主在设置页挂载该面板。 */
@@ -75,6 +77,16 @@ export interface PluginManifestInput {
   version: string;
   description: string;
   author: string;
+  /**
+   * 插件运行时类型（双轨制）：
+   *   - "node"（默认）：entry = .cjs/.js/.mjs，宿主进程内 require 加载，
+   *     共享主进程生命周期（存量生态，行为不变）
+   *   - "dotnet"：entry = 插件自带 .exe（framework-dependent，依赖
+   *     .NET 10 Desktop Runtime），宿主以独立子进程运行并经 stdio
+   *     JSON 行协议通信——进程级隔离、崩溃不影响主进程、工具调用
+   *     走 IPC。性能敏感/系统级插件（采样、本地推理）推荐此轨。
+   */
+  runtime?: "node" | "dotnet";
   entry: string;
   icon?: string;
   settingsPanel?: string;

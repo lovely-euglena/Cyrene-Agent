@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cyrene .NET 插件 SDK（双轨制第二轨）。
+
+    插件作者用法：
+      1. 引用本 SDK（项目引用或直接拷贝 .cs 文件）
+      2. 写一个类继承 CyrenePluginBase，工具方法标 [CyreneTool]
+      3. Program.Main 一行：CyrenePluginBase.Run(new MyPlugin())
+      4. dotnet publish -c Release -r win-x64 /p:SelfContained=false
+         （framework-dependent：依赖用户机 .NET 10 Runtime，
+          产物仅几百 KB dll + exe）
+      5. manifest.json 声明 "runtime": "dotnet"，entry 指向 exe
+
+    协议：与宿主 src/plugins/dotnet-adapter.ts 对应（stdio JSON 行）。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 纯协议库，无 UI 依赖；需要窗口的插件自行引 WPF -->
+  </PropertyGroup>
+
+</Project>
