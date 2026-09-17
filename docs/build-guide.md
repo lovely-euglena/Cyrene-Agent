@@ -154,6 +154,25 @@ Cyrene.exe
 
 缺失时对应功能自动降级或禁用，不阻塞其余功能。
 
+## 5.5 分发产物（一键脚本形态，v2.0.0-test.4+）
+
+xz 流式压缩对"下载/合并损坏"零容忍（一处坏=整包废），人工 `copy /b`
+易错序漏卷。标准分发形态改为**一键脚本链**：
+
+```bash
+xz -t Cyrene-Portable-2.0.0-test.N-x64.tar.xz          # ① 压缩后必验
+split -b 95m -d <tar.xz> <tar.xz>.part.                 # ② 95MB 分卷
+sha256sum <tar.xz>.part.* <tar.xz> > SHA256SUMS.txt     # ③ 逐卷+总包校验表
+```
+
+用户侧：全部下载到同一目录 → 双击 `一键解压运行.bat`（certutil 逐卷
+校验→点名坏卷→合并→总校验→tar 解压→启动）。脚本源码在
+`scripts/portable-unzip.bat`（GBK 编码保 cmd 中文兼容），发版时随分卷
+一起上传并按版本号改 BASE 变量。
+
+**发版前必做回验**：下载任一分卷回来对 SHA256（Gitee 传输层可能损坏，
+test.3 的翻车现场）。
+
 ## 6. 构建产物结构
 
 ```text
