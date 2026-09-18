@@ -5,8 +5,11 @@
   python3 scripts/upload-release-s3.py <本地文件>...      # 上传到 publish/Cyrene-Agent/
   python3 scripts/upload-release-s3.py --list            # 列当前远端内容
 
-Gitee 附件配额 1GB，S3 为第二分发渠道（无配额压力）。凭证走环境变量
-CYRENE_S3_AK / CYRENE_S3_SK；未设置时提示（不硬编码进仓库）。
+Gitee 附件配额 1GB，S3 为第二分发渠道（无配额压力）。
+
+S3 规范：上传【全量 tar.xz 不分卷】（直链下载+无合并步骤，配额无限）；
+分卷只为 Gitee 附件单文件 100MB 限制而生。
+凭证走环境变量 CYRENE_S3_AK / CYRENE_S3_SK；未设置时提示（不硬编码）。
 """
 import os
 import sys

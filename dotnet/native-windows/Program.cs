@@ -34,6 +34,18 @@ public static class Program
             return Mcp.McpHost.Run();
         }
 
+        // 内置工具宿主：计算/系统交互型工具的 .NET 执行（超时/回退由宿主管理）
+        if (args.Length > 0 && args[0] == "--tool-host")
+        {
+            return Tools.ToolHost.Run();
+        }
+
+        // 多 Agent 会话宿主：会话生命周期/状态机/编排（LLM 回调闭环在主进程）
+        if (args.Length > 0 && args[0] == "--agent-host")
+        {
+            return Agents.AgentSessionHost.RunProtocolLoop();
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,

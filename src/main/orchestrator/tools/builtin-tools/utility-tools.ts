@@ -12,6 +12,7 @@
 
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { nativeFirst } from "../native-tool-host";
 
 // ── calculator：安全数学表达式求值 ─────────────────────────────
 
@@ -198,13 +199,16 @@ export const calculatorTool: ToolDefinition = {
     required: ["expression"],
   },
   execute: async (args: Record<string, unknown>) => {
-    const expr = String(args.expression ?? "");
-    const value = evaluateExpression(expr);
-    if (!Number.isFinite(value)) throw new Error(`计算结果不是有限数（可能除以 0 或溢出）: ${value}`);
-    // 拼回表达式让模型可核对
-    return `${expr} = ${value}`;
+    return nativeFirst("calculator", args, calcExecute);
   },
 };
+
+/** calculator 的 TS 实现（native 轨回退路径）。 */
+function calcExecute(args: Record<string, unknown>): string {
+  const expression = String(args.expression ?? "");
+  const value = evaluateExpression(expression);
+  return `${expression} = ${value}`;
+}
 
 // ── now：当前时间 ─────────────────────────────────────────────
 
@@ -233,19 +237,24 @@ export const nowTool: ToolDefinition = {
     required: [],
   },
   execute: async (args: Record<string, unknown>) => {
-    const tz = timezoneGetter?.() || "Asia/Shanghai";
-    const now = new Date();
-    const format = String(args.format ?? "default");
-    if (format === "epoch") return String(now.getTime());
-    if (format === "iso") return now.toISOString();
-    const local = new Intl.DateTimeFormat("zh-CN", {
-      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
-      weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-    }).format(now);
-    // 前段给人看，尾附机器可读 JSON（模型做进一步换算/比较用）
-    return `${local}（时区 ${tz}）\n${JSON.stringify({ now: now.getTime(), iso: now.toISOString(), timezone: tz })}`;
+    return nativeFirst("now", args, nowExecute);
   },
 };
+
+/** now 的 TS 实现（native 轨回退路径）。 */
+function nowExecute(args: Record<string, unknown>): string {
+  const tz = timezoneGetter?.() || "Asia/Shanghai";
+  const now = new Date();
+  const format = String(args.format ?? "default");
+  if (format === "epoch") return String(now.getTime());
+  if (format === "iso") return now.toISOString();
+  const local = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).format(now);
+  // 前段给人看，尾附机器可读 JSON（模型做进一步换算/比较用）
+  return `${local}（时区 ${tz}）\n${JSON.stringify({ now: now.getTime(), iso: now.toISOString(), timezone: tz })}`;
+}
 
 // ── clipboard：剪贴板读写 ─────────────────────────────────────
 
@@ -282,22 +291,27 @@ export const clipboardTool: ToolDefinition = {
     required: ["action"],
   },
   execute: async (args: Record<string, unknown>) => {
-    if (!clipboardLoader) throw new Error("剪贴板不可用（运行环境未注入）");
-    const clipboard = clipboardLoader();
-    const action = String(args.action ?? "read");
-    if (action === "read") {
-      const text = clipboard.readText();
-      if (!text) return "（剪贴板为空或不含文本）";
-      if (text.length > CLIPBOARD_READ_LIMIT) {
-        return text.slice(0, CLIPBOARD_READ_LIMIT) + `\n…（已截断，共 ${text.length} 字符）`;
-      }
-      return text;
-    }
-    if (action === "write") {
-      const text = String(args.text ?? "");
-      clipboard.writeText(text);
-      return `已写入剪贴板（${text.length} 字符）`;
-    }
-    throw new Error(`未知 action "${action}"（支持 read/write）`);
+    return nativeFirst("clipboard", args, clipboardExecute);
   },
 };
+
+/** clipboard 的 TS 实现（native 轨回退路径）。 */
+function clipboardExecute(args: Record<string, unknown>): string {
+  if (!clipboardLoader) throw new Error("剪贴板不可用（运行环境未注入）");
+  const clipboard = clipboardLoader();
+  const action = String(args.action ?? "read");
+  if (action === "read") {
+    const text = clipboard.readText();
+    if (!text) return "（剪贴板为空或不含文本）";
+    if (text.length > CLIPBOARD_READ_LIMIT) {
+      return text.slice(0, CLIPBOARD_READ_LIMIT) + `\n…（已截断，共 ${text.length} 字符）`;
+    }
+    return text;
+  }
+  if (action === "write") {
+    const text = String(args.text ?? "");
+    clipboard.writeText(text);
+    return `已写入剪贴板（${text.length} 字符）`;
+  }
+  throw new Error(`未知 action "${action}"（支持 read/write）`);
+}
