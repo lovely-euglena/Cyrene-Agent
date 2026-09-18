@@ -27,6 +27,13 @@ public static class Program
             return 0;
         }
 
+        // MCP 桥宿主模式：无窗口后台进程，承载全部 MCP server 连接管理
+        // （重连/超时/进程树清理），协议见 Mcp.McpHost 头注释。
+        if (args.Length > 0 && args[0] == "--mcp-host")
+        {
+            return Mcp.McpHost.Run();
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,

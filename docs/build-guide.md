@@ -173,6 +173,13 @@ sha256sum <tar.xz>.part.* <tar.xz> > SHA256SUMS.txt     # ③ 逐卷+总包校�
 **发版前必做回验**：下载任一分卷回来对 SHA256（Gitee 传输层可能损坏，
 test.3 的翻车现场）。
 
+**S3 第二分发渠道**：Gitee 仓库附件配额 1GB，满时新版本发不上去。
+上传脚本 请先 export CYRENE_S3_AK / CYRENE_S3_SK（凭证走 CYRENE_S3_AK/SK 环境变量）：
+
+请先 export CYRENE_S3_AK / CYRENE_S3_SK
+请先 export CYRENE_S3_AK / CYRENE_S3_SK
+直链形态：（公共读）。
+
 ## 6. 构建产物结构
 
 ```text

@@ -9,12 +9,14 @@
 
 export { setUserTimezoneConfig, currentUserTimezone } from "./builtin-tools/timezone";
 export { setWeatherConfig, type WeatherCardData } from "./builtin-tools/weather-tool";
+export { setUtilityTimezoneConfig, setUtilityClipboardConfig } from "./builtin-tools/utility-tools";
 export { setSearchConfig } from "./builtin-tools/web-search-tool";
 
 import { toolRegistry } from "./registry/tool-registry";
 import { logger, LogTag } from "../../logger";
 import { createPlayLive2DActionTool } from "./builtin-tools/play-live2d-action";
 import { weatherTool } from "./builtin-tools/weather-tool";
+import { calculatorTool, nowTool, clipboardTool } from "./builtin-tools/utility-tools";
 import { webSearchTool } from "./builtin-tools/web-search-tool";
 import { fetchUrlTool } from "./builtin-tools/fetch-url-tool";
 import { downloadFileTool } from "./builtin-tools/download-file-tool";
@@ -30,6 +32,9 @@ export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
 }
 
 // ── 注册（顺序 = 原 built-in-tools.ts 的字面顺序，勿重排）─────────────
+toolRegistry.register(calculatorTool);
+toolRegistry.register(nowTool);
+toolRegistry.register(clipboardTool);
 toolRegistry.register(fetchUrlTool);
 toolRegistry.register(downloadFileTool);
 toolRegistry.register(readImageUrlTool);

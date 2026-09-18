@@ -7,6 +7,8 @@ import {
   setSearchConfig,
   setUserTimezoneConfig,
   setWeatherConfig,
+  setUtilityTimezoneConfig,
+  setUtilityClipboardConfig,
 } from "../orchestrator/tools/built-in-tools";
 import { setEmailConfig } from "../orchestrator/tools/email-tools";
 import { setTravelConfig } from "../orchestrator/tools/travel-tools";
@@ -66,6 +68,9 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
 
   // 注入用户时区 getter：工具侧通过 currentUserTimezone() 统一拿用户时区（缺/非法回退 Asia/Shanghai）
   setUserTimezoneConfig(() => loadUserProfile().timezone);
+  // 通用三件套（calculator/now/clipboard）：时区 + Electron clipboard 注入
+  setUtilityTimezoneConfig(() => loadUserProfile().timezone);
+  setUtilityClipboardConfig(() => require("electron").clipboard);
 
   // 注入用户选择卡片回调：工具调 ask_user_choice 时发 Custom 事件给 react 聊天窗口
   setChoiceCardSender((cardData) => {
