@@ -41,7 +41,7 @@ using CyreneNative.Tools;
 /// </summary>
 internal sealed class AgentSessionHost
 {
-    public enum SessionState { Idle, Thinking, WaitingLlm, Done, Failed }
+    public enum SessionState { Idle, Thinking, WaitingLlm, WaitingTool, Done, Failed }
 
     public sealed class Session
     {
@@ -72,31 +72,82 @@ internal sealed class AgentSessionHost
 
     public IReadOnlyCollection<Session> List() => _sessions.Values.ToArray();
 
+    /// <summary>单会话最大轮数（防失控循环——无终止条件时的硬闸）。</summary>
+    public const int MaxTurns = 64;
+
     /// <summary>
-    /// 单步推进：骨架版只做状态机切换（Idle→WaitingLlm）+ 历史 append +
-    /// 产生 llm_request 载荷。完整 loop（工具调用/终止判定/多轮）在
-    /// llm_response 回注后由 ContinueSession 实现（后续提交）。
+    /// 单步推进（P1 闭环版）：用户消息 → WaitingLlm → llm_request。
+    /// llm_response 回注后：若 content 含 tool_calls 字段则追加 assistant
+    /// 消息并再次发 llm_request（多轮工具闭环，工具实际执行在 Electron
+    /// 审批后经 tool_result 帧回注）；纯文本则落史返回 idle。
+    /// 终止判定：turn 上限 / content.done=true / 纯文本。
     /// </summary>
-    public (object llmRequest, Action<JsonElement> onComplete) BeginStep(string sessionId, string message)
+    public (object llmRequest, Func<JsonElement, string> onAssistant) BeginStep(string sessionId, string message)
     {
         var s = Get(sessionId) ?? throw new InvalidOperationException($"会话不存在: {sessionId}");
-        s.State = SessionState.WaitingLlm;
+        if (s.State == SessionState.Thinking) throw new InvalidOperationException($"会话 {sessionId} 正在推进中");
         s.TurnCount++;
+        if (s.TurnCount > MaxTurns) throw new InvalidOperationException($"会话 {sessionId} 超过最大轮数 {MaxTurns}");
+        s.State = SessionState.WaitingLlm;
         s.History.Add(new { role = "user", content = message });
-        var request = new
+        return (BuildLlmRequest(s), MakeContinuation(s));
+    }
+
+    /// <summary>回注 tool_result（工具已执行）后继续下一轮 llm_request。</summary>
+    public (object llmRequest, Func<JsonElement, string> onAssistant) ContinueWithToolResult(string sessionId, JsonElement toolResult)
+    {
+        var s = Get(sessionId) ?? throw new InvalidOperationException($"会话不存在: {sessionId}");
+        if (s.State != SessionState.WaitingTool) throw new InvalidOperationException($"会话 {sessionId} 不在等工具结果状态");
+        s.TurnCount++;
+        if (s.TurnCount > MaxTurns)
         {
-            sessionId,
-            turn = s.TurnCount,
-            messages = s.History,
-            config = s.Config,
-        };
-        Action<JsonElement> onComplete = (content) =>
+            s.State = SessionState.Failed;
+            throw new InvalidOperationException($"会话 {sessionId} 超过最大轮数 {MaxTurns}");
+        }
+        s.History.Add(new { role = "tool", content = toolResult.Clone() });
+        s.State = SessionState.WaitingLlm;
+        return (BuildLlmRequest(s), MakeContinuation(s));
+    }
+
+    public void MarkFailed(string sessionId, string reason)
+    {
+        if (Get(sessionId) is { } s)
+        {
+            s.State = SessionState.Failed;
+            s.History.Add(new { role = "system", content = $"[error] {reason}" });
+        }
+    }
+
+    private static object BuildLlmRequest(Session s) => new
+    {
+        sessionId = s.Id,
+        turn = s.TurnCount,
+        messages = s.History,
+        config = s.Config,
+    };
+
+    /// <summary>构造 llm_response 的续跑闭包：tool_calls→工具环；纯文本→idle。</summary>
+    private Func<JsonElement, string> MakeContinuation(Session s) => (content) =>
+    {
+        // content 形状（Electron 回注）：
+        //   纯文本：{"text": "..."}
+        //   带工具：{"text": "...", "toolCalls": [{"id","name","arguments"}]}
+        string? text = content.ValueKind == JsonValueKind.Object && content.TryGetProperty("text", out var t)
+            ? t.GetString() : null;
+        var hasToolCalls = content.ValueKind == JsonValueKind.Object
+            && content.TryGetProperty("toolCalls", out var tc)
+            && tc.ValueKind == JsonValueKind.Array
+            && tc.GetArrayLength() > 0;
+        if (hasToolCalls)
         {
             s.History.Add(new { role = "assistant", content = content.Clone() });
-            s.State = SessionState.Idle;
-        };
-        return (request, onComplete);
-    }
+            s.State = SessionState.WaitingTool;
+            return "waiting_tool";   // Electron 执行工具后 tool_result 回注继续
+        }
+        s.History.Add(new { role = "assistant", content = text ?? "" });
+        s.State = SessionState.Done;
+        return "done";
+    };
 
     // ── 进程入口（协议循环）──
 
@@ -105,7 +156,7 @@ internal sealed class AgentSessionHost
         var stdout = Console.OpenStandardOutput();
         var ioLock = new SemaphoreSlim(1, 1);
         var host = new AgentSessionHost();
-        var pending = new ConcurrentDictionary<string, Action<JsonElement>>();
+        var pending = new ConcurrentDictionary<string, Func<JsonElement, string>>();
 
         void Send(object frame) => ToolHost.WriteFrame(stdout, ioLock, frame);
         Send(new { op = "ready" });
@@ -156,8 +207,8 @@ internal sealed class AgentSessionHost
                         var callId = root.GetProperty("callId").GetString()!;
                         var id = root.GetProperty("sessionId").GetString()!;
                         var message = root.TryGetProperty("message", out var m) ? m.GetString() : "";
-                        var (req, onComplete) = host.BeginStep(id, message ?? "");
-                        pending[callId] = onComplete;
+                        var (req, onAssistant) = host.BeginStep(id, message ?? "");
+                        pending[callId] = onAssistant;
                         Send(new { op = "llm_request", callId, session = req });
                         break;
                     }
@@ -166,8 +217,56 @@ internal sealed class AgentSessionHost
                         var callId = root.GetProperty("callId").GetString()!;
                         if (pending.TryRemove(callId, out var onComplete))
                         {
-                            onComplete(root.GetProperty("content"));
-                            Send(new { op = "result", callId, ok = true, data = new { state = "idle" } });
+                            var ok = root.TryGetProperty("ok", out var okEl) && (okEl.ValueKind != JsonValueKind.False && okEl.ValueKind != JsonValueKind.Number || (okEl.ValueKind == JsonValueKind.Number && okEl.GetDouble() != 0));
+                            if (ok && root.TryGetProperty("content", out var content))
+                            {
+                                var outcome = onComplete(content);
+                                if (outcome == "waiting_tool")
+                                {
+                                    // 会话进入 WaitingTool：result 换成 tool_request，
+                                    // Electron 执行（含审批）后 tool_result 帧回注继续
+                                    var sid = root.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null;
+                                    var sess = sid is null ? null : host.Get(sid);
+                                    var lastEntry = sess?.History.Count > 0 ? sess.History[^1] : null;
+                                    Send(new
+                                    {
+                                        op = "tool_request",
+                                        callId,
+                                        sessionId = sid,
+                                        assistantMessage = lastEntry,
+                                    });
+                                }
+                                else
+                                {
+                                    Send(new { op = "result", callId, ok = true, data = new { state = outcome } });
+                                }
+                            }
+                            else
+                            {
+                                var err = root.TryGetProperty("error", out var e) ? e.GetString() : "llm 失败";
+                                var sid = root.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null;
+                                if (sid is not null) host.MarkFailed(sid, err ?? "llm 失败");
+                                Send(new { op = "result", callId, ok = false, error = err });
+                            }
+                        }
+                        break;
+                    }
+                    case "tool_result":
+                    {
+                        // Electron 完成工具执行（含审批）后回注结果，续跑会话
+                        var callId = root.GetProperty("callId").GetString()!;
+                        var sid = root.GetProperty("sessionId").GetString()!;
+                        var result = root.GetProperty("result");
+                        if (pending.TryRemove(callId, out _))
+                        {
+                            var (req, onAssistant) = host.ContinueWithToolResult(sid, result);
+                            // 续跑复用同一 callId：下一轮 llm_response/tool_request 都对它
+                            pending[callId] = onAssistant;
+                            Send(new { op = "llm_request", callId, session = req });
+                        }
+                        else
+                        {
+                            Send(new { op = "result", callId, ok = false, error = "tool_result 对应的调用不存在或已完成" });
                         }
                         break;
                     }
