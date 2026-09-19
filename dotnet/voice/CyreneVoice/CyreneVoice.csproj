@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    CyreneVoice —— 语音后端 sidecar（阶段 3 F + 阶段 4 G，A15 独立 exe）。
+    边界铁律（B8）：只动 TTS/ASR 引擎层与 VAD；tts-ipc.ts / 渲染层播放 /
+    mpv 转码 / call-manager 状态机 一律不碰（那些留在 Electron）。
+
+    诚实标注（F4.3）：网络 IO 密集，非性能提速型；收益=主进程瘦身+
+    统一容错+VAD 隐私（静默段不上云 B9）。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CyreneVoice</AssemblyName>
+    <RootNamespace>CyreneVoice</RootNamespace>
+    <!-- L4 便携：self-contained 发布（SelfContained=true）由发布参数控制 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- VAD 推理（G2.2）：复用 OnnxRuntime，与 embedding sidecar 同栈零新依赖 -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.0" />
+    <PackageReference Include="System.Numerics.Tensors" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

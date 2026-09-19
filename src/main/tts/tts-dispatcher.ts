@@ -47,6 +47,20 @@ export async function synthesizeByEngine(
   engine: TtsEngine,
   payload: SynthesizeByEnginePayload,
 ): Promise<SynthesizeByEngineResult> {
+  // F2.5 双轨：CYRENE_VOICE_HOST=1 时优先走 cyrene-voice sidecar（引擎层
+  // 已整体下沉 .NET，含统一重试/超时/错误码）；任何失败（未启用/超时/
+  // E_*）静默回退下方 TS 原路——B8 边界铁律不变（IPC/播放/转码不在此层）。
+  try {
+    const { voiceHostClient } = await import("../dotnet-backend/host-clients");
+    if (voiceHostClient.enabled() && await voiceHostClient.ensureStarted()) {
+      const r = await voiceHostClient.tts(engine, payload as unknown as Record<string, unknown>);
+      if (r?.audioBase64) {
+        return { audio: Buffer.from(r.audioBase64, "base64"), format: r.format as "mp3" };
+      }
+    }
+  } catch (error) {
+    console.warn("[TTS] voice-host 轨失败，回退 TS 引擎:", error instanceof Error ? error.message : error);
+  }
   if (engine === "minimax") {
     if (!payload.apiKey || !payload.voiceId) {
       throw new Error("MiniMax TTS 未配置 apiKey/voiceId");

@@ -46,6 +46,24 @@ public static class Program
             return Agents.AgentSessionHost.RunProtocolLoop();
         }
 
+        // RAG 数据层宿主：SQLite/WAL + jieba BM25 + 混合检索（阶段 2 E）
+        if (args.Length > 0 && args[0] == "--rag-host")
+        {
+            return Rag.RagHost.RunProtocolLoop();
+        }
+
+        // 记忆系统宿主：L0/L1/冲突/反思四表 SQLite 化（阶段 6 I；L2 DMAE 暂缓 A7）
+        if (args.Length > 0 && args[0] == "--memory-host")
+        {
+            return MemoryStore.MemoryHost.RunProtocolLoop();
+        }
+
+        // 对话循环宿主：chat-loop 状态机下沉骨架（阶段 8 K）
+        if (args.Length > 0 && args[0] == "--loop-host")
+        {
+            return LoopHostNs.LoopHost.RunProtocolLoop();
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,

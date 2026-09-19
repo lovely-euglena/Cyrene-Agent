@@ -13,6 +13,7 @@ export { setUtilityTimezoneConfig, setUtilityClipboardConfig } from "./builtin-t
 export { setSearchConfig } from "./builtin-tools/web-search-tool";
 
 import { toolRegistry } from "./registry/tool-registry";
+import { wrapToolForNativeHost } from "./native-tool-router";
 import { logger, LogTag } from "../../logger";
 import { createPlayLive2DActionTool } from "./builtin-tools/play-live2d-action";
 import { weatherTool } from "./builtin-tools/weather-tool";
@@ -32,18 +33,18 @@ export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
 }
 
 // ── 注册（顺序 = 原 built-in-tools.ts 的字面顺序，勿重排）─────────────
-toolRegistry.register(calculatorTool);
-toolRegistry.register(nowTool);
-toolRegistry.register(clipboardTool);
-toolRegistry.register(fetchUrlTool);
-toolRegistry.register(downloadFileTool);
-toolRegistry.register(readImageUrlTool);
-toolRegistry.register(runShellTool);
+toolRegistry.register(wrapToolForNativeHost(calculatorTool));
+toolRegistry.register(wrapToolForNativeHost(nowTool));
+toolRegistry.register(wrapToolForNativeHost(clipboardTool));
+toolRegistry.register(wrapToolForNativeHost(fetchUrlTool));
+toolRegistry.register(wrapToolForNativeHost(downloadFileTool));
+toolRegistry.register(wrapToolForNativeHost(readImageUrlTool));
+toolRegistry.register(wrapToolForNativeHost(runShellTool));
 // run_shell 的后台配套工具：紧跟其后注册，工具目录里相邻展示
-toolRegistry.register(shellJobTool);
-toolRegistry.register(runVerificationTool);
-toolRegistry.register(installMcpServerTool);
+toolRegistry.register(wrapToolForNativeHost(shellJobTool));
+toolRegistry.register(wrapToolForNativeHost(runVerificationTool));
+toolRegistry.register(wrapToolForNativeHost(installMcpServerTool));
 logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_shell / install_mcp_server");
-toolRegistry.register(weatherTool);
-toolRegistry.register(webSearchTool);
-toolRegistry.register(createPlayLive2DActionTool({ sendToLive2DWindow }));
+toolRegistry.register(wrapToolForNativeHost(weatherTool));
+toolRegistry.register(wrapToolForNativeHost(webSearchTool));
+toolRegistry.register(wrapToolForNativeHost(createPlayLive2DActionTool({ sendToLive2DWindow })));

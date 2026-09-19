@@ -26,6 +26,13 @@ namespace CyreneNative.Tools;
 /// 容错：逐调用超时由宿主侧控制（超时即重启本进程——工具全部纯函数
 /// 化无状态，重启零成本）；stdout 协议独占，诊断走 log 帧/stderr。
 /// </summary>
+/// <summary>B5 错误码契约：宿主可据此决定回退/重试语义。</summary>
+internal sealed class ToolHostException : Exception
+{
+    public string Code { get; }
+    public ToolHostException(string code, string message) : base(message) => Code = code;
+}
+
 internal static class ToolHost
 {
     public static int Run()
@@ -96,13 +103,21 @@ internal static class ToolHost
                         "now" => NowTool.Execute(args),
                         "clipboard" => ClipboardTool.Execute(args),
                         "sysinfo" => SysInfo.Execute(),
-                        _ => throw new InvalidOperationException($"未知工具: {tool}"),
+                        "fs_read_file" => FsTools.ReadFile(args ?? default),
+                        "fs_write_file" => FsTools.WriteFile(args ?? default),
+                        "fs_list_dir" => FsTools.ListDir(args ?? default),
+                        "git" => GitTools.Run(args ?? default).GetAwaiter().GetResult(),
+                        _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });
                 }
+                catch (ToolHostException ex)
+                {
+                    WriteFrame(stdout, ioLock, new { op = "result", callId, ok = false, error = ex.Message, errorCode = ex.Code });
+                }
                 catch (Exception ex)
                 {
-                    WriteFrame(stdout, ioLock, new { op = "result", callId, ok = false, error = ex.Message });
+                    WriteFrame(stdout, ioLock, new { op = "result", callId, ok = false, error = ex.Message, errorCode = "E_TOOL_FAILED" });
                 }
                 break;
             }

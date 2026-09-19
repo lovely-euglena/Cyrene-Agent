@@ -30,4 +30,8 @@
     <Content Include="assets\loading.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Jieba.NET" Version="0.42.2" />
+  </ItemGroup>
 </Project>
