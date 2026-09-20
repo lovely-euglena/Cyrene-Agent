@@ -109,9 +109,18 @@ export class LineHostClient {
     }
   }
 
-  protected onEvent(_frame: Record<string, unknown>): void { /* 子类覆盖 */ }
+  private eventListeners: Array<(frame: Record<string, unknown>) => void> = [];
 
-  protected call(op: string, args: Record<string, unknown>): Promise<unknown> {
+  protected onEvent(frame: Record<string, unknown>): void {
+    for (const l of this.eventListeners) l(frame);
+  }
+
+  // 事件订阅：host 主动帧（vad_result/asr/tts_meta/log）观察者。
+  addEventListener(listener: (frame: Record<string, unknown>) => void): void {
+    this.eventListeners.push(listener);
+  }
+
+  call(op: string, args: Record<string, unknown>): Promise<unknown> {
     const callId = `h${++this.seq}-${Math.random().toString(36).slice(2, 7)}`;
     return new Promise((resolve, reject) => {
       if (!this.proc || this.exited) { reject(new Error("host 未运行")); return; }

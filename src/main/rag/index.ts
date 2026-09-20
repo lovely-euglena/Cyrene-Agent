@@ -4,6 +4,8 @@ import { app } from "electron";
 import { getEmbeddingProvider, resetEmbeddingProvider, EmbeddingProvider, switchEmbeddingModel as switchModel, getCurrentModelDims, EmbeddingDimensionMismatchError } from "./embedding";
 import type { EmbeddingIndexMetadata } from "./vectorstore";
 import { JsonVectorStore } from "./vectorstore";
+import { createStore, DotnetRagStore } from "./dotnet-store";
+import { resolveDotnetConfig } from "../dotnet-backend/config";
 import type { MemoryEntry } from "./vectorstore";
 import { HybridRetriever } from "./retriever";
 import { WorldbookManager } from "./worldbook";
@@ -16,7 +18,7 @@ import type { DocumentImportControl } from "./file-ingest";
 import { findPromptPath } from "../external-content-paths";
 
 // ── Global RAG instances ──
-let store: JsonVectorStore | null = null;
+let store: JsonVectorStore | DotnetRagStore | null = null;
 let retriever: HybridRetriever | null = null;
 let worldbook: WorldbookManager | null = null;
 let provider: EmbeddingProvider | null = null;
@@ -37,7 +39,12 @@ export async function initRAG(
 ): Promise<void> {
   const dataDir = getDataDir();
   provider = getEmbeddingProvider(ragMode, cloudBaseUrl, cloudApiKey, embeddingModel, cloudDimensions);
-  store = new JsonVectorStore(dataDir);
+  let storeImpl: JsonVectorStore | DotnetRagStore = new JsonVectorStore(dataDir);
+  // E7 双轨：CYRENE_RAG_HOST=1 → SQLite/WAL 数据层（失败静默回退 JSON）
+  if (resolveDotnetConfig().ragHost) {
+    storeImpl = await createStore(dataDir, storeImpl as JsonVectorStore);
+  }
+  store = storeImpl;
   // 只有 provider 存在时才创建 retriever（向量检索依赖 embedding）
   if (provider) {
     retriever = new HybridRetriever(store, provider);
@@ -121,7 +128,12 @@ export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: bool
             fs.unlinkSync(metaPath);
           }
           // Reload store from the now-empty file
-          store = new JsonVectorStore(dataDir);
+          let storeImpl: JsonVectorStore | DotnetRagStore = new JsonVectorStore(dataDir);
+  // E7 双轨：CYRENE_RAG_HOST=1 → SQLite/WAL 数据层（失败静默回退 JSON）
+  if (resolveDotnetConfig().ragHost) {
+    storeImpl = await createStore(dataDir, storeImpl as JsonVectorStore);
+  }
+  store = storeImpl;
         }
       }
     }

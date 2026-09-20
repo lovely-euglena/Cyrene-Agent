@@ -1,0 +1,31 @@
+# B7：服务器侧 .NET 10 SDK 编译 + 双轨基线（Gitee Go 兼容 GitHub Actions 语法）
+name: dotnet-backend
+on:
+  push:
+    branches: [feature/dotnet-backend, main]
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'scripts/dual-track-diff.ts']
+  pull_request:
+    paths: ['dotnet/**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build cyrene-native
+        run: dotnet build dotnet/native-windows -c Release
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      - name: Build CyreneVoice
+        run: dotnet build dotnet/voice/CyreneVoice -c Release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: TS 类型检查 + 双轨基线
+        run: |
+          npm ci --registry=https://registry.npmmirror.com || npm install --registry=https://registry.npmmirror.com
+          npx tsc -p tsconfig.main.json --noEmit
+          npx tsx scripts/dual-track-diff.ts

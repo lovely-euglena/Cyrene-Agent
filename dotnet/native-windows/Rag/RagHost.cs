@@ -27,7 +27,7 @@ namespace CyreneNative.Rag;
 ///   ← {"op":"result","callId","ok":true,"data":{...}}
 /// 崩溃语义：WAL 事务原子；重开即恢复（B3）。
 /// </summary>
-internal sealed class RagHost : IDisposable
+internal sealed partial class RagHost : IDisposable
 {
     private SqliteConnection? _db;
     private readonly JiebaSegmenter _jieba = new();
@@ -299,6 +299,18 @@ internal sealed class RagHost : IDisposable
                         Send(new { op = "result", callId, ok = true, data = new { marked = ids.Length } });
                         break;
                     }
+                    case "list":
+                        Send(new { op = "result", callId, ok = true, data = host.List(root) });
+                        break;
+                    case "delete":
+                        Send(new { op = "result", callId, ok = true, data = host.Delete(root) });
+                        break;
+                    case "prune":
+                        Send(new { op = "result", callId, ok = true, data = host.Prune(root) });
+                        break;
+                    case "chunk":
+                        Send(new { op = "result", callId, ok = true, data = host.Chunk(root) });
+                        break;
                     case "stats":
                         Send(new { op = "result", callId, ok = true, data = host.Stats() });
                         break;

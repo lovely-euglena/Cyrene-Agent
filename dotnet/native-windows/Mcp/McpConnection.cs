@@ -17,6 +17,18 @@ namespace CyreneNative.Mcp;
 /// </summary>
 internal sealed class McpConnection : IDisposable
 {
+    private JsonElement _cachedTools = JsonDocument.Parse("[]").RootElement;
+
+    private void CacheTools(JsonElement tools)
+    {
+        var arr = tools.Clone();
+        _ = arr;   // Clone 后存储
+        _cachedTools = tools.Clone();
+    }
+
+    /// <summary>最近一次 tools/list 快照（HTTP 端点 M3 聚合用）。</summary>
+    public JsonElement ToolsSnapshot() => _cachedTools.Clone();
+
     private readonly string _serverId;
     private readonly string _transport;          // "stdio" | "sse"
     private readonly string? _command;
@@ -63,7 +75,9 @@ internal sealed class McpConnection : IDisposable
         {
             await ConnectOnceAsync();
             var tools = await RpcAsync("tools/list", new { }, 30_000);
-            _owner.SendTools(_serverId, tools.GetProperty("tools").Clone());
+            var toolList = tools.GetProperty("tools").Clone();
+            CacheTools(toolList);
+            _owner.SendTools(_serverId, toolList);
             _owner.SendState(_serverId, "connected");
             _owner.Log("info", $"MCP 已连接: {_serverId}");
             return true;
@@ -101,8 +115,10 @@ internal sealed class McpConnection : IDisposable
                 backoff = 1_000;
                 try
                 {
-                    var tools = await RpcAsync("tools/list", new { }, 30_000);
-                    _owner.SendTools(_serverId, tools.GetProperty("tools").Clone());
+                    var tools2 = await RpcAsync("tools/list", new { }, 30_000);
+                    var toolList2 = tools2.GetProperty("tools").Clone();
+                    CacheTools(toolList2);
+                    _owner.SendTools(_serverId, toolList2);
                     _owner.SendState(_serverId, "connected");
                     _owner.Log("info", $"MCP 重连成功: {_serverId}");
                 }
@@ -276,8 +292,10 @@ internal sealed class McpConnection : IDisposable
             {
                 try
                 {
-                    var tools = await RpcAsync("tools/list", new { }, 30_000);
-                    _owner.SendTools(_serverId, tools.GetProperty("tools").Clone());
+                    var tools2 = await RpcAsync("tools/list", new { }, 30_000);
+                    var toolList2 = tools2.GetProperty("tools").Clone();
+                    CacheTools(toolList2);
+                    _owner.SendTools(_serverId, toolList2);
                     _owner.Log("info", $"MCP 工具表已刷新: {_serverId}");
                 }
                 catch (Exception ex) { _owner.Log("warn", $"list_changed 刷新失败 {_serverId}: {ex.Message}"); }

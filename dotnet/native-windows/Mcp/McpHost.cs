@@ -35,12 +35,55 @@ public static class McpHost
         var manager = new McpConnectionManager(
             Console.OpenStandardInput(),
             Console.OpenStandardOutput());
-        return manager.RunLoop();
+        // M7：CYRENE_MCP_HTTP=1 时挂 Streamable HTTP 端点（127.0.0.1，
+        // A18 铁律）；工具调用经 manager → Electron 审批闸门不变（M8）
+        McpHttpTransport? http = null;
+        var httpFlag = Environment.GetEnvironmentVariable("CYRENE_MCP_HTTP");
+        if (httpFlag is "1" or "true" or "on")
+        {
+            var port = int.TryParse(Environment.GetEnvironmentVariable("CYRENE_MCP_HTTP_PORT"), out var p) ? p : 8810;
+            http = new McpHttpTransport(port, manager.ListToolsForHttp, manager.CallForHttp);
+        }
+        var code = manager.RunLoop();
+        http?.Dispose();
+        return code;
     }
 }
 
 internal sealed class McpConnectionManager
 {
+    /// <summary>M3：HTTP 端点的 tools/list——聚合全部连接的工具表。</summary>
+    public Task<JsonElement[]> ListToolsForHttp()
+    {
+        var all = new List<JsonElement>();
+        foreach (var (_, conn) in _connections)
+        {
+            var snap = conn.ToolsSnapshot();
+            if (snap.ValueKind == JsonValueKind.Array)
+                foreach (var t in snap.EnumerateArray()) all.Add(t.Clone());
+        }
+        return Task.FromResult(all.ToArray());
+    }
+
+    /// <summary>M8/M2：HTTP 端点来的 tools/call 经此进入同一派发路径。</summary>
+    public async Task<JsonElement> CallForHttp(string toolName, string argsJson)
+    {
+        // 形如 "serverId-toolName"（与 TS 侧注册 id 同构）；先匹配连接前缀
+        foreach (var (sid, conn) in _connections)
+        {
+            var prefix = sid + "-";
+            if (toolName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var shortName = toolName[prefix.Length..];
+                JsonElement args;
+                try { args = JsonDocument.Parse(argsJson).RootElement.Clone(); }
+                catch { args = JsonDocument.Parse("{}").RootElement.Clone(); }
+                return await conn.CallToolAsync(shortName, args);
+            }
+        }
+        throw new InvalidOperationException($"HTTP MCP: 无 server 提供工具 {toolName}");
+    }
+
     private readonly Stream _stdin;
     private readonly Stream _stdout;
     private readonly Dictionary<string, McpConnection> _connections = new();

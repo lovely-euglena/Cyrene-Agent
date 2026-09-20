@@ -16,7 +16,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // [主包, win 变体]——版本以主包 optionalDependencies 声明为准
 const NATIVES = [
-  ["@lancedb/lancedb", "@lancedb/lancedb-win32-x64-msvc"],
   ["@node-rs/jieba", "@node-rs/jieba-win32-x64-msvc"],
   ["@ast-grep/napi", "@ast-grep/napi-win32-x64-msvc"],
 ];

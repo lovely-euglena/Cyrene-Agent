@@ -194,10 +194,10 @@ function bm25Score(
 
 // ── 混合检索器 ──
 export class HybridRetriever {
-  private store: JsonVectorStore;
+  private store: JsonVectorStore | import("./dotnet-store").DotnetRagStore;
   private provider: EmbeddingProvider | null;
 
-  constructor(store: JsonVectorStore, provider?: EmbeddingProvider | null) {
+  constructor(store: JsonVectorStore | import("./dotnet-store").DotnetRagStore, provider?: EmbeddingProvider | null) {
     this.store = store;
     this.provider = provider ?? null;
   }
@@ -280,10 +280,11 @@ export class HybridRetriever {
   }
 
   private bm25Search(query: string, source?: string, topK = 15, options: RetrieveOptions = {}): SearchResult[] {
-    const entries = this.store["entries"] as Array<{
+    const storeAny = this.store as unknown as { entries: Array<{
       id: string; text: string; embedding: number[]; source: string;
       weight: number; createdAt: number; lastRecalledAt: number; metadata?: Record<string, unknown>;
-    }>;
+    }> };
+    const entries = storeAny.entries;
 
     const allowedImportIds = new Set(options.importIds ?? []);
     const allowedEntryIds = options.allowedEntryIds ? new Set(options.allowedEntryIds) : null;

@@ -46,6 +46,14 @@ public static class Program
             return Agents.AgentSessionHost.RunProtocolLoop();
         }
 
+        // 自测子命令（J6 越权保护等——CI/冒烟消费退出码）
+        if (args.Length > 1 && args[0] == "--selftest")
+        {
+            if (args[1] == "agents") return Agents.OrchestratorSelfTest.Run();
+            Console.Error.WriteLine($"未知自测: {args[1]}");
+            return 2;
+        }
+
         // RAG 数据层宿主：SQLite/WAL + jieba BM25 + 混合检索（阶段 2 E）
         if (args.Length > 0 && args[0] == "--rag-host")
         {

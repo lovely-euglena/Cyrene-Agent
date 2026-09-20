@@ -26,6 +26,29 @@ for (const stream of [process.stdout, process.stderr]) {
 // 插件设置面板协议：scheme 特权必须在 app.ready 之前注册（Electron 硬性要求）
 registerPluginPanelScheme();
 
+// 便携模式（阶段 9 L1/L8）：CYRENE_PORTABLE=1 → userData 重定向到 exe
+// 同级 ./data，且不可写直接致命退出（不静默回退 %APPDATA%——铁律 B10：
+// 不写注册表/系统目录，卸载=删目录）。必须发生在任何 userData 消费前。
+{
+  const { resolveDotnetConfig } = require("./dotnet-backend/config") as
+    typeof import("./dotnet-backend/config");
+  const { app: electronApp } = require("electron") as typeof import("electron");
+  if (resolveDotnetConfig().portable) {
+    const path = require("node:path") as typeof import("node:path");
+    const fs = require("node:fs") as typeof import("node:fs");
+    const dataDir = path.join(path.dirname(electronApp.getPath("exe")), "data");
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.accessSync(dataDir, fs.constants.W_OK);
+    } catch (error) {
+      console.error(`[Portable] 数据目录不可写: ${dataDir}`, error);
+      electronApp.exit(1);
+    }
+    electronApp.setPath("userData", dataDir);
+    console.log(`[Portable] userData -> ${dataDir}`);
+  }
+}
+
 const application = createApplication(createDefaultApplicationDependencies());
 
 application.installLifecycleHandlers();

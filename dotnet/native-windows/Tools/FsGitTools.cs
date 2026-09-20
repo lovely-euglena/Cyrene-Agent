@@ -182,13 +182,30 @@ internal static class GitTools
         var cwd = args.TryGetProperty("cwd", out var c) ? c.GetString() : null;
         if (string.IsNullOrEmpty(cwd) || !Directory.Exists(cwd))
             return "[错误] cwd 不存在: " + cwd;
+        // 写操作（init/commit/switch/push/revert）需 cwd 与 message 等参数；
+        // 权限审批在 Electron 侧（risk=fs-write），本层只执行
+        var message = args.TryGetProperty("message", out var m) ? m.GetString() : null;
+        var branch = args.TryGetProperty("branch", out var b) ? b.GetString() : null;
         var (gitArgs, name) = sub switch
         {
             "log" => ("--no-pager log --oneline -n 50", "git log"),
             "diff" => ("--no-pager diff --stat", "git diff"),
+            "init" => ("init", "git init"),
+            "commit" => ($"-am {Quote(message ?? "update")}", "git commit"),
+            "add" => ("add -A", "git add"),
+            "switch" => ($"switch {Quote(branch ?? "main")}", "git switch"),
+            "push" => ("push", "git push"),
+            "revert" => ("revert --no-edit HEAD", "git revert"),
             _ => ("--no-pager status --short --branch", "git status"),
         };
         return await RunGit(gitArgs, cwd!, name);
+    }
+
+    /// <summary>commit message / branch 名防注入（只允安全字符，双引号包裹）。</summary>
+    private static string Quote(string v)
+    {
+        var safe = new string(v.Where(c => char.IsLetterOrDigit(c) || " ,._-".Contains(c) || (c >= '\u4e00' && c <= '\u9fff')).ToArray());
+        return "\"" + safe.Trim() + "\"";
     }
 
     private static async Task<string> RunGit(string gitArgs, string cwd, string name)

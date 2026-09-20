@@ -23,6 +23,7 @@
     <!-- VAD 推理（G2.2）：复用 OnnxRuntime，与 embedding sidecar 同栈零新依赖 -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.0" />
     <PackageReference Include="System.Numerics.Tensors" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
   </ItemGroup>
 
 </Project>

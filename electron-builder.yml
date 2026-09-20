@@ -10,8 +10,6 @@ asar: true
 asarUnpack:
   - "**/vendor/srt-win/**"
   # LanceDB native（win32 msvc 补装的 .node 必须落磁盘真实路径）
-  - "**/node_modules/@lancedb/lancedb-win32-x64-msvc/**"
-  - "**/node_modules/@lancedb/lancedb-linux-x64-gnu/**"
   - "**/node_modules/onnxruntime-node/**"
   - "**/node_modules/@node-rs/jieba/**"
   - "**/node_modules/@node-rs/jieba-win32-x64-msvc/**"
@@ -33,10 +31,6 @@ files:
   - "!models/**/*"
   # 平台裁剪（Linux 构建机交叉打 win 包：node_modules 装的是 linux 变体，
   # win 变体经 npm install --no-save 显式补装；两套并存故必须显式排除）
-  - "!**/node_modules/@lancedb/lancedb-linux-*/**"
-  - "!**/node_modules/@lancedb/lancedb-darwin*/**"
-  - "!**/node_modules/@lancedb/lancedb-android*/**"
-  - "!**/node_modules/@lancedb/lancedb-freebsd*/**"
   - "!**/node_modules/@node-rs/jieba-linux-*/**"
   - "!**/node_modules/@node-rs/jieba-darwin*/**"
   - "!**/node_modules/@node-rs/jieba-android*/**"

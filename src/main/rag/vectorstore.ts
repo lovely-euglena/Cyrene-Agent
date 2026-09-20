@@ -532,6 +532,17 @@ export class JsonVectorStore {
     return before - this.entries.length;
   }
 
+  /** .NET 轨适配钩子：外部条目注入（host 为事实源时保持本实例可回退/对比）。 */
+  appendExternal(entry: MemoryEntry): void {
+    this.entries.push(entry);
+    this.rebuildIndex();
+  }
+
+  /** .NET 轨适配钩子：按 id 查内存态。 */
+  getById(id: string): MemoryEntry | undefined {
+    return this.entries.find((e) => e.id === id);
+  }
+
   deleteEntriesByIds(ids: string[], source?: string): number {
     const idSet = new Set(ids);
     if (idSet.size === 0) return 0;
