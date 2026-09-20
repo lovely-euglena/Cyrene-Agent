@@ -83,9 +83,10 @@ internal sealed class VadEngine : IDisposable
             _send(new { op = "log", level = "info", message = $"VAD 模型已加载: {p}" });
             return;
         }
-        // 模型缺失：local/hybrid 降级 cloud，显式警告（不静默）
-        _send(new { op = "log", level = "warn", message = "silero_vad.onnx 未找到——local/hybrid 降级 cloud 语义（G 阶段验收项）" });
-        Mode = "cloud";
+        // 模型缺失：保持 local/hybrid 模式，改走能量启发式门控（Handle
+        // 里 _session==null 分支）——绝不降级 cloud 全放行（B9：静默段
+        // 不上云优先于模型可用性；能量门控对静音/语音的区分足够可靠）
+        _send(new { op = "log", level = "warn", message = "silero_vad.onnx 未找到——降级能量启发式门控（仍拦静默段，B9）" });
     }
 
     public void Handle(string callId, JsonElement root)

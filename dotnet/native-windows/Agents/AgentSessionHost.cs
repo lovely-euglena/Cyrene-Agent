@@ -270,6 +270,14 @@ internal sealed class AgentSessionHost
                         }
                         break;
                     }
+                    case "orchestrate":
+                    {
+                        // J5：编排入口（Sequential/Supervisor）——见 Orchestrator
+                        var orcCallId = root.GetProperty("callId").GetString()!;
+                        var orch = new Orchestrator(host);
+                        Send(orch.Start(orcCallId, root));
+                        break;
+                    }
                     case "shutdown":
                         return 0;
                 }

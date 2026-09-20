@@ -19,10 +19,21 @@ internal sealed class TtsDispatcher
 
     public TtsDispatcher(SendFrame send) => _send = send;
 
-    public async Task Handle(string callId, JsonElement root)
+    public async Task Handle(string callId, JsonElement root, TtsCache? cache = null)
     {
         var engine = root.TryGetProperty("engine", out var e) ? e.GetString() : null;
         var payload = root.TryGetProperty("payload", out var p) ? p : (JsonElement?)null;
+        var voice = payload?.TryGetProperty("voiceId", out var v) == true ? v.GetString() : null;
+        var text = payload?.TryGetProperty("text", out var tx) == true ? tx.GetString() : null;
+        var speed = payload?.TryGetProperty("speed", out var sp) == true && sp.ValueKind == JsonValueKind.Number ? sp.GetDouble() : (double?)null;
+        var volume = payload?.TryGetProperty("volume", out var vo) == true && vo.ValueKind == JsonValueKind.Number ? vo.GetDouble() : (double?)null;
+        var cacheKey = cache is not null && !string.IsNullOrEmpty(text)
+            ? TtsCache.KeyOf(engine ?? "", voice ?? "", text, speed, volume, null) : null;
+        if (cacheKey is not null && cache!.Get(cacheKey) is { } hit)
+        {
+            _send(new { op = "result", callId, ok = true, data = new { audioBase64 = Convert.ToBase64String(hit.audio), format = hit.format } });
+            return;
+        }
         const int retries = 2;
         for (var attempt = 0; ; attempt++)
         {
@@ -37,8 +48,8 @@ internal sealed class TtsDispatcher
                     "minimax" => await MinimaxSkeleton(payload),
                     _ => throw new EngineException("E_ENGINE_UNKNOWN", $"未知 TTS 引擎: {engine}"),
                 };
-                _send(new { op = "tts_meta", callId, format, bytes = audio.Length });
-                _send(new { op = "tts_audio_b64", callId, audioBase64 = Convert.ToBase64String(audio) });
+                if (cacheKey is not null) cache!.Put(cacheKey, audio, format);
+                _send(new { op = "result", callId, ok = true, data = new { audioBase64 = Convert.ToBase64String(audio), format } });
                 return;
             }
             catch (EngineException ex) when (attempt < retries && ex.Code is "E_TTS_TIMEOUT" or "E_TTS_SERVER")

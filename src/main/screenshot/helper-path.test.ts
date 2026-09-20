@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as path from "node:path";
 import { resolveScreenshotHelperPath } from "./helper-path";
 
 describe("resolveScreenshotHelperPath", () => {
@@ -8,7 +9,7 @@ describe("resolveScreenshotHelperPath", () => {
       appPath: "C:\\repo",
       resourcesPath: "C:\\app\\resources",
       envOverride: undefined,
-    })).toBe("C:\\repo\\native\\cyrene-screenshot\\target\\release\\cyrene-screenshot.exe");
+    })).toBe(path.win32.join("C:\\repo", "native", "cyrene-screenshot", "target", "release", "cyrene-screenshot.exe"));
   });
 
   it("uses the packaged resources binary", () => {
@@ -17,7 +18,7 @@ describe("resolveScreenshotHelperPath", () => {
       appPath: "C:\\app\\resources\\app.asar",
       resourcesPath: "C:\\app\\resources",
       envOverride: undefined,
-    })).toBe("C:\\app\\resources\\bin\\cyrene-screenshot.exe");
+    })).toBe(path.win32.join("C:\\app", "resources", "bin", "cyrene-screenshot.exe"));
   });
 
   it("allows an explicit helper path override", () => {
@@ -26,6 +27,6 @@ describe("resolveScreenshotHelperPath", () => {
       appPath: "C:\\app\\resources\\app.asar",
       resourcesPath: "C:\\app\\resources",
       envOverride: "D:\\debug\\cyrene-screenshot.exe",
-    })).toBe("D:\\debug\\cyrene-screenshot.exe");
+    })).toBe(path.win32.join("D:\\debug", "cyrene-screenshot.exe"));
   });
 });

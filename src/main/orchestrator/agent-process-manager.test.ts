@@ -13,6 +13,9 @@ vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 vi.mock("../windows/native-windows-host", () => ({
   resolveNativeWindowsExe: vi.fn(() => "/fake/cyrene-native.exe"),
 }));
+vi.mock("../dotnet-backend/config", () => ({
+  resolveDotnetConfig: vi.fn(() => ({ agentHost: true, toolHost: true, loopHost: false, ragHost: false, memoryHost: false, voiceHost: false, portable: false, mcpHttp: false, vad: "hybrid" })),
+}));
 vi.mock("./vendors", () => ({
   getAdapterForConfig: vi.fn(() => ({ transport: "openai" })),
 }));

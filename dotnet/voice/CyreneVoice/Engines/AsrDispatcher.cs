@@ -134,6 +134,16 @@ internal sealed class AsrDispatcher : IDisposable
         }
     }
 
+    /// <summary>flush：发送 EOF 半关闭信号（等 server 收尾）。</summary>
+    public async Task Flush(string callId)
+    {
+        if (_sockets.TryGetValue(callId, out var ws))
+        {
+            try { await ws.SendAsync(new ArraySegment<byte>(Array.Empty<byte>()), WebSocketMessageType.Text, true, CancellationToken.None); }
+            catch { /* ignore */ }
+        }
+    }
+
     public void Dispose()
     {
         foreach (var ws in _sockets.Values)

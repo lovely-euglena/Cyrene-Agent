@@ -138,7 +138,8 @@ internal sealed partial class RagHost : IDisposable
             ("@emb", blob), ("@dim", e.Dim));
     }
 
-    public object Query(double[] embedding, string text, IReadOnlyList<string>? keywords, int topK)
+    public object Query(double[] embedding, string text, IReadOnlyList<string>? keywords, int topK,
+        string? source = null, IReadOnlyList<string>? allowedEntryIds = null)
     {
         if (_db is null) throw new InvalidOperationException("未 open");
         var terms = keywords is { Count: > 0 } ? keywords : Tokenize(text).ToList();
@@ -174,13 +175,19 @@ internal sealed partial class RagHost : IDisposable
         var scored = new List<(object entry, double score)>();
         using (var cmd = _db.CreateCommand())
         {
-            cmd.CommandText = "SELECT id, text, source, weight, created_at, last_recalled_at, metadata, embedding, dim FROM entries WHERE dim = @dim";
+            cmd.CommandText = "SELECT id, text, source, weight, created_at, last_recalled_at, metadata, embedding, dim FROM entries WHERE dim = @dim"
+                + (source is null ? "" : " AND source = @src");
+            if (source is not null)
+            {
+                var ps = cmd.CreateParameter(); ps.ParameterName = "@src"; ps.Value = source; cmd.Parameters.Add(ps);
+            }
             var p = cmd.CreateParameter(); p.ParameterName = "@dim"; p.Value = embedding.Length; cmd.Parameters.Add(p);
             using var r = cmd.ExecuteReader();
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             while (r.Read())
             {
                 var id = r.GetString(0);
+                if (allowedEntryIds is { Count: > 0 } && !allowedEntryIds.Contains(id)) continue;
                 var cos = Cosine(embedding, (byte[])r[7], r.GetInt32(8));
                 var bm = bm25.GetValueOrDefault(id) / maxBm25;
                 var hybrid = 0.3 * bm + 0.7 * cos;
@@ -288,7 +295,10 @@ internal sealed partial class RagHost : IDisposable
                         var kws = root.TryGetProperty("keywords", out var kw) && kw.ValueKind == JsonValueKind.Array
                             ? kw.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : null;
                         var topK = root.TryGetProperty("topK", out var k) && k.ValueKind == JsonValueKind.Number ? k.GetInt32() : 8;
-                        Send(new { op = "result", callId, ok = true, data = host.Query(emb, text, kws, topK) });
+                        var src = root.TryGetProperty("source", out var sv) && sv.ValueKind == JsonValueKind.String ? sv.GetString() : null;
+                        var allowed = root.TryGetProperty("allowedEntryIds", out var av) && av.ValueKind == JsonValueKind.Array
+                            ? av.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : null;
+                        Send(new { op = "result", callId, ok = true, data = host.Query(emb, text, kws, topK, src, allowed) });
                         break;
                     }
                     case "mark_recalled":

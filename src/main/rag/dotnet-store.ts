@@ -20,6 +20,8 @@ const LOG = "[RAG-Dotnet]";
 interface HostEntry {
   id: string; text: string; source: string; weight: number;
   createdAt: number; lastRecalledAt: number; metadata?: Record<string, unknown>;
+  /** host 的混合分（0.3*BM25+0.7*cos）×weight×衰减——融合层必须拿到，否则向量轨全零分 */
+  score?: number;
 }
 
 export class DotnetRagStore {
@@ -114,8 +116,9 @@ export class DotnetRagStore {
       for (const h of list) {
         if (options.allowedEntryIds && !options.allowedEntryIds.includes(h.id)) continue;
         const entry = this.fallbackUpsertCache(h);
-        out.push({ entry, score: 0 /* score 由 retriever 归一化，不消费 */ } as unknown as SearchResult);
-        // host 已做 cosine×weight×衰减 融合；retriever 侧 BM25+融合仍会重排
+        // score 透传 host 混合分（cos×weight×衰减）——retriever 融合层的
+        // vectorScore 就取它做归一，置 0 会把向量轨在融合中清零
+        out.push({ entry, score: h.score ?? 0 } as unknown as SearchResult);
       }
       return out.slice(0, topK);
     } catch (error) {

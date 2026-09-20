@@ -17,6 +17,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import * as readline from "readline";
 import { resolveNativeWindowsExe } from "../windows/native-windows-host";
+import { resolveDotnetConfig } from "../dotnet-backend/config";
 import { getAdapterForConfig, type ChatMessage, type VendorConfig } from "./vendors";
 import { streamChatWithSdk } from "./vendors/sdk-stream/runtime";
 
@@ -50,7 +51,8 @@ export class AgentProcessManager {
   messagePreprocessor: ((messages: ChatMessage[]) => ChatMessage[]) | null = null;
 
   enabled(): boolean {
-    return process.env.CYRENE_AGENT_HOST === "1" && resolveNativeWindowsExe() !== null;
+    // 统一开关入口（环境变量 > ./config/cyrene.conf > 默认）——禁止散读 env
+    return resolveDotnetConfig().agentHost && resolveNativeWindowsExe() !== null;
   }
 
   private async ensureStarted(): Promise<boolean> {

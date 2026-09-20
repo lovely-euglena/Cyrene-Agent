@@ -91,7 +91,7 @@ function appRoot(): string {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const electron = require("electron");
     appRootCache = electron.app?.isPackaged
-      ? require("node:path").dirname(electron.process.resourcesPath)
+      ? require("node:path").dirname(process.resourcesPath)
       : electron.app.getAppPath();
   } catch {
     appRootCache = process.cwd();

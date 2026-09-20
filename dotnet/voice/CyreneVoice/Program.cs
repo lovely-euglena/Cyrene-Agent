@@ -39,6 +39,10 @@ internal static class Program
 
         var tts = new TtsDispatcher(Send);
         var vad = new VadEngine(Send);
+        var asr = new AsrDispatcher(Send);
+        // TtsCache（F2.4）：exe 同级 ./data/tts-cache（A15 便携语义 B10）
+        var exeDir = AppContext.BaseDirectory;
+        var cache = new TtsCache(Path.Combine(exeDir, "data", "tts-cache", "cache.db"));
 
         using var reader = new StreamReader(stdin, Encoding.UTF8);
         string? line;
@@ -56,7 +60,19 @@ internal static class Program
                 switch (op)
                 {
                     case "tts":
-                        await_or_sync(tts.Handle(callId, root), stdout, ioLock);
+                        await_or_sync(tts.Handle(callId, root, cache), stdout, ioLock);
+                        break;
+                    case "asr_start":
+                        await_or_sync(asr.Start(callId, root), stdout, ioLock);
+                        break;
+                    case "asr_audio":
+                        await_or_sync(asr.Audio(callId, root.TryGetProperty("pcmBase64", out var pb) ? pb.GetString() ?? "" : ""), stdout, ioLock);
+                        break;
+                    case "asr_flush":
+                        await_or_sync(asr.Flush(callId), stdout, ioLock);
+                        break;
+                    case "asr_stop":
+                        await_or_sync(asr.Stop(callId), stdout, ioLock);
                         break;
                     case "vad_config":
                         vad.Configure(root);
