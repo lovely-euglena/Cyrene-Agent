@@ -104,7 +104,12 @@ internal sealed class AgentSessionHost
             s.State = SessionState.Failed;
             throw new InvalidOperationException($"会话 {sessionId} 超过最大轮数 {MaxTurns}");
         }
-        s.History.Add(new { role = "tool", content = toolResult.Clone() });
+        // A2：result 兼容单对象（单工具）与数组（多工具同轮）两种形态
+        if (toolResult.ValueKind == JsonValueKind.Array)
+            foreach (var r in toolResult.EnumerateArray())
+                s.History.Add(new { role = "tool", content = r.Clone() });
+        else
+            s.History.Add(new { role = "tool", content = toolResult.Clone() });
         s.State = SessionState.WaitingLlm;
         return (BuildLlmRequest(s), MakeContinuation(s));
     }
@@ -134,13 +139,32 @@ internal sealed class AgentSessionHost
         //   带工具：{"text": "...", "toolCalls": [{"id","name","arguments"}]}
         string? text = content.ValueKind == JsonValueKind.Object && content.TryGetProperty("text", out var t)
             ? t.GetString() : null;
+        JsonElement tc = default;
         var hasToolCalls = content.ValueKind == JsonValueKind.Object
-            && content.TryGetProperty("toolCalls", out var tc)
+            && content.TryGetProperty("toolCalls", out tc)
             && tc.ValueKind == JsonValueKind.Array
             && tc.GetArrayLength() > 0;
         if (hasToolCalls)
         {
-            s.History.Add(new { role = "assistant", content = content.Clone() });
+            // J6 白名单主路径拦截（A1 修复：此前仅 selftest 验函数，真实
+            // 循环未调用——LLM 幻觉出白名单外工具会直达 tool_request）
+            var allowedCalls = new List<JsonElement>();
+            var denied = new List<string>();
+            foreach (var call in tc.EnumerateArray())
+            {
+                var name = call.TryGetProperty("name", out var n) ? n.GetString() : null;
+                if (name is not null && Orchestrator.ToolAllowed(this, s.Id, name))
+                    allowedCalls.Add(call.Clone());
+                else denied.Add(name ?? "?");
+            }
+            if (denied.Count > 0)
+                s.History.Add(new { role = "system", content = "工具被白名单拒绝: " + string.Join(", ", denied) });
+            if (allowedCalls.Count == 0)
+            {
+                s.State = SessionState.Done;
+                return "done";
+            }
+            s.History.Add(new { role = "assistant", content = new { text, toolCalls = allowedCalls } });
             s.State = SessionState.WaitingTool;
             return "waiting_tool";   // Electron 执行工具后 tool_result 回注继续
         }
@@ -257,21 +281,19 @@ internal sealed class AgentSessionHost
                     }
                     case "tool_result":
                     {
-                        // Electron 完成工具执行（含审批）后回注结果，续跑会话
+                        // Electron 完成工具执行（含审批）后回注结果，续跑会话。
+                        // 生命周期修复：llm_response 已消费 pending[callId]（waiting_tool
+                        // 分支），此处不能再查 pending——由会话状态（WaitingTool）
+                        // 做准入校验，续跑注册新一轮 continuation
                         var callId = root.GetProperty("callId").GetString()!;
-                        var sid = root.GetProperty("sessionId").GetString()!;
-                        var result = root.GetProperty("result");
-                        if (pending.TryRemove(callId, out _))
-                        {
-                            var (req, onAssistant) = host.ContinueWithToolResult(sid, result);
-                            // 续跑复用同一 callId：下一轮 llm_response/tool_request 都对它
-                            pending[callId] = onAssistant;
-                            Send(new { op = "llm_request", callId, session = req });
-                        }
-                        else
-                        {
-                            Send(new { op = "result", callId, ok = false, error = "tool_result 对应的调用不存在或已完成" });
-                        }
+                        var sid = root.TryGetProperty("sessionId", out var sidEl) && sidEl.ValueKind == JsonValueKind.String
+                            ? sidEl.GetString() : null;
+                        if (sid is null) throw new InvalidOperationException("tool_result 缺 sessionId 字段");
+                        if (!root.TryGetProperty("result", out var resultEl))
+                            throw new InvalidOperationException("tool_result 缺 result 字段");
+                        var (req2, onAssistant2) = host.ContinueWithToolResult(sid, resultEl);
+                        pending[callId] = onAssistant2;
+                        Send(new { op = "llm_request", callId, session = req2 });
                         break;
                     }
                     case "orchestrate":
@@ -288,6 +310,11 @@ internal sealed class AgentSessionHost
             }
             catch (Exception ex)
             {
+                // 契约修复（E1）：异常也必须回 result ok:false——否则 TS 侧
+                // pending[callId] 永不 resolve（泄漏+挂起到超时）
+                var ecid = root.TryGetProperty("callId", out var ec) && ec.ValueKind == JsonValueKind.String ? ec.GetString() : null;
+                if (!string.IsNullOrEmpty(ecid))
+                    Send(new { op = "result", callId = ecid, ok = false, error = ex.Message, errorCode = "E_AGENT" });
                 Send(new { op = "log", level = "error", message = ex.Message });
             }
         }

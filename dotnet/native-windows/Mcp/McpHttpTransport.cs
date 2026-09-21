@@ -91,6 +91,17 @@ internal sealed class McpHttpTransport : IDisposable
             return;
         }
 
+        // S1：DNS rebinding 防护——浏览器恶意页面把 evil.com 解析到
+        // 127.0.0.1 后发起跨站请求时，Host 头仍是 evil.com（非本端点）
+        var hostHeader = ctx.Request.Headers["Host"];
+        if (hostHeader is null || (!hostHeader.StartsWith("127.0.0.1:", StringComparison.Ordinal)
+            && hostHeader != "127.0.0.1" && !hostHeader.StartsWith("localhost:", StringComparison.Ordinal)
+            && hostHeader != "localhost"))
+        {
+            ctx.Response.StatusCode = 403;
+            return;
+        }
+
         var req = ctx.Request;
         using var body = new StreamReader(req.InputStream);
         var payload = await body.ReadToEndAsync();

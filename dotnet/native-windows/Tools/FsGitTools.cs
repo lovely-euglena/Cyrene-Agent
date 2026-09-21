@@ -104,16 +104,17 @@ internal static class FsTools
     {
         var raw = (args.TryGetProperty("path", out var p) ? p.GetString() : "")?.Trim();
         if (string.IsNullOrEmpty(raw) || !Path.IsPathRooted(raw))
-            return "[错误] path 必须是绝对路径";
+            throw new ToolHostException("E_FS_PATH", "path 必须是绝对路径");
         var dirPath = Path.GetFullPath(raw);
-        if (!Directory.Exists(dirPath)) return "[错误] 目录不存在或无法访问: " + dirPath;
+        if (!Directory.Exists(dirPath)) throw new ToolHostException("E_FS_NOT_FOUND", "目录不存在或无法访问: " + dirPath);
 
         var showHidden = args.TryGetProperty("showHidden", out var h) && h.ValueKind == JsonValueKind.True;
         var filter = args.TryGetProperty("filter", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString()!.Trim() : "";
 
         IEnumerable<FileSystemInfo> entries;
         try { entries = new DirectoryInfo(dirPath).EnumerateFileSystemInfos(); }
-        catch (Exception ex) { return "[错误] 读取目录失败: " + ex.Message; }
+        catch (ToolHostException) { throw; }
+        catch (Exception ex) { throw new ToolHostException("E_FS_IO", "读取目录失败: " + ex.Message); }
 
         var list = entries.ToList();
         if (!showHidden) list = list.Where(e => !e.Name.StartsWith('.')).ToList();
@@ -181,7 +182,7 @@ internal static class GitTools
         var sub = args.TryGetProperty("sub", out var s) ? s.GetString() : "status";
         var cwd = args.TryGetProperty("cwd", out var c) ? c.GetString() : null;
         if (string.IsNullOrEmpty(cwd) || !Directory.Exists(cwd))
-            return "[错误] cwd 不存在: " + cwd;
+            throw new ToolHostException("E_FS_PATH", "cwd 不存在: " + (cwd ?? ""));
         // 写操作（init/commit/switch/push/revert）需 cwd 与 message 等参数；
         // 权限审批在 Electron 侧（risk=fs-write），本层只执行
         var message = args.TryGetProperty("message", out var m) ? m.GetString() : null;
@@ -191,7 +192,7 @@ internal static class GitTools
             "log" => ("--no-pager log --oneline -n 50", "git log"),
             "diff" => ("--no-pager diff --stat", "git diff"),
             "init" => ("init", "git init"),
-            "commit" => ($"-am {Quote(message ?? "update")}", "git commit"),
+            "commit" => ($"commit -am {Quote(message ?? "update")}", "git commit"),
             "add" => ("add -A", "git add"),
             "switch" => ($"switch {Quote(branch ?? "main")}", "git switch"),
             "push" => ("push", "git push"),
@@ -221,7 +222,7 @@ internal static class GitTools
             StandardErrorEncoding = Encoding.UTF8,
         };
         using var proc = Process.Start(psi);
-        if (proc is null) return "[错误] git 启动失败";
+        if (proc is null) throw new ToolHostException("E_FS_IO", "git 进程启动失败");
         using var cts = new CancellationTokenSource(TimeoutMs);
         try
         {
@@ -231,7 +232,7 @@ internal static class GitTools
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             if (proc.ExitCode != 0)
-                return $"[错误] {name} 失败（exit {proc.ExitCode}）: {stderr.Trim()}";
+                throw new ToolHostException("E_GIT_FAILED", $"{name} 失败（exit {proc.ExitCode}）: {stderr.Trim()}");
             return stdout.Length == 0 ? "（无输出）" : stdout.TrimEnd();
         }
         catch (OperationCanceledException)

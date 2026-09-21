@@ -11,11 +11,15 @@ NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
 results = []
 
 def run_host(args, frames, timeout=60):
-    """spawn host → 逐行喂帧 → 收全部输出行（dict 化）。"""
+    """spawn host → 逐行喂帧 → 收全部输出行（dict 化）。env 自足。"""
+    env = dict(os.environ)
+    dr = os.path.expanduser("~/.dotnet")
+    env["DOTNET_ROOT"] = dr
+    env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     p = subprocess.run(
-        ["dotnet", os.path.basename(NATIVE)] if False else ["dotnet", NATIVE] + args,
+        ["dotnet", NATIVE] + args,
         input="\n".join(frames), capture_output=True, text=True, timeout=timeout,
-        cwd="/home/z/my-project/repos/Cyrene-Agent")
+        cwd="/home/z/my-project/repos/Cyrene-Agent", env=env)
     out = []
     for line in p.stdout.strip().splitlines():
         try:
@@ -58,7 +62,8 @@ by_id = {f.get("callId"): f for f in out if f.get("op") == "result"}
 c1 = by_id.get("c1"); check("fs_write_file 写入", c1 and c1.get("ok") and "w.txt" in json.dumps(c1))
 c2 = by_id.get("c2")
 c2ok = c2 and c2.get("ok") and "line2" in json.dumps(c2.get("data", "")) if isinstance(c2.get("data"), str) else False
-check("fs_read_file 行号分页+中文", c2ok and "1" in str(c2.get("data", ""))[:50] if c2 else False)
+# 行号前缀“    1 | ”验证（窗口放宽到 300——tmp 目录名长度不定）
+check("fs_read_file 行号分页+中文", bool(c2ok and "    1 | line1" in str(c2.get("data", ""))[:300]) if c2 else False)
 c3 = by_id.get("c3"); check("fs_list_dir", c3 and c3.get("ok") and "hello.txt" in json.dumps(c3))
 c4 = by_id.get("c4")
 c4ok = c4 and c4.get("ok") and "E_FS_NOT_FOUND" in str(c4.get("data", ""))

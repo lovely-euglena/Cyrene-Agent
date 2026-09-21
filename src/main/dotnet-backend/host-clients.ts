@@ -25,10 +25,10 @@ export class LineHostClient {
   private starting: Promise<boolean> | null = null;
   private pending = new Map<string, Pending>();
   private seq = 0;
-  private readonly mode: string;
+  private readonly mode: string | string[];
   private readonly timeoutMs: number;
 
-  constructor(mode: string, timeoutMs = 10_000) {
+  constructor(mode: string | string[], timeoutMs = 10_000) {
     this.mode = mode;
     this.timeoutMs = timeoutMs;
   }
@@ -39,10 +39,22 @@ export class LineHostClient {
     const starting = (async () => {
       const exe = this.resolveExe();
       if (!exe) return false;
-      const child = spawn(exe, [this.mode], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      // mode 支持数组（["dotnet", dll, "--tool-host"] 形态——argv[0] 是
+      // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）
+      const argv = Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode];
+      const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       if (!child?.stdout?.readable || !child?.stdin) return false;
       this.proc = child;
       this.exited = false;
+      // spawn 失败（ENOENT 等）立即反馈：清 pending + 标记退出，
+      // 调用方收到明确错误而非干等超时
+      child.on("error", (err) => {
+        this.exited = true;
+        this.proc = null;
+        this.starting = null;
+        for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error(`host 启动失败: ${err.message}`)); }
+        this.pending.clear();
+      });
       child.stdout.setEncoding("utf-8");
       const rl = readline.createInterface({ input: child.stdout });
       rl.on("line", (line) => this.onLine(line));
@@ -66,6 +78,8 @@ export class LineHostClient {
   }
 
   protected resolveExe(): string | null {
+    // 数组 mode：argv[0] 即可执行（测试后门/自定义 sidecar 启动）
+    if (Array.isArray(this.mode)) return String(this.mode[0]);
     if (this.mode === "--voice-host") {
       // A15：voice 是独立 exe（资源目录 voice/ 下）
       try {
@@ -73,7 +87,7 @@ export class LineHostClient {
         const path = require("node:path");
         const fs = require("node:fs") as typeof import("node:fs");
         if (electron.app?.isPackaged) {
-          const p = path.join(electron.process.resourcesPath, "voice", VOICE_EXE_NAME);
+          const p = path.join(process.resourcesPath, "voice", VOICE_EXE_NAME);
           if (fs.existsSync(p)) return p;
         }
         const dev = path.join(electron.app.getAppPath(), "dotnet", "voice", "CyreneVoice", "bin", "Release", "net10.0", VOICE_EXE_NAME);
@@ -87,8 +101,6 @@ export class LineHostClient {
 
   /** onBinary：voice 客户端覆盖以收音频段。 */
   protected onBinary(_payload: Buffer): void { /* 默认无二进制 */ }
-
-  private buffer = Buffer.alloc(0);
 
   private onLine(line: string): void {
     // voice 轨二进制段与文本帧混流：按 4B 头探测
@@ -126,6 +138,7 @@ export class LineHostClient {
       if (!this.proc || this.exited) { reject(new Error("host 未运行")); return; }
       const timer = setTimeout(() => {
         this.pending.delete(callId);
+        this.exited = true;          // 先标记，防新 call 拿到垂死 proc
         this.killAndReset();
         reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重启）`));
       }, this.timeoutMs);
@@ -149,6 +162,9 @@ export class LineHostClient {
   async shutdown(): Promise<void> {
     const child = this.proc;
     if (!child || this.exited) return;
+    // 在途调用立即失败（不等 exit 事件）
+    for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error("host 关停中")); }
+    this.pending.clear();
     try { child.stdin?.write(`${JSON.stringify({ op: "shutdown" })}\n`); } catch { /* ignore */ }
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } resolve(); }, 5_000);
