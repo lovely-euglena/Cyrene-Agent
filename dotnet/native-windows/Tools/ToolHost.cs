@@ -59,14 +59,14 @@ internal static class ToolHost
             }
             var root = doc.RootElement.Clone();
             doc.Dispose();
-            _ = Task.Run(() =>
+            // 同步顺序处理（Bug 修复：原 Task.Run fire-and-forget 在 stdin EOF
+            // 时进程先退，在途帧丢失——批量帧+立即关闭必复现；顺序性也是
+            // 帧协议 B5 的硬约束。工具执行最重为 git spawn（秒级），可接受）
+            try { Handle(root, stdout, ioLock); }
+            catch (Exception ex)
             {
-                try { Handle(root, stdout, ioLock); }
-                catch (Exception ex)
-                {
-                    WriteFrame(stdout, ioLock, new { op = "log", level = "error", message = ex.Message });
-                }
-            });
+                WriteFrame(stdout, ioLock, new { op = "log", level = "error", message = ex.Message });
+            }
         }
         return 0;
     }
@@ -103,10 +103,10 @@ internal static class ToolHost
                         "now" => NowTool.Execute(args),
                         "clipboard" => ClipboardTool.Execute(args),
                         "sysinfo" => SysInfo.Execute(),
-                        "fs_read_file" => FsTools.ReadFile(args ?? default),
-                        "fs_write_file" => FsTools.WriteFile(args ?? default),
-                        "fs_list_dir" => FsTools.ListDir(args ?? default),
-                        "git" => GitTools.Run(args ?? default).GetAwaiter().GetResult(),
+                        "fs_read_file" => FsTools.ReadFile(args.GetValueOrDefault()),
+                        "fs_write_file" => FsTools.WriteFile(args.GetValueOrDefault()),
+                        "fs_list_dir" => FsTools.ListDir(args.GetValueOrDefault()),
+                        "git" => GitTools.Run(args.GetValueOrDefault()).GetAwaiter().GetResult(),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });

@@ -34,4 +34,10 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
     <PackageReference Include="Jieba.NET" Version="0.42.2" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Jieba.NET 老式 content 包：SDK 项目不自动拷 Resources（词典）——
+         不拷则 JiebaSegmenter 静态构造抛异常，rag-host open 即失败 -->
+    <None Include="$(NuGetPackageRoot)jieba.net/0.42.2/Resources/**/*"
+          CopyToOutputDirectory="PreserveNewest" LinkBase="Resources" />
+  </ItemGroup>
 </Project>

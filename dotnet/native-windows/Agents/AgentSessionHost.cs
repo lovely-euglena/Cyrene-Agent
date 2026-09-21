@@ -217,7 +217,11 @@ internal sealed class AgentSessionHost
                         var callId = root.GetProperty("callId").GetString()!;
                         if (pending.TryRemove(callId, out var onComplete))
                         {
-                            var ok = root.TryGetProperty("ok", out var okEl) && (okEl.ValueKind != JsonValueKind.False && okEl.ValueKind != JsonValueKind.Number || (okEl.ValueKind == JsonValueKind.Number && okEl.GetDouble() != 0));
+                            // 契约修复：ok 缺省 = true（content 在即成功；显式
+                            // false/0 才走失败——协议头帧例与本修复对齐）
+                            var ok = !root.TryGetProperty("ok", out var okEl)
+                                || (okEl.ValueKind != JsonValueKind.False && okEl.ValueKind != JsonValueKind.Number)
+                                || (okEl.ValueKind == JsonValueKind.Number && okEl.GetDouble() != 0);
                             if (ok && root.TryGetProperty("content", out var content))
                             {
                                 var outcome = onComplete(content);

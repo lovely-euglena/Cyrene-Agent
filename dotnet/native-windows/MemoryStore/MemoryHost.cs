@@ -77,6 +77,25 @@ internal sealed class MemoryHost : IDisposable
         Console.Error.WriteLine($"[MemoryHost] memory.json 迁移完成: {n} 条 → L1");
     }
 
+    /// <summary>单条读取（get op）；不存在返回 null（data:null 语义）。</summary>
+    public object? GetOne(string level, string id)
+    {
+        var table = level switch { "l0_working" => "l0_working", "l1_longterm" => "l1_longterm", "l2_dmae" => "l2_dmae", _ => null };
+        if (table is null) return null;
+        using var c = _db!.CreateCommand();
+        c.CommandText = table == "l0_working"
+            ? "SELECT value AS content, updated_at FROM l0_working WHERE key = @k"
+            : table == "l1_longterm"
+                ? "SELECT content, salience, created_at, updated_at, meta FROM l1_longterm WHERE id = @k"
+                : "SELECT content, updated_at FROM l2_dmae WHERE id = @k";
+        var p = c.CreateParameter(); p.ParameterName = "@k"; p.Value = id; c.Parameters.Add(p);
+        using var r = c.ExecuteReader();
+        if (!r.Read()) return null;
+        if (table == "l1_longterm")
+            return new { id, content = r.GetString(0), salience = r.GetDouble(1), createdAt = r.GetInt64(2), updatedAt = r.GetInt64(3) };
+        return new { id, content = r.GetString(0), updatedAt = r.GetInt64(r.FieldCount - 1) };
+    }
+
     public void Put(string level, string id, string content, double salience)
     {
         if (!Schema.ContainsKey(level)) throw new InvalidOperationException($"未知层级: {level}");
@@ -183,6 +202,30 @@ internal sealed class MemoryHost : IDisposable
                             root.TryGetProperty("salience", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetDouble() : 1.0);
                         Send(new { op = "result", callId, ok = true, data = new { } });
                         break;
+                    case "get":
+                    {
+                        // level 内单条（id）或全量（无 id）
+                        var lvl = root.GetProperty("level").GetString() ?? "l1_longterm";
+                        if (root.TryGetProperty("id", out var gid) && gid.ValueKind == JsonValueKind.String)
+                        {
+                            Send(new { op = "result", callId, ok = true, data = host.GetOne(lvl, gid.GetString()!) });
+                        }
+                        else
+                        {
+                            Send(new { op = "result", callId, ok = true, data = host.Query(lvl, 200) });
+                        }
+                        break;
+                    }
+                    case "append":
+                    {
+                        // l0_working 追加（滚动窗口）；content 原文存储
+                        var lv = root.GetProperty("level").GetString() ?? "l0_working";
+                        var key = root.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String
+                            ? k.GetString() : $"w_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+                        host.Put(lv, key!, root.GetProperty("content").GetRawText(), 1.0);
+                        Send(new { op = "result", callId, ok = true, data = new { id = key } });
+                        break;
+                    }
                     case "record_conflict":
                         host.RecordConflict(
                             root.TryGetProperty("old", out var oc) && oc.ValueKind == JsonValueKind.String ? oc.GetString() : null,

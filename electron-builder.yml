@@ -61,6 +61,9 @@ extraResources:
   # 开关不生效，走 BrowserWindow 路径）
   - from: dotnet/native-windows/bin/Release/net10.0-windows/win-x64/publish
     to: native-windows
+  # 语音后端 sidecar（F/G 阶段：TTS/ASR 引擎 + Silero VAD）
+  - from: dotnet/voice/CyreneVoice/bin/Release/net10.0/win-x64/publish
+    to: CyreneVoice
   # 第三方 skills 快照归档：首启解压到 userData/skills（见 src/main/skills/snapshot-install.ts）
   - from: vendor/cyrene-skills
     to: cyrene-skills

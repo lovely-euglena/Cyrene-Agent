@@ -45,7 +45,7 @@ internal sealed partial class RagHost : IDisposable
             id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL,
             weight REAL NOT NULL DEFAULT 1.0, created_at INTEGER NOT NULL,
             last_recalled_at INTEGER NOT NULL, metadata TEXT,
-            embedding BLOB, dim INTEGER");
+            embedding BLOB, dim INTEGER)");
         Exec(@"CREATE TABLE IF NOT EXISTS bm25(
             term TEXT NOT NULL, doc_id TEXT NOT NULL, tf INTEGER NOT NULL,
             PRIMARY KEY(term, doc_id))");
@@ -100,10 +100,16 @@ internal sealed partial class RagHost : IDisposable
 
     internal IEnumerable<string> Tokenize(string text)
     {
-        foreach (var w in _jieba.Cut(text))
+        // CutForSearch（搜索引擎模式）：细粒度，"今天天气"→今天/天气——
+        // 精确模式整词进倒排导致查询词失配（Bug 修复）
+        foreach (var w in _jieba.CutForSearch(text))
         {
             var t = w.Trim().ToLowerInvariant();
-            if (t.Length > 0 && !IsStopword(t)) yield return t;
+            if (t.Length == 0) continue;
+            // 标点/空白/纯符号不进倒排（"，"等此前被索引为垃圾词）
+            if (!t.Any(char.IsLetterOrDigit)) continue;
+            if (IsStopword(t)) continue;
+            yield return t;
         }
     }
 
@@ -212,14 +218,18 @@ internal sealed partial class RagHost : IDisposable
     private static double Cosine(double[] query, byte[] blob, int dim)
     {
         if (blob.Length != dim * sizeof(float) || query.Length != dim) return 0;
-        double dot = 0, qn = 0;
+        double dot = 0, qn = 0, en = 0;
         for (var i = 0; i < dim; i++)
         {
             var v = BitConverter.ToSingle(blob, i * sizeof(float));
             dot += v * query[i];
             qn += query[i] * query[i];
+            en += v * v;
         }
-        return qn > 0 ? dot / Math.Sqrt(qn) : 0;
+        // 余弦 = dot/(|q||e|)（Bug 修复：此前漏除 entry 范数，导致
+        // 长向量（大分量）系统性虚高——排序被向量模长污染）
+        var denom = Math.Sqrt(qn) * Math.Sqrt(en);
+        return denom > 0 ? dot / denom : 0;
     }
 
     public void MarkRecalled(string[] ids, double weightDelta, double cap)

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Linux 冒烟壳：同源编译五 host 协议类（排除 WinForms 窗口/剪贴板），
+       验证发布产物同源代码的协议行为。Windows 实机仍以主 csproj 为准。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>cyrene-smoke</AssemblyName>
+    <RootNamespace>CyreneSmoke</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../dotnet/native-windows/Tools/ToolHost.cs" />
+    <Compile Include="../../dotnet/native-windows/Tools/Calculator.cs" />
+    <Compile Include="../../dotnet/native-windows/Tools/FsGitTools.cs" />
+    <Compile Include="BuiltinToolsStub.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="../../dotnet/native-windows/Rag/RagHost.cs" />
+    <Compile Include="../../dotnet/native-windows/Rag/RagHostExtensions.cs" />
+    <Compile Include="../../dotnet/native-windows/MemoryStore/MemoryHost.cs" />
+    <Compile Include="../../dotnet/native-windows/LoopHost/LoopHost.cs" />
+    <Compile Include="../../dotnet/native-windows/Agents/AgentSessionHost.cs" />
+    <Compile Include="../../dotnet/native-windows/Agents/Orchestrator.cs" />
+    <Compile Include="../../dotnet/native-windows/Agents/OrchestratorSelfTest.cs" />
+    <Compile Include="../../dotnet/native-windows/Mcp/McpHost.cs" />
+    <Compile Include="../../dotnet/native-windows/Mcp/McpConnection.cs" />
+    <Compile Include="../../dotnet/native-windows/Mcp/McpHttpTransport.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Jieba.NET" Version="0.42.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Jieba.NET 老式 content 包：SDK 项目不自动拷 Resources（词典）——
+         不拷则 JiebaSegmenter 静态构造抛异常，rag-host open 即失败 -->
+    <None Include="$(NuGetPackageRoot)jieba.net/0.42.2/Resources/**/*"
+          CopyToOutputDirectory="PreserveNewest" LinkBase="Resources" />
+  </ItemGroup>
+</Project>
