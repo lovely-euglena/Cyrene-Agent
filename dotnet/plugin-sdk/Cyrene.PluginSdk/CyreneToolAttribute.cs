@@ -24,6 +24,11 @@ public sealed class CyreneToolAttribute : Attribute
     /// </summary>
     public string Schema { get; set; } = """{"type":"object","properties":{}}""";
 
+    /// <summary>风险等级（宿主权限闸门）：safe/fs-read/fs-write/shell/
+    /// network/input-control/unknown。缺省 unknown——宿主默认拒绝
+    /// （closed world），作者必须显式声明。</summary>
+    public string Risk { get; set; } = "unknown";
+
     public CyreneToolAttribute(string id, string name, string description)
     {
         Id = id;

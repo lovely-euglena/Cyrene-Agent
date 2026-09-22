@@ -36,6 +36,10 @@ const READY_TIMEOUT_MS = 30_000;
 /** 优雅关停后允许的自然退出时间。 */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 /** init 协议主版本（与 CURRENT_PLUGIN_API_VERSION 对齐，C# SDK 校验）。 */
+/** ready.tools 数量上限——防恶意/失控插件撑爆工具注册表。 */
+const MAX_TOOLS_PER_PLUGIN = 64;
+/** risk 白名单（permission-policy 的 ToolRiskLevel 域 + unknown 拒绝）。 */
+const RISK_ALLOWLIST = new Set(["safe", "fs-read", "fs-write", "shell", "network", "input-control"]);
 const PROTOCOL_API_VERSION = 1;
 
 interface RemoteTool {
@@ -74,7 +78,12 @@ export class DotnetPluginAdapter implements CyrenePlugin {
     );
 
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(exe, [], {
+      // .dll 产物经 dotnet 启动（Windows .exe 直接 spawn）；dotnet 用
+      // 宿主同款运行时目录，避免 PATH 污染
+      const isDll = exe.toLowerCase().endsWith(".dll");
+      const argv = isDll ? [exe] : [];
+      const bin = isDll ? (process.env.DOTNET_HOST_PATH ?? "dotnet") : exe;
+      const child = spawn(bin, argv, {
         cwd: this.record.dir,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
@@ -118,15 +127,28 @@ export class DotnetPluginAdapter implements CyrenePlugin {
           for (const tool of tools) {
             // 宿主工具 id 规范：{pluginId}_{短id}（单下划线，同 node 轨）
             const shortId = tool.id;
+            // 权限闸门（P2 修复）：risk 必须显式声明且在白名单内——
+            // 未声明/unknown 的工具直接拒注册（closed world：宿主对
+            // .NET 插件的默认姿态是拒绝，而不是 safe 放行）
+            const risk = (tool as { risk?: unknown }).risk as PluginTool["risk"];
+            if (typeof risk !== "string" || !RISK_ALLOWLIST.has(risk)) {
+              throw new Error(
+                `dotnet 插件 ${this.record.manifest.id} 工具 ${shortId} 未声明合法 risk（safe/fs-read/fs-write/shell/network/input-control）——拒注册`,
+              );
+            }
             ctx.registerTool({
               id: `${this.record.manifest.id}_${shortId}`,
               name: tool.name,
               description: tool.description,
               enabled: true,
+              risk,
               // schema 形状与 node 插件一致；缺省给空对象 schema
               inputSchema: (tool.inputSchema as PluginTool["inputSchema"]) ?? { type: "object", properties: {} },
               execute: (input) => this.invokeTool(shortId, input),
             });
+          }
+          if (tools.length > MAX_TOOLS_PER_PLUGIN) {
+            throw new Error(`dotnet 插件 ${this.record.manifest.id} 声明 ${tools.length} 个工具（上限 ${MAX_TOOLS_PER_PLUGIN}）——拒载`);
           }
           console.log(`[plugins] dotnet 插件 ${this.record.manifest.id} 就绪，注册 ${tools.length} 个工具`);
           resolve();

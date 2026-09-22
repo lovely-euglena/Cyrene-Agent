@@ -124,7 +124,7 @@ export interface PluginTool {
   category?: string;
   capability?: string;
   enabled: boolean;
-  risk?: "safe" | "fs-read" | "fs-write" | "shell" | "network" | "input-control";
+  risk?: "safe" | "fs-read" | "fs-write" | "shell" | "network" | "input-control" | "unknown";
   modes?: Array<"learn" | "code" | "work">;
   inputSchema: {
     type: "object";
