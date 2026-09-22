@@ -56,7 +56,7 @@ class FakeChild implements HelperChildProcess {
   }
 }
 
-function createHarness(): { client: ElectronScreenshotHelperClient; child: FakeChild; startReady(): Promise<void> } {
+function createHarness(idleExitMs?: number): { client: ElectronScreenshotHelperClient; child: FakeChild; startReady(): Promise<void> } {
   const child = new FakeChild();
   let sequence = 0;
   const client = new ElectronScreenshotHelperClient({
@@ -67,6 +67,7 @@ function createHarness(): { client: ElectronScreenshotHelperClient; child: FakeC
     now: () => 1000,
     createRequestId: () => `r${++sequence}`,
     logger: { debug: () => {}, warn: () => {}, error: () => {} },
+    ...(idleExitMs !== undefined ? { idleExitMs } : {}),
   });
   return {
     client,
@@ -239,5 +240,71 @@ describe("ElectronScreenshotHelperClient —— helper 先退出时的 stdin 写
     // 监听器本身必须能安全吞掉错误，不能再抛
     const handler = stdin.on!.mock.calls.find(c => c[0] === "error")?.[1] as (e: Error) => void;
     expect(() => handler(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).not.toThrow();
+  });
+});
+
+describe("空闲自杀（600s 策略）", () => {
+  it("最后一个请求完成后 idleExitMs 无新请求 → 发 shutdown 回收", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, child, startReady } = createHarness(60_000);
+      await startReady();
+
+      const result = client.start("clipboard-and-file", "hotkey");
+      child.emitStdout('{"type":"interaction-state","requestId":"r1","state":"selected"}');
+      child.emitStdout('{"type":"completed","requestId":"r1","fileName":null,"width":10,"height":20,"mime":"image/png","clipboardWritten":true,"hasAnnotations":true}');
+      await result;
+      expect(client.processState).toBe("ready");
+
+      // 未到期：不回收
+      vi.advanceTimersByTime(59_999);
+      expect(client.processState).toBe("ready");
+
+      // 到期：发 shutdown 命令（优雅回收）
+      vi.advanceTimersByTime(1);
+      expect(child.stdinWrites.some((l: string) => l.includes('"type":"shutdown"'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("空闲期内新请求 → 撤销回收计时", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, child, startReady } = createHarness(60_000);
+      await startReady();
+      const r1 = client.start("clipboard-and-file", "hotkey");
+      child.emitStdout('{"type":"completed","requestId":"r1","fileName":null,"width":1,"height":1,"mime":"image/png","clipboardWritten":true,"hasAnnotations":false}');
+      await r1;
+
+      // 快到期时新请求进来：计时撤销
+      vi.advanceTimersByTime(59_000);
+      const r2 = client.start("clipboard-and-file", "chat-button");
+      child.emitStdout('{"type":"completed","requestId":"r2","fileName":null,"width":1,"height":1,"mime":"image/png","clipboardWritten":true,"hasAnnotations":false}');
+      await r2;
+
+      // 再过原周期的一半：不该被回收（r2 重置了计时起点）
+      vi.advanceTimersByTime(30_000);
+      expect(child.stdinWrites.some((l: string) => l.includes('"type":"shutdown"'))).toBe(false);
+      expect(client.processState).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("idleExitMs=0 → 永不回收", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, child, startReady } = createHarness(0);
+      await startReady();
+      const r = client.start("clipboard-and-file", "hotkey");
+      child.emitStdout('{"type":"completed","requestId":"r1","fileName":null,"width":1,"height":1,"mime":"image/png","clipboardWritten":true,"hasAnnotations":false}');
+      await r;
+
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(child.stdinWrites.some((l: string) => l.includes('"type":"shutdown"'))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

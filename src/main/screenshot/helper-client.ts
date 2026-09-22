@@ -67,6 +67,16 @@ export interface ScreenshotHelperClientOptions {
   now?: () => number;
   createRequestId?: () => string;
   logger?: Pick<Console, "debug" | "warn" | "error">;
+  /** 空闲自杀毫秒数（默认 600s，SCREENSHOT_HELPER_IDLE_MS 覆盖；0=永不）。 */
+  idleExitMs?: number;
+}
+
+/** 读环境覆盖的空闲回收毫秒（与 embedding sidecar 600s 语义对齐）。 */
+function readIdleExitMs(override?: number): number {
+  if (typeof override === "number") return override;
+  const raw = process.env.SCREENSHOT_HELPER_IDLE_MS;
+  if (raw && /^\d+$/.test(raw)) return Number(raw);
+  return 600_000;
 }
 
 interface DeferredRequest {
@@ -89,8 +99,17 @@ export class ElectronScreenshotHelperClient implements ScreenshotHelperClient {
   private resolveReady: (() => void) | null = null;
   private rejectReady: ((error: Error) => void) | null = null;
   private didHandleExit = false;
+  /**
+   * 空闲自杀：Rust helper 无自主退出逻辑，宿主代管——最后一个请求
+   * 完成后 idleExitMs 内无新请求则发 shutdown 回收（截图是间歇性
+   * 操作，桌宠 24/7 常驻无意义；下次截图懒重启 ~200ms）。
+   */
+  private readonly idleExitMs: number;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly options: ScreenshotHelperClientOptions) {}
+  constructor(private readonly options: ScreenshotHelperClientOptions) {
+    this.idleExitMs = readIdleExitMs(options.idleExitMs);
+  }
 
   get processState(): HelperProcessState {
     return this.state;
@@ -110,6 +129,7 @@ export class ElectronScreenshotHelperClient implements ScreenshotHelperClient {
 
     this.state = "starting";
     this.didHandleExit = false;
+    this.cancelIdleTimer();
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -164,6 +184,7 @@ export class ElectronScreenshotHelperClient implements ScreenshotHelperClient {
 
   private beginRequest(mode: ScreenshotMode, source: PendingRequest["source"]): Promise<ScreenshotResult> {
     if (!this.child || this.state !== "ready") return Promise.reject(new Error("HELPER_NOT_READY"));
+    this.cancelIdleTimer(); // 新请求进来：撤销排定的空闲回收
 
     const requestId = (this.options.createRequestId ?? randomUUID)();
     const request: PendingRequest = {
@@ -294,11 +315,33 @@ export class ElectronScreenshotHelperClient implements ScreenshotHelperClient {
       this.currentInteractionRequestId = null;
       this.currentCaptureState = "idle";
     }
+    if (this.requests.size === 0) this.scheduleIdleDispose();
+  }
+
+  /** 排定空闲回收（有在途请求则不排）。 */
+  private scheduleIdleDispose(): void {
+    if (this.idleExitMs <= 0 || !this.child || this.state !== "ready") return;
+    this.cancelIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.requests.size > 0 || !this.child || this.state !== "ready") return;
+      this.options.logger?.debug(`[ScreenshotHelper] idle ${this.idleExitMs / 1000}s, shutting down (lazy respawn on next screenshot)`);
+      void this.shutdown();
+    }, this.idleExitMs);
+    this.idleTimer.unref?.();
+  }
+
+  private cancelIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
   }
 
   private handleExit(error: Error): void {
     if (this.didHandleExit) return;
     this.didHandleExit = true;
+    this.cancelIdleTimer();
     const wasStopping = this.state === "stopping";
     this.child = null;
     this.state = wasStopping ? "stopped" : "unavailable";

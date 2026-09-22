@@ -24,6 +24,8 @@ export interface ScreenshotServiceDeps {
   sendInsert(data: ScreenshotInsertData): void;
   registerShortcut(accelerator: string, callback: () => void): boolean;
   unregisterShortcut(accelerator: string): void;
+  /** 路径预检（prewarm 懒启动用——只解析不 spawn）。 */
+  resolveHelperPath(): string;
 }
 
 export interface ScreenshotImageProbe {
@@ -142,12 +144,13 @@ export function createScreenshotService(deps: ScreenshotServiceDeps): Screenshot
       replaceHotkey(initialHotkey);
     },
     async prewarm() {
+      // 懒启动（原为启动即 spawn 常驻）：只做路径预检——安装破损早发现
+      // 且不占常驻内存；首次截图经 ensureStarted() 懒拉起（~200ms）。
+      // 常驻回收由 helper client 的 600s 空闲自杀负责。
       try {
-        await deps.client.ensureStarted();
+        deps.resolveHelperPath();
       } catch (error) {
-        // Helper availability is optional at app startup. A later screenshot
-        // request will retry through ScreenshotHelperClient.start().
-        console.warn("[Screenshot] native helper prewarm failed:", error);
+        console.warn("[Screenshot] native helper path resolve failed:", error);
       }
     },
     startFromHotkey,

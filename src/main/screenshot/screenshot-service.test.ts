@@ -38,14 +38,17 @@ function createHarness(registerResult = true) {
   const unregisterShortcut = vi.fn((accelerator: string) => {
     callbacks.delete(accelerator);
   });
+  const resolveHelperPath = vi.fn(() => "/mock/helper.exe");
   const service = createScreenshotService({
     client,
     sendInsert,
     registerShortcut,
     unregisterShortcut,
+    resolveHelperPath,
   });
   return {
     client,
+    resolveHelperPath,
     sendInsert,
     callbacks,
     registerShortcut,
@@ -114,15 +117,24 @@ describe("createScreenshotService", () => {
 
   it("does not reject app startup when helper prewarm fails", async () => {
     const harness = createHarness();
-    vi.mocked(harness.client.ensureStarted).mockRejectedValueOnce(new Error("missing helper"));
+    // 懒启动语义：prewarm 只做路径预检（不 spawn）——路径解析抛错也不崩
+    vi.mocked(harness.resolveHelperPath).mockImplementationOnce(() => {
+      throw new Error("missing helper");
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await expect(harness.service.prewarm()).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith(
-      "[Screenshot] native helper prewarm failed:",
+      "[Screenshot] native helper path resolve failed:",
       expect.any(Error),
     );
     warn.mockRestore();
+  });
+
+  it("prewarm 懒启动：不 spawn helper 进程", async () => {
+    const harness = createHarness();
+    await expect(harness.service.prewarm()).resolves.toBeUndefined();
+    expect(harness.client.ensureStarted).not.toHaveBeenCalled();
   });
 
   it("suspends the active shortcut while settings captures keys and resumes it", () => {

@@ -112,6 +112,13 @@ export function initializeScreenshotService(
 
   const service = createScreenshotService({
     client,
+    resolveHelperPath: () =>
+      resolveScreenshotHelperPath({
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        envOverride: process.env.CYRENE_SCREENSHOT_HELPER_PATH,
+      }),
     registerShortcut: (accelerator, callback) =>
       globalShortcut.register(accelerator, callback),
     unregisterShortcut: (accelerator) => globalShortcut.unregister(accelerator),
