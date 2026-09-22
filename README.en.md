@@ -6,9 +6,12 @@
 
 **English** | [中文](./README.md)
 
-**Primary repo**: [GitHub](https://github.com/Playa-0v0/Cyrene-Agent) ・ **Mirror for China**: [Gitee](https://gitee.com/playa0/cyrene-agent)
+**This fork (community continuation)**: [Gitee](https://gitee.com/ygwill/cyrene-agent) ・
+**Upstream**: [Gitee](https://gitee.com/playa0/cyrene-agent) / [GitHub](https://github.com/Playa-0v0/Cyrene-Agent)
 
-> ⚠️ **Temporary notice (2026-09-13)**: Our GitHub account is temporarily suspended and under appeal, so the GitHub repository is currently inaccessible. Please clone from the Gitee mirror in the meantime; GitHub will be re-synced once restored.
+> 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)** and **.NET desktop architecture** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. Details in the [Chinese README](./README.md) and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
+
+> ⚠️ **Temporary notice (2026-09-13)**: The upstream GitHub account is temporarily suspended and under appeal, so the upstream GitHub repository is currently inaccessible. Please clone from a Gitee mirror in the meantime.
 
 </div>
 

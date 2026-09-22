@@ -199,3 +199,11 @@ release/win-unpacked/
 
 运行时桌面环境要求：**.NET 10 Desktop Runtime**（原生窗口默认启用；
 缺失自动回退 Electron 渲染，不影响可用性）。
+
+## 发版渠道（test.6 起）
+
+- **Gitee Releases**：95MB 分卷（.part.00~03）+ `一键解压运行.bat`（合并/校验/解压/启动全自动）+ `SHA256SUMS-test.6.txt`
+- **S3 直链**（第二渠道，无配额压力）：全量 tar.xz **不分卷** + **zip 版**（`Cyrene-Portable-2.0.0-test.6-x64.zip`，解压器直接展开，无需脚本）
+  - 上传：`python3 scripts/upload-release-s3.py <file>`（需 `CYRENE_S3_AK/SK` 环境变量）
+  - zip 版自 test.6 起提供（跨平台用户免装 tar）
+- 回验：上传后下载抽样校验 SHA256（防传输损坏，test.4 的教训）

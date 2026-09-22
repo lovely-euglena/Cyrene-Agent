@@ -46,6 +46,9 @@
 
 - 🪟 **.NET 原生窗口** — splash / 侧栏 / 日程 / 设置窗由 `cyrene-native`（WPF + WinForms，.NET 10）渲染，替代对应 Chromium 渲染进程，显著降低常驻内存；Electron 路径保留为回退
 - 🧱 **分离托盘** — `cyrene-native --tray` 独立托盘进程常驻（~20MB），Electron 主程序按需启动；全窗关闭后仅托盘驻留，随时拉起
+- ⚙️ **七 host .NET 后端**（feature/dotnet-backend）— 内置工具 / RAG（SQLite WAL + jieba BM25 混合检索）/ 记忆六表 / Agent 会话（多轮工具环）/ 对话循环 / MCP 连接 / 语音（CyreneVoice 独立 exe）下沉为 `cyrene-native` 子进程宿主，stdio JSON 行协议，双轨开关可整体回退 TS 原路（详见 [docs/dotnet-backend.md](./docs/dotnet-backend.md)）
+- 🧪 **实测驱动的质量链** — Linux 冒烟壳五套 96+ 项测试全绿（协议帧序 / 边缘注入 / 工具矩阵 / Agent 循环 / IPC 压力）+ calculator 双轨数值等价 diff；详见 dotnet-backend.md「测试矩阵」
+- 🛡️ **纵深安全** — MCP HTTP Host 头白名单（DNS rebinding 防护）、.NET 插件 risk 声明闸门（未声明拒注册，closed world）、工具白名单主路径拦截、截图 helper 600s 空闲自杀 + prewarm 懒启动
 - ⚡ **流式 100ms 批量吐 token** — AGUI 流事件按 messageId 攒批，窗口不可见时暂停推送（后台不烧渲染），聊天流畅度大幅改善
 - 🐈 **聊天窗按需启动** — 启动不预载聊天页，首次激活秒开加载
 - 🐹 **桌宠内存治理** — Live2D 空闲三档降频（60→24→12fps），拖动坐标自适应校准（DPI 无关，修复对角抖动）
