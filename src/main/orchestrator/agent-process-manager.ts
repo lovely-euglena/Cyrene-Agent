@@ -11,7 +11,7 @@
  *     （含权限审批，复用 executeToolCall 路径）→ tool_result 回注
  *
  * 协议见 dotnet/native-windows/Agents/AgentSessionHost.cs 头注释。
- * 双轨开关 CYRENE_AGENT_HOST=0/1：0 或 native exe 缺失时全部 API
+ * 默认启用（CYRENE_AGENT_HOST=0 关闭）：0 或 native exe 缺失时全部 API
  * 返回 { ok: false, error: "agent-host 未启用" }——上层照旧走 TS 循环。
  */
 import { spawn, type ChildProcess } from "child_process";
@@ -50,7 +50,7 @@ export class AgentProcessManager {
   messagePreprocessor: ((messages: ChatMessage[]) => ChatMessage[]) | null = null;
 
   enabled(): boolean {
-    return process.env.CYRENE_AGENT_HOST === "1" && resolveNativeWindowsExe() !== null;
+    return process.env.CYRENE_AGENT_HOST !== "0" && resolveNativeWindowsExe() !== null;
   }
 
   private async ensureStarted(): Promise<boolean> {

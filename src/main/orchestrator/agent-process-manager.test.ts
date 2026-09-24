@@ -58,12 +58,21 @@ const VENDOR = { provider: "test", baseUrl: "http://x", model: "m", apiKey: "k" 
 afterEach(() => { vi.clearAllMocks(); });
 
 describe("AgentProcessManager", () => {
-  it("未启用（CYRENE_AGENT_HOST≠1）时 step 直接失败可回退", async () => {
-    delete process.env.CYRENE_AGENT_HOST;
+  it("显式关闭（CYRENE_AGENT_HOST=0）时 step 直接失败可回退", async () => {
+    process.env.CYRENE_AGENT_HOST = "0";
     const mgr = new AgentProcessManager();
     const r = await mgr.step("s1", "hi", VENDOR);
     expect(r.ok).toBe(false);
     expect(r.error).toContain("未启用");
+  });
+
+  it("默认启用（不设开关）时 enabled() 为 true；=0 关闭", () => {
+    delete process.env.CYRENE_AGENT_HOST;
+    const mgr = new AgentProcessManager();
+    expect(mgr.enabled()).toBe(true);
+    process.env.CYRENE_AGENT_HOST = "0";
+    expect(mgr.enabled()).toBe(false);
+    delete process.env.CYRENE_AGENT_HOST;
   });
 
   it("llm_request → 代理 → llm_response 成功路径", async () => {
