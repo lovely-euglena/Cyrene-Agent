@@ -10,10 +10,13 @@ import * as fs from "fs";
 import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 import {
+  ELECTRON_ONLY_SETTINGS_SECTIONS,
   NATIVE_GENERAL_SETTING_KEYS,
+  NATIVE_SETTINGS_SECTIONS,
   NATIVE_USER_PROFILE_FIELDS,
   sanitizeNativeGeneralSetting,
   sanitizeNativeUserProfile,
+  shouldOpenSettingsInElectron,
 } from "./native-settings-protocol";
 
 const settingsWindowCs = fs.readFileSync(
@@ -37,6 +40,11 @@ function extractCsWriteKeys(source: string): string[] {
 /** 提取 C# 源码中所有 SetUserProfile("field&quot;, ...) 的字段名 */
 function extractCsUserProfileFields(source: string): string[] {
   return [...source.matchAll(/SetUserProfile\("([A-Za-z]+)"/g)].map((m) => m[1]);
+}
+
+/** 提取 C# 设置窗 AddSection("id&quot;, ...) 的 section id */
+function extractCsSections(source: string): string[] {
+  return [...source.matchAll(/AddSection\("([^"]+)"/g)].map((m) => m[1]);
 }
 
 /** 提取 RequestRouter.cs 中 settings.set 白名单集合 */
@@ -197,5 +205,36 @@ describe("跨语言契约：C# 设置窗 ↔ 宿主白名单", () => {
 
   it("渠道按钮走 openChannels（而非 open-legacy channels）", () => {
     expect(settingsWindowCs).toContain('SendCommand("settings", "openChannels")');
+  });
+});
+
+describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
+  it("无 section（通用入口）→ WPF", () => {
+    expect(shouldOpenSettingsInElectron()).toBe(false);
+    expect(shouldOpenSettingsInElectron(undefined)).toBe(false);
+  });
+
+  it("channels / tts / asr → Electron（保持弹页面）", () => {
+    for (const section of ELECTRON_ONLY_SETTINGS_SECTIONS) {
+      expect(shouldOpenSettingsInElectron(section)).toBe(true);
+    }
+  });
+
+  it("WPF 认识的 section（含占位 api/memory/tasks）→ WPF", () => {
+    for (const section of ["general", "appearance", "user", "about", "api", "memory", "plugins", "tasks"]) {
+      expect(shouldOpenSettingsInElectron(section)).toBe(false);
+    }
+  });
+
+  it("Electron 专属 section（tokens/preferences/cyrene/disclaimer/api-advanced）→ Electron", () => {
+    for (const section of ["tokens", "preferences", "cyrene", "disclaimer", "api-advanced", "unknown-section"]) {
+      expect(shouldOpenSettingsInElectron(section)).toBe(true);
+    }
+  });
+
+  it("C# 设置窗 section 集合与 NATIVE_SETTINGS_SECTIONS 完全一致（路由不会落错页）", () => {
+    const csSections = extractCsSections(settingsWindowCs);
+    expect(csSections.length).toBeGreaterThan(0);
+    expect(new Set(csSections)).toEqual(new Set(NATIVE_SETTINGS_SECTIONS));
   });
 });

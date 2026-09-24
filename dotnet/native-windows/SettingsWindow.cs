@@ -40,6 +40,9 @@ public sealed class SettingsWindow : NativeWindow
     private readonly ScrollViewer _scroll;
     private readonly StackPanel _sections;
     private readonly Dictionary<string, StackPanel> _sectionHosts = new();
+    private readonly Dictionary<string, RadioButton> _navButtons = new();
+    /// <summary>宿主显式定位的初始 section（layout.section；未知/缺省 → general）</summary>
+    private readonly string? _initialSection;
     /// <summary>用户已输入但尚未提交的控件刷新（快照重建时停掉）</summary>
     private readonly List<DispatcherTimer> _debounceTimers = new();
     private readonly string _genderGroupId = Guid.NewGuid().ToString("N");
@@ -55,6 +58,11 @@ public sealed class SettingsWindow : NativeWindow
         _settings = layout.ValueKind == JsonValueKind.Object && layout.TryGetProperty("settings", out var s)
             ? s
             : default;
+        _initialSection = layout.ValueKind == JsonValueKind.Object
+            && layout.TryGetProperty("section", out var sec)
+            && sec.ValueKind == JsonValueKind.String
+            ? sec.GetString()
+            : null;
 
         _window = new Window
         {
@@ -123,6 +131,7 @@ public sealed class SettingsWindow : NativeWindow
             };
             btn.Checked += (_, _) => SwitchSection(id);
             nav.Children.Add(btn);
+            _navButtons[id] = btn;
 
             var host = new StackPanel { Visibility = Visibility.Collapsed };
             _sectionHosts[id] = host;
@@ -130,7 +139,6 @@ public sealed class SettingsWindow : NativeWindow
             host.Children.Add(native
                 ? BuildNativeSection(id)
                 : BuildLegacySection(id, label, legacyHash ?? id, pluginManager));
-            if (id == "general") { btn.IsChecked = true; }
         }
 
         AddSection("general", "通用", native: true);
@@ -144,6 +152,30 @@ public sealed class SettingsWindow : NativeWindow
         AddSection("tasks", "定时任务", native: false, legacyHash: "tasks");
         AddSection("channels", "渠道配置", native: false, legacyHash: "channels");
         AddSection("about", "关于", native: true);
+
+        // 初始 section：优先宿主显式定位（layout.section），未知/缺省 → 通用
+        var initial = _initialSection is not null && _navButtons.ContainsKey(_initialSection)
+            ? _initialSection
+            : "general";
+        _navButtons[initial].IsChecked = true;
+    }
+
+    /// <summary>
+    /// 宿主指定要打开的 section（win.spawn layout.section；已开窗时由
+    /// RequestRouter 重定向）。未知 id 忽略，避免白屏。
+    /// </summary>
+    public void SwitchToSection(string section)
+    {
+        if (!_navButtons.TryGetValue(section, out var btn))
+        {
+            return;
+        }
+        if (btn.IsChecked == true)
+        {
+            SwitchSection(section);
+            return;
+        }
+        btn.IsChecked = true; // 触发 Checked → SwitchSection
     }
 
     private void SwitchSection(string id)

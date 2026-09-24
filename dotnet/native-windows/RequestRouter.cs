@@ -19,15 +19,21 @@ public static class RequestRouter
             case "win.spawn":
             {
                 var kind = element.GetProperty("kind").GetString()!;
+                var layout = element.TryGetProperty("layout", out var layoutEl) ? layoutEl : default;
                 app.Dispatcher.Invoke(() =>
                 {
                     if (Windows.TryGetValue(kind, out var existing) && !existing.IsClosed)
                     {
                         existing.Activate();
+                        // 已开窗：显式 section 请求重定向（设置窗）
+                        if (existing is SettingsWindow settingsWindow)
+                        {
+                            var section = ReadSection(layout);
+                            if (section is not null) settingsWindow.SwitchToSection(section);
+                        }
                     }
                     else
                     {
-                        var layout = element.TryGetProperty("layout", out var layoutEl) ? layoutEl : default;
                         NativeWindow window = kind switch
                         {
                             "settings" => new SettingsWindow(layout),
@@ -154,6 +160,15 @@ public static class RequestRouter
     public static void OnEvent(System.Windows.Application app, JsonElement element)
     {
         // 宿主→native 目前无 event 帧（事件都是 native→host 方向）
+    }
+
+    /// <summary>读取 win.spawn layout.section（设置窗显式定位；缺省/非法返回 null）。</summary>
+    private static string? ReadSection(JsonElement layout)
+    {
+        if (layout.ValueKind != JsonValueKind.Object) return null;
+        if (!layout.TryGetProperty("section", out var s) || s.ValueKind != JsonValueKind.String) return null;
+        var value = s.GetString();
+        return string.IsNullOrEmpty(value) ? null : value;
     }
 
     /// <summary>

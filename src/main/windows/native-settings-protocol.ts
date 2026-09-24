@@ -44,6 +44,47 @@ export const NATIVE_USER_PROFILE_FIELDS = [
   "gender",
 ] as const;
 
+// ── 设置窗路由：入口默认走 WPF（.NET），例外见下 ──────────────────────────
+
+/**
+ * Electron 专属 section：内容仍在 Electron，入口一律弹 Electron 页——
+ *   - channels：渠道配置独立 Electron 窗（用户指定不迁 .NET）
+ *   - tts / asr：TTS/ASR 配置保持在 Electron 设置页
+ */
+export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "tts", "asr"] as const;
+
+/**
+ * WPF 设置窗认识的 section（与 SettingsWindow.cs 的 AddSection 对齐；
+ * 契约测试锁定）。不在其中（tokens/preferences/cyrene/... 等 Electron
+ * 专属 section）或命中 ELECTRON_ONLY 时，入口回 Electron 页。
+ */
+export const NATIVE_SETTINGS_SECTIONS = [
+  "general",
+  "appearance",
+  "user",
+  "about",
+  "api",
+  "memory",
+  "plugins",
+  "tasks",
+  "channels",
+  "tts",
+  "asr",
+] as const;
+
+/**
+ * 设置入口路由裁决：true = 弹 Electron 设置页；false = 用 WPF（.NET）设置窗。
+ *   - 无 section（通用入口）→ WPF
+ *   - channels / tts / asr → Electron
+ *   - 其余 WPF 认识的 section（含占位 api/memory/tasks）→ WPF
+ *   - WPF 不认识的 section（Electron 专属）→ Electron（避免落错页）
+ */
+export function shouldOpenSettingsInElectron(section?: string): boolean {
+  if (!section) return false;
+  if ((ELECTRON_ONLY_SETTINGS_SECTIONS as readonly string[]).includes(section)) return true;
+  return !(NATIVE_SETTINGS_SECTIONS as readonly string[]).includes(section);
+}
+
 const USER_PROFILE_FIELD_MAX_LENGTH = 200;
 const GENDERS = new Set(["secret", "male", "female"]);
 

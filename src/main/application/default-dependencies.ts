@@ -120,6 +120,7 @@ import {
   spawnNativeWindow,
 } from "../windows/native-windows-bridge";
 import { connectDetachedTray } from "../tray-detached";
+import { openSettingsWindow } from "../windows/settings-router";
 import { createSplashWindow } from "../startup/create-splash-window";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
@@ -286,22 +287,18 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       createChatShell: (windowManager) => windowManager.createReactChatWindowShell(),
       registerProtocolHandlers,
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
-        registerWindowSystemIpc({ ipc, windowManager });
+        registerWindowSystemIpc({ ipc, windowManager, openSettings: openSettingsWindow });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
+      // 托盘/协议激活的设置入口：默认 WPF（例外见 settings-router）
+      openSettings: openSettingsWindow,
       // native 三件套窗口（默认启用）：动作转发回
       // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
       initializeNativeWindows: (windowManager) => {
         initNativeWindowsBridge({
-          // native 模式：设置窗走 .NET（spawn native settings）；
-          // 渠道 section 例外（保持 Electron，用户指定）→ 直接弹 Electron 设置窗
-          openSettings: (section?: string) => {
-            if (section === "channels") {
-              windowManager.createSettingsWindow(section);
-              return;
-            }
-            void spawnNativeWindow("settings");
-          },
+          // 设置窗路由：默认 WPF（.NET）；channels/TTS/ASR 及 Electron 专属
+          // section 弹 Electron（settings-router 统一裁决 + 失败回退）
+          openSettings: openSettingsWindow,
           openChatWindow: () => windowManager.createReactChatWindowShell(),
           openCallWindow: () => windowManager.createCallWindow(),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),

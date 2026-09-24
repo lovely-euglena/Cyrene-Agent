@@ -11,6 +11,11 @@ import type { WindowManager } from "./window-manager";
 
 export interface WindowSystemIpcDependencies {
   get windowManager(): WindowManager | null;
+  /**
+   * 设置入口路由（默认 WPF；channels/TTS/ASR 等例外弹 Electron）。
+   * 缺省回退：直接创建 Electron 设置窗（兼容旧装配/测试桩）。
+   */
+  openSettings?(section?: string): void;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
 }
@@ -63,7 +68,13 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_SETTINGS, (_event, section?: string) => {
-    deps.windowManager?.createSettingsWindow(section);
+    // 默认 WPF 设置窗（channels/TTS/ASR 等例外弹 Electron，见 settings-router）
+    const target = typeof section === "string" ? section : undefined;
+    if (deps.openSettings) {
+      deps.openSettings(target);
+      return;
+    }
+    deps.windowManager?.createSettingsWindow(target);
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_CALL, () => {

@@ -37,6 +37,11 @@ export interface ShellDependencies {
   createChatShell(windowManager: WindowManager): ReactChatWindowHandle;
   /** 初始化 native 三件套窗口桥接（未启用/无 exe 时 no-op）。 */
   initializeNativeWindows(windowManager: WindowManager): void;
+  /**
+   * 打开设置窗（默认 WPF；channels/TTS/ASR 及 Electron 专属 section 弹 Electron）。
+   * 缺省回退：直接创建 Electron 设置窗（测试桩兼容）。
+   */
+  openSettings?(section?: string): void;
   registerProtocolHandlers(): void;
   /** 壳安全 IPC：仅注册依赖在壳阶段已就绪的处理器。 */
   registerShellIpc(input: ShellIpcRegistrationInput): void;
@@ -112,7 +117,9 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
           windowManager.createSidebarWindow();
           break;
         case "settings":
-          windowManager.createSettingsWindow(request.section);
+          // 默认 WPF 设置窗（channels/TTS/ASR 例外弹 Electron，见 settings-router）
+          if (deps.openSettings) deps.openSettings(request.section);
+          else windowManager.createSettingsWindow(request.section);
           break;
       }
     },
