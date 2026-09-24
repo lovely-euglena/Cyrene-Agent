@@ -25,3 +25,5 @@ export const citaEngineSelect = document.getElementById("cita-engine-select") as
 export const clearChatHistoryBtn = document.getElementById("clear-chat-history-btn") as HTMLButtonElement;
 export const customStyleSamplingBtn = document.getElementById("custom-style-sampling-btn") as HTMLButtonElement | null;
 export const customStylePromptBtn = document.getElementById("custom-style-prompt-btn") as HTMLButtonElement | null;
+export const gitCommitAuthorNameInput = document.getElementById("git-commit-author-name") as HTMLInputElement;
+export const gitCommitAuthorEmailInput = document.getElementById("git-commit-author-email") as HTMLInputElement;

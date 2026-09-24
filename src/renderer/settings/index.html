@@ -651,6 +651,17 @@
               <span class="switch"><input id="disable-gpu-electron" type="checkbox" /><span class="switch__track"><span class="switch__thumb"></span></span></span>
             </div>
 
+            <div class="setting-row">
+              <div>
+                <strong><span data-i18n="panel.general.gitIdentity.title">Git 提交身份</span></strong>
+                <span><span data-i18n="panel.general.gitIdentity.desc">昔涟创建 Git 提交时使用的作者信息。提交作者名默认 Cyrene；邮箱为必填，未填写时提交会被拒绝并提示来这里补填。</span></span>
+              </div>
+              <div class="git-identity-fields">
+                <input id="git-commit-author-name" type="text" maxlength="120" placeholder="Cyrene" data-i18n-placeholder="panel.general.gitIdentity.namePlaceholder" />
+                <input id="git-commit-author-email" type="email" maxlength="254" placeholder="you@example.com" data-i18n-placeholder="panel.general.gitIdentity.emailPlaceholder" />
+              </div>
+            </div>
+
             <div class="setting-row setting-row--about">
               <div>
                 <strong><span data-i18n="panel.general.about.title">关于</span></strong>

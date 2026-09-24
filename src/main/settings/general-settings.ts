@@ -183,4 +183,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   skillModeOverrides: SkillModeOverrides;
   /** Code 模式使用的用户自管语言服务命令覆盖。 */
   lspServerOverrides: LspServerOverride[];
+  /**
+   * Git 提交作者名（昔涟创建提交时使用；默认 Cyrene）。
+   * 内置 git 禁用了全局配置，提交身份完全由这里提供。
+   */
+  gitCommitAuthorName: string;
+  /**
+   * Git 提交作者邮箱（必填）：未填写时 git_commit 会拒绝提交并提示来设置里补填。
+   */
+  gitCommitAuthorEmail: string;
 }

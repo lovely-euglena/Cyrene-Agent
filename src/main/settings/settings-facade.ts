@@ -129,6 +129,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   chatToolsEnabled: false,
   skillModeOverrides: {},
   lspServerOverrides: [],
+  gitCommitAuthorName: "Cyrene",
+  gitCommitAuthorEmail: "",
 };
 
 function normalizeMosslandTtsModel(value: unknown): string {
@@ -178,6 +180,14 @@ export function normalizeGeneralSettings(
     return Number.isFinite(numberValue)
       ? Math.max(1, Math.min(8, Math.trunc(numberValue)))
       : DEFAULT_GENERAL_SETTINGS.maxParallelToolCalls;
+  };
+  const normalizeGitCommitAuthorName = (value: unknown): string => {
+    const text = typeof value === "string" ? value.replace(/[\r\n]/g, " ").trim() : "";
+    return text || DEFAULT_GENERAL_SETTINGS.gitCommitAuthorName;
+  };
+  const normalizeGitCommitAuthorEmail = (value: unknown): string => {
+    const text = typeof value === "string" ? value.replace(/[\r\n]/g, "").trim() : "";
+    return text.slice(0, 254);
   };
   return {
     plugins: Object.fromEntries(
@@ -339,6 +349,8 @@ export function normalizeGeneralSettings(
     chatToolsEnabled: Boolean(input?.chatToolsEnabled),
     skillModeOverrides: normalizeSkillModeOverrides(input?.skillModeOverrides),
     lspServerOverrides: normalizeLspServerOverrides(input?.lspServerOverrides),
+    gitCommitAuthorName: normalizeGitCommitAuthorName(input?.gitCommitAuthorName),
+    gitCommitAuthorEmail: normalizeGitCommitAuthorEmail(input?.gitCommitAuthorEmail),
   };
 }
 

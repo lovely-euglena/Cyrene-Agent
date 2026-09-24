@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ChatSession } from "../../shared/chat-types";
 import type { ResolvedGitExecutable } from "./git-executable";
-import { createGitService, type GitClient, type GitStatusSnapshot } from "./git-service";
+import { createGitService, buildGitBaseConfig, type GitClient, type GitStatusSnapshot } from "./git-service";
 
 const executable: ResolvedGitExecutable = {
   command: "git",
@@ -186,6 +186,55 @@ describe("GitService.diff", () => {
     await current.diff(ctx, { ref: "v1.2.3" });
     await current.diff(ctx, { ref: "refs/heads/main" });
     expect(getDiff).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("buildGitBaseConfig（safe.directory 与提交身份）", () => {
+  it("为工作区注入两种写法的 safe.directory（反斜杠 + 正斜杠）", () => {
+    const config = buildGitBaseConfig("F:\\code\\time-viwer");
+    expect(config).toContain("safe.directory=F:\\code\\time-viwer");
+    expect(config).toContain("safe.directory=F:/code/time-viwer");
+  });
+
+  it("正斜杠路径不重复；未传身份时不注入 user.*", () => {
+    const config = buildGitBaseConfig("F:/code/repo");
+    expect(config.filter((entry) => entry.startsWith("safe.directory="))).toHaveLength(1);
+    expect(config.some((entry) => entry.startsWith("user."))).toBe(false);
+  });
+
+  it("身份姓名/邮箱去除换行后注入", () => {
+    const config = buildGitBaseConfig("C:\\repo", { name: "Cy\nrene", email: " a@b.c \n" });
+    expect(config).toContain("user.name=Cy rene");
+    expect(config).toContain("user.email=a@b.c");
+  });
+});
+
+describe("GitService commit identity", () => {
+  const ctx = { sessionId: "session-1", mode: "code" as const, workspaceRoot: "C:\\repo" };
+
+  it("缺少提交邮箱时拒绝提交并给出设置指引", async () => {
+    const current = createGitService({
+      getSession: () => session("code"),
+      resolveExecutable: async () => executable,
+      createClient: () => client(),
+      getCommitIdentity: () => ({ name: "Cyrene", email: "" }),
+    });
+    await expect(current.commit(ctx, "feat: x", ["a.ts"])).rejects.toThrow(/Git 提交邮箱/);
+  });
+
+  it("提交时把身份传给客户端（缺名回退 Cyrene）", async () => {
+    const createClient = vi.fn(() => client());
+    const current = createGitService({
+      getSession: () => session("code"),
+      resolveExecutable: async () => executable,
+      createClient,
+      getCommitIdentity: () => ({ email: "cyrene@example.com" }),
+    });
+    await current.commit(ctx, "feat: x", ["a.ts"]);
+    expect(createClient).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRoot: "C:\\repo",
+      identity: { name: "Cyrene", email: "cyrene@example.com" },
+    }));
   });
 });
 

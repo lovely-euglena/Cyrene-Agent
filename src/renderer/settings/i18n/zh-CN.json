@@ -343,6 +343,12 @@
           "title": "关于",
           "desc": "· 轻量情感陪伴桌面 Agent"
         },
+        "gitIdentity": {
+          "title": "Git 提交身份",
+          "desc": "昔涟创建 Git 提交时使用的作者信息。提交作者名默认 Cyrene；邮箱为必填，未填写时提交会被拒绝并提示来这里补填。",
+          "namePlaceholder": "提交作者名（默认 Cyrene）",
+          "emailPlaceholder": "提交邮箱（必填）"
+        },
         "saveStatus": "等待保存"
       },
       "cyrene": {

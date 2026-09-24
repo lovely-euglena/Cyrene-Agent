@@ -455,6 +455,14 @@ createTray: (input) => {
             });
             return resolvedGit;
           },
+          // 提交身份来自设置（内置 git 禁全局配置，不注入则 commit 会失败）
+          getCommitIdentity: () => {
+            const settings = loadGeneralSettings();
+            return {
+              name: settings.gitCommitAuthorName,
+              email: settings.gitCommitAuthorEmail,
+            };
+          },
         });
 
         // LSP：管理器预创建；具体语言服务进程按需启动

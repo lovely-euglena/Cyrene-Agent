@@ -728,6 +728,37 @@ body {
   font-weight: 400;
 }
 
+/* Git 提交身份：名称 + 邮箱两个输入框（通用设置） */
+.git-identity-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.git-identity-fields input {
+  min-width: 0;
+  width: 150px;
+  font: 500 13px/1 var(--rb-font-sans);
+  padding: 6px 12px;
+  border: 1px solid var(--rb-border-faint);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rb-text-default);
+  transition: border-color 160ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.git-identity-fields input:focus {
+  outline: none;
+  border-color: var(--rb-pink-400);
+}
+
+.git-identity-fields input::placeholder {
+  color: var(--rb-text-faint);
+  font-weight: 400;
+}
+
 .inline-control,
 .button-group {
   display: flex;
