@@ -32,6 +32,16 @@ export interface NativeBridgeActions {
   openLegacySettings?(section?: string): void;
   /** native 设置窗「插件」section → 打开 .NET 插件管理窗（宿主侧失败可回退 Electron）。 */
   openPluginManager?(): void;
+  /**
+   * native 设置窗「API 与模型」section 动作。verb:
+   * save / test / test-vision / set-default-profile / delete-profile；
+   * payload 为对应参数对象（config / id 等）。
+   */
+  apiAction?(verb: string, payload: Record<string, unknown>): void;
+  /** native 设置窗「记忆」section 动作。verb: save-l0/save-l1/delete-doc/vault-bind/vault-unbind/vault-export/vault-sync/vault-auto-sync */
+  memoryAction?(verb: string, payload: Record<string, unknown>): void;
+  /** native 设置窗「定时任务」section 动作。verb: add/update/toggle/fire/delete/history */
+  schedulerAction?(verb: string, payload: Record<string, unknown>): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
   /**
@@ -44,6 +54,10 @@ export interface NativeBridgeActions {
 
 let client: NativeWindowsClient | null = null;
 let initialized = false;
+
+const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
 /**
  * 初始化桥接（应用启动时调用一次）。未启用 native 窗口时 no-op。
@@ -87,6 +101,15 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           if (frameKind === "plugins") {
             actions.openPluginManager?.();
           }
+          break;
+        case "api":
+          actions.apiAction?.(asString(frame.verb), asRecord(frame.payload));
+          break;
+        case "memory":
+          actions.memoryAction?.(asString(frame.verb), asRecord(frame.payload));
+          break;
+        case "scheduler":
+          actions.schedulerAction?.(asString(frame.verb), asRecord(frame.payload));
           break;
         case "openChannels":
           actions.openChannelsWindow?.();
@@ -155,6 +178,22 @@ export async function pushPluginsSnapshotToNative(
 
 export function bindNativeDataProviders(providers: NativeDataProviders): void {
   dataProviders = providers;
+}
+
+/** 设置窗 section 反馈消息（保存/测试/同步结果与错误）。 */
+export interface NativeSettingsNotice {
+  section: string;
+  level: "ok" | "error" | "info";
+  text: string;
+  at: number;
+}
+
+/**
+ * 推送 section 反馈到 .NET 设置窗（就地更新状态行，不触发 section 重建；
+ * 窗未开时 no-op）。
+ */
+export function pushSettingsNoticeToNative(notice: NativeSettingsNotice): void {
+  void activeClient()?.pushSettingsNotice(notice).catch(() => undefined);
 }
 
 /**

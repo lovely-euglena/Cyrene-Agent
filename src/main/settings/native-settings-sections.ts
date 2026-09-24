@@ -80,8 +80,8 @@ export interface NativeMemoryL2Item {
 }
 
 export interface NativeMemoryData {
-  l0: Record<string, unknown>;
-  l1: Record<string, unknown>;
+  l0: object;
+  l1: object;
   l2: unknown[];
   importedDocs: Array<{ importId: string | null; fileName: string; chunkCount: number; lastImportedAt: number }>;
   reflections: Array<{ id: string; title: string; body: string; meta: string }>;
@@ -112,9 +112,9 @@ export interface NativeSchedulerSnapshot {
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
 /** L0/L1 只输出字符串字段（渲染投影不需要类型元数据）。 */
-function projectProfileFields(raw: Record<string, unknown>): Record<string, string> {
+function projectProfileFields(raw: object): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw)) {
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof value === "string") out[key] = value;
   }
   return out;

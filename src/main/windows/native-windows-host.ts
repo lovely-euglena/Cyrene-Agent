@@ -320,6 +320,11 @@ export class NativeWindowsClient {
     await this.request({ op: "state.settings", settings: settings ?? {} });
   }
 
+  async pushSettingsNotice(notice: unknown): Promise<void> {
+    await this.ensureStarted();
+    await this.request({ op: "state.settings-notice", notice: notice ?? {} });
+  }
+
   async pushTasks(tasks: unknown, usage: unknown): Promise<void> {
     await this.request({ op: "state.tasks", tasks, usage });
   }

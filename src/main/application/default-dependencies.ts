@@ -31,7 +31,7 @@ import {
   settingsWindow,
   tasksWindow,
 } from "../windows/window-state";
-import { loadModelSettings, saveModelSettings, getPublicModelConfig } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
 import { registerSettingsIpc } from "../settings/settings-ipc";
 import {
   applyGeneralSettings,
@@ -96,12 +96,32 @@ import { registerAgUiIpc } from "../agui-bridge";
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
-import { createSchedulerSubsystem } from "../scheduler/bootstrap";
+import { createSchedulerSubsystem, type SchedulerSubsystem } from "../scheduler/bootstrap";
+import { createSchedulerActions } from "../scheduler/scheduler-actions";
+import {
+  buildApiSectionSnapshot,
+  buildMemorySectionSnapshot,
+  buildSchedulerSectionSnapshot,
+} from "../settings/native-settings-sections";
+import { loadMemoryPanelData } from "../memory/panel";
+import {
+  bindMemoryVault,
+  exportMemoryVault,
+  getMemoryVaultConfig,
+  removeImportedDocEntry,
+  saveMemoryL0,
+  saveMemoryL1,
+  setMemoryVaultAutoSync,
+  syncMemoryVaultNow,
+  unbindMemoryVault,
+} from "../memory/memory-actions";
+import { testVendorConnection } from "../orchestrator/vendors/test-connection";
+import { testVisionConnection } from "../settings/vision-test";
 import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime, getPluginMarketService } from "../plugin-runtime";
-import { pushPluginsSnapshotToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
+import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -213,6 +233,289 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       plugins: pluginManager ? pluginManager.overview().plugins : [],
       market: pluginManager && mkt ? await mkt.listMarket() : [],
     };
+  };
+
+  // ── native 设置窗 section（API/记忆/定时任务）：动作与快照数据 ──────
+  // 动作层实例在 createScheduler 时建立（core 阶段早于任何 native 动作）
+  let nativeSchedulerActions: ReturnType<typeof createSchedulerActions> | null = null;
+  /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖） */
+  let nativeTaskHistory: { taskId: string; rows: unknown[] } | null = null;
+
+  const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
+  const asObj = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const clampInt = (value: unknown, min: number, max: number): number | null => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return Math.max(min, Math.min(max, Math.round(value)));
+  };
+  const transportOf = (value: unknown): "openai" | "anthropic" | "responses" | undefined =>
+    value === "openai" || value === "anthropic" || value === "responses" ? value : undefined;
+
+  /** 设置窗 section 反馈（就地状态行展示，不触发 section 重建；窗未开时 no-op） */
+  const nativeNotice = (section: string, level: "ok" | "error" | "info", text: string): void => {
+    pushSettingsNoticeToNative({ section, level, text, at: Date.now() });
+  };
+
+  /** 插件运行态（WPF 定时任务 section 判断"等待插件启用"） */
+  const currentPluginRunning = (): Record<string, boolean> => {
+    const running: Record<string, boolean> = {};
+    const plugins = (pluginManager?.overview().plugins ?? []) as Array<{ id?: unknown; status?: unknown }>;
+    for (const plugin of plugins) {
+      if (typeof plugin.id === "string") running[plugin.id] = plugin.status === "running";
+    }
+    return running;
+  };
+
+  const broadcastModelChanged = (): void => {
+    broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
+  };
+
+  /** WPF「API 与模型」section 动作（与渲染设置页同口径：档案 saveModelProfile + 全局 saveModelSettings） */
+  const nativeApiAction = (verb: string, payload: Record<string, unknown>): void => {
+    switch (verb) {
+      case "save": {
+        const config = asObj(payload.config);
+        const vision = asObj(config.vision);
+        try {
+          const result = saveModelProfile({
+            id: asStr(config.profileId) || undefined,
+            provider: asStr(config.provider) || loadModelSettings().provider,
+            displayName: asStr(config.displayName),
+            baseUrl: asStr(config.baseUrl),
+            model: asStr(config.model),
+            apiKey: asStr(config.apiKey),
+            explicitTransport: transportOf(config.transport),
+            contextWindowTokens: clampInt(config.contextWindowTokens, 4096, 10_000_000) ?? undefined,
+            multimodal: config.multimodal === true,
+          });
+          saveModelSettings({
+            vision: { baseUrl: asStr(vision.baseUrl), apiKey: asStr(vision.apiKey), model: asStr(vision.model) },
+            thinkingOverride: config.thinkingOverride === 1 ? 1 : config.thinkingOverride === -1 ? -1 : 0,
+            disableMaxToken: config.disableMaxToken === true,
+          });
+          broadcastModelChanged();
+          nativeNotice(
+            "api",
+            result.added ? "ok" : "error",
+            result.added ? "档案已保存" : "存在相同 Key/模型/BaseURL 的档案，未新增",
+          );
+        } catch (err) {
+          nativeNotice("api", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      case "test": {
+        const config = asObj(payload.config);
+        void testVendorConnection({
+          provider: asStr(config.provider),
+          baseUrl: asStr(config.baseUrl),
+          model: asStr(config.model),
+          apiKey: asStr(config.apiKey),
+          explicitTransport: transportOf(config.transport),
+        } as Parameters<typeof testVendorConnection>[0]).then((result) => {
+          nativeNotice(
+            "api",
+            result.ok ? "ok" : "error",
+            result.ok
+              ? `连接成功 · ${result.latency}ms${result.sample ? ` · ${result.sample}` : ""}`
+              : `连接失败：${result.error ?? "未知错误"}`,
+          );
+        }).catch((err) => {
+          nativeNotice("api", "error", `连接失败：${err instanceof Error ? err.message : String(err)}`);
+        });
+        return;
+      }
+      case "test-vision": {
+        const config = asObj(payload.config);
+        void testVisionConnection({
+          baseUrl: asStr(config.baseUrl),
+          apiKey: asStr(config.apiKey),
+          model: asStr(config.model),
+        }).then((result) => {
+          nativeNotice(
+            "api",
+            result.ok ? "ok" : "error",
+            result.ok
+              ? `视觉模型连接成功 · ${result.latency}ms${result.sample ? ` · ${result.sample}` : ""}`
+              : `视觉模型连接失败：${result.error ?? "未知错误"}`,
+          );
+        });
+        return;
+      }
+      case "set-default-profile": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        try {
+          setDefaultModelProfile(id);
+          broadcastModelChanged();
+          nativeNotice("api", "ok", "已设为默认模型");
+        } catch (err) {
+          nativeNotice("api", "error", `设置默认失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      case "delete-profile": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        try {
+          const settings = loadModelSettings();
+          const profiles = listSavedModelProfiles(settings).filter((profile) => profile.id !== id);
+          const defaultModelProfileId = settings.defaultModelProfileId === id
+            ? profiles[0]?.id
+            : settings.defaultModelProfileId;
+          saveModelSettings({ modelProfiles: profiles, defaultModelProfileId });
+          broadcastModelChanged();
+          nativeNotice("api", "ok", "档案已删除");
+        } catch (err) {
+          nativeNotice("api", "error", `删除失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      default:
+        console.warn("[NativeSettings] unhandled api action:", verb);
+    }
+  };
+
+  /** WPF「记忆」section 动作（与渲染设置页同口径；实现见 memory/memory-actions.ts） */
+  const nativeMemoryAction = (verb: string, payload: Record<string, unknown>): void => {
+    switch (verb) {
+      case "save-l0":
+      case "save-l1":
+        void (async () => {
+          const result = verb === "save-l0"
+            ? await saveMemoryL0(payload.fields)
+            : await saveMemoryL1(payload.fields);
+          nativeNotice(
+            "memory",
+            result.ok ? "ok" : "error",
+            result.ok ? (verb === "save-l0" ? "画像已保存" : "近况已保存") : `保存失败：${result.error ?? "未知错误"}`,
+          );
+          pushSettingsSnapshotToNative();
+        })();
+        return;
+      case "delete-doc": {
+        const importId = asStr(payload.importId);
+        const fileName = asStr(payload.fileName);
+        if (!importId && !fileName) return;
+        const deleted = removeImportedDocEntry(importId, fileName || undefined);
+        nativeNotice(
+          "memory",
+          deleted > 0 ? "ok" : "info",
+          deleted > 0 ? `已删除（${deleted} 个片段）` : "没有找到可删除的片段",
+        );
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      case "vault-bind":
+        void bindMemoryVault().then((result) => {
+          if (result.canceled) return;
+          nativeNotice(
+            "memory",
+            result.ok ? "ok" : "error",
+            result.ok ? `已绑定并同步 ${result.fileCount ?? 0} 个文件` : `绑定失败：${result.error ?? "未知错误"}`,
+          );
+          pushSettingsSnapshotToNative();
+        });
+        return;
+      case "vault-unbind":
+        unbindMemoryVault();
+        nativeNotice("memory", "ok", "已解绑（vault 文件夹里的 md 不会被删除）");
+        pushSettingsSnapshotToNative();
+        return;
+      case "vault-export":
+        void exportMemoryVault().then((result) => {
+          if (result.canceled) return;
+          nativeNotice(
+            "memory",
+            result.ok ? "ok" : "error",
+            result.ok ? `已导出 ${result.fileCount ?? 0} 个文件` : `导出失败：${result.error ?? "未知错误"}`,
+          );
+        });
+        return;
+      case "vault-sync":
+        void syncMemoryVaultNow().then((result) => {
+          nativeNotice(
+            "memory",
+            result.ok ? "ok" : "error",
+            result.ok ? `已同步 ${result.fileCount ?? 0} 个文件` : `同步失败：${result.error ?? "未知错误"}`,
+          );
+          pushSettingsSnapshotToNative();
+        });
+        return;
+      case "vault-auto-sync":
+        setMemoryVaultAutoSync(payload.enabled === true);
+        nativeNotice("memory", "info", payload.enabled === true ? "已开启自动同步" : "已关闭自动同步");
+        pushSettingsSnapshotToNative();
+        return;
+      default:
+        console.warn("[NativeSettings] unhandled memory action:", verb);
+    }
+  };
+
+  /** WPF「定时任务」section 动作（动作层与 scheduler IPC 共用；写操作自动广播刷新） */
+  const nativeSchedulerAction = (verb: string, payload: Record<string, unknown>): void => {
+    const actions = nativeSchedulerActions;
+    if (!actions) {
+      nativeNotice("tasks", "error", "调度器尚未就绪");
+      return;
+    }
+    switch (verb) {
+      case "add": {
+        const result = actions.add(asObj(payload.input) as unknown as Parameters<typeof actions.add>[0]);
+        nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已创建" : `创建失败：${result.error ?? "未知错误"}`);
+        return;
+      }
+      case "update": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        const result = actions.update(id, asObj(payload.patch) as unknown as Parameters<typeof actions.update>[1]);
+        nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已保存" : `保存失败：${result.error ?? "未知错误"}`);
+        return;
+      }
+      case "toggle": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        const result = actions.toggle(id, payload.enabled === true);
+        if (!result.ok) nativeNotice("tasks", "error", `启停失败：${result.error ?? "未知错误"}`);
+        return;
+      }
+      case "fire": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        void actions.fireNow(id).then((result) => {
+          if (result.ok) return;
+          const reason = "reason" in result ? result.reason : undefined;
+          const errorText = "error" in result ? result.error : undefined;
+          const message = reason === "task already running"
+            ? "该任务正在运行中"
+            : reason === "plugin not running"
+              ? "插件已停用，等待插件启用后再运行"
+              : (errorText ?? reason ?? "立即运行失败");
+          nativeNotice("tasks", "error", message);
+        });
+        return;
+      }
+      case "delete": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        const result = actions.remove(id);
+        nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已删除" : `删除失败：${result.error ?? "未知错误"}`);
+        return;
+      }
+      case "history": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        const result = actions.history(id, 10);
+        nativeTaskHistory = { taskId: id, rows: (result.value ?? []) as unknown[] };
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      default:
+        console.warn("[NativeSettings] unhandled scheduler action:", verb);
+    }
   };
 
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
@@ -346,6 +649,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               if (!ok) windowManager.createSettingsWindow("plugins");
             });
           },
+          // WPF 设置窗三个 section 的动作（与渲染设置页同口径，见上方动作函数）
+          apiAction: nativeApiAction,
+          memoryAction: nativeMemoryAction,
+          schedulerAction: nativeSchedulerAction,
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
           // .NET 插件管理窗操作：manager/market 运行期引用（startPlugins 之后可用）
@@ -608,21 +915,52 @@ createTray: (input) => {
 
       // native 三件套数据源绑定（core 阶段调用；未启用时 no-op）。
       // ⚠️ 该键曾在合并 ffc6322dd 中整体丢失（原生窗拿不到数据），勿删。
-      bindNativeData: (providers) => bindNativeDataProviders(providers),
+      // 这里同时装饰设置窗快照：core 提供 general+user，本层拼上
+      // api/memory/tasks 三个 section（数据源持有运行期引用，见上方动作函数）。
+      bindNativeData: (providers) => bindNativeDataProviders({
+        ...providers,
+        getSettingsSnapshot: providers.getSettingsSnapshot
+          ? async () => {
+              const base = (await providers.getSettingsSnapshot!()) as Record<string, unknown>;
+              const modelSettings = loadModelSettings();
+              const actions = nativeSchedulerActions;
+              return {
+                ...base,
+                api: buildApiSectionSnapshot(modelSettings, listSavedModelProfiles(modelSettings)),
+                memory: buildMemorySectionSnapshot(await loadMemoryPanelData(), getMemoryVaultConfig()),
+                tasks: buildSchedulerSectionSnapshot(
+                  actions?.list().value ?? [],
+                  actions?.getTools().value ?? [],
+                  currentPluginRunning(),
+                  nativeTaskHistory,
+                ),
+              };
+            }
+          : undefined,
+      }),
       /** 模型公开配置（native sidebar 模型区订阅用）。 */
       getPublicModelConfig: () => getPublicModelConfig(),
       /** .NET 插件管理窗快照（已装 + 市场索引）。 */
       getPluginsSnapshot: () => buildPluginSnapshot(),
 
-      createScheduler: (runtime) => createSchedulerSubsystem({
-        agentRuntime: runtime,
-        getReactChatWindow: () => reactChatWindow,
-        ipc: shell.ipc,
-        publishLifecycle: lifecyclePublisher,
-        // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
-        canRunTask: (task) => !task.ownerPluginId
-          || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
-      }),
+      createScheduler: (runtime) => {
+        const subsystem = createSchedulerSubsystem({
+          agentRuntime: runtime,
+          getReactChatWindow: () => reactChatWindow,
+          ipc: shell.ipc,
+          publishLifecycle: lifecyclePublisher,
+          // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
+          canRunTask: (task) => !task.ownerPluginId
+            || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
+        });
+        // native 设置窗「定时任务」动作与快照共用同一动作层（与 scheduler IPC 行为一致）
+        nativeSchedulerActions = createSchedulerActions({
+          store: subsystem.store,
+          engine: subsystem.engine,
+          getTools: () => toolRegistry.getAllTools(),
+        });
+        return subsystem;
+      },
 
       registerCoreIpc: ({ ipc, runtime, services }) => {
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动

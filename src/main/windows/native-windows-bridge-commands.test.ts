@@ -44,6 +44,9 @@ function initBridge() {
     openPluginManager: vi.fn(),
     openChannelsWindow: vi.fn(),
     pluginAction: vi.fn(),
+    apiAction: vi.fn(),
+    memoryAction: vi.fn(),
+    schedulerAction: vi.fn(),
   };
   const client = initNativeWindowsBridge(actions as never);
   expect(client).not.toBeNull();
@@ -96,6 +99,23 @@ describe("native-windows-bridge · cmd 动作分发", () => {
 
     dispatch({ kind: "settings", action: "pick-avatar" });
     expect(actions.pickAvatar).toHaveBeenCalledTimes(1);
+  });
+
+  it("api/memory/scheduler 命名空间动作 → verb + payload 透传", () => {
+    const actions = initBridge();
+
+    dispatch({ kind: "settings", action: "api", verb: "save", payload: { config: { model: "m" } } });
+    expect(actions.apiAction).toHaveBeenCalledWith("save", { config: { model: "m" } });
+
+    dispatch({ kind: "settings", action: "memory", verb: "vault-sync" });
+    expect(actions.memoryAction).toHaveBeenCalledWith("vault-sync", {});
+
+    dispatch({ kind: "settings", action: "scheduler", verb: "toggle", payload: { id: "t1", enabled: true } });
+    expect(actions.schedulerAction).toHaveBeenCalledWith("toggle", { id: "t1", enabled: true });
+
+    // 非法 payload → 空对象；缺失 verb → 空串（由宿主 switch 落入 warn）
+    dispatch({ kind: "settings", action: "api", verb: 42, payload: "bad" });
+    expect(actions.apiAction).toHaveBeenLastCalledWith("", {});
   });
 
   it("未知动作不触发任何回调（仅告警）", () => {
