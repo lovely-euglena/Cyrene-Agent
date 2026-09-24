@@ -282,7 +282,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerWindowSystemIpc({ ipc, windowManager });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
-      // native 三件套窗口（CYRENE_NATIVE_WINDOWS=1 灰度）：动作转发回
+      // native 三件套窗口（默认启用）：动作转发回
       // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
       initializeNativeWindows: (windowManager) => {
         initNativeWindowsBridge({
@@ -358,9 +358,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
 createTray: (input) => {
-        // 分离托盘（CYRENE_DETACHED_TRAY=1 + .NET 托盘进程在跑）：
-        // 连 pipe 成功 → 外部托盘；失败 → 回退内置 Electron Tray
-        if (process.env.CYRENE_DETACHED_TRAY === "1") {
+        // 分离托盘（默认优先；CYRENE_DETACHED_TRAY=0 关闭）：
+        // 托盘进程在跑（pipe 存在）→ 外部托盘；否则回退内置 Electron Tray
+        if (process.env.CYRENE_DETACHED_TRAY !== "0") {
           const detached = connectDetachedTray({
             requestActivation: input.requestActivation,
             togglePetWindow: input.togglePetWindow,

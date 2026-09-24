@@ -3,9 +3,9 @@
 // 取代 splash / sidebar / tasks 三个 BrowserWindow（-3 Chromium 渲染进程，
 // 约 -200~400MB 常驻）。窗口本体在 dotnet/native-windows/（WPF×2 + WinForms×1）。
 //
-// 启用条件（默认关闭，灰度开关）：
-//   CYRENE_NATIVE_WINDOWS=1 且 exe 存在。未启用时 createAuxWindows /
-//   createSplashWindow 走原 BrowserWindow 路径——每步可回退。
+// 启用条件（默认启用）：exe 就位即走 .NET 窗口路径；CYRENE_NATIVE_WINDOWS=0
+// 强制回退 Electron BrowserWindow（排障开关）。未启用时 createAuxWindows /
+// createSplashWindow 走原 BrowserWindow 路径——每步可回退。
 //
 // 数据推送复用主进程现成的 IPC 数据源（runtimeState / modelConfig /
 // scheduler / tokenUsage），窗口动作（openSettings 等）转发到既有

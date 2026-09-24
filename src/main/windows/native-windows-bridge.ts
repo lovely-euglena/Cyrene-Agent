@@ -1,6 +1,6 @@
 // native 窗口桥接层：把现有 IPC 数据流/窗口动作复用到 cyrene-native 进程。
 //
-// 接入原则（灰度开关 CYRENE_NATIVE_WINDOWS=1）：
+// 接入原则（原生窗口默认启用；CYRENE_NATIVE_WINDOWS=0 强制回退）：
 //   - 数据推送：在 aux 窗广播的同一数据源上加订阅（runtimeState /
 //     modelConfig / scheduler / tokenUsage），双路并存——native 开着就
 //     推 native，BrowserWindow 路径不受影响（回退 = 关开关即回原样）

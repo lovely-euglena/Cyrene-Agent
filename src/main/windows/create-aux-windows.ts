@@ -217,7 +217,7 @@ export function dispatchOrQueueReactSession(sessionId: string): void {
  * 创建/复用侧边状态面板窗口。
  */
 export function createSidebarWindow(): void {
-  // 灰度开关：native 窗口进程路径（CYRENE_NATIVE_WINDOWS=1 且 exe 就位）
+  // native 窗口进程路径（默认启用；exe 未就位或 CYRENE_NATIVE_WINDOWS=0 时走 BrowserWindow）
   if (isNativeWindowActive("sidebar")) {
     const layout = computeLayout();
     void spawnNativeWindow("sidebar", { sidebar: layout.sidebar }).then((ok) => {
@@ -278,7 +278,7 @@ export function createSidebarWindow(): void {
  * 创建/复用今日日程窗口。
  */
 export function createTasksWindow(): void {
-  // 灰度开关：native 窗口进程路径
+  // native 窗口进程路径（默认启用；未启用时走 BrowserWindow）
   if (isNativeWindowActive("tasks")) {
     const layout = computeLayout();
     void spawnNativeWindow("tasks", { tasks: layout.tasks }).then((ok) => {

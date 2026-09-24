@@ -262,7 +262,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const lazyChat = process.env.CYRENE_LAZY_CHAT_WINDOW !== "0";
   await deps.revealStartupWindows({
     splashWindow: shell.splashWindow,
-    // native splash（CYRENE_NATIVE_WINDOWS=1 时 shell.splashWindow 为 null）
+    // native splash（原生窗口启用时 shell.splashWindow 为 null）
     // 在 reveal 同点关闭；bridge 未启用时 no-op（closeNativeWindow 短路）
     closeSplashWindow: () => { void closeNativeWindow("splash"); },
     chatWindow: lazyChat && !shell.chat.isMaterialized?.() ? null : shell.chat.window,

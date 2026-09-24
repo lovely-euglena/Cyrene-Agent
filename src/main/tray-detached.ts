@@ -2,7 +2,7 @@
 //
 // 架构（见 dotnet/native-windows/TrayHost.cs）：.NET 托盘进程常驻 +
 // named pipe cyrene-tray；Electron 成为「按需工作进程」。本模块：
-//   - 连 pipe（2s 重试窗口；连不上返回 null → 调用方回退内置 Electron Tray）
+//   - pipe 探测（托盘未运行 → 返回 null，调用方回退内置 Electron Tray）
 //   - duck-type Electron Tray（isDestroyed/destroy/setImage/setToolTip），
 //     shell-bootstrap 与设置图标的既有消费点零改动
 //   - 收 tray cmd → 转发激活/桌宠/退出（与内置托盘菜单同语义）
@@ -10,6 +10,7 @@
 //
 // 通信协议：JSON 行（\n 分隔，低频控制通道，无需三件套的长度前缀帧）。
 
+import * as fs from "node:fs";
 import * as nodeNet from "net";
 import type { NativeImage, Tray } from "electron";
 import type { WindowActivationRequest } from "./application/window-activation";
@@ -30,14 +31,29 @@ interface TrayCommand {
   action: string;
 }
 
+/**
+ * 托盘进程可用性探测：pipe 不存在（托盘未运行）→ 直接回退内置 Tray，
+ * 避免返回一个无图标的「死托盘」。Windows named pipe 用 fs.existsSync
+ * 探测（libuv 支持 pipe 路径 stat）；非 Windows 恒 false（分离托盘为
+ * Windows 专属，宿主在 TrayHost.cs）。
+ */
+function isTrayPipeAvailable(): boolean {
+  if (process.platform !== "win32") return false;
+  try {
+    return fs.existsSync(PIPE_PATH);
+  } catch {
+    return false;
+  }
+}
+
 export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
+  if (!isTrayPipeAvailable()) return null;
   let socket: nodeNet.Socket | null = null;
   let destroyed = false;
   let lineBuffer = "";
 
-  // 同步连接探测：托盘在 Electron 启动前应已就位（托盘拉起 Electron 的
-  // 正常流）。Electron 直启 + 托盘未跑 → 回退内置 Tray（双托盘由用户
-  // 后开托盘造成时自行共存，v1 接受）。
+  // 快探测：托盘在 Electron 启动前应已就位（托盘拉起 Electron 的正常流）。
+  // 托盘未跑（pipe 不存在）→ 返回 null，调用方回退内置 Tray。
   try {
     socket = nodeNet.connect(PIPE_PATH);
     socket.on("error", () => { /* pipe 断开：托盘先走，静默 */ });

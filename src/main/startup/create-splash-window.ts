@@ -16,8 +16,9 @@ const SPLASH_SIZE = 520;
  * 创建 Loading（splash）窗口。创建失败返回 null（启动编排器会跳过最短展示时长，
  * 继续以聊天核心就绪条件推进），不让 Loading 问题阻塞启动。
  *
- * 灰度开关 CYRENE_NATIVE_WINDOWS=1 时走 cyrene-native 进程的 WPF splash
- * （onShown 经 native 桥接层回调，语义对齐）。
+ * 原生窗口默认启用：走 cyrene-native 进程的 WPF splash（exe 缺失或
+ * CYRENE_NATIVE_WINDOWS=0 时回退 BrowserWindow）。onShown 经 native
+ * 桥接层回调，语义对齐。
  */
 export function createSplashWindow(ctx: CreateSplashWindowContext): BrowserWindow | null {
   // native 路径：win.shown 事件到达时桥接层调用 ctx.onShown

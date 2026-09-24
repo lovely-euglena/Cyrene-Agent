@@ -35,13 +35,13 @@ export interface ShellDependencies {
   createWindowManager(): WindowManager;
   /** 创建未加载页面的聊天窗口壳；load() 留给 core 阶段。 */
   createChatShell(windowManager: WindowManager): ReactChatWindowHandle;
-  /** 初始化 native 三件套窗口桥接（灰度开关关闭时 no-op）。 */
+  /** 初始化 native 三件套窗口桥接（未启用/无 exe 时 no-op）。 */
   initializeNativeWindows(windowManager: WindowManager): void;
   registerProtocolHandlers(): void;
   /** 壳安全 IPC：仅注册依赖在壳阶段已就绪的处理器。 */
   registerShellIpc(input: ShellIpcRegistrationInput): void;
   /** 托盘：窗口类入口走激活请求；桌宠开关立即执行。
-   *  返回类型含分离托盘的 duck-type（CYRENE_DETACHED_TRAY 模式），
+   *  返回类型含分离托盘的 duck-type（托盘进程存在时默认优先），
    *  消费点只依赖 isDestroyed/destroy/setImage/setToolTip。 */
   createTray(input: {
     requestActivation(request: WindowActivationRequest): void;
