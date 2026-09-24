@@ -12,14 +12,17 @@ import type {
 } from "../shared/plugin-management";
 import type { PluginImportResult } from "../plugins/manager";
 
-/** 官方插件市场索引源：Gitee 镜像为主源，GitHub raw 为兜底；市场面板会实时探测各源死活并展示 */
+/**
+ * 官方插件市场索引源（本 fork 自持收录仓库）。
+ * 注意：所有源的 registry 条目 zip 必须落在 MARKET_ZIP_URL_PREFIX 之下——
+ * 白名单只有一个前缀，跨仓镜像（如上游 playa0 索引）的 zip 会被整源丢弃。
+ */
 export const MARKET_REGISTRY_URLS = [
-  "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
-  "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json",
+  "https://gitee.com/ygwill/cyrene-plugins/raw/main/registry.json",
 ] as const;
 
-/** 插件包只允许来自官方仓库 zips/ 目录的直链，防止索引被篡改后下载任意来源的包 */
-export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/Ygwill2022/cyrene-plugins/raw/main/zips/";
+/** 插件包只允许来自收录仓库 zips/ 目录的直链，防止索引被篡改后下载任意来源的包 */
+export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/ygwill/cyrene-plugins/raw/main/zips/";
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -144,6 +147,14 @@ function validateRegistry(data: unknown, deps: PluginMarketplaceDeps): {
     snapshot.set(entry.id, { id: entry.id, version: entry.version, zip: entry.zip, sha256: entry.sha256 });
   }
   plugins.sort((a, b) => b.downloads - a.downloads || a.name.localeCompare(b.name, "zh-CN"));
+  // 全部条目被丢弃（典型：镜像 registry 的 zip 前缀与白名单不同源）→ 整源判失败，
+  // 避免「空市场」静默顶替可用源（UI 会展示该源的失败原因）
+  if (plugins.length === 0 && record.plugins.length > 0) {
+    throw new RegistryFormatError(
+      "registry 条目全部校验失败（zip 白名单不匹配或字段非法）",
+      "invalid",
+    );
+  }
   return { plugins, snapshot };
 }
 

@@ -172,6 +172,17 @@ describe("listMarket", () => {
     expect(result.plugins.map((p) => p.id)).toEqual(["ok"]);
   });
 
+  it("条目全部被丢弃（zip 白名单不匹配）判整源失败，不静默给空市场", async () => {
+    // 典型场景：registry 来自其它仓库（zip 前缀不同源），旧实现会「成功」返回 0 个插件
+    const fetchImpl: MarketplaceFetch = async () =>
+      jsonResponse(registryJson([registryEntry({ id: "alien", zip: "https://gitee.com/other/repo/raw/main/zips/x.zip" })]));
+    const service = createPluginMarketplaceService(makeDeps({ fetchImpl }));
+    const result = await service.listMarket();
+    expect(result.ok).toBe(false);
+    expect(result.sources.every((s) => !s.ok)).toBe(true);
+    expect(result.error).toContain("暂时无法获取插件列表");
+  });
+
   it("并发请求时只有最后一次请求的结果会落快照", async () => {
     const zipBytes = new Uint8Array([1, 2, 3, 4]);
     const sha = sha256Of(zipBytes);
