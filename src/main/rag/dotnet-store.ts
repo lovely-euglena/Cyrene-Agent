@@ -152,6 +152,22 @@ export class DotnetRagStore {
     return this.fallback.deleteImportedDoc(importId, fileName);
   }
 
+  /** 维度切换清库（转发 host 清空 + fallback 本地清，防旧维度写回）。 */
+  clearForRebuild(): void {
+    try { void ragHostClient.call("delete_all", {}); } catch { /* ignore */ }
+    this.fallback.clearForRebuild();
+  }
+
+  /** 受控退出（before-quit）：异步刷盘（上游 2026-09-24 新增协议，转发 fallback）。 */
+  async flush(): Promise<void> {
+    await this.fallback.flush();
+  }
+
+  /** 会话紧急结束（Windows session-end）：同步落盘（转发 fallback）。 */
+  flushSync(): void {
+    this.fallback.flushSync();
+  }
+
   /** index.ts 的 getEntriesBySource 直捅 entries 私有数组（as any）——
    * 这里暴露同形访问器保持兼容。 */
   hasImportedDocumentChunks(importId: string): boolean {

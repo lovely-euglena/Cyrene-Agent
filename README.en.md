@@ -11,8 +11,7 @@
 
 > 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)** and **.NET desktop architecture** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. Details in the [Chinese README](./README.md) and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
 
-> ⚠️ **Temporary notice (2026-09-13)**: The upstream GitHub account is temporarily suspended and under appeal, so the upstream GitHub repository is currently inaccessible. Please clone from a Gitee mirror in the meantime.
-
+> ⚠️ **Temporary notice (2026-09-13)**: The upstream GitHub account is temporarily suspended and under appeal; please clone from a Gitee mirror in the meantime.
 </div>
 
 

@@ -38,6 +38,7 @@ import {
 const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   plugins: {},
   pluginRuntimeEnabled: false,
+  rememberWindowState: true,
   maxParallelToolCalls: 4,
   citaEnabled: false,
   citaSemanticEngine: "remote",
@@ -268,6 +269,12 @@ export function normalizeGeneralSettings(
     ttsMinimaxVocalEnhance: input?.ttsMinimaxVocalEnhance === undefined
       ? DEFAULT_GENERAL_SETTINGS.ttsMinimaxVocalEnhance
       : Boolean(input.ttsMinimaxVocalEnhance),
+    assistantBubbleEnabled: input?.assistantBubbleEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.assistantBubbleEnabled
+      : Boolean(input.assistantBubbleEnabled),
+    rememberWindowState: input?.rememberWindowState === undefined
+      ? true
+      : Boolean(input.rememberWindowState),
     weatherSource: ["open-meteo", "amap"].includes(String(input?.weatherSource))
       ? (input!.weatherSource as "open-meteo" | "amap")
       : "open-meteo",

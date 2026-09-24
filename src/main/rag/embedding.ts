@@ -1,18 +1,7 @@
-import { checkEmbeddingModelInstalled } from "./model-status";
-import { isMainThread } from "worker_threads";
-import {
-  DEFAULT_MODEL_KEY,
-  LOCAL_MODELS,
-  dropLocalPipeline,
-  getLocalPipeline,
-  getLocalPipelineDiagnostics,
-  getCurrentModelKey,
-  resetLocalPipelines,
-  runBatchedInference,
-  setCurrentModelKey,
-} from "./embedding-pipeline";
-import { disposeEmbeddingWorker, getEmbeddingWorkerClient } from "./embedding-worker";
-import { disposeEmbeddingSidecar, getEmbeddingSidecarClient } from "./embedding-sidecar";
+// @xenova/transformers is ESM-only, use dynamic import in CJS context
+import { checkEmbeddingModelInstalled, getProjectModelBaseDir } from "./model-status";
+import * as path from "path";
+import * as os from "os";
 
 // ── 错误类型 ──
 export class EmbeddingDimensionMismatchError extends Error {
@@ -72,44 +61,62 @@ export interface EmbeddingProvider {
   readonly resolvedDimensions?: number;
 }
 
-// ── 模型注册表 / 本地 pipeline 状态 ──
-// LOCAL_MODELS、pipeline 缓存与批量推理辅助已抽到 embedding-pipeline.ts，
-// 供本模块与 embedding-worker.ts（专用推理线程）共用。
+// ── 模型注册表 ──
+interface ModelConfig {
+  key: string;
+  hfName: string;
+  dims: number;
+}
 
-// ── 本地推理入口 ──
-/**
- * 执行 local embedding 推理。
- * - 主进程 + sidecar 启用（CYRENE_EMBED_SIDECAR=1 且 exe 存在）：
- *   走 .NET sidecar（ORT native，~4.3x 提速，数值与 WASM 逐位一致）；
- * - 主进程（sidecar 关闭/不可用）：走专用 embedding worker，
- *   推理不再阻塞主进程事件循环；
- * - 已在 worker 线程（document-index-worker）：直接用本线程 pipeline。
- *
- * sidecar 数值与 transformers.js 逐位一致（verify cosine=1.0），
- * cacheIdentity 保持 "local" 不变，LanceDB 索引零迁移。
- */
-async function embedLocal(modelKey: string, texts: string[]): Promise<Float32Array[]> {
-  if (isMainThread) {
-    const sidecar = getEmbeddingSidecarClient();
-    if (sidecar) {
-      try {
-        return await sidecar.embedTexts(modelKey, texts);
-      } catch (error) {
-        console.warn(
-          "[Embedding] sidecar failed, falling back to worker:",
-          error instanceof Error ? error.message : String(error),
-        );
-        // 兜底走 worker（其自身带 10min 空闲回收，不会双模型常驻）
-        const vectors = await getEmbeddingWorkerClient().embedTexts(modelKey, texts);
-        // sidecar 恢复期已用 worker 完成本次请求；若 sidecar 下次调用重启
-        // 成功，worker 会因空闲超时自动卸载（两套模型不同时常驻 >10min）
-        return vectors;
-      }
-    }
-    return getEmbeddingWorkerClient().embedTexts(modelKey, texts);
+const LOCAL_MODELS: Record<string, ModelConfig> = {
+  bgem3: { key: "bgem3", hfName: "Xenova/bge-m3", dims: 1024 },
+};
+
+const DEFAULT_MODEL_KEY = "bgem3";
+
+// ── 本地 Pipeline ──
+// bge-m3 是唯一的 embedding 模型，同时服务于 RAG 记忆/文档检索和场景识别
+const localPipelines: Map<string, any> = new Map();
+const localPipelineLoads: Map<string, Promise<any>> = new Map();
+let currentModelKey: string = DEFAULT_MODEL_KEY;
+let localPipelineInitCount = 0;
+
+const importEsm = new Function("moduleName", "return import(moduleName)") as (moduleName: string) => Promise<any>;
+
+async function getLocalPipeline(modelKey?: string): Promise<any> {
+  const key = modelKey || currentModelKey;
+  const config = LOCAL_MODELS[key];
+  if (!config) throw new Error("Unknown embedding model: " + key);
+
+  const cached = localPipelines.get(key);
+  if (cached) return cached;
+  const loading = localPipelineLoads.get(key);
+  if (loading) return loading;
+
+  const load = (async () => {
+    localPipelineInitCount += 1;
+    const { pipeline, env } = await importEsm("@xenova/transformers");
+    env.allowLocalModels = true;
+    env.allowRemoteModels = false;
+    env.useBrowserCache = false;
+    // 主路径：项目根 models/（用户实际放模型的地方）。
+    // 兜底：HF cache，通过 cache_dir 选项传给 pipeline。
+    // transformers 内部会按 (localModelPath, cache_dir) 顺序查找文件。
+    const modelBaseDir = getProjectModelBaseDir("embedding", key);
+    if (!modelBaseDir) throw new Error(`Local embedding model "${key}" is not installed`);
+    env.localModelPath = modelBaseDir;
+    const pipe = await pipeline("feature-extraction", config.hfName, {
+      cache_dir: path.join(os.homedir(), ".cache", "huggingface"),
+    });
+    localPipelines.set(key, pipe);
+    return pipe;
+  })();
+  localPipelineLoads.set(key, load);
+  try {
+    return await load;
+  } finally {
+    localPipelineLoads.delete(key);
   }
-  const pipe = await getLocalPipeline(modelKey);
-  return runBatchedInference(pipe, texts);
 }
 
 export function createLocalEmbeddingProvider(modelKey?: string): EmbeddingProvider | null {
@@ -135,15 +142,30 @@ export function createLocalEmbeddingProvider(modelKey?: string): EmbeddingProvid
     workerConfig: { provider: "local", modelKey: key },
 
     async embed(text: string): Promise<number[]> {
-      const [vector] = await embedLocal(key, [text]);
-      return Array.from(vector);
+      const pipe = await getLocalPipeline(key);
+      const result: any = await pipe(text, { pooling: "mean", normalize: true });
+      return Array.from(result.data as Float32Array);
     },
 
     async embedBatch(texts: string[]): Promise<number[][]> {
-      // 真批量推理：一次前向处理整批文本（内部按 token 量切子批次），
-      // 不再逐条调 pipeline。
-      const vectors = await embedLocal(key, texts);
-      return vectors.map((vector) => Array.from(vector));
+      if (texts.length === 0) return [];
+      const pipe = await getLocalPipeline(key);
+      // 真批量：数组一次进 pipeline（张量级并行），实测比逐条 await 快约 1.2~1.4 倍
+      const result: any = await pipe(texts, { pooling: "mean", normalize: true });
+      // 池化归一化后输出形状为 [批数, 维度]，按行切回逐条向量
+      const shape: number[] = result.dims;
+      const data = result.data as Float32Array;
+      if (shape.length !== 2 || shape[0] !== texts.length) {
+        throw new Error(
+          `Unexpected batch embedding output shape ${JSON.stringify(shape)} for ${texts.length} inputs`
+        );
+      }
+      const dim = shape[1];
+      const results: number[][] = [];
+      for (let i = 0; i < texts.length; i++) {
+        results.push(Array.from(data.subarray(i * dim, (i + 1) * dim)));
+      }
+      return results;
     },
   };
 }
@@ -362,13 +384,15 @@ export function getEmbeddingWorkerConfig(): EmbeddingWorkerConfig {
   const provider = getEmbeddingProvider();
   if (!provider) throw new Error("Embedding provider is not available");
   if (provider.workerConfig) return provider.workerConfig;
-  return { provider: "local", modelKey: getCurrentModelKey() };
+  return { provider: "local", modelKey: currentModelKey };
 }
 
-export { getCurrentModelKey };
+export function getCurrentModelKey(): string {
+  return currentModelKey;
+}
 
 export function getCurrentModelDims(): number {
-  const config = LOCAL_MODELS[getCurrentModelKey()];
+  const config = LOCAL_MODELS[currentModelKey];
   return config ? config.dims : 1024;
 }
 
@@ -378,17 +402,17 @@ export function switchEmbeddingModel(modelKey: string): void {
     return;
   }
   cachedProvider = null;
-  dropLocalPipeline(getCurrentModelKey());
-  setCurrentModelKey(modelKey);
+  localPipelines.delete(currentModelKey);
+  localPipelineLoads.delete(currentModelKey);
+  currentModelKey = modelKey;
 }
 
 export function resetEmbeddingProvider(): void {
   cachedProvider = null;
-  resetLocalPipelines();
-  setCurrentModelKey(DEFAULT_MODEL_KEY);
-  // 连同 embedding worker / sidecar 一起回收（下次 embed 时懒重启）
-  disposeEmbeddingWorker("resetEmbeddingProvider");
-  void disposeEmbeddingSidecar("resetEmbeddingProvider");
+  localPipelines.clear();
+  localPipelineLoads.clear();
+  currentModelKey = DEFAULT_MODEL_KEY;
+  localPipelineInitCount = 0;
 }
 
 export function getEmbeddingDiagnostics(): {
@@ -396,31 +420,13 @@ export function getEmbeddingDiagnostics(): {
   cachedPipelineKeys: string[];
   loadingPipelineKeys: string[];
   localPipelineInitCount: number;
-  embeddingWorker: { workerRunning: boolean; modelKey: string | null; pendingRequests: number };
 } {
-  const pipeline = getLocalPipelineDiagnostics();
   return {
-    currentModelKey: getCurrentModelKey(),
-    cachedPipelineKeys: pipeline.cachedPipelineKeys,
-    loadingPipelineKeys: pipeline.loadingPipelineKeys,
-    localPipelineInitCount: pipeline.localPipelineInitCount,
-    embeddingWorker: getEmbeddingWorkerClient().getWorkerDiagnostics(),
+    currentModelKey,
+    cachedPipelineKeys: Array.from(localPipelines.keys()),
+    loadingPipelineKeys: Array.from(localPipelineLoads.keys()),
+    localPipelineInitCount,
   };
-}
-
-// ── 场景识别专用 provider（固定 bge-m3，不受 RAG 模型切换影响）──
-let sceneProvider: EmbeddingProvider | null = null;
-
-/**
- * 获取场景识别专用的 embedding provider（固定 bge-m3）。
- * 和文档/记忆的 provider 独立——RAG 切换模型不影响场景识别。
- * 模型不存在时返回 null。
- */
-export function getSceneEmbeddingProvider(): EmbeddingProvider | null {
-  if (!sceneProvider) {
-    sceneProvider = createLocalEmbeddingProvider("bgem3");
-  }
-  return sceneProvider;
 }
 
 export { checkEmbeddingModelInstalled };

@@ -179,11 +179,12 @@ export function listFeed(options: { limit?: number; before?: number } = {}): Mom
   const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
   const before = options.before;
   return store.posts
-    .filter((post) => (typeof before === "number" ? post.createdAt < before : true))
-    // tie-break：同毫秒创建时按插入序倒排（后发动态在前），feed 语义稳定
-    .sort((a, b) => b.createdAt - a.createdAt || store.posts.indexOf(b) - store.posts.indexOf(a))
+    .map((post, index) => ({ post, index }))
+    .filter(({ post }) => (typeof before === "number" ? post.createdAt < before : true))
+    // createdAt 相同（同毫秒）时按插入顺序倒序，保证后创建的动态稳定排在前面
+    .sort((a, b) => b.post.createdAt - a.post.createdAt || b.index - a.index)
     .slice(0, limit)
-    .map((post) => assembleFeedItem(store, post));
+    .map(({ post }) => assembleFeedItem(store, post));
 }
 
 export function getFeedItem(postId: string): MomentFeedItem | null {

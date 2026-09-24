@@ -319,6 +319,7 @@ export type PluginTurnStartedEvent =
       source: "scheduler";
       taskId: string;
       schedulerRunId: string;
+      conversationId?: string;
     });
 
 interface PluginTurnFinishedBase extends PluginTurnEventBase {
@@ -347,6 +348,7 @@ export type PluginTurnFinishedEvent =
       source: "scheduler";
       taskId: string;
       schedulerRunId: string;
+      conversationId?: string;
     });
 
 /**
@@ -356,6 +358,7 @@ export type PluginTurnFinishedEvent =
 export interface PluginSchedulerFinishedEvent extends PluginHostEventBase {
   taskId: string;
   schedulerRunId: string;
+  conversationId?: string;
   status: PluginTurnStatus;
   durationMs?: number;
 }
@@ -370,7 +373,9 @@ export type PluginToolRisk =
   | "fs-write"
   | "shell"
   | "network"
-  | "input-control";
+  | "input-control"
+  /** 未声明风险（closed-world：非 full 档全 deny） */
+  | "unknown";
 
 /**
  * 工具完成事件：结果已确定后的只读观察通知。
