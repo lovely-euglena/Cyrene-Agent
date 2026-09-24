@@ -285,6 +285,11 @@ public sealed class SettingsWindow : NativeWindow
             // 插件管理 = .NET PluginManagerWindow（cmd kind:plugins）
             btn.Click += (_, _) => RequestRouter.SendCommand("plugins", "open");
         }
+        else if (section == "channels")
+        {
+            // 渠道配置 = Electron 独立窗（宿主 openChannels 动作）
+            btn.Click += (_, _) => RequestRouter.SendCommand("settings", "openChannels");
+        }
         else
         {
             // 其余占位 section 回 Electron 旧版设置页（带 hash 定位）

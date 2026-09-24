@@ -28,6 +28,10 @@ export interface NativeBridgeActions {
   setUserProfile?(profile: unknown): void;
   /** native 设置窗「更换头像」：宿主弹文件框并保存（native 不传路径）。 */
   pickAvatar?(): void;
+  /** native 设置窗占位 section「在旧版设置中打开」→ Electron 设置窗（hash 定位）。 */
+  openLegacySettings?(section?: string): void;
+  /** native 设置窗「插件」section → 打开 .NET 插件管理窗（宿主侧失败可回退 Electron）。 */
+  openPluginManager?(): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
   /**
@@ -73,6 +77,16 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "pick-avatar":
           actions.pickAvatar?.();
+          break;
+        case "open-legacy":
+          // native 设置窗占位 section → Electron 旧版设置页（带 hash 定位）
+          actions.openLegacySettings?.(section);
+          break;
+        case "open":
+          // 插件管理窗入口：{"kind":"plugins","action":"open"}
+          if (frameKind === "plugins") {
+            actions.openPluginManager?.();
+          }
           break;
         case "openChannels":
           actions.openChannelsWindow?.();

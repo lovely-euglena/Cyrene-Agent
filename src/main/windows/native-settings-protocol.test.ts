@@ -24,6 +24,10 @@ const requestRouterCs = fs.readFileSync(
   fileURLToPath(new URL("../../../dotnet/native-windows/RequestRouter.cs", import.meta.url)),
   "utf8",
 );
+const bridgeTs = fs.readFileSync(
+  fileURLToPath(new URL("./native-windows-bridge.ts", import.meta.url)),
+  "utf8",
+);
 
 /** 提取 C# 源码中所有 SetSetting("key&quot;, ...) 的键名 */
 function extractCsWriteKeys(source: string): string[] {
@@ -173,5 +177,25 @@ describe("跨语言契约：C# 设置窗 ↔ 宿主白名单", () => {
     }
     // avatarPath 只能由宿主文件框产生，native 不得直接写路径
     expect(fields).not.toContain("avatarPath");
+  });
+
+  it("C# 发送的 cmd 动作都有宿主处理（死按钮回归：open-legacy/openChannels/plugins open）", () => {
+    // 扫描设置窗与 RequestRouter 里的 SendCommand("kind", "action") 调用
+    const sources = [settingsWindowCs, requestRouterCs];
+    const actions = new Set<string>();
+    for (const source of sources) {
+      for (const match of source.matchAll(/SendCommand\("([^"]+)",\s*"([^"]+)"/g)) {
+        actions.add(match[2]);
+      }
+    }
+    expect(actions.size).toBeGreaterThan(0);
+    for (const action of actions) {
+      // 宿主 switch 必须有对应 case（动作名在桥接开关中唯一；kind 区分由 case 内部处理）
+      expect(bridgeTs).toContain(`case "${action}"`);
+    }
+  });
+
+  it("渠道按钮走 openChannels（而非 open-legacy channels）", () => {
+    expect(settingsWindowCs).toContain('SendCommand("settings", "openChannels")');
   });
 });

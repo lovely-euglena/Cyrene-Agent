@@ -339,6 +339,16 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               })
               .catch((err) => console.warn("[NativeSettings] pick avatar failed:", err));
           },
+          // native 设置窗占位 section「在旧版设置中打开」→ Electron 设置窗（hash 定位）
+          openLegacySettings: (section?: string) => {
+            windowManager.createSettingsWindow(section);
+          },
+          // native 设置窗「插件」section → .NET 插件管理窗；native 不可用/失败回退 Electron 插件区
+          openPluginManager: () => {
+            void spawnNativeWindow("plugins").then((ok) => {
+              if (!ok) windowManager.createSettingsWindow("plugins");
+            });
+          },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
           // .NET 插件管理窗操作：manager/market 运行期引用（startPlugins 之后可用）
