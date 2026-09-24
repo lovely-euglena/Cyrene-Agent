@@ -89,6 +89,12 @@ export class NativeWindowsClient {
   private startup: Promise<void> | null = null;
   private chunks: Buffer[] = [];
   private bufferedBytes = 0;
+  /**
+   * 已解析、但帧体尚未到齐的帧长。管道分块到达时前缀会先被消费掉，
+   * 必须保留长度状态等帧体补齐——否则下一块数据会被当作新前缀读出
+   * 错误的长度（bad frame length）。
+   */
+  private pendingFrameLength: number | null = null;
   private nextId = 1;
   private pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
   private onCommand: CommandHandler;
@@ -125,6 +131,7 @@ export class NativeWindowsClient {
     this.child = child;
     this.chunks = [];
     this.bufferedBytes = 0;
+    this.pendingFrameLength = null;
 
     const isCurrent = () => this.child === child;
 
@@ -206,17 +213,24 @@ export class NativeWindowsClient {
 
   private drainFrames(): void {
     for (;;) {
-      const prefix = this.take(4);
-      if (!prefix) return;
-      const len = prefix.readInt32LE(0);
-      if (len < 0 || len > 16 * 1024 * 1024) {
-        console.error(`[NativeWindows] bad frame length ${len}; recycling`);
-        this.failAllPending(new Error("native windows protocol failure"));
-        this.disposeSync("protocol-failure");
-        return;
+      // 前缀与帧体可能分块到达（.NET 侧 prefix/body 是两次 Write）：
+      // 长度解析后先存 pendingFrameLength，等帧体到齐再消费，避免
+      // 消费掉前缀却丢弃长度状态导致流错位。
+      if (this.pendingFrameLength === null) {
+        const prefix = this.take(4);
+        if (!prefix) return;
+        const len = prefix.readInt32LE(0);
+        if (len < 0 || len > 16 * 1024 * 1024) {
+          console.error(`[NativeWindows] bad frame length ${len}; recycling`);
+          this.failAllPending(new Error("native windows protocol failure"));
+          this.disposeSync("protocol-failure");
+          return;
+        }
+        this.pendingFrameLength = len;
       }
-      const headerBuf = this.take(len);
+      const headerBuf = this.take(this.pendingFrameLength);
       if (!headerBuf) return;
+      this.pendingFrameLength = null;
       let frame: Frame;
       try {
         frame = JSON.parse(headerBuf.toString("utf8"));
@@ -319,6 +333,7 @@ export class NativeWindowsClient {
     this.child = null;
     this.chunks = [];
     this.bufferedBytes = 0;
+    this.pendingFrameLength = null;
   }
 
   disposeSync(reason: string): void {
