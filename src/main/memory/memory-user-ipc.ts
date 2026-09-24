@@ -4,7 +4,6 @@ import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getStickerManagerConfig, setStickerEnabled } from "../orchestrator/sticker-settings";
 import { addUserSticker, deleteUserSticker } from "../sticker-storage";
 import { loadMemoryPanelData } from "./panel";
-import { deleteImportedDoc } from "../rag";
 import { loadUserProfile, saveUserProfile, loadAvatarDataUrl } from "../settings-store";
 import { addMcpServer, removeMcpServer, listMcpServers } from "../orchestrator/mcp-manager";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
@@ -21,10 +20,19 @@ import {
   stickerManagerWindow,
 } from "../windows/window-state";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
-import { memoryStore } from "./memory-store";
-import { exportMemoryToObsidianVault, syncToBoundVault } from "./obsidian-exporter";
-import { loadObsidianVaultConfig, saveObsidianVaultConfig, unbindVault } from "./obsidian-vault-config";
-import { startVaultWatcher, stopVaultWatcher } from "./obsidian-importer";
+import { loadObsidianVaultConfig } from "./obsidian-vault-config";
+import { startVaultWatcher } from "./obsidian-importer";
+import {
+  bindMemoryVault,
+  exportMemoryVault,
+  getMemoryVaultConfig,
+  removeImportedDocEntry,
+  saveMemoryL0,
+  saveMemoryL1,
+  setMemoryVaultAutoSync,
+  syncMemoryVaultNow,
+  unbindMemoryVault,
+} from "./memory-actions";
 import { pickAndSaveUserAvatar } from "./user-avatar";
 
 export interface MemoryUserToolIpcDependencies {
@@ -41,9 +49,6 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
     }
   }
 }
-
-const L0_EDITABLE_KEYS = ["preferredName", "occupation", "longTermInterests", "language", "permanentNote"];
-const L1_EDITABLE_KEYS = ["recentGoals", "recentPreferences", "currentProject"];
 
 export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): void {
   const { embeddingIndexService } = deps;
@@ -123,100 +128,49 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
     return loadAvatarDataUrl();
   });
 
-  // Memory panel
+  // 记忆面板
   ipc.handle(IPC.MEMORY_PANEL_GET_DATA, () => loadMemoryPanelData());
 
   ipc.handle(IPC.MEMORY_PANEL_DELETE_IMPORTED_DOC, (_event, payload: { importId: string; fileName?: string }) => {
-    const deleted = deleteImportedDoc(payload.importId, payload.fileName);
+    const deleted = removeImportedDocEntry(payload.importId, payload.fileName);
     return { ok: true, deleted };
   });
 
   ipc.handle(IPC.MEMORY_PANEL_SAVE_L0, async (_event, raw: Record<string, unknown>) => {
-    const patch: Partial<{
-      preferredName: string;
-      occupation: string;
-      longTermInterests: string;
-      language: string;
-      permanentNote: string;
-    }> = {};
-    for (const key of L0_EDITABLE_KEYS) {
-      if (key in raw && typeof raw[key] === "string") {
-        (patch as Record<string, unknown>)[key] = (raw[key] as string).trim();
-      }
-    }
-    await memoryStore.updateL0(patch);
-    return { ok: true };
+    const result = await saveMemoryL0(raw);
+    return result.ok ? { ok: true } : { ok: false, error: result.error };
   });
 
   ipc.handle(IPC.MEMORY_PANEL_SAVE_L1, async (_event, raw: Record<string, unknown>) => {
-    const patch: Partial<{
-      recentGoals: string;
-      recentPreferences: string;
-      currentProject: string;
-    }> = {};
-    for (const key of L1_EDITABLE_KEYS) {
-      if (key in raw && typeof raw[key] === "string") {
-        (patch as Record<string, unknown>)[key] = (raw[key] as string).trim();
-      }
-    }
-    await memoryStore.updateL1(patch);
-    return { ok: true };
+    const result = await saveMemoryL1(raw);
+    return result.ok ? { ok: true } : { ok: false, error: result.error };
   });
 
-  // ── Obsidian Vault 绑定 / 同步 / 配置 ──
+  // ── Obsidian Vault 绑定 / 同步 / 配置（动作层与 native 设置窗共用） ──
 
   // 一次性导出（不绑定）：弹目录选择框 → 调导出器
-  ipc.handle(IPC.MEMORY_EXPORT_OBSIDIAN_VAULT, async () => {
-    const result = await dialog.showOpenDialog({
-      title: "选择 Obsidian Vault 导出位置",
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return { ok: false, canceled: true };
-    }
-    return exportMemoryToObsidianVault(result.filePaths[0]);
-  });
+  ipc.handle(IPC.MEMORY_EXPORT_OBSIDIAN_VAULT, () => exportMemoryVault());
 
   // 绑定 vault：弹目录选择 → 保存路径 → 立即同步一次 → 启动回流监听
-  ipc.handle(IPC.OBSIDIAN_VAULT_BIND, async () => {
-    const result = await dialog.showOpenDialog({
-      title: "选择要绑定的 Obsidian Vault 文件夹",
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return { ok: false, canceled: true };
-    }
-    const vaultPath = result.filePaths[0];
-    saveObsidianVaultConfig({ vaultPath });
-    // 绑定后立即同步一次
-    const syncResult = await syncToBoundVault();
-    // 启动 Obsidian → PMRS 回流监听
-    startVaultWatcher(vaultPath);
-    return { ok: syncResult.ok, vaultPath, fileCount: syncResult.fileCount, error: syncResult.error };
-  });
+  ipc.handle(IPC.OBSIDIAN_VAULT_BIND, () => bindMemoryVault());
 
   // 解绑：先停监听再清配置
   ipc.handle(IPC.OBSIDIAN_VAULT_UNBIND, () => {
-    stopVaultWatcher();
-    unbindVault();
+    unbindMemoryVault();
     return { ok: true };
   });
 
   // 读配置
-  ipc.handle(IPC.OBSIDIAN_VAULT_GET_CONFIG, () => {
-    return loadObsidianVaultConfig();
-  });
+  ipc.handle(IPC.OBSIDIAN_VAULT_GET_CONFIG, () => getMemoryVaultConfig());
 
   // 设置自动同步开关
   ipc.handle(IPC.OBSIDIAN_VAULT_SET_AUTO_SYNC, (_event, autoSync: boolean) => {
-    const updated = saveObsidianVaultConfig({ autoSync: Boolean(autoSync) });
-    return { ok: true, config: updated };
+    const config = setMemoryVaultAutoSync(autoSync);
+    return { ok: true, config };
   });
 
   // 立即同步
-  ipc.handle(IPC.OBSIDIAN_VAULT_SYNC_NOW, async () => {
-    return syncToBoundVault();
-  });
+  ipc.handle(IPC.OBSIDIAN_VAULT_SYNC_NOW, () => syncMemoryVaultNow());
 
   ipc.handle(IPC.USER_GET_PROFILE, () => loadUserProfile());
 
