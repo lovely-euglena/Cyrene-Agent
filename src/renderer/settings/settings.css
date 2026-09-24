@@ -70,6 +70,33 @@ body {
   gap: 2px;
 }
 
+/* 未保存提醒：任一 .save-status 为脏态时点亮（shared/unsaved-indicator.ts） */
+.settings-nav__unsaved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font: var(--rb-text-small);
+  color: #9a5b12;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  white-space: nowrap;
+}
+
+.settings-nav__unsaved[hidden] {
+  display: none;
+}
+
+.settings-nav__unsaved-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.9);
+}
+
 .settings-nav__logo {
   width: 28px;
   height: 28px;

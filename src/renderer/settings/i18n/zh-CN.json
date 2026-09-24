@@ -3,6 +3,7 @@
     "nav": {
       "ariaLabel": "设置导航",
       "brand": "昔涟",
+      "unsaved": "未保存",
       "memory": "记忆",
       "user": "用户信息",
       "tasks": "定时任务",

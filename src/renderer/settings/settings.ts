@@ -123,6 +123,10 @@ import "./preferences/panel";  // 副作用导入：截图热键捕获 + 表情�
 import "./mcp/panel";  // 副作用导入：MCP Server 添加/删除/启停 + 自定义端点接入说明
 import "./tokens/panel";  // 副作用导入：Token 用量图表 + 时间范围切换
 import { t } from "./i18n";
+import { installUnsavedIndicator } from "./shared/unsaved-indicator";
+
+// 标题栏「未保存」提醒：任一状态条为脏态时点亮（MutationObserver 全局侦测）
+installUnsavedIndicator();
 
 // Inline modal (to avoid Vite tree-shaking)
 
