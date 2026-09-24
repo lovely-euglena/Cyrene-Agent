@@ -8,6 +8,7 @@ import { SpeakingMotionController } from "./live2d/speaking-motion";
 // OpenerBubbleController 已被移除（主动开口子系统整体删除）。
 import { ClickThroughController } from "./live2d/click-through";
 import { Live2DRendererLifecycleTracker } from "./live2d/lifecycle-diagnostics";
+import { resolveDragCalibration } from "./pet-drag-calibration";
 import { resolveAsset } from "../shared/renderer-base";
 
 const canvas = document.getElementById("live2d-canvas") as HTMLCanvasElement;
@@ -222,14 +223,24 @@ let dragToken = 0;
 //      已知差异），双流交替 = 目标位置交替 = 左下↔右上抖动。只信
 //      setPointerCapture 成功的那个 pointerId。
 //   2) 自适应单位系数 k——screenX 是物理像素还是 DIP 在不同 Chromium
-//      版本/缩放设置下不一致，硬编码 DPR 换算不可靠。拖动首个反馈帧
-//      用「目标位置 vs window.screenX 实测」校准 k，之后增量按 k 缩放，
-//      对任何单位/DPR 组合收敛。
+//      版本/缩放设置下不一致，硬编码 DPR 换算不可靠。拖动首个反馈帧用
+//      「同一条命令」实测校准：命令目标 vs 该命令产生的窗口实际位置
+//      （窗口尚未响应命令时不校准，见 pet-drag-calibration.ts）。
 let dragPointerId = -1;
 let dragUnitScale = 1;
 let dragBaseScreen = { x: 0, y: 0 };
 let dragBaseWin = { x: 0, y: 0 };
 let dragCalibrated = false;
+let dragLastSent: {
+  /** 命令的窗口目标位置 */
+  x: number;
+  y: number;
+  /** 命令下发时的窗口基准/指针基准（校准重设时取同一命令的基准对） */
+  baseWinX: number;
+  baseWinY: number;
+  baseScreenX: number;
+  baseScreenY: number;
+} | null = null;
 
 let dragOverlayUrl: string | null = null;
 
@@ -321,6 +332,7 @@ function cancelPendingMove(): void {
 function finishDrag(): void {
   isDragging = false;
   dragToken += 1;
+  dragLastSent = null;
   cancelPendingMove();
   clearDragOverlay();
   if (petVisible) {
@@ -359,6 +371,7 @@ addTrackedEventListener(canvas, "canvas:pointerdown", "pointerdown", (e) => {
   dragPointerId = event.pointerId;
   dragCalibrated = false;
   dragUnitScale = 1;
+  dragLastSent = null;
   dragBaseScreen = { x: event.screenX, y: event.screenY };
   dragBaseWin = { x: window.screenX, y: window.screenY };
   dragOffsetX = event.screenX - window.screenX;
@@ -384,35 +397,39 @@ addTrackedEventListener(canvas, "canvas:pointermove", "pointermove", (e) => {
   // 双流过滤：只信 capture 的 pointerId（forward 合成的 move 不驱动拖动）
   if (dragPointerId !== -1 && event.pointerId !== dragPointerId) return;
 
-  // 单位校准（首个反馈帧）：上一帧发的目标位置 vs 窗口实际落位
-  if (!dragCalibrated) {
-    const expectedX = dragBaseWin.x + (event.screenX - dragBaseScreen.x) * dragUnitScale;
-    const expectedY = dragBaseWin.y + (event.screenY - dragBaseScreen.y) * dragUnitScale;
-    const actualX = window.screenX;
-    const actualY = window.screenY;
-    if (Math.abs(expectedX - actualX) > 2 || Math.abs(expectedY - actualY) > 2) {
-      // screenX 单位与 window.screenX 不一致：按实测比修正
-      const kx = Math.abs(expectedX - dragBaseWin.x) > 8
-        ? (actualX - dragBaseWin.x) / (expectedX - dragBaseWin.x)
-        : dragUnitScale;
-      const ky = Math.abs(expectedY - dragBaseWin.y) > 8
-        ? (actualY - dragBaseWin.y) / (expectedY - dragBaseWin.y)
-        : dragUnitScale;
-      const k = Math.min(3, Math.max(0.25, (kx + ky) / 2));
-      console.info(
-        `[PetDrag] calibrate k=${k.toFixed(3)} (expected=(${expectedX.toFixed(0)},${expectedY.toFixed(0)}) actual=(${actualX},${actualY}))`,
-      );
-      dragUnitScale = k;
-      dragBaseScreen = { x: event.screenX, y: event.screenY };
-      dragBaseWin = { x: actualX, y: actualY };
-    } else {
+  // 单位校准：只在「同一条命令」上测量——命令目标 vs 该命令产生的实际
+  // 窗口位置；窗口尚未响应命令时不校准、不重设基准（避免误判成单位差
+  // 把 k 钳到 0.25，出现"拖动跟不上"）。
+  if (!dragCalibrated && dragLastSent) {
+    const result = resolveDragCalibration({
+      lastTarget: { x: dragLastSent.x, y: dragLastSent.y },
+      baseWin: { x: dragLastSent.baseWinX, y: dragLastSent.baseWinY },
+      actual: { x: window.screenX, y: window.screenY },
+    });
+    if (result.kind === "matched") {
       dragCalibrated = true;
+    } else if (result.kind === "rescale") {
+      dragUnitScale = result.unitScale;
+      // 以同一命令重设基准对：窗口取实际落位，指针取该命令的基准 screen，
+      // 当前帧位移照常累加（不丢帧）
+      dragBaseWin = { x: window.screenX, y: window.screenY };
+      dragBaseScreen = { x: dragLastSent.baseScreenX, y: dragLastSent.baseScreenY };
+      dragCalibrated = true;
+      console.info(`[PetDrag] calibrate k=${dragUnitScale.toFixed(3)}`);
     }
   }
 
   const dx = (event.screenX - dragBaseScreen.x) * dragUnitScale;
   const dy = (event.screenY - dragBaseScreen.y) * dragUnitScale;
   scheduleMoveTo(dragBaseWin.x + dx + dragOffsetX, dragBaseWin.y + dy + dragOffsetY);
+  dragLastSent = {
+    x: dragBaseWin.x + dx,
+    y: dragBaseWin.y + dy,
+    baseWinX: dragBaseWin.x,
+    baseWinY: dragBaseWin.y,
+    baseScreenX: dragBaseScreen.x,
+    baseScreenY: dragBaseScreen.y,
+  };
 });
 
 addTrackedEventListener(canvas, "canvas:pointerup", "pointerup", (e) => {
