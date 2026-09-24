@@ -85,6 +85,30 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
   return !(NATIVE_SETTINGS_SECTIONS as readonly string[]).includes(section);
 }
 
+// ── section 动作契约（cmd settings <kind> {"verb":...}） ─────────────────
+
+/**
+ * native 设置窗 section 动作白名单。C# SettingsWindow.*.cs 通过
+ * RequestRouter.SendSettingsAction(kind, verb, payload) 发送，宿主组合根按
+ * (kind, verb) 分发；契约测试扫描 C# 源码锁定（未知 verb 会被宿主 warn 丢弃）。
+ */
+export const NATIVE_SECTION_ACTIONS = {
+  api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
+  memory: [
+    "save-l0",
+    "save-l1",
+    "delete-doc",
+    "vault-bind",
+    "vault-unbind",
+    "vault-export",
+    "vault-sync",
+    "vault-auto-sync",
+  ],
+  scheduler: ["add", "update", "toggle", "fire", "delete", "history"],
+} as const;
+
+export type NativeSectionKind = keyof typeof NATIVE_SECTION_ACTIONS;
+
 const USER_PROFILE_FIELD_MAX_LENGTH = 200;
 const GENDERS = new Set(["secret", "male", "female"]);
 

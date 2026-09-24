@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   ELECTRON_ONLY_SETTINGS_SECTIONS,
   NATIVE_GENERAL_SETTING_KEYS,
+  NATIVE_SECTION_ACTIONS,
   NATIVE_SETTINGS_SECTIONS,
   NATIVE_USER_PROFILE_FIELDS,
   sanitizeNativeGeneralSetting,
@@ -31,6 +32,21 @@ const bridgeTs = fs.readFileSync(
   fileURLToPath(new URL("./native-windows-bridge.ts", import.meta.url)),
   "utf8",
 );
+const settingsSectionCs = [
+  settingsWindowCs,
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Api.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Memory.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Tasks.cs", import.meta.url)),
+    "utf8",
+  ),
+].join("\n");
 
 /** 提取 C# 源码中所有 SetSetting("key&quot;, ...) 的键名 */
 function extractCsWriteKeys(source: string): string[] {
@@ -236,5 +252,32 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     const csSections = extractCsSections(settingsWindowCs);
     expect(csSections.length).toBeGreaterThan(0);
     expect(new Set(csSections)).toEqual(new Set(NATIVE_SETTINGS_SECTIONS));
+  });
+});
+
+describe("section 动作契约（cmd settings <kind> verb）", () => {
+  it("C# SendSettingsAction 的 kind/verb 都在白名单内", () => {
+    const calls = [...settingsSectionCs.matchAll(/SendSettingsAction\("([a-z]+)",\s*"([a-z0-9-]+)"/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, kind, verb] of calls) {
+      expect(Object.keys(NATIVE_SECTION_ACTIONS)).toContain(kind);
+      const verbs = NATIVE_SECTION_ACTIONS[kind as keyof typeof NATIVE_SECTION_ACTIONS] as readonly string[];
+      expect(verbs).toContain(verb);
+    }
+  });
+
+  it("三类 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
+    expect([...NATIVE_SECTION_ACTIONS.api]).toEqual(["save", "test", "test-vision", "set-default-profile", "delete-profile"]);
+    expect([...NATIVE_SECTION_ACTIONS.memory]).toEqual([
+      "save-l0",
+      "save-l1",
+      "delete-doc",
+      "vault-bind",
+      "vault-unbind",
+      "vault-export",
+      "vault-sync",
+      "vault-auto-sync",
+    ]);
+    expect([...NATIVE_SECTION_ACTIONS.scheduler]).toEqual(["add", "update", "toggle", "fire", "delete", "history"]);
   });
 });

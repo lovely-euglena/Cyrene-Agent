@@ -14,27 +14,29 @@ namespace CyreneNative;
 /// WPF 原生设置窗（设置页 .NET 重写）。
 ///
 /// 范围（渐进迁移）：
-///   - 真 section：通用 / 外观 / 用户信息 / 关于
-///   - 占位 section（API/记忆/TTS/ASR/插件/任务/渠道）：显示
-///     「在旧版设置中打开」按钮 → cmd 事件 → 宿主弹 Electron 设置窗
-///     （插件 section 走 .NET PluginManagerWindow；渠道设置独立 Electron 弹窗）
+///   - 真 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于
+///   - 占位 section（TTS/ASR/插件/渠道）：显示跳转按钮 → cmd 事件
+///     （插件 section 走 .NET PluginManagerWindow；TTS/ASR/渠道走 Electron）
 ///
 /// 数据流：settings.* 协议（RequestRouter）——
 ///   宿主 → native：{"op":"state.settings","settings":{...}} 快照推送
-///                  （窗口 spawn 后到达即重建原生 section，值随快照刷新）
+///                  （按 section 数据源判定差异重建，避免打断未提交输入）
+///                  {"op":"state.settings-notice","notice":{...}} 反馈帧（就地状态行）
 ///   native → 宿主：{"id":n,"op":"settings.set","key":"...","value":...}
 ///                  {"op":"event","name":"cmd","kind":"settings","action":"set",...}
 ///                  {"op":"event","name":"cmd","kind":"settings","action":"set-user-profile",...}
 ///                  {"op":"event","name":"cmd","kind":"settings","action":"pick-avatar"}
-///                  {"id":n,"op":"settings.open","section":"legacy|channels|api"}
+///                  {"op":"event","name":"cmd","kind":"settings","action":"api|memory|scheduler","verb":...,"payload":{...}}
 /// 复用三件套的 stdio 帧协议（同一 HostProtocol/RequestRouter）。
+///
+/// 分文件：SettingsWindow.Api.cs / SettingsWindow.Memory.cs / SettingsWindow.Tasks.cs。
 ///
 /// ⚠️ 读写键名契约：see src/main/windows/native-settings-protocol.ts。
 /// 历史 bug：本文件曾用 autoStart/trayResident/theme 读写，与宿主快照
 /// launchAtLogin/uiTheme 不一致 → 开关永远显示默认值、写入被白名单丢弃。
 /// 契约测试会扫描本文件提取 SetSetting 调用中的键名并校验白名单。
 /// </summary>
-public sealed class SettingsWindow : NativeWindow
+public sealed partial class SettingsWindow : NativeWindow
 {
     private readonly Window _window;
     private readonly ScrollViewer _scroll;
@@ -143,13 +145,13 @@ public sealed class SettingsWindow : NativeWindow
 
         AddSection("general", "通用", native: true);
         AddSection("appearance", "外观", native: true);
-        AddSection("api", "API 与模型", native: false, legacyHash: "api");
-        AddSection("memory", "记忆", native: false, legacyHash: "memory");
+        AddSection("api", "API 与模型", native: true);
+        AddSection("memory", "记忆", native: true);
         AddSection("tts", "语音合成 TTS", native: false, legacyHash: "tts");
         AddSection("asr", "语音识别 ASR", native: false, legacyHash: "asr");
         AddSection("plugins", "插件", native: false, legacyHash: "plugins", pluginManager: true);
         AddSection("user", "用户信息", native: true);
-        AddSection("tasks", "定时任务", native: false, legacyHash: "tasks");
+        AddSection("tasks", "定时任务", native: true);
         AddSection("channels", "渠道配置", native: false, legacyHash: "channels");
         AddSection("about", "关于", native: true);
 
@@ -187,16 +189,19 @@ public sealed class SettingsWindow : NativeWindow
         }
     }
 
-    // ── 原生 section：通用 / 外观 / 用户信息 / 关于 ──
+    // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "appearance" or "user" or "about";
+        => id is "general" or "appearance" or "user" or "api" or "memory" or "tasks" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
         "general" => BuildGeneralSection(),
         "appearance" => BuildAppearanceSection(),
         "user" => BuildUserSection(),
+        "api" => BuildApiSection(),
+        "memory" => BuildMemorySection(),
+        "tasks" => BuildTasksSection(),
         "about" => BuildAboutSection(),
         _ => new TextBlock { Text = "未知分区" },
     };
@@ -332,9 +337,10 @@ public sealed class SettingsWindow : NativeWindow
 
     /// <summary>
     /// 宿主推送的设置快照（state.settings）。
-    /// 重建全部原生 section：控件值随快照刷新（spawn 后快照到达是主要路径；
-    /// 头像更换后也经此刷新图片）。重建前停掉未提交的防抖定时器，避免旧控件
-    /// 在重建后写出陈旧值。
+    /// 按 section 数据源子集判定差异，只重建变化的 section：
+    ///   - 列表型 section（记忆/定时任务）随数据刷新
+    ///   - 表单型 section（API/用户）不会被无关推送打断（保住未提交输入）
+    /// 重建前停掉未提交的防抖定时器，避免旧控件在重建后写出陈旧值。
     /// </summary>
     public void ApplySettings(JsonElement settings)
     {
@@ -344,9 +350,60 @@ public sealed class SettingsWindow : NativeWindow
         foreach (var (id, host) in _sectionHosts)
         {
             if (!IsNativeSection(id)) continue;
+            var source = SectionSourceJson(id);
+            if (_sectionSources.TryGetValue(id, out var previous) && previous == source) continue;
+            _sectionSources[id] = source;
             host.Children.Clear();
             host.Children.Add(BuildNativeSection(id));
         }
+    }
+
+    // ── section 差异判定 / 反馈帧 ──
+
+    private readonly Dictionary<string, string> _sectionSources = new();
+    private readonly Dictionary<string, TextBlock> _sectionStatus = new();
+
+    /// <summary>各 section 的数据源子集（用于按 section 判定是否重建）。</summary>
+    private string SectionSourceJson(string id) => id switch
+    {
+        "general" => $"{GetBool("launchAtLogin")}|{GetBool("petVisible", true)}|{GetBool("petAlwaysOnTop", true)}",
+        "appearance" => $"{GetInt("windowCornerRadius", -1)}|{GetBool("toastSoundEnabled", true)}",
+        "user" => NodeRawJson("user"),
+        "api" => NodeRawJson("api"),
+        "memory" => NodeRawJson("memory"),
+        "tasks" => NodeRawJson("tasks"),
+        // 关于：静态内容（版本号启动后不变），只需首次构建
+        _ => "",
+    };
+
+    private string NodeRawJson(string key)
+    {
+        var node = GetNode(key);
+        return node.ValueKind == JsonValueKind.Undefined ? "" : node.GetRawText();
+    }
+
+    /// <summary>section 状态行注册（每次重建覆盖注册）。</summary>
+    private void RegisterSectionStatus(string section, TextBlock status)
+    {
+        _sectionStatus[section] = status;
+    }
+
+    /// <summary>宿主反馈帧（state.settings-notice）：就地更新对应 section 状态行。</summary>
+    public void ApplyNotice(JsonElement notice)
+    {
+        if (notice.ValueKind != JsonValueKind.Object) return;
+        var section = GetString(notice, "section");
+        var text = GetString(notice, "text");
+        var level = GetString(notice, "level", "info");
+        if (section.Length == 0 || text.Length == 0) return;
+        if (!_sectionStatus.TryGetValue(section, out var status)) return;
+        status.Text = $"· {text}";
+        status.Foreground = new SolidColorBrush(level switch
+        {
+            "ok" => Color.FromRgb(0x1D, 0x9A, 0x54),
+            "error" => Color.FromRgb(0xD3, 0x3A, 0x3A),
+            _ => Color.FromRgb(0x66, 0x66, 0x77),
+        });
     }
 
     private void StopDebounceTimers()
@@ -413,6 +470,121 @@ public sealed class SettingsWindow : NativeWindow
         Foreground = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x88)),
         Margin = new Thickness(0, 2, 0, 2),
     };
+
+    /// <summary>section 状态行（反馈帧就地更新；注册到 _sectionStatus）。</summary>
+    private TextBlock MakeSectionStatus(string section)
+    {
+        var status = new TextBlock
+        {
+            Text = "",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x77)),
+            Margin = new Thickness(0, 4, 0, 6),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        RegisterSectionStatus(section, status);
+        return status;
+    }
+
+    private static TextBlock MakeSubHeader(string text) => new()
+    {
+        Text = text,
+        FontSize = 14,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44)),
+        Margin = new Thickness(0, 14, 0, 6),
+    };
+
+    private static Button MakeButton(string text, Action onClick, bool primary = false, double minWidth = 96)
+    {
+        var button = new Button
+        {
+            Content = text,
+            Height = 30,
+            MinWidth = minWidth,
+            FontSize = 12,
+            Padding = new Thickness(10, 0, 10, 0),
+            Margin = new Thickness(0, 4, 8, 4),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Background = new SolidColorBrush(primary ? Color.FromRgb(0x5B, 0x5B, 0xD6) : Color.FromRgb(0xE8, 0xE8, 0xF0)),
+            Foreground = new SolidColorBrush(primary ? Colors.White : Color.FromRgb(0x33, 0x33, 0x44)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC5, 0xC5, 0xD5)),
+            BorderThickness = new Thickness(1),
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    private static TextBlock MakeCardTitle(string text) => new()
+    {
+        Text = text,
+        FontSize = 13,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x33)),
+        TextWrapping = TextWrapping.Wrap,
+    };
+
+    private static TextBlock MakeCardMeta(string text) => new()
+    {
+        Text = text,
+        FontSize = 11,
+        Foreground = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x88)),
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(0, 2, 0, 2),
+    };
+
+    /// <summary>卡片容器（白底圆角边框 + 内部竖直 StackPanel）。</summary>
+    private static Border MakeCard(out StackPanel content)
+    {
+        content = new StackPanel();
+        return new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xEA)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Background = Brushes.White,
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 4, 0, 4),
+            Child = content,
+        };
+    }
+
+    private static string FormatUnixMs(double ms)
+    {
+        if (ms <= 0) return "-";
+        try
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds((long)ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+        }
+        catch
+        {
+            return "-";
+        }
+    }
+
+    // ── 快照读取（嵌套节点静态重载；section 分文件共用） ──
+
+    private static JsonElement GetNode(JsonElement node, string key)
+        => node.ValueKind == JsonValueKind.Object && node.TryGetProperty(key, out var v) ? v : default;
+
+    private static bool GetBool(JsonElement node, string key, bool fallback = false)
+        => node.ValueKind == JsonValueKind.Object && node.TryGetProperty(key, out var v)
+            ? v.ValueKind == JsonValueKind.True ? true
+              : v.ValueKind == JsonValueKind.False ? false
+              : fallback
+            : fallback;
+
+    private static int GetInt(JsonElement node, string key, int fallback)
+        => node.ValueKind == JsonValueKind.Object
+           && node.TryGetProperty(key, out var v)
+           && v.ValueKind == JsonValueKind.Number
+           && v.TryGetInt32(out var n) ? n : fallback;
+
+    private static double GetDouble(JsonElement node, string key, double fallback)
+        => node.ValueKind == JsonValueKind.Object
+           && node.TryGetProperty(key, out var v)
+           && v.ValueKind == JsonValueKind.Number
+           && v.TryGetDouble(out var n) ? n : fallback;
 
     private static Border MakeRow(string label, FrameworkElement control)
     {

@@ -141,6 +141,18 @@ public static class RequestRouter
                 });
                 break;
             }
+            case "state.settings-notice":
+            {
+                // 设置窗 section 反馈（保存/测试/同步结果；就地状态行，不重建 section）
+                var notice = element.TryGetProperty("notice", out var noticeEl) ? noticeEl : default;
+                app.Dispatcher.Invoke(() =>
+                {
+                    if (Windows.TryGetValue("settings", out var w) && w is SettingsWindow settingsWindow)
+                        settingsWindow.ApplyNotice(notice);
+                    Protocol?.ReplyOk(id);
+                });
+                break;
+            }
             case "settings.set":
             {
                 // native 设置窗 → 宿主：写设置键（白名单在 SendSettingForwarded）
@@ -228,6 +240,25 @@ public static class RequestRouter
     public static void SendPickAvatar()
     {
         SendCommand("settings", "pick-avatar");
+    }
+
+    /// <summary>
+    /// 设置窗 section 动作（API 与模型 / 记忆 / 定时任务）：
+    /// {"op":"event","name":"cmd","kind":"settings","action":&lt;kind&gt;,"verb":&lt;verb&gt;,"payload":{...}}
+    /// kind/verb 的合法集合由宿主 native-settings-protocol 契约测试锁定。
+    /// </summary>
+    public static void SendSettingsAction(string kind, string verb, Dictionary<string, object?>? payload = null)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["op"] = "event",
+            ["name"] = "cmd",
+            ["kind"] = "settings",
+            ["action"] = kind,
+            ["verb"] = verb,
+        };
+        if (payload is not null) body["payload"] = payload;
+        Protocol?.SendEvent(body);
     }
 
     /// <summary>窗口请求宿主动作（openSettings 等）。</summary>
