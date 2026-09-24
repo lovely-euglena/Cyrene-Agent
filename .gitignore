@@ -15,6 +15,7 @@ dist/renderer/sticker-manager/index.html
 dist/renderer/tasks/index.html
 dist/renderer/index.html
 dist/renderer/react/index.html
+dist/renderer/toast/index.html
 dist/renderer/live2dcubismcore.min.js
 dist/sim/
 dist/skills/

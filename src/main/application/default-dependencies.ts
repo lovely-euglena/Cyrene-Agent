@@ -90,7 +90,7 @@ import * as chatsStore from "../chats/chats-store";
 import { flush as flushTokenUsage } from "../token-usage-store";
 import { TtsSessionService } from "../tts/tts-session-service";
 import { registerTtsIpc } from "../tts/tts-ipc";
-import { loadUserProfile } from "../settings-store";
+import { loadUserProfile, saveUserProfile } from "../settings-store";
 import { getAppIconPath } from "../app-icon";
 import { registerAgUiIpc } from "../agui-bridge";
 import { updateLocaleContext } from "../locale-context";
@@ -101,7 +101,7 @@ import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime, getPluginMarketService } from "../plugin-runtime";
-import { pushPluginsSnapshotToNative } from "../windows/native-windows-bridge";
+import { pushPluginsSnapshotToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -126,6 +126,11 @@ import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle"
 import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
+import {
+  sanitizeNativeGeneralSetting,
+  sanitizeNativeUserProfile,
+} from "../windows/native-settings-protocol";
+import { pickAndSaveUserAvatar } from "../memory/user-avatar";
 
 import { createIpcScope, type IpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -306,12 +311,33 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
           },
           onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
-          // native 设置窗写键（白名单与 C# 侧一致）：写盘 + 既有联动
+          // native 设置窗写键：白名单/取值校验统一在 native-settings-protocol；
+          // saveGeneralSettings 自动触发 handleGeneralSettingsChanged（桌宠显隐/
+          // 置顶、开机自启、主题广播等联动）。
+          // 不回推快照：native 控件状态即用户刚写入的值，回推重建会在滑杆/输入
+          // 交互后打断焦点；快照仅在 spawn、换头像等需要刷新时推送。
           setSetting: (key, value) => {
-            const allowed = new Set(["launchAtLogin", "petVisible", "petAlwaysOnTop", "uiTheme", "language"]);
-            if (!allowed.has(key)) return;
-            // petVisible 关闭走既有 toggle 联动（hide），直接写盘不走窗口管理
-            saveGeneralSettings({ [key]: value } as Partial<import("../settings/general-settings").GeneralSettings>);
+            const patch = sanitizeNativeGeneralSetting(key, value);
+            if (!patch) return;
+            saveGeneralSettings(patch);
+          },
+          // native 设置窗写用户资料：字段白名单 + 时区/性别校验；写后广播给
+          // Electron 窗口（聊天/调用链有依赖）；同样不回推快照（避免打断输入）。
+          setUserProfile: (profile) => {
+            const patch = sanitizeNativeUserProfile(profile);
+            if (!patch) return;
+            const saved = saveUserProfile(patch);
+            broadcastToAuxWindows(IPC.USER_PROFILE_CHANGED, saved);
+          },
+          // native 设置窗「更换头像」：宿主弹文件框（native 不传路径），完成后重推快照
+          pickAvatar: () => {
+            void pickAndSaveUserAvatar()
+              .then((picked) => {
+                if (!picked) return;
+                broadcastToAuxWindows(IPC.USER_AVATAR_CHANGED, null);
+                pushSettingsSnapshotToNative();
+              })
+              .catch((err) => console.warn("[NativeSettings] pick avatar failed:", err));
           },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
@@ -690,6 +716,7 @@ createTray: (input) => {
       },
 
       loadGeneralSettings,
+      loadUserProfile,
       applyGeneralSettings: (settings, services) => applyGeneralSettings(settings, {
         windowManager: shell.windowManager,
         tray: shell.tray,
@@ -699,11 +726,16 @@ createTray: (input) => {
       }),
       wireToastCenter: ({ ipc, windowManager }) => {
         // 提醒中心组合根：窗口控制器 + 生命周期权威服务 + 事件总线订阅
+        // 窗口按需创建（默认）：首个 toast 才建窗+载页，队列空 30s 后回收
+        // （启动零 toast 渲染进程，常驻 Chromium 渲染进程 -1）；
+        // CYRENE_LAZY_TOAST_WINDOW=0 恢复急切模式（启动预热 + 常驻不销毁）。
+        const eagerToastWindow = process.env.CYRENE_LAZY_TOAST_WINDOW === "0";
         const toastWindowController = createToastWindowController({
           createWindow: createToastWindowShell,
           getChatWindow: () => reactChatWindow,
           getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
           getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+          idleTeardownMs: eagerToastWindow ? null : undefined,
         });
         const toastService = createToastService({
           bus: toastEvents,
@@ -722,8 +754,10 @@ createTray: (input) => {
           },
         });
         toastService.registerIpc(ipc);
-        // 预创建隐藏窗口，提前加载渲染页，首次弹出零延迟
-        toastWindowController.preload();
+        if (eagerToastWindow) {
+          // 预创建隐藏窗口，提前加载渲染页，首次弹出零延迟（急切模式）
+          toastWindowController.preload();
+        }
         shutdown.register({
           id: "toast-center",
           phase: "stopLocalResources",

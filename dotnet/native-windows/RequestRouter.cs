@@ -180,10 +180,39 @@ public static class RequestRouter
     /// <summary>settings.set 帧的宿主侧转发（cmd 事件通道 + 白名单）。</summary>
     private static void SendSettingForwarded(string? key, JsonElement? value)
     {
-        // 白名单：native 设置窗一期只允许这几个键
-        var allowed = new HashSet<string> { "autoStart", "trayResident", "petVisible", "theme" };
+        // 白名单与宿主 native-settings-protocol.ts 完全一致（契约测试锁定）：
+        // launchAtLogin / petVisible / petAlwaysOnTop / windowCornerRadius /
+        // toastSoundEnabled 为当前 UI 写入键；uiTheme / language 为读方向+
+        // 前向兼容键。历史键名（autoStart/trayResident/theme）已废弃。
+        var allowed = new HashSet<string> { "launchAtLogin", "petVisible", "petAlwaysOnTop", "windowCornerRadius", "toastSoundEnabled", "uiTheme", "language" };
         if (string.IsNullOrEmpty(key) || !allowed.Contains(key)) return;
         SendSetting(key, value.HasValue ? value.Value : null);
+    }
+
+    /// <summary>
+    /// 设置窗写入用户资料字段（白名单/取值校验在宿主侧执行）：
+    /// {"op":"event","name":"cmd","kind":"settings","action":"set-user-profile","profile":{...}}
+    /// </summary>
+    public static void SendUserProfile(IDictionary<string, object?> profile)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["op"] = "event",
+            ["name"] = "cmd",
+            ["kind"] = "settings",
+            ["action"] = "set-user-profile",
+            ["profile"] = profile,
+        };
+        Protocol?.SendEvent(payload);
+    }
+
+    /// <summary>
+    /// 设置窗「更换头像」：宿主弹系统文件框并保存（native 不传路径），
+    /// 完成后宿主重推设置快照刷新头像图片。
+    /// </summary>
+    public static void SendPickAvatar()
+    {
+        SendCommand("settings", "pick-avatar");
     }
 
     /// <summary>窗口请求宿主动作（openSettings 等）。</summary>

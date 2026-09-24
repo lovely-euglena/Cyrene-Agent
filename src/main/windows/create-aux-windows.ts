@@ -14,12 +14,10 @@ import {
   setCallWindowLocal,
   setReactChatWindow,
   setSettingsWindow,
-  setPluginManagerWindow,
   setSidebarWindow,
   setStickerManagerWindow,
   setTasksWindow,
   settingsWindow,
-  pluginManagerWindow,
   showWindowWhenStartupReady,
   sidebarWindow,
   stickerManagerWindow,
@@ -337,20 +335,6 @@ export function createTasksWindow(): void {
 /**
  * 创建/复用设置窗口。
  */
-/**
- * 插件管理窗口（插件页重写——.NET 方案）。
- * WPF PluginManagerWindow 走 spawnNativeWindow("plugins")；插件运行时
- * 面板（Panel Bridge）仍归 Electron（生态适配层）。
- */
-export function createPluginManagerWindow(): void {
-  // native 路径优先；未启用/失败时由调用方回退 Electron 设置窗 plugins
-  // section（hash 路由），避免用户失去插件管理入口
-  void import("./native-windows-bridge").then(({ spawnNativeWindow }) =>
-    spawnNativeWindow("plugins").then((ok) => {
-      if (!ok) createSettingsWindow("plugins");
-    }),
-  );
-}
 
 export function createSettingsWindow(section?: string): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {

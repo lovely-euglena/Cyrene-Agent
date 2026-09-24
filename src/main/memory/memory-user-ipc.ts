@@ -1,13 +1,11 @@
 import { dialog } from "electron";
-import * as fs from "fs";
-import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getStickerManagerConfig, setStickerEnabled } from "../orchestrator/sticker-settings";
 import { addUserSticker, deleteUserSticker } from "../sticker-storage";
 import { loadMemoryPanelData } from "./panel";
 import { deleteImportedDoc } from "../rag";
-import { loadUserProfile, saveUserProfile, getAvatarPath } from "../settings-store";
+import { loadUserProfile, saveUserProfile, loadAvatarDataUrl } from "../settings-store";
 import { addMcpServer, removeMcpServer, listMcpServers } from "../orchestrator/mcp-manager";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import type { ConversationMode } from "../../shared/chat-types";
@@ -27,6 +25,7 @@ import { memoryStore } from "./memory-store";
 import { exportMemoryToObsidianVault, syncToBoundVault } from "./obsidian-exporter";
 import { loadObsidianVaultConfig, saveObsidianVaultConfig, unbindVault } from "./obsidian-vault-config";
 import { startVaultWatcher, stopVaultWatcher } from "./obsidian-importer";
+import { pickAndSaveUserAvatar } from "./user-avatar";
 
 export interface MemoryUserToolIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -121,19 +120,7 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
 
   // User avatar / profile
   ipc.handle(IPC.USER_GET_AVATAR, () => {
-    const avatarPath = getAvatarPath();
-    if (!fs.existsSync(avatarPath)) return null;
-    const buf = fs.readFileSync(avatarPath);
-    const ext = path.extname(avatarPath).toLowerCase();
-    const mime =
-      ext === ".png"
-        ? "image/png"
-        : ext === ".jpg" || ext === ".jpeg"
-          ? "image/jpeg"
-          : ext === ".webp"
-            ? "image/webp"
-            : "image/png";
-    return "data:" + mime + ";base64," + buf.toString("base64");
+    return loadAvatarDataUrl();
   });
 
   // Memory panel
@@ -240,18 +227,10 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
   });
 
   ipc.handle(IPC.USER_UPLOAD_AVATAR, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile"],
-      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    const srcPath = result.filePaths[0];
-    const avatarPath = getAvatarPath();
-    fs.mkdirSync(path.dirname(avatarPath), { recursive: true });
-    fs.copyFileSync(srcPath, avatarPath);
-    const profile = saveUserProfile({ avatarPath });
+    const picked = await pickAndSaveUserAvatar();
+    if (!picked) return null;
     broadcastToAuxWindows(IPC.USER_AVATAR_CHANGED, null);
-    return { avatarPath, profile };
+    return { avatarPath: picked.avatarPath, profile: picked.profile };
   });
 
   // MCP servers

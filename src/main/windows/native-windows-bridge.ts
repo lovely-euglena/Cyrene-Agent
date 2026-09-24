@@ -24,6 +24,10 @@ export interface NativeBridgeActions {
   onSplashShown(): void;
   /** native 设置窗写入设置键（白名单在宿主侧执行）。 */
   setSetting?(key: string, value: unknown): void;
+  /** native 设置窗写入用户资料字段（字段白名单/取值校验在宿主侧执行）。 */
+  setUserProfile?(profile: unknown): void;
+  /** native 设置窗「更换头像」：宿主弹文件框并保存（native 不传路径）。 */
+  pickAvatar?(): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
   /**
@@ -62,6 +66,13 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           if (typeof frame.key === "string") {
             actions.setSetting?.(frame.key, frame.value);
           }
+          break;
+        case "set-user-profile":
+          // native 设置窗写用户资料：{"action":"set-user-profile","profile":{...}}
+          actions.setUserProfile?.(frame.profile);
+          break;
+        case "pick-avatar":
+          actions.pickAvatar?.();
           break;
         case "openChannels":
           actions.openChannelsWindow?.();
@@ -130,6 +141,18 @@ export async function pushPluginsSnapshotToNative(
 
 export function bindNativeDataProviders(providers: NativeDataProviders): void {
   dataProviders = providers;
+}
+
+/**
+ * 重推设置快照到 .NET 设置窗（换头像等需要刷新 UI 的写入后调用；窗未开时 no-op）。
+ * 快照来源与 spawn 初始推送同一数据源（getSettingsSnapshot），保证读方向一致。
+ */
+export function pushSettingsSnapshotToNative(): void {
+  const c = activeClient();
+  if (!c || !dataProviders) return;
+  void dataProviders.getSettingsSnapshot?.()
+    .then((settings) => c.pushSettings(settings))
+    .catch((error) => console.warn("[NativeWindows] settings snapshot push failed:", error));
 }
 
 // ── native 显窗门控（window-state.markStartupPhaseReady 的 native 版） ──
@@ -219,9 +242,8 @@ export async function spawnNativeWindow(
       void c.pushRuntimeState(dataProviders.getRuntimeState()).catch(() => undefined);
       void c.pushModelConfig(dataProviders.getModelConfig()).catch(() => undefined);
     } else if (kind === "settings" && dataProviders) {
-      void dataProviders.getSettingsSnapshot?.()
-        .then((settings) => c.pushSettings(settings))
-        .catch((error) => console.warn("[NativeWindows] settings snapshot push failed:", error));
+      // 初始快照与后续写入重推共用同一路径（读方向键名统一在协议模块）
+      pushSettingsSnapshotToNative();
     } else if (kind === "plugins" && dataProviders) {
       void dataProviders.getPluginsSnapshot?.()
         .then((snapshot) => c.pushPlugins(snapshot))

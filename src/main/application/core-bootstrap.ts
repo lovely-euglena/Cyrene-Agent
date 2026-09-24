@@ -30,6 +30,9 @@ import type { SocialContextService } from "../services/social-context/social-con
 import type { ChannelsSubsystem } from "../channels/bootstrap";
 import type { SchedulerSubsystem } from "../scheduler/bootstrap";
 import type { GeneralSettings } from "../settings/general-settings";
+import type { UserProfile } from "../settings-store";
+import { loadAvatarDataUrl } from "../settings-store";
+import { TIMEZONE_OPTIONS } from "../../shared/timezone-options";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
 
@@ -89,9 +92,11 @@ export interface CoreDependencies {
   /** 公开模型配置（getPublicModelConfig；native sidebar 快照用）。 */
   getPublicModelConfig?(): unknown;
   registerCoreIpc(input: RegisterCoreIpcInput): void;
-  /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、预创建隐藏窗口。 */
+  /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、按需创建隐藏窗口。 */
   wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
+  /** 用户资料（native 设置窗「用户信息」section 快照）。 */
+  loadUserProfile(): UserProfile;
   /** 启动期一次性应用通用设置（登录项同步、桌宠偏好等）。 */
   applyGeneralSettings(settings: GeneralSettings, services: CoreServices): void;
   revealStartupWindows(input: RevealStartupWindowsOptions): Promise<void>;
@@ -175,16 +180,31 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     getTasks: async () => scheduler.store.getTasks() as unknown[],
     // .NET 插件管理窗快照：已装 + 市场索引（manager/market 由运行期闭包提供）
     getPluginsSnapshot: async () => deps.getPluginsSnapshot?.(),
-    // native 设置窗快照：通用/外观/关于子集（键名与 C# 白名单对齐）
+    // native 设置窗快照：通用/外观/关于 + 用户信息（键名与 C# 白名单对齐；
+    // 契约见 windows/native-settings-protocol.ts）
     getSettingsSnapshot: async () => {
       const gs = deps.loadGeneralSettings();
+      const profile = deps.loadUserProfile();
       return {
         launchAtLogin: gs.launchAtLogin,
         petVisible: gs.petVisible,
         petAlwaysOnTop: gs.petAlwaysOnTop,
+        windowCornerRadius: gs.windowCornerRadius,
+        toastSoundEnabled: gs.toastSoundEnabled,
         uiTheme: gs.uiTheme,
         language: gs.language,
         version: process.env.npm_package_version ?? "1.1.9",
+        user: {
+          nickname: profile.nickname,
+          callPreference: profile.callPreference,
+          birthday: profile.birthday,
+          defaultCity: profile.defaultCity,
+          timezone: profile.timezone,
+          gender: profile.gender,
+          // 时区白名单与渲染页共用（src/shared/timezone-options.ts）
+          timezoneOptions: TIMEZONE_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
+          avatarDataUrl: loadAvatarDataUrl(),
+        },
       };
     },
   });
