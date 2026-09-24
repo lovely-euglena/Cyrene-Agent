@@ -243,11 +243,21 @@ export function clearPluginModuleCache(pluginDir: string): void {
 }
 
 /** 动态加载插件入口（.cjs/.js/.mjs 均可），归一化 default/named export */
-export async function loadPlugin(record: PluginRecord): Promise<CyrenePlugin> {
+export interface LoadPluginHooks {
+  /** .NET 轨：进程意外退出（供上层更新插件状态） */
+  onDotnetUnexpectedExit?: (pluginId: string, message: string) => void;
+  /** .NET 轨：意外退出后自动重启成功 */
+  onDotnetRestarted?: (pluginId: string) => void;
+}
+
+export async function loadPlugin(record: PluginRecord, hooks: LoadPluginHooks = {}): Promise<CyrenePlugin> {
   // 双轨分流：dotnet 插件不走 require——以独立子进程 + stdio 协议运行
   if (record.manifest.runtime === "dotnet") {
     const { DotnetPluginAdapter } = await import("./dotnet-adapter");
-    return new DotnetPluginAdapter(record);
+    return new DotnetPluginAdapter(record, {
+      onUnexpectedExit: hooks.onDotnetUnexpectedExit,
+      onRestarted: hooks.onDotnetRestarted,
+    });
   }
   const entry = path.join(record.dir, record.manifest.entry);
   const ext = path.extname(entry).toLowerCase();

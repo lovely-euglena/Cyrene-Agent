@@ -209,6 +209,26 @@ export class PluginManager {
     }
   }
 
+  /**
+   * .NET 轨进程意外退出：把状态改为 failed（UI 不再滞留 running），
+   * 错误信息带上退出原因；工具调用侧由适配器自愈重启。
+   */
+  private markProcessExited(pluginId: string, message: string): void {
+    if (!this.instances.has(pluginId)) return;
+    this.statuses.set(pluginId, "failed");
+    this.errors.set(pluginId, message);
+    this.notifyRunningState(pluginId, false);
+  }
+
+  /** .NET 轨进程自动重启成功：恢复 running 并清掉退出错误 */
+  private markProcessRestarted(pluginId: string): void {
+    if (!this.instances.has(pluginId)) return;
+    this.statuses.set(pluginId, "running");
+    this.errors.delete(pluginId);
+    this.notifyRunningState(pluginId, true);
+    console.log(`[plugins] 插件 ${pluginId} 进程已自动重启`);
+  }
+
   start(): Promise<void> {
     return this.enqueueOperation(async () => {
       if (this.started) return;
@@ -636,7 +656,10 @@ export class PluginManager {
     this.statuses.set(id, "starting");
     this.errors.delete(id);
     try {
-      const plugin = await loadPlugin(record);
+      const plugin = await loadPlugin(record, {
+        onDotnetUnexpectedExit: (_pluginId, message) => this.markProcessExited(id, message),
+        onDotnetRestarted: () => this.markProcessRestarted(id),
+      });
       const ctx = createContext(
         id,
         path.join(this.opts.storageRoot, id),

@@ -9,7 +9,7 @@ namespace Cyrene.PluginSdk;
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
 public sealed class CyreneToolAttribute : Attribute
 {
-    /// <summary>工具短 id（宿主侧全 id 为 "pluginId__短id"）。</summary>
+    /// <summary>工具短 id（宿主侧全 id 为 "pluginId_短id"，单下划线）。</summary>
     public string Id { get; }
 
     /// <summary>工具显示名（给 Agent 的模型看）。</summary>
@@ -23,6 +23,14 @@ public sealed class CyreneToolAttribute : Attribute
     /// <c>{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}</c>
     /// </summary>
     public string Schema { get; set; } = """{"type":"object","properties":{}}""";
+
+    /// <summary>
+    /// 风险级（可选，透传给宿主权限策略 Permission Policy）。取值：
+    /// <c>safe | fs-read | fs-write | shell | network | input-control</c>。
+    /// 缺省/非法值按宿主默认 safe 处理——需要写文件、执行命令或联网的工具
+    /// 务必显式声明，否则不会触发对应的权限审批。
+    /// </summary>
+    public string? Risk { get; set; }
 
     public CyreneToolAttribute(string id, string name, string description)
     {

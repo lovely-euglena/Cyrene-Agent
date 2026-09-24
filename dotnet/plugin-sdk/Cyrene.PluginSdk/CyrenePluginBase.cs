@@ -16,7 +16,7 @@ namespace Cyrene.PluginSdk;
 ///     {"op":"shutdown"}
 ///
 ///   插件 → 宿主（stdout，每行一个 JSON）：
-///     {"op":"ready","tools":[{id,name,description,inputSchema}]}
+///     {"op":"ready","tools":[{id,name,description,inputSchema,risk?}]}
 ///     {"op":"result","callId":"c1","ok":true,"data":...}
 ///     {"op":"result","callId":"c1","ok":false,"error":"..."}
 ///     {"op":"log","level":"info","message":"..."}
@@ -26,7 +26,7 @@ namespace Cyrene.PluginSdk;
 /// </summary>
 public abstract class CyrenePluginBase
 {
-    private record ToolEntry(string Id, string Name, string Description, JsonElement Schema, MethodInfo Method)
+    private record ToolEntry(string Id, string Name, string Description, JsonElement Schema, MethodInfo Method, string? Risk)
     {
         public bool IsStatic => Method.IsStatic;
     }
@@ -110,7 +110,7 @@ public abstract class CyrenePluginBase
             op = "ready",
             tools = _tools.Values.Select(t => new
             {
-                id = t.Id, name = t.Name, description = t.Description, inputSchema = t.Schema,
+                id = t.Id, name = t.Name, description = t.Description, inputSchema = t.Schema, risk = t.Risk,
             }),
         });
     }
@@ -165,7 +165,7 @@ public abstract class CyrenePluginBase
             {
                 schema = JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone();
             }
-            _tools[attr.Id] = new ToolEntry(attr.Id, attr.Name, attr.Description, schema, method);
+            _tools[attr.Id] = new ToolEntry(attr.Id, attr.Name, attr.Description, schema, method, attr.Risk);
         }
     }
 

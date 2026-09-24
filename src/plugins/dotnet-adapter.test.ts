@@ -1,11 +1,13 @@
 /**
  * DotnetPluginAdapter 协议测试（mock 子进程——不真 spawn）。
  *
- * 覆盖：ready 握手与工具注册、invoke 应答路由、插件退出时在途调用失败、
- * shutdown 优雅关停、协议外 stdout 行容错。
+ * 覆盖：ready 握手与工具注册（含 dataDir/risk 透传）、invoke 应答路由、
+ * 进程意外退出的在途失败与状态上报、下次调用自愈重启、shutdown 优雅关停、
+ * 协议外 stdout 行容错。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChildProcess } from "node:child_process";
+import path from "node:path";
 
 vi.mock("node:child_process", () => {
   const spawn = vi.fn();
@@ -16,24 +18,31 @@ import { spawn as mockSpawn } from "node:child_process";
 import { DotnetPluginAdapter } from "./dotnet-adapter";
 import type { PluginRecord } from "./types";
 
-function makeFakeChild(): {
+interface FakeChild {
   child: ChildProcess;
   emitLine(line: string): void;
-  emitExit(): void;
+  /** 触发进程退出（on("exit") 与 once("exit") 两类监听都触发） */
+  emitExit(code?: number | null): void;
   written: string[];
-} {
-  const handlers: Array<(buf: Buffer) => void> = [];
-  const exitCbs: Array<() => void> = [];
+}
+
+function makeFakeChild(): FakeChild {
+  const dataHandlers: Array<(buf: Buffer) => void> = [];
+  const exitHandlers: Array<(code: number | null) => void> = [];
+  const onceExitCbs: Array<() => void> = [];
   const written: string[] = [];
   const child = {
     stdin: { write: vi.fn((data: string) => { written.push(data); return true; }), writable: true },
     stdout: {
       setEncoding: vi.fn(),
-      on: vi.fn((_event: string, cb: (buf: Buffer) => void) => { handlers.push(cb); }),
+      on: vi.fn((_event: string, cb: (buf: Buffer) => void) => { dataHandlers.push(cb); }),
     },
     stderr: { setEncoding: vi.fn(), on: vi.fn() },
-    once: vi.fn((event: string, cb: () => void) => { if (event === "exit") { exitCbs.push(cb); } return child; }),
-    on: vi.fn(),
+    once: vi.fn((event: string, cb: () => void) => { if (event === "exit") { onceExitCbs.push(cb); } return child; }),
+    on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+      if (event === "exit") exitHandlers.push(cb as (code: number | null) => void);
+      return child;
+    }),
     kill: vi.fn(),
     pid: 4321,
     connected: true,
@@ -41,9 +50,12 @@ function makeFakeChild(): {
   return {
     child,
     written,
-    emitExit: () => { for (const cb of exitCbs.splice(0)) cb(); },
+    emitExit: (code: number | null = 1) => {
+      for (const cb of exitHandlers.splice(0)) cb(code);
+      for (const cb of onceExitCbs.splice(0)) cb();
+    },
     emitLine: (line: string) => {
-      for (const cb of handlers) cb(Buffer.from(`${line}\n`));
+      for (const cb of dataHandlers) cb(Buffer.from(`${line}\n`));
     },
   };
 }
@@ -66,45 +78,60 @@ function makeRecord(): PluginRecord {
   } as unknown as PluginRecord;
 }
 
+function makeCtx(registered: unknown[] = []): { ctx: never; registered: unknown[] } {
+  const ctx = {
+    registerTool: (tool: unknown) => registered.push(tool),
+    onDispose: vi.fn(),
+    signal: new AbortController().signal,
+    storage: { rootDir: () => "/data/my-plugin" },
+  } as never;
+  return { ctx, registered };
+}
+
 describe("DotnetPluginAdapter", () => {
-  const restore = () => { vi.clearAllMocks(); };
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
 
-  afterEach(restore);
-
-  it("register: 握手后按 ready.tools 注册并 spawn 参数正确", async () => {
+  it("register: init 帧带 storage.rootDir()，握手后按 ready.tools 注册（含 risk 透传）", async () => {
     const fake = makeFakeChild();
     mockSpawn.mockReturnValueOnce(fake.child);
     const adapter = new DotnetPluginAdapter(makeRecord());
-    const registered: unknown[] = [];
-    const ctx = {
-      registerTool: (tool: unknown) => registered.push(tool),
-      onDispose: vi.fn(),
-      signal: new AbortController().signal,
-    } as never;
+    const { ctx, registered } = makeCtx();
 
     const pending = adapter.register(ctx);
-    expect(fake.written[0]).toContain('"op":"init"');
+    const initFrame = JSON.parse(fake.written[0]);
+    expect(initFrame.op).toBe("init");
+    expect(initFrame.dataDir).toBe("/data/my-plugin");
     expect(mockSpawn).toHaveBeenCalledWith(
-      "/plugins/my-plugin/MyPlugin.exe",
+      // 平台无关：适配器用 path.join 拼 exe 路径
+      path.join("/plugins/my-plugin", "MyPlugin.exe"),
       [],
       expect.objectContaining({ stdio: ["pipe", "pipe", "pipe"] }),
     );
 
     fake.emitLine(JSON.stringify({
       op: "ready",
-      tools: [{ id: "greet", name: "问候", description: "d", inputSchema: { type: "object", properties: {} } }],
+      tools: [
+        { id: "greet", name: "问候", description: "d", inputSchema: { type: "object", properties: {} }, risk: "fs-write" },
+        { id: "poke", name: "戳", description: "d", inputSchema: { type: "object", properties: {} }, risk: "not-a-risk" },
+      ],
     }));
     await pending;
 
-    expect(registered).toHaveLength(1);
-    expect((registered[0] as { id: string }).id).toBe("my-plugin_greet");
+    expect(registered).toHaveLength(2);
+    const [greet, poke] = registered as Array<{ id: string; risk?: string }>;
+    expect(greet.id).toBe("my-plugin_greet");
+    expect(greet.risk).toBe("fs-write");
+    expect(poke.id).toBe("my-plugin_poke");
+    expect(poke.risk).toBeUndefined();
   });
 
   it("invoke: result 帧路由回调用方（对象序列化为字符串）", async () => {
     const fake = makeFakeChild();
     mockSpawn.mockReturnValueOnce(fake.child);
     const adapter = new DotnetPluginAdapter(makeRecord());
-    const ctx = { registerTool: vi.fn(), onDispose: vi.fn(), signal: new AbortController().signal } as never;
+    const { ctx } = makeCtx();
     const pendingRegister = adapter.register(ctx);
     fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
     await pendingRegister;
@@ -119,46 +146,76 @@ describe("DotnetPluginAdapter", () => {
     await expect(call).resolves.toBe(JSON.stringify({ message: "你好" }));
   });
 
-  it("插件进程退出：在途调用失败 + 后续调用直接拒绝", async () => {
+  it("意外退出：在途调用失败 + 上报 onUnexpectedExit；重启无进程时下次调用报重启失败", async () => {
     const fake = makeFakeChild();
     mockSpawn.mockReturnValueOnce(fake.child);
-    const adapter = new DotnetPluginAdapter(makeRecord());
-    const ctx = { registerTool: vi.fn(), onDispose: vi.fn(), signal: new AbortController().signal } as never;
+    const onUnexpectedExit = vi.fn();
+    const adapter = new DotnetPluginAdapter(makeRecord(), { onUnexpectedExit });
+    const { ctx } = makeCtx();
     const pendingRegister = adapter.register(ctx);
     fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
     await pendingRegister;
 
     const call = adapter.invokeToolForTest("greet", {});
-    // 触发 exit 回调（on("exit") 注册的第一个 handler）
-    const onExit = (fake.child.on as ReturnType<typeof vi.fn>).mock.calls.find(
-      (c: unknown[]) => c[0] === "exit",
-    );
-    (onExit?.[1] as (code: number | null) => void)?.(1);
+    fake.emitExit(1);
     await expect(call).rejects.toThrow("退出");
-    await expect(adapter.invokeToolForTest("greet", {})).rejects.toThrow("未运行");
+    expect(onUnexpectedExit).toHaveBeenCalledWith("my-plugin", expect.stringContaining("进程退出"));
+    // 没有可用的第二次 spawn mock：自愈重启失败
+    await expect(adapter.invokeToolForTest("greet", {})).rejects.toThrow(/自动重启失败/);
   });
 
-  it("unregister: 发送 shutdown 帧并卸载", async () => {
+  it("自愈重启：意外退出后下次调用重启进程并恢复（上报 onRestarted）", async () => {
+    const first = makeFakeChild();
+    const second = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(first.child).mockReturnValueOnce(second.child);
+    const onRestarted = vi.fn();
+    const adapter = new DotnetPluginAdapter(makeRecord(), { onRestarted });
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    first.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    first.emitExit(1);
+    const call = adapter.invokeToolForTest("greet", { ok: true });
+    // 重启握手：新进程 init 后回 ready
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+    const initFrame = JSON.parse(second.written[0]);
+    expect(initFrame.op).toBe("init");
+    second.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const invokeFrame = JSON.parse(second.written[second.written.length - 1]);
+    expect(invokeFrame.op).toBe("invoke");
+    second.emitLine(JSON.stringify({ op: "result", callId: invokeFrame.callId, ok: true, data: "pong" }));
+    await expect(call).resolves.toBe("pong");
+    expect(onRestarted).toHaveBeenCalledWith("my-plugin");
+  });
+
+  it("unregister: 发送 shutdown 帧；正常关停不触发 onUnexpectedExit", async () => {
     const fake = makeFakeChild();
     mockSpawn.mockReturnValueOnce(fake.child);
-    const adapter = new DotnetPluginAdapter(makeRecord());
-    const ctx = { registerTool: vi.fn(), onDispose: vi.fn(), signal: new AbortController().signal } as never;
+    const onUnexpectedExit = vi.fn();
+    const adapter = new DotnetPluginAdapter(makeRecord(), { onUnexpectedExit });
+    const { ctx } = makeCtx();
     const pendingRegister = adapter.register(ctx);
     fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
     await pendingRegister;
 
     const unregisterDone = adapter.unregister?.();
-    fake.emitExit();
+    fake.emitExit(0);
     await unregisterDone;
     const last = JSON.parse(fake.written[fake.written.length - 1]);
     expect(last.op).toBe("shutdown");
+    expect(onUnexpectedExit).not.toHaveBeenCalled();
+    // 关停后的调用直接拒绝（不再自愈重启）
+    await expect(adapter.invokeToolForTest("greet", {})).rejects.toThrow("未运行");
   });
 
   it("协议外 stdout 行被安全忽略，log 帧不打断流程", async () => {
     const fake = makeFakeChild();
     mockSpawn.mockReturnValueOnce(fake.child);
     const adapter = new DotnetPluginAdapter(makeRecord());
-    const ctx = { registerTool: vi.fn(), onDispose: vi.fn(), signal: new AbortController().signal } as never;
+    const { ctx } = makeCtx();
     const pendingRegister = adapter.register(ctx);
     fake.emitLine("dotnet runtime noise line");
     fake.emitLine(JSON.stringify({ op: "log", level: "info", message: "hi" }));

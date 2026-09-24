@@ -15,7 +15,7 @@ namespace CyreneNative;
 /// 协议（复用三件套 stdio 帧协议）：
 ///   宿主 → native：state.plugins 快照推送
 ///     { "op":"state.plugins", "plugins":[{id,name,version,description,
-///        enabled,origin,hasPanel}...], "market":[{id,name,version,
+///        enabled,origin,settingsPanel}...], "market":[{id,name,version,
 ///        description,author}...], "installing":[id...] }
 ///   native → 宿主：cmd 事件
 ///     {"op":"event","name":"cmd","kind":"plugins",
@@ -109,7 +109,8 @@ public sealed class PluginManagerWindow : NativeWindow
         _installed = ParseList<PluginInfo>(payload, "plugins", el => new PluginInfo(
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Bool(el, "enabled"), Str(el, "origin") ?? "user",
-            Bool(el, "hasPanel")));
+            // 宿主快照字段为 settingsPanel（设置面板 HTML 文件名，仅合法时透出）
+            Str(el, "settingsPanel") is { Length: > 0 }));
         _market = ParseList<MarketEntry>(payload, "market", el => new MarketEntry(
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Str(el, "author") ?? ""));
