@@ -1,7 +1,7 @@
 // .NET embedding sidecar 客户端（spawn cyrene-embed serve）。
 //
 // 激活条件（全部满足才启用，否则调用方回退 embedding-worker）：
-//   1. 环境变量 CYRENE_EMBED_SIDECAR=1（实验开关，后续接 settings UI）
+//   1. 默认启用（CYRENE_EMBED_SIDECAR=0 关闭；exe 缺失自动回退 worker）
 //   2. sidecar exe 存在（见 resolveSidecarPath）
 //
 // 帧协议见 dotnet/embedding-sidecar/Program.cs：
@@ -53,16 +53,18 @@ let cachedExePath: string | null | undefined;
 
 /**
  * sidecar exe 路径（只找一次，结果缓存）。
- * 打包态：resources/embed-sidecar/cyrene-embed（electron-builder extraResources）
- * 开发态：dotnet/embedding-sidecar/bin/Release|Debug/net10.0/（需 dotnet build）
+ * 打包态：resources/embed-sidecar/cyrene-embed(.exe)（electron-builder extraResources）
+ * 开发态：dotnet/embedding-sidecar/bin/Release|Debug/net10.0/（需 dotnet build/publish）
  */
 export function resolveSidecarPath(): string | null {
   if (cachedExePath !== undefined) return cachedExePath;
 
+  // Windows 产物带 .exe 后缀（此前只找无后缀名，Windows 打包态永远探测不到）
+  const exeName = process.platform === "win32" ? "cyrene-embed.exe" : "cyrene-embed";
   const candidates: string[] = [];
   try {
     // 打包态（app.isPackaged 时 process.resourcesPath 指向 resources/）
-    candidates.push(path.join(process.resourcesPath, "embed-sidecar", "cyrene-embed"));
+    candidates.push(path.join(process.resourcesPath, "embed-sidecar", exeName));
   } catch {
     /* 非打包环境无 resourcesPath —— 忽略 */
   }
@@ -70,8 +72,9 @@ export function resolveSidecarPath(): string | null {
   if (!app.isPackaged) {
     const repoRoot = app.getAppPath();
     candidates.push(
-      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", "cyrene-embed"),
-      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Debug", "net10.0", "cyrene-embed"),
+      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", "win-x64", "publish", exeName),
+      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", exeName),
+      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Debug", "net10.0", exeName),
     );
   }
 
@@ -80,7 +83,8 @@ export function resolveSidecarPath(): string | null {
 }
 
 export function isSidecarEnabled(): boolean {
-  if (process.env.CYRENE_EMBED_SIDECAR !== "1") return false;
+  // 默认启用（转正）；CYRENE_EMBED_SIDECAR=0 显式关闭，exe 缺失自动回退 worker
+  if (process.env.CYRENE_EMBED_SIDECAR === "0") return false;
   return resolveSidecarPath() !== null;
 }
 

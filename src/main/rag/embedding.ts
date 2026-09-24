@@ -79,7 +79,7 @@ export interface EmbeddingProvider {
 // ── 本地推理入口 ──
 /**
  * 执行 local embedding 推理。
- * - 主进程 + sidecar 启用（CYRENE_EMBED_SIDECAR=1 且 exe 存在）：
+ * - 主进程 + sidecar 启用（默认启用且 exe 存在；CYRENE_EMBED_SIDECAR=0 关闭）：
  *   走 .NET sidecar（ORT native，~4.3x 提速，数值与 WASM 逐位一致）；
  * - 主进程（sidecar 关闭/不可用）：走专用 embedding worker，
  *   推理不再阻塞主进程事件循环；
