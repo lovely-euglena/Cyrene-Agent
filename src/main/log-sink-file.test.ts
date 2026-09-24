@@ -7,6 +7,7 @@ import {
   formatTs,
   rotateIfNeeded,
   createFileLogSink,
+  installConsoleFileMirror,
   installFileLogSink,
 } from "./log-sink-file";
 
@@ -165,6 +166,45 @@ describe("installFileLogSink", () => {
       expect(fs.readFileSync(logPath, "utf8")).toContain("after-rotate");
     } finally {
       uninstall();
+    }
+  });
+});
+
+describe("installConsoleFileMirror（CYRENE_DEBUG_LOGS=1 全量落盘）", () => {
+  it("把 console.* 镜像到 cyrene.log，卸载后恢复原方法且不再写入", () => {
+    const originalLog = console.log;
+    const uninstall = installConsoleFileMirror(tmpDir);
+    try {
+      expect(console.log).not.toBe(originalLog);
+      console.log("mirror-marker", { a: 1 });
+      const logPath = path.join(tmpDir, "logs", "cyrene.log");
+      const text = fs.readFileSync(logPath, "utf8");
+      expect(text).toContain("[console] mirror-marker");
+      expect(text).toContain('"a":1');
+    } finally {
+      uninstall();
+    }
+    expect(console.log).toBe(originalLog);
+
+    console.log("after-uninstall-marker");
+    const logPath = path.join(tmpDir, "logs", "cyrene.log");
+    expect(fs.readFileSync(logPath, "utf8")).not.toContain("after-uninstall-marker");
+  });
+
+  it("与 logger sink 共用同一文件时不重复落盘", () => {
+    const uninstallSink = installFileLogSink(tmpDir);
+    const uninstallMirror = installConsoleFileMirror(tmpDir);
+    try {
+      setLogLevel("info");
+      logger.info("Cyrene", "logger-marker");
+      console.log("console-marker");
+      const text = fs.readFileSync(path.join(tmpDir, "logs", "cyrene.log"), "utf8");
+      // shared logger 走 process.stdout.write，不经 console，镜像不会重复计
+      expect(text.split("logger-marker").length - 1).toBe(1);
+      expect(text.split("console-marker").length - 1).toBe(1);
+    } finally {
+      uninstallMirror();
+      uninstallSink();
     }
   });
 });

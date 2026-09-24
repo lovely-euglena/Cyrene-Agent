@@ -86,3 +86,61 @@ export function installFileLogSink(
   fs.mkdirSync(dir, { recursive: true });
   return addLogSink(createFileLogSink(path.join(dir, "cyrene.log"), maxBytes));
 }
+
+const CONSOLE_METHODS: Array<{ method: string; level: "info" | "warn" | "error" }> = [
+  { method: "log", level: "info" },
+  { method: "info", level: "info" },
+  { method: "debug", level: "info" },
+  { method: "warn", level: "warn" },
+  { method: "error", level: "error" },
+];
+
+/**
+ * 把 console.* 输出镜像到 <userData>/logs/cyrene.log（与 logger sink 同文件、同滚动策略）。
+ *
+ * 默认不开启，只有排障时用 CYRENE_DEBUG_LOGS=1 打开（见 src/main/logger.ts）：
+ * 主进程大量诊断走 console.*，不镜像的话打包版几乎不留痕。
+ * 注意：shared logger 走 process.stdout.write，不经过 console，因此不会与
+ * logger sink 重复落盘。
+ *
+ * @returns 卸载函数（恢复原始 console 方法；测试用）
+ */
+export function installConsoleFileMirror(
+  userDataDir: string,
+  maxBytes = DEFAULT_MAX_BYTES,
+): () => void {
+  const dir = path.join(userDataDir, "logs");
+  fs.mkdirSync(dir, { recursive: true });
+  const sink = createFileLogSink(path.join(dir, "cyrene.log"), maxBytes);
+  const consoleRecord = console as unknown as Record<string, (...args: unknown[]) => void>;
+  const originals: Array<{ method: string; original: (...args: unknown[]) => void }> = [];
+
+  for (const { method, level } of CONSOLE_METHODS) {
+    const original = consoleRecord[method];
+    if (typeof original !== "function") continue;
+    originals.push({ method, original });
+    consoleRecord[method] = (...args: unknown[]): void => {
+      try {
+        const message = args.map(formatConsoleArg).join(" ");
+        sink({ ts: Date.now(), level, tag: "console", message, line: `[console] ${message}` });
+      } catch {
+        // 镜像失败不影响原始输出
+      }
+      original.apply(console, args);
+    };
+  }
+
+  return () => {
+    for (const { method, original } of originals) consoleRecord[method] = original;
+  };
+}
+
+function formatConsoleArg(arg: unknown): string {
+  if (typeof arg === "string") return arg;
+  if (arg instanceof Error) return arg.stack ?? arg.message;
+  try {
+    return JSON.stringify(arg) ?? String(arg);
+  } catch {
+    return String(arg);
+  }
+}
