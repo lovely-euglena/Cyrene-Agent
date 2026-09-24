@@ -24,7 +24,8 @@ export interface DetachedTrayInput {
   quit(): void;
 }
 
-const PIPE_PATH = "\\\\.\\pipe\\cyrene-tray";
+const PIPE_NAME = "cyrene-tray";
+const PIPE_PATH = `\\\\.\\pipe\\${PIPE_NAME}`;
 
 interface TrayCommand {
   op: "cmd";
@@ -33,21 +34,24 @@ interface TrayCommand {
 
 /**
  * 托盘进程可用性探测：pipe 不存在（托盘未运行）→ 直接回退内置 Tray，
- * 避免返回一个无图标的「死托盘」。Windows named pipe 用 fs.existsSync
- * 探测（libuv 支持 pipe 路径 stat）；非 Windows 恒 false（分离托盘为
- * Windows 专属，宿主在 TrayHost.cs）。
+ * 避免返回一个无图标的「死托盘」。
+ *
+ * 实现注意：不能用 fs.existsSync(PIPE_PATH)——对 .NET
+ * NamedPipeServerStream 创建的实例返回 false（stat/open 报 EBUSY/失败），
+ * 会误判成「托盘未运行」。用管道命名空间枚举（readdir）判断名字存在，
+ * 实测对 .NET 管道可靠；非 Windows 恒 false（分离托盘为 Windows 专属）。
  */
-function isTrayPipeAvailable(): boolean {
+export function isDetachedTrayPipeAvailable(): boolean {
   if (process.platform !== "win32") return false;
   try {
-    return fs.existsSync(PIPE_PATH);
+    return fs.readdirSync("\\\\.\\pipe\\").includes(PIPE_NAME);
   } catch {
     return false;
   }
 }
 
 export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
-  if (!isTrayPipeAvailable()) return null;
+  if (!isDetachedTrayPipeAvailable()) return null;
   let socket: nodeNet.Socket | null = null;
   let destroyed = false;
   let lineBuffer = "";
