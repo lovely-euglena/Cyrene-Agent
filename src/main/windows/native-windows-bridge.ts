@@ -137,9 +137,10 @@ const pendingNativeShows = new Set<string>();
 let nativeWindowsStartupReady = false;
 
 /**
- * 启动就绪后统一显示 native 辅助窗（default-dependencies 的
- * markStartupWindowsReady 处调用，与 markStartupPhaseReady 同点）。
- * 启动后再 spawn 的窗口不经 pending（spawn 即 show）。
+ * 启动就绪后统一显示 native 辅助窗（core-bootstrap 在 reveal 同点、
+ * markStartupWindowsReady 之后调用——与 BrowserWindow 的
+ * markStartupPhaseReady 同点）。启动后再 spawn 的窗口不经 pending
+ * （spawn 即 show）。
  */
 export function markNativeWindowsStartupReady(): void {
   if (nativeWindowsStartupReady) return;

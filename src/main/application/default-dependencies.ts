@@ -117,7 +117,6 @@ import {
   initNativeWindowsBridge,
   bindNativeDataProviders,
   relayAuxBroadcast,
-  markNativeWindowsStartupReady,
   spawnNativeWindow,
 } from "../windows/native-windows-bridge";
 import { connectDetachedTray } from "../tray-detached";
@@ -150,6 +149,9 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
       win.webContents.send(channel, payload);
     }
   }
+  // native 三件套旁路（未启用时 no-op）：同一数据双路推送。
+  // ⚠️ 此调用曾在合并 ffc6322dd 中丢失（native 窗收不到实时状态），勿删。
+  relayAuxBroadcast(channel, payload);
 }
 
 async function reconcileUserMemoryIndex(): Promise<void> {
@@ -562,6 +564,14 @@ createTray: (input) => {
         }
         return startPluginsImpl(services, scheduler, runtime);
       },
+
+      // native 三件套数据源绑定（core 阶段调用；未启用时 no-op）。
+      // ⚠️ 该键曾在合并 ffc6322dd 中整体丢失（原生窗拿不到数据），勿删。
+      bindNativeData: (providers) => bindNativeDataProviders(providers),
+      /** 模型公开配置（native sidebar 模型区订阅用）。 */
+      getPublicModelConfig: () => getPublicModelConfig(),
+      /** .NET 插件管理窗快照（已装 + 市场索引）。 */
+      getPluginsSnapshot: () => buildPluginSnapshot(),
 
       createScheduler: (runtime) => createSchedulerSubsystem({
         agentRuntime: runtime,

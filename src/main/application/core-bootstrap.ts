@@ -13,7 +13,7 @@ import type { ShutdownCoordinator } from "./shutdown";
 import type { WindowActivationBroker } from "./window-activation";
 import type { ShellResult } from "./shell-bootstrap";
 import type { RevealStartupWindowsOptions } from "../startup/startup-window-reveal";
-import { closeNativeWindow } from "../windows/native-windows-bridge";
+import { closeNativeWindow, markNativeWindowsStartupReady } from "../windows/native-windows-bridge";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -272,6 +272,11 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
   console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
   deps.markStartupWindowsReady();
+  // native 三件套（sidebar/tasks/settings/plugins）与 BrowserWindow 同点放行：
+  // startup 阶段 spawn 的窗口先进 pendingNativeShows，此处统一发 win.show。
+  // ⚠️ 此调用曾在合并 ffc6322dd 中丢失（窗口「生成了但永不显示」），勿删；
+  // bridge 未启用时 no-op。
+  markNativeWindowsStartupReady();
 
   // 主窗口可激活：消费启动期间排队的激活请求
   await activation.markReady();

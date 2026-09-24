@@ -4,6 +4,18 @@ import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
 import { startCore, type CoreDependencies, type CoreServices } from "./core-bootstrap";
 
+// 只替换两个接线函数，其余保持真实导出（避免模块级 import 断链）
+vi.mock("../windows/native-windows-bridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../windows/native-windows-bridge")>();
+  return {
+    ...actual,
+    closeNativeWindow: vi.fn(async () => undefined),
+    markNativeWindowsStartupReady: vi.fn(),
+  };
+});
+
+import { markNativeWindowsStartupReady } from "../windows/native-windows-bridge";
+
 function makeServices(): CoreServices {
   return {
     runtimeState: {} as never,
@@ -189,6 +201,30 @@ describe("startCore", () => {
     await startCore(deps);
     expect(calls.indexOf("reveal")).toBeLessThan(calls.indexOf("mark-startup-windows"));
     expect(deps.readiness.getPhase()).toBe("core-ready");
+  });
+
+  it("reveal 后放行 native 窗口（防合并丢失接线）", async () => {
+    const calls: string[] = [];
+    const markNative = vi.mocked(markNativeWindowsStartupReady);
+    markNative.mockClear();
+    markNative.mockImplementation(() => { calls.push("mark-native"); });
+    await startCore(makeCoreDeps(calls));
+    expect(calls).toContain("mark-native");
+    // 与 BrowserWindow 同点：reveal → mark-startup-windows → mark-native
+    expect(calls.indexOf("reveal")).toBeLessThan(calls.indexOf("mark-native"));
+    expect(calls.indexOf("mark-startup-windows")).toBeLessThan(calls.indexOf("mark-native"));
+  });
+
+  it("bindNativeData 注入数据源（runtime/model/tasks 可读；防合并丢失接线）", async () => {
+    const bindNativeData = vi.fn();
+    await startCore(makeCoreDeps([], { bindNativeData }));
+    expect(bindNativeData).toHaveBeenCalledTimes(1);
+    const providers = bindNativeData.mock.calls[0][0] as Record<string, unknown>;
+    expect(typeof providers.getRuntimeState).toBe("function");
+    expect(typeof providers.getModelConfig).toBe("function");
+    expect(typeof providers.getTasks).toBe("function");
+    expect(typeof providers.getPluginsSnapshot).toBe("function");
+    expect(typeof providers.getSettingsSnapshot).toBe("function");
   });
 
   it("stops plugins before built-in channels during controlled shutdown", async () => {
