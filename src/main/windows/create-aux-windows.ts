@@ -2,9 +2,9 @@ import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
+import { loadGeneralSettings } from "../settings/settings-facade";
 import { computeLayout } from "../window-layout";
 import { stopCall, setCallWindow } from "../call/call-manager";
-import { attachExternalLinkHandler } from "./external-link";
 import { isNativeWindowActive, spawnNativeWindow } from "./native-windows-bridge";
 import {
   callWindow,
@@ -109,6 +109,23 @@ export function createLazyReactChatWindowHandle(
   };
 }
 
+// Electron 44 新增 WindowStatePersistence；本地 43 垫片声明（升级 44 后冗余无害）
+declare namespace Electron {
+  interface WindowStatePersistence {
+    bounds: boolean;
+    displayMode: boolean;
+  }
+}
+
+export function persistedWindowState(
+  name: string,
+  enabled: boolean,
+): { name?: string; windowStatePersistence?: Electron.WindowStatePersistence } {
+  return enabled
+    ? { name, windowStatePersistence: { bounds: true, displayMode: false } }
+    : {};
+}
+
 /**
  * 创建/复用 React 聊天窗口壳。
  * 只构造 BrowserWindow 对象并登记全局状态，禁止调用 loadURL/loadFile ——
@@ -148,9 +165,6 @@ export function createReactChatWindowShell(): BrowserWindow {
   });
   setReactChatWindow(window);
 
-  // 聊天窗口内出现外链（如插件收录仓库）时转交系统浏览器打开，不再派生新窗口
-  attachExternalLinkHandler(window);
-
   window.webContents.on("did-start-loading", () => {
     reactChatSession.markLoading();
   });
@@ -177,7 +191,7 @@ export function loadReactChatWindowPage(window: BrowserWindow, sessionId?: strin
   //   t0 load 开始 → t1 dom-ready → t2 did-finish-load → t3 渲染层 CHATS_REACT_READY
   // 渲染层脚本初始化耗时（t2→t3）+ 加载耗时（t0→t2）分段定位卡在哪段。
   const t0 = Date.now();
-  const once = (wc: Electron.WebContents): void => {
+  const once = (wc: import("electron").WebContents): void => {
     wc.once("dom-ready", () => {
       console.info(`[ChatPerf] dom-ready +${Date.now() - t0}ms`);
     });
@@ -367,7 +381,9 @@ export function createSettingsWindow(section?: string): void {
   const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
   const width = 1060;
   const height = 920;
+  const rememberWindowState = loadGeneralSettings().rememberWindowState;
   const window = new BrowserWindow({
+    ...persistedWindowState("cyrene.settings", rememberWindowState),
     x: dx + Math.max(0, Math.floor((dw - width) / 2)),
     y: dy + Math.max(0, Math.floor((dh - height) / 2)),
     width,
@@ -390,9 +406,7 @@ export function createSettingsWindow(section?: string): void {
   });
   setSettingsWindow(window);
 
-  attachExternalLinkHandler(window);
 
-  // 保留不动（设置窗路径）
   const hash = section ? `#${section}` : "";
   if (isDev) {
     window.loadURL("http://localhost:5173/settings/" + hash);

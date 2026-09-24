@@ -27,6 +27,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * 插件管理窗动态启停。
    */
   pluginRuntimeEnabled?: boolean;
+  /** 助手气泡（上游字段，facade 归一化引用）。 */
+  assistantBubbleEnabled: boolean;
+  /** 记住设置与音乐窗口的位置和大小（上游 2026-09-24 新增）。 */
+  rememberWindowState: boolean;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
   maxParallelToolCalls: number;
   citaEnabled: boolean;

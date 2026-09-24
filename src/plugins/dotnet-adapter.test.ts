@@ -92,7 +92,7 @@ describe("DotnetPluginAdapter", () => {
 
     fake.emitLine(JSON.stringify({
       op: "ready",
-      tools: [{ id: "greet", name: "问候", description: "d", inputSchema: { type: "object", properties: {} } }],
+      tools: [{ id: "greet", name: "问候", description: "d", inputSchema: { type: "object", properties: {} }, risk: "safe" }],
     }));
     await pending;
 

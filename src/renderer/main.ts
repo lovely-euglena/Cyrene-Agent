@@ -1,6 +1,7 @@
 import { Live2DManager } from "./live2d/manager";
 import "./ui/theme";
 import { InteractionController } from "./live2d/interaction";
+import { BlinkController } from "./live2d/blink";
 import { MouseFocusController } from "./live2d/focus";
 import { ExpressionResetController } from "./live2d/expression-reset";
 import { MouthSyncController } from "./live2d/mouth-sync";
@@ -46,6 +47,7 @@ let interaction: InteractionController | null = null;
 let focus: MouseFocusController | null = null;
 let expressionReset: ExpressionResetController | null = null;
 let mouthSync: MouthSyncController | null = null;
+let blink: BlinkController | null = null;
 let speakingMotion: SpeakingMotionController | null = null;
 let clickThrough: ClickThroughController | null = null;
 let petZoomOff: (() => void) | null = null;
@@ -80,6 +82,7 @@ const manager = new Live2DManager({
 
     expressionReset = new ExpressionResetController(model);
     mouthSync = new MouthSyncController(model);
+    blink = new BlinkController(model);
     speakingMotion = new SpeakingMotionController(model);
     const speechOffs: Array<() => void> = [];
     speechOffs.push(
@@ -187,6 +190,8 @@ addTrackedEventListener(window, "window:resize", "resize", () => {
 
 window.addEventListener("beforeunload", () => {
   expressionReset?.dispose();
+  blink?.dispose();
+  blink = null;
   expressionReset = null;
   for (const off of live2dSpeechOffs) off();
   live2dSpeechOffs = [];

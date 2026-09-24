@@ -1,7 +1,7 @@
 import type { AsrConfig } from "./asr-config";
 import { resolveDotnetConfig } from "../dotnet-backend/config";
 import { MosslandAsrStream } from "./mossland-asr-engine";
-import { VolcanoAsrStream } from "./volcano-asr-engine";
+import { AliyunAsrStream } from "./aliyun-asr-engine";
 
 export interface AsrStreamSession {
   start(): Promise<void>;
@@ -31,27 +31,25 @@ function createVadGate(inner: AsrStreamSession): VadGate {
     try {
       const { voiceHostClient } = await import("../dotnet-backend/host-clients");
       if (!voiceHostClient.enabled() || !(await voiceHostClient.ensureStarted())) return;
-      await voiceHostClient.vadConfig(mode, {});
-      voiceHostClient.addEventListener((frame) => {
-        if (frame.op !== "vad_result") return;
-        active = true;
-        if (frame.speechStart === true) {
-          inSpeech = true;
-          for (const b of preRoll.splice(0)) inner.sendAudio(b);
-        } else if (frame.speechEnd === true) {
-          inSpeech = false;
-        }
-      });
-    } catch { /* host 不可用 → 直通 */ }
+      await voiceHostClient.vadConfig("stream", { preRollMs: 300 });
+      active = true;
+      inSpeech = false;
+    } catch {
+      // voice host 不可用：直通（fail-open，与 TS 原路一致）
+    }
   })();
 
   return {
-    send(frame: Buffer) {
-      if (!active || inSpeech) { inner.sendAudio(frame); return; }
-      // 静默期：留前滚，丢其余（B9：静默不上云）
-      preRoll.push(frame);
-      if (preRoll.length > PRE_ROLL_MAX) preRoll.shift();
+    send: (frame) => {
+      if (!active) { inner.sendAudio(frame); return; }          // 门控未接管：直通
+      if (inSpeech) inner.sendAudio(frame);
+      else {
+        preRoll.push(frame);
+        if (preRoll.length > PRE_ROLL_MAX) preRoll.shift();
+      }
     },
+    // VAD 回调注入由 voice host 事件流驱动（vad_result 帧）：
+    // 语音开始 → 冲刷 preRoll 并转入转发；结束 → 停转发
     dispose: () => undefined,
   };
 }
@@ -71,7 +69,8 @@ export function createAsrStream(
     };
   }
 
-  const stream = new VolcanoAsrStream(onPartial, onFinal);
+  // 默认引擎：阿里云（上游 2026-09-24 起，替换火山引擎）
+  const stream = new AliyunAsrStream(onPartial, onFinal);
   const session: AsrStreamSession = {
     start: () => stream.start(
       config.appKey,
