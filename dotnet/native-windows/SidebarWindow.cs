@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -46,7 +47,7 @@ public sealed class SidebarWindow : NativeWindow
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) }); // titlebar
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) }); // 底部按钮排
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(68) }); // 底部按钮排
         // 顶部高光覆盖层（不参与命中测试，纯装饰），置于内容之下
         var highlight = new Border
         {
@@ -134,22 +135,24 @@ public sealed class SidebarWindow : NativeWindow
         Grid.SetRow(body, 1);
         grid.Children.Add(body);
 
-        // ── 底部：打开聊天 / 语音 ──
-        var footer = new StackPanel
+        // ── 底部：打开聊天 / 语音通话 / 设置（等宽铺满，旧版按钮为整行大按钮） ──
+        var footer = new UniformGrid
         {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            Columns = 3,
+            Margin = new Thickness(12, 0, 12, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var chatBtn = MakePillButton("打开聊天");
+        var chatBtn = MakePillButton("打开聊天", large: true);
         chatBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openChat");
-        var callBtn = MakePillButton("语音通话");
+        var callBtn = MakePillButton("语音通话", large: true);
         callBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openCall");
-        var settingsBtn = MakePillButton("设置");
+        var settingsBtn = MakePillButton("设置", large: true);
         settingsBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings");
-        footer.Children.Add(chatBtn);
-        footer.Children.Add(callBtn);
-        footer.Children.Add(settingsBtn);
+        foreach (var (btn, isLast) in new[] { (chatBtn, false), (callBtn, false), (settingsBtn, true) })
+        {
+            btn.Margin = new Thickness(0, 0, isLast ? 0 : 8, 0);
+            footer.Children.Add(btn);
+        }
         Grid.SetRow(footer, 2);
         grid.Children.Add(footer);
 
@@ -264,32 +267,46 @@ public sealed class SidebarWindow : NativeWindow
         return btn;
     }
 
-    private static System.Windows.Controls.Button MakePillButton(string text)
+    private static System.Windows.Controls.Button MakePillButton(string text, bool large = false)
     {
-        var btn = new Button
-        {
-            Content = text,
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2)),
-            Background = new SolidColorBrush(Color.FromArgb(0x2E, 0xC9, 0x8C, 0xFF)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xE4, 0x99, 0xFF)),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(14, 6, 14, 6),
-            Cursor = Cursors.Hand,
-        };
-        var template = new ControlTemplate(typeof(Button));
-        var border = new FrameworkElementFactory(typeof(Border));
+        var normalFill = new SolidColorBrush(Color.FromArgb(0x2E, 0xC9, 0x8C, 0xFF));
+        var normalBorder = new SolidColorBrush(Color.FromArgb(0x40, 0xE4, 0x99, 0xFF));
+        var hoverFill = new SolidColorBrush(Color.FromArgb(0x52, 0xC9, 0x8C, 0xFF));
+        var hoverBorder = new SolidColorBrush(Color.FromArgb(0x80, 0xE4, 0x99, 0xFF));
+        var pressedFill = new SolidColorBrush(Color.FromArgb(0x6E, 0xB8, 0x6C, 0xFF));
+
+        var style = new Style(typeof(System.Windows.Controls.Button));
+        style.Setters.Add(new Setter(Button.ForegroundProperty, new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2))));
+        // 底部三个主操作按钮加大：与旧版整行按钮的体量对齐
+        style.Setters.Add(new Setter(Button.FontSizeProperty, large ? 14.0 : 12.0));
+        style.Setters.Add(new Setter(Button.MinHeightProperty, large ? 40.0 : 28.0));
+        style.Setters.Add(new Setter(Button.PaddingProperty, large ? new Thickness(12, 9, 12, 9) : new Thickness(14, 6, 14, 6)));
+        style.Setters.Add(new Setter(Button.CursorProperty, Cursors.Hand));
+        style.Setters.Add(new Setter(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
+        style.Setters.Add(new Setter(Button.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+
+        var template = new ControlTemplate(typeof(System.Windows.Controls.Button));
+        var border = new FrameworkElementFactory(typeof(Border), "pill");
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
-        border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(0x2E, 0xC9, 0x8C, 0xFF)));
-        border.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(0x40, 0xE4, 0x99, 0xFF)));
+        border.SetValue(Border.BackgroundProperty, normalFill);
+        border.SetValue(Border.BorderBrushProperty, normalBorder);
         border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
         presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
         presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
         border.AppendChild(presenter);
         template.VisualTree = border;
-        btn.Template = template;
-        return btn;
+
+        var hover = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, hoverFill) { TargetName = "pill" });
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, hoverBorder) { TargetName = "pill" });
+        template.Triggers.Add(hover);
+        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
+        pressed.Setters.Add(new Setter(Border.BackgroundProperty, pressedFill) { TargetName = "pill" });
+        template.Triggers.Add(pressed);
+
+        style.Setters.Add(new Setter(Button.TemplateProperty, template));
+        return new System.Windows.Controls.Button { Content = text, Style = style };
     }
 
     /// <summary>粉紫玻璃底：直接返回线性渐变笔刷（不再包 VisualBrush——分离
