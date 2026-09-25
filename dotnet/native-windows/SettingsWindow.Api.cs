@@ -81,12 +81,16 @@ public sealed partial class SettingsWindow
         var displayNameBox = MakeApiTextBox(form.DisplayName);
         var apiKeyBox = MakeApiPasswordBox(form.ApiKey);
         var baseUrlBox = MakeApiTextBox(form.BaseUrl);
-        var modelCombo = new ComboBox
+        var modelBox = MakeApiTextBox(form.Model);
+        // 模型候选用「非可编辑下拉 + 文本框」组合：可编辑 ComboBox 的模板过于复杂，
+        // 且系统默认样式与主题不搭（原实现是 IsEditable=true 的裸 ComboBox）
+        var modelCandidates = new ComboBox { Width = 260, FontSize = 12 };
+        modelCandidates.SelectionChanged += (_, _) =>
         {
-            Width = 260,
-            FontSize = 12,
-            IsEditable = true,
-            Text = form.Model,
+            if (modelCandidates.SelectedItem is string candidate && candidate.Length > 0)
+            {
+                modelBox.Text = candidate;
+            }
         };
         var contextBox = MakeApiTextBox(form.ContextWindow.ToString());
         contextBox.Width = 120;
@@ -116,7 +120,8 @@ public sealed partial class SettingsWindow
 
         void FillModelCandidates(string provider)
         {
-            modelCombo.Items.Clear();
+            modelCandidates.Items.Clear();
+            modelCandidates.SelectedIndex = -1;
             foreach (var preset in visiblePresets)
             {
                 if (GetString(preset, "provider") != provider) continue;
@@ -124,7 +129,7 @@ public sealed partial class SettingsWindow
                 if (models.ValueKind != JsonValueKind.Array) break;
                 foreach (var model in models.EnumerateArray())
                 {
-                    if (model.ValueKind == JsonValueKind.String) modelCombo.Items.Add(model.GetString());
+                    if (model.ValueKind == JsonValueKind.String) modelCandidates.Items.Add(model.GetString());
                 }
                 break;
             }
@@ -267,7 +272,8 @@ public sealed partial class SettingsWindow
         panel.Children.Add(MakeLabeledApi("API Key", apiKeyBox));
         panel.Children.Add(MakeLabeledApi("Base URL", baseUrlBox));
         panel.Children.Add(MakeLabeledApi("API 协议", transportCombo));
-        panel.Children.Add(MakeLabeledApi("模型名", modelCombo));
+        panel.Children.Add(MakeLabeledApi("模型名", modelBox));
+        panel.Children.Add(MakeLabeledApi("常用模型", modelCandidates));
         panel.Children.Add(MakeLabeledApi("上下文窗口（Token）", contextBox));
         var testTimeoutBox = MakeApiTextBox(GetInt(config, "testTimeout", 15000).ToString());
         testTimeoutBox.Width = 120;
@@ -321,7 +327,7 @@ public sealed partial class SettingsWindow
             form.DisplayName = displayNameBox.Text.Trim();
             form.ApiKey = apiKeyBox.Password.Trim();
             form.BaseUrl = baseUrlBox.Text.Trim();
-            form.Model = (modelCombo.Text ?? "").Trim();
+            form.Model = modelBox.Text.Trim();
             form.Transport = transportCombo.SelectedIndex switch { 1 => "anthropic", 2 => "responses", _ => "openai" };
             form.ContextWindow = int.TryParse(contextBox.Text.Trim(), out var context) ? Math.Max(4096, context) : 256000;
             form.Multimodal = multimodalBox.IsChecked == true;
@@ -374,7 +380,7 @@ public sealed partial class SettingsWindow
                 {
                     ["provider"] = form.Provider,
                     ["baseUrl"] = baseUrlBox.Text.Trim(),
-                    ["model"] = (modelCombo.Text ?? "").Trim(),
+                    ["model"] = modelBox.Text.Trim(),
                     ["apiKey"] = apiKeyBox.Password.Trim(),
                     ["transport"] = transportCombo.SelectedIndex switch { 1 => "anthropic", 2 => "responses", _ => "openai" },
                 },

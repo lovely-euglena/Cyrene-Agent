@@ -193,6 +193,28 @@ public sealed partial class SettingsWindow : NativeWindow
     private void BuildSections(StackPanel nav)
     {
         var navStyle = BuildNavItemStyle();
+        // 导航头部品牌行（logo + 昔涟）——对齐 Electron 设置页 settings-nav__brand
+        var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 2, 8, 10) };
+        var brandLogo = new Image
+        {
+            Width = 22,
+            Height = 22,
+            Stretch = Stretch.Uniform,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var brandSource = TryLoadAssetImage(Path.Combine("icons", "settings-logo.png"));
+        if (brandSource is not null) brandLogo.Source = brandSource;
+        brand.Children.Add(brandLogo);
+        brand.Children.Add(new TextBlock
+        {
+            Text = "昔涟",
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+        nav.Children.Add(brand);
         void AddSection(string id, string label, bool native, string? legacyHash = null, bool pluginManager = false)
         {
             var btn = new RadioButton
@@ -363,24 +385,87 @@ public sealed partial class SettingsWindow : NativeWindow
         return panel;
     }
 
-    /// <summary>桌面图标二选一（绮梦/晴光）；点击本地高亮 + 写设置。</summary>
+    /// <summary>桌面图标二选一（绮梦/晴光）：显示预设图片，选中带粉色描边。</summary>
     private FrameworkElement MakeUiIconRow(string current)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
         var selected = current == "cyrene-pink" ? "cyrene-pink" : "cyrene-sun";
-        Button? pinkBtn = null;
-        Button? sunBtn = null;
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
+        Border? pinkTile = null;
+        Border? sunTile = null;
         void Refresh()
         {
-            if (pinkBtn is not null) pinkBtn.Style = selected == "cyrene-pink" ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle;
-            if (sunBtn is not null) sunBtn.Style = selected == "cyrene-sun" ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle;
+            if (pinkTile is not null)
+            {
+                pinkTile.BorderBrush = selected == "cyrene-pink" ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush;
+                pinkTile.BorderThickness = new Thickness(selected == "cyrene-pink" ? 2 : 1);
+            }
+            if (sunTile is not null)
+            {
+                sunTile.BorderBrush = selected == "cyrene-sun" ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush;
+                sunTile.BorderThickness = new Thickness(selected == "cyrene-sun" ? 2 : 1);
+            }
         }
-        pinkBtn = MakeButton("绮梦", () => { selected = "cyrene-pink"; SetSetting("uiIcon", selected); Refresh(); }, minWidth: 96);
-        sunBtn = MakeButton("晴光", () => { selected = "cyrene-sun"; SetSetting("uiIcon", selected); Refresh(); }, minWidth: 96);
+        Border MakeTile(string id, string label)
+        {
+            var content = new StackPanel { Orientation = Orientation.Vertical, Width = 64 };
+            var image = new Image { Width = 40, Height = 40, Stretch = Stretch.Uniform };
+            var source = TryLoadAssetImage(Path.Combine("icons", $"{id}.png"));
+            if (source is not null) image.Source = source;
+            content.Children.Add(image);
+            content.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 11,
+                Foreground = NativeTheme.TextMutedBrush,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+            var tile = new Border
+            {
+                Child = content,
+                CornerRadius = new CornerRadius(10),
+                Background = Brushes.White,
+                BorderBrush = NativeTheme.BorderSoftBrush,
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 0, 10, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+            };
+            tile.MouseLeftButtonUp += (_, _) =>
+            {
+                selected = id;
+                SetSetting("uiIcon", id);
+                Refresh();
+            };
+            return tile;
+        }
+        pinkTile = MakeTile("cyrene-pink", "绮梦");
+        sunTile = MakeTile("cyrene-sun", "晴光");
         Refresh();
-        row.Children.Add(pinkBtn);
-        row.Children.Add(sunBtn);
+        row.Children.Add(pinkTile);
+        row.Children.Add(sunTile);
         return MakeRow("桌面图标", row);
+    }
+
+    /** 从 assets 目录加载图片（缺失返回 null，UI 退化为无图）。 */
+    private static ImageSource? TryLoadAssetImage(string relativePath)
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "assets", relativePath);
+            if (!File.Exists(path)) return null;
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.UriSource = new Uri(path);
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>界面字体：显示当前字体 + 导入/恢复默认（宿主弹文件框，native 不传路径）。</summary>
@@ -471,8 +556,20 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakeHeader("关于"));
-        panel.Children.Add(MakeHint("Cyrene · 桌面伴侣"));
-        panel.Children.Add(MakeHint($"版本：{GetString("version", "未知")}（原生设置窗）"));
+        // 应用图标 + 品牌行（对齐 Electron 设置页导航头部的 logo/标语）
+        var logo = new Image
+        {
+            Width = 64,
+            Height = 64,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 4, 0, 8),
+        };
+        var logoSource = TryLoadAssetImage(Path.Combine("icons", "cyrene-pink.png"));
+        if (logoSource is not null) logo.Source = logoSource;
+        panel.Children.Add(logo);
+        panel.Children.Add(MakeHint("昔涟 · 轻量情感陪伴桌面 Agent"));
+        panel.Children.Add(MakeHint($"版本：v{GetString("version", "未知")}"));
         panel.Children.Add(MakeHint($"cyrene-native 运行时：.NET {Environment.Version}"));
         panel.Children.Add(MakeHint("协议：stdio 帧（与宿主同链路）"));
         return panel;

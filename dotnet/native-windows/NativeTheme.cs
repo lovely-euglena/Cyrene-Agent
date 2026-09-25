@@ -461,6 +461,92 @@ public static class NativeTheme
         return bar;
     }
 
+    private static readonly System.Lazy<Style> ComboBoxLazy = new(() => Parse("""
+<Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ComboBox">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="MinHeight" Value="32"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="ComboBox">
+        <Grid>
+          <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press"
+                        IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+            <ToggleButton.Template>
+              <ControlTemplate TargetType="ToggleButton">
+                <Border x:Name="bd" CornerRadius="8" Background="White" BorderBrush="#D2D2D7" BorderThickness="1">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*"/>
+                      <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ContentPresenter Grid.Column="0" Margin="11,0,6,0" VerticalAlignment="Center"
+                                      Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                      ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
+                    <TextBlock Grid.Column="1" Text="⌄" FontSize="13" Margin="0,0,11,0"
+                               VerticalAlignment="Center" Foreground="#6F6876"/>
+                  </Grid>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+                  </Trigger>
+                  <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="bd" Property="BorderBrush" Value="#FF5B8A"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </ToggleButton.Template>
+          </ToggleButton>
+          <Popup x:Name="PART_Popup" AllowsTransparency="True" Placement="Bottom" Focusable="False"
+                 IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Slide">
+            <Border Background="White" BorderBrush="#D2D2D7" BorderThickness="1" CornerRadius="8"
+                    Margin="0,4,0,0" MinWidth="{TemplateBinding ActualWidth}"
+                    MaxHeight="{TemplateBinding MaxDropDownHeight}">
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+              </ScrollViewer>
+            </Border>
+          </Popup>
+        </Grid>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    private static readonly System.Lazy<Style> ComboBoxItemLazy = new(() => Parse("""
+<Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ComboBoxItem">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="Foreground" Value="#2C2C2E"/>
+  <Setter Property="Padding" Value="10,7"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="ComboBoxItem">
+        <Border x:Name="bd" CornerRadius="6" Background="Transparent" Margin="4,2" Padding="{TemplateBinding Padding}">
+          <ContentPresenter VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsHighlighted" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#FFECF2"/>
+          </Trigger>
+          <Trigger Property="IsSelected" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#F0EFF5"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
     public static Style TextBoxStyle => TextBoxLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;
@@ -470,6 +556,8 @@ public static class NativeTheme
     public static Style SliderStyle => SliderLazy.Value;
     public static Style NavItemStyle => NavItemLazy.Value;
     public static Style FlatIconButtonStyle => FlatIconButtonLazy.Value;
+    public static Style ComboBoxStyle => ComboBoxLazy.Value;
+    public static Style ComboBoxItemStyle => ComboBoxItemLazy.Value;
     public static Style TabItemStyle => TabItemLazy.Value;
     public static Style TabControlStyle => TabControlLazy.Value;
 
@@ -484,5 +572,9 @@ public static class NativeTheme
         window.Resources[typeof(Slider)] = SliderStyle;
         window.Resources[typeof(TabItem)] = TabItemStyle;
         window.Resources[typeof(TabControl)] = TabControlStyle;
+        // ComboBox 模板仅支持非可编辑模式（可编辑下拉需 PART_EditableTextBox 特殊处理，
+        // 代码库中的可编辑模型下拉已改为「文本框 + 建议下拉」组合）
+        window.Resources[typeof(ComboBox)] = ComboBoxStyle;
+        window.Resources[typeof(ComboBoxItem)] = ComboBoxItemStyle;
     }
 }

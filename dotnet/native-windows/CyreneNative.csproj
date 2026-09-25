@@ -27,6 +27,7 @@
     <!-- 状态/心情图标：sidebar 窗口按名加载 -->
     <Content Include="assets\status\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets\feeling\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\icons\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets\loading.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
