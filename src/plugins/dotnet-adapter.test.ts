@@ -645,4 +645,43 @@ describe("DotnetPluginAdapter", () => {
     expect(unknown.ok).toBe(false);
     expect(unknown.code).toBeUndefined();
   });
+
+  it("deps.llm 选项白名单化（signal 不外传）；scheduler limit 原样交给宿主校验", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const fakeCtx = makeCtx();
+    const seen: unknown[] = [];
+    fakeCtx.deps.llm = {
+      generateText: async (_messages: unknown, options: unknown) => {
+        seen.push(["llm", options]);
+        return "ok";
+      },
+    };
+    fakeCtx.deps.scheduler = {
+      getHistory: async (taskId: string, limit?: number) => {
+        seen.push(["history", taskId, limit]);
+        return [];
+      },
+    };
+    const pendingRegister = adapter.register(fakeCtx.ctx);
+    fake.emitLine(readyFrameV2());
+    await pendingRegister;
+
+    // signal 是进程内对象：必须被丢弃而不是透传；未知字段（temperature）静默降级
+    const llm = await pluginCall(fake, "e1", "deps.llm.generateText", {
+      messages: [{ role: "user", content: "hi" }],
+      options: { maxTokens: 4, signal: { aborted: false }, temperature: 9 },
+    });
+    expect(llm).toMatchObject({ ok: true, data: "ok" });
+
+    // 非整数 limit 不做本地截断：宿主按 Node 语义回 E_INVALID_ARGUMENT
+    const history = await pluginCall(fake, "e2", "deps.scheduler.getHistory", { taskId: "t1", limit: 1.5 });
+    expect(history).toMatchObject({ ok: true, data: [] });
+
+    expect(seen).toEqual([
+      ["llm", { maxTokens: 4 }],
+      ["history", "t1", 1.5],
+    ]);
+  });
 });

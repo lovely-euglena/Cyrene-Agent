@@ -174,13 +174,17 @@ var binding = await Deps.Workspace.GetBindingAsync(conversationId);
 await Deps.Scheduler.CreateTaskAsync(new ScheduledTaskInput
 {
     Title = "每日提醒", Schedule = ScheduleConfig.Daily("09:00"),
-    Prompt = "提醒我今天的安排", Mode = "work", AllowedToolIds = ["builtin_calendar"],
+    Prompt = "提醒我今天的安排", Mode = "work", AllowedToolIds = ["read_file"],
 });
 
 // 渠道发现
 var hasFeishu = await Deps.Channels.HasAsync("feishu");
 ```
 
+> `deps.llm.generateText` 的 `TimeoutMs` 上限 300s，与工具调用兜底超时同量级；长任务请把
+> `TimeoutMs` 控制在兜底超时以内（默认 300s，可用 `CYRENE_PLUGIN_INVOKE_TIMEOUT_MS` 调整），
+> 否则宿主会先按超时取消在途工具调用。
+>
 > `deps.llm.runGoal`（无头目标循环）尚未开放；渠道 adapter / 语音输入租约规划中。
 
 ### open（自有窗口）
@@ -299,7 +303,7 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 - 可选属性 `Risk`：风险级 `safe | fs-read | fs-write | shell | network | input-control`，
   透传给宿主权限策略（Permission Policy）参与审批分级；**写文件/执行命令/联网的工具
   务必显式声明**，缺省按 `safe` 处理（不触发对应审批）
-- 返回值序列化为 JSON 回传；抛异常自动转 `ok:false`
+- 返回值序列化为 JSON 回传（命名类型属性按 camelCase 输出，与 Node 轨 JSON 风格一致）；抛异常自动转 `ok:false`
 - 支持 static 方法（工具方法无需实例状态时）
 
 ## 与 Node 插件的能力对照

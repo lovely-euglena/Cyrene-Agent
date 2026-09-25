@@ -214,6 +214,37 @@ function parseLlmMessages(value: unknown): PluginLlmMessage[] {
   });
 }
 
+/**
+ * deps.llm.generateText 选项白名单：JSON 桥只接受可序列化字段，
+ * signal（Node 轨进程内专用）等未知字段一律丢弃——新 SDK 的选项
+ * 在旧宿主上降级为默认值，而不是把非法对象喂给宿主服务。
+ */
+function parseLlmOptions(value: unknown): PluginLlmGenerateOptions | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new Error("deps.llm.generateText 的 options 需要对象");
+  const options: PluginLlmGenerateOptions = {};
+  const maxTokens = value.maxTokens;
+  if (maxTokens !== undefined) {
+    if (typeof maxTokens !== "number" || !Number.isInteger(maxTokens)) {
+      throw new Error("deps.llm.generateText 的 maxTokens 必须是整数");
+    }
+    options.maxTokens = maxTokens;
+  }
+  const timeoutMs = value.timeoutMs;
+  if (timeoutMs !== undefined) {
+    if (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs)) {
+      throw new Error("deps.llm.generateText 的 timeoutMs 必须是整数");
+    }
+    options.timeoutMs = timeoutMs;
+  }
+  const purpose = value.purpose;
+  if (purpose !== undefined) {
+    if (typeof purpose !== "string") throw new Error("deps.llm.generateText 的 purpose 必须是字符串");
+    options.purpose = purpose;
+  }
+  return Object.keys(options).length > 0 ? options : undefined;
+}
+
 export interface DotnetPluginAdapterHooks {
   /** 进程意外退出（非 shutdown）：上层据此更新插件状态与错误信息 */
   onUnexpectedExit?: (pluginId: string, message: string) => void;
@@ -857,8 +888,7 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       case "deps.llm.generateText": {
         const llm = this.requireDep("llm");
         const messages = parseLlmMessages(params.messages);
-        const options = isRecord(params.options) ? (params.options as PluginLlmGenerateOptions) : undefined;
-        return llm.generateText(messages, options);
+        return llm.generateText(messages, parseLlmOptions(params.options));
       }
       case "deps.secrets.get": {
         const value = await this.requireDep("secrets").get(requireStringParam(params.key, "deps.secrets.get 的 key"));
@@ -908,9 +938,8 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         );
       }
       case "deps.scheduler.getHistory": {
-        const limit = typeof params.limit === "number" && Number.isFinite(params.limit)
-          ? Math.trunc(params.limit)
-          : undefined;
+        // limit 原样透传：非整数由宿主按 Node 语义回 E_INVALID_ARGUMENT，不做本地截断
+        const limit = params.limit === undefined ? undefined : (params.limit as number);
         return this.requireDep("scheduler").getHistory(
           requireStringParam(params.taskId, "deps.scheduler.getHistory 的 taskId"),
           limit,

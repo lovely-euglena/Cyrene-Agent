@@ -5,7 +5,8 @@ namespace HelloDotnet;
 
 /// <summary>
 /// 最小 dotnet 插件示例，同时是文档与协议自测的回归夹具：
-/// 同步 object / async Task&lt;T&gt; / 取消 / IPC / 提示词 Provider / 事件 / 私有存储。
+/// 同步 object / async Task&lt;T&gt; / 取消 / IPC / 提示词 Provider / 事件 / 私有存储 /
+/// 宿主服务（deps）/ 命名类型序列化约定。
 /// </summary>
 public sealed class HelloPlugin : CyrenePluginBase
 {
@@ -138,5 +139,15 @@ public sealed class HelloPlugin : CyrenePluginBase
         {
             return new { code = ex.Code };
         }
+    }
+
+    /// <summary>序列化约定回归用例：命名类型返回值按 camelCase 字段回传（与 Node 轨 JSON 风格一致）。</summary>
+    [CyreneTool("shape_probe", "形状探针", "验证命名类型结果 camelCase 序列化（协议自测）")]
+    public object ShapeProbe(JsonElement args) => new ShapeProbeResult { OkValue = true, CountValue = 3 };
+
+    private sealed class ShapeProbeResult
+    {
+        public bool OkValue { get; init; }
+        public int CountValue { get; init; }
     }
 }

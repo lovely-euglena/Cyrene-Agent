@@ -7,7 +7,8 @@
 //      host→plugin call（ipc.dispatch / prompt.provide / plugin.open）、
 //      plugin→host call（events.emit：工具与事件处理两条路径）、
 //      notify event.deliver 投递、私有 KV 跨会话持久化、
-//      deps.* 直通（channels/llm/secrets/workspace/conversations/scheduler）
+//      deps.* 直通（channels/llm/secrets/workspace/conversations/scheduler）、
+//      命名类型结果 camelCase 序列化
 //   3. 宿主 cancel 帧：声明 CancellationToken 的长任务应被中止并回 ok:false
 //   4. 协议主版本不符：回 error(api_version_mismatch) 帧并退出
 //   5. 多字节/大结果分帧由宿主侧 dotnet-adapter 单测覆盖，这里只验证协议语义
@@ -248,6 +249,15 @@ try {
       fail(`错误码透传不符: ${JSON.stringify(errProbe)}`);
     }
     console.log("  · 宿主错误码透传（PluginHostException.Code）");
+
+    // 命名类型结果 camelCase 序列化（SDK JsonOptions 约定）
+    session.send({ op: "invoke", callId: "c11", tool: "shape_probe", args: {} });
+    const shape = await session.waitFor((f) => f.op === "result" && f.callId === "c11", 10_000, "shape_probe 结果");
+    if (shape.ok !== true || shape.data?.okValue !== true || shape.data?.countValue !== 3
+      || Object.prototype.hasOwnProperty.call(shape.data ?? {}, "OkValue")) {
+      fail(`命名类型序列化不符: ${JSON.stringify(shape)}`);
+    }
+    console.log("  · 命名类型结果 camelCase 序列化");
 
     await session.stop();
     console.log("  · 私有 KV 写入/读取");
