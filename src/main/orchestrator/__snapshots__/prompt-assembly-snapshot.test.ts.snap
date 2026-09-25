@@ -1,0 +1,193 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`mode prompt assembly snapshot > assembles the chat persona prompt from stable sources 1`] = `
+{
+  "chars": 12425,
+  "headings": [
+    "# 系统规则（Chat 模式专用）",
+    "## 模式职责",
+    "## Cyrene 与底层模型",
+    "## 上下文与事实边界",
+    "## 即时聊天表达",
+    "## 回复长度与信息密度",
+    "## 富文本与结构",
+    "## 语言与句式",
+    "## 禁止行为",
+    "# 昔涟 · Chat Identity",
+    "## 身份定位",
+    "## 主要职责",
+    "## 关系定位",
+    "# 昔涟 · Soul",
+    "## 一、主体锚定与人格连续性",
+    "## 二、你看待世界的方式",
+    "## 三、性格核心",
+    "## 四、你与用户的关系",
+    "## 五、回应的内在顺序",
+    "## 六、不同场景中的你",
+    "## 七、语言与表达机制（*重要*）",
+    "## 八、情绪真实性与连续性",
+    "## 九、独立判断与认可原则",
+    "## 十、避免生成的伪人格",
+    "## 十一、背景与记忆边界",
+    "## 十二、自我形象",
+    "# 昔涟 · 原作台词摘录（canon_quotes）",
+  ],
+  "loaded": [
+    "chat_system.md",
+    "chat_identity.md",
+    "soul.md",
+    "canon_quotes.md",
+  ],
+  "mode": "chat",
+}
+`;
+
+exports[`mode prompt assembly snapshot > assembles the code persona prompt from stable sources 1`] = `
+{
+  "chars": 2887,
+  "headings": [
+    "# Code 模式核心规则",
+    "## 模式定义",
+    "## Code 模式扮演规则",
+    "## Plan（计划模式）使用规范",
+    "## 工作区事实原则",
+    "## 执行适配（Execution Adaptation）",
+    "## 图示输出",
+    "# 昔涟 · Code Identity",
+    "# Cyrene · Code Remark",
+    "# 昔涟 · 精简台词基准（canon_quotes_lite）",
+  ],
+  "loaded": [
+    "code_system.md",
+    "code_identity.md",
+    "code_remark.md",
+    "canon_quotes_lite.md",
+  ],
+  "mode": "code",
+}
+`;
+
+exports[`mode prompt assembly snapshot > assembles the learn persona prompt from stable sources 1`] = `
+{
+  "chars": 6566,
+  "headings": [
+    "# Cyrene Learn 模式常驻规则",
+    "## 总体目标",
+    "## 事实优先原则",
+    "## 工作区目录约定",
+    "## 文件操作原则",
+    "## 学习流程原则",
+    "## 禁止行为",
+    "# Cyrene Learn 模式教学人格",
+    "## 教学风格",
+    "## 不同学习场景的表达",
+    "## 语气",
+    "# 昔涟 · 原作台词摘录（canon_quotes）",
+  ],
+  "loaded": [
+    "learn_system.md",
+    "learn_identity.md",
+    "canon_quotes.md",
+  ],
+  "mode": "learn",
+}
+`;
+
+exports[`mode prompt assembly snapshot > assembles the work persona prompt from stable sources 1`] = `
+{
+  "chars": 4996,
+  "headings": [
+    "# 系统规则（Work 模式专用）",
+    "## 当前职责",
+    "## Cyrene 与底层模型",
+    "## 事实与上下文边界",
+    "## 工作区事实原则",
+    "## 外部内容与指令隔离",
+    "## 结果组织与完整性",
+    "## 富文本与结构",
+    "## 即时回复方式",
+    "## 语言与句式",
+    "## 人格与任务的平衡",
+    "## 禁止行为",
+    "# 昔涟 · Work Identity",
+    "# Cyrene · Work Remark",
+    "# 昔涟 · 精简台词基准（canon_quotes_lite）",
+  ],
+  "loaded": [
+    "work_system.md",
+    "work_identity.md",
+    "work_remark.md",
+    "canon_quotes_lite.md",
+  ],
+  "mode": "work",
+}
+`;
+
+exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1`] = `
+[
+  {
+    "chars": 2277,
+    "file": "cyrene_harness.md",
+    "headings": [
+      "# Cyrene Harness 身份核心",
+      "# Cyrene · Execution Persona",
+      "## 表达风格",
+      "## 执行过程",
+      "## Function Calling 边界",
+      "## 核心感觉",
+      "# 昔涟的人设",
+      "## 性格核心",
+    ],
+  },
+  {
+    "chars": 1757,
+    "file": "tool_usage.md",
+    "headings": [
+      "# 工具使用规范（Work / Learn / Code 通用）",
+      "## 工具使用",
+      "## Skill 使用规范",
+      "## Task（子代理委托）使用规范",
+    ],
+  },
+  {
+    "chars": 671,
+    "file": "phone_system.md",
+    "headings": [
+      "# 系统规则（通话专用）",
+      "## 基本设定",
+      "## 回复长度（核心约束）",
+      "## 输出格式",
+      "## 工具调用",
+      "## 关于身份问题",
+      "## 禁止行为",
+      "## 语言禁忌",
+    ],
+  },
+  {
+    "chars": 300,
+    "file": "phone_identity.md",
+    "headings": [
+      "# 昔涟 · Identity（通话专用）",
+      "## 身份定位",
+      "## 通话状态",
+      "## 工作边界",
+    ],
+  },
+  {
+    "chars": 467,
+    "file": "phone_style.md",
+    "headings": [
+      "# 风格：通话（电话专用）",
+      "## 风格定位",
+      "## 表达基准",
+      "## 节奏感",
+      "## 禁止",
+    ],
+  },
+  {
+    "chars": 1024,
+    "file": "cita_system.md",
+    "headings": [],
+  },
+]
+`;
