@@ -220,6 +220,6 @@ sticker-descriptions/
 
 # Cyrene agent
 .cyrene/
-dotnet/*/bin/
-dotnet/*/obj/
+dotnet/**/bin/
+dotnet/**/obj/
 scripts/diagnostics/embedding-verify-data.json
