@@ -245,8 +245,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   // ── native 设置窗 section（API/记忆/定时任务）：动作与快照数据 ──────
   // 动作层实例在 createScheduler 时建立（core 阶段早于任何 native 动作）
   let nativeSchedulerActions: ReturnType<typeof createSchedulerActions> | null = null;
-  /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖） */
-  let nativeTaskHistory: { taskId: string; rows: unknown[] } | null = null;
+  /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖）；error 为空串表示成功 */
+  let nativeTaskHistory: { taskId: string; rows: unknown[]; error: string } | null = null;
 
   const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
   const asObj = (value: unknown): Record<string, unknown> =>
@@ -259,8 +259,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     value === "openai" || value === "anthropic" || value === "responses" ? value : undefined;
 
   /** 设置窗 section 反馈（就地状态行展示，不触发 section 重建；窗未开时 no-op） */
-  const nativeNotice = (section: string, level: "ok" | "error" | "info", text: string): void => {
-    pushSettingsNoticeToNative({ section, level, text, at: Date.now() });
+  const nativeNotice = (
+    section: string,
+    level: "ok" | "error" | "info",
+    text: string,
+    data?: Record<string, unknown>,
+  ): void => {
+    pushSettingsNoticeToNative({ section, level, text, at: Date.now(), ...(data ? { data } : {}) });
   };
 
   /** 插件运行态（WPF 定时任务 section 判断"等待插件启用"） */
@@ -283,18 +288,44 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       case "save": {
         const config = asObj(payload.config);
         const vision = asObj(config.vision);
+        const profileId = asStr(config.profileId) || undefined;
+        const provider = asStr(config.provider) || loadModelSettings().provider;
+        const baseUrl = asStr(config.baseUrl);
+        const model = asStr(config.model);
+        // 宿主侧统一校验（对齐 Electron 保存前校验，WPF 不再写坏档案）
+        if (!provider || !model) {
+          nativeNotice("api", "error", "保存失败：厂商与模型名不能为空");
+          return;
+        }
+        if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+          nativeNotice("api", "error", "保存失败：Base URL 必须以 http(s):// 开头");
+          return;
+        }
         try {
+          const existing = profileId
+            ? listSavedModelProfiles(loadModelSettings()).find((profile) => profile.id === profileId)
+            : undefined;
+          const beforeIds = new Set(listSavedModelProfiles(loadModelSettings()).map((profile) => profile.id));
+          // 不丢推理偏好：payload 未带 reasoning 时保留原档案值（WPF 无该字段 UI，
+          // 旧实现重建档案时 normalizeReasoningPreference(undefined) 会把它抹掉）
+          const reasoning = config.reasoning !== undefined
+            ? (config.reasoning as Parameters<typeof saveModelProfile>[0]["reasoning"])
+            : existing?.reasoning;
           const result = saveModelProfile({
-            id: asStr(config.profileId) || undefined,
-            provider: asStr(config.provider) || loadModelSettings().provider,
+            id: profileId,
+            provider,
             displayName: asStr(config.displayName),
-            baseUrl: asStr(config.baseUrl),
-            model: asStr(config.model),
+            baseUrl,
+            model,
             apiKey: asStr(config.apiKey),
             explicitTransport: transportOf(config.transport),
             contextWindowTokens: clampInt(config.contextWindowTokens, 4096, 10_000_000) ?? undefined,
             multimodal: config.multimodal === true,
+            reasoning,
           });
+          const savedProfileId = profileId
+            ?? listSavedModelProfiles(result.settings).find((profile) => !beforeIds.has(profile.id))?.id
+            ?? "";
           saveModelSettings({
             vision: { baseUrl: asStr(vision.baseUrl), apiKey: asStr(vision.apiKey), model: asStr(vision.model) },
             thinkingOverride: config.thinkingOverride === 1 ? 1 : config.thinkingOverride === -1 ? -1 : 0,
@@ -305,6 +336,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             "api",
             result.added ? "ok" : "error",
             result.added ? "档案已保存" : "存在相同 Key/模型/BaseURL 的档案，未新增",
+            result.added && savedProfileId ? { savedProfileId } : undefined,
           );
         } catch (err) {
           nativeNotice("api", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
@@ -516,7 +548,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         const id = asStr(payload.id);
         if (!id) return;
         const result = actions.history(id, 10);
-        nativeTaskHistory = { taskId: id, rows: (result.value ?? []) as unknown[] };
+        // 读取失败也写 error：WPF 据此显示错误行（旧实现只存 rows，失败被吞成「暂无运行历史」）
+        nativeTaskHistory = {
+          taskId: id,
+          rows: (result.value ?? []) as unknown[],
+          error: result.ok ? "" : (result.error ?? "读取历史失败"),
+        };
         pushSettingsSnapshotToNative();
         return;
       }
@@ -938,7 +975,20 @@ createTray: (input) => {
               return {
                 ...base,
                 api: buildApiSectionSnapshot(modelSettings, listSavedModelProfiles(modelSettings)),
-                memory: buildMemorySectionSnapshot(await loadMemoryPanelData(), getMemoryVaultConfig()),
+                // 记忆读取失败不再让整个快照失败：带 error 键下发给 WPF 显示错误行
+                memory: await (async () => {
+                  try {
+                    return buildMemorySectionSnapshot(await loadMemoryPanelData(), getMemoryVaultConfig());
+                  } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.warn("[NativeSettings] memory snapshot failed:", message);
+                    return buildMemorySectionSnapshot(
+                      { l0: {}, l1: {}, l2: [], importedDocs: [], reflections: [] },
+                      getMemoryVaultConfig(),
+                      message,
+                    );
+                  }
+                })(),
                 tasks: buildSchedulerSectionSnapshot(
                   actions?.list().value ?? [],
                   actions?.getTools().value ?? [],

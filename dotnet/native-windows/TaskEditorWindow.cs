@@ -140,6 +140,7 @@ public sealed class TaskEditorWindow : Window
         _toolsScroll.BorderBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xEA));
         _toolsScroll.Padding = new Thickness(6);
         panel.Children.Add(_toolsScroll);
+        panel.Children.Add(Hint("未选择工具时，任务只能使用模型自身能力（不能调用工具）。"));
 
         // 初始化选中工具 + 计划字段
         var selectedTools = hasTask ? GetStringArrayStatic(taskValue, "allowedToolIds") : new List<string>();
@@ -331,6 +332,12 @@ public sealed class TaskEditorWindow : Window
         else if (kind is "daily" or "weekly")
         {
             var timeOfDay = _timeBox.Text.Trim();
+            // 清空时回退 08:00（对齐 Electron：空值不报错而是用默认时间）
+            if (timeOfDay.Length == 0)
+            {
+                timeOfDay = "08:00";
+                _timeBox.Text = timeOfDay;
+            }
             if (!TimePattern.IsMatch(timeOfDay))
             {
                 _status.Text = "时间格式必须是 HH:mm";
@@ -366,14 +373,13 @@ public sealed class TaskEditorWindow : Window
 
         var allowList = _isPluginTask || _allowListBox.IsChecked == true;
         var selectedTools = new List<string>();
-        if (allowList)
+        // 已勾选的工具始终收集：取消 allow-list 再重新勾上时保留原选择
+        //（对齐 Electron；旧实现 allowList=false 时清空，重新开启会丢选择）
+        foreach (var child in _toolsPanel.Children)
         {
-            foreach (var child in _toolsPanel.Children)
+            if (child is CheckBox { IsChecked: true, Tag: string id })
             {
-                if (child is CheckBox { IsChecked: true, Tag: string id })
-                {
-                    selectedTools.Add(id);
-                }
+                selectedTools.Add(id);
             }
         }
 

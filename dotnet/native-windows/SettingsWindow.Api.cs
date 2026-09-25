@@ -79,7 +79,7 @@ public sealed partial class SettingsWindow
 
         // ── 表单控件（先建控件，后面按版面顺序挂载） ──
         var displayNameBox = MakeApiTextBox(form.DisplayName);
-        var apiKeyBox = MakeApiTextBox(form.ApiKey);
+        var apiKeyBox = MakeApiPasswordBox(form.ApiKey);
         var baseUrlBox = MakeApiTextBox(form.BaseUrl);
         var modelCombo = new ComboBox
         {
@@ -243,6 +243,8 @@ public sealed partial class SettingsWindow
             form.Provider = GetString(preset, "provider");
             form.DisplayName = GetString(preset, "shortName", form.Provider);
             form.Transport = GetString(preset, "transport", "openai");
+            // 应用预设清空旧 Key（对齐 Electron：避免跨厂商残留）
+            form.ApiKey = "";
             var anthropicUrl = GetString(preset, "anthropicBaseUrl");
             form.BaseUrl = form.Transport == "anthropic" && anthropicUrl.Length > 0
                 ? anthropicUrl
@@ -314,7 +316,7 @@ public sealed partial class SettingsWindow
         saveRow.Children.Add(MakeButton("保存档案", () =>
         {
             form.DisplayName = displayNameBox.Text.Trim();
-            form.ApiKey = apiKeyBox.Text.Trim();
+            form.ApiKey = apiKeyBox.Password.Trim();
             form.BaseUrl = baseUrlBox.Text.Trim();
             form.Model = (modelCombo.Text ?? "").Trim();
             form.Transport = transportCombo.SelectedIndex switch { 1 => "anthropic", 2 => "responses", _ => "openai" };
@@ -367,7 +369,7 @@ public sealed partial class SettingsWindow
                     ["provider"] = form.Provider,
                     ["baseUrl"] = baseUrlBox.Text.Trim(),
                     ["model"] = (modelCombo.Text ?? "").Trim(),
-                    ["apiKey"] = apiKeyBox.Text.Trim(),
+                    ["apiKey"] = apiKeyBox.Password.Trim(),
                     ["transport"] = transportCombo.SelectedIndex switch { 1 => "anthropic", 2 => "responses", _ => "openai" },
                 },
             });
@@ -385,6 +387,19 @@ public sealed partial class SettingsWindow
         return new TextBox
         {
             Text = text,
+            Width = width,
+            FontSize = 12,
+            Padding = new Thickness(6, 4, 6, 4),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+    }
+
+    /// <summary>API Key 输入：用 PasswordBox 遮蔽（旧实现明文 TextBox）。</summary>
+    private static PasswordBox MakeApiPasswordBox(string password, double width = 260)
+    {
+        return new PasswordBox
+        {
+            Password = password,
             Width = width,
             FontSize = 12,
             Padding = new Thickness(6, 4, 6, 4),

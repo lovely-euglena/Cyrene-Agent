@@ -188,6 +188,8 @@ export interface NativeSettingsNotice {
   level: "ok" | "error" | "info";
   text: string;
   at: number;
+  /** 可选结构化附加数据（如保存成功后回传 savedProfileId 供 WPF 进入编辑态） */
+  data?: Record<string, unknown>;
 }
 
 /**

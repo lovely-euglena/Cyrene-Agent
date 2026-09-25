@@ -153,6 +153,19 @@ public sealed partial class SettingsWindow
             return box;
         }
         var rows = GetNode(history, "rows");
+        var historyError = history.ValueKind == JsonValueKind.Object ? GetString(history, "error") : "";
+        if (historyError.Length > 0)
+        {
+            box.Children.Add(new TextBlock
+            {
+                Text = $"⚠ {historyError}",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 1, 0, 1),
+            });
+            return box;
+        }
         if (rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() == 0)
         {
             box.Children.Add(MakeHint("暂无运行历史"));
@@ -278,5 +291,6 @@ public sealed partial class SettingsWindow
         _sectionSources.Remove(id);
         host.Children.Clear();
         host.Children.Add(BuildNativeSection(id));
+        RenderNotice(id);
     }
 }

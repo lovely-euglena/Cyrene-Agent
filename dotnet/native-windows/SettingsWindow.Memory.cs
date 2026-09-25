@@ -28,6 +28,18 @@ public sealed partial class SettingsWindow
         panel.Children.Add(MakeSectionStatus("memory"));
 
         var memory = GetNode("memory");
+        var memoryError = GetString(memory, "error");
+        if (memoryError.Length > 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"⚠ 记忆读取失败：{memoryError}",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 4),
+            });
+        }
 
         BuildMemoryProfileBlocks(panel, memory);
         BuildMemoryL2Block(panel, memory);
@@ -108,13 +120,19 @@ public sealed partial class SettingsWindow
             ToolTip = "按内容 / 触发片段 / 状态过滤",
         };
         var total = GetNode(memory, "l2Total");
+        var truncated = GetBool(memory, "l2Truncated");
         var totalText = new TextBlock
         {
             FontSize = 11,
             Foreground = new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0xAA)),
             Margin = new Thickness(10, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
-            Text = total.ValueKind == JsonValueKind.Number ? $"共 {total.GetInt32()} 条" : "",
+            TextWrapping = TextWrapping.Wrap,
+            Text = total.ValueKind == JsonValueKind.Number
+                ? (truncated
+                    ? $"共 {total.GetInt32()} 条 · 仅显示前 500 条，搜索范围受限"
+                    : $"共 {total.GetInt32()} 条")
+                : "",
         };
         searchRow.Children.Add(searchBox);
         searchRow.Children.Add(totalText);

@@ -245,6 +245,7 @@ public sealed partial class SettingsWindow : NativeWindow
         if (host.Children.Count > 0) return;
         _sectionSources[id] = SectionSourceJson(id);
         host.Children.Add(BuildNativeSection(id));
+        RenderNotice(id);
     }
 
     /// <summary>
@@ -443,6 +444,7 @@ public sealed partial class SettingsWindow : NativeWindow
             _sectionSources[id] = source;
             host.Children.Clear();
             host.Children.Add(BuildNativeSection(id));
+            RenderNotice(id);
         }
     }
 
@@ -450,6 +452,8 @@ public sealed partial class SettingsWindow : NativeWindow
 
     private readonly Dictionary<string, string> _sectionSources = new();
     private readonly Dictionary<string, TextBlock> _sectionStatus = new();
+    /** 各 section 最近一次宿主反馈（section 重建后在状态行回填，避免提示被冲掉） */
+    private readonly Dictionary<string, (string Text, string Level)> _lastNotices = new();
 
     /// <summary>各 section 的数据源子集（用于按 section 判定是否重建）。</summary>
     private string SectionSourceJson(string id) => id switch
@@ -484,9 +488,24 @@ public sealed partial class SettingsWindow : NativeWindow
         var text = GetString(notice, "text");
         var level = GetString(notice, "level", "info");
         if (section.Length == 0 || text.Length == 0) return;
+        _lastNotices[section] = (text, level);
+        // api 保存成功回执：记住新档案 id，重建后的表单直接进入编辑态
+        //（旧实现保存新增档案后 ProfileId 仍为 null，再保存会命中去重失败）
+        if (section == "api" && notice.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+        {
+            var savedProfileId = GetString(data, "savedProfileId");
+            if (savedProfileId.Length > 0 && _apiForm is not null) _apiForm.ProfileId = savedProfileId;
+        }
+        RenderNotice(section);
+    }
+
+    /// <summary>把最近一次 section 反馈渲染到状态行（section 重建后回填，避免提示被冲掉）。</summary>
+    private void RenderNotice(string section)
+    {
         if (!_sectionStatus.TryGetValue(section, out var status)) return;
-        status.Text = $"· {text}";
-        status.Foreground = new SolidColorBrush(level switch
+        if (!_lastNotices.TryGetValue(section, out var notice)) return;
+        status.Text = $"· {notice.Text}";
+        status.Foreground = new SolidColorBrush(notice.Level switch
         {
             "ok" => Color.FromRgb(0x1D, 0x9A, 0x54),
             "error" => Color.FromRgb(0xD3, 0x3A, 0x3A),

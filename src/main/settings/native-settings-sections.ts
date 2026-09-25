@@ -92,6 +92,10 @@ export interface NativeMemorySnapshot {
   l1: Record<string, string>;
   l2: NativeMemoryL2Item[];
   l2Total: number;
+  /** L2 被投影上限截断（UI 应提示「仅显示前 N 条」） */
+  l2Truncated: boolean;
+  /** 读取失败原因（空串=正常）；UI 据此显示错误行而非空态 */
+  error: string;
   importedDocs: Array<{ importId: string | null; fileName: string; chunkCount: number; lastImportedAt: number }>;
   reflections: Array<{ id: string; title: string; body: string; meta: string }>;
   vault: { vaultPath: string; autoSync: boolean; lastSyncAt: number };
@@ -100,6 +104,8 @@ export interface NativeMemorySnapshot {
 export interface NativeSchedulerHistorySnapshot {
   taskId: string;
   rows: unknown[];
+  /** 读取失败原因（空串=成功）；UI 显示错误行而不是空态 */
+  error: string;
 }
 
 export interface NativeSchedulerSnapshot {
@@ -180,7 +186,11 @@ export function buildApiSectionSnapshot(settings: ModelSettings, profiles: Saved
   };
 }
 
-export function buildMemorySectionSnapshot(data: NativeMemoryData, vault: ObsidianVaultConfig): NativeMemorySnapshot {
+export function buildMemorySectionSnapshot(
+  data: NativeMemoryData,
+  vault: ObsidianVaultConfig,
+  error = "",
+): NativeMemorySnapshot {
   const l2: NativeMemoryL2Item[] = [];
   for (const raw of data.l2) {
     if (l2.length >= L2_PROJECTION_LIMIT) break;
@@ -200,6 +210,8 @@ export function buildMemorySectionSnapshot(data: NativeMemoryData, vault: Obsidi
     l1: projectProfileFields(data.l1),
     l2,
     l2Total: data.l2.length,
+    l2Truncated: data.l2.length > L2_PROJECTION_LIMIT,
+    error,
     importedDocs: data.importedDocs.map((doc) => ({
       importId: doc.importId,
       fileName: doc.fileName,
