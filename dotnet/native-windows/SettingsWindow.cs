@@ -93,69 +93,79 @@ public sealed partial class SettingsWindow : NativeWindow
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Child = grid;
         _window.Content = root;
         // 圆角裁剪：Border 不会自动把子元素裁到圆角，导航/标题栏会溢出方形角
         NativeTheme.ClipRounded(grid, 12);
 
-        // ── 顶部标题栏：应用图标 + 标题 + 最小化/关闭（无边框窗的可见拖拽区） ──
-        var header = new Border
+        // ── 右侧：标题栏（当前 section 标题 + 说明 + 最小化/关闭）+ 内容区 ──
+        // 对齐旧版设置页布局：导航列在最左（含品牌行），内容列顶部是 section 标题栏
+        var contentGrid = new Grid();
+        contentGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+        contentGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var titleBar = new Border
         {
             Background = Brushes.White,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
+            CornerRadius = new CornerRadius(12, 12, 0, 0),
         };
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var headerTitle = new TextBlock
-        {
-            Text = "昔涟 · 设置",
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44)),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(16, 0, 0, 0),
-        };
-        Grid.SetColumn(headerTitle, 0);
-        headerGrid.Children.Add(headerTitle);
+        var titleGrid = new Grid();
+        titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var titleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 0, 12, 0) };
+        _sectionTitle.Text = "设置";
+        _sectionTitle.FontSize = 15;
+        _sectionTitle.FontWeight = FontWeights.SemiBold;
+        _sectionTitle.Foreground = NativeTheme.TextStrongBrush;
+        _sectionHint.FontSize = 11.5;
+        _sectionHint.Foreground = NativeTheme.TextMutedBrush;
+        _sectionHint.Margin = new Thickness(0, 2, 0, 0);
+        _sectionHint.TextTrimming = TextTrimming.CharacterEllipsis;
+        titleStack.Children.Add(_sectionTitle);
+        titleStack.Children.Add(_sectionHint);
+        Grid.SetColumn(titleStack, 0);
+        titleGrid.Children.Add(titleStack);
         var minBtn = MakeTitleBarButton("—", () => _window.WindowState = WindowState.Minimized);
         var closeBtn = MakeTitleBarButton("✕", () => _window.Close());
         Grid.SetColumn(minBtn, 1);
         Grid.SetColumn(closeBtn, 2);
-        headerGrid.Children.Add(minBtn);
-        headerGrid.Children.Add(closeBtn);
-        header.Child = headerGrid;
-        header.MouseLeftButtonDown += (_, _) => { try { _window.DragMove(); } catch { /* not pressed */ } };
-        Grid.SetColumnSpan(header, 2);
-        Grid.SetRow(header, 0);
-        grid.Children.Add(header);
+        titleGrid.Children.Add(minBtn);
+        titleGrid.Children.Add(closeBtn);
+        titleBar.Child = titleGrid;
+        titleBar.MouseLeftButtonDown += (_, _) => { try { _window.DragMove(); } catch { /* not pressed */ } };
+        Grid.SetRow(titleBar, 0);
+        contentGrid.Children.Add(titleBar);
 
-        // ── 左侧导航 ──
+        // ── 左侧导航（品牌行 + section 列表） ──
         var nav = new Border
         {
             Background = NativeTheme.SurfaceNavBrush,
-            Child = new StackPanel { Margin = new Thickness(0, 8, 0, 12) },
+            Child = new StackPanel { Margin = new Thickness(0, 10, 0, 12) },
         };
         Grid.SetColumn(nav, 0);
-        Grid.SetRow(nav, 1);
+        Grid.SetRow(nav, 0);
         grid.Children.Add(nav);
         var navPanel = (StackPanel)nav.Child;
 
-        // ── 右侧内容区 ──
         _scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0) };
         _sections = new StackPanel { Margin = new Thickness(24, 16, 24, 24) };
         _scroll.Content = _sections;
-        Grid.SetColumn(_scroll, 1);
         Grid.SetRow(_scroll, 1);
-        grid.Children.Add(_scroll);
+        contentGrid.Children.Add(_scroll);
+
+        Grid.SetColumn(contentGrid, 1);
+        grid.Children.Add(contentGrid);
 
         BuildSections(navPanel);
         _window.Closed += (_, _) => { StopDebounceTimers(); RaiseClosed(); };
     }
+
+    private readonly TextBlock _sectionTitle = new();
+    private readonly TextBlock _sectionHint = new();
 
     /// <summary>标题栏按钮（最小化/关闭）：扁平图标按钮样式。</summary>
     private static Button MakeTitleBarButton(string glyph, Action onClick)
@@ -217,9 +227,23 @@ public sealed partial class SettingsWindow : NativeWindow
         nav.Children.Add(brand);
         void AddSection(string id, string label, bool native, string? legacyHash = null, bool pluginManager = false)
         {
+            // 导航项内容：图标（旧版 SVG 几何/图片）+ 文本
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            var icon = SettingsNavIcons.Create(id);
+            if (icon is not null)
+            {
+                icon.VerticalAlignment = VerticalAlignment.Center;
+                content.Children.Add(icon);
+            }
+            content.Children.Add(new TextBlock
+            {
+                Text = label,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(icon is null ? 0 : 10, 0, 0, 0),
+            });
             var btn = new RadioButton
             {
-                Content = label,
+                Content = content,
                 GroupName = "settings-nav",
                 Style = navStyle,
                 Tag = id,
@@ -295,6 +319,12 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         _activeSection = id;
         EnsureSectionBuilt(id);
+        // 内容区标题栏跟随当前 section（旧版 section-title / section-hint 语义）
+        if (SettingsNavIcons.SectionMeta.TryGetValue(id, out var meta))
+        {
+            _sectionTitle.Text = meta.Title;
+            _sectionHint.Text = meta.Hint;
+        }
         foreach (var (key, host) in _sectionHosts)
         {
             host.Visibility = key == id ? Visibility.Visible : Visibility.Collapsed;
@@ -449,26 +479,8 @@ public sealed partial class SettingsWindow : NativeWindow
         return MakeRow("桌面图标", row);
     }
 
-    /** 从 assets 目录加载图片（缺失返回 null，UI 退化为无图）。 */
-    private static ImageSource? TryLoadAssetImage(string relativePath)
-    {
-        try
-        {
-            var path = Path.Combine(AppContext.BaseDirectory, "assets", relativePath);
-            if (!File.Exists(path)) return null;
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.UriSource = new Uri(path);
-            image.EndInit();
-            image.Freeze();
-            return image;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    /** 图片加载：统一走 NativeTheme（assets 目录，缺失返回 null）。 */
+    private static ImageSource? TryLoadAssetImage(string relativePath) => NativeTheme.TryLoadAssetImage(relativePath);
 
     /// <summary>界面字体：显示当前字体 + 导入/恢复默认（宿主弹文件框，native 不传路径）。</summary>
     private FrameworkElement MakeUiFontRow()

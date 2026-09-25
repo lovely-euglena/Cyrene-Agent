@@ -547,6 +547,27 @@ public static class NativeTheme
 </Style>
 """));
 
+    /// <summary>从 assets 目录加载图片（缺失返回 null，UI 退化为无图）。</summary>
+    public static ImageSource? TryLoadAssetImage(string relativePath)
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(System.AppContext.BaseDirectory, "assets", relativePath);
+            if (!System.IO.File.Exists(path)) return null;
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit();
+            image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.UriSource = new System.Uri(path);
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static Style TextBoxStyle => TextBoxLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;
