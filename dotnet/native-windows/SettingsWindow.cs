@@ -76,64 +76,157 @@ public sealed partial class SettingsWindow : NativeWindow
             ResizeMode = ResizeMode.NoResize,
             Background = new SolidColorBrush(Color.FromRgb(0xF7, 0xF7, 0xFA)),
             ShowInTaskbar = true,
+            // 任务栏/Alt-Tab 图标：从打包布局同级的 Cyrene.exe 提取（缺失则留空）
+            Icon = ResolveAppIcon(),
         };
 
         var root = new Border { BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)), BorderThickness = new Thickness(1) };
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Child = grid;
         _window.Content = root;
+
+        // ── 顶部标题栏：应用图标 + 标题 + 最小化/关闭（无边框窗的可见拖拽区） ──
+        var header = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xEF, 0xEF, 0xF4)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+        };
+        var headerGrid = new Grid();
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headerTitle = new TextBlock
+        {
+            Text = "昔涟 · 设置",
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(16, 0, 0, 0),
+        };
+        Grid.SetColumn(headerTitle, 0);
+        headerGrid.Children.Add(headerTitle);
+        var minBtn = MakeTitleBarButton("—", () => _window.WindowState = WindowState.Minimized);
+        var closeBtn = MakeTitleBarButton("✕", () => _window.Close());
+        Grid.SetColumn(minBtn, 1);
+        Grid.SetColumn(closeBtn, 2);
+        headerGrid.Children.Add(minBtn);
+        headerGrid.Children.Add(closeBtn);
+        header.Child = headerGrid;
+        header.MouseLeftButtonDown += (_, _) => { try { _window.DragMove(); } catch { /* not pressed */ } };
+        Grid.SetColumnSpan(header, 2);
+        Grid.SetRow(header, 0);
+        grid.Children.Add(header);
 
         // ── 左侧导航 ──
         var nav = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(0xEF, 0xEF, 0xF4)),
-            Child = new StackPanel { Margin = new Thickness(0, 40, 0, 12) },
+            Child = new StackPanel { Margin = new Thickness(0, 8, 0, 12) },
         };
         Grid.SetColumn(nav, 0);
+        Grid.SetRow(nav, 1);
         grid.Children.Add(nav);
         var navPanel = (StackPanel)nav.Child;
 
         // ── 右侧内容区 ──
-        _scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 40, 0, 0) };
-        _sections = new StackPanel { Margin = new Thickness(24, 0, 24, 24) };
+        _scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0) };
+        _sections = new StackPanel { Margin = new Thickness(24, 16, 24, 24) };
         _scroll.Content = _sections;
         Grid.SetColumn(_scroll, 1);
+        Grid.SetRow(_scroll, 1);
         grid.Children.Add(_scroll);
-
-        // 标题栏拖动区（无边框窗）
-        var dragBar = new Border
-        {
-            Height = 38,
-            Background = Brushes.Transparent,
-            Cursor = System.Windows.Input.Cursors.Arrow,
-            VerticalAlignment = VerticalAlignment.Top,
-        };
-        dragBar.MouseLeftButtonDown += (_, e) => { try { _window.DragMove(); } catch { /* maximized */ } };
-        // ⚠️ 曾误写成 root.Child = dragBar —— 那会把上面建好的 grid（导航+内容）
-        // 整个替换成一根透明空条，设置窗表现为「整页空白」。拖动条必须以覆盖层
-        // 形式叠加在 grid 之上（不改变 grid 作为 root.Child）。
-        Grid.SetColumnSpan(dragBar, 2);
-        Panel.SetZIndex(dragBar, 100);
-        grid.Children.Add(dragBar);
 
         BuildSections(navPanel);
         _window.Closed += (_, _) => { StopDebounceTimers(); RaiseClosed(); };
     }
 
+    /// <summary>标题栏按钮（最小化/关闭）：扁平、无边框、悬停高亮。</summary>
+    private static Button MakeTitleBarButton(string glyph, Action onClick)
+    {
+        var btn = new Button
+        {
+            Content = glyph,
+            Width = 40,
+            Height = 40,
+            FontSize = 12,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x66)),
+        };
+        btn.Click += (_, _) => onClick();
+        return btn;
+    }
+
+    /// <summary>应用图标：从同级 Cyrene.exe 提取关联图标（失败返回 null，不影响窗口）。</summary>
+    private static ImageSource? ResolveAppIcon()
+    {
+        try
+        {
+            var exe = TrayHost.ResolveElectronExe();
+            if (!File.Exists(exe)) return null;
+            using var icon = System.Drawing.Icon.ExtractAssociatedIcon(exe);
+            if (icon is null) return null;
+            var source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                icon.Handle,
+                new Int32Rect(0, 0, icon.Width, icon.Height),
+                BitmapSizeOptions.FromEmptyOptions());
+            source.Freeze();
+            return source;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 导航项样式：去掉 RadioButton 默认圆点，改为圆角高亮条（选中/悬停）。
+    /// </summary>
+    private static Style BuildNavItemStyle()
+    {
+        var style = new Style(typeof(RadioButton));
+        var template = new ControlTemplate(typeof(RadioButton));
+        var bg = new FrameworkElementFactory(typeof(Border), "navBg");
+        bg.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        bg.SetValue(Border.MarginProperty, new Thickness(8, 2, 8, 2));
+        bg.SetValue(Border.BackgroundProperty, new SolidColorBrush(Colors.Transparent));
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        presenter.SetValue(ContentPresenter.MarginProperty, new Thickness(10, 8, 8, 8));
+        bg.AppendChild(presenter);
+        template.VisualTree = bg;
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0xE2, 0xE2, 0xEE)), "navBg"));
+        template.Triggers.Add(hover);
+        var isChecked = new Trigger { Property = RadioButton.IsCheckedProperty, Value = true };
+        isChecked.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0xDA, 0xD6, 0xFA)), "navBg"));
+        template.Triggers.Add(isChecked);
+
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44))));
+        style.Setters.Add(new Setter(Control.FontSizeProperty, 13.0));
+        style.Setters.Add(new Setter(Control.CursorProperty, System.Windows.Input.Cursors.Hand));
+        return style;
+    }
+
     private void BuildSections(StackPanel nav)
     {
+        var navStyle = BuildNavItemStyle();
         void AddSection(string id, string label, bool native, string? legacyHash = null, bool pluginManager = false)
         {
             var btn = new RadioButton
             {
-                Content = $"  {label}",
+                Content = label,
                 GroupName = "settings-nav",
-                Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44)),
-                FontSize = 13,
-                Padding = new Thickness(10, 9, 8, 9),
-                Cursor = System.Windows.Input.Cursors.Hand,
+                Style = navStyle,
                 Tag = id,
             };
             btn.Checked += (_, _) => SwitchSection(id);
@@ -143,9 +236,13 @@ public sealed partial class SettingsWindow : NativeWindow
             var host = new StackPanel { Visibility = Visibility.Collapsed };
             _sectionHosts[id] = host;
             _sections.Children.Add(host);
-            host.Children.Add(native
-                ? BuildNativeSection(id)
-                : BuildLegacySection(id, label, legacyHash ?? id, pluginManager));
+            // 原生 section 懒构建：窗口打开只建当前 section，切换时再建。
+            // 旧实现在构造时一次性构建全部 section（含列表/表单），是设置窗
+            // 打开延时的主因。占位 section 很轻，仍即时构建。
+            if (!native)
+            {
+                host.Children.Add(BuildLegacySection(id, label, legacyHash ?? id, pluginManager));
+            }
         }
 
         AddSection("general", "通用", native: true);
@@ -165,6 +262,16 @@ public sealed partial class SettingsWindow : NativeWindow
             ? _initialSection
             : "general";
         _navButtons[initial].IsChecked = true;
+    }
+
+    /// <summary>首次显示该 section 时才构建其内容（懒构建）。</summary>
+    private void EnsureSectionBuilt(string id)
+    {
+        if (!IsNativeSection(id)) return;
+        if (!_sectionHosts.TryGetValue(id, out var host)) return;
+        if (host.Children.Count > 0) return;
+        _sectionSources[id] = SectionSourceJson(id);
+        host.Children.Add(BuildNativeSection(id));
     }
 
     /// <summary>
@@ -188,6 +295,7 @@ public sealed partial class SettingsWindow : NativeWindow
     private void SwitchSection(string id)
     {
         _activeSection = id;
+        EnsureSectionBuilt(id);
         foreach (var (key, host) in _sectionHosts)
         {
             host.Visibility = key == id ? Visibility.Visible : Visibility.Collapsed;
@@ -355,6 +463,8 @@ public sealed partial class SettingsWindow : NativeWindow
         foreach (var (id, host) in _sectionHosts)
         {
             if (!IsNativeSection(id)) continue;
+            // 懒构建：未显示过的 section 不随快照重建（首次显示时按最新快照构建）
+            if (host.Children.Count == 0) continue;
             var source = SectionSourceJson(id);
             if (_sectionSources.TryGetValue(id, out var previous) && previous == source) continue;
             _sectionSources[id] = source;
