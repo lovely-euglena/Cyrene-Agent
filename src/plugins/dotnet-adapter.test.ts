@@ -287,8 +287,12 @@ describe("DotnetPluginAdapter", () => {
 
       const call = adapter.invokeToolForTest("slow", {});
       void call.catch(() => { /* 防 unhandled rejection */ });
+      const invokeFrame = JSON.parse(fake.written[fake.written.length - 1]);
       await vi.advanceTimersByTimeAsync(300_001);
       await expect(call).rejects.toThrow(/调用超时/);
+      // 超时要尽力通知插件停止计算（cancel 帧），而不是只放弃等待
+      const cancelFrame = JSON.parse(fake.written[fake.written.length - 1]);
+      expect(cancelFrame).toMatchObject({ op: "cancel", id: invokeFrame.callId, reason: "timeout" });
     } finally {
       vi.useRealTimers();
     }
@@ -305,7 +309,11 @@ describe("DotnetPluginAdapter", () => {
 
     const controller = new AbortController();
     const call = adapter.invokeToolForTest("greet", {}, controller.signal);
+    const invokeFrame = JSON.parse(fake.written[fake.written.length - 1]);
     controller.abort();
     await expect(call).rejects.toThrow(/已取消/);
+    // abort 要向插件发 cancel 帧（尽力中止计算），老 SDK 会忽略未知 op
+    const cancelFrame = JSON.parse(fake.written[fake.written.length - 1]);
+    expect(cancelFrame).toMatchObject({ op: "cancel", id: invokeFrame.callId, reason: "abort" });
   });
 });

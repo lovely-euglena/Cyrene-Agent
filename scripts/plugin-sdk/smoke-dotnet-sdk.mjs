@@ -3,8 +3,10 @@
 // 覆盖（对应历史故障）：
 //   1. 同步 object 工具（echo）与 async Task<T> 工具（echo_async）都要回 result 帧
 //      ——旧 SDK 只 await Task<object?>/Task<JsonElement>，Task<string> 静默不回帧
-//   2. 协议主版本不符：回 error(api_version_mismatch) 帧并退出
-//   3. 多字节/大结果分帧由宿主侧 dotnet-adapter 单测覆盖，这里只验证协议语义
+//   2. 宿主 cancel 帧：声明 CancellationToken 的长任务应被中止并回 ok:false
+//      ——旧 SDK 无 cancel 通道，宿主只能单方面放弃等待
+//   3. 协议主版本不符：回 error(api_version_mismatch) 帧并退出
+//   4. 多字节/大结果分帧由宿主侧 dotnet-adapter 单测覆盖，这里只验证协议语义
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -113,10 +115,33 @@ try {
     console.log("  · 同步 object / async Task<string> 工具均正常回帧");
   }
 
-  // ── 2. 协议版本不符：error 帧 + 退出 ──
+  // ── 2. 宿主 cancel 帧：在途调用及时中止（CancellationToken 参数） ──
   {
     const session = new Session(path.join(dataRoot, "h2"));
-    session.send({ op: "init", apiVersion: 99, manifest: { id: "hello-dotnet" }, dataDir: path.join(dataRoot, "h2") });
+    session.send({ op: "init", apiVersion: 1, manifest: { id: "hello-dotnet" }, dataDir: path.join(dataRoot, "h2") });
+    await session.waitFor((f) => f.op === "ready", 20_000, "ready 握手（cancel 用例）");
+
+    const startedAt = Date.now();
+    session.send({ op: "invoke", callId: "c3", tool: "echo_slow", args: { ms: 60_000, text: "x" } });
+    await new Promise((resolve) => setTimeout(resolve, 300)); // 等 handler 进入 Task.Delay
+    session.send({ op: "cancel", id: "c3", reason: "abort" });
+    const cancelled = await session.waitFor(
+      (f) => f.op === "result" && f.callId === "c3",
+      5_000,
+      "取消结果（应在取消后立即回帧）",
+    );
+    if (cancelled.ok !== false || !String(cancelled.error).includes("取消")) {
+      fail(`取消后应回 ok:false/取消: ${JSON.stringify(cancelled)}`);
+    }
+    if (Date.now() - startedAt > 5_000) fail("取消未及时生效");
+    await session.stop();
+    console.log("  · cancel 帧中止在途调用（CancellationToken）");
+  }
+
+  // ── 3. 协议版本不符：error 帧 + 退出 ──
+  {
+    const session = new Session(path.join(dataRoot, "h3"));
+    session.send({ op: "init", apiVersion: 99, manifest: { id: "hello-dotnet" }, dataDir: path.join(dataRoot, "h3") });
     const frame = await session.waitFor((f) => f.op === "error", 10_000, "api_version_mismatch error 帧");
     if (frame.code !== "api_version_mismatch") fail(`error 帧 code 不符: ${JSON.stringify(frame)}`);
     await new Promise((resolve) => setTimeout(resolve, 500));

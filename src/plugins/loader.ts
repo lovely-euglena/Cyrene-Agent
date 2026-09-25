@@ -132,12 +132,9 @@ function hashDotnetRuntimeFiles(dir: string, hash: Hash): void {
   }
   files.sort((a, b) => a.localeCompare(b));
   let total = 0;
-  const stats = new Map<string, number>();
   for (const file of files) {
     try {
-      const stat = statSync(file);
-      stats.set(file, stat.size);
-      total += stat.size;
+      total += statSync(file).size;
     } catch {
       // 读不到的文件跳过（大小未知）
     }

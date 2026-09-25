@@ -10,6 +10,7 @@
  *   宿主 → 插件：
  *     {"op":"init","apiVersion":1,"manifest":{...},"dataDir":"<插件私有数据目录>"}
  *     {"op":"invoke","callId":"c1","tool":"<短id>","args":{...}}
+ *     {"op":"cancel","id":"c1","reason":"abort|timeout"}   // 尽力取消在途调用（SDK 映射到 CancellationToken）
  *     {"op":"shutdown"}                     // 优雅关停；5s 未退出则 SIGKILL
  *
  *   插件 → 宿主：
@@ -104,6 +105,8 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   /** stdout 分帧缓冲：chunk 边界不保证落在整行上（大结果 / 中文多字节跨 chunk）。 */
   private stdoutCarry = "";
   private stdoutDecoder = new StringDecoder("utf8");
+  /** 超长帧告警次数上限：异常插件刷屏时只提示前几次 */
+  private oversizedFrameWarned = 0;
 
   constructor(record: PluginRecord, hooks: DotnetPluginAdapterHooks = {}) {
     this.record = record;
@@ -161,7 +164,14 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       this.exited = false;
 
       child.on("error", (error) => {
-        reject(new Error(`dotnet 插件 ${this.record.manifest.id} 启动失败: ${errorMessage(error)}`));
+        // spawn 失败（exe 缺失/无权限）：立即置退出态并收口 ready 等待者，
+        // 避免后续调用把坏进程当成「运行中」等满 300s 兜底超时
+        this.exited = true;
+        this.proc = null;
+        const failure = new Error(`dotnet 插件 ${this.record.manifest.id} 启动失败: ${errorMessage(error)}`);
+        for (const r of this.readyResolvers) r.reject(failure);
+        this.readyResolvers = [];
+        reject(failure);
       });
       child.on("exit", (code, signal) => {
         this.exited = true;
@@ -278,13 +288,18 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         this.pending.delete(callId);
         action();
       };
-      const onAbort = () => finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
+      const onAbort = () => {
+        // 尽力通知插件停止计算（SDK 映射为 CancellationToken）；老 SDK 忽略未知 op
+        this.send({ op: "cancel", id: callId, reason: "abort" });
+        finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
+      };
 
       if (signal?.aborted) {
         finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
         return;
       }
       timer = setTimeout(() => {
+        this.send({ op: "cancel", id: callId, reason: "timeout" });
         finish(() => reject(new Error(
           `dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用超时（${INVOKE_TIMEOUT_MS}ms）`,
         )));
@@ -311,9 +326,15 @@ export class DotnetPluginAdapter implements CyrenePlugin {
     this.stdoutCarry += this.stdoutDecoder.write(chunk);
     let index: number;
     while ((index = this.stdoutCarry.indexOf("\n")) >= 0) {
-      const line = this.stdoutCarry.slice(0, index).trim();
+      const rawLine = this.stdoutCarry.slice(0, index);
       this.stdoutCarry = this.stdoutCarry.slice(index + 1);
+      const line = rawLine.trim();
       if (!line) continue;
+      // 完整行也可能超大：解析前先挡掉，避免为垃圾输入分配巨型 JSON
+      if (rawLine.length > MAX_FRAME_BUFFER_CHARS) {
+        this.warnOversizedFrame();
+        continue;
+      }
       let frame: Record<string, unknown>;
       try {
         frame = JSON.parse(line) as Record<string, unknown>;
@@ -324,11 +345,18 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       this.handleFrame(frame);
     }
     if (this.stdoutCarry.length > MAX_FRAME_BUFFER_CHARS) {
-      console.warn(
-        `[plugins] dotnet 插件 ${this.record.manifest.id} stdout 单行超过 ${MAX_FRAME_BUFFER_CHARS} 字符，已丢弃`,
-      );
+      this.warnOversizedFrame();
       this.stdoutCarry = "";
     }
+  }
+
+  /** 超长帧告警（最多 3 次）：正常协议帧不应接近上限，出现即插件侧有 bug */
+  private warnOversizedFrame(): void {
+    if (this.oversizedFrameWarned >= 3) return;
+    this.oversizedFrameWarned += 1;
+    console.warn(
+      `[plugins] dotnet 插件 ${this.record.manifest.id} stdout 单行超过 ${MAX_FRAME_BUFFER_CHARS} 字符，已丢弃`,
+    );
   }
 
   private handleFrame(frame: Record<string, unknown>): void {

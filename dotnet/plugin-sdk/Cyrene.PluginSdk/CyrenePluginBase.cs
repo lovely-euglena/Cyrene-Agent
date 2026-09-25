@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,7 @@ namespace Cyrene.PluginSdk;
 ///   宿主 → 插件（stdin，每行一个 JSON）：
 ///     {"op":"init","apiVersion":1,"manifest":{...},"dataDir":"..."}
 ///     {"op":"invoke","callId":"c1","tool":"短id","args":{...}}
+///     {"op":"cancel","id":"c1","reason":"abort|timeout"}   // 取消在途调用（工具可声明 CancellationToken 接收）
 ///     {"op":"shutdown"}
 ///
 ///   插件 → 宿主（stdout，每行一个 JSON）：
@@ -43,6 +45,8 @@ public abstract class CyrenePluginBase
         JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone();
 
     private readonly Dictionary<string, ToolEntry> _tools = new();
+    /// <summary>在途调用 → 独立取消令牌（宿主 cancel 帧映射到这里）。</summary>
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _inflight = new();
     private string _dataDir = "";
     private string _pluginId = "plugin";
 
@@ -94,10 +98,16 @@ public abstract class CyrenePluginBase
                     if (!await HandleInitAsync(doc.RootElement, cts.Token)) return;
                     break;
                 case "invoke":
-                    // 并行调用：不阻塞读循环（长任务不影响后续 invoke）
-                    _ = HandleInvokeAsync(doc.RootElement, cts.Token);
+                    // 在读循环内同步登记取消令牌（避免 cancel 帧早于登记而丢失），
+                    // 任务体切线程池执行：同步长任务不再阻塞读循环（否则连 cancel 都读不到）
+                    StartInvoke(doc.RootElement, cts.Token);
+                    break;
+                case "cancel":
+                    // 宿主取消/超时：尽力中止对应在途调用（工具可声明 CancellationToken 参数接收）
+                    HandleCancel(doc.RootElement);
                     break;
                 case "shutdown":
+                    CancelAllInflight();
                     await OnShutdownAsync(cts.Token);
                     return;
             }
@@ -137,28 +147,75 @@ public abstract class CyrenePluginBase
         return true;
     }
 
-    private async Task HandleInvokeAsync(JsonElement frame, CancellationToken ct)
+    /// <summary>登记在途调用并切线程池执行，保证读循环只做协议解析。</summary>
+    private void StartInvoke(JsonElement frame, CancellationToken hostToken)
     {
         var callId = frame.TryGetProperty("callId", out var c) ? c.GetString() ?? "" : "";
+        var callCts = CancellationTokenSource.CreateLinkedTokenSource(hostToken);
+        if (callId.Length > 0) _inflight[callId] = callCts;
+        _ = Task.Run(() => HandleInvokeAsync(frame, callId, callCts));
+    }
+
+    private async Task HandleInvokeAsync(JsonElement frame, string callId, CancellationTokenSource callCts)
+    {
         var toolId = frame.TryGetProperty("tool", out var t) ? t.GetString() ?? "" : "";
         var args = frame.TryGetProperty("args", out var a) && a.ValueKind == JsonValueKind.Object ? a : default;
+        var ct = callCts.Token;
 
         try
         {
             if (!_tools.TryGetValue(toolId, out var entry))
             {
-                WriteLine(new { op = "result", callId, ok = false, error = $"未知工具: {toolId}" });
+                TryWriteLine(new { op = "result", callId, ok = false, error = $"未知工具: {toolId}" }, out _);
                 return;
             }
-            var result = InvokeTool(entry, args);
+            var result = InvokeTool(entry, args, ct);
             var value = await AwaitResultAsync(result);
-            WriteLine(new { op = "result", callId, ok = true, data = value });
+            // 结果序列化失败必须回错误帧：只写 stderr 会让宿主一直等到兜底超时
+            if (!TryWriteLine(new { op = "result", callId, ok = true, data = value }, out var writeError))
+            {
+                TryWriteLine(new { op = "result", callId, ok = false, error = $"结果序列化失败: {writeError}" }, out _);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Warn($"工具 {toolId} 调用已取消");
+            TryWriteLine(new { op = "result", callId, ok = false, error = "调用已取消" }, out _);
         }
         catch (Exception ex)
         {
             // 失败细节进 stderr（宿主打日志），协议帧只带 message
             Warn($"工具 {toolId} 执行失败: {ex}");
-            WriteLine(new { op = "result", callId, ok = false, error = ex.Message });
+            TryWriteLine(new { op = "result", callId, ok = false, error = ex.Message }, out _);
+        }
+        finally
+        {
+            if (callId.Length > 0) _inflight.TryRemove(callId, out _);
+            callCts.Dispose();
+        }
+    }
+
+    /// <summary>处理宿主 cancel 帧：取消对应在途调用的令牌（不存在则忽略）。</summary>
+    private void HandleCancel(JsonElement frame)
+    {
+        var id = frame.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String
+            ? idEl.GetString()
+            : null;
+        if (string.IsNullOrEmpty(id)) return;
+        if (_inflight.TryGetValue(id, out var cts))
+        {
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { /* 调用刚好结束并释放 */ }
+        }
+    }
+
+    /// <summary>关停前取消全部在途调用，让声明了 CancellationToken 的工具尽快退出。</summary>
+    private void CancelAllInflight()
+    {
+        foreach (var cts in _inflight.Values)
+        {
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { /* 同上 */ }
         }
     }
 
@@ -177,15 +234,21 @@ public abstract class CyrenePluginBase
         return type.IsGenericType ? type.GetProperty("Result")?.GetValue(task) : null;
     }
 
-    private object? InvokeTool(ToolEntry entry, JsonElement args)
+    private object? InvokeTool(ToolEntry entry, JsonElement args, CancellationToken ct)
     {
         var parameters = entry.Method.GetParameters();
-        // 签名已在 CollectTools 保证：0 参数或单个 JsonElement 参数
-        object?[] invocation = parameters.Length == 0
-            ? []
-            : [args.ValueKind == JsonValueKind.Object ? args : EmptyArgs];
+        // 签名已在 CollectTools 保证：0 参 / (JsonElement) / (JsonElement, CancellationToken)
+        object?[] invocation = parameters.Length switch
+        {
+            0 => [],
+            1 => [ObjectArgs(args)],
+            _ => [ObjectArgs(args), ct],
+        };
         return entry.Method.Invoke(entry.IsStatic ? null : this, invocation);
     }
+
+    private static JsonElement ObjectArgs(JsonElement args)
+        => args.ValueKind == JsonValueKind.Object ? args : EmptyArgs;
 
     private void CollectTools()
     {
@@ -198,14 +261,17 @@ public abstract class CyrenePluginBase
                 Warn($"忽略 {method.Name}：[CyreneTool] 缺少 id");
                 continue;
             }
-            // 签名白名单：0 参数，或单个 JsonElement 参数。不合法在 init 时即报出，
-            // 不再等到调用时抛 TargetParameterCountException / 参数转换异常。
+            // 签名白名单：0 参数 / (JsonElement) / (JsonElement, CancellationToken)。
+            // 不合法在 init 时即报出，不再等到调用时抛 TargetParameterCountException / 参数转换异常。
             var parameters = method.GetParameters();
             var validSignature = parameters.Length == 0
-                || (parameters.Length == 1 && parameters[0].ParameterType == typeof(JsonElement));
+                || (parameters.Length == 1 && parameters[0].ParameterType == typeof(JsonElement))
+                || (parameters.Length == 2
+                    && parameters[0].ParameterType == typeof(JsonElement)
+                    && parameters[1].ParameterType == typeof(CancellationToken));
             if (!validSignature)
             {
-                Warn($"忽略工具 {attr.Id}（{method.Name}）：签名必须是无参或单个 JsonElement 参数");
+                Warn($"忽略工具 {attr.Id}（{method.Name}）：签名必须是 () / (JsonElement) / (JsonElement, CancellationToken)");
                 continue;
             }
             JsonElement schema;
@@ -226,17 +292,34 @@ public abstract class CyrenePluginBase
     /// <summary>SDK 内部诊断：有返回值走 stderr（stdout 被协议独占），宿主收集为日志。</summary>
     private static void Warn(string message) => Console.Error.WriteLine($"[cyrene-plugin] {message}");
 
-    private void WriteLine(object frame)
+    private void WriteLine(object frame) => TryWriteLine(frame, out _);
+
+    /// <summary>
+    /// 写协议帧。返回 false 表示序列化失败或 stdout 写失败——调用方据此回错误帧，
+    /// 避免「结果不可序列化 → 静默不回帧 → 宿主等到兜底超时」。
+    /// </summary>
+    private bool TryWriteLine(object frame, out string? error)
     {
         string json;
         try { json = JsonSerializer.Serialize(frame); }
         catch (Exception ex)
         {
             // 序列化失败必须显式暴露：吞掉后调用方只看到宿主 invoke 永久 pending
+            error = ex.Message;
             Warn($"帧序列化失败（{frame.GetType().Name}）: {ex.Message}");
-            return;
+            return false;
         }
-        try { Console.Out.WriteLine(json); Console.Out.Flush(); }
-        catch { /* stdout 关闭：进程即将退出 */ }
+        try
+        {
+            Console.Out.WriteLine(json);
+            Console.Out.Flush();
+            error = null;
+            return true;
+        }
+        catch
+        {
+            error = "stdout 已关闭";
+            return false;
+        }
     }
 }
