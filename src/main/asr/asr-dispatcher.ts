@@ -22,7 +22,7 @@ function createVadGate(inner: AsrStreamSession): VadGate {
   const mode = resolveDotnetConfig().vad;
   if (mode === "cloud") return { send: (f) => inner.sendAudio(f), dispose: () => undefined };
 
-  let inSpeech = true;          // 起始放行（避免门控建立前丢音频）
+  let inSpeech = true;          // 起始放行（门控接管前不丢帧）
   let active = false;           // voice host 是否已确认接管
   const preRoll: Buffer[] = [];
   const PRE_ROLL_MAX = 10;      // ~320ms @ 32ms/帧
@@ -31,9 +31,19 @@ function createVadGate(inner: AsrStreamSession): VadGate {
     try {
       const { voiceHostClient } = await import("../dotnet-backend/host-clients");
       if (!voiceHostClient.enabled() || !(await voiceHostClient.ensureStarted())) return;
-      await voiceHostClient.vadConfig("stream", { preRollMs: 300 });
-      active = true;
-      inSpeech = false;
+      await voiceHostClient.vadConfig(mode, { preRollMs: 300 });
+      // vad_result 事件流驱动状态机（合并回归修复：此前订阅丢失导致
+      // active 后所有帧滞留 preRoll，ASR 引擎收不到任何音频）
+      voiceHostClient.addEventListener((frame) => {
+        if (frame.op !== "vad_result") return;
+        active = true;
+        if (frame.speechStart === true) {
+          inSpeech = true;
+          for (const b of preRoll.splice(0)) inner.sendAudio(b);
+        } else if (frame.speechEnd === true) {
+          inSpeech = false;
+        }
+      });
     } catch {
       // voice host 不可用：直通（fail-open，与 TS 原路一致）
     }
@@ -41,15 +51,11 @@ function createVadGate(inner: AsrStreamSession): VadGate {
 
   return {
     send: (frame) => {
-      if (!active) { inner.sendAudio(frame); return; }          // 门控未接管：直通
-      if (inSpeech) inner.sendAudio(frame);
-      else {
-        preRoll.push(frame);
-        if (preRoll.length > PRE_ROLL_MAX) preRoll.shift();
-      }
+      if (!active || inSpeech) { inner.sendAudio(frame); return; }
+      // 静默期：留前滚，丢其余（B9：静默不上云）
+      preRoll.push(frame);
+      if (preRoll.length > PRE_ROLL_MAX) preRoll.shift();
     },
-    // VAD 回调注入由 voice host 事件流驱动（vad_result 帧）：
-    // 语音开始 → 冲刷 preRoll 并转入转发；结束 → 停转发
     dispose: () => undefined,
   };
 }

@@ -125,7 +125,6 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   asrShowTranscript: false,
   screenshotHotkey: "Alt+Shift+S",
   chatLineHeight: 1.75,
-  assistantBubbleEnabled: false,
   toolModeOverrides: {},
   chatToolsEnabled: false,
   skillModeOverrides: {},
@@ -269,9 +268,6 @@ export function normalizeGeneralSettings(
     ttsMinimaxVocalEnhance: input?.ttsMinimaxVocalEnhance === undefined
       ? DEFAULT_GENERAL_SETTINGS.ttsMinimaxVocalEnhance
       : Boolean(input.ttsMinimaxVocalEnhance),
-    assistantBubbleEnabled: input?.assistantBubbleEnabled === undefined
-      ? DEFAULT_GENERAL_SETTINGS.assistantBubbleEnabled
-      : Boolean(input.assistantBubbleEnabled),
     rememberWindowState: input?.rememberWindowState === undefined
       ? true
       : Boolean(input.rememberWindowState),

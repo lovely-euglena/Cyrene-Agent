@@ -46,6 +46,17 @@ internal sealed partial class RagHost
     {
         var deleted = 0;
         using var tx = _db!.BeginTransaction();
+        // all:true → 全清（维度切换 clearForRebuild 专用；事务内双表同步清，
+        // 防新旧维度向量混存污染检索）
+        if (root.TryGetProperty("all", out var all) && all.ValueKind == JsonValueKind.True)
+        {
+            using var cAll = tx.Connection!.CreateCommand();
+            cAll.Transaction = tx;
+            cAll.CommandText = "DELETE FROM entries; DELETE FROM bm25;";
+            deleted = cAll.ExecuteNonQuery();
+            tx.Commit();
+            return new { deleted };
+        }
         if (root.TryGetProperty("ids", out var ids) && ids.ValueKind == JsonValueKind.Array && ids.GetArrayLength() > 0)
         {
             foreach (var id in ids.EnumerateArray())

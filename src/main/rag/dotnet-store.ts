@@ -152,9 +152,11 @@ export class DotnetRagStore {
     return this.fallback.deleteImportedDoc(importId, fileName);
   }
 
-  /** 维度切换清库（转发 host 清空 + fallback 本地清，防旧维度写回）。 */
+  /** 维度切换清库（转发 host 全清 + fallback 本地清，防旧维度写回）。 */
   clearForRebuild(): void {
-    try { void ragHostClient.call("delete_all", {}); } catch { /* ignore */ }
+    try { void ragHostClient.call("delete", { all: true }); } catch (e) {
+      console.warn("[DotnetRagStore] clearForRebuild host 轨失败:", e instanceof Error ? e.message : e);
+    }
     this.fallback.clearForRebuild();
   }
 

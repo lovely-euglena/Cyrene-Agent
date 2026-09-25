@@ -169,6 +169,7 @@ const manager = new Live2DManager({
           expressionReset: expressionReset !== null,
           mouthSync: mouthSync !== null,
           speakingMotion: speakingMotion !== null,
+          blink: blink !== null,
           clickThrough: clickThrough !== null,
         },
         petVisible,
