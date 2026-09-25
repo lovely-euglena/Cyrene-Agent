@@ -344,6 +344,9 @@ export async function spawnNativeWindow(
       // 初始快照与后续写入重推共用同一路径（读方向键名统一在协议模块）
       pushSettingsSnapshotToNative();
     } else if (kind === "plugins" && dataProviders) {
+      // 进入即刷新一次（快照含各插件实际占用）。刷新策略：进入一次 +
+      // 插件操作后重推（见 pluginAction 尾部）+ 窗内「刷新」按钮手动重推；
+      // 不做定时轮询。
       void dataProviders.getPluginsSnapshot?.()
         .then((snapshot) => c.pushPlugins(snapshot))
         .catch((error) => console.warn("[NativeWindows] plugins snapshot push failed:", error));

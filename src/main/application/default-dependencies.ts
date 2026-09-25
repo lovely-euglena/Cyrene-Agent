@@ -906,7 +906,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               setPluginNotice("error", `操作失败：${message}`);
               console.warn("[PluginNative] action failed:", action, id, err);
             }
-            // 完成后重推快照（installed ± market 索引；与 spawn 初始推送同一构建器）
+            // 完成后重推快照（installed ± market 索引；与 spawn 初始推送同一构建器）。
+            // 刷新策略：进入推一次 + 插件操作后重推（此处，保留）+ 窗内「刷新」
+            // 手动重推；不做定时轮询。
             await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
           },
         });
