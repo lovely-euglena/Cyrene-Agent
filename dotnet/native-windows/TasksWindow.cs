@@ -14,6 +14,7 @@ public sealed class TasksWindow : NativeWindow
 {
     private readonly Form _form;
     private readonly Label _scheduleCount;
+    private readonly Label _scheduleDate;
     private readonly FlowLayoutPanel _taskList;
     private readonly Label _tokenSummary;
     private readonly Panel _chartPanel;
@@ -125,11 +126,30 @@ public sealed class TasksWindow : NativeWindow
             Text = "",
             ForeColor = System.Drawing.Color.FromArgb(0xCC, 0xCC, 0xD8),
             AutoSize = true,
-            Margin = new Padding(0, 42, 0, 0),
+            Margin = new Padding(0, 2, 0, 0),
         };
+        // 日期行（旧版 schedule-date：2026年9月26日 · 周六）
+        _scheduleDate = new Label
+        {
+            Text = "",
+            ForeColor = System.Drawing.Color.FromArgb(0xCC, 0xCC, 0xD8),
+            AutoSize = true,
+            Font = new Font("Microsoft YaHei UI", 9f),
+            Margin = new Padding(0, 22, 0, 0),
+        };
+        var usageColumn = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            AutoSize = true,
+            WrapContents = false,
+            Margin = new Padding(28, 0, 0, 0),
+            BackColor = System.Drawing.Color.Transparent,
+        };
+        usageColumn.Controls.Add(_scheduleDate);
+        usageColumn.Controls.Add(_tokenSummary);
         overview.Controls.Add(_scheduleCount);
         overview.Controls.Add(countUnit);
-        overview.Controls.Add(_tokenSummary);
+        overview.Controls.Add(usageColumn);
         _root.Controls.Add(overview, 0, 1);
 
         // ── 任务列表 ──
@@ -160,7 +180,7 @@ public sealed class TasksWindow : NativeWindow
         if (layout.ValueKind == JsonValueKind.Object) ApplyLayout(layout);
     }
 
-    private record TaskRow(string Name, string Time, bool Enabled);
+    private record TaskRow(string Title, string Time);
 
     /// <summary>无边框 WinForms 窗的圆角（区域裁剪；失败不影响功能）。</summary>
     private void ApplyRoundedRegion()
@@ -177,29 +197,55 @@ public sealed class TasksWindow : NativeWindow
     }
 
     private List<TaskRow> _tasks = new();
+    /// <summary>口径内任务总数（旧版 totalCount）：今日任务优先，否则未来任务；列表只显示前 3 条。</summary>
+    private int _scheduleTotal;
     private List<(string Weekday, int Total, bool IsToday, bool IsFuture)> _week = new();
 
     public void ApplyState(JsonElement tasks, JsonElement usage)
     {
         _tasks.Clear();
+        _scheduleTotal = 0;
+        // 与旧版 tasks 页 task-filter.ts 同口径：
+        //   启用 + nextFireAt 合法 + 未来 → 按触发时间升序；
+        //   有今日任务则只取今日，否则取未来；总数 = 口径内数量，列表只显示 3 条。
         if (tasks.ValueKind == JsonValueKind.Array)
         {
+            var now = DateTime.Now;
+            var upcoming = new List<(DateTime FireAt, string Title, string Kind)>();
             foreach (var t in tasks.EnumerateArray())
             {
-                var name = t.TryGetProperty("name", out var n) ? n.GetString() : "";
-                var time = "";
-                if (t.TryGetProperty("time", out var tm))
-                {
-                    time = tm.ValueKind switch
-                    {
-                        JsonValueKind.String => tm.GetString() ?? "",
-                        JsonValueKind.Number => tm.GetDouble().ToString("0.####"),
-                        _ => "",
-                    };
-                }
-                var enabled = !t.TryGetProperty("enabled", out var en) || (en.ValueKind == JsonValueKind.True);
-                _tasks.Add(new TaskRow(name ?? "", time, enabled));
+                if (t.ValueKind != JsonValueKind.Object) continue;
+                // 宿主已按 RendererScheduledTask 投影；enabled = 有效授权状态
+                if (!t.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.True) continue;
+                var next = t.TryGetProperty("nextFireAt", out var nf) ? nf.GetString() : null;
+                if (string.IsNullOrEmpty(next)
+                    || !DateTimeOffset.TryParse(next, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var fireAt)) continue;
+                var local = fireAt.LocalDateTime;
+                if (local < now) continue;
+
+                var title = t.TryGetProperty("title", out var ti) ? ti.GetString() : null;
+                // 兼容旧快照的 name 键（宿主投影已统一为 title）
+                if (string.IsNullOrEmpty(title) && t.TryGetProperty("name", out var nm)) title = nm.GetString();
+                var kind = "";
+                if (t.TryGetProperty("schedule", out var sc) && sc.ValueKind == JsonValueKind.Object
+                    && sc.TryGetProperty("kind", out var sk)) kind = sk.GetString() ?? "";
+                upcoming.Add((local, title ?? "", kind));
             }
+            upcoming.Sort((a, b) => a.FireAt.CompareTo(b.FireAt));
+
+            var today = upcoming.Where(x => x.FireAt.Date == now.Date).ToList();
+            var source = today.Count > 0 ? today : upcoming;
+            var mode = today.Count > 0 ? "today" : (upcoming.Count > 0 ? "upcoming" : "empty");
+            _scheduleTotal = source.Count;
+            foreach (var entry in source.Take(3))
+            {
+                // 旧版格式：今日任务显示 HH:mm；未来任务/一次性任务显示 MM-dd HH:mm
+                var showDate = mode == "upcoming" || entry.Kind == "once";
+                _tasks.Add(new TaskRow(entry.Title, entry.FireAt.ToString(showDate ? "MM-dd HH:mm" : "HH:mm")));
+            }
+            _scheduleDate.Text =
+                $"{now.Year}年{now.Month}月{now.Day}日 · {new[] { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }[(int)now.DayOfWeek]}";
         }
 
         // 今日 token 汇总
@@ -271,7 +317,7 @@ public sealed class TasksWindow : NativeWindow
                 };
                 var name = new Label
                 {
-                    Text = t.Name,
+                    Text = t.Title,
                     ForeColor = System.Drawing.Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2),
                     AutoSize = false,
                     Width = item.Width - 70,
@@ -285,23 +331,19 @@ public sealed class TasksWindow : NativeWindow
                     Text = t.Time,
                     ForeColor = System.Drawing.Color.FromArgb(0xB3, 0xE4, 0x99, 0xFF),
                     AutoSize = false,
-                    Width = 58,
+                    Width = 78,
                     Height = 36,
-                    Location = new System.Drawing.Point(item.Width - 66, 2),
+                    Location = new System.Drawing.Point(item.Width - 86, 2),
                     TextAlign = System.Drawing.ContentAlignment.MiddleRight,
                     Font = new Font("Microsoft YaHei UI", 9f),
                 };
-                if (!t.Enabled)
-                {
-                    name.ForeColor = System.Drawing.Color.FromArgb(0x77, 0xCC, 0xCC, 0xD8);
-                    time.ForeColor = System.Drawing.Color.FromArgb(0x77, 0xE4, 0x99, 0xFF);
-                }
                 item.Controls.Add(name);
                 item.Controls.Add(time);
                 _taskList.Controls.Add(item);
             }
         }
-        _scheduleCount.Text = _tasks.Count.ToString();
+        // 计数 = 口径内总数（旧版 totalCount）：列表最多 3 条，计数不随之截断
+        _scheduleCount.Text = _scheduleTotal.ToString();
         _taskList.ResumeLayout();
     }
 

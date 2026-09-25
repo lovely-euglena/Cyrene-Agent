@@ -14,6 +14,7 @@ import type { WindowActivationBroker } from "./window-activation";
 import type { ShellResult } from "./shell-bootstrap";
 import type { RevealStartupWindowsOptions } from "../startup/startup-window-reveal";
 import { closeNativeWindow, markNativeWindowsStartupReady } from "../windows/native-windows-bridge";
+import { projectTaskForRenderer } from "../scheduler/scheduler-actions";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -181,7 +182,10 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   deps.bindNativeData?.({
     getRuntimeState: () => services.runtimeState.getState(),
     getModelConfig: () => deps.getPublicModelConfig?.() ?? null,
-    getTasks: async () => scheduler.store.getTasks() as unknown[],
+    // 与渲染页同一投影口径：插件任务的启停按有效授权状态映射，且剔除
+    // approvalFingerprint/pluginUserEnabled 等宿主内部字段——native 日程窗
+    // 的过滤/排序/展示以这份 RendererScheduledTask 为准。
+    getTasks: async () => scheduler.store.getTasks().map(projectTaskForRenderer) as unknown[],
     // .NET 插件管理窗快照：已装 + 市场索引（manager/market 由运行期闭包提供）
     getPluginsSnapshot: async () => deps.getPluginsSnapshot?.(),
     // native 设置窗快照：通用/外观/关于 + 用户信息（键名与 C# 白名单对齐；
