@@ -17,6 +17,9 @@ import {
 } from "./screenshot-service";
 import { detectSnipasteExecutable } from "./snipaste-detect";
 import { SnipasteScreenshotClient, SwitchableScreenshotClient } from "./snipaste-client";
+import { NativeSnipasteCaptureClient } from "./native-snipaste-client";
+import type { ScreenshotHelperClient } from "./helper-client";
+import { isNativeWindowsEnabled, resolveNativeWindowsExe } from "../windows/native-windows-host";
 
 export type { ScreenshotService };
 
@@ -151,8 +154,18 @@ export function initializeScreenshotService(
     },
     logger: console,
   });
+  // .NET 主通道：cyrene-native --snipaste-capture；不可用时回退上面这套 TS 存档实现。
+  const nativeSnipasteClient = new NativeSnipasteCaptureClient({
+    resolveNativeExe: () => (isNativeWindowsEnabled() ? resolveNativeWindowsExe() : null),
+    getSnipastePath: () => snipastePath,
+    screenshotDirectory,
+    logger: console,
+  });
+  const pickSnipasteClient = (): ScreenshotHelperClient =>
+    isNativeWindowsEnabled() && resolveNativeWindowsExe() ? nativeSnipasteClient : snipasteClient;
+  let activeSnipasteClient = pickSnipasteClient();
   const client = new SwitchableScreenshotClient(
-    options.initialBackend === "snipaste" ? snipasteClient : builtinClient,
+    options.initialBackend === "snipaste" ? activeSnipasteClient : builtinClient,
   );
 
   // 启动即建目录 + 记录实际输出目录（排查 0x80070003 类路径问题）。
@@ -211,11 +224,14 @@ export function initializeScreenshotService(
       snipastePath = nextSnipastePath ?? "";
       cachedSnipasteExecutable = null;
       snipasteDetectInFlight = null;
-      client.setActive(backend === "snipaste" ? snipasteClient : builtinClient);
+      activeSnipasteClient = pickSnipasteClient();
+      client.setActive(backend === "snipaste" ? activeSnipasteClient : builtinClient);
       console.log(
         "[Screenshot] backend =",
         backend,
-        backend === "snipaste" ? (snipastePath ? `path=${snipastePath}` : "(auto-detect)") : "",
+        backend === "snipaste"
+          ? `${activeSnipasteClient === nativeSnipasteClient ? "native" : "ts"}${snipastePath ? ` path=${snipastePath}` : " (auto-detect)"}`
+          : "",
       );
       return { ok: true };
     },
