@@ -52,11 +52,16 @@ describe("openSettingsWindow · 路由", () => {
     expect(mocks.spawnNativeWindow).not.toHaveBeenCalled();
   });
 
-  it("Electron 专属 section（preferences/cyrene）→ Electron（避免落错页）", async () => {
+  it("preferences 迁入 WPF → native + section 定位", async () => {
     openSettingsWindow("preferences");
+    expect(mocks.spawnNativeWindow).toHaveBeenCalledWith("settings", { section: "preferences" });
+    await flush();
+    expect(mocks.createSettingsWindow).not.toHaveBeenCalled();
+  });
+
+  it("Electron 专属 section（cyrene）→ Electron（避免落错页）", async () => {
     openSettingsWindow("cyrene");
-    expect(mocks.createSettingsWindow).toHaveBeenNthCalledWith(1, "preferences");
-    expect(mocks.createSettingsWindow).toHaveBeenNthCalledWith(2, "cyrene");
+    expect(mocks.createSettingsWindow).toHaveBeenCalledWith("cyrene");
     await flush();
     expect(mocks.spawnNativeWindow).not.toHaveBeenCalled();
   });

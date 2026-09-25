@@ -301,6 +301,7 @@ public sealed partial class SettingsWindow : NativeWindow
         }
 
         AddSection("general", "通用", native: true);
+        AddSection("preferences", "偏好设置", native: true);
         AddSection("appearance", "外观", native: true);
         AddSection("api", "API 与模型", native: true);
         AddSection("api-advanced", "高级设置", native: true);
@@ -370,11 +371,12 @@ public sealed partial class SettingsWindow : NativeWindow
     // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "appearance" or "user" or "api" or "api-advanced" or "disclaimer" or "memory" or "tasks" or "tokens" or "about";
+        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "disclaimer" or "memory" or "tasks" or "tokens" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
         "general" => BuildGeneralSection(),
+        "preferences" => BuildPreferencesSection(),
         "appearance" => BuildAppearanceSection(),
         "user" => BuildUserSection(),
         "api" => BuildApiSection(),
@@ -714,6 +716,7 @@ public sealed partial class SettingsWindow : NativeWindow
             GetInt("windowCornerRadius", -1), GetString("uiIcon"), NodeRawJson("uiFont"),
             GetDouble("chatLineHeight", 1.75), GetBool("assistantBubbleEnabled")),
         "user" => NodeRawJson("user"),
+        "preferences" => NodeRawJson("preferences"),
         "api" => NodeRawJson("api"),
         "api-advanced" => NodeRawJson("runtime"),
         "disclaimer" => "",

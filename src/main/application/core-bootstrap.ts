@@ -29,6 +29,7 @@ import type { LlmClient } from "../services/llm/llm-client";
 import type { CitaService } from "../cita";
 import type { SocialContextService } from "../services/social-context/social-context-service";
 import type { ChannelsSubsystem } from "../channels/bootstrap";
+import { channelManager } from "../channels/manager";
 import type { SchedulerSubsystem } from "../scheduler/bootstrap";
 import type { GeneralSettings } from "../settings/general-settings";
 import type { UserProfile } from "../settings-store";
@@ -236,6 +237,35 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
           timezoneOptions: TIMEZONE_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
           avatarDataUrl: loadAvatarDataUrl(),
         },
+        // 偏好设置（preferences section）：与渲染页 saveGeneral 同一批字段。
+        // proactiveDelivery 是渠道可用性（渲染页同口径：仅运行中渠道可选，
+        // local 恒可选）；defaultChatMode/segmentedOutputMode/citaSemanticEngine
+        // 当前为只读展示项。
+        preferences: (() => {
+          const statuses = channelManager.getAllStatus();
+          return {
+            screenshotBackend: gs.screenshotBackend,
+            snipastePath: gs.snipastePath,
+            mobileMessageSegmentation: gs.mobileMessageSegmentation,
+            proactiveChatMode: gs.proactiveChatMode,
+            proactiveDeliveryTarget: gs.proactiveDeliveryTarget,
+            proactiveDelivery: {
+              wechat: statuses.wechat?.phase === "running",
+              feishu: statuses.feishu?.phase === "running",
+            },
+            chatSocialContextEnabled: gs.chatSocialContextEnabled,
+            momentsEnabled: gs.momentsEnabled,
+            cyreneMomentsPostingEnabled: gs.cyreneMomentsPostingEnabled,
+            cyreneMomentsReactionsEnabled: gs.cyreneMomentsReactionsEnabled,
+            momentsCharacterReactionsEnabled: gs.momentsCharacterReactionsEnabled,
+            momentsLiveliness: gs.momentsLiveliness,
+            citaEnabled: gs.citaEnabled,
+            citaSemanticEngine: gs.citaSemanticEngine,
+            customStyle: gs.customStyle,
+            defaultChatMode: gs.defaultChatMode,
+            segmentedOutputMode: gs.segmentedOutputMode,
+          };
+        })(),
       };
     },
   });

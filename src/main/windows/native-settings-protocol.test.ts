@@ -46,6 +46,18 @@ const settingsSectionCs = [
     fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Tasks.cs", import.meta.url)),
     "utf8",
   ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Preferences.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Runtime.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Tokens.cs", import.meta.url)),
+    "utf8",
+  ),
 ].join("\n");
 
 /** 提取 C# 源码中所有 SetSetting("key&quot;, ...) 的键名 */
@@ -61,6 +73,18 @@ function extractCsUserProfileFields(source: string): string[] {
 /** 提取 C# 设置窗 AddSection("id&quot;, ...) 的 section id */
 function extractCsSections(source: string): string[] {
   return [...source.matchAll(/AddSection\("([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** 提取 AddSection("id", ..., native: false, ...) 的非原生 section（走 Electron 占位/入口） */
+function extractCsLegacySections(source: string): string[] {
+  return [...source.matchAll(/AddSection\("([^"]+)",\s*"[^"]*",\s*native:\s*false/g)].map((m) => m[1]);
+}
+
+/** 提取 IsNativeSection 表达式里的 section 字面量（懒构建门禁，漂移会落占位页） */
+function extractCsNativeSectionGate(source: string): string[] {
+  const match = source.match(/IsNativeSection\(string id\)\s*\n?\s*=>([^;]+);/);
+  if (!match) throw new Error("SettingsWindow.cs 未找到 IsNativeSection 表达式");
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 }
 
 /** 提取 RequestRouter.cs 中 settings.set 白名单集合 */
@@ -124,7 +148,54 @@ describe("sanitizeNativeGeneralSetting", () => {
       "gitCommitAuthorEmail",
       "sidebarVisible",
       "tasksVisible",
+      "screenshotBackend",
+      "snipastePath",
+      "mobileMessageSegmentation",
+      "proactiveChatMode",
+      "proactiveDeliveryTarget",
+      "chatSocialContextEnabled",
+      "momentsEnabled",
+      "cyreneMomentsPostingEnabled",
+      "cyreneMomentsReactionsEnabled",
+      "momentsCharacterReactionsEnabled",
+      "momentsLiveliness",
+      "citaEnabled",
+      "customStyle",
     ]);
+  });
+
+  it("偏好设置（preferences）键：归一化 / 类型校验", () => {
+    expect(sanitizeNativeGeneralSetting("screenshotBackend", "snipaste")).toEqual({ screenshotBackend: "snipaste" });
+    expect(sanitizeNativeGeneralSetting("screenshotBackend", "other")).toBeNull();
+    expect(sanitizeNativeGeneralSetting("snipastePath", "  C:/tools/Snipaste.exe  ")).toEqual({
+      snipastePath: "C:/tools/Snipaste.exe",
+    });
+    expect(sanitizeNativeGeneralSetting("mobileMessageSegmentation", "on")).toEqual({
+      mobileMessageSegmentation: "on",
+    });
+    expect(sanitizeNativeGeneralSetting("mobileMessageSegmentation", "yes")).toEqual({
+      mobileMessageSegmentation: "off",
+    });
+    expect(sanitizeNativeGeneralSetting("proactiveChatMode", "on")).toEqual({ proactiveChatMode: "on" });
+    expect(sanitizeNativeGeneralSetting("proactiveDeliveryTarget", "feishu")).toEqual({
+      proactiveDeliveryTarget: "feishu",
+    });
+    expect(sanitizeNativeGeneralSetting("proactiveDeliveryTarget", "sms")).toEqual({
+      proactiveDeliveryTarget: "local",
+    });
+    expect(sanitizeNativeGeneralSetting("momentsLiveliness", "lively")).toEqual({ momentsLiveliness: "lively" });
+    expect(sanitizeNativeGeneralSetting("momentsLiveliness", "chaos")).toBeNull();
+    expect(sanitizeNativeGeneralSetting("momentsEnabled", true)).toEqual({ momentsEnabled: true });
+    expect(sanitizeNativeGeneralSetting("citaEnabled", "yes")).toBeNull();
+    // customStyle：只收对象，交给共享归一化（非法档位回落默认 / 数值 clamp）
+    expect(sanitizeNativeGeneralSetting("customStyle", null)).toBeNull();
+    expect(sanitizeNativeGeneralSetting("customStyle", "temperature")).toBeNull();
+    expect(sanitizeNativeGeneralSetting("customStyle", {
+      diversity: { driver: "temperature", value: 9 },
+      repetition: "strong",
+    })).toEqual({
+      customStyle: { diversity: { driver: "temperature", value: 2 }, repetition: "strong" },
+    });
   });
 });
 
@@ -183,8 +254,8 @@ describe("sanitizeNativeUserProfile", () => {
 });
 
 describe("跨语言契约：C# 设置窗 ↔ 宿主白名单", () => {
-  it("SettingsWindow.cs 写入的所有 general 键都在宿主白名单内", () => {
-    const csKeys = new Set(extractCsWriteKeys(settingsWindowCs));
+  it("SettingsWindow(*).cs 写入的所有 general 键都在宿主白名单内", () => {
+    const csKeys = new Set(extractCsWriteKeys(settingsSectionCs));
     expect(csKeys.size).toBeGreaterThan(0);
     for (const key of csKeys) {
       expect(NATIVE_GENERAL_SETTING_KEYS).toContain(key);
@@ -245,14 +316,14 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     }
   });
 
-  it("WPF 认识的 section（含新迁 disclaimer/api-advanced）→ WPF", () => {
-    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks"]) {
+  it("WPF 认识的 section（含新迁 disclaimer/api-advanced/preferences）→ WPF", () => {
+    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks", "tokens", "preferences"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(false);
     }
   });
 
-  it("Electron 专属 section（preferences/cyrene）→ Electron", () => {
-    for (const section of ["preferences", "cyrene", "unknown-section"]) {
+  it("Electron 专属 section（cyrene）→ Electron", () => {
+    for (const section of ["cyrene", "unknown-section"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(true);
     }
   });
@@ -261,6 +332,12 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     const csSections = extractCsSections(settingsWindowCs);
     expect(csSections.length).toBeGreaterThan(0);
     expect(new Set(csSections)).toEqual(new Set(NATIVE_SETTINGS_SECTIONS));
+  });
+
+  it("IsNativeSection 门禁与 AddSection(native:true) 集合一致（漂移会落旧版占位页）", () => {
+    const legacy = new Set(extractCsLegacySections(settingsWindowCs));
+    const expectedNative = NATIVE_SETTINGS_SECTIONS.filter((section) => !legacy.has(section));
+    expect(new Set(extractCsNativeSectionGate(settingsWindowCs))).toEqual(new Set(expectedNative));
   });
 });
 
@@ -275,8 +352,9 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
     }
   });
 
-  it("三类 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
+  it("各 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
     expect([...NATIVE_SECTION_ACTIONS.api]).toEqual(["save", "test", "test-vision", "set-default-profile", "delete-profile"]);
+    expect([...NATIVE_SECTION_ACTIONS.preferences]).toEqual(["open-prompt"]);
     expect([...NATIVE_SECTION_ACTIONS.memory]).toEqual([
       "save-l0",
       "save-l1",

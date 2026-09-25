@@ -18,6 +18,12 @@ import { normalizeUiTheme, type UiTheme } from "../../shared/ui-theme";
 import { normalizeWindowCornerRadius } from "../../shared/window-corner-radius";
 import { normalizeUiIcon } from "../../shared/ui-icon";
 import { isAllowedTimezoneValue } from "../../shared/timezone-options";
+import {
+  normalizeMobileMessageSegmentationMode,
+  normalizeProactiveChatMode,
+  normalizeProactiveDeliveryTarget,
+} from "../../shared/preferences";
+import { normalizeCustomStyleConfig } from "../../shared/style-sampling";
 import type { GeneralSettings } from "../settings/general-settings";
 import type { UserProfile } from "../settings-store";
 
@@ -39,6 +45,20 @@ export const NATIVE_GENERAL_SETTING_KEYS = [
   "gitCommitAuthorEmail",
   "sidebarVisible",
   "tasksVisible",
+  // 偏好设置（preferences section）：
+  "screenshotBackend",
+  "snipastePath",
+  "mobileMessageSegmentation",
+  "proactiveChatMode",
+  "proactiveDeliveryTarget",
+  "chatSocialContextEnabled",
+  "momentsEnabled",
+  "cyreneMomentsPostingEnabled",
+  "cyreneMomentsReactionsEnabled",
+  "momentsCharacterReactionsEnabled",
+  "momentsLiveliness",
+  "citaEnabled",
+  "customStyle",
 ] as const;
 
 export type NativeGeneralSettingKey = (typeof NATIVE_GENERAL_SETTING_KEYS)[number];
@@ -64,11 +84,12 @@ export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "tts", "asr"] as con
 
 /**
  * WPF 设置窗认识的 section（与 SettingsWindow.cs 的 AddSection 对齐；
- * 契约测试锁定）。不在其中（tokens/preferences/cyrene/... 等 Electron
- * 专属 section）或命中 ELECTRON_ONLY 时，入口回 Electron 页。
+ * 契约测试锁定）。不在其中（cyrene/... 等 Electron 专属 section）或命中
+ * ELECTRON_ONLY 时，入口回 Electron 页。
  */
 export const NATIVE_SETTINGS_SECTIONS = [
   "general",
+  "preferences",
   "appearance",
   "user",
   "about",
@@ -106,6 +127,7 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
  */
 export const NATIVE_SECTION_ACTIONS = {
   api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
+  preferences: ["open-prompt"],
   runtime: ["save"],
   tokens: ["set-days", "clear"],
   memory: [
@@ -143,6 +165,12 @@ export function sanitizeNativeGeneralSetting(
     case "disableGpuElectron":
     case "sidebarVisible":
     case "tasksVisible":
+    case "chatSocialContextEnabled":
+    case "momentsEnabled":
+    case "cyreneMomentsPostingEnabled":
+    case "cyreneMomentsReactionsEnabled":
+    case "momentsCharacterReactionsEnabled":
+    case "citaEnabled":
       return typeof value === "boolean" ? { [key]: value } : null;
     case "petZoom": {
       if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -166,6 +194,29 @@ export function sanitizeNativeGeneralSetting(
     case "language":
       // GeneralSettings.language 当前仅支持 zh-CN（normalizeGeneralSettings 会强制归一）
       return value === "zh-CN" ? { language: "zh-CN" } : null;
+    // ── 偏好设置（preferences section）：渲染页同款归一化（非法值回落默认档） ──
+    case "mobileMessageSegmentation":
+      return typeof value === "string"
+        ? { mobileMessageSegmentation: normalizeMobileMessageSegmentationMode(value) }
+        : null;
+    case "proactiveChatMode":
+      return typeof value === "string" ? { proactiveChatMode: normalizeProactiveChatMode(value) } : null;
+    case "proactiveDeliveryTarget":
+      return typeof value === "string"
+        ? { proactiveDeliveryTarget: normalizeProactiveDeliveryTarget(value) }
+        : null;
+    case "momentsLiveliness":
+      return value === "quiet" || value === "natural" || value === "lively"
+        ? { momentsLiveliness: value }
+        : null;
+    case "screenshotBackend":
+      return value === "builtin" || value === "snipaste" ? { screenshotBackend: value } : null;
+    case "snipastePath":
+      return typeof value === "string" ? { snipastePath: value.trim().slice(0, 500) } : null;
+    case "customStyle":
+      return value !== null && typeof value === "object"
+        ? { customStyle: normalizeCustomStyleConfig(value) }
+        : null;
     default:
       return null;
   }

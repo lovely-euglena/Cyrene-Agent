@@ -6,7 +6,7 @@
  * 本文件内的闭包只做构造与委托；任何长期任务都必须由对应启动阶段显式启动。
  */
 
-import { app, BrowserWindow, dialog, screen } from "electron";
+import { app, BrowserWindow, dialog, screen, shell as electronShell } from "electron";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
 
@@ -122,6 +122,7 @@ import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
+import { ensureCustomStylePrompt } from "../style-prompt";
 import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 import {
   MAX_PLUGIN_MEMORY_LIMIT_MB,
@@ -792,6 +793,18 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               clearUsage();
               nativeNotice("tokens", "ok", "用量统计已重置");
               pushSettingsSnapshotToNative();
+            }
+          },
+          // 「偏好设置」section：打开自定义 Prompt 文件（旧版 settings.ts 同口径：
+          // 确保文件存在后在资源管理器中定位）
+          preferencesAction: (verb) => {
+            if (verb !== "open-prompt") return;
+            try {
+              const filePath = ensureCustomStylePrompt();
+              electronShell.showItemInFolder(filePath);
+              nativeNotice("preferences", "ok", "已在资源管理器中定位自定义 Prompt 文件");
+            } catch (err) {
+              nativeNotice("preferences", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`);
             }
           },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）

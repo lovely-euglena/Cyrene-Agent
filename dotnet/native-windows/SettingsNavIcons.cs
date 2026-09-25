@@ -40,6 +40,7 @@ public static class SettingsNavIcons
     public static readonly Dictionary<string, (string Title, string Hint)> SectionMeta = new()
     {
         ["general"] = ("通用设置", "控制状态栏、日程栏、基础音频和系统行为"),
+        ["preferences"] = ("偏好设置", "设置聊天窗口和输出行为的默认偏好"),
         ["appearance"] = ("外观设置", "桌宠显示、窗口样式与聊天排版"),
         ["api"] = ("API 设置", "填写模型服务配置，保存在本地"),
         ["api-advanced"] = ("高级设置", "超时与并发等运行期参数"),

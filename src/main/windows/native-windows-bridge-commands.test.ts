@@ -46,6 +46,7 @@ function initBridge() {
     apiAction: vi.fn(),
     memoryAction: vi.fn(),
     schedulerAction: vi.fn(),
+    preferencesAction: vi.fn(),
   };
   const client = initNativeWindowsBridge(actions as never);
   expect(client).not.toBeNull();
@@ -100,6 +101,13 @@ describe("native-windows-bridge · cmd 动作分发", () => {
     dispatch({ kind: "sidebar", action: "modelSwitch" });
     expect(actions.openSettings).toHaveBeenCalledTimes(1);
     expect(actions.openSettings).toHaveBeenCalledWith("api");
+  });
+
+  it("preferences 动作透传（open-prompt：定位自定义 Prompt 文件）", () => {
+    const actions = initBridge();
+    dispatch({ kind: "settings", action: "preferences", verb: "open-prompt" });
+    expect(actions.preferencesAction).toHaveBeenCalledTimes(1);
+    expect(actions.preferencesAction).toHaveBeenCalledWith("open-prompt", {});
   });
 
   it("settings set / set-user-profile / pick-avatar → 对应回调", () => {

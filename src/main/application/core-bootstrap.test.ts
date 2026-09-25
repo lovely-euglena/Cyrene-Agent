@@ -215,9 +215,47 @@ describe("startCore", () => {
     expect(calls.indexOf("mark-startup-windows")).toBeLessThan(calls.indexOf("mark-native"));
   });
 
-  it("bindNativeData 注入数据源（runtime/model/tasks 可读；防合并丢失接线）", async () => {
+  it("bindNativeData 注入数据源（runtime/model/tasks/settings 可读；防合并丢失接线）", async () => {
     const bindNativeData = vi.fn();
-    await startCore(makeCoreDeps([], { bindNativeData }));
+    await startCore(makeCoreDeps([], {
+      bindNativeData,
+      loadGeneralSettings: () => ({
+        petVisible: true,
+        petAlwaysOnTop: true,
+        petZoom: 1,
+        sidebarVisible: false,
+        tasksVisible: false,
+        launchAtLogin: true,
+        toastSoundEnabled: true,
+        chatLineHeight: 1.75,
+        assistantBubbleEnabled: true,
+        windowCornerRadius: 24,
+        defaultChatMode: "chat",
+        segmentedOutputMode: "off",
+        screenshotBackend: "snipaste",
+        snipastePath: "C:/tools/Snipaste.exe",
+        mobileMessageSegmentation: "on",
+        proactiveChatMode: "on",
+        proactiveDeliveryTarget: "local",
+        chatSocialContextEnabled: true,
+        momentsEnabled: true,
+        cyreneMomentsPostingEnabled: false,
+        cyreneMomentsReactionsEnabled: true,
+        momentsCharacterReactionsEnabled: true,
+        momentsLiveliness: "natural",
+        citaEnabled: true,
+        citaSemanticEngine: "remote",
+        customStyle: { diversity: { driver: "temperature", value: 0.82 }, repetition: "light" },
+      }) as never,
+      loadUserProfile: () => ({
+        nickname: "T",
+        callPreference: "",
+        birthday: "",
+        defaultCity: "",
+        timezone: "Asia/Shanghai",
+        gender: "secret",
+      }) as never,
+    }));
     expect(bindNativeData).toHaveBeenCalledTimes(1);
     const providers = bindNativeData.mock.calls[0][0] as Record<string, unknown>;
     expect(typeof providers.getRuntimeState).toBe("function");
@@ -225,6 +263,27 @@ describe("startCore", () => {
     expect(typeof providers.getTasks).toBe("function");
     expect(typeof providers.getPluginsSnapshot).toBe("function");
     expect(typeof providers.getSettingsSnapshot).toBe("function");
+    // preferences 快照：与渲染页 saveGeneral 同批字段 + 渠道可用性（空渠道 → 手机目标不可选）
+    const snapshot = await (providers.getSettingsSnapshot as () => Promise<Record<string, any>>)();
+    expect(snapshot.preferences).toMatchObject({
+      defaultChatMode: "chat",
+      segmentedOutputMode: "off",
+      screenshotBackend: "snipaste",
+      snipastePath: "C:/tools/Snipaste.exe",
+      mobileMessageSegmentation: "on",
+      proactiveChatMode: "on",
+      proactiveDeliveryTarget: "local",
+      chatSocialContextEnabled: true,
+      momentsEnabled: true,
+      cyreneMomentsPostingEnabled: false,
+      cyreneMomentsReactionsEnabled: true,
+      momentsCharacterReactionsEnabled: true,
+      momentsLiveliness: "natural",
+      citaEnabled: true,
+      citaSemanticEngine: "remote",
+      customStyle: { diversity: { driver: "temperature", value: 0.82 }, repetition: "light" },
+    });
+    expect(snapshot.preferences.proactiveDelivery).toEqual({ wechat: false, feishu: false });
   });
 
   it("stops plugins before built-in channels during controlled shutdown", async () => {

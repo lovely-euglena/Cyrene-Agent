@@ -212,6 +212,11 @@ public static class RequestRouter
         // windowCornerRadius / toastSoundEnabled / chatLineHeight /
         // assistantBubbleEnabled / disableGpuElectron / gitCommitAuthorName /
         // gitCommitAuthorEmail / sidebarVisible / tasksVisible 为 UI 写入键；
+        // preferences 段（截图后端 / 偏好开关 / 朋友圈 / CITA / 自定义采样）：
+        // screenshotBackend / snipastePath / mobileMessageSegmentation /
+        // proactiveChatMode / proactiveDeliveryTarget / chatSocialContextEnabled /
+        // momentsEnabled / cyreneMomentsPostingEnabled / cyreneMomentsReactionsEnabled /
+        // momentsCharacterReactionsEnabled / momentsLiveliness / citaEnabled / customStyle；
         // uiTheme / language 为读方向+前向兼容键。历史键名（autoStart/
         // trayResident/theme）已废弃。
         var allowed = new HashSet<string> {
@@ -219,6 +224,10 @@ public static class RequestRouter
             "uiTheme", "language", "windowCornerRadius", "toastSoundEnabled",
             "chatLineHeight", "assistantBubbleEnabled", "disableGpuElectron",
             "gitCommitAuthorName", "gitCommitAuthorEmail", "sidebarVisible", "tasksVisible",
+            "screenshotBackend", "snipastePath", "mobileMessageSegmentation",
+            "proactiveChatMode", "proactiveDeliveryTarget", "chatSocialContextEnabled",
+            "momentsEnabled", "cyreneMomentsPostingEnabled", "cyreneMomentsReactionsEnabled",
+            "momentsCharacterReactionsEnabled", "momentsLiveliness", "citaEnabled", "customStyle",
         };
         if (string.IsNullOrEmpty(key) || !allowed.Contains(key)) return;
         SendSetting(key, value.HasValue ? value.Value : null);
