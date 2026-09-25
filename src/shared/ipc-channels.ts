@@ -382,6 +382,7 @@ export const IPC = {
   CALL_OPEN: "call:open",                 // sidebar → main：打开通话窗口
   CALL_START: "call:start",               // renderer → main：开始通话（初始化 ASR）
   CALL_AUDIO_FRAME: "call:audio-frame",    // renderer → main：PCM 音频帧
+  CALL_VAD_STATE: "call:vad-state",        // renderer → main：VAD 语音开始/静默（ASR 静默门控）
   CALL_ASR_RESULT: "call:asr-result",     // main → renderer：ASR 识别结果
   CALL_TURN_END: "call:turn-end",         // renderer → main：VAD 静默，结束本轮
   CALL_TTS_AUDIO: "call:tts-audio",       // main → renderer：TTS 音频

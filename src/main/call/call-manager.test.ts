@@ -36,6 +36,7 @@ import {
   claimExternalSpeechInput,
   endTurn,
   handleAudioFrame,
+  handleVadState,
   onCallEnded,
   onTtsDone,
   releaseExternalSpeechInput,
@@ -78,6 +79,23 @@ describe("call turn submission", () => {
     setCallWindow(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("VAD 上报转发给当前 ASR 流（静默门控：静默段不上云）", () => {
+    const reportVad = vi.fn();
+    mocks.createAsrStream.mockReturnValue({
+      start: vi.fn(async () => undefined),
+      sendAudio: vi.fn(),
+      reportVad,
+      stop: vi.fn(async () => ""),
+    });
+
+    startCall();
+    handleVadState(true);
+    handleVadState(false);
+
+    expect(reportVad).toHaveBeenNthCalledWith(1, true);
+    expect(reportVad).toHaveBeenNthCalledWith(2, false);
   });
 
   it("leaves LISTENING immediately while batch transcription is still stopping", async () => {

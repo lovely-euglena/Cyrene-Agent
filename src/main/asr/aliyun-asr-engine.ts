@@ -14,7 +14,7 @@ const LOG_PREFIX = "[AliyunASR]";
 const NLS_GATEWAY = "wss://nls-gateway.cn-shanghai.aliyuncs.com/ws/v1";
 
 /** 阿里云 ASR 流式识别会话 */
-export class VolcanoAsrStream {
+export class AliyunAsrStream {
   private ws: WebSocket | null = null;
   private stopped = false;
   private audioBuffer = Buffer.alloc(0);

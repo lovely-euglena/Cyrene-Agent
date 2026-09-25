@@ -447,6 +447,14 @@ export function handleAudioFrame(frame: Buffer): void {
   }
 }
 
+/** 处理 VAD 上报：驱动 ASR 静默门控（静默段不上云）。 */
+export function handleVadState(speech: boolean): void {
+  if (inputOwner === "external") return;
+  if (asrStream && currentState === "LISTENING") {
+    asrStream.reportVad(speech);
+  }
+}
+
 /** 天气关键词正则匹配 */
 const WEATHER_REGEX = /天气|今天.*热|今天.*冷|下雨|下雪|气温|几度|多少度|穿什么/;
 
@@ -536,6 +544,7 @@ export function registerCallIpc(ipcOption?: IpcScope): void {
   const ipc = ipcOption ?? createIpcScope();
   ipc.on(IPC.CALL_START, () => startCall());
   ipc.on(IPC.CALL_AUDIO_FRAME, (_event, frame: ArrayBuffer) => handleAudioFrame(Buffer.from(frame)));
+  ipc.on(IPC.CALL_VAD_STATE, (_event, speech: boolean) => handleVadState(speech === true));
   ipc.on(IPC.CALL_TURN_END, () => void endTurn());
   ipc.on(IPC.CALL_TTS_DONE, () => onTtsDone());
   ipc.on(IPC.CALL_STOP, () => stopCall());

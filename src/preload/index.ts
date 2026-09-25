@@ -260,6 +260,7 @@ contextBridge.exposeInMainWorld("moments", momentsApi);
 const callApi = {
   start: () => ipcRenderer.send(IPC.CALL_START),
   sendAudioFrame: (frame: ArrayBuffer) => ipcRenderer.send(IPC.CALL_AUDIO_FRAME, frame),
+  sendVadState: (speech: boolean) => ipcRenderer.send(IPC.CALL_VAD_STATE, speech),
   turnEnd: () => ipcRenderer.send(IPC.CALL_TURN_END),
   ttsDone: () => ipcRenderer.send(IPC.CALL_TTS_DONE),
   stop: () => ipcRenderer.send(IPC.CALL_STOP),
