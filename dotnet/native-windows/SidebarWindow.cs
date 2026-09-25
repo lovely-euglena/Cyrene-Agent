@@ -37,6 +37,9 @@ public sealed class SidebarWindow : NativeWindow
             CornerRadius = new CornerRadius(24),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0x5B, 0xFF, 0xBE, 0xE2)), // rgba(255,190,226,0.36)
             BorderThickness = new Thickness(1),
+            // 玻璃底：直接渐变笔刷（可渲染 + 可命中）。旧实现用「分离
+            // VisualBrush」当背景——其 Visual 不在可视树中、渲染为空，
+            // 表现为整窗透明且点击穿透（用户报「背景透明，点不动」）。
             Background = MakeGlassBrush(),
             Padding = new Thickness(0),
         };
@@ -44,10 +47,30 @@ public sealed class SidebarWindow : NativeWindow
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) }); // titlebar
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) }); // 底部按钮排
+        // 顶部高光覆盖层（不参与命中测试，纯装饰），置于内容之下
+        var highlight = new Border
+        {
+            Background = new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.18, 0.08),
+                Center = new Point(0.18, 0.08),
+                RadiusX = 0.5,
+                RadiusY = 0.5,
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(0x30, 0x60, 0x50, 0x70), 0),
+                    new GradientStop(Color.FromArgb(0x00, 0x60, 0x50, 0x70), 1),
+                },
+            },
+            CornerRadius = new CornerRadius(24),
+            IsHitTestVisible = false,
+        };
+        Grid.SetRowSpan(highlight, 3);
+        grid.Children.Add(highlight);
         _root.Child = grid;
 
         // ── titlebar（拖拽区 + 置顶/最小化/关闭） ──
-        var titlebar = new Grid();
+        var titlebar = new Grid { Background = Brushes.Transparent };
         titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -267,12 +290,12 @@ public sealed class SidebarWindow : NativeWindow
         return btn;
     }
 
-    /// <summary>粉紫玻璃底：多层渐变近似 CSS radial-gradient 组合。</summary>
+    /// <summary>粉紫玻璃底：直接返回线性渐变笔刷（不再包 VisualBrush——分离
+    /// Visual 不渲染且命中测试不可靠）。</summary>
     private static System.Windows.Media.Brush MakeGlassBrush()
     {
-        var grid = new Grid();
         // 主渐变（155deg 线性近似：左上→右下）
-        var main = new LinearGradientBrush
+        return new LinearGradientBrush
         {
             StartPoint = new Point(0.2, 0),
             EndPoint = new Point(0.9, 1),
@@ -282,27 +305,8 @@ public sealed class SidebarWindow : NativeWindow
                 new GradientStop((Color)ColorConverter.ConvertFromString("#991b1b2e"), 0.6),
                 new GradientStop((Color)ColorConverter.ConvertFromString("#cc2b2135"), 1),
             },
-            Opacity = 0.92,
+            Opacity = 0.96,
         };
-        var bg = new Border { Background = main, CornerRadius = new CornerRadius(24) };
-        grid.Children.Add(bg);
-        // 顶部高光（radial at 18% 8% 近似）
-        var highlight = new RadialGradientBrush
-        {
-            GradientOrigin = new Point(0.18, 0.08),
-            Center = new Point(0.18, 0.08),
-            RadiusX = 0.5, RadiusY = 0.5,
-            GradientStops =
-            {
-                new GradientStop(Color.FromArgb(0x30, 0x60, 0x50, 0x70), 0),
-                new GradientStop(Color.FromArgb(0x00, 0x60, 0x50, 0x70), 1),
-            },
-        };
-        var hl = new Border { Background = highlight, CornerRadius = new CornerRadius(24) };
-        grid.Children.Add(hl);
-
-        var brush = new VisualBrush(grid) { Stretch = Stretch.UniformToFill };
-        return brush;
     }
 
     public override void ShowWindow()
