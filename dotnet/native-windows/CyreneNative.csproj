@@ -31,4 +31,9 @@
     <Content Include="assets\loading.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- SSH 托管宿主：会话/认证（DPAPI 由 net10.0-windows 框架自带） -->
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+  </ItemGroup>
+
 </Project>

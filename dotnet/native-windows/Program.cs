@@ -34,6 +34,18 @@ public static class Program
             return Mcp.McpHost.Run();
         }
 
+        // SSH 托管宿主：有状态会话常驻（档案/凭据落 --data-dir），协议见 Ssh.SshHost。
+        if (args.Length > 0 && args[0] == "--ssh-host")
+        {
+            return Ssh.SshHost.Run(args);
+        }
+
+        // Snipaste 命令行截图：一次性捕获，stdout 单行 JSON（见 Screenshot.SnipasteCapture）。
+        if (args.Length > 0 && args[0] == "--snipaste-capture")
+        {
+            return Screenshot.SnipasteCapture.Run(args);
+        }
+
         // 内置工具宿主：计算/系统交互型工具的 .NET 执行（超时/回退由宿主管理）
         if (args.Length > 0 && args[0] == "--tool-host")
         {
