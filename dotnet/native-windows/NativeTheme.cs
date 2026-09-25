@@ -287,13 +287,113 @@ public static class NativeTheme
 </Style>
 """));
 
+    private static readonly System.Lazy<Style> DangerButtonLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="Button">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="Foreground" Value="#D7263D"/>
+  <Setter Property="Padding" Value="14,0"/>
+  <Setter Property="Height" Value="32"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Button">
+        <Border x:Name="bd" CornerRadius="8" Background="White" BorderBrush="#E8B4BC" BorderThickness="1">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#FDF1F3"/>
+            <Setter TargetName="bd" Property="BorderBrush" Value="#D7263D"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    private static readonly System.Lazy<Style> SuccessButtonLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="Button">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="Foreground" Value="#2E7D32"/>
+  <Setter Property="Padding" Value="14,0"/>
+  <Setter Property="Height" Value="32"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Button">
+        <Border x:Name="bd" CornerRadius="8" Background="#E8F5E9" BorderBrush="#B7DFC1" BorderThickness="1">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+        </Border>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    private static readonly System.Lazy<Style> TabItemLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="TabItem">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="Foreground" Value="#6F6876"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="TabItem">
+        <Border x:Name="bd" CornerRadius="8" Margin="0,0,8,0" Padding="16,8" Background="Transparent">
+          <ContentPresenter ContentSource="Header" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#FAFAFC"/>
+          </Trigger>
+          <Trigger Property="IsSelected" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#FFECF2"/>
+            <Setter Property="Foreground" Value="#E84A78"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    private static readonly System.Lazy<Style> TabControlLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="TabControl">
+  <Setter Property="Background" Value="Transparent"/>
+  <Setter Property="BorderBrush" Value="Transparent"/>
+  <Setter Property="BorderThickness" Value="0"/>
+  <Setter Property="Padding" Value="0"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="TabControl">
+        <DockPanel>
+          <TabPanel IsItemsHost="True" DockPanel.Dock="Top" Margin="8,8,8,10" Background="Transparent"/>
+          <Border Background="Transparent">
+            <ContentPresenter ContentSource="SelectedContent"/>
+          </Border>
+        </DockPanel>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
     public static Style TextBoxStyle => TextBoxLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;
+    public static Style DangerButtonStyle => DangerButtonLazy.Value;
+    public static Style SuccessButtonStyle => SuccessButtonLazy.Value;
     public static Style SwitchStyle => SwitchLazy.Value;
     public static Style SliderStyle => SliderLazy.Value;
     public static Style NavItemStyle => NavItemLazy.Value;
     public static Style FlatIconButtonStyle => FlatIconButtonLazy.Value;
+    public static Style TabItemStyle => TabItemLazy.Value;
+    public static Style TabControlStyle => TabControlLazy.Value;
 
     /// <summary>把主题套到窗口：字体 + 隐式控件样式（只影响未显式设置 Style 的控件）。</summary>
     public static void Apply(Window window)
@@ -304,5 +404,7 @@ public static class NativeTheme
         window.Resources[typeof(Button)] = SecondaryButtonStyle;
         window.Resources[typeof(CheckBox)] = SwitchStyle;
         window.Resources[typeof(Slider)] = SliderStyle;
+        window.Resources[typeof(TabItem)] = TabItemStyle;
+        window.Resources[typeof(TabControl)] = TabControlStyle;
     }
 }

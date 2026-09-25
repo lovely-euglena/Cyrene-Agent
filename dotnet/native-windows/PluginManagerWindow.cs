@@ -49,13 +49,13 @@ public sealed class PluginManagerWindow : NativeWindow
         _status = new TextBlock
         {
             FontSize = 12,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0x8E, 0x93)),
+            Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(16, 6, 16, 6),
         };
         _marketStatus = new TextBlock
         {
             FontSize = 11.5,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0x8E, 0x93)),
+            Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(12, 8, 12, 0),
             TextWrapping = TextWrapping.Wrap,
         };
@@ -210,10 +210,7 @@ public sealed class PluginManagerWindow : NativeWindow
             {
                 Content = "启用插件运行时",
                 Width = 150, Height = 28, FontSize = 12,
-                Background = new SolidColorBrush(Color.FromRgb(0x34, 0x78, 0xF6)),
-                Foreground = Brushes.White,
-                BorderBrush = null,
-                Cursor = System.Windows.Input.Cursors.Hand,
+                Style = NativeTheme.PrimaryButtonStyle,
             };
             enableBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "enable-runtime");
             sp.Children.Add(enableBtn);
@@ -225,7 +222,7 @@ public sealed class PluginManagerWindow : NativeWindow
             {
                 Text = "暂无插件。到「插件市场」看看，或从 ZIP 导入（设置 → 旧版插件页）。",
                 FontSize = 12.5,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0x8E, 0x93)),
+                Foreground = NativeTheme.TextMutedBrush,
                 Margin = new Thickness(8, 24, 8, 8),
                 TextAlignment = TextAlignment.Center,
             });
@@ -239,8 +236,8 @@ public sealed class PluginManagerWindow : NativeWindow
 
     private Border MakeInstalledCard(PluginInfo p)
     {
-        var header = new TextBlock { Text = $"{p.Name}  {p.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(0x1D, 0x1D, 0x1F)) };
-        var desc = new TextBlock { Text = p.Description, FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0x6E, 0x73)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+        var header = new TextBlock { Text = $"{p.Name}  {p.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
+        var desc = new TextBlock { Text = p.Description, FontSize = 12, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
 
         var toggle = new CheckBox { Content = "启用", IsChecked = p.Enabled, VerticalAlignment = VerticalAlignment.Center, Cursor = System.Windows.Input.Cursors.Hand };
         toggle.Checked += (_, _) => RequestRouter.SendCommand("plugins", "enable", p.Id);
@@ -280,7 +277,7 @@ public sealed class PluginManagerWindow : NativeWindow
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(0, 0, 0, 8),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xED)),
+            BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
         };
     }
@@ -297,17 +294,15 @@ public sealed class PluginManagerWindow : NativeWindow
 
     private Border MakeMarketCard(MarketEntry m, bool installed)
     {
-        var header = new TextBlock { Text = $"{m.Name}  {m.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(0x1D, 0x1D, 0x1F)) };
-        var meta = new TextBlock { Text = $"by {m.Author}", FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0x8E, 0x93)), Margin = new Thickness(0, 1, 0, 0) };
-        var desc = new TextBlock { Text = m.Description, FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0x6E, 0x73)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+        var header = new TextBlock { Text = $"{m.Name}  {m.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
+        var meta = new TextBlock { Text = $"by {m.Author}", FontSize = 11.5, Foreground = NativeTheme.TextMutedBrush, Margin = new Thickness(0, 1, 0, 0) };
+        var desc = new TextBlock { Text = m.Description, FontSize = 12, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
 
         var btn = MakeMiniButton(installed ? "已安装" : "安装", primary: !installed);
         btn.IsEnabled = !installed && !_installing.Contains(m.Id);
         if (installed)
         {
-            btn.Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xF5, 0xE9));
-            btn.BorderBrush = new SolidColorBrush(Color.FromRgb(0xB7, 0xDF, 0xC1));
-            btn.Foreground = new SolidColorBrush(Color.FromRgb(0x2E, 0x7D, 0x32));
+            btn.Style = NativeTheme.SuccessButtonStyle;
         }
         btn.Click += (_, _) =>
         {
@@ -332,36 +327,23 @@ public sealed class PluginManagerWindow : NativeWindow
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(0, 0, 0, 8),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xED)),
+            BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
         };
     }
 
     private static Button MakeMiniButton(string text, bool primary = false, bool danger = false)
     {
-        var b = new Button
+        return new Button
         {
             Content = text,
+            Height = 28,
             FontSize = 12,
-            Padding = new Thickness(14, 4, 14, 4),
             Margin = new Thickness(6, 0, 0, 0),
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Background = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC5, 0xC5, 0xD5)),
-            Foreground = new SolidColorBrush(Color.FromRgb(0x1D, 0x1D, 0x1F)),
+            Style = primary
+                ? NativeTheme.PrimaryButtonStyle
+                : danger ? NativeTheme.DangerButtonStyle : NativeTheme.SecondaryButtonStyle,
         };
-        if (primary)
-        {
-            b.Background = new SolidColorBrush(Color.FromRgb(0x34, 0x78, 0xF6));
-            b.BorderBrush = new SolidColorBrush(Color.FromRgb(0x34, 0x78, 0xF6));
-            b.Foreground = Brushes.White;
-        }
-        else if (danger)
-        {
-            b.Foreground = new SolidColorBrush(Color.FromRgb(0xD7, 0x26, 0x3D));
-            b.BorderBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xB4, 0xBC));
-        }
-        return b;
     }
 
     // ── NativeWindow 实现 ──

@@ -169,6 +169,8 @@ public sealed class SidebarWindow : NativeWindow
             Topmost = _pinned,
         };
         _window.Closed += (_, _) => RaiseClosed();
+        // 深色玻璃底：窗口级浅色前景，未显式设色的文本（标题/模型名等）才能看清
+        _window.Foreground = new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2));
 
         if (layout.ValueKind == JsonValueKind.Object) ApplyLayout(layout);
     }
