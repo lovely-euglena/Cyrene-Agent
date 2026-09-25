@@ -410,10 +410,12 @@ addTrackedEventListener(canvas, "canvas:pointermove", "pointermove", (e) => {
       dragCalibrated = true;
     } else if (result.kind === "rescale") {
       dragUnitScale = result.unitScale;
-      // 以同一命令重设基准对：窗口取实际落位，指针取该命令的基准 screen，
-      // 当前帧位移照常累加（不丢帧）
+      // 以「同一时刻」重设基准对：窗口取实际落位，指针取*当前*事件坐标。
+      // ⚠️ 曾误用 dragLastSent.baseScreenX（上一条命令的旧指针基准）配当前
+      // 窗口位置——两者不同时刻，基准对错配 → 校准帧算出累积偏移，窗口/
+      // 人物向前跳再回摆（用户报「拖动时左右闪」）。
       dragBaseWin = { x: window.screenX, y: window.screenY };
-      dragBaseScreen = { x: dragLastSent.baseScreenX, y: dragLastSent.baseScreenY };
+      dragBaseScreen = { x: event.screenX, y: event.screenY };
       dragCalibrated = true;
       console.info(`[PetDrag] calibrate k=${dragUnitScale.toFixed(3)}`);
     }
