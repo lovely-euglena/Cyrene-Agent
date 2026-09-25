@@ -124,6 +124,11 @@ export interface PluginTool {
   category?: string;
   capability?: string;
   enabled: boolean;
+  /**
+   * 风险级：必须显式声明（写文件/执行命令/联网/控制输入务必如实标注）。
+   * 缺省时宿主按内部的 undeclared 处理：只读/指定目录档位拒绝、每次审批档位询问；
+   * 非法值会导致工具注册失败。
+   */
   risk?: "safe" | "fs-read" | "fs-write" | "shell" | "network" | "input-control";
   modes?: Array<"learn" | "code" | "work">;
   inputSchema: {
@@ -227,7 +232,7 @@ export interface PluginAgentRunOptions {
   runId: string;
   /** 任务目标，作为首条 user 消息。 */
   goal: string;
-  /** 不注册的冻结工具集；直接复用 PluginTool 完整契约。 */
+  /** 不注册的冻结工具集；直接复用 PluginTool 完整契约（必须显式声明 risk）。 */
   tools: ReadonlyArray<PluginTool>;
   /** 可选任务诊断标签；宿主以 plugin:<id>:<purpose> 标记该次运行与工具上下文。 */
   purpose?: string;
@@ -363,14 +368,18 @@ export interface PluginSchedulerFinishedEvent extends PluginHostEventBase {
 /** 工具完成事件的归一化状态（与宿主执行层四态 outcome 一致）。 */
 export type PluginToolStatus = "success" | "failure" | "unknown" | "not_executed";
 
-/** 工具风险级投影；取值与宿主工具注册表声明的风险级一致。 */
+/**
+ * 工具风险级投影；取值与宿主工具注册表一致。
+ * `undeclared` 表示该工具未声明风险级（宿主按“只读档拒绝、每次审批档询问”处理）。
+ */
 export type PluginToolRisk =
   | "safe"
   | "fs-read"
   | "fs-write"
   | "shell"
   | "network"
-  | "input-control";
+  | "input-control"
+  | "undeclared";
 
 /**
  * 工具完成事件：结果已确定后的只读观察通知。

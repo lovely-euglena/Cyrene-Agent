@@ -96,7 +96,7 @@ async register(ctx) {
 
 | 方法 | 说明 |
 |---|---|
-| `ctx.registerTool(spec)` | 注册 AI 工具，id 必须 `<插件id>_` 前缀 |
+| `ctx.registerTool(spec)` | 注册 AI 工具，id 必须 `<插件id>_` 前缀，且必须显式声明 `risk` |
 | `ctx.unregisterTool(id)` | 只能注销本插件注册过的工具 |
 | `ctx.registerPromptProvider(spec)` | 注册每轮动态提示词贡献；id 在当前插件内唯一，可按场景（`sources`：conversation / scheduler / moments-post）与模式（`modes`：chat/work/learn/code）过滤 |
 | `ctx.unregisterPromptProvider(id)` | 只能注销本插件注册过的提示词 Provider |
@@ -149,11 +149,12 @@ await ctx.events.emit("updated", { value: 1 });
 - `on()` 返回幂等退订函数；插件停用/刷新/卸载时自动退订，进入停止阶段后不能再新增订阅
 - 监听器按订阅顺序执行并等待异步结果；单个失败或超过 5 秒只跳过自己，不影响其他监听器
 - 事件名 segment 只允许字母数字 `.` `_` `-`，≤64 字符
+- **事件总线是公开的**：任何插件都能订阅其他插件的事件；不要在负载里放密钥/令牌
 - 当前内置宿主事件：
   - `host:plugins:ready`（payload `{ pluginIds: string[] }`）
   - `host:plugins:stopping`（无 payload）
   - `host:turn:started` / `host:turn:finished`（轮次开始与终态，详见下文）
-  - `host:tool:finished`（工具完成只读通知：`runId`/`toolId`/`toolCallId`/`status`/`risk`/`durationMs`，不含参数与输出正文）
+  - `host:tool:finished`（工具完成只读通知：`runId`/`toolId`/`toolCallId`/`status`/`risk`/`durationMs`；未声明风险级的工具 `risk` 为 `undeclared`；不含参数与输出正文）
   - `host:scheduler:finished`（调度任务完成：`taskId`/`schedulerRunId`/`status`/`durationMs`）
   - `host:turn:completed`（v1 兼容事件，详见下文）
 

@@ -203,7 +203,11 @@ ctx.registerTool({
 - **id 必须以 `<插件id>_` 开头**（如插件 id 是 `my-plugin`，工具就得叫 `my-plugin_xxx`），否则启用直接报错——这是防抢名机制
 - **description 写给 AI 看**，写清楚“什么场景该用这个工具”，直接决定 AI 用不用它
 - `execute` 返回**字符串**（或可序列化对象），这段文字会进入对话上下文
-- 常用风险标注：只读查询 `risk: "safe"` + `effectKind: "read"`；有副作用（写文件、发消息）用 `effectKind: "write"`
+- **必须显式声明 `risk`**：`safe | fs-read | fs-write | shell | network | input-control`。
+  只读查询用 `safe`，写文件用 `fs-write`，执行命令用 `shell`，联网用 `network`。
+  漏写或拼错会被按「未声明」处理：只读/指定目录档位直接拒绝、每次审批档位弹审批；
+  非法值会让注册报错——这是审批不被绕过的底线
+- 常用搭配：只读查询 `risk: "safe"` + `effectKind: "read"`；有副作用（写文件、发消息）用 `effectKind: "mutation"`
 
 ---
 
@@ -353,6 +357,10 @@ ctx.events.on("plugin:weather:updated", (payload) => {
   ctx.log("天气已更新", payload);
 });
 ```
+
+> 注意：插件事件是**公开总线**——任何插件都能按完整事件名订阅（用于插件间协作），
+> 因此不要在事件负载里放密钥、令牌或其他插件不应共享的数据。发布方无法伪造
+> `host:*` 或其他插件的事件（前缀由框架生成）。
 
 发布自己的事件时只写短名称，Cyrene 会自动添加当前插件 id，防止伪造宿主或其他插件事件：
 

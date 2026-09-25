@@ -19,6 +19,17 @@ import { createPluginResourceTracker } from "./resources";
 export { PLUGIN_CLEANUP_TIMEOUT_MS, runPluginCleanup } from "./cleanup";
 
 const IPC_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+/** 插件渠道 id：小写段式，与宿主渠道（feishu/wx/qq/qqbot）同风格。 */
+const CHANNEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** 插件可声明的工具风险级；"undeclared" 是宿主内部兜底，插件不能主动声明。 */
+const TOOL_RISK_VALUES: ReadonlySet<string> = new Set([
+  "safe",
+  "fs-read",
+  "fs-write",
+  "shell",
+  "network",
+  "input-control",
+]);
 
 /** deps 声明名到 PluginDeps 字段名的映射（连字符能力名转驼峰）。 */
 const DEP_TO_FIELD: Record<string, keyof PluginDeps> = {
@@ -149,6 +160,8 @@ export function createContext(
       tracker.track("onDispose", `dispose-${++resourceSeq}`, cleanup);
     },
     events: {
+      // 事件订阅是跨插件公开通道（文档化的“听其他插件”场景），这里只做命名空间
+      // 语法校验（由 eventBus 完成）；插件不得把密钥等敏感数据放进事件负载。
       on(event, listener) {
         assertAcceptingResources("订阅事件");
         // 订阅纳入资源跟踪器：插件停用时统一退订，不遗留跨生命周期监听器。
@@ -187,7 +200,22 @@ export function createContext(
       if (existing) {
         throw new Error(`插件工具 id 已被占用: ${tool.id}`);
       }
-      runtime.toolRegistry.register(tool as ToolDefinition);
+      // 风险级必须显式声明：缺省降级为宿主内部 "undeclared"（只读/指定目录档拒绝、
+      // 每次审批档询问），杜绝“缺省 = safe”绕过审批。
+      const declaredRisk = (tool as { risk?: unknown }).risk;
+      if (declaredRisk !== undefined && !(typeof declaredRisk === "string" && TOOL_RISK_VALUES.has(declaredRisk))) {
+        throw new Error(
+          `非法工具风险级: ${String(declaredRisk)}（允许 safe/fs-read/fs-write/shell/network/input-control，或省略风险级）`,
+        );
+      }
+      if (declaredRisk === undefined) {
+        console.warn(
+          `[plugins] 插件 ${id} 工具 ${tool.id} 未声明 risk，按“未声明”处理：`
+          + "只读/指定目录档位拒绝，每次审批档位询问；请显式声明风险级",
+        );
+      }
+      const definition = { ...tool, risk: declaredRisk ?? "undeclared" } as unknown as ToolDefinition;
+      runtime.toolRegistry.register(definition);
       tracker.track("tool", tool.id, () => {
         runtime.toolRegistry.unregister(tool.id);
       });
@@ -237,6 +265,11 @@ export function createContext(
     },
     async registerChannelAdapter(adapter) {
       assertAcceptingResources("注册渠道");
+      if (typeof adapter?.id !== "string" || !CHANNEL_ID_RE.test(adapter.id)) {
+        throw new Error(
+          `非法插件渠道 id: ${String(adapter?.id)}（小写字母数字开头，仅允许 . _ -，最长 64）`,
+        );
+      }
       if (tracker.has("channel-adapter", adapter.id)) {
         throw new Error(`插件渠道 id 已由当前插件注册: ${adapter.id}`);
       }

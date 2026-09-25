@@ -66,6 +66,18 @@ my-plugin.zip
 保留路径和大小写冲突路径也会被拒绝。这些检查用于降低路径穿越和 ZIP bomb 风险，但插件代码
 本身仍属于可信本地原生代码，导入校验不等同于运行时沙箱。
 
+**安全边界（必读）**：
+
+- Node 插件在宿主主进程内 `require` 运行，拥有完整用户权限；宿主不提供沙箱与强制终止——
+  「停用/卸载」只撤销工具、IPC、事件、提示词等能力暴露，**不保证停止插件已启动的定时器、
+  网络连接或子进程**。崩溃或 `process.exit` 会影响整个应用。
+- .NET 插件以独立子进程运行（环境变量白名单 + 协议收口），可被强制终止（Windows 下
+  `taskkill /T` 整树回收），崩溃不影响宿主；但同为用户级权限，没有内存/CPU 配额。
+- 只有内置 `run_shell` 工具经过 SRT 沙箱（按档位限制文件系统）；插件自己的代码与
+  `spawn` 的命令**不经过**该沙箱，真正的审批闸门是工具 `risk` 声明。
+- 结论：安装插件 ≈ 在本机安装并运行程序。市场来源校验 + 首次启用 opt-in + 风险声明
+  是全部防线，不要把不可信代码交给插件承载。
+
 内置插件：
 
 ```text
@@ -201,6 +213,10 @@ ctx.unregisterTool("my-plugin_hello"); // allowed
 ctx.unregisterTool("read_file");       // rejected
 ```
 
+工具风险级 `risk` **必须显式声明**（`safe | fs-read | fs-write | shell | network | input-control`）。
+缺省或拼错会被按「未声明」处理：只读/指定目录档位直接拒绝、每次审批档位弹审批；非法值会让
+注册报错。
+
 ### IPC
 
 ```js
@@ -235,6 +251,9 @@ await ctx.events.emit("status", { online: true });
 // 订阅方收到：plugin:my-plugin:status
 ```
 
+> 事件总线是公开的：其他插件可以按完整事件名订阅你的事件（插件间协作用）。不要把密钥、
+> 令牌或其他插件不应共享的数据放进负载。
+
 插件不能伪造 `host:*` 或其他插件的事件。宿主通过
 `PluginManager.publishHostEvent("chat:message", payload)` 发布的完整名称为
 `host:chat:message`。目前内置事件：
@@ -243,7 +262,7 @@ await ctx.events.emit("status", { online: true });
 - `host:plugins:stopping`：全局插件停止开始、任何活动插件被注销之前，payload 为 `undefined`；
 - `host:turn:started`：一轮对话开始，payload 含 `eventId`、`timestamp`、`runId`、`mode` 和 `source`（desktop / channel / scheduler）及各来源的判别字段（desktop 携带 `conversationId` 与 `inputMessageId`；channel 携带 `channel`；scheduler 携带 `taskId` 与 `schedulerRunId`）；
 - `host:turn:finished`：一轮对话进入终态（success / cancelled / timeout / runtime_error），字段同上；desktop 分支在成功终态且 assistant 消息确认落盘后额外携带 `finalMessageId`。非成功终态不得用「当前最后一条消息」补齐该字段；
-- `host:tool:finished`：工具执行结果已确定后的只读观察通知，payload 含 `runId`、`toolId`、`toolCallId`、`status`（success / failure / unknown / not_executed）、`risk` 与可选 `durationMs`；不携带工具参数、输出正文与内部异常；
+- `host:tool:finished`：工具执行结果已确定后的只读观察通知，payload 含 `runId`、`toolId`、`toolCallId`、`status`（success / failure / unknown / not_executed）、`risk`（未声明风险级的工具为 `undeclared`）与可选 `durationMs`；不携带工具参数、输出正文与内部异常；
 - `host:scheduler:finished`：调度任务执行完成，payload 含 `taskId`、`schedulerRunId`、`status`、`durationMs` 与事件公共元数据，不含任务提示词与模型输出正文；
 - `host:turn:completed`：v1 兼容事件，仅成功终态发布；新代码请改用 `host:turn:started` / `host:turn:finished`。
 

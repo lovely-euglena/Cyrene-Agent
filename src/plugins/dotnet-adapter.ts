@@ -97,6 +97,25 @@ const PROMPT_CALL_TIMEOUT_MS = 5_000;
 const OPEN_TIMEOUT_MS = 15_000;
 /** stdout 单行协议帧上限（字符）：超过视为异常输出丢弃，避免内存无界增长。 */
 const MAX_FRAME_BUFFER_CHARS = 4 * 1024 * 1024;
+/** 日志帧速率上限（每进程代每秒）：防止插件用日志洪水挤占宿主读循环。 */
+const LOG_FRAMES_PER_SECOND = 100;
+/** 自动重启熔断：窗口内连续崩溃达到该次数后暂停自愈，等待用户重新启用。 */
+const CRASH_FUSE_LIMIT = 3;
+const CRASH_FUSE_WINDOW_MS = 60_000;
+/**
+ * 子进程环境白名单（小写键）：插件进程只继承 .NET 运行与系统定位所需变量，
+ * 不把宿主完整环境（可能含内部变量/注入标记）交给插件。
+ */
+const CHILD_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
+  "path", "pathext", "systemroot", "windir", "comspec", "temp", "tmp", "tz",
+  "number_of_processors", "processor_architecture", "processor_identifier", "os",
+  "dotnet_root", "dotnet_root(x86)", "dotnet_host_path", "dotnet_cli_telemetry_optout",
+  "userprofile", "homedrive", "homepath", "home", "localappdata", "appdata", "programdata",
+  "programfiles", "programfiles(x86)", "commonprogramfiles", "commonprogramfiles(x86)",
+  "systemdrive", "lang", "lc_all",
+  // 网络代理（用户环境配置，透传以保证插件自带 HTTP 客户端可用）
+  "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+]);
 
 interface RemoteTool {
   id: string;
@@ -245,6 +264,30 @@ function parseLlmOptions(value: unknown): PluginLlmGenerateOptions | undefined {
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
+/** 子进程环境白名单：只透传 .NET 运行与系统定位所需变量，不继承宿主完整环境。 */
+function buildChildEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && CHILD_ENV_ALLOWLIST.has(key.toLowerCase())) env[key] = value;
+  }
+  return env;
+}
+
+const EMPTY_REMOTE_TOOL_SCHEMA: PluginTool["inputSchema"] = { type: "object", properties: {} };
+
+/** 远程工具 schema 形状校验：只接受 {type:"object", properties:{...}}，异常回退空 schema。 */
+function normalizeRemoteToolSchema(value: unknown, pluginId: string, toolId: string): PluginTool["inputSchema"] {
+  if (isRecord(value) && value.type === "object" && isRecord(value.properties)) {
+    return value as unknown as PluginTool["inputSchema"];
+  }
+  if (value !== undefined && value !== null) {
+    console.warn(
+      `[plugins] dotnet 插件 ${pluginId} 工具 ${toolId} 的 inputSchema 形状非法，已回退为空对象 schema`,
+    );
+  }
+  return EMPTY_REMOTE_TOOL_SCHEMA;
+}
+
 export interface DotnetPluginAdapterHooks {
   /** 进程意外退出（非 shutdown）：上层据此更新插件状态与错误信息 */
   onUnexpectedExit?: (pluginId: string, message: string) => void;
@@ -275,6 +318,12 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   private stdoutDecoder = new StringDecoder("utf8");
   /** 超长帧告警次数上限：异常插件刷屏时只提示前几次 */
   private oversizedFrameWarned = 0;
+  /** 日志帧速率窗口（每代重置）：防止日志洪水 */
+  private logWindowStart = 0;
+  private logWindowCount = 0;
+  private logFloodWarned = false;
+  /** 最近意外退出的时间戳（自动重启熔断用） */
+  private crashTimes: number[] = [];
 
   // ── v2 桥状态（每个"进程代"一份，进程退出即撤销） ──
   /** 已登记到 ctx 的插件 IPC channel（短名） */
@@ -315,14 +364,20 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       // 宿主工具 id 规范：{pluginId}_{短id}（单下划线，同 node 轨）
       const shortId = tool.id;
       const risk = parseRemoteRisk(tool.risk);
+      if (tool.risk !== undefined && risk === undefined) {
+        // 拼错的风险级不静默变 safe：ctx.registerTool 会按“未声明”处理
+        console.warn(
+          `[plugins] dotnet 插件 ${this.record.manifest.id} 工具 ${shortId} 声明了非法风险级 ${String(tool.risk)}，按未声明处理`,
+        );
+      }
       ctx.registerTool({
         id: `${this.record.manifest.id}_${shortId}`,
         name: tool.name,
         description: tool.description,
         enabled: true,
         ...(risk ? { risk } : {}),
-        // schema 形状与 node 插件一致；缺省给空对象 schema
-        inputSchema: (tool.inputSchema as PluginTool["inputSchema"]) ?? { type: "object", properties: {} },
+        // schema 只接受 {type:"object", properties:{...}}；异常形状回退空 schema
+        inputSchema: normalizeRemoteToolSchema(tool.inputSchema, this.record.manifest.id, shortId),
         // 取消信号来自工具上下文（宿主取消本轮时中止在途调用）
         execute: (input, toolCtx) => this.invokeTool(shortId, input, toolCtx?.signal),
       });
@@ -480,13 +535,17 @@ export class DotnetPluginAdapter implements CyrenePlugin {
     const exe = path.join(this.record.dir, this.record.manifest.entry);
 
     return new Promise<RemoteReady>((resolve, reject) => {
-      // 新进程：清空上一进程残留的分帧缓冲与解码器
+      // 新进程：清空上一进程残留的分帧缓冲与解码器/速率窗口
       this.stdoutCarry = "";
       this.stdoutDecoder = new StringDecoder("utf8");
+      this.logWindowStart = 0;
+      this.logWindowCount = 0;
+      this.logFloodWarned = false;
       const child = spawn(exe, [], {
         cwd: this.record.dir,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        env: buildChildEnv(),
       });
       this.proc = child;
       this.exited = false;
@@ -514,6 +573,10 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         for (const r of this.readyResolvers) r.reject(new Error(message));
         this.readyResolvers = [];
         if (!this.stopping) {
+          // 自动重启熔断：记录窗口内的意外退出，供 invokeTool 判定是否继续自愈
+          const now = Date.now();
+          this.crashTimes.push(now);
+          this.crashTimes = this.crashTimes.filter((t) => now - t <= CRASH_FUSE_WINDOW_MS);
           console.warn(`[plugins] ${message}（下次工具调用将尝试自动重启）`);
           this.hooks.onUnexpectedExit?.(this.record.manifest.id, message);
         }
@@ -593,6 +656,15 @@ export class DotnetPluginAdapter implements CyrenePlugin {
     if (!this.proc || this.exited) {
       if (this.stopping) {
         throw new Error(`dotnet 插件 ${this.record.manifest.id} 未运行`);
+      }
+      // 熔断：窗口内连续崩溃过多时不再自动重启，等待用户在管理窗重新启用
+      const now = Date.now();
+      this.crashTimes = this.crashTimes.filter((t) => now - t <= CRASH_FUSE_WINDOW_MS);
+      if (this.crashTimes.length >= CRASH_FUSE_LIMIT) {
+        throw new Error(
+          `dotnet 插件 ${this.record.manifest.id} 在 ${CRASH_FUSE_WINDOW_MS / 1000}s 内连续崩溃 `
+          + `${this.crashTimes.length} 次，已暂停自动重启；请在插件管理窗停用后重新启用`,
+        );
       }
       try {
         const ready = await this.startProcess();
@@ -791,6 +863,20 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       return;
     }
     if (op === "log") {
+      // 日志帧限速：正常插件每秒远低于上限；超限丢弃并只告警一次，避免刷屏挤占读循环
+      const now = Date.now();
+      if (now - this.logWindowStart >= 1000) {
+        this.logWindowStart = now;
+        this.logWindowCount = 0;
+      }
+      if (this.logWindowCount >= LOG_FRAMES_PER_SECOND) {
+        if (!this.logFloodWarned) {
+          this.logFloodWarned = true;
+          console.warn(`[plugins] dotnet 插件 ${this.record.manifest.id} 日志帧速率超限，已丢弃超额日志`);
+        }
+        return;
+      }
+      this.logWindowCount += 1;
       const level = typeof frame.level === "string" ? frame.level : "info";
       const message = typeof frame.message === "string" ? frame.message : "";
       const line = `[plugin:${this.record.manifest.id}] ${message}`;
@@ -963,6 +1049,19 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   private kill(): void {
     const child = this.proc;
     if (!child || this.exited) return;
+    // Windows：taskkill /T 整树回收——插件自己 spawn 的孙进程不随父进程终止。
+    // spawnSync 可能被测试 mock 剥离，做运行时守卫；任何失败都回退 child.kill。
+    if (process.platform === "win32" && typeof child.pid === "number") {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+        if (typeof spawnSync === "function") {
+          spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
+        }
+      } catch {
+        /* 忽略：child.kill 兜底 */
+      }
+    }
     try {
       child.kill();
     } catch {

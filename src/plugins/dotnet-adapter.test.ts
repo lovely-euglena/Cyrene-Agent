@@ -223,16 +223,65 @@ describe("DotnetPluginAdapter", () => {
       tools: [
         { id: "greet", name: "问候", description: "d", inputSchema: { type: "object", properties: {} }, risk: "fs-write" },
         { id: "poke", name: "戳", description: "d", inputSchema: { type: "object", properties: {} }, risk: "not-a-risk" },
+        { id: "blob", name: "坏 schema", description: "d", inputSchema: "not-a-schema", risk: "safe" },
       ],
     }));
     await pending;
 
-    expect(registered).toHaveLength(2);
-    const [greet, poke] = registered as Array<{ id: string; risk?: string }>;
+    expect(registered).toHaveLength(3);
+    const [greet, poke, blob] = registered as Array<{ id: string; risk?: string; inputSchema?: unknown }>;
     expect(greet.id).toBe("my-plugin_greet");
     expect(greet.risk).toBe("fs-write");
     expect(poke.id).toBe("my-plugin_poke");
     expect(poke.risk).toBeUndefined();
+    // 非法 schema 形状回退空对象 schema，避免把任意 JSON 喂给工具目录/模型
+    expect(blob?.inputSchema).toEqual({ type: "object", properties: {} });
+  });
+
+  it("spawn：环境变量按白名单收敛（不继承宿主内部变量）", async () => {
+    process.env.CYRENE_TEST_SECRET = "leak-me";
+    try {
+      const fake = makeFakeChild();
+      mockSpawn.mockReturnValueOnce(fake.child);
+      const adapter = new DotnetPluginAdapter(makeRecord());
+      const { ctx } = makeCtx();
+      const pendingRegister = adapter.register(ctx);
+      fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+      await pendingRegister;
+
+      const spawnOptions = mockSpawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      const envKeys = Object.keys(spawnOptions.env ?? {}).map((key) => key.toLowerCase());
+      expect(envKeys).not.toContain("cyrene_test_secret");
+      expect(envKeys).toContain("path");
+    } finally {
+      delete process.env.CYRENE_TEST_SECRET;
+    }
+  });
+
+  it("崩溃熔断：窗口内连续 3 次意外退出后暂停自动重启", async () => {
+    const gens = [makeFakeChild(), makeFakeChild(), makeFakeChild()];
+    mockSpawn
+      .mockReturnValueOnce(gens[0].child)
+      .mockReturnValueOnce(gens[1].child)
+      .mockReturnValueOnce(gens[2].child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    gens[0].emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    // 前两次崩溃允许自愈重启
+    for (let i = 0; i < 2; i += 1) {
+      gens[i].emitExit(1);
+      void adapter.invokeToolForTest("greet", {}).catch(() => undefined);
+      gens[i + 1].emitLine(JSON.stringify({ op: "ready", tools: [] }));
+      await flush();
+    }
+
+    // 第三次崩溃达到熔断阈值：拒绝自动重启（不再消耗 spawn）
+    gens[2].emitExit(1);
+    await expect(adapter.invokeToolForTest("greet", {})).rejects.toThrow(/连续崩溃|暂停自动重启/);
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
   });
 
   it("invoke: result 帧路由回调用方（对象序列化为字符串）", async () => {
