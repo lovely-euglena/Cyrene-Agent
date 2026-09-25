@@ -211,6 +211,13 @@ export function pushSettingsSnapshotToNative(): void {
 // ── native 显窗门控（window-state.markStartupPhaseReady 的 native 版） ──
 const pendingNativeShows = new Set<string>();
 let nativeWindowsStartupReady = false;
+/**
+ * splash 是否已被请求关闭。冷启动时 reveal 的关闭请求可能早于 splash 的
+ * win.spawn 落地（native 进程尚在启动）——那次 win.close 会打空，随后
+ * spawn 完成才显示 splash，就再也没人关它（启动屏常驻）。用标志记录，
+ * spawn 落地后补关。
+ */
+let splashDismissed = false;
 
 /**
  * 启动就绪后统一显示 native 辅助窗（core-bootstrap 在 reveal 同点、
@@ -283,6 +290,10 @@ export async function spawnNativeWindow(
     // startup 阶段先 pending，markStartupPhaseReady 后统一 win.show
     if (kind === "splash") {
       await c.showWindow("splash");
+      // 关闭请求早于本次 spawn 落地（冷启动竞态）→ 补发关闭，避免启动屏常驻
+      if (splashDismissed) {
+        await c.closeWindow("splash").catch(() => undefined);
+      }
     } else if (nativeWindowsStartupReady) {
       await c.showWindow(kind);
     } else {
@@ -314,6 +325,8 @@ export async function spawnNativeWindow(
 }
 
 export async function closeNativeWindow(kind: string): Promise<void> {
+  // splash：记录标志——若关闭请求早于 win.spawn 落地，spawn 后补关
+  if (kind === "splash") splashDismissed = true;
   await activeClient()?.closeWindow(kind).catch(() => undefined);
 }
 
@@ -351,6 +364,7 @@ export function notifyNativeSplashShown(): void {
 }
 
 export function disposeNativeWindowsBridge(reason = "shutdown"): void {
+  splashDismissed = false;
   client?.disposeSync(reason);
 }
 
