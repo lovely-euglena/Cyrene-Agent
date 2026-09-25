@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, type Hash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import path from "node:path";
@@ -102,6 +102,64 @@ function resolveSettingsPanel(dir: string, panel: unknown): string | undefined {
   return panel;
 }
 
+/**
+ * .NET 插件指纹：apphost（entry .exe）只是壳，真正代码在旁边的 dll 里，
+ * 只哈希 entry 会导致「换 dll 但指纹不变 → 重扫判定未变化 → 不重载」。
+ * 覆盖插件目录内 .dll/.json/.exe/.config；目录过大（自包含发布）时退化为
+ * 路径 + 大小 + mtime，避免每次重扫都要读几十 MB。
+ */
+const DOTNET_FINGERPRINT_EXTENSIONS = new Set([".dll", ".json", ".exe", ".config"]);
+const DOTNET_FINGERPRINT_MAX_BYTES = 64 * 1024 * 1024;
+
+function hashDotnetRuntimeFiles(dir: string, hash: Hash): void {
+  const files: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!DOTNET_FINGERPRINT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+      files.push(full);
+    }
+  };
+  try {
+    walk(dir);
+  } catch {
+    return; // 目录不可读：沿用 entry-only 指纹
+  }
+  files.sort((a, b) => a.localeCompare(b));
+  let total = 0;
+  const stats = new Map<string, number>();
+  for (const file of files) {
+    try {
+      const stat = statSync(file);
+      stats.set(file, stat.size);
+      total += stat.size;
+    } catch {
+      // 读不到的文件跳过（大小未知）
+    }
+  }
+  const useMetadata = total > DOTNET_FINGERPRINT_MAX_BYTES;
+  for (const file of files) {
+    const relative = path.relative(dir, file).split(path.sep).join("/");
+    hash.update(relative).update("\0");
+    try {
+      if (useMetadata) {
+        const stat = statSync(file);
+        hash.update(`${stat.size}:${Math.round(stat.mtimeMs)}`);
+      } else {
+        hash.update(readFileSync(file));
+      }
+    } catch {
+      hash.update("unreadable");
+    }
+    hash.update("\0");
+  }
+}
+
 export function inspectPluginDir(dir: string): ManifestInspection {
   const manifestPath = path.join(dir, MANIFEST_FILE);
   if (!existsSync(manifestPath)) return { manifest: null, error: "缺少 manifest.json" };
@@ -173,11 +231,14 @@ export function inspectPluginDir(dir: string): ManifestInspection {
       defaultEnabled: input.defaultEnabled !== false,
       deps,
     };
-    const fingerprint = createHash("sha256")
+    const fingerprintHash = createHash("sha256")
       .update(manifestText)
       .update("\0")
-      .update(readFileSync(realEntry))
-      .digest("hex");
+      .update(readFileSync(realEntry));
+    if (runtime === "dotnet") {
+      hashDotnetRuntimeFiles(realDir, fingerprintHash);
+    }
+    const fingerprint = fingerprintHash.digest("hex");
     return { manifest, fingerprint };
   } catch (error) {
     return { manifest: null, error: asErrorMessage(error) };

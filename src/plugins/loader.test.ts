@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadPlugin, readManifest, scanPluginDir } from "./loader";
+import { inspectPluginDir, loadPlugin, readManifest, scanPluginDir } from "./loader";
 
 let tmp: string;
 
@@ -285,5 +285,37 @@ describe("loadPlugin", () => {
     });
     const record = scanPluginDir(path.dirname(dir)).find((item) => item.dir === dir)!;
     await expect(loadPlugin(record)).rejects.toThrow(/register/);
+  });
+});
+
+describe("指纹（rescan/重载判定）", () => {
+  it("dotnet 轨：entry 不变、dll 变化 → 指纹变化（否则换 dll 不会重载）", () => {
+    const dir = fixture("dotnet-fp", {
+      "manifest.json": JSON.stringify({ ...validManifest, entry: "Plugin.exe", runtime: "dotnet" }),
+      "Plugin.exe": "apphost-bytes",
+      "Plugin.dll": "code-v1",
+      "Plugin.deps.json": "{}",
+    });
+    const before = inspectPluginDir(dir);
+    expect(before.manifest).not.toBeNull();
+    expect(before.fingerprint).toBeTruthy();
+
+    writeFileSync(path.join(dir, "Plugin.dll"), "code-v2", "utf8");
+    const after = inspectPluginDir(dir);
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+
+    // 协议帧外/无关文件的变化不影响指纹
+    writeFileSync(path.join(dir, "readme.txt"), "hello", "utf8");
+    expect(inspectPluginDir(dir).fingerprint).toBe(after.fingerprint);
+  });
+
+  it("node 轨：入口内容变化 → 指纹变化", () => {
+    const dir = fixture("node-fp", {
+      "manifest.json": JSON.stringify(validManifest),
+      "index.cjs": "module.exports = {};",
+    });
+    const before = inspectPluginDir(dir).fingerprint;
+    writeFileSync(path.join(dir, "index.cjs"), "module.exports = { register() {} };", "utf8");
+    expect(inspectPluginDir(dir).fingerprint).not.toBe(before);
   });
 });
