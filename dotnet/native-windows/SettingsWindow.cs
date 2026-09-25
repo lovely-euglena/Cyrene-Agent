@@ -450,6 +450,8 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeSubHeader("聊天排版"));
         panel.Children.Add(MakeDoubleSliderRow("行间距", GetDouble("chatLineHeight", 1.75), 1.2, 2.0, 0.05, "",
             v => SetSetting("chatLineHeight", Math.Round(v, 2)), v => v.ToString("0.00")));
+        panel.Children.Add(MakeDoubleSliderRow("段落间距", GetDouble("chatParaSpacing", 0.5), 0.2, 1.2, 0.05, "em",
+            v => SetSetting("chatParaSpacing", Math.Round(v, 2)), v => v.ToString("0.00") + "em"));
         panel.Children.Add(MakeToggleRow("昔涟回复气泡", GetBool("assistantBubbleEnabled"),
             v => SetSetting("assistantBubbleEnabled", v)));
 
@@ -716,7 +718,8 @@ public sealed partial class SettingsWindow : NativeWindow
         "appearance" => string.Join("|",
             GetBool("petVisible", true), GetBool("petAlwaysOnTop", true), GetDouble("petZoom", 1),
             GetInt("windowCornerRadius", -1), GetString("uiIcon"), NodeRawJson("uiFont"),
-            GetDouble("chatLineHeight", 1.75), GetBool("assistantBubbleEnabled")),
+            GetDouble("chatLineHeight", 1.75), GetBool("assistantBubbleEnabled"),
+            GetDouble("chatParaSpacing", 0.5)),
         "user" => NodeRawJson("user"),
         "preferences" => NodeRawJson("preferences"),
         "api" => NodeRawJson("api"),

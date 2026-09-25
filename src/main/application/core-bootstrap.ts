@@ -205,6 +205,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
         toastSoundEnabled: gs.toastSoundEnabled,
         chatLineHeight: gs.chatLineHeight,
         assistantBubbleEnabled: gs.assistantBubbleEnabled,
+        chatParaSpacing: gs.chatParaSpacing,
         disableGpuElectron: gs.disableGpuElectron === true,
         gitCommitAuthorName: gs.gitCommitAuthorName,
         gitCommitAuthorEmail: gs.gitCommitAuthorEmail,

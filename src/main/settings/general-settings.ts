@@ -54,6 +54,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 朋友圈热闹程度：控制每条动态的抽签人数分布与角色日调用上限。
    *  quiet=现状（冷场常见），natural=冷场减半，lively=上限 5 人冷场罕见。 */
   momentsLiveliness: "quiet" | "natural" | "lively";
+  /** 聊天气泡段落间距（em，0.2~1.2，默认 0.5）；渲染应用待接入。 */
+  chatParaSpacing: number;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */

@@ -41,6 +41,7 @@ export const NATIVE_GENERAL_SETTING_KEYS = [
   "toastSoundEnabled",
   "chatLineHeight",
   "assistantBubbleEnabled",
+  "chatParaSpacing",
   "disableGpuElectron",
   "gitCommitAuthorName",
   "gitCommitAuthorEmail",
@@ -182,6 +183,10 @@ export function sanitizeNativeGeneralSetting(
     case "chatLineHeight": {
       if (typeof value !== "number" || !Number.isFinite(value)) return null;
       return { chatLineHeight: Math.min(2, Math.max(1.2, Math.round(value * 100) / 100)) };
+    }
+    case "chatParaSpacing": {
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      return { chatParaSpacing: Math.min(1.2, Math.max(0.2, Math.round(value * 100) / 100)) };
     }
     case "uiIcon":
       return typeof value === "string" ? { uiIcon: normalizeUiIcon(value) } : null;

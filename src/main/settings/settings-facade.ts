@@ -12,7 +12,7 @@ import {
 } from "../../shared/style-sampling";
 import { normalizeUiTheme } from "../../shared/ui-theme";
 import { normalizeUiIcon } from "../../shared/ui-icon";
-import { normalizeChatAppearance } from "../../shared/chat-appearance";
+import { clampFiniteNumber, normalizeChatAppearance } from "../../shared/chat-appearance";
 import {
   normalizeChatSocialContextEnabled,
   normalizeDefaultChatMode,
@@ -49,6 +49,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   cyreneMomentsReactionsEnabled: true,
   momentsCharacterReactionsEnabled: true,
   momentsLiveliness: "quiet",
+  chatParaSpacing: 0.5,
   petAlwaysOnTop: true,
   petVisible: true,
   petZoom: 1,
@@ -233,6 +234,13 @@ export function normalizeGeneralSettings(
     petAlwaysOnTop: input?.petAlwaysOnTop === undefined
       ? DEFAULT_GENERAL_SETTINGS.petAlwaysOnTop
       : Boolean(input.petAlwaysOnTop),
+    // 聊天气泡段落间距（em）：有限数值 clamp 0.2~1.2，非法回落默认
+    chatParaSpacing: clampFiniteNumber(
+      input?.chatParaSpacing,
+      0.2,
+      1.2,
+      DEFAULT_GENERAL_SETTINGS.chatParaSpacing,
+    ),
     petVisible: input?.petVisible === undefined
       ? DEFAULT_GENERAL_SETTINGS.petVisible
       : Boolean(input.petVisible),

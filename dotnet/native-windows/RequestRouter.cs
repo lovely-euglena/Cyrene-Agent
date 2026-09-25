@@ -223,6 +223,7 @@ public static class RequestRouter
             "launchAtLogin", "petVisible", "petAlwaysOnTop", "petZoom", "uiIcon",
             "uiTheme", "language", "windowCornerRadius", "toastSoundEnabled",
             "chatLineHeight", "assistantBubbleEnabled", "disableGpuElectron",
+            "chatParaSpacing",
             "gitCommitAuthorName", "gitCommitAuthorEmail", "sidebarVisible", "tasksVisible",
             "screenshotBackend", "snipastePath", "mobileMessageSegmentation",
             "proactiveChatMode", "proactiveDeliveryTarget", "chatSocialContextEnabled",

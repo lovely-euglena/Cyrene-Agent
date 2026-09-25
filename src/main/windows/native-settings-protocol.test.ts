@@ -125,6 +125,14 @@ describe("sanitizeNativeGeneralSetting", () => {
     expect(sanitizeNativeGeneralSetting("language", "en-US")).toBeNull();
   });
 
+  it("chatParaSpacing 归一化（clamp 0.2~1.2 两位小数；非法值拒绝）", () => {
+    expect(sanitizeNativeGeneralSetting("chatParaSpacing", 0.55)).toEqual({ chatParaSpacing: 0.55 });
+    expect(sanitizeNativeGeneralSetting("chatParaSpacing", 3)).toEqual({ chatParaSpacing: 1.2 });
+    expect(sanitizeNativeGeneralSetting("chatParaSpacing", 0)).toEqual({ chatParaSpacing: 0.2 });
+    expect(sanitizeNativeGeneralSetting("chatParaSpacing", "0.5")).toBeNull();
+    expect(sanitizeNativeGeneralSetting("chatParaSpacing", Number.NaN)).toBeNull();
+  });
+
   it("类型不符/未知键/历史键名一律拒绝", () => {
     expect(sanitizeNativeGeneralSetting("petVisible", "yes")).toBeNull();
     expect(sanitizeNativeGeneralSetting("windowCornerRadius", "")).toBeNull();
@@ -149,6 +157,7 @@ describe("sanitizeNativeGeneralSetting", () => {
       "toastSoundEnabled",
       "chatLineHeight",
       "assistantBubbleEnabled",
+      "chatParaSpacing",
       "disableGpuElectron",
       "gitCommitAuthorName",
       "gitCommitAuthorEmail",
