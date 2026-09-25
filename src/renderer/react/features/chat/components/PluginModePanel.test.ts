@@ -68,6 +68,7 @@ function plugin(overrides: Partial<PluginListEntry> = {}): PluginListEntry {
     author: "Playa",
     entry: "index.cjs",
     apiVersion: 1,
+    runtime: "node",
     source: "user",
     path: "C:\\plugins\\system-status",
     defaultEnabled: false,

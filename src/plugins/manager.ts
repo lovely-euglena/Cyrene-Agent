@@ -132,6 +132,7 @@ export class PluginManager {
           author: record.manifest.author,
           entry: record.manifest.entry,
           apiVersion: record.manifest.apiVersion,
+          runtime: record.manifest.runtime,
           source: record.source,
           origin,
           path: record.dir,

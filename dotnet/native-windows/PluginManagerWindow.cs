@@ -38,7 +38,7 @@ public sealed class PluginManagerWindow : NativeWindow
     private List<MarketSource> _marketSources = new();
     private string _marketError = "";
 
-    private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel);
+    private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
     private record MarketSource(string Url, bool Ok, bool Used);
 
@@ -146,7 +146,9 @@ public sealed class PluginManagerWindow : NativeWindow
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Bool(el, "enabled"), Str(el, "origin") ?? "user",
             // 宿主快照字段为 settingsPanel（设置面板 HTML 文件名，仅合法时透出）
-            Str(el, "settingsPanel") is { Length: > 0 }));
+            Str(el, "settingsPanel") is { Length: > 0 },
+            // 双轨标识（node/dotnet）；旧宿主快照无此字段时按 node 显示
+            Str(el, "runtime") ?? "node"));
         _market = ParseList<MarketEntry>(payload, "market", el => new MarketEntry(
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Str(el, "author") ?? ""));
@@ -256,7 +258,10 @@ public sealed class PluginManagerWindow : NativeWindow
 
     private Border MakeInstalledCard(PluginInfo p)
     {
-        var header = new TextBlock { Text = $"{p.Name}  {p.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
+        var headerText = new TextBlock { Text = $"{p.Name}  {p.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
+        var header = new StackPanel { Orientation = Orientation.Horizontal };
+        header.Children.Add(headerText);
+        header.Children.Add(MakeRuntimeBadge(p.Runtime));
         var desc = new TextBlock { Text = p.Description, FontSize = 12, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
 
         var toggle = new CheckBox { Content = "启用", IsChecked = p.Enabled, VerticalAlignment = VerticalAlignment.Center, Cursor = System.Windows.Input.Cursors.Hand };
@@ -299,6 +304,27 @@ public sealed class PluginManagerWindow : NativeWindow
             Margin = new Thickness(0, 0, 0, 8),
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
+        };
+    }
+
+    /// <summary>双轨标识徽标（Node / .NET）——旧版插件列表没有运行时信息，管理窗区分两轨。</summary>
+    private static Border MakeRuntimeBadge(string runtime)
+    {
+        var isDotnet = string.Equals(runtime, "dotnet", StringComparison.OrdinalIgnoreCase);
+        return new Border
+        {
+            Margin = new Thickness(8, 1, 0, 0),
+            Padding = new Thickness(6, 1, 6, 1),
+            CornerRadius = new CornerRadius(6),
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(isDotnet ? Color.FromRgb(0xF5, 0xF3, 0xFF) : Color.FromRgb(0xF3, 0xF4, 0xF6)),
+            Child = new TextBlock
+            {
+                Text = isDotnet ? ".NET" : "Node",
+                FontSize = 10.5,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(isDotnet ? Color.FromRgb(0x7C, 0x3A, 0xED) : Color.FromRgb(0x6B, 0x72, 0x80)),
+            },
         };
     }
 
