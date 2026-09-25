@@ -82,7 +82,7 @@ internal static class SnipasteCapture
         var timeoutMs = 10 * 60_000;
         var residentTimeoutMs = 8_000;
 
-        for (var i = 0; i < args.Length; i++)
+        for (var i = 1; i < args.Length; i++)
         {
             switch (args[i])
             {
