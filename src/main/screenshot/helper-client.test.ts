@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   ElectronScreenshotHelperClient,
   type HelperChildProcess,
   type ScreenshotMode,
 } from "./helper-client";
+
+/** 跨平台固定根（Linux CI 与 Windows 都是本机合法绝对路径）。 */
+const SHOTS_DIR = path.join(os.tmpdir(), "cyrene-shots-test");
 
 type Listener = (...args: any[]) => void;
 
@@ -61,8 +66,8 @@ function createHarness(): { client: ElectronScreenshotHelperClient; child: FakeC
   let sequence = 0;
   const client = new ElectronScreenshotHelperClient({
     spawnImpl: () => child,
-    resolveHelperPath: () => "C:\\helper\\cyrene-screenshot.exe",
-    screenshotDirectory: "C:\\shots",
+    resolveHelperPath: () => path.join(os.tmpdir(), "cyrene-helper", "cyrene-screenshot.exe"),
+    screenshotDirectory: SHOTS_DIR,
     parentProcessId: 42,
     now: () => 1000,
     createRequestId: () => `r${++sequence}`,
@@ -130,7 +135,9 @@ describe("ElectronScreenshotHelperClient", () => {
     expect(client.pendingRequests.get("r1")).toMatchObject({ captureReleased: true, source: "chat-button" });
 
     child.emitStdout('{"type":"completed","requestId":"r1","fileName":"00000000-0000-4000-8000-000000000001.png","width":800,"height":600,"mime":"image/png","clipboardWritten":true,"hasAnnotations":false}');
-    await expect(result).resolves.toMatchObject({ filePath: "C:\\shots\\00000000-0000-4000-8000-000000000001.png" });
+    await expect(result).resolves.toMatchObject({
+      filePath: path.join(SHOTS_DIR, "00000000-0000-4000-8000-000000000001.png"),
+    });
     expect(client.pendingRequests.size).toBe(0);
   });
 
