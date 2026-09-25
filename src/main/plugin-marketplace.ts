@@ -13,16 +13,20 @@ import type {
 import type { PluginImportResult } from "../plugins/manager";
 
 /**
- * 官方插件市场索引源（本 fork 自持收录仓库）。
- * 注意：所有源的 registry 条目 zip 必须落在 MARKET_ZIP_URL_PREFIX 之下——
- * 白名单只有一个前缀，跨仓镜像（如上游 playa0 索引）的 zip 会被整源丢弃。
+ * 官方插件市场索引源。
+ *
+ * ⚠️ registry 与 zip 必须同源（同一个 zipUrlPrefix 白名单）：白名单只有一个
+ * 前缀，跨仓 registry（条目 zip 指向别的仓库）会被整源丢弃。
+ * 当前源 = 上游 playa0/cyrene-plugins——registry 与 zips/ 同仓、raw 可达；
+ * 自持的 ygwill/cyrene-plugins 因 raw 接口被 Gitee 拒绝（403）暂不可用，
+ * 待其 raw 恢复后可作为备用源加回（需与白名单同源）。
  */
 export const MARKET_REGISTRY_URLS = [
-  "https://gitee.com/ygwill/cyrene-plugins/raw/main/registry.json",
+  "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
 ] as const;
 
 /** 插件包只允许来自收录仓库 zips/ 目录的直链，防止索引被篡改后下载任意来源的包 */
-export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/ygwill/cyrene-plugins/raw/main/zips/";
+export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/";
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -92,7 +96,8 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
   if (typeof version !== "string" || !isValidPluginVersion(version)) return null;
   if (typeof zip !== "string" || !zip.startsWith(deps.zipUrlPrefix)) return null;
   if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) return null;
-  if (typeof downloads !== "number" || !Number.isInteger(downloads) || downloads < 0) return null;
+  // downloads 可选（上游新条目会省略）：给出时必须是非负整数，缺省按 0 计
+  if (downloads !== undefined && (typeof downloads !== "number" || !Number.isInteger(downloads) || downloads < 0)) return null;
   if (homepage !== undefined && !isHttpsUrl(homepage)) return null;
   return {
     id,
@@ -100,7 +105,7 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
     version,
     description,
     author,
-    downloads,
+    downloads: typeof downloads === "number" ? downloads : 0,
     homepage: typeof homepage === "string" ? homepage : undefined,
     zip,
     sha256,
