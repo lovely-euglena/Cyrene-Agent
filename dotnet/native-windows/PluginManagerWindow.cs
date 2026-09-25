@@ -90,11 +90,12 @@ public sealed class PluginManagerWindow : NativeWindow
             MinWidth = 720,
             MinHeight = 520,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            Background = new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF7)),
+            Background = NativeTheme.SurfaceAppBrush,
             Content = root,
             ShowActivated = true,
             WindowStyle = WindowStyle.SingleBorderWindow,
         };
+        NativeTheme.Apply(_window);
         ApplyWindowBoundsFromLayout(layout);
     }
 

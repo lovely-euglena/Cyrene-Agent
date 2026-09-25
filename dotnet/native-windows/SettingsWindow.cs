@@ -74,11 +74,12 @@ public sealed partial class SettingsWindow : NativeWindow
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
-            Background = new SolidColorBrush(Color.FromRgb(0xF7, 0xF7, 0xFA)),
+            Background = NativeTheme.SurfaceAppBrush,
             ShowInTaskbar = true,
             // 任务栏/Alt-Tab 图标：从打包布局同级的 Cyrene.exe 提取（缺失则留空）
             Icon = ResolveAppIcon(),
         };
+        NativeTheme.Apply(_window);
 
         var root = new Border { BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)), BorderThickness = new Thickness(1) };
         var grid = new Grid();
@@ -92,8 +93,8 @@ public sealed partial class SettingsWindow : NativeWindow
         // ── 顶部标题栏：应用图标 + 标题 + 最小化/关闭（无边框窗的可见拖拽区） ──
         var header = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(0xEF, 0xEF, 0xF4)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)),
+            Background = Brushes.White,
+            BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
         };
         var headerGrid = new Grid();
@@ -126,7 +127,7 @@ public sealed partial class SettingsWindow : NativeWindow
         // ── 左侧导航 ──
         var nav = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(0xEF, 0xEF, 0xF4)),
+            Background = NativeTheme.SurfaceNavBrush,
             Child = new StackPanel { Margin = new Thickness(0, 8, 0, 12) },
         };
         Grid.SetColumn(nav, 0);
@@ -146,20 +147,10 @@ public sealed partial class SettingsWindow : NativeWindow
         _window.Closed += (_, _) => { StopDebounceTimers(); RaiseClosed(); };
     }
 
-    /// <summary>标题栏按钮（最小化/关闭）：扁平、无边框、悬停高亮。</summary>
+    /// <summary>标题栏按钮（最小化/关闭）：扁平图标按钮样式。</summary>
     private static Button MakeTitleBarButton(string glyph, Action onClick)
     {
-        var btn = new Button
-        {
-            Content = glyph,
-            Width = 40,
-            Height = 40,
-            FontSize = 12,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x66)),
-        };
+        var btn = new Button { Content = glyph, Style = NativeTheme.FlatIconButtonStyle };
         btn.Click += (_, _) => onClick();
         return btn;
     }
@@ -186,36 +177,8 @@ public sealed partial class SettingsWindow : NativeWindow
         }
     }
 
-    /// <summary>
-    /// 导航项样式：去掉 RadioButton 默认圆点，改为圆角高亮条（选中/悬停）。
-    /// </summary>
-    private static Style BuildNavItemStyle()
-    {
-        var style = new Style(typeof(RadioButton));
-        var template = new ControlTemplate(typeof(RadioButton));
-        var bg = new FrameworkElementFactory(typeof(Border), "navBg");
-        bg.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
-        bg.SetValue(Border.MarginProperty, new Thickness(8, 2, 8, 2));
-        bg.SetValue(Border.BackgroundProperty, new SolidColorBrush(Colors.Transparent));
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        presenter.SetValue(ContentPresenter.MarginProperty, new Thickness(10, 8, 8, 8));
-        bg.AppendChild(presenter);
-        template.VisualTree = bg;
-
-        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0xE2, 0xE2, 0xEE)), "navBg"));
-        template.Triggers.Add(hover);
-        var isChecked = new Trigger { Property = RadioButton.IsCheckedProperty, Value = true };
-        isChecked.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0xDA, 0xD6, 0xFA)), "navBg"));
-        template.Triggers.Add(isChecked);
-
-        style.Setters.Add(new Setter(Control.TemplateProperty, template));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44))));
-        style.Setters.Add(new Setter(Control.FontSizeProperty, 13.0));
-        style.Setters.Add(new Setter(Control.CursorProperty, System.Windows.Input.Cursors.Hand));
-        return style;
-    }
+    /// <summary>导航项样式：圆角高亮条（选中/悬停）—— 见 NativeTheme。</summary>
+    private static Style BuildNavItemStyle() => NativeTheme.NavItemStyle;
 
     private void BuildSections(StackPanel nav)
     {
@@ -572,17 +535,18 @@ public sealed partial class SettingsWindow : NativeWindow
     private static TextBlock MakeHeader(string text) => new()
     {
         Text = text,
-        FontSize = 17,
+        FontSize = 19,
         FontWeight = FontWeights.SemiBold,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x33)),
-        Margin = new Thickness(0, 0, 0, 10),
+        Foreground = NativeTheme.TextStrongBrush,
+        Margin = new Thickness(0, 0, 0, 8),
     };
 
     private static TextBlock MakeHint(string text) => new()
     {
         Text = text,
         FontSize = 12,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x88)),
+        Foreground = NativeTheme.TextMutedBrush,
+        TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 2, 0, 2),
     };
 
@@ -593,7 +557,7 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             Text = "",
             FontSize = 12,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x77)),
+            Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(0, 4, 0, 6),
             TextWrapping = TextWrapping.Wrap,
         };
@@ -606,8 +570,8 @@ public sealed partial class SettingsWindow : NativeWindow
         Text = text,
         FontSize = 14,
         FontWeight = FontWeights.SemiBold,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44)),
-        Margin = new Thickness(0, 14, 0, 6),
+        Foreground = NativeTheme.TextStrongBrush,
+        Margin = new Thickness(0, 16, 0, 6),
     };
 
     private static Button MakeButton(string text, Action onClick, bool primary = false, double minWidth = 96)
@@ -615,16 +579,9 @@ public sealed partial class SettingsWindow : NativeWindow
         var button = new Button
         {
             Content = text,
-            Height = 30,
             MinWidth = minWidth,
-            FontSize = 12,
-            Padding = new Thickness(10, 0, 10, 0),
             Margin = new Thickness(0, 4, 8, 4),
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Background = new SolidColorBrush(primary ? Color.FromRgb(0x5B, 0x5B, 0xD6) : Color.FromRgb(0xE8, 0xE8, 0xF0)),
-            Foreground = new SolidColorBrush(primary ? Colors.White : Color.FromRgb(0x33, 0x33, 0x44)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC5, 0xC5, 0xD5)),
-            BorderThickness = new Thickness(1),
+            Style = primary ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle,
         };
         button.Click += (_, _) => onClick();
         return button;
@@ -635,7 +592,7 @@ public sealed partial class SettingsWindow : NativeWindow
         Text = text,
         FontSize = 13,
         FontWeight = FontWeights.SemiBold,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x33)),
+        Foreground = NativeTheme.TextStrongBrush,
         TextWrapping = TextWrapping.Wrap,
     };
 
@@ -643,7 +600,7 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         Text = text,
         FontSize = 11,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x88)),
+        Foreground = NativeTheme.TextMutedBrush,
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 2, 0, 2),
     };
@@ -654,12 +611,12 @@ public sealed partial class SettingsWindow : NativeWindow
         content = new StackPanel();
         return new Border
         {
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xEA)),
+            BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(12),
             Background = Brushes.White,
-            Padding = new Thickness(12, 10, 12, 10),
-            Margin = new Thickness(0, 4, 0, 4),
+            Padding = new Thickness(14, 12, 14, 12),
+            Margin = new Thickness(0, 6, 0, 6),
             Child = content,
         };
     }
@@ -704,7 +661,14 @@ public sealed partial class SettingsWindow : NativeWindow
     private static Border MakeRow(string label, FrameworkElement control)
     {
         var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 10) };
-        sp.Children.Add(new TextBlock { Text = label, FontSize = 13, Width = 140, VerticalAlignment = VerticalAlignment.Center });
+        sp.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 12.5,
+            Width = 140,
+            Foreground = NativeTheme.TextDefaultBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
         sp.Children.Add(control);
         return new Border { Child = sp, Padding = new Thickness(0, 2, 0, 2) };
     }

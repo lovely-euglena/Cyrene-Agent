@@ -60,7 +60,8 @@ public sealed class TaskEditorWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
-        Background = new SolidColorBrush(Color.FromRgb(0xF7, 0xF7, 0xFA));
+        Background = NativeTheme.SurfaceAppBrush;
+        NativeTheme.Apply(this);
 
         var root = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(20) };
         var panel = new StackPanel();
