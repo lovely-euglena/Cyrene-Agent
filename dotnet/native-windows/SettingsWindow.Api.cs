@@ -139,6 +139,15 @@ public sealed partial class SettingsWindow
             return null;
         }
 
+        // 厂商预设切换 → 模型候选列表跟着刷新（旧实现只在构建时按当前
+        // provider 填一次，"模型名"下拉不随供应商变化）。
+        presetCombo.SelectionChanged += (_, _) =>
+        {
+            var index = presetCombo.SelectedIndex;
+            if (index < 0 || index >= visiblePresets.Count) return;
+            FillModelCandidates(GetString(visiblePresets[index], "provider"));
+        };
+
         // 协议切换：Base URL 仍是预设已知值时同步切换（与渲染页一致）
         transportCombo.SelectionChanged += (_, _) =>
         {
