@@ -92,7 +92,7 @@ export function resolveNativeWindowsExe(): string | null {
 
 /**
  * 窗口动作回调（宿主注入）：openSettings / openChat / openCall /
- * togglePin / modelSwitch / splashShown。返回 false 表示动作未处理
+ * togglePin / splashShown。返回 false 表示动作未处理
  * （native 侧仍保持窗口自身状态）。
  */
 export interface NativeWindowsHost {

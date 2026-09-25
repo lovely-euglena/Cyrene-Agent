@@ -21,7 +21,6 @@ export interface NativeBridgeActions {
   openChatWindow(): void;
   openCallWindow(): void;
   toggleSidebarPin(): void;
-  cycleModelProvider(): void;
   onSplashShown(): void;
   /** native 设置窗写入设置键（白名单在宿主侧执行）。 */
   setSetting?(key: string, value: unknown): void;
@@ -82,7 +81,10 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "openChat": actions.openChatWindow(); break;
         case "openCall": actions.openCallWindow(); break;
         case "togglePin": actions.toggleSidebarPin(); break;
-        case "modelSwitch": actions.cycleModelProvider(); break;
+        case "modelSwitch":
+          // 旧版状态栏「切换模型」= 打开 API 设置页（sidebar.ts: openSettings("api")）
+          actions.openSettings("api");
+          break;
         case "shown":
           actions.onSplashShown();
           notifyNativeSplashShown();

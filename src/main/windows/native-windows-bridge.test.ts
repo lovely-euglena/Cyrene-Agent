@@ -37,7 +37,6 @@ describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () 
       openChatWindow: vi.fn(),
       openCallWindow: vi.fn(),
       toggleSidebarPin: vi.fn(),
-      cycleModelProvider: vi.fn(),
       onSplashShown: vi.fn(),
     });
     expect(client).toBeNull();

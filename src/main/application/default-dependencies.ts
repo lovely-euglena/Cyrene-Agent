@@ -673,11 +673,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           openChatWindow: () => { void windowManager.openReactChatWindow(); },
           openCallWindow: () => windowManager.createCallWindow(),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),
-          cycleModelProvider: () => {
-            // 模型切换：复用 modelConfig 变更广播路径（具体切换逻辑
-            // 在 settings IPC 域，此处仅触发 UI 侧可见的下一 provider）
-            broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
-          },
           onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
           // native 设置窗写键：白名单/取值校验统一在 native-settings-protocol；
           // saveGeneralSettings 自动触发 handleGeneralSettingsChanged（桌宠显隐/

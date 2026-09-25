@@ -38,7 +38,6 @@ function init(): void {
     openChatWindow: vi.fn(),
     openCallWindow: vi.fn(),
     toggleSidebarPin: vi.fn(),
-    cycleModelProvider: vi.fn(),
     onSplashShown: vi.fn(),
   });
 }

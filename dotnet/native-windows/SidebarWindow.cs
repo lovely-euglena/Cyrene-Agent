@@ -128,7 +128,8 @@ public sealed class SidebarWindow : NativeWindow
         _modelLabel.VerticalAlignment = VerticalAlignment.Center;
         modelRow.Children.Add(_modelLabel);
         var switchBtn = MakePillButton("切换");
-        switchBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "modelSwitch");
+        // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
+        switchBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings", "api");
         modelRow.Children.Add(switchBtn);
         body.Children.Add(modelRow);
         body.Children.Add(_onlineLabel);

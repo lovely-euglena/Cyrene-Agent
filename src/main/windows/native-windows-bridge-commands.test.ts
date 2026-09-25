@@ -35,7 +35,6 @@ function initBridge() {
     openChatWindow: vi.fn(),
     openCallWindow: vi.fn(),
     toggleSidebarPin: vi.fn(),
-    cycleModelProvider: vi.fn(),
     onSplashShown: vi.fn(),
     setSetting: vi.fn(),
     setUserProfile: vi.fn(),
@@ -94,6 +93,13 @@ describe("native-windows-bridge · cmd 动作分发", () => {
     dispatch({ kind: "plugins", action: "openWindow", id: "my-plugin" });
     expect(actions.pluginAction).toHaveBeenCalledWith("openWindow", "my-plugin");
     expect(actions.openPluginManager).not.toHaveBeenCalled();
+  });
+
+  it("modelSwitch 按旧版状态栏语义打开 API 设置页（而非无副作用的 provider 广播）", () => {
+    const actions = initBridge();
+    dispatch({ kind: "sidebar", action: "modelSwitch" });
+    expect(actions.openSettings).toHaveBeenCalledTimes(1);
+    expect(actions.openSettings).toHaveBeenCalledWith("api");
   });
 
   it("settings set / set-user-profile / pick-avatar → 对应回调", () => {
