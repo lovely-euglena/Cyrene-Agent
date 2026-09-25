@@ -64,7 +64,18 @@ public sealed class SidebarWindow : NativeWindow
         titlebar.Children.Add(title);
 
         var btnStyle = MakeTitleButtonStyle();
-        var pinBtn = MakeTitleButton("置顶", "✔", btnStyle, () => RequestRouter.SendCommand(Kind, "togglePin"));
+        // 置顶：本地切换 Topmost（对齐 Electron 状态栏 SIDEBAR_TOGGLE_ALWAYS_ON_TOP
+        // 的语义），并同步按钮高亮/提示。旧实现发 togglePin 给宿主，宿主只重新
+        // 显示窗口；_pinned 从未赋值 → 置顶永远无效。
+        System.Windows.Controls.Button pinBtn = null!;
+        void TogglePin()
+        {
+            _pinned = !_pinned;
+            _window.Topmost = _pinned;
+            pinBtn.Foreground = new SolidColorBrush(_pinned ? Colors.White : Color.FromArgb(0xCC, 0xFF, 0xE3, 0xF2));
+            pinBtn.ToolTip = _pinned ? "取消置顶" : "置顶";
+        }
+        pinBtn = MakeTitleButton("置顶", "✔", btnStyle, TogglePin);
         var minBtn = MakeTitleButton("最小化", "—", btnStyle, () => _window.WindowState = WindowState.Minimized);
         var closeBtn = MakeTitleButton("关闭", "✕", btnStyle, () => _window.Close());
         Grid.SetColumn(pinBtn, 1); Grid.SetColumn(minBtn, 2); Grid.SetColumn(closeBtn, 3);
