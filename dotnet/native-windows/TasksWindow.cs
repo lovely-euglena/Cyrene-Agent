@@ -146,11 +146,28 @@ public sealed class TasksWindow : NativeWindow
 
         _form.Controls.Add(_root);
         _form.FormClosed += (_, _) => RaiseClosed();
+        // 圆角：WinForms 无透明窗，用区域裁剪出圆角（与其它原生窗统一）
+        ApplyRoundedRegion();
+        _form.SizeChanged += (_, _) => ApplyRoundedRegion();
 
         if (layout.ValueKind == JsonValueKind.Object) ApplyLayout(layout);
     }
 
     private record TaskRow(string Name, string Time, bool Enabled);
+
+    /// <summary>无边框 WinForms 窗的圆角（区域裁剪；失败不影响功能）。</summary>
+    private void ApplyRoundedRegion()
+    {
+        try
+        {
+            const int radius = 12;
+            var previous = _form.Region;
+            _form.Region = System.Drawing.Region.FromHrgn(
+                NativeMethods.CreateRoundRectRgn(0, 0, _form.Width + 1, _form.Height + 1, radius, radius));
+            previous?.Dispose();
+        }
+        catch { /* 圆角失败不影响功能 */ }
+    }
 
     private List<TaskRow> _tasks = new();
     private List<(string Weekday, int Total, bool IsToday, bool IsFuture)> _week = new();

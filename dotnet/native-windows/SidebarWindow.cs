@@ -297,17 +297,19 @@ public sealed class SidebarWindow : NativeWindow
     private static System.Windows.Media.Brush MakeGlassBrush()
     {
         // 主渐变（155deg 线性近似：左上→右下）
+        // 主渐变（155deg 线性近似：左上→右下）。alpha 接近不透明——
+        // 用户反馈旧值（0x33/0x99/0xcc）太透，背景压不住桌面。
         return new LinearGradientBrush
         {
             StartPoint = new Point(0.2, 0),
             EndPoint = new Point(0.9, 1),
             GradientStops =
             {
-                new GradientStop((Color)ColorConverter.ConvertFromString("#33262640"), 0),
-                new GradientStop((Color)ColorConverter.ConvertFromString("#991b1b2e"), 0.6),
-                new GradientStop((Color)ColorConverter.ConvertFromString("#cc2b2135"), 1),
+                new GradientStop((Color)ColorConverter.ConvertFromString("#F2262640"), 0),
+                new GradientStop((Color)ColorConverter.ConvertFromString("#F71b1b2e"), 0.6),
+                new GradientStop((Color)ColorConverter.ConvertFromString("#FC2b2135"), 1),
             },
-            Opacity = 0.96,
+            Opacity = 1.0,
         };
     }
 

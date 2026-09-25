@@ -60,14 +60,33 @@ public sealed class TaskEditorWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
-        Background = NativeTheme.SurfaceAppBrush;
+        // 无边框圆角窗 + 自绘标题栏（与其它原生窗统一圆角）
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
         NativeTheme.Apply(this);
 
         var root = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(20) };
         var panel = new StackPanel();
         root.Content = panel;
-        Content = root;
 
+        var shellGrid = new Grid();
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var titleBar = NativeTheme.BuildTitleBar(this, Title);
+        Grid.SetRow(titleBar, 0);
+        shellGrid.Children.Add(titleBar);
+        Grid.SetRow(root, 1);
+        shellGrid.Children.Add(root);
+        NativeTheme.ClipRounded(shellGrid, 12);
+        Content = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Child = shellGrid,
+        };
         panel.Children.Add(Header(hasTask ? "编辑定时任务" : "新建定时任务"));
         panel.Children.Add(Hint("提示词会在触发时作为一次 Agent 运行；工具白名单限制该运行可用的工具。"));
 

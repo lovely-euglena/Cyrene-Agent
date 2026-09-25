@@ -383,6 +383,84 @@ public static class NativeTheme
 </Style>
 """));
 
+    /// <summary>圆角窗口壳：无边框 + 全透明，内容由调用方的圆角 Border 提供。</summary>
+    public static void MakeRounded(Window window)
+    {
+        window.WindowStyle = WindowStyle.None;
+        window.AllowsTransparency = true;
+        window.Background = Brushes.Transparent;
+        window.ResizeMode = window.ResizeMode == ResizeMode.NoResize
+            ? ResizeMode.NoResize
+            : ResizeMode.CanResize;
+    }
+
+    /// <summary>把容器按圆角矩形裁剪（WPF Border 不会自动裁剪子元素到圆角）。</summary>
+    public static void ClipRounded(FrameworkElement element, double radius)
+    {
+        void Apply()
+        {
+            if (element.ActualWidth <= 0 || element.ActualHeight <= 0) return;
+            element.Clip = new RectangleGeometry(
+                new Rect(0, 0, element.ActualWidth, element.ActualHeight), radius, radius);
+        }
+        element.SizeChanged += (_, _) => Apply();
+        Apply();
+    }
+
+    /// <summary>扁平图标按钮（标题栏用）。</summary>
+    public static Button MakeIconButton(string glyph, Action onClick)
+    {
+        var btn = new Button { Content = glyph, Style = FlatIconButtonStyle };
+        btn.Click += (_, _) => onClick();
+        return btn;
+    }
+
+    /// <summary>
+    /// 无边框窗的圆角标题栏：标题 + 可选最小化 + 关闭，可拖动。
+    /// 需与该窗的圆角壳（ClipRounded）配合，顶部两角才真正圆。
+    /// </summary>
+    public static Border BuildTitleBar(Window window, string title, bool showMinimize = false)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        if (showMinimize) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var titleText = new TextBlock
+        {
+            Text = title,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = TextStrongBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(16, 0, 0, 0),
+        };
+        Grid.SetColumn(titleText, 0);
+        grid.Children.Add(titleText);
+
+        var column = 1;
+        if (showMinimize)
+        {
+            var minBtn = MakeIconButton("—", () => window.WindowState = WindowState.Minimized);
+            Grid.SetColumn(minBtn, column++);
+            grid.Children.Add(minBtn);
+        }
+        var closeBtn = MakeIconButton("✕", () => window.Close());
+        Grid.SetColumn(closeBtn, column);
+        grid.Children.Add(closeBtn);
+
+        var bar = new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = BorderSoftBrush,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            CornerRadius = new CornerRadius(12, 12, 0, 0),
+            Child = grid,
+        };
+        bar.MouseLeftButtonDown += (_, _) => { try { window.DragMove(); } catch { /* not pressed */ } };
+        return bar;
+    }
+
     public static Style TextBoxStyle => TextBoxLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;

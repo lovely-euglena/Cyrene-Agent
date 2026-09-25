@@ -74,14 +74,22 @@ public sealed partial class SettingsWindow : NativeWindow
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
-            Background = NativeTheme.SurfaceAppBrush,
+            // 无边框圆角窗：窗口本身全透明，圆角由 root Border + 裁剪提供
+            AllowsTransparency = true,
+            Background = Brushes.Transparent,
             ShowInTaskbar = true,
             // 任务栏/Alt-Tab 图标：从打包布局同级的 Cyrene.exe 提取（缺失则留空）
             Icon = ResolveAppIcon(),
         };
         NativeTheme.Apply(_window);
 
-        var root = new Border { BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)), BorderThickness = new Thickness(1) };
+        var root = new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Background = NativeTheme.SurfaceAppBrush,
+        };
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -89,6 +97,8 @@ public sealed partial class SettingsWindow : NativeWindow
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Child = grid;
         _window.Content = root;
+        // 圆角裁剪：Border 不会自动把子元素裁到圆角，导航/标题栏会溢出方形角
+        NativeTheme.ClipRounded(grid, 12);
 
         // ── 顶部标题栏：应用图标 + 标题 + 最小化/关闭（无边框窗的可见拖拽区） ──
         var header = new Border

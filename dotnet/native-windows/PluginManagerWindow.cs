@@ -90,11 +90,31 @@ public sealed class PluginManagerWindow : NativeWindow
             MinWidth = 720,
             MinHeight = 520,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            Background = NativeTheme.SurfaceAppBrush,
-            Content = root,
             ShowActivated = true,
-            WindowStyle = WindowStyle.SingleBorderWindow,
+            // 无边框圆角窗 + 自绘标题栏（系统边框是直角，无法统一圆角）
+            WindowStyle = WindowStyle.None,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent,
         };
+
+        var shellGrid = new Grid();
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var titleBar = NativeTheme.BuildTitleBar(_window, "昔涟 · 插件");
+        Grid.SetRow(titleBar, 0);
+        shellGrid.Children.Add(titleBar);
+        Grid.SetRow(root, 1);
+        shellGrid.Children.Add(root);
+        NativeTheme.ClipRounded(shellGrid, 12);
+        _window.Content = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Child = shellGrid,
+        };
+
         NativeTheme.Apply(_window);
         ApplyWindowBoundsFromLayout(layout);
     }
