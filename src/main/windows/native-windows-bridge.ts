@@ -13,6 +13,7 @@
 import { NativeWindowsClient, getNativeWindowsClient, type NativeWindowsHost } from "./native-windows-host";
 import { IPC } from "../../shared/ipc-channels";
 import { getUsageReport } from "../token-usage-store";
+import { debugLog } from "../agent-log";
 
 // ── 宿主动作注入点（由 default-dependencies 装配时提供） ──
 export interface NativeBridgeActions {
@@ -69,6 +70,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
       const action = String(frame.action ?? "");
       const section = typeof frame.section === "string" ? frame.section : undefined;
       const frameKind = typeof frame.kind === "string" ? frame.kind : "";
+      debugLog(`[NativeWindows] cmd kind=${frameKind} action=${action}${section ? ` section=${section}` : ""}${typeof frame.id === "string" ? ` id=${frame.id}` : ""}`);
       switch (action) {
         case "openSettings": actions.openSettings(section); break;
         case "openChat": actions.openChatWindow(); break;
@@ -285,6 +287,7 @@ export async function spawnNativeWindow(
   if (!c) return false;
   try {
     await c.spawnWindow(kind, layout);
+    debugLog(`[NativeWindows] spawned ${kind}`);
     // 显窗时机（对齐 showWindowWhenStartupReady 语义）：
     // splash 无门控（本来就是启动期首帧）；sidebar/tasks 在
     // startup 阶段先 pending，markStartupPhaseReady 后统一 win.show
@@ -292,6 +295,7 @@ export async function spawnNativeWindow(
       await c.showWindow("splash");
       // 关闭请求早于本次 spawn 落地（冷启动竞态）→ 补发关闭，避免启动屏常驻
       if (splashDismissed) {
+        debugLog("[NativeWindows] splash 关闭请求早于 spawn，补发 win.close");
         await c.closeWindow("splash").catch(() => undefined);
       }
     } else if (nativeWindowsStartupReady) {
@@ -327,6 +331,7 @@ export async function spawnNativeWindow(
 export async function closeNativeWindow(kind: string): Promise<void> {
   // splash：记录标志——若关闭请求早于 win.spawn 落地，spawn 后补关
   if (kind === "splash") splashDismissed = true;
+  debugLog(`[NativeWindows] close requested: ${kind}`);
   await activeClient()?.closeWindow(kind).catch(() => undefined);
 }
 

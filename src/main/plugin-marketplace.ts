@@ -4,6 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { isValidPluginVersion } from "../shared/version";
+import { debugLog } from "./agent-log";
 import type {
   MarketInstallResult,
   MarketListResult,
@@ -188,10 +189,16 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
   async function fetchRegistryJson(url: string): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), registryTimeoutMs);
+    const startedAt = Date.now();
     try {
       const response = await fetchImpl(url, { signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json() as unknown;
+      const data = await response.json() as unknown;
+      debugLog(`[plugins] market registry ok ${url} (+${Date.now() - startedAt}ms)`);
+      return data;
+    } catch (error) {
+      debugLog(`[plugins] market registry failed ${url} (+${Date.now() - startedAt}ms): ${errorMessage(error)}`);
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -234,6 +241,10 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
       }
     }
     if (chosen) {
+      debugLog(
+        `[plugins] market list: ${chosen.plugins.length} plugins; sources=` +
+        sources.map((s) => `${s.url}=${s.ok ? (s.used ? "used" : "standby") : "fail"}`).join(" | "),
+      );
       if (seq === listSeq) {
         // 只有最新一次请求才能落快照；过期响应的结果直接交还发起方但不改变状态
         snapshot = chosen.snapshot;

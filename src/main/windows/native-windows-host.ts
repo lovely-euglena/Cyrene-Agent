@@ -15,6 +15,20 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
+import { debugLog } from "../agent-log";
+
+/**
+ * 帧摘要（排障日志用）：op/kind/action 等关键字段 + 载荷字节数，
+ * 不打印完整载荷，避免设置/任务快照把日志刷爆。
+ */
+function frameSummary(frame: { op?: unknown; kind?: unknown; action?: unknown; name?: unknown }): string {
+  const parts: string[] = [];
+  if (typeof frame.op === "string") parts.push(frame.op);
+  if (typeof frame.kind === "string") parts.push(`kind=${frame.kind}`);
+  if (typeof frame.action === "string") parts.push(`action=${frame.action}`);
+  if (typeof frame.name === "string") parts.push(`name=${frame.name}`);
+  return parts.join(" ");
+}
 
 // ── 帧协议（与 cyrene-embed sidecar 同构） ──
 interface Frame {
@@ -129,6 +143,8 @@ export class NativeWindowsClient {
       },
     });
     this.child = child;
+    const launchedAt = Date.now();
+    debugLog(`[NativeWindows] launch ${this.exePath}`);
     this.chunks = [];
     this.bufferedBytes = 0;
     this.pendingFrameLength = null;
@@ -145,6 +161,7 @@ export class NativeWindowsClient {
       // native 进程异常退出：窗口全部消失。宿主侧标记未运行，
       // 下次 ensureStarted 重启（窗口状态由调用方按需重 spawn）
       console.warn(`[NativeWindows] exited with code ${code}`);
+      debugLog(`[NativeWindows] exited after ${Date.now() - launchedAt}ms code=${code}`);
       this.failAllPending(new Error(`native windows process exited: ${code}`));
       this.resetForRespawn();
     });
@@ -154,8 +171,10 @@ export class NativeWindowsClient {
       this.resetForRespawn();
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      // native 侧诊断日志直通（stderr 不参与帧协议）
-      process.stderr.write(`[cyrene-native] ${chunk}`);
+      // native 侧诊断日志直通（stderr 不参与帧协议）。走 console.error 以便
+      // CYRENE_DEBUG_LOGS=1 时被 console 镜像落盘——否则打包版看不到
+      // [cyrene-native] 的异常输出。
+      console.error(`[cyrene-native] ${String(chunk).trimEnd()}`);
     });
 
     const stdout = child.stdout;
@@ -180,6 +199,7 @@ export class NativeWindowsClient {
         resolve();
       };
     });
+    debugLog(`[NativeWindows] ready in ${Date.now() - launchedAt}ms`);
   }
 
   private readyCallback: (() => void) | null = null;
@@ -252,6 +272,7 @@ export class NativeWindowsClient {
     }
     // 事件通知（无 id 语义）
     if (frame.op === "event") {
+      debugLog(`[NativeWindows] ← event ${frameSummary(frame)}`);
       if (frame.name === "cmd") {
         this.onCommand(frame);
       } else if (frame.name === "win.shown") {
@@ -263,6 +284,7 @@ export class NativeWindowsClient {
     const pending = this.pending.get(frame.id);
     if (!pending) return;
     this.pending.delete(frame.id);
+    debugLog(`[NativeWindows] ← #${frame.id} ${frame.ok ? "ok" : `err=${frame.error ?? ""}`}`);
     if (frame.ok) pending.resolve();
     else pending.reject(new Error(frame.error ?? "native windows request failed"));
   }
@@ -273,6 +295,7 @@ export class NativeWindowsClient {
       throw new Error("native windows process is not running");
     }
     const id = this.nextId++;
+    debugLog(`[NativeWindows] → #${id} ${frameSummary(payload)}`);
     return new Promise<void>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       const json = Buffer.from(JSON.stringify({ id, ...payload }), "utf8");

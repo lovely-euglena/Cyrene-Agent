@@ -33,6 +33,24 @@ try {
   const userData = app.getPath("userData");
   installFileLogSink(userData);
   if (DEBUG_LOGS_ENABLED) installConsoleFileMirror(userData);
+  if (DEBUG_LOGS_ENABLED) {
+    // 排障模式启动清单：环境/开关/版本/日志路径——附日志时一眼看清运行配置
+    logger.info("Runtime", "debug logs enabled", {
+      logFile: `${userData}/logs/cyrene.log`,
+      electron: process.versions.electron,
+      node: process.versions.node,
+      chrome: process.versions.chrome,
+      packaged: app.isPackaged,
+      flags: {
+        nativeWindows: process.env.CYRENE_NATIVE_WINDOWS ?? "(default on)",
+        detachedTray: process.env.CYRENE_DETACHED_TRAY ?? "(default on)",
+        nativeAgentHost: process.env.CYRENE_AGENT_HOST ?? "(default on)",
+        lazyChatWindow: process.env.CYRENE_LAZY_CHAT_WINDOW ?? "(default on)",
+        lazyToastWindow: process.env.CYRENE_LAZY_TOAST_WINDOW ?? "(default on)",
+        logLevel: process.env.CYRENE_LOG_LEVEL ?? "(auto=debug)",
+      },
+    });
+  }
 } catch {
   // userData 不可用时静默跳过，日志落盘只是增强项
 }

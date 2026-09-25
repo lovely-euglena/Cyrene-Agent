@@ -1,6 +1,7 @@
 import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
 import { isNativeWindowActive, spawnNativeSplash } from "../windows/native-windows-bridge";
+import { debugLog } from "../agent-log";
 
 export interface CreateSplashWindowContext {
   isDev: boolean;
@@ -23,6 +24,7 @@ const SPLASH_SIZE = 520;
 export function createSplashWindow(ctx: CreateSplashWindowContext): BrowserWindow | null {
   // native 路径：win.shown 事件到达时桥接层调用 ctx.onShown
   if (isNativeWindowActive("splash")) {
+    debugLog("[Splash] using native splash window");
     void spawnNativeSplash(ctx).then((ok) => {
       if (!ok) console.warn("[Splash] native spawn failed — 启动流程继续（无 splash）");
     });
