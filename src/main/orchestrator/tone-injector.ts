@@ -4,22 +4,15 @@
 // 场景样本仅作参考，模型按昔涟的语气表达相同意思。
 
 import * as fs from "fs";
-import { matchScene, type SceneId, type SceneIndex } from "../scene-embedder";
+import { matchScene, SCENE_LABELS, type SceneId, type SceneIndex } from "../scene-embedder";
 import { type EmbeddingProvider } from "../rag/embedding";
 import { findPromptPath, findSkillPath } from "../external-content-paths";
 
-/** 场景匹配阈值——贴着 farewell 最低分 0.722 收紧，所有正确命中都能过。 */
+/**
+ * 场景匹配阈值。原值按 7 场景样本贴着 farewell 最低分 0.722 收紧；
+ * 增补 encourage/boundary/gratitude 锚点后，建议用真实语料复测再调整。
+ */
 const SCENE_MATCH_THRESHOLD = 0.72;
-
-/** 每个场景的展示名（注入 prompt 时用）。 */
-const SCENE_NAMES: Record<string, string> = {
-  greeting: "打招呼/相遇",
-  comfort: "安慰/陪伴",
-  praised: "被夸奖/被喜欢",
-  playful: "轻松俏皮",
-  farewell: "告别/道别",
-  concern: "表达关心",
-};
 
 // 通用语气规则（无论哪个场景都注入）—— 从 prompts/tone-rules.md 读取
 const DEFAULT_RULES = `## 句式禁止
@@ -88,7 +81,7 @@ function buildSampleInstruction(samples: string, scene: SceneId): string {
     .map((l) => l.replace(/^> 「/, "").replace(/」$/, ""))
     .filter(Boolean);
   if (lines.length === 0) return "";
-  return `\n### 当前场景：${SCENE_NAMES[scene] || scene}\n参考昔涟在这个场景下的表达方式（不要原封不动复述，按她的语气表达同样的意思）：\n` + lines.map((l) => `- ${l}`).join("\n");
+  return `\n### 当前场景：${SCENE_LABELS[scene] || scene}\n参考昔涟在这个场景下的表达方式（不要原封不动复述，按她的语气表达同样的意思）：\n` + lines.map((l) => `- ${l}`).join("\n");
 }
 
 /**

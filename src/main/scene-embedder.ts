@@ -1,5 +1,5 @@
 // 场景 embedding 匹配引擎
-// 把 7 个场景的例句各自向量化，每轮用户输入向量化后取 max 相似度锁定场景。
+// 把各场景的例句分别向量化，每轮用户输入向量化后取 max 相似度锁定场景。
 // 替代原 tone-injector.ts 的关键词匹配，用语义相似度判断用户处于什么场景。
 //
 // 方案 A（加权向量）：最近 3 轮 user 消息各自 embed 成独立向量，
@@ -13,7 +13,7 @@ const WEIGHT_CURRENT = 0.75;
 const WEIGHT_PREV = 0.20;
 const WEIGHT_PREV2 = 0.05;
 
-// ── 定稿的 42 句例句（7 场景 × 6 句）──
+// ── 场景锚点例句（10 个场景，每场景 6-8 句）──
 export const SCENE_EXAMPLES: Record<string, string[]> = {
   daily: [
     "今天发生什么了。",
@@ -38,6 +38,14 @@ export const SCENE_EXAMPLES: Record<string, string[]> = {
     "有点难受，说不清楚为什么。",
     "明天有个很重要的事，我有点怕。",
     "感觉最近什么都没意思。",
+  ],
+  encourage: [
+    "明天要上台，我有点怕。",
+    "不知道自己能不能坚持下去。",
+    "我想试试，可又怕搞砸。",
+    "万一失败了怎么办。",
+    "这件事我没什么信心。",
+    "有点不敢开始。",
   ],
   praised: [
     "你今天真的好好看。",
@@ -65,6 +73,22 @@ export const SCENE_EXAMPLES: Record<string, string[]> = {
     "先溜了。",
     "去忙了哈。",
   ],
+  boundary: [
+    "你觉得我以后会变成什么样？",
+    "你能告诉我结局吗？",
+    "未来真的能改变吗？",
+    "如果是你，你会怎么选？",
+    "我想听真话，不要安慰我。",
+    "你到底是谁？",
+  ],
+  gratitude: [
+    "谢谢你，真的。",
+    "这段时间多亏有你。",
+    "谢谢你愿意听我说这些。",
+    "谢谢你一直在。",
+    "真的很感谢你。",
+    "有你在真好，谢谢。",
+  ],
   concern: [
     "你会累吗？",
     "昔涟你还好吗？",
@@ -73,6 +97,20 @@ export const SCENE_EXAMPLES: Record<string, string[]> = {
     "你一个人不会无聊吗？",
     "你一个人的时候在做什么？",
   ],
+};
+
+/** 场景展示名：注入 prompt 与日志时使用，与 SCENE_EXAMPLES 一一对应。 */
+export const SCENE_LABELS: Record<string, string> = {
+  daily: "日常闲聊",
+  greeting: "打招呼/相遇",
+  comfort: "安慰/陪伴",
+  encourage: "鼓励/支持",
+  praised: "被夸奖/被喜欢",
+  playful: "轻松俏皮",
+  farewell: "告别/道别",
+  boundary: "边界/追问未来",
+  gratitude: "表达感谢",
+  concern: "表达关心",
 };
 
 export type SceneId = keyof typeof SCENE_EXAMPLES | "";
