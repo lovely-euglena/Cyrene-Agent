@@ -813,7 +813,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               else if (action === "disable" && id) await manager.setEnabled(id, false);
               else if (action === "uninstall" && id) await manager.uninstall(id);
               else if (action === "install" && id) await market?.installFromMarket(id);
-              else if (action === "openPanel") {
+              else if (action === "openWindow" && id) {
+                // 插件自有窗口（.NET 轨 = 子进程 WPF；Node 轨 = 宿主 BrowserWindow）
+                const result = await manager.open(id);
+                if (!result.ok) console.warn("[PluginNative] openWindow failed:", id, result.error);
+              } else if (action === "openPanel") {
                 // 插件运行时面板归 Electron（首版宿主=设置窗插件 section）
                 windowManager.createSettingsWindow("plugins");
                 return;

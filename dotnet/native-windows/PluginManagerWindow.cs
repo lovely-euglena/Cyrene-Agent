@@ -19,7 +19,7 @@ namespace CyreneNative;
 ///        description,author}...], "installing":[id...] }
 ///   native → 宿主：cmd 事件
 ///     {"op":"event","name":"cmd","kind":"plugins",
-///      "action":"enable|disable|uninstall|install|openPanel|refresh",
+///      "action":"enable|disable|uninstall|install|openWindow|openPanel|refresh",
 ///      "id":...}
 /// </summary>
 public sealed class PluginManagerWindow : NativeWindow
@@ -38,7 +38,7 @@ public sealed class PluginManagerWindow : NativeWindow
     private List<MarketSource> _marketSources = new();
     private string _marketError = "";
 
-    private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime);
+    private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime, bool CanOpen);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
     private record MarketSource(string Url, bool Ok, bool Used);
 
@@ -148,7 +148,9 @@ public sealed class PluginManagerWindow : NativeWindow
             // 宿主快照字段为 settingsPanel（设置面板 HTML 文件名，仅合法时透出）
             Str(el, "settingsPanel") is { Length: > 0 },
             // 双轨标识（node/dotnet）；旧宿主快照无此字段时按 node 显示
-            Str(el, "runtime") ?? "node"));
+            Str(el, "runtime") ?? "node",
+            // open 能力：运行中且插件实现了打开窗口
+            Bool(el, "canOpen")));
         _market = ParseList<MarketEntry>(payload, "market", el => new MarketEntry(
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Str(el, "author") ?? ""));
@@ -269,6 +271,12 @@ public sealed class PluginManagerWindow : NativeWindow
         toggle.Unchecked += (_, _) => RequestRouter.SendCommand("plugins", "disable", p.Id);
 
         var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (p.CanOpen)
+        {
+            var openBtn = MakeMiniButton("打开");
+            openBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "openWindow", p.Id);
+            btnPanel.Children.Add(openBtn);
+        }
         if (p.HasPanel)
         {
             var openBtn = MakeMiniButton("打开面板");

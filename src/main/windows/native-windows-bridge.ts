@@ -140,6 +140,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "disable":
         case "uninstall":
         case "install":
+        case "openWindow":
         case "openPanel":
         case "refresh":
           // 插件管理窗操作：{"kind":"plugins","action":"install","id":...}
