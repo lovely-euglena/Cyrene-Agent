@@ -21,6 +21,8 @@ import type { PluginRecord } from "./types";
 interface FakeChild {
   child: ChildProcess;
   emitLine(line: string): void;
+  /** 直接投递原始 stdout 字节（不加换行，用于模拟跨 chunk 分帧） */
+  emitRaw(data: Buffer | string): void;
   /** 触发进程退出（on("exit") 与 once("exit") 两类监听都触发） */
   emitExit(code?: number | null): void;
   written: string[];
@@ -56,6 +58,10 @@ function makeFakeChild(): FakeChild {
     },
     emitLine: (line: string) => {
       for (const cb of dataHandlers) cb(Buffer.from(`${line}\n`));
+    },
+    emitRaw: (data: Buffer | string) => {
+      const buf = typeof data === "string" ? Buffer.from(data) : data;
+      for (const cb of dataHandlers) cb(buf);
     },
   };
 }
@@ -221,5 +227,85 @@ describe("DotnetPluginAdapter", () => {
     fake.emitLine(JSON.stringify({ op: "log", level: "info", message: "hi" }));
     fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
     await expect(pendingRegister).resolves.toBeUndefined();
+  });
+
+  it("跨 chunk 分帧：整行被拆开、多字节字符被拆到两个 chunk，仍能解析", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+
+    // ready 帧切成两半投递（含中文多字节字符跨 chunk）
+    const ready = Buffer.from(`${JSON.stringify({ op: "ready", tools: [] })}\n`);
+    const cut = Math.floor(ready.length / 2);
+    fake.emitRaw(ready.subarray(0, cut));
+    fake.emitRaw(ready.subarray(cut));
+    await expect(pendingRegister).resolves.toBeUndefined();
+
+    // 200KB 级别的大结果：按 7 字节切片投递，验证缓冲拼接
+    const call = adapter.invokeToolForTest("big", {});
+    const invokeFrame = JSON.parse(fake.written[fake.written.length - 1]);
+    const payload = "汉".repeat(70_000); // 210KB UTF-8
+    const resultBuf = Buffer.from(`${JSON.stringify({ op: "result", callId: invokeFrame.callId, ok: true, data: payload })}\n`);
+    for (let offset = 0; offset < resultBuf.length; offset += 7) {
+      fake.emitRaw(resultBuf.subarray(offset, offset + 7));
+    }
+    await expect(call).resolves.toBe(payload);
+  });
+
+  it("SDK error 帧：拒绝握手、不按意外退出上报、不重启", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const onUnexpectedExit = vi.fn();
+    const adapter = new DotnetPluginAdapter(makeRecord(), { onUnexpectedExit });
+    const { ctx } = makeCtx();
+    const pending = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({
+      op: "error",
+      code: "api_version_mismatch",
+      message: "协议版本不匹配：宿主 apiVersion=99",
+      fatal: true,
+    }));
+    await expect(pending).rejects.toThrow(/协议版本不匹配/);
+    expect(fake.child.kill).toHaveBeenCalled();
+    fake.emitExit(0);
+    expect(onUnexpectedExit).not.toHaveBeenCalled();
+  });
+
+  it("invoke 兜底超时：超时后调用方收到错误，而不是永久 pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeChild();
+      mockSpawn.mockReturnValueOnce(fake.child);
+      const adapter = new DotnetPluginAdapter(makeRecord());
+      const { ctx } = makeCtx();
+      const pendingRegister = adapter.register(ctx);
+      fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+      await vi.advanceTimersByTimeAsync(0);
+      await pendingRegister;
+
+      const call = adapter.invokeToolForTest("slow", {});
+      void call.catch(() => { /* 防 unhandled rejection */ });
+      await vi.advanceTimersByTimeAsync(300_001);
+      await expect(call).rejects.toThrow(/调用超时/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("工具取消信号：abort 后调用立即失败", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    const controller = new AbortController();
+    const call = adapter.invokeToolForTest("greet", {}, controller.signal);
+    controller.abort();
+    await expect(call).rejects.toThrow(/已取消/);
   });
 });

@@ -17,15 +17,20 @@
  *     {"op":"result","callId":"c1","ok":true,"data":{...}}            // invoke 的应答
  *     {"op":"result","callId":"c1","ok":false,"error":"..."}
  *     {"op":"log","level":"info|warn|error","message":"..."}
+ *     {"op":"error","code":"...","message":"...","fatal":true}        // 致命错误 → 拒绝握手并停止
  *
  * 生命周期与容错：
  *   - register()：spawn → 等 ready（30s 超时）→ 按 ready.tools 注册进 ctx
  *   - unregister()：shutdown → 等自然退出 → 超时 kill
  *   - 运行中意外退出：在途调用立即失败 + 上报 hooks.onUnexpectedExit（上层更新状态）；
  *     下次工具调用自动重启一次（自愈），失败则报「重启失败」错误
- *   - stdout 的非 JSON 行（如 .NET 运行时自身输出）忽略并 warn 一次
+ *   - stdout 按行分帧：跨 chunk 缓冲 + UTF-8 StringDecoder（大结果/多字节字符不丢帧）
+ *   - invoke 兜底超时（默认 300s，CYRENE_PLUGIN_INVOKE_TIMEOUT_MS 可调）+ 工具上下文
+ *     AbortSignal 取消；两者都让调用方及时拿到错误，而不是永久 pending
+ *   - 协议版本不符：SDK 回 error 帧并退出，宿主拒绝握手（不视为可自愈的意外退出）
  */
 import { ChildProcess, spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import path from "node:path";
 import type { PluginRecord } from "./types";
 import type { PluginTool } from "./api";
@@ -35,8 +40,18 @@ import type { CyrenePlugin, PluginContext } from "./api";
 const READY_TIMEOUT_MS = 30_000;
 /** 优雅关停后允许的自然退出时间。 */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
-/** init 协议主版本（与 CURRENT_PLUGIN_API_VERSION 对齐，C# SDK 校验）。 */
+/** init 协议主版本（与 CURRENT_PLUGIN_API_VERSION 对齐；SDK 侧校验，不符回 error 帧并退出）。 */
 const PROTOCOL_API_VERSION = 1;
+/**
+ * 单次 invoke 的宿主兜底超时：插件挂死/不回帧时不再永久 pending。
+ * 正常调用（含本地推理类长任务）不应命中；可用 CYRENE_PLUGIN_INVOKE_TIMEOUT_MS 调整。
+ */
+const INVOKE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.CYRENE_PLUGIN_INVOKE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 300_000;
+})();
+/** stdout 单行协议帧上限（字符）：超过视为异常输出丢弃，避免内存无界增长。 */
+const MAX_FRAME_BUFFER_CHARS = 4 * 1024 * 1024;
 
 interface RemoteTool {
   id: string;
@@ -86,6 +101,9 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   private starting: Promise<RemoteTool[]> | null = null;
   /** init 帧下发的插件私有数据目录（ctx.storage.rootDir()） */
   private dataDir = "";
+  /** stdout 分帧缓冲：chunk 边界不保证落在整行上（大结果 / 中文多字节跨 chunk）。 */
+  private stdoutCarry = "";
+  private stdoutDecoder = new StringDecoder("utf8");
 
   constructor(record: PluginRecord, hooks: DotnetPluginAdapterHooks = {}) {
     this.record = record;
@@ -111,7 +129,8 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         ...(risk ? { risk } : {}),
         // schema 形状与 node 插件一致；缺省给空对象 schema
         inputSchema: (tool.inputSchema as PluginTool["inputSchema"]) ?? { type: "object", properties: {} },
-        execute: (input) => this.invokeTool(shortId, input),
+        // 取消信号来自工具上下文（宿主取消本轮时中止在途调用）
+        execute: (input, toolCtx) => this.invokeTool(shortId, input, toolCtx?.signal),
       });
     }
     console.log(`[plugins] dotnet 插件 ${this.record.manifest.id} 就绪，注册 ${tools.length} 个工具`);
@@ -130,6 +149,9 @@ export class DotnetPluginAdapter implements CyrenePlugin {
     const exe = path.join(this.record.dir, this.record.manifest.entry);
 
     return new Promise<RemoteTool[]>((resolve, reject) => {
+      // 新进程：清空上一进程残留的分帧缓冲与解码器
+      this.stdoutCarry = "";
+      this.stdoutDecoder = new StringDecoder("utf8");
       const child = spawn(exe, [], {
         cwd: this.record.dir,
         stdio: ["pipe", "pipe", "pipe"],
@@ -144,6 +166,7 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       child.on("exit", (code, signal) => {
         this.exited = true;
         this.proc = null;
+        this.stdoutCarry = "";
         // 在途调用全部失败
         const message = `dotnet 插件 ${this.record.manifest.id} 进程退出 (code=${code} signal=${signal})`;
         for (const [, call] of this.pending) call.reject(new Error(message));
@@ -216,11 +239,15 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   // ── 内部 ──
 
   /** 测试钩子：直接调用 invoke（生产路径经 ctx.registerTool 的 execute 闭包）。 */
-  invokeToolForTest(toolId: string, args: Record<string, unknown>): Promise<string> {
-    return this.invokeTool(toolId, args);
+  invokeToolForTest(toolId: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+    return this.invokeTool(toolId, args, signal);
   }
 
-  private async invokeTool(toolId: string, args: Record<string, unknown>): Promise<string> {
+  private async invokeTool(
+    toolId: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<string> {
     // 意外退出后自愈：下次调用先重启进程再发 invoke（重启失败才报错）
     if (!this.proc || this.exited) {
       if (this.stopping) {
@@ -240,7 +267,35 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         return;
       }
       const callId = `c${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      this.pending.set(callId, { resolve, reject });
+      let timer: NodeJS.Timeout | undefined;
+      let settled = false;
+      // 统一收口：超时/取消/结果帧三选一，清理定时器与监听后落定
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        this.pending.delete(callId);
+        action();
+      };
+      const onAbort = () => finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
+
+      if (signal?.aborted) {
+        finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
+        return;
+      }
+      timer = setTimeout(() => {
+        finish(() => reject(new Error(
+          `dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用超时（${INVOKE_TIMEOUT_MS}ms）`,
+        )));
+      }, INVOKE_TIMEOUT_MS);
+      if (typeof timer.unref === "function") timer.unref();
+
+      this.pending.set(callId, {
+        resolve: (value) => finish(() => resolve(value)),
+        reject: (error) => finish(() => reject(error)),
+      });
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
       this.send({ op: "invoke", callId, tool: toolId, args });
     });
   }
@@ -252,23 +307,46 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   }
 
   private consume(chunk: Buffer): void {
-    const text = String(chunk);
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    // chunk 边界不保证是整行：先入缓冲，只处理完整行（大结果 / 多字节字符跨 chunk）
+    this.stdoutCarry += this.stdoutDecoder.write(chunk);
+    let index: number;
+    while ((index = this.stdoutCarry.indexOf("\n")) >= 0) {
+      const line = this.stdoutCarry.slice(0, index).trim();
+      this.stdoutCarry = this.stdoutCarry.slice(index + 1);
+      if (!line) continue;
       let frame: Record<string, unknown>;
       try {
-        frame = JSON.parse(trimmed) as Record<string, unknown>;
+        frame = JSON.parse(line) as Record<string, unknown>;
       } catch {
         // .NET 运行时自身的非协议输出——忽略
         continue;
       }
       this.handleFrame(frame);
     }
+    if (this.stdoutCarry.length > MAX_FRAME_BUFFER_CHARS) {
+      console.warn(
+        `[plugins] dotnet 插件 ${this.record.manifest.id} stdout 单行超过 ${MAX_FRAME_BUFFER_CHARS} 字符，已丢弃`,
+      );
+      this.stdoutCarry = "";
+    }
   }
 
   private handleFrame(frame: Record<string, unknown>): void {
     const op = typeof frame.op === "string" ? frame.op : "";
+    if (op === "error") {
+      // SDK 侧致命错误（如协议版本不符）：拒绝握手与在途调用；不按「意外退出」自愈重启
+      const message = typeof frame.message === "string" ? frame.message : "插件报告致命错误";
+      const error = new Error(`dotnet 插件 ${this.record.manifest.id}: ${message}`);
+      console.error(`[plugins] ${error.message}`);
+      const resolvers = this.readyResolvers;
+      this.readyResolvers = [];
+      for (const r of resolvers) r.reject(error);
+      this.stopping = true;
+      for (const [, call] of this.pending) call.reject(error);
+      this.pending.clear();
+      this.kill();
+      return;
+    }
     if (op === "ready") {
       const tools = Array.isArray(frame.tools) ? (frame.tools as RemoteTool[]) : [];
       const resolvers = this.readyResolvers;
