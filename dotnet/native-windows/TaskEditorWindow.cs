@@ -55,8 +55,8 @@ public sealed class TaskEditorWindow : Window
         _isPluginTask = hasTask && GetStringStatic(taskValue, "ownerPluginId").Length > 0;
 
         Title = hasTask ? "编辑定时任务" : "新建定时任务";
-        Width = 560;
-        Height = 640;
+        Width = 592;
+        Height = 672;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
@@ -79,14 +79,19 @@ public sealed class TaskEditorWindow : Window
         Grid.SetRow(root, 1);
         shellGrid.Children.Add(root);
         NativeTheme.ClipRounded(shellGrid, 12);
-        Content = new Border
+        var contentBorder = new Border
         {
             CornerRadius = new CornerRadius(12),
             Background = NativeTheme.SurfaceAppBrush,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
+            Margin = new Thickness(16), // 透明留白：给窗口投影
             Child = shellGrid,
         };
+        var windowShell = new Grid();
+        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(12));
+        windowShell.Children.Add(contentBorder);
+        Content = windowShell;
         panel.Children.Add(Header(hasTask ? "编辑定时任务" : "新建定时任务"));
         panel.Children.Add(Hint("提示词会在触发时作为一次 Agent 运行；工具白名单限制该运行可用的工具。"));
 
@@ -457,6 +462,8 @@ public sealed class TaskEditorWindow : Window
 
     private static Button MakeDialogButton(string text, Action onClick, bool primary)
     {
+        // 用显式主题样式：隐式 Button 模板不消费内联 Background/Foreground，
+        // 旧实现设了 #5B5BD6/白字但模板固定白底 → 主按钮看起来是空白（白字白底）
         var button = new Button
         {
             Content = text,
@@ -465,10 +472,7 @@ public sealed class TaskEditorWindow : Window
             FontSize = 12,
             Margin = new Thickness(8, 0, 0, 0),
             Cursor = System.Windows.Input.Cursors.Hand,
-            Background = new SolidColorBrush(primary ? Color.FromRgb(0x5B, 0x5B, 0xD6) : Color.FromRgb(0xE8, 0xE8, 0xF0)),
-            Foreground = new SolidColorBrush(primary ? Colors.White : Color.FromRgb(0x33, 0x33, 0x44)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC5, 0xC5, 0xD5)),
-            BorderThickness = new Thickness(1),
+            Style = primary ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle,
         };
         button.Click += (_, _) => onClick();
         return button;

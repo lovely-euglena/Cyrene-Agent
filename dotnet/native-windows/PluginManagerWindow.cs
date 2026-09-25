@@ -92,10 +92,10 @@ public sealed class PluginManagerWindow : NativeWindow
         _window = new Window
         {
             Title = "昔涟 · 插件",
-            Width = 880,
-            Height = 640,
-            MinWidth = 720,
-            MinHeight = 520,
+            Width = 912,
+            Height = 672,
+            MinWidth = 752,
+            MinHeight = 552,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             ShowActivated = true,
             // 无边框圆角窗 + 自绘标题栏（系统边框是直角，无法统一圆角）
@@ -113,14 +113,19 @@ public sealed class PluginManagerWindow : NativeWindow
         Grid.SetRow(root, 1);
         shellGrid.Children.Add(root);
         NativeTheme.ClipRounded(shellGrid, 12);
-        _window.Content = new Border
+        var contentBorder = new Border
         {
             CornerRadius = new CornerRadius(12),
             Background = NativeTheme.SurfaceAppBrush,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
+            Margin = new Thickness(16), // 透明留白：给窗口投影
             Child = shellGrid,
         };
+        var windowShell = new Grid();
+        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(12));
+        windowShell.Children.Add(contentBorder);
+        _window.Content = windowShell;
 
         NativeTheme.Apply(_window);
         ApplyWindowBoundsFromLayout(layout);
@@ -403,6 +408,7 @@ public sealed class PluginManagerWindow : NativeWindow
             Margin = new Thickness(0, 0, 0, 8),
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
+            Effect = NativeTheme.CardShadow(),
         };
     }
 
@@ -486,6 +492,7 @@ public sealed class PluginManagerWindow : NativeWindow
             Margin = new Thickness(0, 0, 0, 8),
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
+            Effect = NativeTheme.CardShadow(),
         };
     }
 

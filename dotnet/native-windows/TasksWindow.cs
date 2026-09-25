@@ -33,12 +33,14 @@ public sealed class TasksWindow : NativeWindow
             Size = new Size(360, 760),
             MinimumSize = new Size(300, 540),
             ShowInTaskbar = false,
-            BackColor = System.Drawing.Color.FromArgb(0x26, 0x26, 0x3E),
+            BackColor = System.Drawing.Color.White,
             TopMost = false,
         };
 
-        // 深色字色 token（对齐 tasks.css 粉紫系）
-        var textPrimary = System.Drawing.Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2);
+        // pearl-white 字色 token（对齐设置/侧栏浅色壳）
+        var textPrimary = System.Drawing.Color.FromArgb(0x1D, 0x1D, 0x1F);
+        var textMuted = System.Drawing.Color.FromArgb(0x6F, 0x68, 0x76);
+        var accent = System.Drawing.Color.FromArgb(0xFF, 0x5B, 0x8A);
 
         _root = new TableLayoutPanel
         {
@@ -102,14 +104,14 @@ public sealed class TasksWindow : NativeWindow
         {
             FlowDirection = FlowDirection.LeftToRight,
             Dock = DockStyle.Fill,
-            BackColor = System.Drawing.Color.FromArgb(0x33, 0x2B, 0x2B, 0x4A),
+            BackColor = System.Drawing.Color.FromArgb(0xF5, 0xF5, 0xF7),
             Padding = new Padding(12),
             WrapContents = false,
         };
         _scheduleCount = new Label
         {
             Text = "0",
-            ForeColor = System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF),
+            ForeColor = accent,
             Font = new Font("Microsoft YaHei UI", 20f, FontStyle.Bold),
             AutoSize = true,
             Margin = new Padding(0, 0, 6, 0),
@@ -118,13 +120,15 @@ public sealed class TasksWindow : NativeWindow
         {
             Text = "个待办日程",
             ForeColor = textPrimary,
+            Font = new Font("Microsoft YaHei UI", 9.5f),
             AutoSize = true,
             Margin = new Padding(0, 12, 12, 0),
         };
         _tokenSummary = new Label
         {
             Text = "",
-            ForeColor = System.Drawing.Color.FromArgb(0xCC, 0xCC, 0xD8),
+            ForeColor = textMuted,
+            Font = new Font("Microsoft YaHei UI", 9.5f),
             AutoSize = true,
             Margin = new Padding(0, 2, 0, 0),
         };
@@ -132,17 +136,17 @@ public sealed class TasksWindow : NativeWindow
         _scheduleDate = new Label
         {
             Text = "",
-            ForeColor = System.Drawing.Color.FromArgb(0xCC, 0xCC, 0xD8),
+            ForeColor = textMuted,
             AutoSize = true,
             Font = new Font("Microsoft YaHei UI", 9f),
-            Margin = new Padding(0, 22, 0, 0),
+            Margin = new Padding(0, 0, 0, 0),
         };
         var usageColumn = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.TopDown,
             AutoSize = true,
             WrapContents = false,
-            Margin = new Padding(28, 0, 0, 0),
+            Margin = new Padding(24, 0, 0, 0),
             BackColor = System.Drawing.Color.Transparent,
         };
         usageColumn.Controls.Add(_scheduleDate);
@@ -279,7 +283,9 @@ public sealed class TasksWindow : NativeWindow
             {
                 var day = weekSunday.AddDays(i);
                 var key = $"{day.Month:D2}-{day.Day:D2}";
-                var isFuture = day > now.Date;
+                // 注意：weekSunday 保留了当前时分秒，必须按日期比较，
+                // 否则「今天」会被判成未来（柱变虚线 + 今日用量不计入）
+                var isFuture = day.Date > now.Date;
                 var total = byDate.TryGetValue(key, out var v) && !isFuture ? v : 0;
                 _week.Add((new[] { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }[(int)day.DayOfWeek], total, key == $"{now.Month:D2}-{now.Day:D2}", isFuture));
             }
@@ -298,8 +304,9 @@ public sealed class TasksWindow : NativeWindow
             var empty = new Label
             {
                 Text = "暂无已启用定时任务",
-                ForeColor = System.Drawing.Color.FromArgb(0x99, 0xCC, 0xCC, 0xD8),
+                ForeColor = System.Drawing.Color.FromArgb(0x6F, 0x68, 0x76),
                 AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9.5f),
                 Padding = new Padding(4, 10, 4, 10),
             };
             _taskList.Controls.Add(empty);
@@ -312,13 +319,13 @@ public sealed class TasksWindow : NativeWindow
                 {
                     Width = Math.Max(_taskList.ClientSize.Width - 24, 120),
                     Height = 40,
-                    BackColor = System.Drawing.Color.FromArgb(0x22, 0x33, 0x33, 0x50),
+                    BackColor = System.Drawing.Color.FromArgb(0xF7, 0xF7, 0xFA),
                     Margin = new Padding(0, 3, 0, 3),
                 };
                 var name = new Label
                 {
                     Text = t.Title,
-                    ForeColor = System.Drawing.Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2),
+                    ForeColor = System.Drawing.Color.FromArgb(0x1D, 0x1D, 0x1F),
                     AutoSize = false,
                     Width = item.Width - 70,
                     Height = 36,
@@ -329,7 +336,7 @@ public sealed class TasksWindow : NativeWindow
                 var time = new Label
                 {
                     Text = t.Time,
-                    ForeColor = System.Drawing.Color.FromArgb(0xB3, 0xE4, 0x99, 0xFF),
+                    ForeColor = System.Drawing.Color.FromArgb(0xE8, 0x4A, 0x78),
                     AutoSize = false,
                     Width = 78,
                     Height = 36,
@@ -368,22 +375,22 @@ public sealed class TasksWindow : NativeWindow
 
                 if (isFuture)
                 {
-                    // 未来留空柱（虚线框）
-                    using var pen = new Pen(System.Drawing.Color.FromArgb(0x33, 0xFF, 0xE3, 0xF2), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+                    // 未来留空柱（虚线框，pearl-white 弱化描边）
+                    using var pen = new Pen(System.Drawing.Color.FromArgb(0x80, 0xD2, 0xD2, 0xD7), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
                     g.DrawRectangle(pen, x, plot.Bottom - 48, barWidth, 48);
                 }
                 else
                 {
                     var h = Math.Max((int)(48.0 * total / maxVal), total > 0 ? 4 : 0);
                     var color = isToday
-                        ? System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF)
-                        : System.Drawing.Color.FromArgb(0x99, 0xC9, 0x8C, 0xFF);
+                        ? System.Drawing.Color.FromArgb(0xFF, 0x5B, 0x8A)
+                        : System.Drawing.Color.FromArgb(0xFF, 0xB1, 0xCB);
                     using var brush = new SolidBrush(color);
                     g.FillRectangle(brush, x, plot.Bottom - h, barWidth, h);
                     if (total > 0)
                     {
                         using var font = new Font("Microsoft YaHei UI", 7.5f);
-                        using var textBrush = new SolidBrush(System.Drawing.Color.FromArgb(0xB3, 0xCC, 0xCC, 0xD8));
+                        using var textBrush = new SolidBrush(System.Drawing.Color.FromArgb(0x6F, 0x68, 0x76));
                         var txt = FormatTokenShort(total);
                         var size = g.MeasureString(txt, font);
                         g.DrawString(txt, font, textBrush, (float)(x + barWidth / 2.0 - size.Width / 2), plot.Bottom - h - 14);
@@ -392,8 +399,8 @@ public sealed class TasksWindow : NativeWindow
                 // 星期标签
                 using var lblFont = new Font("Microsoft YaHei UI", 8.5f);
                 using var lblBrush = new SolidBrush(isToday
-                    ? System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF)
-                    : System.Drawing.Color.FromArgb(0x8C, 0xCC, 0xCC, 0xD8));
+                    ? System.Drawing.Color.FromArgb(0xE8, 0x4A, 0x78)
+                    : System.Drawing.Color.FromArgb(0x6F, 0x68, 0x76));
                 var lblSize = g.MeasureString(weekday, lblFont);
                 g.DrawString(weekday, lblFont, lblBrush, (float)(x + barWidth / 2.0 - lblSize.Width / 2), (float)(plot.Bottom + 4));
             }
@@ -412,7 +419,7 @@ public sealed class TasksWindow : NativeWindow
         {
             Text = glyph,
             FlatStyle = FlatStyle.Flat,
-            ForeColor = System.Drawing.Color.FromArgb(0xCC, 0xFF, 0xE3, 0xF2),
+            ForeColor = System.Drawing.Color.FromArgb(0x6F, 0x68, 0x76),
             BackColor = System.Drawing.Color.Transparent,
             // FlatAppearance.BorderSize 通过初始化后设置
             TabStop = false,
@@ -420,7 +427,8 @@ public sealed class TasksWindow : NativeWindow
             Font = new Font("Consolas", 9f),
         };
         btn.FlatAppearance.BorderSize = 0;
-        btn.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(0x40, 0xC9, 0x8C, 0xFF);
+        btn.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(0xFF, 0xD6, 0xE4);
+        btn.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(0xFF, 0xB1, 0xCB);
         btn.Click += (_, _) => onClick();
         return btn;
     }

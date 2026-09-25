@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
@@ -31,6 +32,25 @@ public sealed class SplashWindow : NativeWindow
 
         var root = new Grid();
 
+        // 粉紫柔光（对齐 splash.html 的 filter: blur(45px) 光斑；纯装饰不参与命中）
+        root.Children.Add(new Ellipse
+        {
+            Width = 300,
+            Height = 300,
+            Fill = new SolidColorBrush(Color.FromArgb(0x59, 0xE2, 0x99, 0xFF)),
+            Effect = new BlurEffect { Radius = 45, RenderingBias = RenderingBias.Performance },
+            IsHitTestVisible = false,
+        });
+        root.Children.Add(new Ellipse
+        {
+            Width = 180,
+            Height = 180,
+            Fill = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xB1, 0xCB)),
+            Effect = new BlurEffect { Radius = 36, RenderingBias = RenderingBias.Performance },
+            Margin = new Thickness(120, 110, 0, 0),
+            IsHitTestVisible = false,
+        });
+
         // logo（找不到图片时静默跳过，仅显示动画）
         var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "assets", "loading.png");
         if (File.Exists(logoPath))
@@ -41,6 +61,14 @@ public sealed class SplashWindow : NativeWindow
                 Width = 160,
                 Height = 160,
                 Stretch = Stretch.Uniform,
+                Effect = new DropShadowEffect
+                {
+                    Color = Color.FromRgb(0xE2, 0x99, 0xFF),
+                    BlurRadius = 28,
+                    ShadowDepth = 0,
+                    Opacity = 0.45,
+                    RenderingBias = RenderingBias.Performance,
+                },
             };
             root.Children.Add(logo);
         }
@@ -125,7 +153,13 @@ public sealed class SplashWindow : NativeWindow
 
     public override void ShowWindow()
     {
+        // 淡入（对齐 Web 入场观感；透明窗 Opacity 动画代价极低）
+        _window.Opacity = 0;
         _window.Show();
+        _window.BeginAnimation(Window.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(260))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+        });
         // 首帧渲染完成：cmd 事件（action=shown）驱动宿主侧 onShown —— 与
         // Electron ready-to-show → show → onShown 语义对齐。只发 cmd 帧
         // （win.shown 事件帧已删：宿主 handleFrame 对无 action 的事件帧

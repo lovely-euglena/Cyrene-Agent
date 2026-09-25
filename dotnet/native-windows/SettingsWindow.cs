@@ -69,8 +69,8 @@ public sealed partial class SettingsWindow : NativeWindow
         _window = new Window
         {
             Title = "昔涟 · 设置",
-            Width = 920,
-            Height = 640,
+            Width = 952,
+            Height = 672,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
@@ -89,15 +89,27 @@ public sealed partial class SettingsWindow : NativeWindow
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12),
             Background = NativeTheme.SurfaceAppBrush,
+            Margin = new Thickness(16), // 透明留白：给窗口投影
         };
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Child = grid;
-        _window.Content = root;
-        // 圆角裁剪：Border 不会自动把子元素裁到圆角，导航/标题栏会溢出方形角
-        NativeTheme.ClipRounded(grid, 12);
+        // 投影层 + 内容壳（同圆角；阴影画在 16px 透明留白里）
+        _rootBorder = root;
+        _shadowLayer = NativeTheme.MakeWindowShadowLayer(12);
+        var shell = new Grid();
+        shell.Children.Add(_shadowLayer);
+        shell.Children.Add(root);
+        _window.Content = shell;
+        // 圆角裁剪：Border 不会自动把子元素裁到圆角，导航/标题栏会溢出方形角。
+        // 用可更新几何体，窗口圆角随设置（windowCornerRadius）切换。
+        _clipGeometry = new RectangleGeometry { RadiusX = 12, RadiusY = 12 };
+        grid.Clip = _clipGeometry;
+        void UpdateClip() => _clipGeometry.Rect = new Rect(0, 0, grid.ActualWidth, grid.ActualHeight);
+        grid.SizeChanged += (_, _) => UpdateClip();
+        UpdateClip();
 
         // ── 右侧：标题栏（当前 section 标题 + 说明 + 最小化/关闭）+ 内容区 ──
         // 对齐旧版设置页布局：导航列在最左（含品牌行），内容列顶部是 section 标题栏
@@ -136,6 +148,7 @@ public sealed partial class SettingsWindow : NativeWindow
         titleGrid.Children.Add(minBtn);
         titleGrid.Children.Add(closeBtn);
         titleBar.Child = titleGrid;
+        _titleBar = titleBar;
         titleBar.MouseLeftButtonDown += (_, _) => { try { _window.DragMove(); } catch { /* not pressed */ } };
         Grid.SetRow(titleBar, 0);
         contentGrid.Children.Add(titleBar);
@@ -166,6 +179,29 @@ public sealed partial class SettingsWindow : NativeWindow
 
     private readonly TextBlock _sectionTitle = new();
     private readonly TextBlock _sectionHint = new();
+
+    // ── 窗口外观（投影 / 圆角跟随设置） ──
+    private Border? _rootBorder;
+    private Border? _shadowLayer;
+    private Border? _titleBar;
+    private RectangleGeometry? _clipGeometry;
+    private double _cornerRadius = 12;
+
+    /// <summary>窗口圆角跟随设置（windowCornerRadius 0–40：内容壳/投影层/标题栏/裁剪同步）。</summary>
+    private void ApplyWindowRadius(double radius)
+    {
+        radius = Math.Clamp(radius, 0, 40);
+        if (Math.Abs(radius - _cornerRadius) < 0.5) return;
+        _cornerRadius = radius;
+        if (_rootBorder is not null) _rootBorder.CornerRadius = new CornerRadius(radius);
+        if (_shadowLayer is not null) _shadowLayer.CornerRadius = new CornerRadius(radius);
+        if (_titleBar is not null) _titleBar.CornerRadius = new CornerRadius(radius, radius, 0, 0);
+        if (_clipGeometry is not null)
+        {
+            _clipGeometry.RadiusX = radius;
+            _clipGeometry.RadiusY = radius;
+        }
+    }
 
     /// <summary>标题栏按钮（最小化/关闭）：扁平图标按钮样式。</summary>
     private static Button MakeTitleBarButton(string glyph, Action onClick)
@@ -534,10 +570,8 @@ public sealed partial class SettingsWindow : NativeWindow
             Height = 32,
             Margin = new Thickness(16, 16, 0, 0),
             FontSize = 12,
-            Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xF0)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC5, 0xC5, 0xD5)),
-            BorderThickness = new Thickness(1),
             Cursor = System.Windows.Input.Cursors.Hand,
+            Style = NativeTheme.SecondaryButtonStyle,
         };
         uploadButton.Click += (_, _) => RequestRouter.SendPickAvatar();
         avatarRow.Children.Add(uploadButton);
@@ -610,10 +644,8 @@ public sealed partial class SettingsWindow : NativeWindow
             Height = 32,
             Margin = new Thickness(0, 14, 0, 0),
             FontSize = 12,
-            Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xF0)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC5, 0xC5, 0xD5)),
-            BorderThickness = new Thickness(1),
             Cursor = System.Windows.Input.Cursors.Hand,
+            Style = NativeTheme.SecondaryButtonStyle,
         };
         if (pluginManager)
         {
@@ -645,6 +677,9 @@ public sealed partial class SettingsWindow : NativeWindow
         if (settings.ValueKind != JsonValueKind.Object) return;
         _settings = settings;
         StopDebounceTimers();
+        // 窗口圆角跟随设置（快照键 windowCornerRadius；旧实现 native 硬编码 12）
+        var radius = GetInt("windowCornerRadius", -1);
+        if (radius >= 0) ApplyWindowRadius(radius);
         foreach (var (id, host) in _sectionHosts)
         {
             if (!IsNativeSection(id)) continue;
@@ -861,7 +896,7 @@ public sealed partial class SettingsWindow : NativeWindow
         Margin = new Thickness(0, 2, 0, 2),
     };
 
-    /// <summary>卡片容器（白底圆角边框 + 内部竖直 StackPanel）。</summary>
+    /// <summary>卡片容器（白底圆角边框 + 轻投影 + 内部竖直 StackPanel）。</summary>
     private static Border MakeCard(out StackPanel content)
     {
         content = new StackPanel();
@@ -874,6 +909,7 @@ public sealed partial class SettingsWindow : NativeWindow
             Padding = new Thickness(14, 12, 14, 12),
             Margin = new Thickness(0, 6, 0, 6),
             Child = content,
+            Effect = NativeTheme.CardShadow(),
         };
     }
 

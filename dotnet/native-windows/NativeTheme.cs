@@ -3,6 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 
 namespace CyreneNative;
@@ -54,13 +56,84 @@ public static class NativeTheme
     public static readonly SolidColorBrush SurfaceAppBrush = Brush(SurfaceApp);
     public static readonly SolidColorBrush SurfaceNavBrush = Brush(SurfaceNav);
 
+    /// <summary>投影基色（对齐 --rb-shadow 的冷灰基调）。</summary>
+    public static readonly Color ShadowColor = Color.FromRgb(0x1F, 0x23, 0x30);
+
+    /// <summary>卡片投影：对齐 pearl-white --rb-shadow-card（1px 贴地 + 大扩散浅影）。</summary>
+    public static DropShadowEffect CardShadow() => new()
+    {
+        Color = ShadowColor,
+        BlurRadius = 14,
+        ShadowDepth = 1,
+        Direction = 270,
+        Opacity = 0.10,
+        RenderingBias = RenderingBias.Performance,
+    };
+
+    /// <summary>窗口投影：贴在日常内容壳下方的一层（比卡片投影更大更深）。</summary>
+    public static DropShadowEffect WindowShadow() => new()
+    {
+        Color = ShadowColor,
+        BlurRadius = 26,
+        ShadowDepth = 3,
+        Direction = 270,
+        Opacity = 0.22,
+        RenderingBias = RenderingBias.Performance,
+    };
+
+    /// <summary>给卡片套投影（Effect 每元素独立，避免共享冻结带来的动画限制）。</summary>
+    public static void ApplyCardShadow(FrameworkElement element) => element.Effect = CardShadow();
+
+    /// <summary>
+    /// 无边框透明窗的投影层：与内容壳同圆角、纯白底，仅用于把 Effect 的
+    /// 阴影画在窗口透明留白里（内容壳用同样的 margin 盖在它上面）。
+    /// 消费方需把窗口宽高各 +2*margin，视觉尺寸保持不变。
+    /// </summary>
+    public static Border MakeWindowShadowLayer(double radius, double margin = 16) => new()
+    {
+        CornerRadius = new CornerRadius(radius),
+        Background = Brushes.White,
+        Margin = new Thickness(margin),
+        Effect = WindowShadow(),
+        SnapsToDevicePixels = true,
+    };
+
+    /// <summary>hover 抬升动效时长（对齐 Electron 120ms）。</summary>
+    public static readonly Duration HoverDuration = new(TimeSpan.FromMilliseconds(120));
+
+    /// <summary>开关滑块动效（对齐 Electron 180ms cubic-bezier(.2,.8,.2,1)）。</summary>
+    public static readonly IEasingFunction SwitchEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+
     private const string Ns =
         "xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" " +
         "xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"";
 
     private static Style Parse(string xaml) => (Style)XamlReader.Parse(xaml);
 
-    private static readonly System.Lazy<Style> TextBoxLazy = new(() => Parse($$"""
+    private static readonly System.Lazy<Style> FocusRingLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="Control">
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Control">
+        <Border CornerRadius="9" BorderBrush="#FF5B8A" BorderThickness="1.5" Margin="1"
+                SnapsToDevicePixels="True" Opacity="0.9"/>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    /// <summary>粉色焦点环（键盘可达性；鼠标点击不显示）。</summary>
+    public static Style FocusRingStyle => FocusRingLazy.Value;
+
+    /// <summary>给控件样式挂上焦点环。</summary>
+    private static Style WithFocusRing(Style style)
+    {
+        style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, FocusRingStyle));
+        return style;
+    }
+
+    private static readonly System.Lazy<Style> TextBoxLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="TextBox">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
   <Setter Property="FontSize" Value="12.5"/>
@@ -82,6 +155,11 @@ public static class NativeTheme
         <ControlTemplate.Triggers>
           <Trigger Property="IsKeyboardFocused" Value="True">
             <Setter TargetName="bd" Property="BorderBrush" Value="#FF5B8A"/>
+            <Setter TargetName="bd" Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect Color="#FF5B8A" BlurRadius="8" ShadowDepth="0" Opacity="0.24" RenderingBias="Performance"/>
+              </Setter.Value>
+            </Setter>
           </Trigger>
           <Trigger Property="IsMouseOver" Value="True">
             <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
@@ -94,9 +172,9 @@ public static class NativeTheme
     </Setter.Value>
   </Setter>
 </Style>
-"""));
+""")));
 
-    private static readonly System.Lazy<Style> SecondaryButtonLazy = new(() => Parse($$"""
+    private static readonly System.Lazy<Style> SecondaryButtonLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="Button">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
   <Setter Property="FontSize" Value="12.5"/>
@@ -108,12 +186,37 @@ public static class NativeTheme
     <Setter.Value>
       <ControlTemplate TargetType="Button">
         <Border x:Name="bd" CornerRadius="8" Background="White" BorderBrush="#D2D2D7" BorderThickness="1">
+          <Border.RenderTransform>
+            <TranslateTransform/>
+          </Border.RenderTransform>
           <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
         </Border>
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True">
             <Setter TargetName="bd" Property="Background" Value="#FFF5F8"/>
             <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+            <Trigger.EnterActions>
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetName="bd"
+                                   Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                   To="-1" Duration="0:0:0.12">
+                    <DoubleAnimation.EasingFunction>
+                      <QuadraticEase EasingMode="EaseOut"/>
+                    </DoubleAnimation.EasingFunction>
+                  </DoubleAnimation>
+                </Storyboard>
+              </BeginStoryboard>
+            </Trigger.EnterActions>
+            <Trigger.ExitActions>
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetName="bd"
+                                   Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                   To="0" Duration="0:0:0.12"/>
+                </Storyboard>
+              </BeginStoryboard>
+            </Trigger.ExitActions>
           </Trigger>
           <Trigger Property="IsPressed" Value="True">
             <Setter TargetName="bd" Property="Background" Value="#FFECF2"/>
@@ -126,9 +229,9 @@ public static class NativeTheme
     </Setter.Value>
   </Setter>
 </Style>
-"""));
+""")));
 
-    private static readonly System.Lazy<Style> PrimaryButtonLazy = new(() => Parse($$"""
+    private static readonly System.Lazy<Style> PrimaryButtonLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="Button">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
   <Setter Property="FontSize" Value="12.5"/>
@@ -141,12 +244,37 @@ public static class NativeTheme
     <Setter.Value>
       <ControlTemplate TargetType="Button">
         <Border x:Name="bd" CornerRadius="8" Background="#FF5B8A" BorderBrush="#FF5B8A" BorderThickness="1">
+          <Border.RenderTransform>
+            <TranslateTransform/>
+          </Border.RenderTransform>
           <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
         </Border>
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True">
             <Setter TargetName="bd" Property="Background" Value="#E84A78"/>
             <Setter TargetName="bd" Property="BorderBrush" Value="#E84A78"/>
+            <Trigger.EnterActions>
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetName="bd"
+                                   Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                   To="-1" Duration="0:0:0.12">
+                    <DoubleAnimation.EasingFunction>
+                      <QuadraticEase EasingMode="EaseOut"/>
+                    </DoubleAnimation.EasingFunction>
+                  </DoubleAnimation>
+                </Storyboard>
+              </BeginStoryboard>
+            </Trigger.EnterActions>
+            <Trigger.ExitActions>
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetName="bd"
+                                   Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                   To="0" Duration="0:0:0.12"/>
+                </Storyboard>
+              </BeginStoryboard>
+            </Trigger.ExitActions>
           </Trigger>
           <Trigger Property="IsPressed" Value="True">
             <Setter TargetName="bd" Property="Background" Value="#C43A64"/>
@@ -159,9 +287,9 @@ public static class NativeTheme
     </Setter.Value>
   </Setter>
 </Style>
-"""));
+""")));
 
-    private static readonly System.Lazy<Style> SwitchLazy = new(() => Parse($$"""
+    private static readonly System.Lazy<Style> SwitchLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="CheckBox">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
   <Setter Property="FontSize" Value="12.5"/>
@@ -172,15 +300,50 @@ public static class NativeTheme
       <ControlTemplate TargetType="CheckBox">
         <StackPanel Orientation="Horizontal" Background="Transparent">
           <Border x:Name="track" Width="40" Height="22" CornerRadius="11" Background="#E5E5EA" VerticalAlignment="Center">
-            <Ellipse x:Name="thumb" Width="16" Height="16" Fill="White" HorizontalAlignment="Left" Margin="3,0,0,0"/>
+            <Border x:Name="thumb" Width="16" Height="16" CornerRadius="8" Background="White"
+                    HorizontalAlignment="Left" Margin="3,0,0,0">
+              <Border.RenderTransform>
+                <TranslateTransform/>
+              </Border.RenderTransform>
+              <Border.Effect>
+                <DropShadowEffect BlurRadius="6" ShadowDepth="1" Direction="270" Opacity="0.18" RenderingBias="Performance"/>
+              </Border.Effect>
+            </Border>
           </Border>
           <ContentPresenter Margin="10,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
         </StackPanel>
         <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="track" Property="Background" Value="#D8D2DC"/>
+          </Trigger>
           <Trigger Property="IsChecked" Value="True">
             <Setter TargetName="track" Property="Background" Value="#FF5B8A"/>
-            <Setter TargetName="thumb" Property="HorizontalAlignment" Value="Right"/>
-            <Setter TargetName="thumb" Property="Margin" Value="0,0,3,0"/>
+            <Trigger.EnterActions>
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetName="thumb"
+                                   Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                   To="18" Duration="0:0:0.18">
+                    <DoubleAnimation.EasingFunction>
+                      <CubicEase EasingMode="EaseOut"/>
+                    </DoubleAnimation.EasingFunction>
+                  </DoubleAnimation>
+                </Storyboard>
+              </BeginStoryboard>
+            </Trigger.EnterActions>
+            <Trigger.ExitActions>
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetName="thumb"
+                                   Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                   To="0" Duration="0:0:0.18">
+                    <DoubleAnimation.EasingFunction>
+                      <CubicEase EasingMode="EaseOut"/>
+                    </DoubleAnimation.EasingFunction>
+                  </DoubleAnimation>
+                </Storyboard>
+              </BeginStoryboard>
+            </Trigger.ExitActions>
           </Trigger>
           <Trigger Property="IsEnabled" Value="False">
             <Setter TargetName="track" Property="Opacity" Value="0.5"/>
@@ -190,9 +353,9 @@ public static class NativeTheme
     </Setter.Value>
   </Setter>
 </Style>
-"""));
+""")));
 
-    private static readonly System.Lazy<Style> SliderLazy = new(() => Parse($$"""
+    private static readonly System.Lazy<Style> SliderLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="Slider">
   <Setter Property="Height" Value="24"/>
   <Setter Property="Template">
@@ -223,18 +386,31 @@ public static class NativeTheme
               <Thumb Width="16" Height="16">
                 <Thumb.Template>
                   <ControlTemplate TargetType="Thumb">
-                    <Ellipse Fill="White" Stroke="#FF5B8A" StrokeThickness="2"/>
+                    <Ellipse x:Name="thumb" Fill="White" Stroke="#FF5B8A" StrokeThickness="2"/>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="thumb" Property="Stroke" Value="#E84A78"/>
+                      </Trigger>
+                      <Trigger Property="IsDragging" Value="True">
+                        <Setter TargetName="thumb" Property="Fill" Value="#FFECF2"/>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
                   </ControlTemplate>
                 </Thumb.Template>
               </Thumb>
             </Track.Thumb>
           </Track>
         </Grid>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter Property="Opacity" Value="0.5"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value>
   </Setter>
 </Style>
-"""));
+""")));
 
     private static readonly System.Lazy<Style> NavItemLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="RadioButton">
@@ -380,6 +556,85 @@ public static class NativeTheme
       </ControlTemplate>
     </Setter.Value>
   </Setter>
+</Style>
+"""));
+
+    private static readonly System.Lazy<Style> ScrollBarLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="ScrollBar">
+  <Setter Property="Background" Value="Transparent"/>
+  <Setter Property="Width" Value="10"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="ScrollBar">
+        <Grid Background="Transparent">
+          <Track x:Name="PART_Track" IsDirectionReversed="True">
+            <Track.DecreaseRepeatButton>
+              <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False" IsTabStop="False"/>
+            </Track.DecreaseRepeatButton>
+            <Track.Thumb>
+              <Thumb MinHeight="24">
+                <Thumb.Template>
+                  <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="tb" Background="#D2D2D7" CornerRadius="4" Margin="2"/>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="tb" Property="Background" Value="#FFB1CB"/>
+                      </Trigger>
+                      <Trigger Property="IsDragging" Value="True">
+                        <Setter TargetName="tb" Property="Background" Value="#FF5B8A"/>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </Thumb.Template>
+              </Thumb>
+            </Track.Thumb>
+            <Track.IncreaseRepeatButton>
+              <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False" IsTabStop="False"/>
+            </Track.IncreaseRepeatButton>
+          </Track>
+        </Grid>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+  <Style.Triggers>
+    <Trigger Property="Orientation" Value="Horizontal">
+      <Setter Property="Width" Value="Auto"/>
+      <Setter Property="Height" Value="10"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Grid Background="Transparent">
+              <Track x:Name="PART_Track">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="ScrollBar.PageLeftCommand" Opacity="0" Focusable="False" IsTabStop="False"/>
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb MinWidth="24">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="tb" Background="#D2D2D7" CornerRadius="4" Margin="2"/>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="tb" Property="Background" Value="#FFB1CB"/>
+                          </Trigger>
+                          <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="tb" Property="Background" Value="#FF5B8A"/>
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="ScrollBar.PageRightCommand" Opacity="0" Focusable="False" IsTabStop="False"/>
+                </Track.IncreaseRepeatButton>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Trigger>
+  </Style.Triggers>
 </Style>
 """));
 
@@ -581,6 +836,7 @@ public static class NativeTheme
     public static Style ComboBoxItemStyle => ComboBoxItemLazy.Value;
     public static Style TabItemStyle => TabItemLazy.Value;
     public static Style TabControlStyle => TabControlLazy.Value;
+    public static Style ScrollBarStyle => ScrollBarLazy.Value;
 
     /// <summary>把主题套到窗口：字体 + 隐式控件样式（只影响未显式设置 Style 的控件）。</summary>
     public static void Apply(Window window)
@@ -593,6 +849,7 @@ public static class NativeTheme
         window.Resources[typeof(Slider)] = SliderStyle;
         window.Resources[typeof(TabItem)] = TabItemStyle;
         window.Resources[typeof(TabControl)] = TabControlStyle;
+        window.Resources[typeof(ScrollBar)] = ScrollBarStyle;
         // ComboBox 模板仅支持非可编辑模式（可编辑下拉需 PART_EditableTextBox 特殊处理，
         // 代码库中的可编辑模型下拉已改为「文本框 + 建议下拉」组合）
         window.Resources[typeof(ComboBox)] = ComboBoxStyle;

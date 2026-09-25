@@ -28,6 +28,9 @@ public sealed class SidebarWindow : NativeWindow
 
     private bool _pinned;
 
+    /// <summary>窗口投影的透明边距（窗口比内容壳大 2*margin；位置补偿见 ApplyLayout）。</summary>
+    private const int WindowShadowMargin = 16;
+
     public override string Kind => "sidebar";
     public override bool IsClosed => _window == null;
 
@@ -36,42 +39,22 @@ public sealed class SidebarWindow : NativeWindow
         _root = new Border
         {
             CornerRadius = new CornerRadius(24),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0x5B, 0xFF, 0xBE, 0xE2)), // rgba(255,190,226,0.36)
+            BorderBrush = NativeTheme.BorderSoftBrush, // pearl-white 壳边框 #E5E5EA
             BorderThickness = new Thickness(1),
-            // 玻璃底：直接渐变笔刷（可渲染 + 可命中）。旧实现用「分离
-            // VisualBrush」当背景——其 Visual 不在可视树中、渲染为空，
-            // 表现为整窗透明且点击穿透（用户报「背景透明，点不动」）。
-            Background = MakeGlassBrush(),
+            // 浅色壳（对齐 theme.css pearl-white）：白底 + 左上淡粉环境渐变。
+            // 旧版是深色玻璃渐变；pearl-white 成为默认主题后，深色壳与白底
+            // 聊天/设置窗割裂，这里跟随主题统一（外壳可命中，不用分离 Visual）。
+            Background = MakePearlBrush(),
             Padding = new Thickness(0),
         };
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) }); // titlebar
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(68) }); // 底部按钮排
-        // 顶部高光覆盖层（不参与命中测试，纯装饰），置于内容之下
-        var highlight = new Border
-        {
-            Background = new RadialGradientBrush
-            {
-                GradientOrigin = new Point(0.18, 0.08),
-                Center = new Point(0.18, 0.08),
-                RadiusX = 0.5,
-                RadiusY = 0.5,
-                GradientStops =
-                {
-                    new GradientStop(Color.FromArgb(0x30, 0x60, 0x50, 0x70), 0),
-                    new GradientStop(Color.FromArgb(0x00, 0x60, 0x50, 0x70), 1),
-                },
-            },
-            CornerRadius = new CornerRadius(24),
-            IsHitTestVisible = false,
-        };
-        Grid.SetRowSpan(highlight, 3);
-        grid.Children.Add(highlight);
         _root.Child = grid;
 
         // ── titlebar（拖拽区 + 置顶/最小化/关闭） ──
-        var titlebar = new Grid { Background = Brushes.Transparent };
+        var titlebar = new Grid { Background = NativeTheme.SurfaceNavBrush };
         titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -80,7 +63,8 @@ public sealed class SidebarWindow : NativeWindow
         {
             Text = "昔涟 · 状态",
             FontSize = 12,
-            Opacity = 0.75,
+            FontWeight = FontWeights.Medium,
+            Foreground = NativeTheme.TextStrongBrush,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(14, 0, 0, 0),
         };
@@ -96,7 +80,7 @@ public sealed class SidebarWindow : NativeWindow
         {
             _pinned = !_pinned;
             _window.Topmost = _pinned;
-            pinBtn.Foreground = new SolidColorBrush(_pinned ? Colors.White : Color.FromArgb(0xCC, 0xFF, 0xE3, 0xF2));
+            pinBtn.Foreground = new SolidColorBrush(_pinned ? NativeTheme.Pink : NativeTheme.TextMuted);
             pinBtn.ToolTip = _pinned ? "取消置顶" : "置顶";
         }
         pinBtn = MakeTitleButton("置顶", "✔", btnStyle, TogglePin);
@@ -106,6 +90,15 @@ public sealed class SidebarWindow : NativeWindow
         titlebar.Children.Add(pinBtn);
         titlebar.Children.Add(minBtn);
         titlebar.Children.Add(closeBtn);
+        // 标题栏底边线（pearl-white titlebar 与内容的分隔）
+        var titleLine = new Border
+        {
+            Height = 1,
+            Background = NativeTheme.BorderSoftBrush,
+            VerticalAlignment = VerticalAlignment.Bottom,
+        };
+        Grid.SetColumnSpan(titleLine, 4);
+        titlebar.Children.Add(titleLine);
 
         // 拖拽移动（对齐 -webkit-app-region: drag；按钮区域 no-drag 由事件冒泡天然区分）
         titlebar.MouseLeftButtonDown += (_, e) =>
@@ -116,23 +109,11 @@ public sealed class SidebarWindow : NativeWindow
         Grid.SetRow(titlebar, 0);
         grid.Children.Add(titlebar);
 
-        // ── 主体：状态/心情/模型 ──
-        var body = new StackPanel { Margin = new Thickness(16, 20, 16, 12) };
-        body.Children.Add(MakeStatusRow());
-        body.Children.Add(MakeDivider());
-        body.Children.Add(MakeFeelingRow());
-        body.Children.Add(MakeDivider());
-        var modelHeader = new TextBlock { Text = "模型", FontSize = 11, Opacity = 0.6, Margin = new Thickness(2, 6, 0, 4) };
-        body.Children.Add(modelHeader);
-        var modelRow = new StackPanel { Orientation = Orientation.Horizontal };
-        _modelLabel.VerticalAlignment = VerticalAlignment.Center;
-        modelRow.Children.Add(_modelLabel);
-        var switchBtn = MakePillButton("切换");
-        // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
-        switchBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings", "api");
-        modelRow.Children.Add(switchBtn);
-        body.Children.Add(modelRow);
-        body.Children.Add(_onlineLabel);
+        // ── 主体：状态/心情/模型（白卡 + 轻投影，对齐 pearl-white 卡片语言） ──
+        var body = new StackPanel { Margin = new Thickness(14, 14, 14, 8) };
+        body.Children.Add(MakeCard(MakeStatusRow()));
+        body.Children.Add(MakeCard(MakeFeelingRow()));
+        body.Children.Add(MakeCard(MakeModelBlock()));
         Grid.SetRow(body, 1);
         grid.Children.Add(body);
 
@@ -157,10 +138,16 @@ public sealed class SidebarWindow : NativeWindow
         Grid.SetRow(footer, 2);
         grid.Children.Add(footer);
 
+        // 窗口投影：内容壳四周留 16px 透明边（窗口整体 +32，位置在 ApplyLayout 补偿）
+        _root.Margin = new Thickness(WindowShadowMargin);
+        var windowShell = new Grid();
+        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(24));
+        windowShell.Children.Add(_root);
+
         _window = new Window
         {
-            Width = 320,
-            Height = 760,
+            Width = 352,
+            Height = 792,
             MinWidth = 56,
             MinHeight = 540,
             WindowStyle = WindowStyle.None,
@@ -169,12 +156,12 @@ public sealed class SidebarWindow : NativeWindow
             ResizeMode = ResizeMode.CanResize,
             ShowInTaskbar = false,
             ShowActivated = false,
-            Content = _root,
+            Content = windowShell,
             Topmost = _pinned,
         };
         _window.Closed += (_, _) => RaiseClosed();
-        // 深色玻璃底：窗口级浅色前景，未显式设色的文本（标题/模型名等）才能看清
-        _window.Foreground = new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2));
+        // pearl-white 浅色壳：窗口级深色默认前景（未显式设色的文本才看得清）
+        _window.Foreground = NativeTheme.TextDefaultBrush;
 
         if (layout.ValueKind == JsonValueKind.Object) ApplyLayout(layout);
     }
@@ -207,8 +194,8 @@ public sealed class SidebarWindow : NativeWindow
         _modelLabel.Text = displayName ?? shortName ?? "未配置";
         _onlineLabel.Text = connected ? "在线" : "离线";
         _onlineLabel.Foreground = new SolidColorBrush(connected
-            ? (Color)ColorConverter.ConvertFromString("#6ee7a0")
-            : (Color)ColorConverter.ConvertFromString("#ff9c9c"));
+            ? (Color)ColorConverter.ConvertFromString("#15803D")
+            : (Color)ColorConverter.ConvertFromString("#B91C1C"));
     }
 
     private ImageSource? LoadStatusIcon(string name, string category)
@@ -224,6 +211,8 @@ public sealed class SidebarWindow : NativeWindow
         var row = new StackPanel { Orientation = Orientation.Horizontal };
         _statusIcon.VerticalAlignment = VerticalAlignment.Center;
         _statusLabel.VerticalAlignment = VerticalAlignment.Center;
+        _statusLabel.Foreground = NativeTheme.TextStrongBrush;
+        _statusLabel.Margin = new Thickness(10, 0, 0, 0);
         row.Children.Add(_statusIcon);
         row.Children.Add(_statusLabel);
         return row;
@@ -234,30 +223,83 @@ public sealed class SidebarWindow : NativeWindow
         var row = new StackPanel { Orientation = Orientation.Horizontal };
         _feelingIcon.VerticalAlignment = VerticalAlignment.Center;
         _feelingLabel.VerticalAlignment = VerticalAlignment.Center;
+        _feelingLabel.Foreground = NativeTheme.TextStrongBrush;
+        _feelingLabel.Margin = new Thickness(10, 0, 0, 0);
         row.Children.Add(_feelingIcon);
         row.Children.Add(_feelingLabel);
         return row;
     }
 
-    private static Border MakeDivider() => new()
+    /// <summary>模型块：小标题 + 模型名 + 切换按钮 + 在线状态。</summary>
+    private StackPanel MakeModelBlock()
     {
-        Height = 1,
-        Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
-        Margin = new Thickness(0, 14, 0, 14),
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock
+        {
+            Text = "模型",
+            FontSize = 11,
+            Foreground = NativeTheme.TextMutedBrush,
+            Margin = new Thickness(0, 0, 0, 6),
+        });
+        var modelRow = new StackPanel { Orientation = Orientation.Horizontal };
+        _modelLabel.VerticalAlignment = VerticalAlignment.Center;
+        _modelLabel.Foreground = NativeTheme.TextDefaultBrush;
+        _modelLabel.FontSize = 13;
+        _modelLabel.Margin = new Thickness(0, 0, 10, 0);
+        _modelLabel.MaxWidth = 170; // 给「切换」按钮留位，长模型名省略号截断
+        modelRow.Children.Add(_modelLabel);
+        var switchBtn = MakePillButton("切换");
+        // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
+        switchBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings", "api");
+        modelRow.Children.Add(switchBtn);
+        stack.Children.Add(modelRow);
+        _onlineLabel.Foreground = NativeTheme.TextMutedBrush;
+        _onlineLabel.Margin = new Thickness(0, 6, 0, 0);
+        stack.Children.Add(_onlineLabel);
+        return stack;
+    }
+
+    /// <summary>白卡容器（pearl-white：白底 + 软边框 + 轻投影）。</summary>
+    private static Border MakeCard(FrameworkElement content) => new()
+    {
+        Background = Brushes.White,
+        BorderBrush = NativeTheme.BorderSoftBrush,
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(12),
+        Padding = new Thickness(14, 12, 14, 12),
+        Margin = new Thickness(0, 0, 0, 10),
+        Child = content,
+        Effect = NativeTheme.CardShadow(),
     };
 
     private static Style MakeTitleButtonStyle()
     {
         var style = new Style(typeof(Button));
-        style.Setters.Add(new Setter(Button.ForegroundProperty, new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xE3, 0xF2))));
+        style.Setters.Add(new Setter(Button.ForegroundProperty, NativeTheme.TextMutedBrush));
         style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
         style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
         style.Setters.Add(new Setter(Button.FontSizeProperty, 11.0));
-        style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(6, 2, 6, 2)));
+        style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(7, 3, 7, 3)));
+        style.Setters.Add(new Setter(Button.MarginProperty, new Thickness(2, 0, 2, 0)));
         style.Setters.Add(new Setter(Button.CursorProperty, Cursors.Hand));
-        var trigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        trigger.Setters.Add(new Setter(Button.ForegroundProperty, Brushes.White));
-        style.Triggers.Add(trigger);
+        // 圆角 hover 底（对齐 pearl-white 窗口按钮的 hover 语言）
+        var template = new ControlTemplate(typeof(Button));
+        var bd = new FrameworkElementFactory(typeof(Border), "bg");
+        bd.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        bd.AppendChild(presenter);
+        template.VisualTree = bd;
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.BorderSoftBrush) { TargetName = "bg" });
+        hover.Setters.Add(new Setter(Control.ForegroundProperty, NativeTheme.TextStrongBrush));
+        template.Triggers.Add(hover);
+        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
+        pressed.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.BorderStrongBrush) { TargetName = "bg" });
+        template.Triggers.Add(pressed);
+        style.Setters.Add(new Setter(Button.TemplateProperty, template));
         return style;
     }
 
@@ -270,14 +312,14 @@ public sealed class SidebarWindow : NativeWindow
 
     private static System.Windows.Controls.Button MakePillButton(string text, bool large = false)
     {
-        var normalFill = new SolidColorBrush(Color.FromArgb(0x2E, 0xC9, 0x8C, 0xFF));
-        var normalBorder = new SolidColorBrush(Color.FromArgb(0x40, 0xE4, 0x99, 0xFF));
-        var hoverFill = new SolidColorBrush(Color.FromArgb(0x52, 0xC9, 0x8C, 0xFF));
-        var hoverBorder = new SolidColorBrush(Color.FromArgb(0x80, 0xE4, 0x99, 0xFF));
-        var pressedFill = new SolidColorBrush(Color.FromArgb(0x6E, 0xB8, 0x6C, 0xFF));
+        var normalFill = Brushes.White;
+        var normalBorder = NativeTheme.BorderStrongBrush;
+        var hoverFill = NativeTheme.PinkSoftBrush;
+        var hoverBorder = NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB));
+        var pressedFill = NativeTheme.Brush(Color.FromRgb(0xFF, 0xD6, 0xE4));
 
         var style = new Style(typeof(System.Windows.Controls.Button));
-        style.Setters.Add(new Setter(Button.ForegroundProperty, new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xE3, 0xF2))));
+        style.Setters.Add(new Setter(Button.ForegroundProperty, NativeTheme.TextDefaultBrush));
         // 底部三个主操作按钮加大：与旧版整行按钮的体量对齐
         style.Setters.Add(new Setter(Button.FontSizeProperty, large ? 14.0 : 12.0));
         style.Setters.Add(new Setter(Button.MinHeightProperty, large ? 40.0 : 28.0));
@@ -310,24 +352,19 @@ public sealed class SidebarWindow : NativeWindow
         return new System.Windows.Controls.Button { Content = text, Style = style };
     }
 
-    /// <summary>粉紫玻璃底：直接返回线性渐变笔刷（不再包 VisualBrush——分离
-    /// Visual 不渲染且命中测试不可靠）。</summary>
-    private static System.Windows.Media.Brush MakeGlassBrush()
+    /// <summary>pearl-white 浅色壳：白底 + 左上淡粉环境渐变（对齐 theme.css 的淡粉渐变层）。</summary>
+    private static System.Windows.Media.Brush MakePearlBrush()
     {
-        // 主渐变（155deg 线性近似：左上→右下）
-        // 主渐变（155deg 线性近似：左上→右下）。alpha 接近不透明——
-        // 用户反馈旧值（0x33/0x99/0xcc）太透，背景压不住桌面。
         return new LinearGradientBrush
         {
-            StartPoint = new Point(0.2, 0),
-            EndPoint = new Point(0.9, 1),
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(0.65, 1),
             GradientStops =
             {
-                new GradientStop((Color)ColorConverter.ConvertFromString("#F2262640"), 0),
-                new GradientStop((Color)ColorConverter.ConvertFromString("#F71b1b2e"), 0.6),
-                new GradientStop((Color)ColorConverter.ConvertFromString("#FC2b2135"), 1),
+                new GradientStop((Color)ColorConverter.ConvertFromString("#FFF3F8"), 0),
+                new GradientStop(Colors.White, 0.55),
+                new GradientStop(Colors.White, 1),
             },
-            Opacity = 1.0,
         };
     }
 
@@ -356,7 +393,10 @@ public sealed class SidebarWindow : NativeWindow
         // layout.sidebar: {x, y, width, height}
         if (layout.ValueKind != JsonValueKind.Object) return;
         if (!layout.TryGetProperty("sidebar", out var sidebar)) return;
-        if (sidebar.TryGetProperty("x", out var x) && x.TryGetInt32(out var xi)) _window.Left = xi;
-        if (sidebar.TryGetProperty("y", out var y) && y.TryGetInt32(out var yi)) _window.Top = yi;
+        // 内容壳比窗口小 2*margin：窗口坐标 = 宿主坐标 - margin，视觉位置不变
+        if (sidebar.TryGetProperty("x", out var x) && x.TryGetInt32(out var xi))
+            _window.Left = xi - WindowShadowMargin;
+        if (sidebar.TryGetProperty("y", out var y) && y.TryGetInt32(out var yi))
+            _window.Top = yi - WindowShadowMargin;
     }
 }
