@@ -30,7 +30,7 @@ cd MyPlugin
 ```bash
 # 方式 A：项目引用（推荐，跟随主仓库构建）
 dotnet add reference ../Cyrene-Agent/dotnet/plugin-sdk/Cyrene.PluginSdk/Cyrene.PluginSdk.csproj
-# 方式 B：直接拷贝 SDK 的两个 .cs 文件进工程（零依赖）
+# 方式 B：直接拷贝 SDK 目录下的 .cs 源文件进工程（零依赖）
 ```
 
 ### 2. 写插件类
@@ -105,6 +105,56 @@ ZIP 打包（结构同 Node 插件：根目录或唯一顶层目录含 manifest.
 %APPDATA%\light2d-cyrene\plugins\my-plugin\
 ```
 
+## 能力 API（IPC / 事件 / 提示词 / 存储 / open）
+
+v2 桥（宿主 init 携带 `protocolVersion: 2` 时启用）让 .NET 插件获得与 Node 轨同源的
+宿主能力；命名空间、冲突检测、超时与回收全部复用宿主 `PluginContext`。
+以下注册都写在 `OnStartupAsync` 里（随 `ready` 一次性声明；ready 之后再调用会动态补登记）。
+
+### 插件私有 IPC（面板交互）
+
+```csharp
+RegisterIpc("settings", (args, token) => Task.FromResult<object?>(new { ok = true, count = args.Length }));
+// 面板/渲染端经 plugin:my-plugin:settings 调用；返回值序列化为 JSON，抛异常自动转错误
+```
+
+### 事件（订阅宿主 / 发布自有）
+
+```csharp
+Events.On("host:turn:finished", (payload, token) =>
+{
+    Log("一轮结束");
+    return Events.EmitAsync("turn_seen", new { at = DateTimeOffset.UtcNow });
+});
+```
+
+### 每轮提示词贡献
+
+```csharp
+RegisterPromptProvider(new PromptProvider
+{
+    Id = "ctx",
+    Modes = ["code"],
+    Sources = ["conversation"],
+    Provide = (input, token) => Task.FromResult($"[state] mode={input.Mode}"),
+});
+```
+
+### 私有存储（与 Node 轨同格式，可跨轨迁移）
+
+```csharp
+Storage.Set("lastRun", DateTimeOffset.UtcNow);
+var last = Storage.Get<DateTimeOffset?>("lastRun");
+```
+
+### open（自有窗口）
+
+重写 `OnOpenAsync` 即视为声明 open 能力，管理窗「打开」按钮随之可用；
+窗口由插件进程自管，进程退出即随之关闭。
+
+> 旧宿主（init 不带 `protocolVersion`）下这些 API 会抛 `NotSupportedException`
+> 并在 `ready` 前以 `startup_failed` 致命帧退出——插件只用工具能力时不受影响。
+
 ## 协议参考
 
 宿主与插件经 **stdin/stdout 的 JSON 行协议** 通信（UTF-8，`\n` 分帧）。
@@ -129,6 +179,37 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 {"op":"error","code":"api_version_mismatch","message":"...","fatal":true}  // 致命错误 → 退出
 ```
 
+### v2 桥（宿主 `protocolVersion:2` 时启用）
+
+```jsonc
+// 通用请求 / 应答（两个方向同构；id 由请求方生成）
+{"op":"call","id":"h1","method":"ipc.dispatch","params":{...}}   // 宿主 → 插件
+{"op":"reply","id":"h1","ok":true,"data":{...}}                  // 插件 → 宿主
+{"op":"reply","id":"h1","ok":false,"error":"..."}
+{"op":"notify","method":"event.deliver","params":{"event":"host:turn:finished","payload":{...}}}
+```
+
+| 方向 | 方法 | 说明 |
+|---|---|---|
+| 宿主→插件 | `ipc.dispatch` | 面板/渲染端调用插件私有 channel（30s 兜底超时） |
+| 宿主→插件 | `prompt.provide` | 每轮提示词组装（宿主注册表 2s 超时，这里 5s 兜底清理） |
+| 宿主→插件 | `plugin.open` | 管理窗「打开」按钮（15s 超时） |
+| 插件→宿主 | `events.emit` | 发布插件事件（宿主限定 `plugin:<id>:*` 命名空间） |
+| 插件→宿主 | `events.subscribe` / `events.unsubscribe` | 动态增删宿主事件订阅 |
+| 插件→宿主 | `ipc.register` / `ipc.unregister` | 动态增删 IPC channel |
+| 插件→宿主 | `prompt.register` / `prompt.unregister` | 动态增删提示词 Provider |
+
+`ready` 声明（宿主据此注册，不等动态调用）：
+
+```jsonc
+{"op":"ready","protocolVersion":2,
+ "tools":[...],
+ "ipc":["settings"],
+ "events":["host:turn:finished"],
+ "promptProviders":[{"id":"ctx","modes":["code"],"sources":["conversation"]}],
+ "capabilities":{"open":true}}
+```
+
 ### 时序与约束
 
 - 宿主 spawn 插件 → 发 `init` → 插件须 **30 秒内** 回 `ready`（超时判启动失败）
@@ -140,7 +221,10 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 - 宿主超时或用户取消（AbortSignal）时会补发 `cancel` 帧；工具声明了
   `(JsonElement, CancellationToken)` 签名即可立即中止计算，未声明则忽略（旧 SDK 也安全忽略）
 - 协议主版本不符：插件回 `{"op":"error","code":"api_version_mismatch",...}` 并退出，宿主拒绝握手
-- 插件意外退出：在途调用立即失败；宿主会在**下次工具调用时自动重启一次**（自愈），
+- v2 桥启用条件：宿主 init 带 `protocolVersion:2` **且** 插件 ready 回 `protocolVersion>=2`；
+  任一缺失都按 v1 运行（旧插件/旧宿主互不感知）
+- 插件意外退出：在途调用立即失败，本代 v2 注册（IPC/事件/提示词/open）全部撤销；
+  宿主会在**下次工具调用时自动重启一次**（自愈），重启 ready 后按新声明重建；
   重启失败才把错误抛给调用方，同时插件状态在管理窗显示为 failed
 
 ## SDK API
@@ -150,10 +234,18 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 | 成员 | 说明 |
 |---|---|
 | `static Run(CyrenePluginBase)` | 启动协议循环（阻塞至 shutdown） |
-| `string DataDir { get; }` | 插件私有数据目录（`userData/plugin-data/<pluginId>`，init 下发；配置/缓存放这里） |
+| `string DataDir { get; }` | 插件私有数据目录（`userData/plugin-data/<pluginId>`，init 下发） |
 | `void Log(string, string level = "info")` | 结构化日志（协议 log 帧） |
-| `virtual Task OnStartupAsync(CancellationToken ct)` | init 之后、`ready` 之前调用（可选重写，做初始化） |
+| `PluginStorage Storage { get; }` | 私有 KV（与 Node 轨同格式 `<DataDir>/<key>.json`，原子写） |
+| `PluginEvents Events { get; }` | `On/Off` 订阅宿主事件、`EmitAsync` 发布插件事件 |
+| `void RegisterIpc(string channel, handler)` | 注册私有 IPC（handler 收 `JsonElement[]` + `CancellationToken`） |
+| `void UnregisterIpc(string channel)` | 注销私有 IPC |
+| `void RegisterPromptProvider(PromptProvider)` | 注册每轮提示词 Provider |
+| `void UnregisterPromptProvider(string id)` | 注销提示词 Provider |
+| `Task EmitEventAsync(string, object?)` | 发布插件事件的语法糖（等价 `Events.EmitAsync`） |
+| `virtual Task OnStartupAsync(CancellationToken ct)` | init 之后、`ready` 之前调用（注册能力/初始化） |
 | `virtual Task OnShutdownAsync(CancellationToken ct)` | 收到 `shutdown` 帧时调用（5s 内返回，超时被强杀） |
+| `virtual Task OnOpenAsync(CancellationToken ct)` | 重写即声明 open 能力（管理窗「打开」按钮） |
 
 ### `[CyreneTool(id, name, description)]`
 
@@ -172,12 +264,18 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 | 能力 | Node 插件 | .NET 插件（当前版本） |
 |---|---|---|
 | 工具注册 | ✅ `ctx.registerTool` | ✅ `[CyreneTool]` |
-| 插件私有 IPC / 渠道 adapter | ✅ | ❌（规划中） |
+| 插件私有 IPC | ✅ `ctx.registerIpc` | ✅ `RegisterIpc` |
+| 事件订阅 / 发布 | ✅ `ctx.events` | ✅ `Events.On / EmitAsync` |
+| 每轮提示词贡献 | ✅ `ctx.registerPromptProvider` | ✅ `RegisterPromptProvider` |
+| 私有存储 | ✅ `ctx.storage` | ✅ `Storage`（同文件格式，可跨轨复用数据） |
+| 自有窗口 | ✅ `open()`（宿主 BrowserWindow） | ✅ `OnOpenAsync`（插件进程自管 WPF 窗口） |
 | 设置面板（HTML） | ✅ `settingsPanel` | ✅（同一机制，HTML 面板与运行时无关） |
-| LLM 服务注入（deps） | ✅ | ❌（规划中——走 `invoke` 由 Agent 侧编排） |
-| 每轮提示词贡献 | ✅ | ❌ |
+| LLM 服务注入（deps） | ✅ | ❌（规划中） |
+| 渠道 adapter | ✅ | ❌（规划中） |
+| 定时任务 / 语音输入 | ✅ | ❌（规划中） |
 
-> 网络型/渠道型插件当前请仍走 Node 轨；.NET 轨聚焦计算与系统交互。
+> 渠道与 LLM 依赖注入仍是 Node 轨的领域；.NET 轨当前聚焦工具 + 面板交互 + 上下文注入 +
+> 事件互通，适合性能敏感/系统级插件。
 
 ## 安全模型（与 Node 轨一致）
 
@@ -190,18 +288,19 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 可运行的最小示例在主仓库：
 
 ```text
-dotnet/plugin-sdk/Example/          ← echo（同步）+ echo_async（Task<string>）+ echo_slow（取消）+ manifest 模板
+dotnet/plugin-sdk/Example/          ← echo（同步）+ echo_async（Task<string>）+ echo_slow（取消）
+                                       + IPC/提示词/事件/open/KV 回归夹具 + manifest 模板
 ```
 
 本地自测（不依赖宿主，直接喂协议帧）：
 
 ```bash
 cd dotnet/plugin-sdk/Example
-echo '{"op":"init","apiVersion":1,"manifest":{"id":"hello"},"dataDir":"/tmp/h"}' | dotnet run
-# → {"op":"ready","tools":[...]}
+echo '{"op":"init","apiVersion":1,"protocolVersion":2,"manifest":{"id":"hello"},"dataDir":"/tmp/h"}' | dotnet run
+# → {"op":"ready","protocolVersion":2,"tools":[...],"ipc":["ping"],...}
 ```
 
-端到端协议自测（构建 SDK + Example，覆盖同步/async Task&lt;T&gt;/版本不符三类路径）：
+端到端协议自测（构建 SDK + Example，覆盖工具 / v2 桥 / 取消 / 版本不符）：
 
 ```bash
 npm run test:dotnet-plugin-sdk

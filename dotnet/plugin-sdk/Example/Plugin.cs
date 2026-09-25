@@ -3,9 +3,42 @@ using Cyrene.PluginSdk;
 
 namespace HelloDotnet;
 
-/// <summary>最小 dotnet 插件示例：echo 工具。文档与协议自测共用。</summary>
+/// <summary>
+/// 最小 dotnet 插件示例，同时是文档与协议自测的回归夹具：
+/// 同步 object / async Task&lt;T&gt; / 取消 / IPC / 提示词 Provider / 事件 / 私有存储。
+/// </summary>
 public sealed class HelloPlugin : CyrenePluginBase
 {
+    protected override Task OnStartupAsync(CancellationToken ct)
+    {
+        // 插件私有 IPC：面板/渲染端经 plugin:hello-dotnet:ping 调用
+        RegisterIpc("ping", (args, _) => Task.FromResult<object?>(new { pong = true, argCount = args.Length }));
+
+        // 每轮对话注入的动态上下文（宿主 2s 超时、16k 截断）
+        RegisterPromptProvider(new PromptProvider
+        {
+            Id = "demo",
+            Sources = ["conversation"],
+            Provide = (input, _) => Task.FromResult($"[hello-dotnet] demo context for {input.Mode}"),
+        });
+
+        // 订阅宿主事件；收到后回发短事件，冒烟脚本据此断言投递链路
+        Events.On("host:turn:finished", (_, _) =>
+        {
+            Log("收到 host:turn:finished");
+            return Events.EmitAsync("turn_seen");
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>open 能力回归：宿主点击「打开」时调用（示例没有窗口，只记日志）。</summary>
+    protected override Task OnOpenAsync(CancellationToken ct)
+    {
+        Log("open 被调用");
+        return Task.CompletedTask;
+    }
+
     [CyreneTool("echo", "回声", "把输入原样返回（演示工具）",
         Schema = """{"type":"object","properties":{"text":{"type":"string","description":"要回声的文本"}},"required":["text"]}""")]
     public object Echo(JsonElement args)
@@ -35,5 +68,35 @@ public sealed class HelloPlugin : CyrenePluginBase
         var text = args.TryGetProperty("text", out var t) ? t.GetString() : "";
         await Task.Delay(ms, ct);
         return $"slow echoed: {text}";
+    }
+
+    /// <summary>插件 → 宿主事件回归用例（宿主侧由冒烟脚本应答）。</summary>
+    [CyreneTool("emit_event", "发布事件", "向宿主发布插件事件（协议自测）",
+        Schema = """{"type":"object","properties":{"event":{"type":"string","description":"事件短名"}},"required":["event"]}""")]
+    public async Task<string> EmitEvent(JsonElement args)
+    {
+        var name = args.TryGetProperty("event", out var e) ? e.GetString() : null;
+        await EmitEventAsync(string.IsNullOrEmpty(name) ? "test" : name, new { from = "hello-dotnet" });
+        return "emitted";
+    }
+
+    /// <summary>私有存储回归用例：与 Node 轨同一文件格式（&lt;DataDir&gt;/&lt;key&gt;.json）。</summary>
+    [CyreneTool("kv_set", "写存储", "写入插件私有 KV（协议自测）",
+        Schema = """{"type":"object","properties":{"key":{"type":"string"},"value":{}},"required":["key","value"]}""")]
+    public object KvSet(JsonElement args)
+    {
+        var key = args.TryGetProperty("key", out var k) ? k.GetString() ?? "k" : "k";
+        var value = args.TryGetProperty("value", out var v) ? v : default;
+        Storage.Set(key, value);
+        return new { ok = true, key };
+    }
+
+    /// <summary>私有存储回归用例：不存在时回 null。</summary>
+    [CyreneTool("kv_get", "读存储", "读取插件私有 KV（协议自测）",
+        Schema = """{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}""")]
+    public object? KvGet(JsonElement args)
+    {
+        var key = args.TryGetProperty("key", out var k) ? k.GetString() ?? "k" : "k";
+        return Storage.Get<object?>(key);
     }
 }

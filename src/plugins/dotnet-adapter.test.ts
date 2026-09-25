@@ -3,7 +3,8 @@
  *
  * 覆盖：ready 握手与工具注册（含 dataDir/risk 透传）、invoke 应答路由、
  * 进程意外退出的在途失败与状态上报、下次调用自愈重启、shutdown 优雅关停、
- * 协议外 stdout 行容错。
+ * 协议外 stdout 行容错、跨 chunk 分帧、invoke 超时/取消、SDK error 帧，
+ * 以及 v2 桥（IPC / 事件 / 提示词 / open + generation 护栏）。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChildProcess } from "node:child_process";
@@ -84,14 +85,97 @@ function makeRecord(): PluginRecord {
   } as unknown as PluginRecord;
 }
 
-function makeCtx(registered: unknown[] = []): { ctx: never; registered: unknown[] } {
+interface FakePromptProvider {
+  id: string;
+  modes?: string[];
+  sources?: string[];
+  provide(input: Record<string, unknown>): unknown;
+}
+
+interface FakeCtx {
+  ctx: never;
+  registered: unknown[];
+  ipc: Map<string, (...args: unknown[]) => unknown>;
+  prompts: FakePromptProvider[];
+  subscriptions: Map<string, (payload: unknown) => void | Promise<void>>;
+  emitted: Array<{ event: string; payload: unknown }>;
+  unregisteredIpc: string[];
+  unregisteredPrompts: string[];
+}
+
+function makeCtx(): FakeCtx {
+  const registered: unknown[] = [];
+  const ipc = new Map<string, (...args: unknown[]) => unknown>();
+  const prompts: FakePromptProvider[] = [];
+  const subscriptions = new Map<string, (payload: unknown) => void | Promise<void>>();
+  const emitted: Array<{ event: string; payload: unknown }> = [];
+  const unregisteredIpc: string[] = [];
+  const unregisteredPrompts: string[] = [];
   const ctx = {
     registerTool: (tool: unknown) => registered.push(tool),
+    registerIpc: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      if (ipc.has(channel)) throw new Error(`插件 IPC channel 已注册: ${channel}`);
+      ipc.set(channel, handler);
+    },
+    unregisterIpc: (channel: string) => {
+      if (!ipc.delete(channel)) throw new Error(`不能注销不属于当前插件的 IPC channel: ${channel}`);
+      unregisteredIpc.push(channel);
+    },
+    registerPromptProvider: (provider: FakePromptProvider) => prompts.push(provider),
+    unregisterPromptProvider: (id: string) => {
+      const index = prompts.findIndex((p) => p.id === id);
+      if (index < 0) throw new Error(`不能注销不属于当前插件的提示词 Provider: ${id}`);
+      prompts.splice(index, 1);
+      unregisteredPrompts.push(id);
+    },
+    events: {
+      on: (event: string, listener: (payload: unknown) => void | Promise<void>) => {
+        subscriptions.set(event, listener);
+        return () => {
+          subscriptions.delete(event);
+        };
+      },
+      emit: async (event: string, payload: unknown) => {
+        emitted.push({ event, payload });
+      },
+    },
     onDispose: vi.fn(),
     signal: new AbortController().signal,
     storage: { rootDir: () => "/data/my-plugin" },
-  } as never;
-  return { ctx, registered };
+  };
+  return {
+    ctx: ctx as never,
+    registered,
+    ipc,
+    prompts,
+    subscriptions,
+    emitted,
+    unregisteredIpc,
+    unregisteredPrompts,
+  };
+}
+
+/** ready v2 帧（带声明）；v1 用 readyFrameV1 */
+function readyFrameV2(extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    op: "ready",
+    protocolVersion: 2,
+    tools: [],
+    ipc: [],
+    events: [],
+    promptProviders: [],
+    capabilities: {},
+    ...extra,
+  });
+}
+
+function lastFrame(fake: FakeChild): Record<string, unknown> {
+  return JSON.parse(fake.written[fake.written.length - 1]);
+}
+
+/** 等待 async 派发（handlePluginCall 等）完成 */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("DotnetPluginAdapter", () => {
@@ -109,6 +193,7 @@ describe("DotnetPluginAdapter", () => {
     const initFrame = JSON.parse(fake.written[0]);
     expect(initFrame.op).toBe("init");
     expect(initFrame.dataDir).toBe("/data/my-plugin");
+    expect(initFrame.protocolVersion).toBe(2);
     expect(mockSpawn).toHaveBeenCalledWith(
       // 平台无关：适配器用 path.join 拼 exe 路径
       path.join("/plugins/my-plugin", "MyPlugin.exe"),
@@ -189,7 +274,7 @@ describe("DotnetPluginAdapter", () => {
     expect(initFrame.op).toBe("init");
     second.emitLine(JSON.stringify({ op: "ready", tools: [] }));
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush();
     const invokeFrame = JSON.parse(second.written[second.written.length - 1]);
     expect(invokeFrame.op).toBe("invoke");
     second.emitLine(JSON.stringify({ op: "result", callId: invokeFrame.callId, ok: true, data: "pong" }));
@@ -315,5 +400,144 @@ describe("DotnetPluginAdapter", () => {
     // abort 要向插件发 cancel 帧（尽力中止计算），老 SDK 会忽略未知 op
     const cancelFrame = JSON.parse(fake.written[fake.written.length - 1]);
     expect(cancelFrame).toMatchObject({ op: "cancel", id: invokeFrame.callId, reason: "abort" });
+  });
+
+  it("v2 ready：IPC / 事件 / 提示词 / open 声明注册进 ctx，且 host→plugin 往返正确", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx, ipc, prompts, subscriptions, unregisteredIpc, unregisteredPrompts } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(readyFrameV2({
+      ipc: ["settings"],
+      events: ["host:turn:finished"],
+      promptProviders: [{ id: "ctx", modes: ["code"], sources: ["conversation"] }],
+      capabilities: { open: true },
+    }));
+    await pendingRegister;
+
+    expect([...ipc.keys()]).toEqual(["settings"]);
+    expect([...subscriptions.keys()]).toEqual(["host:turn:finished"]);
+    expect(prompts.map((p) => p.id)).toEqual(["ctx"]);
+    expect(typeof adapter.open).toBe("function");
+
+    // IPC 派发：宿主 → 插件 call，插件 reply 回值
+    const ipcCall = ipc.get("settings")!(1, "a");
+    const dispatchFrame = lastFrame(fake);
+    expect(dispatchFrame).toMatchObject({
+      op: "call",
+      method: "ipc.dispatch",
+      params: { channel: "settings", args: [1, "a"] },
+    });
+    fake.emitLine(JSON.stringify({ op: "reply", id: dispatchFrame.id, ok: true, data: { saved: true } }));
+    await expect(ipcCall).resolves.toEqual({ saved: true });
+
+    // 提示词 Provider：input 不携带不可序列化的 signal
+    const providerCall = prompts[0].provide({
+      source: "conversation",
+      mode: "code",
+      userText: "hi",
+      signal: new AbortController().signal,
+    });
+    const promptFrame = lastFrame(fake);
+    expect(promptFrame).toMatchObject({ op: "call", method: "prompt.provide", params: { providerId: "ctx" } });
+    expect((promptFrame.params as Record<string, unknown>).input).not.toHaveProperty("signal");
+    fake.emitLine(JSON.stringify({ op: "reply", id: promptFrame.id, ok: true, data: "ctx-block" }));
+    await expect(providerCall).resolves.toBe("ctx-block");
+
+    // 宿主事件投递：插件声明的订阅 → notify event.deliver
+    subscriptions.get("host:turn:finished")!({ mode: "chat" });
+    expect(lastFrame(fake)).toMatchObject({
+      op: "notify",
+      method: "event.deliver",
+      params: { event: "host:turn:finished", payload: { mode: "chat" } },
+    });
+
+    // open 能力：call plugin.open 并等 reply
+    const openCall = adapter.open!();
+    const openFrame = lastFrame(fake);
+    expect(openFrame).toMatchObject({ op: "call", method: "plugin.open" });
+    fake.emitLine(JSON.stringify({ op: "reply", id: openFrame.id, ok: true, data: null }));
+    await expect(openCall).resolves.toBeUndefined();
+
+    // 意外退出 → 本代 v2 注册全部撤销，open 随之失效
+    fake.emitExit(1);
+    expect([...ipc.keys()]).toEqual([]);
+    expect([...subscriptions.keys()]).toEqual([]);
+    expect(unregisteredIpc).toEqual(["settings"]);
+    expect(prompts).toHaveLength(0);
+    expect(unregisteredPrompts).toEqual(["ctx"]);
+    expect(adapter.open).toBeUndefined();
+  });
+
+  it("插件 → 宿主：events.emit 路由到 ctx.events.emit；未知方法回 ok:false", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx, emitted } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(readyFrameV2());
+    await pendingRegister;
+
+    fake.emitLine(JSON.stringify({
+      op: "call",
+      id: "p1",
+      method: "events.emit",
+      params: { event: "weather:updated", payload: { temp: 20 } },
+    }));
+    await flush();
+    expect(emitted).toEqual([{ event: "weather:updated", payload: { temp: 20 } }]);
+    expect(lastFrame(fake)).toMatchObject({ op: "reply", id: "p1", ok: true });
+
+    fake.emitLine(JSON.stringify({ op: "call", id: "p2", method: "no.such.method", params: {} }));
+    await flush();
+    expect(lastFrame(fake)).toMatchObject({ op: "reply", id: "p2", ok: false });
+    expect(lastFrame(fake).error).toContain("未知宿主方法");
+  });
+
+  it("generation 护栏：重启后按新 ready 重建 v2 注册", async () => {
+    const first = makeFakeChild();
+    const second = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(first.child).mockReturnValueOnce(second.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const fakeCtx = makeCtx();
+    const pendingRegister = adapter.register(fakeCtx.ctx);
+    first.emitLine(readyFrameV2({ ipc: ["settings"], promptProviders: [{ id: "ctx" }] }));
+    await pendingRegister;
+
+    expect([...fakeCtx.ipc.keys()]).toEqual(["settings"]);
+    first.emitExit(1);
+    expect([...fakeCtx.ipc.keys()]).toEqual([]);
+
+    const call = adapter.invokeToolForTest("greet", {});
+    second.emitLine(readyFrameV2({ ipc: ["settings"], promptProviders: [{ id: "ctx" }] }));
+    await flush();
+    expect([...fakeCtx.ipc.keys()]).toEqual(["settings"]);
+    expect(fakeCtx.prompts.map((p) => p.id)).toEqual(["ctx"]);
+
+    const invokeFrame = JSON.parse(second.written[second.written.length - 1]);
+    second.emitLine(JSON.stringify({ op: "result", callId: invokeFrame.callId, ok: true, data: "ok" }));
+    await expect(call).resolves.toBe("ok");
+  });
+
+  it("v1 ready（无 protocolVersion）：不注册 v2 能力，open 保持不可用", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx, ipc, prompts } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({
+      op: "ready",
+      tools: [],
+      // 旧宿主/旧 SDK 不会带这些字段；即便带了也不应生效
+      ipc: ["settings"],
+      promptProviders: [{ id: "ctx" }],
+      capabilities: { open: true },
+    }));
+    await pendingRegister;
+
+    expect(ipc.size).toBe(0);
+    expect(prompts).toHaveLength(0);
+    expect(adapter.open).toBeUndefined();
   });
 });
