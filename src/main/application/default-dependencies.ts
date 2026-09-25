@@ -87,7 +87,7 @@ import { createToastService } from "../toast/toast-service";
 import { toastEvents } from "../toast/toast-events";
 import { createToastWindowShell } from "../windows/create-toast-window";
 import * as chatsStore from "../chats/chats-store";
-import { flush as flushTokenUsage } from "../token-usage-store";
+import { flush as flushTokenUsage, getUsageReport, clearUsage } from "../token-usage-store";
 import { TtsSessionService } from "../tts/tts-session-service";
 import { registerTtsIpc } from "../tts/tts-ipc";
 import { loadUserProfile, saveUserProfile } from "../settings-store";
@@ -102,6 +102,7 @@ import {
   buildApiSectionSnapshot,
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
+  buildTokensSectionSnapshot,
 } from "../settings/native-settings-sections";
 import { loadMemoryPanelData } from "../memory/panel";
 import {
@@ -250,6 +251,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   let nativeSchedulerActions: ReturnType<typeof createSchedulerActions> | null = null;
   /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖）；error 为空串表示成功 */
   let nativeTaskHistory: { taskId: string; rows: unknown[]; error: string } | null = null;
+  /** Token 用量 section 当前统计窗口（7/14/30 天） */
+  let nativeTokenDays = 7;
 
   const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
   const asObj = (value: unknown): Record<string, unknown> =>
@@ -741,6 +744,19 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             }
             pushSettingsSnapshotToNative();
           },
+          // 「Token 用量」section：切换统计窗口 / 重置统计
+          tokensAction: (verb, payload) => {
+            if (verb === "set-days") {
+              nativeTokenDays = clampInt(payload.days, 1, 90) ?? 7;
+              pushSettingsSnapshotToNative();
+              return;
+            }
+            if (verb === "clear") {
+              clearUsage();
+              nativeNotice("tokens", "ok", "用量统计已重置");
+              pushSettingsSnapshotToNative();
+            }
+          },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
           // 界面字体导入/恢复（Electron 设置页同口径；宿主弹框/清文件）
@@ -1061,6 +1077,7 @@ createTray: (input) => {
                   currentPluginRunning(),
                   nativeTaskHistory,
                 ),
+                tokens: buildTokensSectionSnapshot(getUsageReport(nativeTokenDays), nativeTokenDays),
               };
             }
           : undefined,

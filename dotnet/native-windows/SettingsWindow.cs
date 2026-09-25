@@ -250,6 +250,7 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("plugins", "插件", native: false, legacyHash: "plugins", pluginManager: true);
         AddSection("user", "用户信息", native: true);
         AddSection("tasks", "定时任务", native: true);
+        AddSection("tokens", "Token 用量", native: true);
         AddSection("channels", "渠道配置", native: false, legacyHash: "channels");
         AddSection("disclaimer", "免责声明", native: true);
         AddSection("about", "关于", native: true);
@@ -303,7 +304,7 @@ public sealed partial class SettingsWindow : NativeWindow
     // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "appearance" or "user" or "api" or "api-advanced" or "disclaimer" or "memory" or "tasks" or "about";
+        => id is "general" or "appearance" or "user" or "api" or "api-advanced" or "disclaimer" or "memory" or "tasks" or "tokens" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
@@ -315,6 +316,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "disclaimer" => BuildDisclaimerSection(),
         "memory" => BuildMemorySection(),
         "tasks" => BuildTasksSection(),
+        "tokens" => BuildTokensSection(),
         "about" => BuildAboutSection(),
         _ => new TextBlock { Text = "未知分区" },
     };
@@ -670,6 +672,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "disclaimer" => "",
         "memory" => NodeRawJson("memory"),
         "tasks" => NodeRawJson("tasks"),
+        "tokens" => NodeRawJson("tokens"),
         // 关于：静态内容（版本号启动后不变），只需首次构建
         _ => "",
     };

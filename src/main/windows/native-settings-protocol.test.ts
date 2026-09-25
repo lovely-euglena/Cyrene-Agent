@@ -251,8 +251,8 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     }
   });
 
-  it("Electron 专属 section（tokens/preferences/cyrene）→ Electron", () => {
-    for (const section of ["tokens", "preferences", "cyrene", "unknown-section"]) {
+  it("Electron 专属 section（preferences/cyrene）→ Electron", () => {
+    for (const section of ["preferences", "cyrene", "unknown-section"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(true);
     }
   });

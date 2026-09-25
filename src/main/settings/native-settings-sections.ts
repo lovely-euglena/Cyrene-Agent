@@ -117,6 +117,67 @@ export interface NativeSchedulerSnapshot {
   history: NativeSchedulerHistorySnapshot | null;
 }
 
+// ── Token 用量（tokens section） ──
+
+export interface NativeTokensDay {
+  date: string;
+  input: number;
+  output: number;
+  hit: number;
+  miss: number;
+  requests: number;
+}
+
+export interface NativeTokensModel {
+  name: string;
+  input: number;
+  output: number;
+  requests: number;
+}
+
+export interface NativeTokensSnapshot {
+  /** 当前统计窗口（7/14/30 天） */
+  days: number;
+  daily: NativeTokensDay[];
+  models: NativeTokensModel[];
+  totals: { input: number; output: number; hit: number; miss: number; requests: number };
+}
+
+/** 投影 token 用量报告（不依赖 electron，纯结构类型便于单测）。 */
+export function buildTokensSectionSnapshot(
+  report: {
+    days: Array<{ date: string; input: number; output: number; hit: number; miss: number; requests: number }>;
+    models: Array<{ model: string; input: number; output: number; requests: number }>;
+  },
+  days: number,
+): NativeTokensSnapshot {
+  const daily: NativeTokensDay[] = report.days.map((day) => ({
+    date: day.date,
+    input: day.input,
+    output: day.output,
+    hit: day.hit,
+    miss: day.miss,
+    requests: day.requests,
+  }));
+  const totals = daily.reduce(
+    (acc, day) => ({
+      input: acc.input + day.input,
+      output: acc.output + day.output,
+      hit: acc.hit + day.hit,
+      miss: acc.miss + day.miss,
+      requests: acc.requests + day.requests,
+    }),
+    { input: 0, output: 0, hit: 0, miss: 0, requests: 0 },
+  );
+  const models: NativeTokensModel[] = report.models.slice(0, 12).map((model) => ({
+    name: model.model,
+    input: model.input,
+    output: model.output,
+    requests: model.requests,
+  }));
+  return { days, daily, models, totals };
+}
+
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
 /** L0/L1 只输出字符串字段（渲染投影不需要类型元数据）。 */

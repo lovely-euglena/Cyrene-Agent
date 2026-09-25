@@ -52,11 +52,11 @@ describe("openSettingsWindow · 路由", () => {
     expect(mocks.spawnNativeWindow).not.toHaveBeenCalled();
   });
 
-  it("Electron 专属 section（tokens/preferences）→ Electron（避免落错页）", async () => {
-    openSettingsWindow("tokens");
+  it("Electron 专属 section（preferences/cyrene）→ Electron（避免落错页）", async () => {
     openSettingsWindow("preferences");
-    expect(mocks.createSettingsWindow).toHaveBeenNthCalledWith(1, "tokens");
-    expect(mocks.createSettingsWindow).toHaveBeenNthCalledWith(2, "preferences");
+    openSettingsWindow("cyrene");
+    expect(mocks.createSettingsWindow).toHaveBeenNthCalledWith(1, "preferences");
+    expect(mocks.createSettingsWindow).toHaveBeenNthCalledWith(2, "cyrene");
     await flush();
     expect(mocks.spawnNativeWindow).not.toHaveBeenCalled();
   });

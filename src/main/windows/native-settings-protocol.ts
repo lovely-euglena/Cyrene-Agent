@@ -78,6 +78,7 @@ export const NATIVE_SETTINGS_SECTIONS = [
   "memory",
   "plugins",
   "tasks",
+  "tokens",
   "channels",
   "tts",
   "asr",
@@ -106,6 +107,7 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
 export const NATIVE_SECTION_ACTIONS = {
   api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
   runtime: ["save"],
+  tokens: ["set-days", "clear"],
   memory: [
     "save-l0",
     "save-l1",
