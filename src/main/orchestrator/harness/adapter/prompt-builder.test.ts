@@ -35,6 +35,40 @@ describe("harness prompt builder", () => {
     expect(prompt).not.toContain("工具使用");
   });
 
+  it("keeps the stable prefix independent from runtime-only fields", () => {
+    const base = {
+      soulSystemBaseContent: "persona",
+      toolSystemContent: "tools",
+      conversationMode: "code",
+    };
+    const first = buildHarnessPromptLayers({
+      ...base,
+      runtimeEnvironmentContext: "环境 A",
+      planSkillContext: "技能 A",
+    } as never);
+    const second = buildHarnessPromptLayers({
+      ...base,
+      runtimeEnvironmentContext: "环境 B",
+      planSkillContext: "技能 B",
+    } as never);
+
+    expect(first.stablePrefix).toBe(second.stablePrefix);
+    expect(first.runtimeContext).not.toBe(second.runtimeContext);
+  });
+
+  it("changes the stable prefix when persona content changes", () => {
+    const first = buildHarnessPromptLayers({
+      soulSystemBaseContent: "persona A",
+      toolSystemContent: "tools",
+    } as never);
+    const second = buildHarnessPromptLayers({
+      soulSystemBaseContent: "persona B",
+      toolSystemContent: "tools",
+    } as never);
+
+    expect(first.stablePrefix).not.toBe(second.stablePrefix);
+  });
+
   it("materializes runtime context as one internal transcript message", () => {
     const messages = materializeHarnessStartTranscript({
       messages: [{ role: "user", content: "继续" }],
