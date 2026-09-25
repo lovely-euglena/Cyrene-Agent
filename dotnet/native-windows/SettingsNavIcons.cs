@@ -1,5 +1,5 @@
 // 本文件由脚本从 src/renderer/settings/index.html 的导航 SVG 生成——勿手改。
-// 重新生成：见提交说明中的 extract 脚本（SVG path → WPF Geometry 字符串）。
+// 重新生成：node scripts/gen-settings-nav-icons.mjs
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
@@ -31,8 +31,9 @@ public static class SettingsNavIcons
 
     private static readonly Dictionary<string, string> ImageIcons = new()
     {
-        ["memory"] = "icons/icons/mimi.png",
-        ["cyrene"] = "icons/icons/cyrene-avatar-line-white.png",
+        ["memory"] = "icons/mimi.png",
+        ["cyrene"] = "icons/cyrene-avatar-line-white.png",
+        ["about"] = "icons/cyrene-pink.png",
     };
 
     /// <summary>section → (标题, 说明)：内容区标题栏用（对齐旧版 section-title/hint）。</summary>
@@ -59,7 +60,7 @@ public static class SettingsNavIcons
     {
         if (ImageIcons.TryGetValue(section, out var imagePath))
         {
-            var image = new Image { Width = 16, Height = 16, Stretch = Stretch.Uniform };
+            var image = new Image { Width = 18, Height = 18, Stretch = Stretch.Uniform };
             var source = NativeTheme.TryLoadAssetImage(imagePath);
             if (source is not null) image.Source = source;
             return image;
