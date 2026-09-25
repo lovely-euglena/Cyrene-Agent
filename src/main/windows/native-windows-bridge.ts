@@ -48,6 +48,12 @@ export interface NativeBridgeActions {
   tokensAction?(verb: string, payload: Record<string, unknown>): void;
   /** native 设置窗「偏好设置」section 动作。verb: open-prompt（定位自定义 Prompt 文件） */
   preferencesAction?(verb: string, payload: Record<string, unknown>): void;
+  /**
+   * native 设置窗「昔涟设置」section 动作：
+   * save（状态栏实时更新 / 表情包开关·大小·阈值，写 model settings）/
+   * open-sticker-manager（Electron 表情包管理窗）/ add-sticker（用户表情包入库）。
+   */
+  cyreneAction?(verb: string, payload: Record<string, unknown>): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
   /** 界面字体导入/恢复（宿主弹文件框/清理文件；native 不传路径）。 */
@@ -132,6 +138,9 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "preferences":
           actions.preferencesAction?.(asString(frame.verb), asRecord(frame.payload));
+          break;
+        case "cyrene":
+          actions.cyreneAction?.(asString(frame.verb), asRecord(frame.payload));
           break;
         case "openChannels":
           actions.openChannelsWindow?.();

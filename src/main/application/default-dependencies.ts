@@ -100,10 +100,12 @@ import { createSchedulerSubsystem, type SchedulerSubsystem } from "../scheduler/
 import { createSchedulerActions } from "../scheduler/scheduler-actions";
 import {
   buildApiSectionSnapshot,
+  buildCyreneSectionSnapshot,
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
   buildTokensSectionSnapshot,
 } from "../settings/native-settings-sections";
+import { addUserSticker } from "../sticker-storage";
 import { loadMemoryPanelData } from "../memory/panel";
 import {
   bindMemoryVault,
@@ -162,7 +164,9 @@ import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
 import {
+  sanitizeNativeCyreneSave,
   sanitizeNativeGeneralSetting,
+  sanitizeNativeStickerAdd,
   sanitizeNativeUserProfile,
 } from "../windows/native-settings-protocol";
 import { pickAndSaveUserAvatar } from "../memory/user-avatar";
@@ -290,6 +294,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   let nativeSchedulerActions: ReturnType<typeof createSchedulerActions> | null = null;
   /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖）；error 为空串表示成功 */
   let nativeTaskHistory: { taskId: string; rows: unknown[]; error: string } | null = null;
+
+/** core 阶段绑定的表情包向量索引（native 昔涟 section 添加表情包后刷新；未绑定=不刷新）。 */
+let stickerEmbeddingIndexService: {
+  invalidateStickerEmbeddingIndex(): void;
+  refreshStickerEmbeddingIndex(reason: string): void;
+} | null = null;
   /** Token 用量 section 当前统计窗口（7/14/30 天） */
   let nativeTokenDays = 7;
 
@@ -807,6 +817,46 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               nativeNotice("preferences", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`);
             }
           },
+          // 「昔涟设置」section（阶段 1）：状态栏实时更新 + 表情包发送。
+          // 与渲染页 saveConfig 同源（saveModelSettings + model-config 广播）。
+          cyreneAction: (verb, payload) => {
+            if (verb === "save") {
+              const patch = sanitizeNativeCyreneSave(payload);
+              if (!patch) return;
+              try {
+                saveModelSettings(patch);
+                broadcastModelChanged();
+              } catch (err) {
+                nativeNotice("cyrene", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
+              }
+              return;
+            }
+            if (verb === "open-sticker-manager") {
+              windowManager.createStickerManagerWindow();
+              return;
+            }
+            if (verb === "add-sticker") {
+              const parsed = sanitizeNativeStickerAdd(payload);
+              if (!parsed.ok) {
+                nativeNotice("cyrene", "error", `添加失败：${parsed.error}`);
+                return;
+              }
+              void addUserSticker(
+                parsed.payload.sourcePath,
+                parsed.payload.id,
+                parsed.payload.description,
+                parsed.payload.phrases,
+              )
+                .then(() => {
+                  stickerEmbeddingIndexService?.invalidateStickerEmbeddingIndex();
+                  stickerEmbeddingIndexService?.refreshStickerEmbeddingIndex("user-sticker-add");
+                  nativeNotice("cyrene", "ok", `表情包已添加：${parsed.payload.id}`);
+                })
+                .catch((err) => {
+                  nativeNotice("cyrene", "error", `添加失败：${err instanceof Error ? err.message : String(err)}`);
+                });
+            }
+          },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
           // 界面字体导入/恢复（Electron 设置页同口径；宿主弹框/清文件）
@@ -1184,6 +1234,8 @@ createTray: (input) => {
                   nativeTaskHistory,
                 ),
                 tokens: buildTokensSectionSnapshot(getUsageReport(nativeTokenDays), nativeTokenDays),
+                // 昔涟设置（阶段 1）：状态栏实时更新 + 表情包发送
+                cyrene: buildCyreneSectionSnapshot(modelSettings),
               };
             }
           : undefined,
@@ -1213,6 +1265,8 @@ createTray: (input) => {
       },
 
       registerCoreIpc: ({ ipc, runtime, services }) => {
+        // native 昔涟 section「添加表情包」需要刷新贴图向量索引（IPC 同源）
+        stickerEmbeddingIndexService = services.embedding;
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动
         onGeneralSettingsChanged((before, after) =>
           handleGeneralSettingsChanged(before, after, {

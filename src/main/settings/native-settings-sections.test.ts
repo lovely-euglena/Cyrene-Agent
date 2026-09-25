@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildApiSectionSnapshot,
+  buildCyreneSectionSnapshot,
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
   type NativeMemoryData,
@@ -129,5 +130,32 @@ describe("buildSchedulerSectionSnapshot", () => {
     expect(snapshot.tools[0].id).toBe("tool");
     expect(snapshot.pluginRunning["plugin-a"]).toBe(true);
     expect(snapshot.history?.taskId).toBe("t1");
+  });
+});
+
+describe("buildCyreneSectionSnapshot", () => {
+  it("状态栏 / 表情包投影：阈值 clamp 到 0.3~0.9，非法档位回落默认", () => {
+    expect(buildCyreneSectionSnapshot(modelSettings({
+      runtimeSync: "llm",
+      stickerEnabled: false,
+      stickerSize: "large",
+      stickerSimilarityThreshold: 0.2,
+    }))).toEqual({
+      runtimeSync: "llm",
+      stickerEnabled: false,
+      stickerSize: "large",
+      stickerSimilarityThreshold: 0.3,
+    });
+
+    expect(buildCyreneSectionSnapshot(modelSettings({
+      runtimeSync: "bogus" as never,
+      stickerSize: "huge" as never,
+      stickerSimilarityThreshold: Number.NaN,
+    }))).toEqual({
+      runtimeSync: "off",
+      stickerEnabled: true,
+      stickerSize: "standard",
+      stickerSimilarityThreshold: 0.55,
+    });
   });
 });

@@ -308,3 +308,37 @@ export function buildSchedulerSectionSnapshot(
 ): NativeSchedulerSnapshot {
   return { tasks, tools, pluginRunning, history };
 }
+
+// ── 昔涟设置（cyrene section）：阶段 1 = 状态栏实时更新 + 表情包发送 ──
+
+export interface NativeCyreneSnapshot {
+  runtimeSync: "off" | "local" | "llm";
+  stickerEnabled: boolean;
+  stickerSize: "small" | "standard" | "large";
+  stickerSimilarityThreshold: number;
+}
+
+/**
+ * 昔涟设置快照（与渲染页 loadGeneralSettings 读的是同一份 model settings；
+ * 写入由 cyrene section 动作 save 走 saveModelSettings，读/写归一化同口径）。
+ */
+export function buildCyreneSectionSnapshot(
+  settings: Pick<ModelSettings, "runtimeSync" | "stickerEnabled" | "stickerSize" | "stickerSimilarityThreshold">,
+): NativeCyreneSnapshot {
+  const runtimeSync = settings.runtimeSync === "llm"
+    ? "llm"
+    : settings.runtimeSync === "local"
+      ? "local"
+      : "off";
+  return {
+    runtimeSync,
+    stickerEnabled: settings.stickerEnabled !== false,
+    stickerSize: settings.stickerSize === "small" || settings.stickerSize === "large"
+      ? settings.stickerSize
+      : "standard",
+    stickerSimilarityThreshold: typeof settings.stickerSimilarityThreshold === "number"
+      && Number.isFinite(settings.stickerSimilarityThreshold)
+      ? Math.min(0.9, Math.max(0.3, settings.stickerSimilarityThreshold))
+      : 0.55,
+  };
+}

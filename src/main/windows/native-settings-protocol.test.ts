@@ -15,7 +15,9 @@ import {
   NATIVE_SECTION_ACTIONS,
   NATIVE_SETTINGS_SECTIONS,
   NATIVE_USER_PROFILE_FIELDS,
+  sanitizeNativeCyreneSave,
   sanitizeNativeGeneralSetting,
+  sanitizeNativeStickerAdd,
   sanitizeNativeUserProfile,
   shouldOpenSettingsInElectron,
 } from "./native-settings-protocol";
@@ -56,6 +58,10 @@ const settingsSectionCs = [
   ),
   fs.readFileSync(
     fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Tokens.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Cyrene.cs", import.meta.url)),
     "utf8",
   ),
 ].join("\n");
@@ -199,8 +205,54 @@ describe("sanitizeNativeGeneralSetting", () => {
   });
 });
 
-describe("sanitizeNativeUserProfile", () => {
-  it("只保留白名单字段并 trim", () => {
+describe("sanitizeNativeCyreneSave / sanitizeNativeStickerAdd（cyrene section 动作）", () => {
+  it("save：合法字段投影，阈值 clamp 到 0.3~0.9 两位小数，非法档位丢弃", () => {
+    expect(sanitizeNativeCyreneSave({
+      runtimeSync: "llm",
+      stickerEnabled: false,
+      stickerSize: "large",
+      stickerSimilarityThreshold: 1.7,
+    })).toEqual({
+      runtimeSync: "llm",
+      stickerEnabled: false,
+      stickerSize: "large",
+      stickerSimilarityThreshold: 0.9,
+    });
+    expect(sanitizeNativeCyreneSave({
+      runtimeSync: "bogus",
+      stickerSize: "huge",
+      stickerSimilarityThreshold: "0.5",
+    })).toBeNull();
+    expect(sanitizeNativeCyreneSave(null)).toBeNull();
+  });
+
+  it("add-sticker：必填校验 + id 规则 + 相近语义去空/过滤/截断", () => {
+    expect(sanitizeNativeStickerAdd({})).toEqual({ ok: false, error: "请先选择图片文件" });
+    expect(sanitizeNativeStickerAdd({ sourcePath: "C:/x.png" })).toEqual({
+      ok: false,
+      error: "名称只能用英文字母、数字、下划线和连字符",
+    });
+    expect(sanitizeNativeStickerAdd({ sourcePath: "C:/x.png", id: "demo" })).toEqual({
+      ok: false,
+      error: "请填写图片描述",
+    });
+    expect(sanitizeNativeStickerAdd({ sourcePath: "C:/x.png", id: "demo", description: "开心" })).toEqual({
+      ok: false,
+      error: "请至少写一行相近语义",
+    });
+    expect(sanitizeNativeStickerAdd({
+      sourcePath: "  C:/x.png  ",
+      id: "  demo-1 ",
+      description: " 开心 ",
+      phrases: ["开心", " ", 42, "笑死"],
+    })).toEqual({
+      ok: true,
+      payload: { sourcePath: "C:/x.png", id: "demo-1", description: "开心", phrases: ["开心", "笑死"] },
+    });
+  });
+});
+
+describe("sanitizeNativeUserProfile", () => {  it("只保留白名单字段并 trim", () => {
     const patch = sanitizeNativeUserProfile({
       nickname: "  小昔  ",
       callPreference: "主人",
@@ -284,8 +336,8 @@ describe("跨语言契约：C# 设置窗 ↔ 宿主白名单", () => {
   });
 
   it("C# 发送的 cmd 动作都有宿主处理（死按钮回归：open-legacy/openChannels/plugins open）", () => {
-    // 扫描设置窗与 RequestRouter 里的 SendCommand("kind", "action") 调用
-    const sources = [settingsWindowCs, requestRouterCs];
+    // 扫描设置窗（含各 section 分文件）与 RequestRouter 里的 SendCommand("kind", "action") 调用
+    const sources = [settingsSectionCs, requestRouterCs];
     const actions = new Set<string>();
     for (const source of sources) {
       for (const match of source.matchAll(/SendCommand\("([^"]+)",\s*"([^"]+)"/g)) {
@@ -316,14 +368,14 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     }
   });
 
-  it("WPF 认识的 section（含新迁 disclaimer/api-advanced/preferences）→ WPF", () => {
-    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks", "tokens", "preferences"]) {
+  it("WPF 认识的 section（含新迁 disclaimer/api-advanced/preferences/cyrene）→ WPF", () => {
+    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks", "tokens", "preferences", "cyrene"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(false);
     }
   });
 
-  it("Electron 专属 section（cyrene）→ Electron", () => {
-    for (const section of ["cyrene", "unknown-section"]) {
+  it("未知 / Electron 专属 section → Electron（防落错页）", () => {
+    for (const section of ["unknown-section", "nonexistent"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(true);
     }
   });
@@ -355,6 +407,7 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
   it("各 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
     expect([...NATIVE_SECTION_ACTIONS.api]).toEqual(["save", "test", "test-vision", "set-default-profile", "delete-profile"]);
     expect([...NATIVE_SECTION_ACTIONS.preferences]).toEqual(["open-prompt"]);
+    expect([...NATIVE_SECTION_ACTIONS.cyrene]).toEqual(["save", "open-sticker-manager", "add-sticker"]);
     expect([...NATIVE_SECTION_ACTIONS.memory]).toEqual([
       "save-l0",
       "save-l1",

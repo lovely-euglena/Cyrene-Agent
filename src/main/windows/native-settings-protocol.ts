@@ -25,6 +25,7 @@ import {
 } from "../../shared/preferences";
 import { normalizeCustomStyleConfig } from "../../shared/style-sampling";
 import type { GeneralSettings } from "../settings/general-settings";
+import type { ModelSettings } from "../settings/model-settings";
 import type { UserProfile } from "../settings-store";
 
 /** general settings 可写键（宿主白名单；C# 侧只应发送这些键） */
@@ -84,8 +85,8 @@ export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "tts", "asr"] as con
 
 /**
  * WPF 设置窗认识的 section（与 SettingsWindow.cs 的 AddSection 对齐；
- * 契约测试锁定）。不在其中（cyrene/... 等 Electron 专属 section）或命中
- * ELECTRON_ONLY 时，入口回 Electron 页。
+ * 契约测试锁定）。不在其中（未知 section 防落错页）或命中 ELECTRON_ONLY
+ * 时，入口回 Electron 页。
  */
 export const NATIVE_SETTINGS_SECTIONS = [
   "general",
@@ -100,6 +101,7 @@ export const NATIVE_SETTINGS_SECTIONS = [
   "plugins",
   "tasks",
   "tokens",
+  "cyrene",
   "channels",
   "tts",
   "asr",
@@ -128,6 +130,7 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
 export const NATIVE_SECTION_ACTIONS = {
   api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
   preferences: ["open-prompt"],
+  cyrene: ["save", "open-sticker-manager", "add-sticker"],
   runtime: ["save"],
   tokens: ["set-days", "clear"],
   memory: [
@@ -254,4 +257,79 @@ export function sanitizeNativeUserProfile(raw: unknown): Partial<UserProfile> | 
   }
 
   return hasField ? patch : null;
+}
+
+// ── 「昔涟设置」section（cyrene）：写入 payload 校验 ─────────────────────
+
+const STICKER_ID_MAX_LENGTH = 64;
+const STICKER_TEXT_MAX_LENGTH = 200;
+const STICKER_PHRASE_LIMIT = 50;
+const STICKER_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/** cyrene save 动作（状态栏实时更新 / 表情包发送）可写字段（model settings 子集）。 */
+export type NativeCyreneSavePatch = Partial<
+  Pick<ModelSettings, "runtimeSync" | "stickerEnabled" | "stickerSize" | "stickerSimilarityThreshold">
+>;
+
+/**
+ * cyrene save payload 校验：只保留合法字段（未知档位丢弃、阈值 clamp 0.3~0.9
+ * 两位小数）；无有效字段返回 null（宿主静默忽略）。
+ */
+export function sanitizeNativeCyreneSave(raw: Record<string, unknown> | null | undefined): NativeCyreneSavePatch | null {
+  if (!raw || typeof raw !== "object") return null;
+  const patch: NativeCyreneSavePatch = {};
+  if (raw.runtimeSync === "off" || raw.runtimeSync === "local" || raw.runtimeSync === "llm") {
+    patch.runtimeSync = raw.runtimeSync;
+  }
+  if (typeof raw.stickerEnabled === "boolean") patch.stickerEnabled = raw.stickerEnabled;
+  if (raw.stickerSize === "small" || raw.stickerSize === "standard" || raw.stickerSize === "large") {
+    patch.stickerSize = raw.stickerSize;
+  }
+  if (typeof raw.stickerSimilarityThreshold === "number" && Number.isFinite(raw.stickerSimilarityThreshold)) {
+    patch.stickerSimilarityThreshold =
+      Math.round(Math.min(0.9, Math.max(0.3, raw.stickerSimilarityThreshold)) * 100) / 100;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+export interface NativeStickerAddPayload {
+  sourcePath: string;
+  id: string;
+  description: string;
+  phrases: string[];
+}
+
+export type NativeStickerAddResult =
+  | { ok: true; payload: NativeStickerAddPayload }
+  | { ok: false; error: string };
+
+/**
+ * cyrene add-sticker payload 校验（与渲染页添加表情包表单同口径）：
+ * 图片路径 + 英文名称 + 描述 + 至少一条相近语义；文件复制/查重在宿主
+ * sticker-storage 侧继续把关。
+ */
+export function sanitizeNativeStickerAdd(raw: Record<string, unknown> | null | undefined): NativeStickerAddResult {
+  const sourcePath = typeof raw?.sourcePath === "string" ? raw.sourcePath.trim().slice(0, 1000) : "";
+  if (!sourcePath) return { ok: false, error: "请先选择图片文件" };
+
+  const id = typeof raw?.id === "string" ? raw.id.trim().slice(0, STICKER_ID_MAX_LENGTH) : "";
+  if (!STICKER_ID_PATTERN.test(id)) {
+    return { ok: false, error: "名称只能用英文字母、数字、下划线和连字符" };
+  }
+
+  const description = typeof raw?.description === "string"
+    ? raw.description.trim().slice(0, STICKER_TEXT_MAX_LENGTH)
+    : "";
+  if (!description) return { ok: false, error: "请填写图片描述" };
+
+  const phrases = Array.isArray(raw?.phrases)
+    ? raw.phrases
+        .filter((phrase): phrase is string => typeof phrase === "string")
+        .map((phrase) => phrase.trim().slice(0, STICKER_TEXT_MAX_LENGTH))
+        .filter((phrase) => phrase.length > 0)
+        .slice(0, STICKER_PHRASE_LIMIT)
+    : [];
+  if (phrases.length === 0) return { ok: false, error: "请至少写一行相近语义" };
+
+  return { ok: true, payload: { sourcePath, id, description, phrases } };
 }

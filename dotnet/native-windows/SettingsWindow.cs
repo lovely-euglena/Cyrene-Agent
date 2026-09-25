@@ -305,6 +305,7 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("appearance", "外观", native: true);
         AddSection("api", "API 与模型", native: true);
         AddSection("api-advanced", "高级设置", native: true);
+        AddSection("cyrene", "昔涟设置", native: true);
         AddSection("memory", "记忆", native: true);
         AddSection("tts", "语音合成 TTS", native: false, legacyHash: "tts");
         AddSection("asr", "语音识别 ASR", native: false, legacyHash: "asr");
@@ -371,7 +372,7 @@ public sealed partial class SettingsWindow : NativeWindow
     // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "disclaimer" or "memory" or "tasks" or "tokens" or "about";
+        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "cyrene" or "disclaimer" or "memory" or "tasks" or "tokens" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
@@ -381,6 +382,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "user" => BuildUserSection(),
         "api" => BuildApiSection(),
         "api-advanced" => BuildRuntimeSection(),
+        "cyrene" => BuildCyreneSection(),
         "disclaimer" => BuildDisclaimerSection(),
         "memory" => BuildMemorySection(),
         "tasks" => BuildTasksSection(),
@@ -719,6 +721,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "preferences" => NodeRawJson("preferences"),
         "api" => NodeRawJson("api"),
         "api-advanced" => NodeRawJson("runtime"),
+        "cyrene" => NodeRawJson("cyrene"),
         "disclaimer" => "",
         "memory" => NodeRawJson("memory"),
         "tasks" => NodeRawJson("tasks"),
@@ -974,6 +977,122 @@ public sealed partial class SettingsWindow : NativeWindow
         toggle.Checked += (_, _) => onChange(true);
         toggle.Unchecked += (_, _) => onChange(false);
         return MakeRow(label, toggle);
+    }
+
+    /// <summary>偏好多行式设置行：标题 + 说明在左（撑满），控件在右。</summary>
+    private static Border MakeDescribedRow(string title, string description, FrameworkElement control)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 10, 0, 10) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
+        copy.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 12.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+        });
+        copy.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 11.5,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        Grid.SetColumn(copy, 0);
+        grid.Children.Add(copy);
+        Grid.SetColumn(control, 1);
+        grid.Children.Add(control);
+        return new Border { Child = grid, Padding = new Thickness(0, 2, 0, 2) };
+    }
+
+    private static Border MakeDescribedToggleRow(string title, string description, bool initial, Action<bool> onChange)
+    {
+        var toggle = new CheckBox { IsChecked = initial, Cursor = System.Windows.Input.Cursors.Hand };
+        toggle.Checked += (_, _) => onChange(true);
+        toggle.Unchecked += (_, _) => onChange(false);
+        return MakeDescribedRow(title, description, toggle);
+    }
+
+    /// <summary>单选按钮组（点击即写；选中态主按钮样式即时高亮）。onSelect 为 null = 只读禁用组。</summary>
+    private static StackPanel MakeChoiceGroup(
+        (string Value, string Text, bool Enabled)[] options,
+        string current,
+        Action<string>? onSelect)
+    {
+        var group = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var buttons = new Dictionary<string, Button>();
+        foreach (var (value, text, enabled) in options)
+        {
+            var button = MakeButton(text, () =>
+            {
+                if (onSelect is null || !enabled) return;
+                foreach (var (optionValue, _, _) in options)
+                {
+                    if (buttons.TryGetValue(optionValue, out var other))
+                    {
+                        other.Style = optionValue == value
+                            ? NativeTheme.PrimaryButtonStyle
+                            : NativeTheme.SecondaryButtonStyle;
+                    }
+                }
+                onSelect(value);
+            }, primary: value == current, minWidth: 76);
+            // 只读组（旧版禁用占位）或渠道不可用项：禁用点击
+            button.IsEnabled = onSelect is not null && enabled;
+            buttons[value] = button;
+            group.Children.Add(button);
+        }
+        return group;
+    }
+
+    /// <summary>居中文本输入（与 MakeTextRow 同提交语义：失焦 / 回车写一次）。</summary>
+    private static Grid MakeTextControl(string initial, Action<string> onCommit, double width, string? placeholder)
+    {
+        var box = new TextBox
+        {
+            Text = initial,
+            Width = width,
+            FontSize = 12,
+            Padding = new Thickness(6, 4, 6, 4),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        var lastCommitted = initial;
+        void Commit()
+        {
+            var text = box.Text.Trim();
+            if (text == lastCommitted) return;
+            lastCommitted = text;
+            onCommit(text);
+        }
+        box.LostFocus += (_, _) => Commit();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter) Commit();
+        };
+        var host = new Grid { Width = width };
+        host.Children.Add(box);
+        if (placeholder is not null)
+        {
+            var placeholderText = new TextBlock
+            {
+                Text = placeholder,
+                FontSize = 12,
+                Foreground = NativeTheme.TextMutedBrush,
+                Margin = new Thickness(9, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+                Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed,
+            };
+            box.TextChanged += (_, _) =>
+            {
+                placeholderText.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            };
+            host.Children.Add(placeholderText);
+        }
+        return host;
     }
 
     /// <summary>滑杆行：拖动/键盘调整经 250ms 防抖后写一次（避免保存风暴）。</summary>

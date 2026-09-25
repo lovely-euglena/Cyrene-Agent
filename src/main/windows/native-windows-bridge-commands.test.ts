@@ -47,6 +47,7 @@ function initBridge() {
     memoryAction: vi.fn(),
     schedulerAction: vi.fn(),
     preferencesAction: vi.fn(),
+    cyreneAction: vi.fn(),
   };
   const client = initNativeWindowsBridge(actions as never);
   expect(client).not.toBeNull();
@@ -108,6 +109,16 @@ describe("native-windows-bridge · cmd 动作分发", () => {
     dispatch({ kind: "settings", action: "preferences", verb: "open-prompt" });
     expect(actions.preferencesAction).toHaveBeenCalledTimes(1);
     expect(actions.preferencesAction).toHaveBeenCalledWith("open-prompt", {});
+  });
+
+  it("cyrene 动作透传（save / open-sticker-manager / add-sticker）", () => {
+    const actions = initBridge();
+    dispatch({ kind: "settings", action: "cyrene", verb: "save", payload: { runtimeSync: "llm" } });
+    dispatch({ kind: "settings", action: "cyrene", verb: "open-sticker-manager" });
+    dispatch({ kind: "settings", action: "cyrene", verb: "add-sticker", payload: { id: "demo" } });
+    expect(actions.cyreneAction).toHaveBeenNthCalledWith(1, "save", { runtimeSync: "llm" });
+    expect(actions.cyreneAction).toHaveBeenNthCalledWith(2, "open-sticker-manager", {});
+    expect(actions.cyreneAction).toHaveBeenNthCalledWith(3, "add-sticker", { id: "demo" });
   });
 
   it("settings set / set-user-profile / pick-avatar → 对应回调", () => {
