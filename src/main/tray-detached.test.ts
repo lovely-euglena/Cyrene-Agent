@@ -14,7 +14,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import * as fs from "node:fs";
-import { isDetachedTrayPipeAvailable } from "./tray-detached";
+import { isDetachedTrayPipeAvailable, showTrayBalloon } from "./tray-detached";
 
 const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
 const originalPlatform = process.platform;
@@ -55,5 +55,23 @@ describe("isDetachedTrayPipeAvailable（分离托盘 pipe 探针）", () => {
     stubPlatform("linux");
     readdirMock.mockReturnValue(["cyrene-tray"]);
     expect(isDetachedTrayPipeAvailable()).toBe(false);
+  });
+});
+
+describe("showTrayBalloon（系统级托盘气泡入口）", () => {
+  it("支持 displayBalloon：转发参数并返回 true", () => {
+    const displayBalloon = vi.fn();
+    const ok = showTrayBalloon({ displayBalloon } as never, { title: "标题", content: "正文" });
+    expect(ok).toBe(true);
+    expect(displayBalloon).toHaveBeenCalledWith({ title: "标题", content: "正文" });
+  });
+
+  it("缺失实现 / null / 内部抛错：返回 false 且不冒泡", () => {
+    expect(showTrayBalloon({} as never, { title: "t", content: "c" })).toBe(false);
+    expect(showTrayBalloon(null, { title: "t", content: "c" })).toBe(false);
+    expect(showTrayBalloon(
+      { displayBalloon: () => { throw new Error("boom"); } } as never,
+      { title: "t", content: "c" },
+    )).toBe(false);
   });
 });

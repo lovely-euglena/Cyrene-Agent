@@ -144,7 +144,7 @@ import {
   spawnNativeWindow,
   disposeNativeWindowsBridge,
 } from "../windows/native-windows-bridge";
-import { connectDetachedTray } from "../tray-detached";
+import { connectDetachedTray, showTrayBalloon } from "../tray-detached";
 import { openSettingsWindow } from "../windows/settings-router";
 import { pickAndImportUiFont, resetUiFont } from "../settings/ui-font";
 import { createSplashWindow } from "../startup/create-splash-window";
@@ -1283,6 +1283,16 @@ createTray: (input) => {
             const chat = reactChatWindow;
             if (!chat || chat.isDestroyed() || !chat.isFocused()) return false;
             return getActiveChatSessionId() === event.sessionId;
+          },
+          // 系统级通知：无任何 Cyrene 窗口聚焦时补一条 Windows 托盘气泡，
+          // 用户在其他应用里也不错过「等待批准 / 任务完成」。
+          // 内置 Tray 与分离托盘都实现 displayBalloon；托盘不可用则静默跳过。
+          notifySystem: (item) => {
+            if (BrowserWindow.getFocusedWindow()) return;
+            showTrayBalloon(shell.tray, {
+              title: item.title,
+              content: item.summary ?? "",
+            });
           },
         });
         toastService.registerIpc(ipc);

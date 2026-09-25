@@ -15,7 +15,32 @@ import * as nodeNet from "net";
 import type { NativeImage, Tray } from "electron";
 import type { WindowActivationRequest } from "./application/window-activation";
 
-export type TrayLike = Pick<Tray, "isDestroyed" | "destroy" | "setImage" | "setToolTip">;
+export type TrayLike = Pick<Tray, "isDestroyed" | "destroy" | "setImage" | "setToolTip"> & {
+  /** Windows 托盘气泡（内置 Tray 与分离托盘同名，宿主通知统一走这里） */
+  displayBalloon?(options: { title: string; content: string }): void;
+};
+
+/** 系统级托盘气泡参数（Electron DisplayBalloonOptions 的最小投影）。 */
+export interface TrayBalloonOptions {
+  title: string;
+  content: string;
+}
+
+/**
+ * 系统级托盘气泡统一入口：内置 Electron Tray 与分离托盘 duck-type 都支持
+ * `displayBalloon`；环境不支持时返回 false（静默忽略，不影响业务）。
+ */
+export function showTrayBalloon(tray: Tray | TrayLike | null | undefined, options: TrayBalloonOptions): boolean {
+  if (!tray) return false;
+  const fn = (tray as { displayBalloon?: (o: TrayBalloonOptions) => void }).displayBalloon;
+  if (typeof fn !== "function") return false;
+  try {
+    fn.call(tray, options);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface DetachedTrayInput {
   requestActivation(request: WindowActivationRequest): void;
@@ -117,6 +142,8 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
       }
     },
     setToolTip: (text: string) => send({ op: "tray.tooltip", text }),
+    displayBalloon: (options: { title: string; content: string }) =>
+      send({ op: "tray.notify", title: options.title, content: options.content }),
   };
 }
 
