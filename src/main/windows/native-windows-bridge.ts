@@ -43,6 +43,8 @@ export interface NativeBridgeActions {
   memoryAction?(verb: string, payload: Record<string, unknown>): void;
   /** native 设置窗「定时任务」section 动作。verb: add/update/toggle/fire/delete/history */
   schedulerAction?(verb: string, payload: Record<string, unknown>): void;
+  /** native 设置窗「高级设置」section 动作。verb: save（超时 + 工具并发） */
+  runtimeAction?(verb: string, payload: Record<string, unknown>): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
   /** 界面字体导入/恢复（宿主弹文件框/清理文件；native 不传路径）。 */
@@ -114,6 +116,9 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "scheduler":
           actions.schedulerAction?.(asString(frame.verb), asRecord(frame.payload));
+          break;
+        case "runtime":
+          actions.runtimeAction?.(asString(frame.verb), asRecord(frame.payload));
           break;
         case "openChannels":
           actions.openChannelsWindow?.();

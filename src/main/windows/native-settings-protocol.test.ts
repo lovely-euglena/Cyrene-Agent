@@ -245,14 +245,14 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     }
   });
 
-  it("WPF 认识的 section（含占位 api/memory/tasks）→ WPF", () => {
-    for (const section of ["general", "appearance", "user", "about", "api", "memory", "plugins", "tasks"]) {
+  it("WPF 认识的 section（含新迁 disclaimer/api-advanced）→ WPF", () => {
+    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(false);
     }
   });
 
-  it("Electron 专属 section（tokens/preferences/cyrene/disclaimer/api-advanced）→ Electron", () => {
-    for (const section of ["tokens", "preferences", "cyrene", "disclaimer", "api-advanced", "unknown-section"]) {
+  it("Electron 专属 section（tokens/preferences/cyrene）→ Electron", () => {
+    for (const section of ["tokens", "preferences", "cyrene", "unknown-section"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(true);
     }
   });

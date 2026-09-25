@@ -95,6 +95,8 @@ export interface CoreDependencies {
   /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、按需创建隐藏窗口。 */
   wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
+  /** 超时设置（高级设置 section 快照用） */
+  getTimeoutSettings?(): { userChoiceTimeout: number; modelRequestTimeoutSec?: number };
   /** 应用版本（打包态用 app.getVersion()；缺省回退环境变量，仅测试桩用） */
   getAppVersion?(): string;
   /** 用户资料（native 设置窗「用户信息」section 快照）。 */
@@ -208,6 +210,17 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
         // 打包态用 app.getVersion()（旧实现读 npm_package_version，打包后
         // 常缺失 → 显示过期的 1.1.9）
         version: deps.getAppVersion?.() ?? process.env.npm_package_version ?? "0.0.0",
+        // 高级设置（api-advanced）快照：超时 + 工具并发
+        runtime: (() => {
+          const timeout = deps.getTimeoutSettings?.();
+          return {
+            modelRequestTimeoutSec: typeof timeout?.modelRequestTimeoutSec === "number"
+              ? timeout.modelRequestTimeoutSec
+              : null,
+            userChoiceTimeout: timeout?.userChoiceTimeout ?? 60000,
+            maxParallelToolCalls: gs.maxParallelToolCalls,
+          };
+        })(),
         user: {
           nickname: profile.nickname,
           callPreference: profile.callPreference,

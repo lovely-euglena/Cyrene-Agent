@@ -716,6 +716,31 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           apiAction: nativeApiAction,
           memoryAction: nativeMemoryAction,
           schedulerAction: nativeSchedulerAction,
+          // 「高级设置」section：超时（秒→ms）+ 工具并发
+          runtimeAction: (verb, payload) => {
+            if (verb !== "save") return;
+            const isBlank = payload.modelRequestTimeoutSec === null
+              || payload.modelRequestTimeoutSec === undefined
+              || payload.modelRequestTimeoutSec === "";
+            const modelRequestTimeoutSec = isBlank
+              ? undefined
+              : (clampInt(payload.modelRequestTimeoutSec, 10, 600) ?? undefined);
+            const choiceSec = clampInt(payload.userChoiceTimeout, 1, 3600);
+            const parallel = clampInt(payload.maxParallelToolCalls, 1, 8);
+            try {
+              saveTimeoutSettings({
+                ...(choiceSec !== null ? { userChoiceTimeout: choiceSec * 1000 } : {}),
+                ...(modelRequestTimeoutSec === undefined
+                  ? { modelRequestTimeoutSec: undefined }
+                  : { modelRequestTimeoutSec }),
+              });
+              if (parallel !== null) saveGeneralSettings({ maxParallelToolCalls: parallel });
+              nativeNotice("runtime", "ok", "运行设置已保存（后续请求/任务生效）");
+            } catch (err) {
+              nativeNotice("runtime", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
+            }
+            pushSettingsSnapshotToNative();
+          },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
           // 界面字体导入/恢复（Electron 设置页同口径；宿主弹框/清文件）
@@ -812,6 +837,7 @@ createTray: (input) => {
       minimumSplashMs: SPLASH_MIN_MS,
       markStartupWindowsReady: () => markStartupPhaseReady(),
       getAppVersion: () => app.getVersion(),
+      getTimeoutSettings: () => getTimeoutSettings(),
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行

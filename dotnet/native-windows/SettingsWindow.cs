@@ -221,6 +221,7 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("general", "通用", native: true);
         AddSection("appearance", "外观", native: true);
         AddSection("api", "API 与模型", native: true);
+        AddSection("api-advanced", "高级设置", native: true);
         AddSection("memory", "记忆", native: true);
         AddSection("tts", "语音合成 TTS", native: false, legacyHash: "tts");
         AddSection("asr", "语音识别 ASR", native: false, legacyHash: "asr");
@@ -228,6 +229,7 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("user", "用户信息", native: true);
         AddSection("tasks", "定时任务", native: true);
         AddSection("channels", "渠道配置", native: false, legacyHash: "channels");
+        AddSection("disclaimer", "免责声明", native: true);
         AddSection("about", "关于", native: true);
 
         // 初始 section：优先宿主显式定位（layout.section），未知/缺省 → 通用
@@ -279,7 +281,7 @@ public sealed partial class SettingsWindow : NativeWindow
     // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "appearance" or "user" or "api" or "memory" or "tasks" or "about";
+        => id is "general" or "appearance" or "user" or "api" or "api-advanced" or "disclaimer" or "memory" or "tasks" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
@@ -287,6 +289,8 @@ public sealed partial class SettingsWindow : NativeWindow
         "appearance" => BuildAppearanceSection(),
         "user" => BuildUserSection(),
         "api" => BuildApiSection(),
+        "api-advanced" => BuildRuntimeSection(),
+        "disclaimer" => BuildDisclaimerSection(),
         "memory" => BuildMemorySection(),
         "tasks" => BuildTasksSection(),
         "about" => BuildAboutSection(),
@@ -565,6 +569,8 @@ public sealed partial class SettingsWindow : NativeWindow
             GetDouble("chatLineHeight", 1.75), GetBool("assistantBubbleEnabled")),
         "user" => NodeRawJson("user"),
         "api" => NodeRawJson("api"),
+        "api-advanced" => NodeRawJson("runtime"),
+        "disclaimer" => "",
         "memory" => NodeRawJson("memory"),
         "tasks" => NodeRawJson("tasks"),
         // 关于：静态内容（版本号启动后不变），只需首次构建
