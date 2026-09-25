@@ -56,7 +56,7 @@ export interface NativeBridgeActions {
    * install/import-zip 为异步（下载或弹框+校验+解压），完成后由宿主重推
    * state.plugins 快照（含操作结果 notice）。
    */
-  pluginAction?(action: string, id?: string): Promise<void> | void;
+  pluginAction?(action: string, id?: string, payload?: Record<string, unknown>): Promise<void> | void;
 }
 
 let client: NativeWindowsClient | null = null;
@@ -147,9 +147,15 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "openPanel":
         case "refresh":
         case "import-zip":
+        case "set-limits":
           // 插件管理窗操作：{"kind":"plugins","action":"install","id":...}
+          // set-limits 额外携带 storageQuotaMb / memoryLimitMb（透传整个 frame）
           if (frameKind === "plugins") {
-            void actions.pluginAction?.(action, typeof frame.id === "string" ? frame.id : undefined);
+            void actions.pluginAction?.(
+              action,
+              typeof frame.id === "string" ? frame.id : undefined,
+              action === "set-limits" ? (frame as unknown as Record<string, unknown>) : undefined,
+            );
           }
           break;
         default:

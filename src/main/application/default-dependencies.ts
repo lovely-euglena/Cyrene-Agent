@@ -123,6 +123,12 @@ import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
 import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
+import {
+  MAX_PLUGIN_MEMORY_LIMIT_MB,
+  MAX_PLUGIN_STORAGE_QUOTA_MB,
+  resolvePluginMemoryLimitMb,
+  resolvePluginStorageQuotaMb,
+} from "../../plugins/limits";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -241,6 +247,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const buildPluginSnapshot = async (): Promise<unknown> => {
     const mkt = getPluginMarketService();
     const market = pluginManager && mkt ? await mkt.listMarket() : null;
+    const general = loadGeneralSettings();
+    const storageQuotaMb = resolvePluginStorageQuotaMb(general.pluginStorageQuotaMb);
+    const memoryLimitMb = resolvePluginMemoryLimitMb(general.pluginMemoryLimitMb);
     return {
       runtimeEnabled: Boolean(pluginManager),
       plugins: pluginManager ? pluginManager.overview().plugins : [],
@@ -251,6 +260,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       marketSources: market?.sources ?? [],
       marketError: market && !market.ok ? (market.error ?? "") : undefined,
       notice: nativePluginNotice ?? undefined,
+      // 资源限制（「设置」页）：生效值 + 是否来自设置页（false = 环境变量/默认）
+      limits: {
+        storageQuotaMb,
+        memoryLimitMb,
+        storageQuotaConfigured: typeof general.pluginStorageQuotaMb === "number",
+        memoryLimitConfigured: typeof general.pluginMemoryLimitMb === "number",
+      },
     };
   };
 
@@ -793,7 +809,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             pushSettingsSnapshotToNative();
           },
           // .NET 插件管理窗操作：manager/market 运行期引用（startPlugins 之后可用）
-          pluginAction: async (action, id) => {
+          pluginAction: async (action, id, payload) => {
             const manager = pluginManager;
             const market = getPluginMarketService();
             // 运行时总开关动态起停（.NET 管理窗「未启用」提示条触发）
@@ -805,6 +821,22 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               if (action === "enable-runtime" && !manager && lastPluginArgs) {
                 const [svcs, sched, rt] = lastPluginArgs;
                 pluginManager = await startPluginsImpl(svcs, sched, rt) ?? undefined;
+              }
+              await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
+              return;
+            }
+            // 资源限制（「设置」页）：不依赖插件运行时是否启用，直接持久化设置
+            if (action === "set-limits") {
+              const storage = clampInt(payload?.storageQuotaMb, 0, MAX_PLUGIN_STORAGE_QUOTA_MB);
+              const memory = clampInt(payload?.memoryLimitMb, 0, MAX_PLUGIN_MEMORY_LIMIT_MB);
+              if (storage === null || memory === null) {
+                setPluginNotice(
+                  "error",
+                  `资源限制参数非法：存储 0-${MAX_PLUGIN_STORAGE_QUOTA_MB} / 内存 0-${MAX_PLUGIN_MEMORY_LIMIT_MB}（MiB 整数）`,
+                );
+              } else {
+                saveGeneralSettings({ pluginStorageQuotaMb: storage, pluginMemoryLimitMb: memory });
+                setPluginNotice("ok", "资源限制已保存（存储配额对后续启动/重启的插件生效）");
               }
               await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
               return;
@@ -983,6 +1015,8 @@ createTray: (input) => {
         const initialSettings = loadGeneralSettings();
         const screenshot = initializeScreenshotService({
           initialHotkey: initialSettings.screenshotHotkey ?? "Alt+Shift+S",
+          initialBackend: initialSettings.screenshotBackend ?? "builtin",
+          initialSnipastePath: initialSettings.snipastePath ?? "",
           getReactChatWindow: () => reactChatWindow,
           capturePetWindow: () => shell.windowManager.capturePetWindow(),
           ipc: shell.ipc,

@@ -269,11 +269,15 @@ public static class RequestRouter
         Protocol?.SendEvent(body);
     }
 
-    /// <summary>窗口请求宿主动作（openSettings 等）。</summary>
-    public static void SendCommand(string kind, string action, string? section = null)
+    /// <summary>窗口请求宿主动作（openSettings 等）；extra 附加字段随 cmd 帧透传。</summary>
+    public static void SendCommand(string kind, string action, string? section = null, Dictionary<string, object?>? extra = null)
     {
         var payload = new Dictionary<string, object?> { ["op"] = "event", ["name"] = "cmd", ["kind"] = kind, ["action"] = action };
         if (section is not null) payload["section"] = section;
+        if (extra is not null)
+        {
+            foreach (var pair in extra) payload[pair.Key] = pair.Value;
+        }
         Protocol?.SendEvent(payload);
     }
 }

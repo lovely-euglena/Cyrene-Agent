@@ -105,7 +105,7 @@ async register(ctx) {
 | `ctx.registerIpc(channel, handler)` | 注册私有 IPC，实际通道名 `plugin:<id>:<channel>`；channel 只允许字母数字 `.` `_` `-`，≤64 字符 |
 | `ctx.signal` | 只读 AbortSignal；停止流程开始时先于 `unregister()` 被取消 |
 | `ctx.onDispose(callback)` | 登记兜底清理回调（逆序执行，单个最多 5 秒） |
-| `ctx.storage.set(key, value)` / `ctx.storage.get(key)` | 私有 JSON 存储，key 匹配 `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$` |
+| `ctx.storage.set(key, value)` / `ctx.storage.get(key)` | 私有 JSON 存储，key 匹配 `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`；单插件默认 64 MiB 软配额（插件管理窗「设置」可调） |
 | `ctx.registerChannelAdapter(adapter)` | 注册渠道适配器（需声明 `deps: ["channels"]`） |
 | `ctx.deps.llm.generateText(messages, opts)` | 调用宿主 LLM（需声明 `deps: ["llm"]`） |
 | `ctx.deps.channels.has(id)` | 只读查询渠道是否已存在 |

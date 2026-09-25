@@ -41,6 +41,15 @@ public sealed class PluginManagerWindow : NativeWindow
     private string _search = "";
     /// <summary>最近一次宿主操作的提示（导入 ZIP / 刷新结果），随快照下发</summary>
     private (string Kind, string Message)? _notice;
+    /// <summary>资源限制（「设置」页）：生效值与是否由设置页显式配置</summary>
+    private int _storageQuotaMb = 64;
+    private int _memoryLimitMb = 2048;
+    private bool _storageQuotaConfigured;
+    private bool _memoryLimitConfigured;
+    private TextBox? _storageQuotaBox;
+    private TextBox? _memoryLimitBox;
+    private TextBlock? _limitsHint;
+    private TextBlock? _limitsStatus;
 
     private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime, bool CanOpen);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
@@ -80,6 +89,9 @@ public sealed class PluginManagerWindow : NativeWindow
         tabMarket.Content = marketPanel;
         _tabs.Items.Add(tabInstalled);
         _tabs.Items.Add(tabMarket);
+        var tabLimits = new TabItem { Header = "设置", FontSize = 13 };
+        tabLimits.Content = MakeLimitsPanel();
+        _tabs.Items.Add(tabLimits);
 
         var root = new DockPanel();
         DockPanel.SetDock(_status, System.Windows.Controls.Dock.Bottom);
@@ -138,6 +150,124 @@ public sealed class PluginManagerWindow : NativeWindow
         return new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(12) };
     }
 
+    /// <summary>「设置」页：插件资源限制（软限制，防无限占用；0 = 不限）。</summary>
+    private ScrollViewer MakeLimitsPanel()
+    {
+        var panel = new StackPanel { Margin = new Thickness(4, 8, 4, 8) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "资源限制",
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = NativeTheme.TextStrongBrush,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "软限制：存储配额只约束走插件存储 API 的写入（保存后对之后启动/重启的插件生效）；"
+                 + "内存上限仅作用于 .NET 插件进程（实时生效，超出即终止）。0 = 不限。",
+            FontSize = 11.5,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14),
+        });
+
+        _storageQuotaBox = MakeLimitBox(_storageQuotaMb);
+        panel.Children.Add(MakeLimitRow("KV 存储配额（MiB）", _storageQuotaBox));
+        _memoryLimitBox = MakeLimitBox(_memoryLimitMb);
+        panel.Children.Add(MakeLimitRow("内存上限（MiB，仅 .NET 插件）", _memoryLimitBox));
+
+        _limitsHint = new TextBlock
+        {
+            FontSize = 11.5,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 10),
+        };
+        panel.Children.Add(_limitsHint);
+
+        var saveBtn = new Button
+        {
+            Content = "保存资源限制",
+            Style = NativeTheme.PrimaryButtonStyle,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(16, 6, 16, 6),
+        };
+        saveBtn.Click += (_, _) => SaveLimitsFromInputs();
+        panel.Children.Add(saveBtn);
+
+        _limitsStatus = new TextBlock
+        {
+            FontSize = 11.5,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 10, 0, 0),
+        };
+        panel.Children.Add(_limitsStatus);
+        return new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(16) };
+    }
+
+    private static TextBox MakeLimitBox(int value) => new()
+    {
+        Text = value.ToString(),
+        Width = 120,
+        FontSize = 12.5,
+        Style = NativeTheme.TextBoxStyle,
+        HorizontalAlignment = HorizontalAlignment.Left,
+    };
+
+    private static StackPanel MakeLimitRow(string label, TextBox box)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            Width = 280,
+            FontSize = 12.5,
+            Foreground = NativeTheme.TextDefaultBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        row.Children.Add(box);
+        return row;
+    }
+
+    private static string FormatLimit(int value) => value <= 0 ? "不限" : $"{value} MiB";
+
+    private void SyncLimitInputs()
+    {
+        if (_storageQuotaBox is { IsKeyboardFocused: false }) _storageQuotaBox.Text = _storageQuotaMb.ToString();
+        if (_memoryLimitBox is { IsKeyboardFocused: false }) _memoryLimitBox.Text = _memoryLimitMb.ToString();
+    }
+
+    private void SetLimitsStatus(string text, bool error)
+    {
+        if (_limitsStatus is null) return;
+        _limitsStatus.Text = text;
+        _limitsStatus.Foreground = error
+            ? new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A))
+            : NativeTheme.TextMutedBrush;
+    }
+
+    private void SaveLimitsFromInputs()
+    {
+        if (!int.TryParse(_storageQuotaBox?.Text.Trim(), out var storage) || storage < 0 || storage > 10240)
+        {
+            SetLimitsStatus("存储配额需为 0-10240 的整数（MiB，0 = 不限）", error: true);
+            return;
+        }
+        if (!int.TryParse(_memoryLimitBox?.Text.Trim(), out var memory) || memory < 0 || memory > 65536)
+        {
+            SetLimitsStatus("内存上限需为 0-65536 的整数（MiB，0 = 不限）", error: true);
+            return;
+        }
+        RequestRouter.SendCommand("plugins", "set-limits", null, new Dictionary<string, object?>
+        {
+            ["storageQuotaMb"] = storage,
+            ["memoryLimitMb"] = memory,
+        });
+        SetLimitsStatus("正在保存…", error: false);
+    }
+
     private void ApplyWindowBoundsFromLayout(JsonElement layout)
     {
         try
@@ -174,6 +304,19 @@ public sealed class PluginManagerWindow : NativeWindow
             _installing = inst.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToList();
         }
         _runtimeEnabled = payload.TryGetProperty("runtimeEnabled", out var rt) && rt.ValueKind == JsonValueKind.True;
+        if (payload.TryGetProperty("limits", out var limitsEl) && limitsEl.ValueKind == JsonValueKind.Object)
+        {
+            if (limitsEl.TryGetProperty("storageQuotaMb", out var sq) && sq.TryGetInt32(out var sqi)) _storageQuotaMb = sqi;
+            if (limitsEl.TryGetProperty("memoryLimitMb", out var mq) && mq.TryGetInt32(out var mqi)) _memoryLimitMb = mqi;
+            _storageQuotaConfigured = Bool(limitsEl, "storageQuotaConfigured");
+            _memoryLimitConfigured = Bool(limitsEl, "memoryLimitConfigured");
+            SyncLimitInputs();
+            if (_limitsHint is not null)
+            {
+                _limitsHint.Text = $"当前生效：存储 {FormatLimit(_storageQuotaMb)} · 内存 {FormatLimit(_memoryLimitMb)}"
+                    + ((!_storageQuotaConfigured || !_memoryLimitConfigured) ? "（未配置项来自环境变量/默认值）" : "");
+            }
+        }
         // 宿主操作提示（导入 ZIP / 刷新结果）：有则显示，否则回落到计数行
         _notice = null;
         if (payload.TryGetProperty("notice", out var noticeEl) && noticeEl.ValueKind == JsonValueKind.Object)

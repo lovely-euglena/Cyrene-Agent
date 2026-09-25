@@ -91,7 +91,7 @@ describe("native-windows-bridge · cmd 动作分发", () => {
   it("plugins openWindow → 打开插件自有窗口（带 id）；open 仍归管理窗入口", () => {
     const actions = initBridge();
     dispatch({ kind: "plugins", action: "openWindow", id: "my-plugin" });
-    expect(actions.pluginAction).toHaveBeenCalledWith("openWindow", "my-plugin");
+    expect(actions.pluginAction).toHaveBeenCalledWith("openWindow", "my-plugin", undefined);
     expect(actions.openPluginManager).not.toHaveBeenCalled();
   });
 
