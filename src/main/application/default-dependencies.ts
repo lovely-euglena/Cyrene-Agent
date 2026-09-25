@@ -138,6 +138,7 @@ import {
   bindNativeDataProviders,
   relayAuxBroadcast,
   spawnNativeWindow,
+  disposeNativeWindowsBridge,
 } from "../windows/native-windows-bridge";
 import { connectDetachedTray } from "../tray-detached";
 import { openSettingsWindow } from "../windows/settings-router";
@@ -538,6 +539,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+  // 原生窗口进程（cyrene-native serve）随宿主退出一并回收：主动结束其 stdin
+  // 并杀进程。缺此清理时它只在 stdin EOF 后「无窗口空转」，成为残留进程
+  // （用户报「托盘退出时有进程残留」；C# 侧 EOF 自退也已补上，双保险）。
+  shutdown.register({
+    id: "native-windows",
+    phase: "stopLocalResources",
+    dispose: () => { disposeNativeWindowsBridge("shutdown"); },
+  });
 
   // 注入应用图标路径 getter（窗口工厂统一读取，避免循环依赖）。
   // 必须在 shell 阶段之前注入：聊天窗口壳与托盘在 shell 阶段创建时就会读取，
@@ -602,7 +611,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           // 设置窗路由：默认 WPF（.NET）；channels/TTS/ASR 及 Electron 专属
           // section 弹 Electron（settings-router 统一裁决 + 失败回退）
           openSettings: openSettingsWindow,
-          openChatWindow: () => windowManager.createReactChatWindowShell(),
+          // native 状态栏「打开聊天」：必须走 openReactChatWindow（建壳+载页+显示）；
+          // 只调 createReactChatWindowShell 会创建不可见的空壳，点了没反应。
+          openChatWindow: () => { void windowManager.openReactChatWindow(); },
           openCallWindow: () => windowManager.createCallWindow(),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),
           cycleModelProvider: () => {

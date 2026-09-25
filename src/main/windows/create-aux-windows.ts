@@ -219,11 +219,18 @@ export function createSidebarWindow(): void {
   if (isNativeWindowActive("sidebar")) {
     const layout = computeLayout();
     void spawnNativeWindow("sidebar", { sidebar: layout.sidebar }).then((ok) => {
-      if (!ok) console.warn("[Sidebar] native spawn failed — fallback unavailable until next call");
+      if (ok) return;
+      // native 进程不可用 / spawn 失败：回退 Electron BrowserWindow，
+      // 保证托盘入口永不「点了没反应」（旧实现此处只 warn 后 return）。
+      console.warn("[Sidebar] native spawn failed — falling back to BrowserWindow");
+      createSidebarBrowserWindow();
     });
     return;
   }
+  createSidebarBrowserWindow();
+}
 
+function createSidebarBrowserWindow(): void {
   if (sidebarWindow && !sidebarWindow.isDestroyed()) {
     sidebarWindow.show();
     sidebarWindow.focus();
@@ -280,11 +287,16 @@ export function createTasksWindow(): void {
   if (isNativeWindowActive("tasks")) {
     const layout = computeLayout();
     void spawnNativeWindow("tasks", { tasks: layout.tasks }).then((ok) => {
-      if (!ok) console.warn("[Tasks] native spawn failed — fallback unavailable until next call");
+      if (ok) return;
+      console.warn("[Tasks] native spawn failed — falling back to BrowserWindow");
+      createTasksBrowserWindow();
     });
     return;
   }
+  createTasksBrowserWindow();
+}
 
+function createTasksBrowserWindow(): void {
   if (tasksWindow && !tasksWindow.isDestroyed()) {
     tasksWindow.show();
     tasksWindow.focus();
