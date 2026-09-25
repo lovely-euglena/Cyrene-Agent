@@ -671,7 +671,7 @@ export async function buildAgentRunOptions(
     && isPlanReadOnly(conversationIdForPlan);
   const enabledTools = planReadOnly
     ? (modeEnabledTools as readonly ToolDefinition[]).filter(
-      (t) => policyFor("read-only", (t as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "safe") === "allow",
+      (t) => policyFor("read-only", (t as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "undeclared") === "allow",
     )
     : modeEnabledTools;
 

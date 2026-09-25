@@ -65,7 +65,10 @@ export interface ToolDefinition {
   /** Runtime 校验受控参数来源；这些值不能由模型自由编造。支持带 kind 的对象形式用于类型化引用验证。 */
   controlledInput?: Record<string, ControlledInputPolicy>;
   enabled: boolean;     // 用户是否启用（对应设置面板的开关）
-  // 危险等级：决定该工具在哪些权限档位下可调用；不填默认 "safe"
+  // 危险等级：决定该工具在哪些权限档位下可调用。
+  // 未声明时由权限策略按 "undeclared" 兜底（只读/指定目录档拒绝、每次审批档询问、
+  // 完全访问档放行）——不得静默当成 "safe" 绕过审批；内置工具必须显式声明
+  // （契约测试 tool-risk-contract.test.ts 锁定）。
   risk?: ToolRiskLevel;
   /** 工具暴露的会话模式白名单。未设置 = 全模式通用（向后兼容，行为不变）。
    *  仅 learn/code/work 三种模式参与过滤；chat 模式不暴露任何工具。
@@ -207,6 +210,7 @@ toolRegistry.register({
     '- 联网信息（那是 web_search）\n\n' +
     '参数：query (必填，搜索关键词)，topK (可选，返回条数，默认5)。',
   enabled: true,
+  risk: "safe",
   effectKind: "read",
   verificationPolicy: "none",
   inputSchema: {
@@ -238,6 +242,7 @@ toolRegistry.register({
     '- 用户从没提过的信息（查不到就老实说不知道）\n\n' +
     '参数：query (必填，搜索关键词)，topK (可选，返回条数，默认5)。',
   enabled: true,
+  risk: "safe",
   effectKind: "read",
   verificationPolicy: "none",
   inputSchema: {
@@ -372,6 +377,7 @@ toolRegistry.register({
     '- 导入文档内容（那是 imported_docs）\n\n' +
     '参数：无参 = 概览（L0/L1 全量 + L2 目录最新 50 条）；id (可选，L2 条目 id) = 读该条全文。',
   enabled: true,
+  risk: "safe",
   effectKind: "read",
   verificationPolicy: "none",
   inputSchema: {
@@ -433,6 +439,7 @@ toolRegistry.register({
     'field (L0 可选：preferredName/occupation/longTermInterests/language/permanentNote；L1 可选：recentGoals/recentPreferences/currentProject，缺省按内容自动分流)；\n' +
     'slug (L2 可选，≤20 字标题)，sourceQuote (L2 可选，用户原话)。',
   enabled: true,
+  risk: "fs-write",
   effectKind: "mutation",
   verificationPolicy: "none",
   inputSchema: {

@@ -32,9 +32,9 @@ import type { HarnessRun } from "./cyrene-harness";
 /** 工具轮结果：completed = 结果已全部写回，继续下一轮；cancelled = 用户取消。 */
 export type ToolRoundOutcome = "completed" | "cancelled";
 
-/** 从工具注册表读取工具注册时声明的风险级；未注册（如 harness 内置工具）视为 safe。 */
+/** 从工具注册表读取工具注册时声明的风险级；缺失按 "undeclared" 处理（不得当成 safe）。 */
 function toolRiskOf(run: HarnessRun, toolId: string): ToolRiskLevel {
-  return run.input.tools.find((t) => t.id === toolId)?.risk ?? "safe";
+  return run.input.tools.find((t) => t.id === toolId)?.risk ?? "undeclared";
 }
 
 /** 发布工具完成观察事件：只读稳定元数据，未注入回调时零开销。 */

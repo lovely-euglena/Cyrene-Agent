@@ -346,7 +346,7 @@ async function executeToolCall(
     return failed("E_TOOL_UNAVAILABLE", "工具不可用: " + tc.name);
   }
 
-  const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk || "safe";
+  const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "undeclared";
   const perm = await checkPermission({
     toolId: tc.name,
     toolName: tool.name,

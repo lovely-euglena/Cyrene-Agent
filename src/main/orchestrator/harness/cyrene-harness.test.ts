@@ -182,6 +182,7 @@ function safeReadTool(id: string): ToolDefinition {
     name: id,
     description: "safe read",
     enabled: true,
+    risk: "safe",
     inputSchema: { type: "object", properties: {} },
     effectKind: "read",
     isConcurrencySafe: () => true,
@@ -927,9 +928,12 @@ describe("CyreneHarness completion", () => {
     });
 
     // read_file 被 ask_user 排他挤掉：not_executed 且无耗时；ask_user 正常完成带耗时
+    // read_file 被 ask_user 顶掉：not_executed 观察在 ask_user 后补发。
+    // ask_user 不在 run.input.tools 里（宿主注入），风险级按 "undeclared" 上报
+    // （缺省不得当成 safe）。
     expect(finished).toEqual([
       expect.objectContaining({ toolId: "read_file", toolCallId: "read-1", status: "not_executed", risk: "safe" }),
-      expect.objectContaining({ toolId: "ask_user", toolCallId: "ask-1", status: "success", risk: "safe" }),
+      expect.objectContaining({ toolId: "ask_user", toolCallId: "ask-1", status: "success", risk: "undeclared" }),
     ]);
     expect("durationMs" in finished[0]).toBe(false);
     expect(finished[1].durationMs).toBeGreaterThanOrEqual(0);

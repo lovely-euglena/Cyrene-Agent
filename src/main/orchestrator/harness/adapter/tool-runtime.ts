@@ -44,7 +44,7 @@ export function prepareToolRuntime(input: {
       && isPlanReadOnly(threadId)
     ) {
       const planTool = toolRegistry.getById(toolId) as (ToolDefinition & { risk?: ToolRiskLevel }) | undefined;
-      const planRisk: ToolRiskLevel = planTool?.risk ?? "safe";
+      const planRisk: ToolRiskLevel = planTool?.risk ?? "undeclared";
       if (policyFor("read-only", planRisk) !== "allow") {
         console.log(`[HarnessAdapter] [Plan] read-only enforcement blocked tool=${toolId} risk=${planRisk}`);
         return false;
@@ -52,7 +52,7 @@ export function prepareToolRuntime(input: {
     }
     const tool = toolRegistry.getById(toolId);
     if (!tool) return false;
-    const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "safe";
+    const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "undeclared";
     return (await checkPermission({
       toolId,
       toolName: tool.name,

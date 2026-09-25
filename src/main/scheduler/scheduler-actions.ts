@@ -97,7 +97,7 @@ export function createSchedulerActions(deps: SchedulerActionsDeps): SchedulerAct
       name: tool.name,
       description: tool.description,
       enabled: tool.enabled,
-      risk: tool.risk ?? "safe",
+      risk: tool.risk ?? "undeclared",
     }))),
 
     add(input) {
