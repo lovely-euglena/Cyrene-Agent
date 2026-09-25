@@ -111,7 +111,12 @@ public sealed partial class SettingsWindow : NativeWindow
             VerticalAlignment = VerticalAlignment.Top,
         };
         dragBar.MouseLeftButtonDown += (_, e) => { try { _window.DragMove(); } catch { /* maximized */ } };
-        root.Child = dragBar;
+        // ⚠️ 曾误写成 root.Child = dragBar —— 那会把上面建好的 grid（导航+内容）
+        // 整个替换成一根透明空条，设置窗表现为「整页空白」。拖动条必须以覆盖层
+        // 形式叠加在 grid 之上（不改变 grid 作为 root.Child）。
+        Grid.SetColumnSpan(dragBar, 2);
+        Panel.SetZIndex(dragBar, 100);
+        grid.Children.Add(dragBar);
 
         BuildSections(navPanel);
         _window.Closed += (_, _) => { StopDebounceTimers(); RaiseClosed(); };
@@ -763,8 +768,20 @@ public sealed partial class SettingsWindow : NativeWindow
 
     // ── NativeWindow 实现 ──
 
-    public override void ShowWindow() => _window.Show();
-    public override void Activate() => _window.Activate();
+    public override void ShowWindow()
+    {
+        if (!_window.IsVisible) _window.Show();
+        _window.Activate();
+    }
+
+    public override void Activate()
+    {
+        if (!_window.IsVisible) _window.Show();
+        if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
+        _window.Activate();
+        _window.Focus();
+    }
+
     public override void Close() => _window.Dispatcher.Invoke(() => _window.Close());
 
     public override void ApplyLayout(JsonElement layout)
