@@ -3,7 +3,7 @@
 // 副作用导入：模块加载时执行事件绑定 + 表情包列表加载。
 
 import { setPreferencesSaveStatus } from "../shared/save-status";
-import { screenshotHotkeyInput } from "../appearance/dom";
+import { screenshotHotkeyInput, screenshotBackendSelect, snipastePathInput, snipastePathRow } from "../appearance/dom";
 import { preferencesState } from "./state";
 import { stickerAddError, stickerAddConfirm, stickerAddCancel, stickerAddPickBtn, stickerAddFileName, stickerAddId, stickerAddDesc, stickerAddPhrases, stickerAddOverlay } from "./dom";
 import { addStickerBtn, openStickerManagerBtn } from "../shared/shell";
@@ -48,6 +48,34 @@ screenshotHotkeyInput?.addEventListener("keydown", (e) => {
   if (parts.length < 2) return;
 
   screenshotHotkeyInput!.value = parts.join("+");
+  setPreferencesSaveStatus("有未保存的更改");
+});
+
+// ── 截图方式：内置 / Snipaste（含路径输入与行显隐） ──
+let screenshotBackend: "builtin" | "snipaste" = "builtin";
+
+export function getScreenshotBackendValue(): "builtin" | "snipaste" {
+  return screenshotBackend;
+}
+
+export function applyScreenshotBackendSelection(value: "builtin" | "snipaste"): void {
+  screenshotBackend = value === "snipaste" ? "snipaste" : "builtin";
+  screenshotBackendSelect?.querySelectorAll<HTMLButtonElement>(".option-block").forEach((button) => {
+    const selected = button.dataset.value === screenshotBackend;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  if (snipastePathRow) snipastePathRow.hidden = screenshotBackend !== "snipaste";
+}
+
+screenshotBackendSelect?.querySelectorAll<HTMLButtonElement>(".option-block").forEach((button) => {
+  button.addEventListener("click", () => {
+    applyScreenshotBackendSelection(button.dataset.value === "snipaste" ? "snipaste" : "builtin");
+    setPreferencesSaveStatus("有未保存的更改");
+  });
+});
+
+snipastePathInput?.addEventListener("input", () => {
   setPreferencesSaveStatus("有未保存的更改");
 });
 

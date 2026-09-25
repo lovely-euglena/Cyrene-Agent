@@ -67,7 +67,7 @@ import { parsePositiveIntOrThrow, parseCommandLine } from "./shared/parse";
 import { apiState, type SavedProfileLite } from "./api/state";
 import { apiForm, apiRuntimeForm, presetCards, profileList, profileListCount, profileEditorTitle, deleteProfileBtn, presetWebsiteLink, displayNameInput, baseUrlInput, baseUrlResetBtn, modelInput, modelInputSuggestions, contextWindowInput, apiKeyInput, apiKeyLabel, apiKeyHint, testConnectionBtn, transportSelect, transportHint, endpointPreview, customEndpointControls, customEndpointOverrides, customEndpointSummary, customEndpointGuideBtn, workFlowAdaptBtn, apiNoteText, multimodalToggle, embeddingDimensionsInput, toggleEnableThinking, toggleDisableThinking, toggleDisableMaxToken } from "./api/dom";
 import { visionBaseUrlInput, visionApiKeyInput, visionModelInput, visionFieldsWrap, testVisionBtn, visionTestStatus } from "./vision/dom";
-import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, assistantBubbleEnabledInput, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput, toastSoundEnabledInput } from "./appearance/dom";
+import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, assistantBubbleEnabledInput, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, snipastePathInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput, toastSoundEnabledInput } from "./appearance/dom";
 import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, momentsEnabledInput, cyreneMomentsPostingEnabledInput, cyreneMomentsReactionsEnabledInput, momentsCharacterReactionsEnabledInput, momentsLivelinessSelect, momentsPostingRow, momentsReactionsRow, momentsCharacterRow, momentsLivelinessRow, citaEnabledInput, citaEngineSelect, clearChatHistoryBtn, customStyleSamplingBtn, customStylePromptBtn, gitCommitAuthorNameInput, gitCommitAuthorEmailInput } from "./general/dom";
 import { minBtn, closeBtn, preferencesForm, sectionTitle, sectionHint, placeholderPanel, cyrenePanel, disclaimerPanel, pluginsPanel, placeholderIcon, placeholderTitle, placeholderCopy, saveStatus, runtimeSaveStatus, preferencesSaveStatus, cyreneSaveStatus, openStickerManagerBtn, addStickerBtn } from "./shared/shell";
 import { pluginAddBtn, permissionBlocksWrap, permissionNote } from "./plugins/dom";
@@ -119,7 +119,7 @@ import "./plugins/panel";  // 副作用导入：执行事件绑定 + 初始加�
 import "./plugins/permission";  // 副作用导入：权限档位 UI + 风险确认弹窗
 import "./tts/panel";  // 副作用导入：TTS 配置加载 + 引擎切换 + 测试发音 + 音色复刻
 import "./rag/panel";  // 副作用导入：RAG 模型切换 + Embedding 下载/删除 + Reranker 模式
-import "./preferences/panel";  // 副作用导入：截图热键捕获 + 表情包列表/添加/删除
+import { applyScreenshotBackendSelection, getScreenshotBackendValue } from "./preferences/panel";  // 副作用导入：截图热键捕获 + 截图方式 + 表情包列表/添加/删除
 import "./mcp/panel";  // 副作用导入：MCP Server 添加/删除/启停 + 自定义端点接入说明
 import "./tokens/panel";  // 副作用导入：Token 用量图表 + 时间范围切换
 import { t } from "./i18n";
@@ -1077,6 +1077,10 @@ async function loadGeneralSettings(): Promise<void> {
     if (screenshotHotkeyInput) {
       screenshotHotkeyInput.value = cfg.screenshotHotkey ?? "Alt+Shift+S";
     }
+    applyScreenshotBackendSelection(cfg.screenshotBackend === "snipaste" ? "snipaste" : "builtin");
+    if (snipastePathInput) {
+      snipastePathInput.value = cfg.snipastePath ?? "";
+    }
     void window.settings!.channelsGetStatus()
       .then((status: unknown) => renderProactiveDeliveryAvailability(status as Record<string, { phase?: string }>))
       .catch(() => renderProactiveDeliveryAvailability({}));
@@ -1949,6 +1953,8 @@ preferencesForm.addEventListener("submit", async (e) => {
       proactiveChatMode: getProactiveChatValue(),
       proactiveDeliveryTarget: getProactiveDeliveryValue(),
       screenshotHotkey: screenshotHotkeyInput?.value || "Alt+Shift+S",
+      screenshotBackend: getScreenshotBackendValue(),
+      snipastePath: snipastePathInput?.value.trim() ?? "",
     });
     setPreferencesSaveStatus(t("settings.status.saved"), "is-ok");
   } catch {

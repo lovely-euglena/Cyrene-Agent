@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as fs from "fs";
 import { spawn } from "node:child_process";
 import { trackChildProcess } from "../child-processes";
-import { app, BrowserWindow, globalShortcut, nativeImage } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, nativeImage } from "electron";
 import { randomUUID } from "crypto";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
@@ -11,14 +11,21 @@ import { resolveScreenshotHelperPath } from "./helper-path";
 import {
   createScreenshotService,
   validateScreenshotInsert,
+  type ScreenshotBackendKind,
   type ScreenshotInsertData,
   type ScreenshotService,
 } from "./screenshot-service";
+import { detectSnipasteExecutable } from "./snipaste-detect";
+import { SnipasteScreenshotClient, SwitchableScreenshotClient } from "./snipaste-client";
 
 export type { ScreenshotService };
 
 export interface ScreenshotLifecycleOptions {
   initialHotkey: string;
+  /** 初始截图后端（缺省 builtin）。 */
+  initialBackend?: ScreenshotBackendKind;
+  /** Snipaste.exe 路径；空 = 自动检测。 */
+  initialSnipastePath?: string;
   getReactChatWindow: () => BrowserWindow | null;
   capturePetWindow: () => Promise<Electron.NativeImage | null>;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
@@ -91,7 +98,7 @@ export function initializeScreenshotService(
     };
   };
 
-  const client = new ElectronScreenshotHelperClient({
+  const builtinClient = new ElectronScreenshotHelperClient({
     spawnImpl: (command, args) => {
       const child = spawn(command, args, {
         stdio: ["pipe", "pipe", "pipe"],
@@ -110,6 +117,44 @@ export function initializeScreenshotService(
     screenshotDirectory,
     logger: console,
   });
+
+  // Snipaste 后端：探测（设置路径 > 环境变量 > PATH > 常见目录 > 注册表）+
+  // 剪贴板差值判定；后端切换由 SwitchableScreenshotClient 承载。
+  let snipastePath = options.initialSnipastePath ?? "";
+  let cachedSnipasteExecutable: string | null = null;
+  let snipasteDetectInFlight: Promise<string | null> | null = null;
+  const resolveSnipasteExecutable = (): Promise<string | null> => {
+    if (cachedSnipasteExecutable) return Promise.resolve(cachedSnipasteExecutable);
+    if (!snipasteDetectInFlight) {
+      snipasteDetectInFlight = detectSnipasteExecutable(snipastePath)
+        .then((resolved) => {
+          cachedSnipasteExecutable = resolved;
+          return resolved;
+        })
+        .finally(() => {
+          snipasteDetectInFlight = null;
+        });
+    }
+    return snipasteDetectInFlight;
+  };
+  const snipasteClient = new SnipasteScreenshotClient({
+    resolveExecutable: resolveSnipasteExecutable,
+    screenshotDirectory,
+    readClipboardPng: () => {
+      const image = clipboard.readImage();
+      return image.isEmpty() ? null : image.toPNG();
+    },
+    spawnImpl: (command, args) => {
+      const child = spawn(command, args, { stdio: "ignore", windowsHide: true });
+      trackChildProcess(child, "snipaste");
+      return child;
+    },
+    logger: console,
+  });
+  const client = new SwitchableScreenshotClient(
+    options.initialBackend === "snipaste" ? snipasteClient : builtinClient,
+  );
+
   // 启动即建目录 + 记录实际输出目录（排查 0x80070003 类路径问题）。
   void ensureScreenshotDirectory(screenshotDirectory);
   console.log("[Screenshot] helper output-dir =", screenshotDirectory);
@@ -160,5 +205,19 @@ export function initializeScreenshotService(
   });
 
   service.init(options.initialHotkey);
-  return service;
+  return {
+    ...service,
+    applyBackend(backend: ScreenshotBackendKind, nextSnipastePath: string) {
+      snipastePath = nextSnipastePath ?? "";
+      cachedSnipasteExecutable = null;
+      snipasteDetectInFlight = null;
+      client.setActive(backend === "snipaste" ? snipasteClient : builtinClient);
+      console.log(
+        "[Screenshot] backend =",
+        backend,
+        backend === "snipaste" ? (snipastePath ? `path=${snipastePath}` : "(auto-detect)") : "",
+      );
+      return { ok: true };
+    },
+  };
 }

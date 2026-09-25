@@ -62,6 +62,8 @@
     "pastedImageInvalid": "粘贴的内容不是有效图片。",
     "pastedImageFailed": "粘贴图片失败：{{error}}",
     "screenshotHelperNotReady": "截图组件未就绪，请稍后重试。",
+    "screenshotSnipasteUnavailable": "未检测到可用的 Snipaste，请在设置中填写路径，或切回内置截图。",
+    "screenshotSnipasteTimeout": "Snipaste 截图等待超时，已取消。",
     "screenshotCancelled": "已取消截图。",
     "screenshotFileMissing": "截图失败：未生成截图文件。",
     "screenshotFailed": "截图失败：{{reason}}",

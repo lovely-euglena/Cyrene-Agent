@@ -8,6 +8,8 @@ export type ScreenshotInsertCandidate =
   Omit<ScreenshotInsertPayload, "previewUrl">
   & { previewUrl?: string };
 
+export type ScreenshotBackendKind = "builtin" | "snipaste";
+
 export interface ScreenshotService {
   init(initialHotkey: string): void;
   prewarm(): Promise<void>;
@@ -17,6 +19,8 @@ export interface ScreenshotService {
   suspendHotkey(): void;
   resumeHotkey(): void;
   shutdown(): Promise<void>;
+  /** 截图后端切换（设置变更时由生命周期层调用）；测试替身可以不提供。 */
+  applyBackend?(backend: ScreenshotBackendKind, snipastePath: string): { ok: boolean; reason?: string };
 }
 
 export interface ScreenshotServiceDeps {

@@ -225,6 +225,20 @@
             }
           }
         },
+        "screenshot": {
+          "backend": {
+            "title": "截图方式",
+            "desc": "内置截图组件，或调用系统中安装的 Snipaste（需已启动；路径留空自动检测）。",
+            "option": {
+              "builtin": "内置",
+              "snipaste": "Snipaste"
+            }
+          },
+          "path": {
+            "title": "Snipaste 路径",
+            "desc": "留空自动检测；也可填写 Snipaste.exe 的完整路径。"
+          }
+        },
         "saveStatus": "等待保存",
         "saveButton": "保存偏好"
       },

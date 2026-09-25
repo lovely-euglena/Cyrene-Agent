@@ -173,6 +173,10 @@ export function useComposerAttachments(input: {
     let text: string;
     if (reason.startsWith("HELPER_")) {
       text = t("chatPage.screenshotHelperNotReady");
+    } else if (reason === "SNIPASTE_TIMEOUT") {
+      text = t("chatPage.screenshotSnipasteTimeout");
+    } else if (reason.startsWith("SNIPASTE_")) {
+      text = t("chatPage.screenshotSnipasteUnavailable");
     } else if (reason.startsWith("SCREENSHOT_CANCELLED")) {
       text = t("chatPage.screenshotCancelled");
     } else if (reason === "SCREENSHOT_FILE_PATH_REQUIRED") {

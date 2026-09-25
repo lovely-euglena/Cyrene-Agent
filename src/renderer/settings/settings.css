@@ -704,6 +704,32 @@ body {
   accent-color: var(--rb-pink-500);
 }
 
+/* Snipaste 路径输入框（偏好设置） */
+#preferences-form .setting-row .path-input {
+  margin-left: auto;
+  width: 360px;
+  text-align: left;
+  font: 500 12px/1.2 var(--rb-font-sans);
+  padding: 8px 12px;
+  border: 1px solid var(--rb-border-faint);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rb-text-default);
+  -webkit-app-region: no-drag;
+}
+#preferences-form .setting-row .path-input:focus {
+  outline: none;
+  border-color: var(--rb-pink-400);
+}
+#preferences-form .setting-row .path-input::placeholder {
+  color: var(--rb-text-faint);
+  font-weight: 400;
+}
+/* setting-row 默认 display:flex 会盖过 hidden 属性，这里补一条显式规则 */
+#preferences-form .setting-row[hidden] {
+  display: none;
+}
+
 /* 截图热键输入框 */
 .hotkey-input {
   min-width: 0;

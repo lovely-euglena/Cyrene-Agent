@@ -17,7 +17,10 @@ import { syncLaunchAtLogin } from "./launch-at-login";
 export interface GeneralSettingsLifecycleDependencies {
   get windowManager(): WindowManager | null;
   get tray(): Tray | import("../tray-detached").TrayLike | null;
-  get screenshotService(): { replaceHotkey: (hotkey: string) => { ok: boolean } | null } | null;
+  get screenshotService(): {
+    replaceHotkey: (hotkey: string) => { ok: boolean } | null;
+    applyBackend?: (backend: "builtin" | "snipaste", snipastePath: string) => { ok: boolean; reason?: string };
+  } | null;
   get proactiveLifecycle(): { getProactiveChatService: () => { invalidate: () => void } | null };
   broadcastToAuxWindows(channel: string, payload: unknown): void;
 }
@@ -163,6 +166,15 @@ export function handleGeneralSettingsChanged(
     const result = deps.screenshotService?.replaceHotkey(after.screenshotHotkey);
     if (result && !result.ok) {
       console.warn("[Cyrene] 截图热键注册失败，可能被其他应用占用:", after.screenshotHotkey);
+    }
+  }
+  if (
+    before.screenshotBackend !== after.screenshotBackend
+    || before.snipastePath !== after.snipastePath
+  ) {
+    const result = deps.screenshotService?.applyBackend?.(after.screenshotBackend, after.snipastePath);
+    if (result && !result.ok) {
+      console.warn("[Cyrene] 截图后端切换失败:", after.screenshotBackend, result.reason ?? "");
     }
   }
   if (

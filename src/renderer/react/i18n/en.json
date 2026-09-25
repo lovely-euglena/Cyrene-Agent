@@ -62,6 +62,8 @@
     "pastedImageInvalid": "The pasted content isn't a valid image.",
     "pastedImageFailed": "Failed to paste image: {{error}}",
     "screenshotHelperNotReady": "The screenshot tool isn't ready yet — please try again in a moment.",
+    "screenshotSnipasteUnavailable": "No usable Snipaste was found. Set its path in Settings, or switch back to the built-in screenshot tool.",
+    "screenshotSnipasteTimeout": "Timed out waiting for Snipaste; the screenshot was canceled.",
     "screenshotCancelled": "Screenshot canceled.",
     "screenshotFileMissing": "Screenshot failed: no image file was created.",
     "screenshotFailed": "Screenshot failed: {{reason}}",

@@ -113,6 +113,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 聊天段落间距（em）。目前仅设置窗口 UI 使用，主进程归一化尚未持久化该字段。 */
   chatParaSpacing?: number;
   screenshotHotkey?: string;
+  screenshotBackend?: "builtin" | "snipaste";
+  snipastePath?: string;
 }
 
 export interface UserApi {
