@@ -891,20 +891,19 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   }
 
   /**
-   * 探测插件进程工作集：超出上限即终止（软限制：滞后一个轮询周期，但能拦住跑飞）。
-   * 只有 Windows 有 tasklist；其他平台直接跳过。
+   * 探测插件进程工作集（字节）：插件管理页展示「内存占用」用。
+   * 非 Windows / 未运行 / 探测失败返回 null（不终止进程、不改状态）。
    */
-  private async checkPluginMemory(): Promise<void> {
-    const limitMb = this.resolveMemoryLimitMb();
+  async probeMemoryBytes(): Promise<number | null> {
     const child = this.proc;
-    if (process.platform !== "win32" || limitMb <= 0) return;
-    if (!child || this.exited || typeof child.pid !== "number") return;
-
+    if (process.platform !== "win32" || !child || this.exited || typeof child.pid !== "number") {
+      return null;
+    }
     const probe = spawn("tasklist", ["/FI", `PID eq ${child.pid}`, "/FO", "CSV", "/NH"], {
       windowsHide: true,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    if (!probe) return;
+    if (!probe) return null;
     const output = await new Promise<string>((resolve) => {
       let buffer = "";
       let settled = false;
@@ -919,7 +918,20 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       probe.once?.("close", finish);
       probe.once?.("error", finish);
     });
-    const bytes = parseTasklistWorkingSet(output);
+    return parseTasklistWorkingSet(output);
+  }
+
+  /**
+   * 探测插件进程工作集：超出上限即终止（软限制：滞后一个轮询周期，但能拦住跑飞）。
+   * 只有 Windows 有 tasklist；其他平台直接跳过。
+   */
+  private async checkPluginMemory(): Promise<void> {
+    const limitMb = this.resolveMemoryLimitMb();
+    const child = this.proc;
+    if (process.platform !== "win32" || limitMb <= 0) return;
+    if (!child || this.exited || typeof child.pid !== "number") return;
+
+    const bytes = await this.probeMemoryBytes();
     if (bytes === null) return;
     const limitBytes = limitMb * 1024 * 1024;
     if (bytes >= limitBytes) {

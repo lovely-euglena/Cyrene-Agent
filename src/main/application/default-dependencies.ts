@@ -129,6 +129,7 @@ import {
   resolvePluginMemoryLimitMb,
   resolvePluginStorageQuotaMb,
 } from "../../plugins/limits";
+import type { PluginUsage } from "../../plugins/manager";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -246,13 +247,26 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   };
   const buildPluginSnapshot = async (): Promise<unknown> => {
     const mkt = getPluginMarketService();
-    const market = pluginManager && mkt ? await mkt.listMarket() : null;
     const general = loadGeneralSettings();
     const storageQuotaMb = resolvePluginStorageQuotaMb(general.pluginStorageQuotaMb);
     const memoryLimitMb = resolvePluginMemoryLimitMb(general.pluginMemoryLimitMb);
+    // 实际占用与市场列表并行取（占用含 .NET 进程探测，不阻塞市场数据）
+    const [market, usage] = await Promise.all([
+      pluginManager && mkt ? mkt.listMarket() : Promise.resolve(null),
+      pluginManager
+        ? pluginManager.collectUsage()
+        : Promise.resolve<Record<string, PluginUsage>>({}),
+    ]);
     return {
       runtimeEnabled: Boolean(pluginManager),
-      plugins: pluginManager ? pluginManager.overview().plugins : [],
+      plugins: pluginManager
+        ? pluginManager.overview().plugins.map((entry) => ({
+            ...entry,
+            // 展示用实际占用（storageBytes 两轨都有；memoryBytes 仅 .NET 运行中）
+            storageBytes: usage[entry.id]?.storageBytes ?? 0,
+            memoryBytes: usage[entry.id]?.memoryBytes ?? null,
+          }))
+        : [],
       // .NET 管理窗把 market 当数组解析：摊平为条目数组（旧实现直接塞
       // listMarket() 结果对象 → ParseList 判非数组 → 市场恒为空）。
       // 源健康/错误另字段下发，供管理器展示多源死活。

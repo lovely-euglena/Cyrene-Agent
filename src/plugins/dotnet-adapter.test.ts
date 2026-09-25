@@ -320,6 +320,25 @@ describe("DotnetPluginAdapter", () => {
     expect(fake.child.kill).toHaveBeenCalled();
   });
 
+  it.skipIf(process.platform !== "win32")("probeMemoryBytes：解析工作集；未运行为 null", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    const probe = makeTasklistFake('"MyPlugin.exe","4321","Console","1","512 K"\r\n');
+    mockSpawn.mockReturnValueOnce(probe.child);
+    const pending = adapter.probeMemoryBytes();
+    probe.deliver();
+    await expect(pending).resolves.toBe(512 * 1024);
+
+    fake.emitExit(0);
+    await expect(adapter.probeMemoryBytes()).resolves.toBeNull();
+  });
+
   it("设置页内存上限可被看门狗逐次读取（0 = 关闭）", async () => {
     const fake = makeFakeChild();
     mockSpawn.mockReturnValueOnce(fake.child);

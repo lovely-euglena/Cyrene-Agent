@@ -1,6 +1,6 @@
 import path from "node:path";
 import { lstat, realpath, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { IPC } from "../shared/ipc-channels";
 import type {
   PluginListEntry,
@@ -31,6 +31,37 @@ import type {
 } from "./types";
 
 export type { PluginListEntry, PluginOverview, PluginRuntimeStatus } from "../shared/plugin-management";
+
+/** 单插件实际占用（管理页展示用；未知/不适用为 null）。 */
+export interface PluginUsage {
+  /** plugin-data/<id> 目录实际占用（字节，含插件直写文件与 .tmp） */
+  storageBytes: number;
+  /** .NET 插件进程工作集（字节）；Node 轨/未运行/探测失败为 null */
+  memoryBytes: number | null;
+}
+
+/** 目录统计条目上限：防病态目录（极多文件）拖慢快照，超出部分按截断计。 */
+const DIR_SIZE_ENTRY_CAP = 5000;
+
+/** 统计目录内文件总大小（不递归；不存在/不可读按 0）。 */
+function dirSizeBytes(dir: string): number {
+  try {
+    let total = 0;
+    let count = 0;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (++count > DIR_SIZE_ENTRY_CAP) break;
+      try {
+        total += statSync(path.join(dir, entry.name)).size;
+      } catch {
+        /* 并发删除/不可读：跳过 */
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
 
 export interface PluginScanRoot {
   path: string;
@@ -162,6 +193,30 @@ export class PluginManager {
 
   overview(): PluginOverview {
     return { plugins: this.list(), issues: [...this.scanIssues] };
+  }
+
+  /**
+   * 汇总各插件实际占用（插件管理窗展示用）：
+   * - storageBytes：扫描 plugin-data/<id> 的实际文件大小（Node/.NET 两轨共用同一目录）
+   * - memoryBytes：仅 .NET 轨运行中的插件可探测（独立进程）；Node 插件与宿主同进程，
+   *   无法按插件归因 → null；未运行/探测失败同样为 null
+   * 展示用途：任何单项失败都静默降级，不抛错、不影响插件。
+   */
+  async collectUsage(): Promise<Record<string, PluginUsage>> {
+    const usage: Record<string, PluginUsage> = {};
+    for (const [id] of this.records) {
+      usage[id] = { storageBytes: dirSizeBytes(path.join(this.opts.storageRoot, id)), memoryBytes: null };
+    }
+    // 每个 .NET 插件一次 tasklist 探测；并发跑，单插件失败只降级为 null
+    await Promise.all(Array.from(this.instances.entries()).map(async ([id, plugin]) => {
+      if (!usage[id] || typeof plugin.probeMemoryBytes !== "function") return;
+      try {
+        usage[id].memoryBytes = await plugin.probeMemoryBytes();
+      } catch {
+        /* 探测失败：保持 null */
+      }
+    }));
+    return usage;
   }
 
   /**

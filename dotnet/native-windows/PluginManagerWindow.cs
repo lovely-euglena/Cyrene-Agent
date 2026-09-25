@@ -51,7 +51,7 @@ public sealed class PluginManagerWindow : NativeWindow
     private TextBlock? _limitsHint;
     private TextBlock? _limitsStatus;
 
-    private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime, bool CanOpen);
+    private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime, bool CanOpen, long StorageBytes, long? MemoryBytes);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
     private record MarketSource(string Url, bool Ok, bool Used);
 
@@ -292,7 +292,10 @@ public sealed class PluginManagerWindow : NativeWindow
             // 双轨标识（node/dotnet）；旧宿主快照无此字段时按 node 显示
             Str(el, "runtime") ?? "node",
             // open 能力：运行中且插件实现了打开窗口
-            Bool(el, "canOpen")));
+            Bool(el, "canOpen"),
+            // 实际占用：存储两轨共用目录；内存仅 .NET 运行中可探测（否则 null）
+            Long(el, "storageBytes"),
+            LongOrNull(el, "memoryBytes")));
         _market = ParseList<MarketEntry>(payload, "market", el => new MarketEntry(
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Str(el, "author") ?? ""));
@@ -371,6 +374,13 @@ public sealed class PluginManagerWindow : NativeWindow
 
     private static bool Bool(JsonElement el, string key)
         => el.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.True;
+
+    private static long Long(JsonElement el, string key)
+        => el.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : 0L;
+
+    /// <summary>可空整数：宿主对「不适用」的占用（如 Node 插件内存）下发 null。</summary>
+    private static long? LongOrNull(JsonElement el, string key)
+        => el.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : null;
 
     private static List<T> ParseList<T>(JsonElement payload, string key, Func<JsonElement, T> map)
     {
@@ -504,6 +514,14 @@ public sealed class PluginManagerWindow : NativeWindow
         header.Children.Add(headerText);
         header.Children.Add(MakeRuntimeBadge(p.Runtime));
         var desc = new TextBlock { Text = p.Description, FontSize = 12, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+        // 实际占用行：存储（两轨）· 内存（仅 .NET 有独立进程可探测）
+        var usage = new TextBlock
+        {
+            Text = FormatUsage(p),
+            FontSize = 11.5,
+            Foreground = NativeTheme.TextMutedBrush,
+            Margin = new Thickness(0, 3, 0, 0),
+        };
 
         var toggle = new CheckBox { Content = "启用", IsChecked = p.Enabled, VerticalAlignment = VerticalAlignment.Center, Cursor = System.Windows.Input.Cursors.Hand };
         toggle.Checked += (_, _) => RequestRouter.SendCommand("plugins", "enable", p.Id);
@@ -540,6 +558,7 @@ public sealed class PluginManagerWindow : NativeWindow
         var left = new StackPanel();
         left.Children.Add(header);
         left.Children.Add(desc);
+        left.Children.Add(usage);
         row.Children.Add(left);
 
         return new Border
@@ -553,6 +572,25 @@ public sealed class PluginManagerWindow : NativeWindow
             BorderThickness = new Thickness(1),
             Effect = NativeTheme.CardShadow(),
         };
+    }
+
+    /// <summary>插件实际占用行：存储两轨都显示；内存仅 .NET 插件有独立进程可探测。</summary>
+    private static string FormatUsage(PluginInfo p)
+    {
+        var parts = new List<string> { $"存储 {FormatBytes(p.StorageBytes)}" };
+        if (string.Equals(p.Runtime, "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(p.MemoryBytes is { } bytes ? $"内存 {FormatBytes(bytes)}" : "内存 —");
+        }
+        return "占用：" + string.Join(" · ", parts);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024L * 1024) return $"{bytes / 1024.0:F1} KiB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / 1024.0 / 1024.0:F1} MiB";
+        return $"{bytes / 1024.0 / 1024.0 / 1024.0:F2} GiB";
     }
 
     /// <summary>双轨标识徽标（Node / .NET）——旧版插件列表没有运行时信息，管理窗区分两轨。</summary>

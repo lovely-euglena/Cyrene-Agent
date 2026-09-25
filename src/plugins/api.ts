@@ -683,6 +683,12 @@ export interface CyrenePlugin {
   open?(): void | Promise<void>;
   register(ctx: PluginContext): void | Promise<void>;
   unregister?(): void | Promise<void>;
+  /**
+   * 可选：探测本插件进程实际内存占用（字节）。仅 .NET 轨适配器实现
+   * （独立进程可探测）；Node 插件与宿主同进程、无法按插件归因，返回 null。
+   * 插件管理页展示「实际占用」用；探测失败/不支持一律 null，不影响插件运行。
+   */
+  probeMemoryBytes?(): Promise<number | null>;
 }
 
 /**
