@@ -50,12 +50,25 @@ public static class Program
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,
         };
+        // UI 线程兜底：单个窗口/绘制异常不应让整个 cyrene-native 进程闪退
+        // （用户报「日程页拖动后闪退」）。记录后吞掉，其余窗口继续存活。
+        app.DispatcherUnhandledException += (_, e) =>
+        {
+            Console.Error.WriteLine($"[cyrene-native] dispatcher unhandled: {e.Exception}");
+            e.Handled = true;
+        };
         var protocol = new HostProtocol(
             Console.OpenStandardInput(),
             Console.OpenStandardOutput(),
             (id, element) => RequestRouter.Handle(app, id, element),
             element => RequestRouter.OnEvent(app, element));
         RequestRouter.Protocol = protocol;
+        // 宿主退出（stdin EOF）：安全关闭全部窗口并结束进程，避免孤儿常驻。
+        protocol.InputClosed += () =>
+        {
+            try { app.Dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Normal); }
+            catch { /* 已关闭/调度器不可用：进程即将自然退出 */ }
+        };
         // ready 握手：宿主 launch() 阻塞等待此帧（15s 超时回收）。
         // 必须在读线程就位后尽快发——WPF 就绪与否与协议就绪无关
         protocol.NotifyReady();

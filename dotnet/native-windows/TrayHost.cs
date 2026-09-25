@@ -30,6 +30,8 @@ public sealed class TrayHost
     private CancellationTokenSource? _pipeCts;
     private string _electronExe = "";
     private bool _electronLaunching;
+    /// <summary>Electron 未连接时暂存的托盘动作，连接建立后补投一次。</summary>
+    private string? _pendingAction;
 
     /// <summary>托盘模式入口：WPF Dispatcher 消息循环 + NotifyIcon。</summary>
     public static void Run(string electronExe)
@@ -55,17 +57,23 @@ public sealed class TrayHost
         menu.Items.Add(new WF.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) =>
         {
-            // 退出 = Electron 一起退（托盘是父入口，退出语义包含整个应用）
+            // 退出 = Electron 一起退（托盘是父入口，退出语义包含整个应用）。
+            // 先发 quit 走受控退出（总超时 10s），等它自然退出；超时才强杀，
+            // 且必须整棵进程树一起杀——只杀 Cyrene.exe 会留下渲染进程/子宿主
+            // （用户报「托盘退出时有进程残留」）。
             SendCmd("quit");
             var p = _electron;
             if (p is not null && !p.HasExited)
             {
                 try
                 {
-                    p.WaitForExit(3000);
+                    p.WaitForExit(15000);
                 }
                 catch { /* 超时强杀 */ }
-                if (!p.HasExited) try { p.Kill(); } catch { }
+                if (!p.HasExited)
+                {
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                }
             }
             app.Dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
         });
@@ -105,7 +113,10 @@ public sealed class TrayHost
     private void LaunchElectron()
     {
         if (_electronLaunching) return;
-        if (_electron is not null && !_electron.HasExited) { SendCmd("chat"); return; }
+        // 已在运行：不重复拉起（单实例锁会拒绝）；动作已暂存，等管道重连补投。
+        // ⚠️ 不可在此递归 SendCmd——管道断开时会在 SendCmd↔LaunchElectron
+        // 之间无限递归直至栈溢出。
+        if (_electron is not null && !_electron.HasExited) return;
         if (!File.Exists(_electronExe))
         {
             System.Diagnostics.Debug.WriteLine($"[TrayHost] Electron exe not found: {_electronExe}");
@@ -165,6 +176,8 @@ public sealed class TrayHost
                         continue;
                     }
                     _pipe = server;
+                    // 连接建立后补投 Electron 未运行时点击的托盘动作
+                    FlushPendingAction(server);
                     await ReadLoopAsync(server, ct);
                 }
                 catch (OperationCanceledException) { break; }
@@ -240,23 +253,40 @@ public sealed class TrayHost
     private void SendCmd(string action)
     {
         var pipe = _pipe;
-        if (pipe is not { IsConnected: true })
+        if (pipe is not { IsConnected: true } || !TryWriteCmd(pipe, action))
         {
-            // Electron 不在：拉起（单实例锁会把动作参数转给已有实例）
-            LaunchElectron();
-            return;
-        }
-        try
-        {
-            var payload = Encoding.UTF8.GetBytes($"{{\"op\":\"cmd\",\"action\":\"{action}\"}}\n");
-            pipe.Write(payload, 0, payload.Length);
-            pipe.Flush();
-        }
-        catch (IOException)
-        {
+            // Electron 未运行/管道断开：暂存动作并（必要时）拉起，连接建立后补投。
+            // 旧实现直接丢动作 → 托盘「打开状态面板」在 Electron 未运行时拉起后
+            // 不打开任何窗口（用户报「状态页无法从托盘打开」）。
+            _pendingAction = action;
             _pipe = null;
             LaunchElectron();
         }
+    }
+
+    private static bool TryWriteCmd(NamedPipeServerStream pipe, string action)
+    {
+        try
+        {
+            var payload = Encoding.UTF8.GetBytes($"{{\"op\":\"cmd\",\"action\":\"{action}\"}}\n");
+            lock (pipe)
+            {
+                pipe.Write(payload, 0, payload.Length);
+                pipe.Flush();
+            }
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    private void FlushPendingAction(NamedPipeServerStream pipe)
+    {
+        var action = _pendingAction;
+        if (action is null) return;
+        if (TryWriteCmd(pipe, action)) _pendingAction = null;
     }
 
     /// <summary>从本 exe 位置推导同级 Electron 主程序（resources/native-windows → ../../Cyrene.exe）。</summary>
