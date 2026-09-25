@@ -137,6 +137,8 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     },
     loadEnabledMap: () => loadGeneralSettings().plugins,
     saveEnabledMap: (plugins) => saveGeneralSettings({ plugins }),
+    getConfiguredPluginStorageQuotaMb: () => loadGeneralSettings().pluginStorageQuotaMb,
+    getConfiguredPluginMemoryLimitMb: () => loadGeneralSettings().pluginMemoryLimitMb,
     // 真正卸载时删除该插件创建的定时任务；清理失败由管理器中止目录删除。
     cleanupPersistentResources: async (pluginId) => {
       deps.schedulerStore.deleteTasksByOwner(pluginId);

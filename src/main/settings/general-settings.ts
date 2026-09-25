@@ -27,6 +27,14 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * 插件管理窗动态启停。
    */
   pluginRuntimeEnabled?: boolean;
+  /**
+   * 插件资源限制（插件管理窗「设置」页可配；undefined = 未配置，
+   * 回退环境变量/内置默认）。0 = 不限。
+   * - pluginStorageQuotaMb：单插件 KV 存储配额（MiB，默认 64）
+   * - pluginMemoryLimitMb：.NET 插件进程内存上限（MiB，默认 2048）
+   */
+  pluginStorageQuotaMb?: number;
+  pluginMemoryLimitMb?: number;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
   maxParallelToolCalls: number;
   citaEnabled: boolean;
@@ -170,6 +178,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   asrShowTranscript: boolean;
   /** 截图全局热键（Electron Accelerator 格式，如 "Alt+Shift+S"） */
   screenshotHotkey: string;
+  /** 截图后端：builtin=内置原生助手；snipaste=外部 Snipaste 命令行 */
+  screenshotBackend: "builtin" | "snipaste";
+  /** Snipaste.exe 路径；空字符串 = 自动检测（PATH / 常见目录 / 注册表） */
+  snipastePath: string;
   /** 工具-模式覆盖层：用户自定义每个工具在 learn/code/work 模式下的可见性。
    *  key = toolId，value = { mode: enabled }。覆盖优先于工具声明的 modes 字段。
    *  空对象 = 全部按默认（modes 字段或全可见），由设置面板 UI 写入。 */

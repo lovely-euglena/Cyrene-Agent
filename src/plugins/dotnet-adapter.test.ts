@@ -16,7 +16,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { spawn as mockSpawn } from "node:child_process";
-import { DotnetPluginAdapter } from "./dotnet-adapter";
+import { DotnetPluginAdapter, parseTasklistWorkingSet } from "./dotnet-adapter";
 import type { PluginRecord } from "./types";
 
 interface FakeChild {
@@ -63,6 +63,27 @@ function makeFakeChild(): FakeChild {
     emitRaw: (data: Buffer | string) => {
       const buf = typeof data === "string" ? Buffer.from(data) : data;
       for (const cb of dataHandlers) cb(buf);
+    },
+  };
+}
+
+/** 内存看门狗探测用的 tasklist 假子进程：交付 stdout 后触发 close。 */
+function makeTasklistFake(payload: string) {
+  const dataHandlers: Array<(buf: Buffer) => void> = [];
+  const closeHandlers: Array<() => void> = [];
+  const child = {
+    stdout: { on: vi.fn((_event: string, cb: (buf: Buffer) => void) => { dataHandlers.push(cb); }) },
+    once: vi.fn((event: string, cb: () => void) => {
+      if (event === "close" || event === "error") closeHandlers.push(cb);
+      return child;
+    }),
+    on: vi.fn(),
+  } as unknown as ChildProcess;
+  return {
+    child,
+    deliver: () => {
+      for (const cb of dataHandlers) cb(Buffer.from(payload));
+      for (const cb of closeHandlers.splice(0)) cb();
     },
   };
 }
@@ -256,6 +277,72 @@ describe("DotnetPluginAdapter", () => {
     } finally {
       delete process.env.CYRENE_TEST_SECRET;
     }
+  });
+
+  it("设置页配置的存储配额覆盖子进程环境变量", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord(), {
+      getConfiguredPluginStorageQuotaMb: () => 128,
+    });
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    const spawnOptions = mockSpawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+    expect(spawnOptions.env?.CYRENE_PLUGIN_STORAGE_QUOTA_MB).toBe("128");
+  });
+
+  it.skipIf(process.platform !== "win32")("内存看门狗：超限终止进程，未超限不动作", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    // 未超限（1 GiB < 默认 2 GiB）
+    const low = makeTasklistFake('"MyPlugin.exe","4321","Console","1","1,048,576 K"\r\n');
+    mockSpawn.mockReturnValueOnce(low.child);
+    const lowCheck = adapter.checkPluginMemoryForTest();
+    low.deliver();
+    await lowCheck;
+    expect(fake.child.kill).not.toHaveBeenCalled();
+
+    // 超限（约 2.9 GiB >= 2 GiB）
+    const high = makeTasklistFake('"MyPlugin.exe","4321","Console","1","3,000,000 K"\r\n');
+    mockSpawn.mockReturnValueOnce(high.child);
+    const highCheck = adapter.checkPluginMemoryForTest();
+    high.deliver();
+    await highCheck;
+    expect(fake.child.kill).toHaveBeenCalled();
+  });
+
+  it("设置页内存上限可被看门狗逐次读取（0 = 关闭）", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    let limitMb = 0;
+    const adapter = new DotnetPluginAdapter(makeRecord(), {
+      getConfiguredPluginMemoryLimitMb: () => limitMb,
+    });
+    const { ctx } = makeCtx();
+    const pendingRegister = adapter.register(ctx);
+    fake.emitLine(JSON.stringify({ op: "ready", tools: [] }));
+    await pendingRegister;
+
+    // 上限为 0：探测直接跳过，不 spawn tasklist
+    await adapter.checkPluginMemoryForTest();
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    limitMb = 1;
+    // 设为 1 MiB 后应发起探测（此处只验证路径被启用，结果解析走 tasklist 假件）
+    const probe = makeTasklistFake('"MyPlugin.exe","4321","Console","1","2,048 K"\r\n');
+    mockSpawn.mockReturnValueOnce(probe.child);
+    const checking = adapter.checkPluginMemoryForTest();
+    probe.deliver();
+    await checking;
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 
   it("崩溃熔断：窗口内连续 3 次意外退出后暂停自动重启", async () => {

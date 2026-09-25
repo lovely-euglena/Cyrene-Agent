@@ -56,9 +56,11 @@
  *   - 协议版本不符：SDK 回 error 帧并退出，宿主拒绝握手（不视为可自愈的意外退出）
  */
 import { ChildProcess, spawn } from "node:child_process";
+import os from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import path from "node:path";
 import { isPluginHostError } from "./api";
+import { PLUGIN_STORAGE_QUOTA_ENV, resolvePluginMemoryLimitMb } from "./limits";
 import type { PluginRecord } from "./types";
 import type {
   CyrenePlugin,
@@ -99,6 +101,10 @@ const OPEN_TIMEOUT_MS = 15_000;
 const MAX_FRAME_BUFFER_CHARS = 4 * 1024 * 1024;
 /** 日志帧速率上限（每进程代每秒）：防止插件用日志洪水挤占宿主读循环。 */
 const LOG_FRAMES_PER_SECOND = 100;
+/** 内存看门狗轮询间隔；上限走 limits.ts（设置 > 环境变量 > 默认 2048 MiB，0 = 关闭）。 */
+const MEMORY_WATCHDOG_INTERVAL_MS = 15_000;
+/** 达到上限该比例时提前告警一次。 */
+const MEMORY_WARN_RATIO = 0.8;
 /** 自动重启熔断：窗口内连续崩溃达到该次数后暂停自愈，等待用户重新启用。 */
 const CRASH_FUSE_LIMIT = 3;
 const CRASH_FUSE_WINDOW_MS = 60_000;
@@ -115,6 +121,8 @@ const CHILD_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
   "systemdrive", "lang", "lc_all",
   // 网络代理（用户环境配置，透传以保证插件自带 HTTP 客户端可用）
   "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+  // 宿主下发的存储配额（设置页配置时覆盖继承值）
+  "cyrene_plugin_storage_quota_mb",
 ]);
 
 interface RemoteTool {
@@ -288,11 +296,30 @@ function normalizeRemoteToolSchema(value: unknown, pluginId: string, toolId: str
   return EMPTY_REMOTE_TOOL_SCHEMA;
 }
 
+/**
+ * 解析 tasklist CSV 输出的「内存使用」列（KB）→ 字节；解析失败返回 null。
+ * 形如："MyPlugin.exe","4321","Console","1","1,234,567 K"（本地化千分位也要认）。
+ */
+export function parseTasklistWorkingSet(output: string): number | null {
+  for (const line of output.split(/\r?\n/)) {
+    const fields = line.match(/"([^"]*)"/g);
+    if (!fields || fields.length < 5) continue;
+    const raw = fields[4].replace(/^"|"$/g, "").replace(/[,\s]/g, "").replace(/K$/i, "");
+    const kib = Number(raw);
+    if (Number.isFinite(kib) && kib >= 0) return kib * 1024;
+  }
+  return null;
+}
+
 export interface DotnetPluginAdapterHooks {
   /** 进程意外退出（非 shutdown）：上层据此更新插件状态与错误信息 */
   onUnexpectedExit?: (pluginId: string, message: string) => void;
   /** 意外退出后自动重启成功：上层恢复运行状态 */
   onRestarted?: (pluginId: string) => void;
+  /** 设置页配置的存储配额（MiB；undefined = 未配置，配置后覆盖子进程环境变量并即时生效） */
+  getConfiguredPluginStorageQuotaMb?: () => number | undefined;
+  /** 设置页配置的内存上限（MiB；undefined = 未配置；看门狗逐次读取，支持运行期调整） */
+  getConfiguredPluginMemoryLimitMb?: () => number | undefined;
 }
 
 export class DotnetPluginAdapter implements CyrenePlugin {
@@ -324,6 +351,9 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   private logFloodWarned = false;
   /** 最近意外退出的时间戳（自动重启熔断用） */
   private crashTimes: number[] = [];
+  /** 内存看门狗定时器（每代重置） */
+  private watchdogTimer: NodeJS.Timeout | null = null;
+  private memoryWarned = false;
 
   // ── v2 桥状态（每个"进程代"一份，进程退出即撤销） ──
   /** 已登记到 ctx 的插件 IPC channel（短名） */
@@ -541,20 +571,36 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       this.logWindowStart = 0;
       this.logWindowCount = 0;
       this.logFloodWarned = false;
+      // 设置页配置了存储配额时覆盖子进程环境变量；未配置则继承白名单内的值
+      const env = buildChildEnv();
+      const configuredQuotaMb = this.hooks.getConfiguredPluginStorageQuotaMb?.();
+      if (typeof configuredQuotaMb === "number") {
+        env[PLUGIN_STORAGE_QUOTA_ENV] = String(configuredQuotaMb);
+      }
       const child = spawn(exe, [], {
         cwd: this.record.dir,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
-        env: buildChildEnv(),
+        env,
       });
       this.proc = child;
       this.exited = false;
+      // 软限制：与主应用抢 CPU 时让路（失败忽略：进程已退出/无权限）
+      try {
+        if (typeof child.pid === "number") {
+          os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+        }
+      } catch {
+        /* 忽略 */
+      }
+      this.startWatchdog();
 
       child.on("error", (error) => {
         // spawn 失败（exe 缺失/无权限）：立即置退出态并收口 ready 等待者，
         // 避免后续调用把坏进程当成「运行中」等满 300s 兜底超时
         this.exited = true;
         this.proc = null;
+        this.stopWatchdog();
         const failure = new Error(`dotnet 插件 ${this.record.manifest.id} 启动失败: ${errorMessage(error)}`);
         for (const r of this.readyResolvers) r.reject(failure);
         this.readyResolvers = [];
@@ -564,6 +610,7 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         this.exited = true;
         this.proc = null;
         this.stdoutCarry = "";
+        this.stopWatchdog();
         // 撤销本代 v2 注册（IPC/事件/提示词/open），防止宿主继续调用死进程
         this.teardownGeneration();
         // 在途调用全部失败
@@ -813,6 +860,83 @@ export class DotnetPluginAdapter implements CyrenePlugin {
     console.warn(
       `[plugins] dotnet 插件 ${this.record.manifest.id} stdout 单行超过 ${MAX_FRAME_BUFFER_CHARS} 字符，已丢弃`,
     );
+  }
+
+  // ── 软资源限制：内存看门狗 ──
+
+  private resolveMemoryLimitMb(): number {
+    return resolvePluginMemoryLimitMb(this.hooks.getConfiguredPluginMemoryLimitMb?.());
+  }
+
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    if (process.platform !== "win32" || this.resolveMemoryLimitMb() <= 0) return;
+    this.memoryWarned = false;
+    this.watchdogTimer = setInterval(() => {
+      void this.checkPluginMemory();
+    }, MEMORY_WATCHDOG_INTERVAL_MS);
+    this.watchdogTimer.unref?.();
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /** 测试钩子：立即跑一次内存探测（生产路径由看门狗定时器调用）。 */
+  checkPluginMemoryForTest(): Promise<void> {
+    return this.checkPluginMemory();
+  }
+
+  /**
+   * 探测插件进程工作集：超出上限即终止（软限制：滞后一个轮询周期，但能拦住跑飞）。
+   * 只有 Windows 有 tasklist；其他平台直接跳过。
+   */
+  private async checkPluginMemory(): Promise<void> {
+    const limitMb = this.resolveMemoryLimitMb();
+    const child = this.proc;
+    if (process.platform !== "win32" || limitMb <= 0) return;
+    if (!child || this.exited || typeof child.pid !== "number") return;
+
+    const probe = spawn("tasklist", ["/FI", `PID eq ${child.pid}`, "/FO", "CSV", "/NH"], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (!probe) return;
+    const output = await new Promise<string>((resolve) => {
+      let buffer = "";
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve(buffer);
+      };
+      probe.stdout?.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+      });
+      probe.once?.("close", finish);
+      probe.once?.("error", finish);
+    });
+    const bytes = parseTasklistWorkingSet(output);
+    if (bytes === null) return;
+    const limitBytes = limitMb * 1024 * 1024;
+    if (bytes >= limitBytes) {
+      console.warn(
+        `[plugins] dotnet 插件 ${this.record.manifest.id} 内存超限`
+        + `（${(bytes / 1024 / 1024).toFixed(0)} MiB >= ${limitMb} MiB），已终止进程`,
+      );
+      this.kill();
+      return;
+    }
+    if (!this.memoryWarned && bytes >= limitBytes * MEMORY_WARN_RATIO) {
+      this.memoryWarned = true;
+      console.warn(
+        `[plugins] dotnet 插件 ${this.record.manifest.id} 内存占用 `
+        + `${(bytes / 1024 / 1024).toFixed(0)} MiB，接近上限 ${limitMb} MiB`,
+      );
+    }
   }
 
   private handleFrame(frame: Record<string, unknown>): void {

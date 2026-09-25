@@ -306,6 +306,10 @@ export interface LoadPluginHooks {
   onDotnetUnexpectedExit?: (pluginId: string, message: string) => void;
   /** .NET 轨：意外退出后自动重启成功 */
   onDotnetRestarted?: (pluginId: string) => void;
+  /** .NET 轨：设置页配置的存储配额（MiB；undefined = 未配置，配置后覆盖子进程环境变量） */
+  getConfiguredPluginStorageQuotaMb?: () => number | undefined;
+  /** .NET 轨：设置页配置的内存上限（MiB；undefined = 未配置，看门狗逐次读取） */
+  getConfiguredPluginMemoryLimitMb?: () => number | undefined;
 }
 
 export async function loadPlugin(record: PluginRecord, hooks: LoadPluginHooks = {}): Promise<CyrenePlugin> {
@@ -315,6 +319,8 @@ export async function loadPlugin(record: PluginRecord, hooks: LoadPluginHooks = 
     return new DotnetPluginAdapter(record, {
       onUnexpectedExit: hooks.onDotnetUnexpectedExit,
       onRestarted: hooks.onDotnetRestarted,
+      getConfiguredPluginStorageQuotaMb: hooks.getConfiguredPluginStorageQuotaMb,
+      getConfiguredPluginMemoryLimitMb: hooks.getConfiguredPluginMemoryLimitMb,
     });
   }
   const entry = path.join(record.dir, record.manifest.entry);

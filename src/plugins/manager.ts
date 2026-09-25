@@ -9,6 +9,7 @@ import type {
 } from "../shared/plugin-management";
 import { createContext, runPluginCleanup, type PluginRuntime } from "./context";
 import { createPluginEventBus, qualifyHostEvent } from "./events";
+import { resolvePluginStorageQuotaMb } from "./limits";
 import {
   clearPluginModuleCache,
   loadPlugin,
@@ -43,6 +44,10 @@ export interface PluginManagerOptions {
   runtime: PluginRuntime;
   loadEnabledMap: () => Record<string, boolean>;
   saveEnabledMap: (map: Record<string, boolean>) => void;
+  /** 设置页配置的 KV 存储配额（MiB；undefined = 未配置，回退环境变量/默认）。 */
+  getConfiguredPluginStorageQuotaMb?: () => number | undefined;
+  /** 设置页配置的 .NET 插件内存上限（MiB；undefined = 未配置）。 */
+  getConfiguredPluginMemoryLimitMb?: () => number | undefined;
   selectPluginZip?: () => Promise<string | undefined>;
   confirmPluginReplace?: (plugin: { id: string; name: string; version: string }) => Promise<boolean>;
   /**
@@ -660,13 +665,18 @@ export class PluginManager {
       const plugin = await loadPlugin(record, {
         onDotnetUnexpectedExit: (_pluginId, message) => this.markProcessExited(id, message),
         onDotnetRestarted: () => this.markProcessRestarted(id),
+        getConfiguredPluginStorageQuotaMb: this.opts.getConfiguredPluginStorageQuotaMb,
+        getConfiguredPluginMemoryLimitMb: this.opts.getConfiguredPluginMemoryLimitMb,
       });
+      // 存储配额在激活时定格（设置变更对之后启动/重启的插件生效）
+      const storageQuotaMb = resolvePluginStorageQuotaMb(this.opts.getConfiguredPluginStorageQuotaMb?.());
       const ctx = createContext(
         id,
         path.join(this.opts.storageRoot, id),
         this.opts.runtime,
         this.eventBus,
         record.manifest.deps,
+        { storageQuotaBytes: storageQuotaMb * 1024 * 1024 },
       );
       try {
         await plugin.register(ctx);

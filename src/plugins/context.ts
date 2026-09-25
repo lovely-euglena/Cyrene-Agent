@@ -101,6 +101,7 @@ export function createContext(
   runtime: PluginRuntime,
   eventBus: Pick<PluginEventBus, "on" | "emit">,
   declaredDeps?: PluginManifest["deps"],
+  limits: { storageQuotaBytes?: number } = {},
 ): DisposableContext {
   // dispose 阶段聚合的错误，在释放完成后统一告警。
   const cleanupErrors: unknown[] = [];
@@ -298,7 +299,10 @@ export function createContext(
         tracker.forget("channel-adapter", channelId);
       }
     },
-    storage: createPluginStorage(storageRoot),
+    storage: createPluginStorage(
+      storageRoot,
+      limits.storageQuotaBytes === undefined ? {} : { quotaBytes: limits.storageQuotaBytes },
+    ),
     deps,
     log(...args: unknown[]) {
       console.log(`[plugin:${id}]`, ...args);

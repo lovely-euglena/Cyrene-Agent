@@ -25,6 +25,7 @@ import { normalizeWindowVisibilitySettings } from "../window-visibility-settings
 import { normalizeCitaSettings } from "../cita/settings";
 import { getGeneralSettingsPath } from "../settings-store";
 import type { GeneralSettings } from "./general-settings";
+import { MAX_PLUGIN_MEMORY_LIMIT_MB, MAX_PLUGIN_STORAGE_QUOTA_MB } from "../../plugins/limits";
 import { DEFAULT_MOSSLAND_TTS_MODEL } from "../../shared/tts-types";
 import type { ToolModeOverrides } from "../orchestrator/tools/registry/tool-registry";
 import type { ConversationMode } from "../../shared/chat-types";
@@ -123,6 +124,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   asrVadThreshold: 0.01,
   asrShowTranscript: false,
   screenshotHotkey: "Alt+Shift+S",
+  screenshotBackend: "builtin",
+  snipastePath: "",
   chatLineHeight: 1.75,
   assistantBubbleEnabled: false,
   toolModeOverrides: {},
@@ -181,6 +184,13 @@ export function normalizeGeneralSettings(
       ? Math.max(1, Math.min(8, Math.trunc(numberValue)))
       : DEFAULT_GENERAL_SETTINGS.maxParallelToolCalls;
   };
+  const normalizePluginLimit = (value: unknown, max: number): number | undefined => {
+    if (value === undefined || value === null || value === "") return undefined;
+    const numberValue = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(numberValue)
+      ? Math.max(0, Math.min(max, Math.round(numberValue)))
+      : undefined;
+  };
   const normalizeGitCommitAuthorName = (value: unknown): string => {
     const text = typeof value === "string" ? value.replace(/[\r\n]/g, " ").trim() : "";
     return text || DEFAULT_GENERAL_SETTINGS.gitCommitAuthorName;
@@ -195,6 +205,8 @@ export function normalizeGeneralSettings(
         (entry): entry is [string, boolean] => typeof entry[1] === "boolean",
       ),
     ),
+    pluginStorageQuotaMb: normalizePluginLimit(input?.pluginStorageQuotaMb, MAX_PLUGIN_STORAGE_QUOTA_MB),
+    pluginMemoryLimitMb: normalizePluginLimit(input?.pluginMemoryLimitMb, MAX_PLUGIN_MEMORY_LIMIT_MB),
     maxParallelToolCalls: normalizeMaxParallelToolCalls(input?.maxParallelToolCalls),
     citaEnabled: cita.enabled,
     citaSemanticEngine: cita.semanticEngine,
@@ -320,6 +332,8 @@ export function normalizeGeneralSettings(
     screenshotHotkey: typeof input?.screenshotHotkey === "string" && input.screenshotHotkey.trim()
       ? input.screenshotHotkey.trim()
       : DEFAULT_GENERAL_SETTINGS.screenshotHotkey,
+    screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
+    snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
     ttsGptsovitsBaseUrl: typeof input?.ttsGptsovitsBaseUrl === "string"
       ? input.ttsGptsovitsBaseUrl
       : DEFAULT_GENERAL_SETTINGS.ttsGptsovitsBaseUrl,

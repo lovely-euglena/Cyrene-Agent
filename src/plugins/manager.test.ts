@@ -80,6 +80,24 @@ function harness(overrides: Partial<PluginManagerOptions> = {}) {
 }
 
 describe("PluginManager", () => {
+  it("存储配额来自设置：超限写入在激活期失败并回滚", async () => {
+    const dir = fixturePlugin("quota-demo");
+    writeFileSync(
+      path.join(dir, "index.cjs"),
+      `module.exports = { register(ctx) {
+        ctx.storage.set("big", "x".repeat(2 * 1024 * 1024));
+      }, unregister() {} };`,
+      "utf8",
+    );
+    const h = harness({ getConfiguredPluginStorageQuotaMb: () => 1 });
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+    const entry = mgr.list().find((e) => e.id === "quota-demo");
+    expect(entry?.status).toBe("failed");
+    expect(entry?.error ?? "").toContain("配额");
+    expect(h.tools).not.toContain("quota-demo_tool");
+  });
+
   it("启动时启用 defaultEnabled 插件并注册列表/开关 IPC", async () => {
     const h = harness();
     const mgr = new PluginManager(h.options);

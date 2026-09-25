@@ -8,7 +8,7 @@
 //      plugin→host call（events.emit：工具与事件处理两条路径）、
 //      notify event.deliver 投递、私有 KV 跨会话持久化、
 //      deps.* 直通（channels/llm/secrets/workspace/conversations/scheduler）、
-//      命名类型结果 camelCase 序列化
+//      命名类型结果 camelCase 序列化、存储配额超限拒绝
 //   3. 宿主 cancel 帧：声明 CancellationToken 的长任务应被中止并回 ok:false
 //   4. 协议主版本不符：回 error(api_version_mismatch) 帧并退出
 //   5. 多字节/大结果分帧由宿主侧 dotnet-adapter 单测覆盖，这里只验证协议语义
@@ -45,7 +45,13 @@ let hostCallSeq = 0;
 class Session {
   constructor(dataDir) {
     this.dataDir = dataDir;
-    this.child = spawn(exampleExe, [], { cwd: path.dirname(exampleExe), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    this.child = spawn(exampleExe, [], {
+      cwd: path.dirname(exampleExe),
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+      // 配额用例：宿主按此环境变量下发 1 MiB 存储配额（超限写入应被 SDK 拒绝）
+      env: { ...process.env, CYRENE_PLUGIN_STORAGE_QUOTA_MB: "1" },
+    });
     this.buffer = "";
     this.frames = [];
     this.stderr = "";
@@ -227,6 +233,19 @@ try {
     session.send({ op: "invoke", callId: "c5", tool: "kv_get", args: { key: "persist" } });
     const got = await session.waitFor((f) => f.op === "result" && f.callId === "c5", 10_000, "kv_get 结果");
     if (got.ok !== true || got.data?.n !== 7) fail(`kv_get 返回不符: ${JSON.stringify(got)}`);
+
+    // 存储配额（宿主经环境变量下发 1 MiB）：超限写入应被 SDK 拒绝
+    session.send({
+      op: "invoke",
+      callId: "c13",
+      tool: "kv_set",
+      args: { key: "big", value: "x".repeat(2 * 1024 * 1024) },
+    });
+    const big = await session.waitFor((f) => f.op === "result" && f.callId === "c13", 10_000, "kv_set 配额结果");
+    if (big.ok !== false || !String(big.error ?? "").includes("配额")) {
+      fail(`存储配额未生效: ${JSON.stringify(big).slice(0, 200)}`);
+    }
+    console.log("  · 存储配额超限拒绝写入（CYRENE_PLUGIN_STORAGE_QUOTA_MB=1）");
 
     // 宿主服务（deps）直通
     session.send({ op: "invoke", callId: "c9", tool: "deps_probe", args: {} });

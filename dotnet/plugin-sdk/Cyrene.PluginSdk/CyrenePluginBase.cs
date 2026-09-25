@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -654,7 +655,16 @@ public abstract class CyrenePluginBase
             1 => [ObjectArgs(args)],
             _ => [ObjectArgs(args), ct],
         };
-        return entry.Method.Invoke(entry.IsStatic ? null : this, invocation);
+        try
+        {
+            return entry.Method.Invoke(entry.IsStatic ? null : this, invocation);
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException is not null)
+        {
+            // 反射会包装同步异常；解包保留原始类型与堆栈，错误信息才能原样回传宿主
+            ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // 不可达：上面必定抛出
+        }
     }
 
     private static JsonElement ObjectArgs(JsonElement args)
