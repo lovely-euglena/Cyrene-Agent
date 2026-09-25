@@ -14,4 +14,15 @@ public sealed class HelloPlugin : CyrenePluginBase
         Log($"echo: {text}");
         return new { echoed = text, plugin = "hello-dotnet", at = DateTimeOffset.UtcNow };
     }
+
+    /// <summary>async Task&lt;T&gt; 返回值回归用例：旧 SDK 只 await Task&lt;object?&gt;/Task&lt;JsonElement&gt;，
+    /// 这个工具会静默不回帧（宿主 invoke 永久 pending）。</summary>
+    [CyreneTool("echo_async", "异步回声", "Task<string> 路径演示：await 后返回字符串",
+        Schema = """{"type":"object","properties":{"text":{"type":"string","description":"要回声的文本"}},"required":["text"]}""")]
+    public async Task<string> EchoAsync(JsonElement args)
+    {
+        var text = args.TryGetProperty("text", out var t) ? t.GetString() : "";
+        await Task.Delay(10);
+        return $"async echoed: {text}";
+    }
 }

@@ -125,6 +125,7 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 {"op":"result","callId":"c1","ok":true,"data":{...}}        // invoke 成功
 {"op":"result","callId":"c1","ok":false,"error":"..."}      // invoke 失败
 {"op":"log","level":"info|warn|error","message":"..."}     // 诊断日志
+{"op":"error","code":"api_version_mismatch","message":"...","fatal":true}  // 致命错误 → 退出
 ```
 
 ### 时序与约束
@@ -133,6 +134,9 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 - 工具 id 在 manifest 侧自动加 `插件id_` 前缀（`[CyreneTool("greet")]` → 全 id `my-plugin_greet`）
 - **stdout 被协议独占**：任何非 JSON 行会被宿主丢弃——诊断走 `Log()` 或 stderr
 - `shutdown` 后 5 秒未退出，宿主强制结束进程
+- 单次 `invoke` 宿主兜底超时 **300 秒**（`CYRENE_PLUGIN_INVOKE_TIMEOUT_MS` 可调）；工具应自觉
+  控制时长，超时调用以错误返回、插件进程继续存活
+- 协议主版本不符：插件回 `{"op":"error","code":"api_version_mismatch",...}` 并退出，宿主拒绝握手
 - 插件意外退出：在途调用立即失败；宿主会在**下次工具调用时自动重启一次**（自愈），
   重启失败才把错误抛给调用方，同时插件状态在管理窗显示为 failed
 
@@ -145,12 +149,14 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 | `static Run(CyrenePluginBase)` | 启动协议循环（阻塞至 shutdown） |
 | `string DataDir { get; }` | 插件私有数据目录（`userData/plugin-data/<pluginId>`，init 下发；配置/缓存放这里） |
 | `void Log(string, string level = "info")` | 结构化日志（协议 log 帧） |
-| `virtual Task OnReady()` | ready 后钩子（可选重写，做后台初始化） |
+| `virtual Task OnStartupAsync(CancellationToken ct)` | init 之后、`ready` 之前调用（可选重写，做初始化） |
+| `virtual Task OnShutdownAsync(CancellationToken ct)` | 收到 `shutdown` 帧时调用（5s 内返回，超时被强杀） |
 
 ### `[CyreneTool(id, name, description)]`
 
-- 方法签名：`object/Task<object> Method(JsonElement args)`（同步异步均可）
-- 可选属性 `Schema`：输入 JSON Schema 字符串（默认空对象）
+- 方法签名：`object / Task / Task<T> Method(JsonElement args)`，参数也可以是空（`Method()`）；
+  签名在 init 时校验，不合法只告警并跳过该工具（不注册）
+- 可选属性 `Schema`：输入 JSON Schema 字符串（默认空对象；非法 JSON 会告警并回退空对象）
 - 可选属性 `Risk`：风险级 `safe | fs-read | fs-write | shell | network | input-control`，
   透传给宿主权限策略（Permission Policy）参与审批分级；**写文件/执行命令/联网的工具
   务必显式声明**，缺省按 `safe` 处理（不触发对应审批）
@@ -180,7 +186,7 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 可运行的最小示例在主仓库：
 
 ```text
-dotnet/plugin-sdk/Example/          ← echo 工具 + manifest 模板
+dotnet/plugin-sdk/Example/          ← echo（同步）+ echo_async（Task<string>）+ manifest 模板
 ```
 
 本地自测（不依赖宿主，直接喂协议帧）：
@@ -189,4 +195,10 @@ dotnet/plugin-sdk/Example/          ← echo 工具 + manifest 模板
 cd dotnet/plugin-sdk/Example
 echo '{"op":"init","apiVersion":1,"manifest":{"id":"hello"},"dataDir":"/tmp/h"}' | dotnet run
 # → {"op":"ready","tools":[...]}
+```
+
+端到端协议自测（构建 SDK + Example，覆盖同步/async Task&lt;T&gt;/版本不符三类路径）：
+
+```bash
+npm run test:dotnet-plugin-sdk
 ```

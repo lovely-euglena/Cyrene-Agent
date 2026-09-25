@@ -2,9 +2,10 @@ namespace Cyrene.PluginSdk;
 
 /// <summary>
 /// 声明一个暴露给宿主 Agent 的工具方法。
-/// 方法签名约定：<c>Task&lt;object?&gt; Name(JsonElement args)</c>，
-/// 或同步的 <c>object? Name(JsonElement args)</c>。
-/// 返回值序列化为 JSON 后作为工具结果回传。
+/// 方法签名约定：<c>Task&lt;T&gt; Name(JsonElement args)</c>、<c>Task Name()</c>
+/// 或同步的 <c>object? Name(JsonElement args)</c>；参数只允许「无参」或
+/// 「单个 JsonElement」，签名不合法在 init 时告警并跳过（不注册）。
+/// 返回值序列化为 JSON 后作为工具结果回传；Task&lt;T&gt; 会 await 后取 T。
 /// </summary>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
 public sealed class CyreneToolAttribute : Attribute
