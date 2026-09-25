@@ -70,12 +70,23 @@ public sealed class TasksWindow : NativeWindow
         var closeBtn = MakeTitleButton("✕", _form.Close);
         titlebar.Controls.Add(minBtn, 1, 0);
         titlebar.Controls.Add(closeBtn, 2, 0);
-        // 拖拽移动
+        // 拖拽移动：记录按下时光标相对窗体左上角的偏移，之后按光标绝对
+        // 位置平移（旧实现只在 MouseDown 里设一次 Location，导致窗口
+        // 「跳一下但不跟手」）。
+        var dragOffset = System.Drawing.Point.Empty;
+        var dragging = false;
         titlebar.MouseDown += (_, e) =>
         {
-            if (e.Button == MouseButtons.Left)
-                _form.Location = new System.Drawing.Point(Cursor.Position.X - e.X, Cursor.Position.Y - e.Y);
+            if (e.Button != MouseButtons.Left) return;
+            dragging = true;
+            dragOffset = new System.Drawing.Point(Cursor.Position.X - _form.Left, Cursor.Position.Y - _form.Top);
         };
+        titlebar.MouseMove += (_, _) =>
+        {
+            if (!dragging) return;
+            _form.Location = new System.Drawing.Point(Cursor.Position.X - dragOffset.X, Cursor.Position.Y - dragOffset.Y);
+        };
+        titlebar.MouseUp += (_, _) => dragging = false;
         _root.Controls.Add(titlebar, 0, 0);
 
         // ── 日程概览 ──
@@ -272,50 +283,58 @@ public sealed class TasksWindow : NativeWindow
 
     private void DrawWeeklyChart(object? sender, PaintEventArgs e)
     {
-        if (_week.Count == 0) return;
-        var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        var plot = new System.Drawing.Rectangle(6, 4, _chartPanel.ClientSize.Width - 12, _chartPanel.ClientSize.Height - 26);
-        var slot = plot.Width / 7.0;
-        var maxVal = Math.Max(_week.Where(w => !w.IsFuture).Select(w => w.Total).DefaultIfEmpty(0).Max(), 1);
-
-        for (var i = 0; i < 7; i++)
+        // 索引安全 + 绘制异常兜底：Paint 抛异常会变成 UI 线程未处理异常，
+        // 直接带走整个 cyrene-native 进程（用户报「日程页拖动后闪退」）。
+        if (_week.Count < 7) return;
+        try
         {
-            var (weekday, total, isToday, isFuture) = _week[i];
-            var barWidth = (int)(slot * 0.52);
-            var x = (int)(plot.X + i * slot + (slot - barWidth) / 2);
-            var label = new Label();
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var plot = new System.Drawing.Rectangle(6, 4, Math.Max(_chartPanel.ClientSize.Width - 12, 40), Math.Max(_chartPanel.ClientSize.Height - 26, 40));
+            var slot = plot.Width / 7.0;
+            var maxVal = Math.Max(_week.Where(w => !w.IsFuture).Select(w => w.Total).DefaultIfEmpty(0).Max(), 1);
 
-            if (isFuture)
+            for (var i = 0; i < 7; i++)
             {
-                // 未来留空柱（虚线框）
-                using var pen = new Pen(System.Drawing.Color.FromArgb(0x33, 0xFF, 0xE3, 0xF2), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
-                g.DrawRectangle(pen, x, plot.Bottom - 48, barWidth, 48);
-            }
-            else
-            {
-                var h = Math.Max((int)(48.0 * total / maxVal), total > 0 ? 4 : 0);
-                var color = isToday
-                    ? System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF)
-                    : System.Drawing.Color.FromArgb(0x99, 0xC9, 0x8C, 0xFF);
-                using var brush = new SolidBrush(color);
-                g.FillRectangle(brush, x, plot.Bottom - h, barWidth, h);
-                if (total > 0)
+                var (weekday, total, isToday, isFuture) = _week[i];
+                var barWidth = Math.Max((int)(slot * 0.52), 1);
+                var x = (int)(plot.X + i * slot + (slot - barWidth) / 2);
+
+                if (isFuture)
                 {
-                    using var font = new Font("Microsoft YaHei UI", 7.5f);
-                    using var textBrush = new SolidBrush(System.Drawing.Color.FromArgb(0xB3, 0xCC, 0xCC, 0xD8));
-                    var txt = FormatTokenShort(total);
-                    var size = g.MeasureString(txt, font);
-                    g.DrawString(txt, font, textBrush, (float)(x + barWidth / 2.0 - size.Width / 2), plot.Bottom - h - 14);
+                    // 未来留空柱（虚线框）
+                    using var pen = new Pen(System.Drawing.Color.FromArgb(0x33, 0xFF, 0xE3, 0xF2), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+                    g.DrawRectangle(pen, x, plot.Bottom - 48, barWidth, 48);
                 }
+                else
+                {
+                    var h = Math.Max((int)(48.0 * total / maxVal), total > 0 ? 4 : 0);
+                    var color = isToday
+                        ? System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF)
+                        : System.Drawing.Color.FromArgb(0x99, 0xC9, 0x8C, 0xFF);
+                    using var brush = new SolidBrush(color);
+                    g.FillRectangle(brush, x, plot.Bottom - h, barWidth, h);
+                    if (total > 0)
+                    {
+                        using var font = new Font("Microsoft YaHei UI", 7.5f);
+                        using var textBrush = new SolidBrush(System.Drawing.Color.FromArgb(0xB3, 0xCC, 0xCC, 0xD8));
+                        var txt = FormatTokenShort(total);
+                        var size = g.MeasureString(txt, font);
+                        g.DrawString(txt, font, textBrush, (float)(x + barWidth / 2.0 - size.Width / 2), plot.Bottom - h - 14);
+                    }
+                }
+                // 星期标签
+                using var lblFont = new Font("Microsoft YaHei UI", 8.5f);
+                using var lblBrush = new SolidBrush(isToday
+                    ? System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF)
+                    : System.Drawing.Color.FromArgb(0x8C, 0xCC, 0xCC, 0xD8));
+                var lblSize = g.MeasureString(weekday, lblFont);
+                g.DrawString(weekday, lblFont, lblBrush, (float)(x + barWidth / 2.0 - lblSize.Width / 2), (float)(plot.Bottom + 4));
             }
-            // 星期标签
-            using var lblFont = new Font("Microsoft YaHei UI", 8.5f);
-            using var lblBrush = new SolidBrush(isToday
-                ? System.Drawing.Color.FromArgb(0xE4, 0x99, 0xFF)
-                : System.Drawing.Color.FromArgb(0x8C, 0xCC, 0xCC, 0xD8));
-            var lblSize = g.MeasureString(weekday, lblFont);
-            g.DrawString(weekday, lblFont, lblBrush, (float)(x + barWidth / 2.0 - lblSize.Width / 2), (float)(plot.Bottom + 4));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[TasksWindow] weekly chart paint failed: {ex.Message}");
         }
     }
 
@@ -340,8 +359,19 @@ public sealed class TasksWindow : NativeWindow
         return btn;
     }
 
-    public override void ShowWindow() => _form.Show();
-    public override void Activate() => _form.Activate();
+    public override void ShowWindow()
+    {
+        if (!_form.Visible) _form.Show();
+        _form.Activate();
+    }
+
+    public override void Activate()
+    {
+        if (!_form.Visible) _form.Show();
+        if (_form.WindowState == FormWindowState.Minimized) _form.WindowState = FormWindowState.Normal;
+        _form.Activate();
+        _form.BringToFront();
+    }
     // 路由调用全部在 WPF Dispatcher（UI 线程）上：Form.Close 直接调。
     // 不用 Form.Invoke——WinForms 控件寄宿在 WPF Dispatcher 线程时无
     // WinForms SynchronizationContext，Invoke 会抛

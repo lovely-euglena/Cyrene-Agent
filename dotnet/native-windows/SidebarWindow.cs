@@ -294,8 +294,24 @@ public sealed class SidebarWindow : NativeWindow
         return brush;
     }
 
-    public override void ShowWindow() => _window.Show();
-    public override void Activate() => _window.Activate();
+    public override void ShowWindow()
+    {
+        if (!_window.IsVisible) _window.Show();
+        _window.Activate();
+    }
+
+    public override void Activate()
+    {
+        if (!_window.IsVisible) _window.Show();
+        if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
+        _window.Activate();
+        _window.Focus();
+        // ShowActivated=false 的窗在后台请求激活时常拿不到前台：短暂置顶抢占，
+        // 随后归还用户 pin 状态（否则托盘「打开状态面板」看起来没反应）。
+        var pinned = _pinned;
+        _window.Topmost = true;
+        _window.Topmost = pinned;
+    }
     public override void Close() => _window.Dispatcher.Invoke(() => _window.Close());
 
     public override void ApplyLayout(JsonElement layout)
