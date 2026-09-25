@@ -29,14 +29,18 @@ public sealed class PluginManagerWindow : NativeWindow
     private readonly StackPanel _installedList;
     private readonly StackPanel _marketList;
     private readonly TextBlock _status;
+    private readonly TextBlock _marketStatus;
     private bool _runtimeEnabled = true;
 
     private List<PluginInfo> _installed = new();
     private List<MarketEntry> _market = new();
     private List<string> _installing = new();
+    private List<MarketSource> _marketSources = new();
+    private string _marketError = "";
 
     private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
+    private record MarketSource(string Url, bool Ok, bool Used);
 
     public PluginManagerWindow(JsonElement layout)
     {
@@ -48,6 +52,13 @@ public sealed class PluginManagerWindow : NativeWindow
             Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0x8E, 0x93)),
             Margin = new Thickness(16, 6, 16, 6),
         };
+        _marketStatus = new TextBlock
+        {
+            FontSize = 11.5,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0x8E, 0x93)),
+            Margin = new Thickness(12, 8, 12, 0),
+            TextWrapping = TextWrapping.Wrap,
+        };
 
         _tabs = new TabControl
         {
@@ -58,7 +69,11 @@ public sealed class PluginManagerWindow : NativeWindow
         var tabInstalled = new TabItem { Header = "已安装", FontSize = 13 };
         tabInstalled.Content = MakeScroll(_installedList);
         var tabMarket = new TabItem { Header = "插件市场", FontSize = 13 };
-        tabMarket.Content = MakeScroll(_marketList);
+        var marketPanel = new DockPanel();
+        DockPanel.SetDock(_marketStatus, System.Windows.Controls.Dock.Top);
+        marketPanel.Children.Add(_marketStatus);
+        marketPanel.Children.Add(MakeScroll(_marketList));
+        tabMarket.Content = marketPanel;
         _tabs.Items.Add(tabInstalled);
         _tabs.Items.Add(tabMarket);
 
@@ -114,6 +129,9 @@ public sealed class PluginManagerWindow : NativeWindow
         _market = ParseList<MarketEntry>(payload, "market", el => new MarketEntry(
             Str(el, "id"), Str(el, "name"), Str(el, "version") ?? "-",
             Str(el, "description") ?? "", Str(el, "author") ?? ""));
+        _marketSources = ParseList<MarketSource>(payload, "marketSources", el => new MarketSource(
+            Str(el, "url") ?? "", Bool(el, "ok"), Bool(el, "used")));
+        _marketError = Str(payload, "marketError") ?? "";
         if (payload.TryGetProperty("installing", out var inst) && inst.ValueKind == JsonValueKind.Array)
         {
             _installing = inst.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToList();
@@ -121,9 +139,33 @@ public sealed class PluginManagerWindow : NativeWindow
         _runtimeEnabled = payload.TryGetProperty("runtimeEnabled", out var rt) && rt.ValueKind == JsonValueKind.True;
         RenderInstalled();
         RenderMarket();
+        RenderMarketStatus();
         _status.Text = _installing.Count > 0
             ? $"正在安装：{string.Join("、", _installing)} …"
             : $"已安装 {_installed.Count} 个插件 · 市场收录 {_market.Count} 个";
+    }
+
+    /// <summary>市场索引源状态行：Gitee/GitHub 双源死活 + 失败原因。</summary>
+    private void RenderMarketStatus()
+    {
+        if (_marketSources.Count == 0)
+        {
+            _marketStatus.Text = _marketError.Length > 0 ? $"⚠ {_marketError}" : "";
+            _marketStatus.Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A));
+            return;
+        }
+        var parts = _marketSources.Select(s =>
+        {
+            var name = s.Url.Contains("github", StringComparison.OrdinalIgnoreCase) ? "GitHub" : "Gitee";
+            var state = !s.Ok ? "不可用" : (s.Used ? "使用中" : "备用");
+            return $"{name}：{state}";
+        });
+        var text = "索引源  " + string.Join("    ", parts);
+        if (_marketError.Length > 0) text += $"    ·    {_marketError}";
+        _marketStatus.Text = text;
+        _marketStatus.Foreground = new SolidColorBrush(_marketSources.Any(s => s.Ok)
+            ? Color.FromRgb(0x66, 0x77, 0x66)
+            : Color.FromRgb(0xD3, 0x3A, 0x3A));
     }
 
     private static string? Str(JsonElement el, string key)

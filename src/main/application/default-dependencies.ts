@@ -229,10 +229,16 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   // 插件快照（.NET 管理窗 state.plugins payload；含运行时开关态）
   const buildPluginSnapshot = async (): Promise<unknown> => {
     const mkt = getPluginMarketService();
+    const market = pluginManager && mkt ? await mkt.listMarket() : null;
     return {
       runtimeEnabled: Boolean(pluginManager),
       plugins: pluginManager ? pluginManager.overview().plugins : [],
-      market: pluginManager && mkt ? await mkt.listMarket() : [],
+      // .NET 管理窗把 market 当数组解析：摊平为条目数组（旧实现直接塞
+      // listMarket() 结果对象 → ParseList 判非数组 → 市场恒为空）。
+      // 源健康/错误另字段下发，供管理器展示多源死活。
+      market: market?.plugins ?? [],
+      marketSources: market?.sources ?? [],
+      marketError: market && !market.ok ? (market.error ?? "") : undefined,
     };
   };
 
@@ -698,14 +704,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             } catch (err) {
               console.warn("[PluginNative] action failed:", action, id, err);
             }
-            // 完成后重推快照（installed ± market 索引）
-            await pushPluginsSnapshotToNative(async () => {
-              const mkt = getPluginMarketService();
-              return {
-                plugins: manager.overview().plugins,
-                market: mkt ? await mkt.listMarket() : [],
-              };
-            });
+            // 完成后重推快照（installed ± market 索引；与 spawn 初始推送同一构建器）
+            await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
           },
         });
       },
