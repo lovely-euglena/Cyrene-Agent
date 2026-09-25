@@ -193,6 +193,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
         petAlwaysOnTop: gs.petAlwaysOnTop,
         petZoom: gs.petZoom,
         uiIcon: gs.uiIcon,
+        uiFont: gs.uiFont,
         windowCornerRadius: gs.windowCornerRadius,
         toastSoundEnabled: gs.toastSoundEnabled,
         chatLineHeight: gs.chatLineHeight,
