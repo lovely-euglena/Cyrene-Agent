@@ -111,10 +111,19 @@ describe("sanitizeNativeGeneralSetting", () => {
       "launchAtLogin",
       "petVisible",
       "petAlwaysOnTop",
-      "windowCornerRadius",
-      "toastSoundEnabled",
+      "petZoom",
+      "uiIcon",
       "uiTheme",
       "language",
+      "windowCornerRadius",
+      "toastSoundEnabled",
+      "chatLineHeight",
+      "assistantBubbleEnabled",
+      "disableGpuElectron",
+      "gitCommitAuthorName",
+      "gitCommitAuthorEmail",
+      "sidebarVisible",
+      "tasksVisible",
     ]);
   });
 });

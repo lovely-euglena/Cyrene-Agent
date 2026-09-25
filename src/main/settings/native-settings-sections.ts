@@ -30,6 +30,8 @@ export interface NativeApiConfigSnapshot {
   multimodal: boolean;
   thinkingOverride: -1 | 0 | 1;
   disableMaxToken: boolean;
+  /** 测试连接超时（ms；timeout-settings.json 的 testTimeout） */
+  testTimeout: number;
   embeddingDimensions: number | null;
   customEndpoint: boolean;
   /** 独立视觉模型（全局，不随档案走） */
@@ -126,7 +128,11 @@ function projectProfileFields(raw: object): Record<string, string> {
   return out;
 }
 
-export function buildApiSectionSnapshot(settings: ModelSettings, profiles: SavedModelProfile[]): NativeApiSnapshot {
+export function buildApiSectionSnapshot(
+  settings: ModelSettings,
+  profiles: SavedModelProfile[],
+  testTimeout = 15_000,
+): NativeApiSnapshot {
   const vision = settings.vision;
   const transport = settings.explicitTransport === "anthropic" || settings.explicitTransport === "responses"
     ? settings.explicitTransport
@@ -145,6 +151,7 @@ export function buildApiSectionSnapshot(settings: ModelSettings, profiles: Saved
       multimodal: settings.multimodal !== false,
       thinkingOverride: settings.thinkingOverride === 1 ? 1 : settings.thinkingOverride === -1 ? -1 : 0,
       disableMaxToken: settings.disableMaxToken === true,
+      testTimeout,
       embeddingDimensions: typeof settings.embeddingDimensions === "number" ? settings.embeddingDimensions : null,
       customEndpoint: !MODEL_PRESETS.some((preset) => preset.providerName === settings.provider),
       // 视觉配置是全局的（不随档案走）

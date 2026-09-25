@@ -16,6 +16,7 @@
 
 import { normalizeUiTheme, type UiTheme } from "../../shared/ui-theme";
 import { normalizeWindowCornerRadius } from "../../shared/window-corner-radius";
+import { normalizeUiIcon } from "../../shared/ui-icon";
 import { isAllowedTimezoneValue } from "../../shared/timezone-options";
 import type { GeneralSettings } from "../settings/general-settings";
 import type { UserProfile } from "../settings-store";
@@ -25,11 +26,19 @@ export const NATIVE_GENERAL_SETTING_KEYS = [
   "launchAtLogin",
   "petVisible",
   "petAlwaysOnTop",
-  "windowCornerRadius",
-  "toastSoundEnabled",
-  // 读方向（快照）仍含以下两项；写方向保留为前向兼容（当前 .NET UI 无控件）
+  "petZoom",
+  "uiIcon",
   "uiTheme",
   "language",
+  "windowCornerRadius",
+  "toastSoundEnabled",
+  "chatLineHeight",
+  "assistantBubbleEnabled",
+  "disableGpuElectron",
+  "gitCommitAuthorName",
+  "gitCommitAuthorEmail",
+  "sidebarVisible",
+  "tasksVisible",
 ] as const;
 
 export type NativeGeneralSettingKey = (typeof NATIVE_GENERAL_SETTING_KEYS)[number];
@@ -125,7 +134,24 @@ export function sanitizeNativeGeneralSetting(
     case "petVisible":
     case "petAlwaysOnTop":
     case "toastSoundEnabled":
+    case "assistantBubbleEnabled":
+    case "disableGpuElectron":
+    case "sidebarVisible":
+    case "tasksVisible":
       return typeof value === "boolean" ? { [key]: value } : null;
+    case "petZoom": {
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      return { petZoom: Math.min(2, Math.max(0.5, Math.round(value * 10) / 10)) };
+    }
+    case "chatLineHeight": {
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      return { chatLineHeight: Math.min(2, Math.max(1.2, Math.round(value * 100) / 100)) };
+    }
+    case "uiIcon":
+      return typeof value === "string" ? { uiIcon: normalizeUiIcon(value) } : null;
+    case "gitCommitAuthorName":
+    case "gitCommitAuthorEmail":
+      return typeof value === "string" ? { [key]: value.trim().slice(0, 200) } : null;
     case "windowCornerRadius":
       if (typeof value !== "number" && typeof value !== "string") return null;
       if (typeof value === "string" && value.trim() === "") return null;

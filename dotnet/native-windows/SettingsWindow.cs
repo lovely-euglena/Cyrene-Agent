@@ -297,11 +297,32 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakeHeader("通用"));
-        panel.Children.Add(MakeHint("启动行为与桌宠偏好（原生设置一期）"));
+        panel.Children.Add(MakeHint("启动行为、窗口显示与系统行为（对齐 Electron 通用设置）。"));
+        panel.Children.Add(MakeSubHeader("启动与提醒"));
         panel.Children.Add(MakeToggleRow("开机自启", GetBool("launchAtLogin"), v => SetSetting("launchAtLogin", v)));
-        panel.Children.Add(MakeToggleRow("桌宠显示", GetBool("petVisible", true), v => SetSetting("petVisible", v)));
-        panel.Children.Add(MakeToggleRow("桌宠始终置顶", GetBool("petAlwaysOnTop", true), v => SetSetting("petAlwaysOnTop", v)));
-        panel.Children.Add(MakeHint("其余通用设置项在旧版设置中（后续版本逐步迁移）"));
+        panel.Children.Add(MakeToggleRow("提醒音效", GetBool("toastSoundEnabled", true),
+            v => SetSetting("toastSoundEnabled", v)));
+
+        panel.Children.Add(MakeSubHeader("窗口"));
+        panel.Children.Add(MakeToggleRow("状态栏窗口", GetBool("sidebarVisible", true),
+            v => SetSetting("sidebarVisible", v)));
+        panel.Children.Add(MakeToggleRow("日程栏窗口", GetBool("tasksVisible", true),
+            v => SetSetting("tasksVisible", v)));
+        panel.Children.Add(MakeHint("关闭状态栏/日程栏后立即隐藏；再次打开从托盘或此处恢复。"));
+
+        panel.Children.Add(MakeSubHeader("性能"));
+        panel.Children.Add(MakeToggleRow("禁用 GPU 渲染", GetBool("disableGpuElectron"),
+            v => SetSetting("disableGpuElectron", v)));
+        panel.Children.Add(MakeHint("无 GPU 或花屏时开启；下次启动生效。"));
+
+        panel.Children.Add(MakeSubHeader("Git 提交身份"));
+        panel.Children.Add(MakeHint("代码 Git 面板提交时使用；邮箱必填。"));
+        panel.Children.Add(MakeTextRow("作者名", GetString("gitCommitAuthorName", "Cyrene"),
+            v => SetSetting("gitCommitAuthorName", v)));
+        panel.Children.Add(MakeTextRow("邮箱", GetString("gitCommitAuthorEmail"),
+            v => SetSetting("gitCommitAuthorEmail", v)));
+
+        panel.Children.Add(MakeHint("其余通用设置项（语言等）在旧版设置中。"));
         panel.Children.Add(MakeLegacyButton("general"));
         return panel;
     }
@@ -310,13 +331,74 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakeHeader("外观"));
-        panel.Children.Add(MakeHint("窗口圆角与提醒音效（原生设置一期）；字体/图标等高级外观见旧版"));
+        panel.Children.Add(MakeHint("桌宠、窗口与聊天排版（对齐 Electron 外观设置）。"));
+        panel.Children.Add(MakeSectionStatus("appearance"));
+
+        panel.Children.Add(MakeSubHeader("昔涟桌宠"));
+        panel.Children.Add(MakeToggleRow("桌宠显示", GetBool("petVisible", true), v => SetSetting("petVisible", v)));
+        panel.Children.Add(MakeToggleRow("桌宠始终置顶", GetBool("petAlwaysOnTop", true),
+            v => SetSetting("petAlwaysOnTop", v)));
+        panel.Children.Add(MakeDoubleSliderRow("桌宠缩放", GetDouble("petZoom", 1), 0.5, 2, 0.1, "%",
+            v => SetSetting("petZoom", Math.Round(v, 1)), v => $"{Math.Round(v * 100)}%"));
+
+        panel.Children.Add(MakeSubHeader("窗口"));
         panel.Children.Add(MakeSliderRow("窗口圆角", GetInt("windowCornerRadius", 24), 0, 40, "px",
             v => SetSetting("windowCornerRadius", v)));
-        panel.Children.Add(MakeToggleRow("提醒音效", GetBool("toastSoundEnabled", true),
-            v => SetSetting("toastSoundEnabled", v)));
+
+        panel.Children.Add(MakeSubHeader("界面"));
+        panel.Children.Add(MakeUiIconRow(GetString("uiIcon", "cyrene-sun")));
+        panel.Children.Add(MakeUiFontRow());
+
+        panel.Children.Add(MakeSubHeader("聊天排版"));
+        panel.Children.Add(MakeDoubleSliderRow("行间距", GetDouble("chatLineHeight", 1.75), 1.2, 2.0, 0.05, "",
+            v => SetSetting("chatLineHeight", Math.Round(v, 2)), v => v.ToString("0.00")));
+        panel.Children.Add(MakeToggleRow("昔涟回复气泡", GetBool("assistantBubbleEnabled"),
+            v => SetSetting("assistantBubbleEnabled", v)));
+
         panel.Children.Add(MakeLegacyButton("appearance"));
         return panel;
+    }
+
+    /// <summary>桌面图标二选一（绮梦/晴光）；点击本地高亮 + 写设置。</summary>
+    private FrameworkElement MakeUiIconRow(string current)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
+        var selected = current == "cyrene-pink" ? "cyrene-pink" : "cyrene-sun";
+        Button? pinkBtn = null;
+        Button? sunBtn = null;
+        void Refresh()
+        {
+            if (pinkBtn is not null) pinkBtn.Style = selected == "cyrene-pink" ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle;
+            if (sunBtn is not null) sunBtn.Style = selected == "cyrene-sun" ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle;
+        }
+        pinkBtn = MakeButton("绮梦", () => { selected = "cyrene-pink"; SetSetting("uiIcon", selected); Refresh(); }, minWidth: 96);
+        sunBtn = MakeButton("晴光", () => { selected = "cyrene-sun"; SetSetting("uiIcon", selected); Refresh(); }, minWidth: 96);
+        Refresh();
+        row.Children.Add(pinkBtn);
+        row.Children.Add(sunBtn);
+        return MakeRow("桌面图标", row);
+    }
+
+    /// <summary>界面字体：显示当前字体 + 导入/恢复默认（宿主弹文件框，native 不传路径）。</summary>
+    private FrameworkElement MakeUiFontRow()
+    {
+        var font = GetNode("uiFont");
+        var displayName = GetString(font, "displayName");
+        if (displayName.Length == 0) displayName = GetString(font, "kind", "source-han") == "custom" ? "自定义字体" : "思源黑体（默认）";
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
+        var label = new TextBlock
+        {
+            Text = displayName,
+            FontSize = 12.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+        };
+        row.Children.Add(label);
+        var importBtn = MakeButton("导入字体", () => RequestRouter.SendCommand("settings", "ui-font-import"), minWidth: 88);
+        var resetBtn = MakeButton("恢复默认", () => RequestRouter.SendCommand("settings", "ui-font-reset"), minWidth: 84);
+        row.Children.Add(importBtn);
+        row.Children.Add(resetBtn);
+        return MakeRow("界面字体", row);
     }
 
     private FrameworkElement BuildUserSection()
@@ -358,10 +440,24 @@ public sealed partial class SettingsWindow : NativeWindow
         avatarRow.Children.Add(uploadButton);
         panel.Children.Add(avatarRow);
 
-        panel.Children.Add(MakeTextRow("昵称", GetString(user, "nickname"), v => SetUserProfile("nickname", v)));
-        panel.Children.Add(MakeTextRow("称呼偏好", GetString(user, "callPreference"), v => SetUserProfile("callPreference", v)));
-        panel.Children.Add(MakeTextRow("生日", GetString(user, "birthday"), v => SetUserProfile("birthday", v)));
-        panel.Children.Add(MakeTextRow("默认城市", GetString(user, "defaultCity"), v => SetUserProfile("defaultCity", v)));
+        panel.Children.Add(MakeTextRow("昵称", GetString(user, "nickname"), v => SetUserProfile("nickname", v),
+            placeholder: "你想让昔涟怎么称呼你"));
+        panel.Children.Add(MakeTextRow("称呼偏好", GetString(user, "callPreference"), v => SetUserProfile("callPreference", v),
+            placeholder: "例如：伙伴（留空用昵称）"));
+        // 生日用日期选择器（旧实现自由文本，可写入非法值）
+        var birthdayPicker = new DatePicker
+        {
+            Width = 260,
+            FontSize = 12,
+            SelectedDate = TryParseDateOnly(GetString(user, "birthday")),
+        };
+        birthdayPicker.SelectedDateChanged += (_, _) =>
+        {
+            SetUserProfile("birthday", birthdayPicker.SelectedDate?.ToString("yyyy-MM-dd") ?? "");
+        };
+        panel.Children.Add(MakeRow("生日", birthdayPicker));
+        panel.Children.Add(MakeTextRow("默认城市", GetString(user, "defaultCity"), v => SetUserProfile("defaultCity", v),
+            placeholder: "例如：上海、北京、广州"));
         panel.Children.Add(MakeTimezoneRow(user));
         panel.Children.Add(MakeGenderRow(user));
         return panel;
@@ -458,8 +554,15 @@ public sealed partial class SettingsWindow : NativeWindow
     /// <summary>各 section 的数据源子集（用于按 section 判定是否重建）。</summary>
     private string SectionSourceJson(string id) => id switch
     {
-        "general" => $"{GetBool("launchAtLogin")}|{GetBool("petVisible", true)}|{GetBool("petAlwaysOnTop", true)}",
-        "appearance" => $"{GetInt("windowCornerRadius", -1)}|{GetBool("toastSoundEnabled", true)}",
+        "general" => string.Join("|",
+            GetBool("launchAtLogin"), GetBool("toastSoundEnabled", true),
+            GetBool("sidebarVisible", true), GetBool("tasksVisible", true),
+            GetBool("disableGpuElectron"),
+            GetString("gitCommitAuthorName"), GetString("gitCommitAuthorEmail")),
+        "appearance" => string.Join("|",
+            GetBool("petVisible", true), GetBool("petAlwaysOnTop", true), GetDouble("petZoom", 1),
+            GetInt("windowCornerRadius", -1), GetString("uiIcon"), NodeRawJson("uiFont"),
+            GetDouble("chatLineHeight", 1.75), GetBool("assistantBubbleEnabled")),
         "user" => NodeRawJson("user"),
         "api" => NodeRawJson("api"),
         "memory" => NodeRawJson("memory"),
@@ -537,6 +640,12 @@ public sealed partial class SettingsWindow : NativeWindow
            && _settings.TryGetProperty(key, out var v)
            && v.ValueKind == JsonValueKind.Number
            && v.TryGetInt32(out var n) ? n : fallback;
+
+    private double GetDouble(string key, double fallback)
+        => _settings.ValueKind == JsonValueKind.Object
+           && _settings.TryGetProperty(key, out var v)
+           && v.ValueKind == JsonValueKind.Number
+           && v.TryGetDouble(out var n) ? n : fallback;
 
     private string GetString(string key, string fallback = "")
         => GetString(_settings, key, fallback);
@@ -750,8 +859,57 @@ public sealed partial class SettingsWindow : NativeWindow
         return MakeRow(label, row);
     }
 
-    /// <summary>文本行：失焦或回车提交；与初值相同不发请求。</summary>
-    private static Border MakeTextRow(string label, string initial, Action<string> onCommit, double width = 260)
+    /// <summary>浮点滑杆行（桌宠缩放 / 行间距）：250ms 防抖后写一次。</summary>
+    private Border MakeDoubleSliderRow(
+        string label,
+        double initial,
+        double min,
+        double max,
+        double step,
+        string unit,
+        Action<double> onChange,
+        Func<double, string>? format = null)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var slider = new Slider
+        {
+            Width = 200,
+            Minimum = min,
+            Maximum = max,
+            Value = Math.Max(min, Math.Min(max, initial)),
+            IsSnapToTickEnabled = true,
+            TickFrequency = step,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        string Format(double v) => format?.Invoke(v) ?? $"{v:0.##}{unit}";
+        var valueText = new TextBlock
+        {
+            Text = Format(slider.Value),
+            Width = 60,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0),
+        };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            onChange(slider.Value);
+        };
+        slider.ValueChanged += (_, _) =>
+        {
+            valueText.Text = Format(slider.Value);
+            timer.Stop();
+            timer.Start();
+        };
+        _debounceTimers.Add(timer);
+        row.Children.Add(slider);
+        row.Children.Add(valueText);
+        return MakeRow(label, row);
+    }
+
+    /// <summary>文本行：失焦或回车提交；与初值相同不发请求。placeholder 为空时不显示占位。</summary>
+    private static Border MakeTextRow(string label, string initial, Action<string> onCommit, double width = 260, string? placeholder = null)
     {
         var box = new TextBox
         {
@@ -774,8 +932,35 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             if (e.Key == System.Windows.Input.Key.Enter) Commit();
         };
-        return MakeRow(label, box);
+        if (placeholder is null) return MakeRow(label, box);
+
+        // 占位文本：WPF TextBox 无 placeholder，用覆盖层 + 空文本切换模拟
+        var host = new Grid { Width = width };
+        host.Children.Add(box);
+        var placeholderText = new TextBlock
+        {
+            Text = placeholder,
+            FontSize = 12,
+            Foreground = NativeTheme.TextMutedBrush,
+            Margin = new Thickness(9, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed,
+        };
+        box.TextChanged += (_, _) =>
+        {
+            placeholderText.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        };
+        host.Children.Add(placeholderText);
+        return MakeRow(label, host);
     }
+
+    /** 解析 yyyy-MM-dd（非法返回 null，DatePicker 显示空） */
+    private static DateTime? TryParseDateOnly(string value)
+        => DateTime.TryParseExact(value, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var date)
+            ? date
+            : null;
 
     /// <summary>时区行：选项来自宿主快照（与渲染页共享白名单）。</summary>
     private Border MakeTimezoneRow(JsonElement user)

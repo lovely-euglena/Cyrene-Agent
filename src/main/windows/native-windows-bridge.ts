@@ -45,6 +45,8 @@ export interface NativeBridgeActions {
   schedulerAction?(verb: string, payload: Record<string, unknown>): void;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
+  /** 界面字体导入/恢复（宿主弹文件框/清理文件；native 不传路径）。 */
+  uiFontAction?(verb: "import" | "reset"): void;
   /**
    * 插件操作（.NET 插件管理窗 → 主进程）：
    * enable/disable/uninstall/install/openPanel/refresh。install 为异步
@@ -115,6 +117,12 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "openChannels":
           actions.openChannelsWindow?.();
+          break;
+        case "ui-font-import":
+          actions.uiFontAction?.("import");
+          break;
+        case "ui-font-reset":
+          actions.uiFontAction?.("reset");
           break;
         case "enable-runtime":
         case "disable-runtime":

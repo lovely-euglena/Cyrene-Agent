@@ -68,7 +68,8 @@ public sealed partial class SettingsWindow
         panel.Children.Add(LabeledBox("长期兴趣", interestsBox));
         panel.Children.Add(LabeledBox("语言", languageBox));
         panel.Children.Add(LabeledBox("长期备注", noteBox));
-        panel.Children.Add(MakeButton("保存画像", () =>
+        var l0Actions = new StackPanel { Orientation = Orientation.Horizontal };
+        l0Actions.Children.Add(MakeButton("保存画像", () =>
         {
             RequestRouter.SendSettingsAction("memory", "save-l0", new Dictionary<string, object?>
             {
@@ -82,6 +83,16 @@ public sealed partial class SettingsWindow
                 },
             });
         }, primary: true));
+        // 取消修改：回滚到最近一次快照值（对齐 Electron 的编辑/取消两态）
+        l0Actions.Children.Add(MakeButton("取消修改", () =>
+        {
+            nameBox.Text = GetString(l0, "preferredName");
+            occupationBox.Text = GetString(l0, "occupation");
+            interestsBox.Text = GetString(l0, "longTermInterests");
+            languageBox.Text = GetString(l0, "language");
+            noteBox.Text = GetString(l0, "permanentNote");
+        }));
+        panel.Children.Add(l0Actions);
 
         panel.Children.Add(MakeSubHeader("近况（L1）"));
         var goalsBox = MakeMemoryBox(GetString(l1, "recentGoals"), multiline: true);
@@ -90,7 +101,8 @@ public sealed partial class SettingsWindow
         panel.Children.Add(LabeledBox("近期目标", goalsBox));
         panel.Children.Add(LabeledBox("近期偏好", preferencesBox));
         panel.Children.Add(LabeledBox("当前项目", projectBox));
-        panel.Children.Add(MakeButton("保存近况", () =>
+        var l1Actions = new StackPanel { Orientation = Orientation.Horizontal };
+        l1Actions.Children.Add(MakeButton("保存近况", () =>
         {
             RequestRouter.SendSettingsAction("memory", "save-l1", new Dictionary<string, object?>
             {
@@ -102,6 +114,13 @@ public sealed partial class SettingsWindow
                 },
             });
         }, primary: true));
+        l1Actions.Children.Add(MakeButton("取消修改", () =>
+        {
+            goalsBox.Text = GetString(l1, "recentGoals");
+            preferencesBox.Text = GetString(l1, "recentPreferences");
+            projectBox.Text = GetString(l1, "currentProject");
+        }));
+        panel.Children.Add(l1Actions);
     }
 
     // ── L2 事件片段（本地搜索过滤） ──

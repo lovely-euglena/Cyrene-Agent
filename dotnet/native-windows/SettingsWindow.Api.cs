@@ -269,6 +269,9 @@ public sealed partial class SettingsWindow
         panel.Children.Add(MakeLabeledApi("API 协议", transportCombo));
         panel.Children.Add(MakeLabeledApi("模型名", modelCombo));
         panel.Children.Add(MakeLabeledApi("上下文窗口（Token）", contextBox));
+        var testTimeoutBox = MakeApiTextBox(GetInt(config, "testTimeout", 15000).ToString());
+        testTimeoutBox.Width = 120;
+        panel.Children.Add(MakeLabeledApi("测试连接超时（ms）", testTimeoutBox));
         panel.Children.Add(multimodalBox);
 
         // ── 视觉模型（全局） ──
@@ -348,6 +351,9 @@ public sealed partial class SettingsWindow
                     ["apiKey"] = form.ApiKey,
                     ["transport"] = form.Transport,
                     ["contextWindowTokens"] = form.ContextWindow,
+                    ["testTimeout"] = int.TryParse(testTimeoutBox.Text.Trim(), out var testTimeout)
+                        ? Math.Max(1000, testTimeout)
+                        : 15000,
                     ["multimodal"] = form.Multimodal,
                     ["thinkingOverride"] = form.ThinkingOverride,
                     ["disableMaxToken"] = form.DisableMaxToken,

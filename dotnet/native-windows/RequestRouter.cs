@@ -208,10 +208,18 @@ public static class RequestRouter
     private static void SendSettingForwarded(string? key, JsonElement? value)
     {
         // 白名单与宿主 native-settings-protocol.ts 完全一致（契约测试锁定）：
-        // launchAtLogin / petVisible / petAlwaysOnTop / windowCornerRadius /
-        // toastSoundEnabled 为当前 UI 写入键；uiTheme / language 为读方向+
-        // 前向兼容键。历史键名（autoStart/trayResident/theme）已废弃。
-        var allowed = new HashSet<string> { "launchAtLogin", "petVisible", "petAlwaysOnTop", "windowCornerRadius", "toastSoundEnabled", "uiTheme", "language" };
+        // launchAtLogin / petVisible / petAlwaysOnTop / petZoom / uiIcon /
+        // windowCornerRadius / toastSoundEnabled / chatLineHeight /
+        // assistantBubbleEnabled / disableGpuElectron / gitCommitAuthorName /
+        // gitCommitAuthorEmail / sidebarVisible / tasksVisible 为 UI 写入键；
+        // uiTheme / language 为读方向+前向兼容键。历史键名（autoStart/
+        // trayResident/theme）已废弃。
+        var allowed = new HashSet<string> {
+            "launchAtLogin", "petVisible", "petAlwaysOnTop", "petZoom", "uiIcon",
+            "uiTheme", "language", "windowCornerRadius", "toastSoundEnabled",
+            "chatLineHeight", "assistantBubbleEnabled", "disableGpuElectron",
+            "gitCommitAuthorName", "gitCommitAuthorEmail", "sidebarVisible", "tasksVisible",
+        };
         if (string.IsNullOrEmpty(key) || !allowed.Contains(key)) return;
         SendSetting(key, value.HasValue ? value.Value : null);
     }

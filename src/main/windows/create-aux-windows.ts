@@ -5,7 +5,7 @@ import { isDev } from "../env";
 import { computeLayout } from "../window-layout";
 import { stopCall, setCallWindow } from "../call/call-manager";
 import { attachExternalLinkHandler } from "./external-link";
-import { isNativeWindowActive, spawnNativeWindow } from "./native-windows-bridge";
+import { isNativeWindowActive, spawnNativeWindow, closeNativeWindow } from "./native-windows-bridge";
 import {
   callWindow,
   getCurrentAppIconPath,
@@ -478,6 +478,34 @@ export async function createStickerManagerWindow(): Promise<{ ok: boolean; error
   });
 
   return { ok: true };
+}
+
+/**
+ * 运行期切换状态栏/日程栏显示（设置窗开关用；native 与 Electron 统一入口）。
+ * native 侧走 win.close；Electron 侧关 BrowserWindow。再次打开复用既有创建函数。
+ */
+export function setSidebarWindowVisible(visible: boolean): void {
+  if (visible) {
+    createSidebarWindow();
+    return;
+  }
+  if (isNativeWindowActive("sidebar")) {
+    void closeNativeWindow("sidebar");
+    return;
+  }
+  if (sidebarWindow && !sidebarWindow.isDestroyed()) sidebarWindow.close();
+}
+
+export function setTasksWindowVisible(visible: boolean): void {
+  if (visible) {
+    createTasksWindow();
+    return;
+  }
+  if (isNativeWindowActive("tasks")) {
+    void closeNativeWindow("tasks");
+    return;
+  }
+  if (tasksWindow && !tasksWindow.isDestroyed()) tasksWindow.close();
 }
 
 /**

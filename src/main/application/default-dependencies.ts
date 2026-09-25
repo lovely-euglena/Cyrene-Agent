@@ -133,6 +133,8 @@ import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
+import { setSidebarWindowVisible, setTasksWindowVisible } from "../windows/create-aux-windows";
+import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import {
   initNativeWindowsBridge,
   bindNativeDataProviders,
@@ -142,6 +144,7 @@ import {
 } from "../windows/native-windows-bridge";
 import { connectDetachedTray } from "../tray-detached";
 import { openSettingsWindow } from "../windows/settings-router";
+import { pickAndImportUiFont, resetUiFont } from "../settings/ui-font";
 import { createSplashWindow } from "../startup/create-splash-window";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
@@ -306,6 +309,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             ? listSavedModelProfiles(loadModelSettings()).find((profile) => profile.id === profileId)
             : undefined;
           const beforeIds = new Set(listSavedModelProfiles(loadModelSettings()).map((profile) => profile.id));
+          // 测试连接超时随保存一起落盘（与 Electron 同口径）
+          const testTimeout = clampInt(config.testTimeout, 1_000, 600_000);
+          if (testTimeout !== null) saveTimeoutSettings({ testTimeout });
           // 不丢推理偏好：payload 未带 reasoning 时保留原档案值（WPF 无该字段 UI，
           // 旧实现重建档案时 normalizeReasoningPreference(undefined) 会把它抹掉）
           const reasoning = config.reasoning !== undefined
@@ -674,6 +680,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             const patch = sanitizeNativeGeneralSetting(key, value);
             if (!patch) return;
             saveGeneralSettings(patch);
+            // 运行期联动：状态栏/日程栏开关立即开/关对应窗口（与 Electron 设置页同语义）
+            if (key === "sidebarVisible") setSidebarWindowVisible(patch.sidebarVisible === true);
+            if (key === "tasksVisible") setTasksWindowVisible(patch.tasksVisible === true);
           },
           // native 设置窗写用户资料：字段白名单 + 时区/性别校验；写后广播给
           // Electron 窗口（聊天/调用链有依赖）；同样不回推快照（避免打断输入）。
@@ -709,6 +718,32 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           schedulerAction: nativeSchedulerAction,
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
+          // 界面字体导入/恢复（Electron 设置页同口径；宿主弹框/清文件）
+          uiFontAction: (verb) => {
+            const fontDeps = {
+              getGeneralSettings: loadGeneralSettings,
+              saveGeneralSettings,
+            };
+            if (verb === "import") {
+              void pickAndImportUiFont(fontDeps).then((result) => {
+                if (result.canceled) return;
+                nativeNotice(
+                  "appearance",
+                  result.ok ? "ok" : "error",
+                  result.ok ? `字体已导入：${result.displayName ?? ""}` : `导入失败：${result.error ?? "未知错误"}`,
+                );
+                pushSettingsSnapshotToNative();
+              });
+              return;
+            }
+            const result = resetUiFont(fontDeps);
+            nativeNotice(
+              "appearance",
+              result.ok ? "ok" : "error",
+              result.ok ? "已恢复默认字体" : `恢复失败：${result.error ?? "未知错误"}`,
+            );
+            pushSettingsSnapshotToNative();
+          },
           // .NET 插件管理窗操作：manager/market 运行期引用（startPlugins 之后可用）
           pluginAction: async (action, id) => {
             const manager = pluginManager;
@@ -776,6 +811,7 @@ createTray: (input) => {
       shutdown,
       minimumSplashMs: SPLASH_MIN_MS,
       markStartupWindowsReady: () => markStartupPhaseReady(),
+      getAppVersion: () => app.getVersion(),
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行
@@ -974,7 +1010,11 @@ createTray: (input) => {
               const actions = nativeSchedulerActions;
               return {
                 ...base,
-                api: buildApiSectionSnapshot(modelSettings, listSavedModelProfiles(modelSettings)),
+                api: buildApiSectionSnapshot(
+                  modelSettings,
+                  listSavedModelProfiles(modelSettings),
+                  getTimeoutSettings().testTimeout,
+                ),
                 // 记忆读取失败不再让整个快照失败：带 error 键下发给 WPF 显示错误行
                 memory: await (async () => {
                   try {
