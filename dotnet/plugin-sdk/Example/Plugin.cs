@@ -99,4 +99,44 @@ public sealed class HelloPlugin : CyrenePluginBase
         var key = args.TryGetProperty("key", out var k) ? k.GetString() ?? "k" : "k";
         return Storage.Get<object?>(key);
     }
+
+    /// <summary>宿主服务（deps）回归用例：一次调用串起全部已声明服务，冒烟脚本按方法应答。</summary>
+    [CyreneTool("deps_probe", "依赖探针", "调用宿主服务并汇总结果（协议自测）")]
+    public async Task<object> DepsProbe(JsonElement args, CancellationToken ct)
+    {
+        var hasChannel = await Deps.Channels.HasAsync("feishu", ct);
+        await Deps.Secrets.SetAsync("probe", "v1", ct);
+        var secret = await Deps.Secrets.GetAsync("probe", ct);
+        var binding = await Deps.Workspace.GetBindingAsync("conv-1", ct);
+        var conversations = await Deps.Conversations.ListAsync(new ConversationListInput { Limit = 1 }, ct);
+        var tasks = await Deps.Scheduler.ListTasksAsync(ct);
+        var llm = await Deps.Llm.GenerateTextAsync(
+            new[] { new LlmMessage { Role = "user", Content = "hi" } },
+            new LlmGenerateOptions { MaxTokens = 16, Purpose = "probe" },
+            ct);
+        return new
+        {
+            hasChannel,
+            secret,
+            bindingRoot = binding?.Root,
+            conversations = conversations.Items.Count,
+            tasks = tasks.Count,
+            llm,
+        };
+    }
+
+    /// <summary>错误码回归用例：宿主回 ok:false + code 时应抛 <see cref="PluginHostException"/>。</summary>
+    [CyreneTool("deps_error_probe", "依赖错误探针", "验证宿主错误码透传（协议自测）")]
+    public async Task<object> DepsErrorProbe(JsonElement args, CancellationToken ct)
+    {
+        try
+        {
+            await Deps.Secrets.DeleteAsync("boom", ct);
+            return new { code = "none" };
+        }
+        catch (PluginHostException ex)
+        {
+            return new { code = ex.Code };
+        }
+    }
 }

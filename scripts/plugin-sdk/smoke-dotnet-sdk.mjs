@@ -6,7 +6,8 @@
 //   2. v2 桥：ready 声明（protocolVersion/ipc/promptProviders/capabilities）、
 //      host→plugin call（ipc.dispatch / prompt.provide / plugin.open）、
 //      plugin→host call（events.emit：工具与事件处理两条路径）、
-//      notify event.deliver 投递、私有 KV 跨会话持久化
+//      notify event.deliver 投递、私有 KV 跨会话持久化、
+//      deps.* 直通（channels/llm/secrets/workspace/conversations/scheduler）
 //   3. 宿主 cancel 帧：声明 CancellationToken 的长任务应被中止并回 ok:false
 //   4. 协议主版本不符：回 error(api_version_mismatch) 帧并退出
 //   5. 多字节/大结果分帧由宿主侧 dotnet-adapter 单测覆盖，这里只验证协议语义
@@ -69,8 +70,32 @@ class Session {
       this.frames.push(frame);
       // 插件 → 宿主 call：自动应答，避免插件侧 pending
       if (frame.op === "call") {
-        this.send({ op: "reply", id: frame.id, ok: true, data: null });
+        const reply = this.autoReply(frame.method);
+        const payload = { op: "reply", id: frame.id, ok: reply.ok !== false, data: reply.data ?? null };
+        if (reply.error) payload.error = reply.error;
+        if (reply.code) payload.code = reply.code;
+        this.send(payload);
       }
+    }
+  }
+
+  /** 宿主服务（deps）假应答：按方法返回可断言的数据/错误码 */
+  autoReply(method) {
+    switch (method) {
+      case "deps.channels.has": return { data: true };
+      case "deps.secrets.set": return { data: null };
+      case "deps.secrets.get": return { data: "secret-v1" };
+      case "deps.secrets.delete": return { ok: false, error: "模拟安全存储不可用", code: "E_STORAGE_UNAVAILABLE" };
+      case "deps.workspace.getBinding": return { data: { conversationId: "conv-1", root: "C:/ws", displayName: "ws" } };
+      case "deps.conversations.list": return {
+        data: {
+          items: [{ id: "c1", title: "t", mode: "chat", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+          nextCursor: null,
+        },
+      };
+      case "deps.scheduler.listTasks": return { data: [] };
+      case "deps.llm.generateText": return { data: "llm-ok" };
+      default: return { data: null };
     }
   }
 
@@ -110,7 +135,10 @@ function init(session, apiVersion = 1) {
     op: "init",
     apiVersion,
     protocolVersion: 2,
-    manifest: { id: "hello-dotnet" },
+    manifest: {
+      id: "hello-dotnet",
+      deps: ["channels", "llm", "secrets", "conversations", "workspace", "scheduler"],
+    },
     dataDir: session.dataDir,
   });
 }
@@ -198,6 +226,29 @@ try {
     session.send({ op: "invoke", callId: "c5", tool: "kv_get", args: { key: "persist" } });
     const got = await session.waitFor((f) => f.op === "result" && f.callId === "c5", 10_000, "kv_get 结果");
     if (got.ok !== true || got.data?.n !== 7) fail(`kv_get 返回不符: ${JSON.stringify(got)}`);
+
+    // 宿主服务（deps）直通
+    session.send({ op: "invoke", callId: "c9", tool: "deps_probe", args: {} });
+    const probe = await session.waitFor((f) => f.op === "result" && f.callId === "c9", 10_000, "deps_probe 结果");
+    if (probe.ok !== true
+      || probe.data?.hasChannel !== true
+      || probe.data?.secret !== "secret-v1"
+      || probe.data?.bindingRoot !== "C:/ws"
+      || probe.data?.conversations !== 1
+      || probe.data?.tasks !== 0
+      || probe.data?.llm !== "llm-ok") {
+      fail(`deps_probe 返回不符: ${JSON.stringify(probe)}`);
+    }
+    console.log("  · deps.* 直通（channels/llm/secrets/workspace/conversations/scheduler）");
+
+    // 宿主错误码透传 → PluginHostException.Code
+    session.send({ op: "invoke", callId: "c10", tool: "deps_error_probe", args: {} });
+    const errProbe = await session.waitFor((f) => f.op === "result" && f.callId === "c10", 10_000, "deps_error_probe 结果");
+    if (errProbe.ok !== true || errProbe.data?.code !== "E_STORAGE_UNAVAILABLE") {
+      fail(`错误码透传不符: ${JSON.stringify(errProbe)}`);
+    }
+    console.log("  · 宿主错误码透传（PluginHostException.Code）");
+
     await session.stop();
     console.log("  · 私有 KV 写入/读取");
   }

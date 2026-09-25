@@ -30,6 +30,12 @@
  *       插件→宿主  events.emit / events.subscribe / events.unsubscribe
  *                  ipc.register / ipc.unregister
  *                  prompt.register / prompt.unregister
+ *                  deps.channels.has
+ *                  deps.llm.generateText
+ *                  deps.secrets.get / set / delete
+ *                  deps.conversations.list / getMessages
+ *                  deps.workspace.getBinding
+ *                  deps.scheduler.createTask / listTasks / updateTask / deleteTask / getHistory
  *     ready 声明：protocolVersion / tools / ipc / events / promptProviders / capabilities
  *       {"op":"ready","protocolVersion":2,"tools":[...],"ipc":["settings"],
  *        "events":["host:turn:finished"],
@@ -52,9 +58,21 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import path from "node:path";
+import { isPluginHostError } from "./api";
 import type { PluginRecord } from "./types";
-import type { PluginPromptProvider, PluginTool } from "./api";
-import type { CyrenePlugin, PluginContext } from "./api";
+import type {
+  CyrenePlugin,
+  PluginContext,
+  PluginConversationListInput,
+  PluginDeps,
+  PluginLlmGenerateOptions,
+  PluginLlmMessage,
+  PluginMessagePageInput,
+  PluginPromptProvider,
+  PluginScheduledTaskInput,
+  PluginScheduledTaskPatch,
+  PluginTool,
+} from "./api";
 
 /** 与 C# Cyrene.PluginSdk 的 PluginBase 握手超时（进程冷启动 + .NET 首次 JIT）。 */
 const READY_TIMEOUT_MS = 30_000;
@@ -172,6 +190,28 @@ function parseRemotePrompt(value: unknown): RemotePromptProvider {
 function requireStringParam(value: unknown, label: string): string {
   if (typeof value !== "string" || !value) throw new Error(`${label} 必须是非空字符串`);
   return value;
+}
+
+function requireObjectParam<T>(value: unknown, label: string): T {
+  if (!isRecord(value)) throw new Error(`${label} 需要对象参数`);
+  return value as unknown as T;
+}
+
+/** deps.llm.generateText 的消息校验：role 白名单 + content 必须是字符串 */
+function parseLlmMessages(value: unknown): PluginLlmMessage[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("deps.llm.generateText 需要非空 messages 数组");
+  }
+  return value.map((item) => {
+    if (!isRecord(item) || typeof item.content !== "string") {
+      throw new Error("deps.llm.generateText 消息必须是 {role, content}");
+    }
+    const role = item.role;
+    if (role !== "system" && role !== "user" && role !== "assistant") {
+      throw new Error(`deps.llm.generateText 非法角色: ${String(role)}`);
+    }
+    return { role, content: item.content };
+  });
 }
 
 export interface DotnetPluginAdapterHooks {
@@ -739,7 +779,10 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       const data = await this.dispatchPluginMethod(method, params);
       this.send({ op: "reply", id, ok: true, data: data ?? null });
     } catch (error) {
-      this.send({ op: "reply", id, ok: false, error: errorMessage(error) });
+      const payload: Record<string, unknown> = { op: "reply", id, ok: false, error: errorMessage(error) };
+      // 宿主服务错误带稳定 code（E_*，与 Node 轨一致），插件应依赖 code 分支
+      if (isPluginHostError(error)) payload.code = error.code;
+      this.send(payload);
     }
   }
 
@@ -749,6 +792,8 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   ): Promise<unknown> {
     const ctx = this.ctx;
     if (!ctx) throw new Error("插件尚未完成注册");
+    // 宿主服务（manifest.deps 声明的能力）统一走 deps.* 命名空间
+    if (method.startsWith("deps.")) return this.dispatchDepsMethod(method, params);
     switch (method) {
       case "events.emit": {
         const event = requireStringParam(params.event, "events.emit 的 event");
@@ -779,6 +824,97 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       case "prompt.unregister": {
         this.unregisterRemotePrompt(requireStringParam(params.providerId, "prompt.unregister 的 providerId"));
         return null;
+      }
+      default:
+        throw new Error(`未知宿主方法: ${method}`);
+    }
+  }
+
+  /** 取 manifest.deps 声明的宿主服务；未声明/未提供 → E_CAPABILITY_UNAVAILABLE（与 Node 错误码一致） */
+  private requireDep<K extends keyof PluginDeps>(name: K): NonNullable<PluginDeps[K]> {
+    const service = this.ctx?.deps?.[name];
+    if (!service) {
+      const error = new Error(`插件未声明或宿主未提供依赖: ${String(name)}`) as Error & { code: string };
+      error.code = "E_CAPABILITY_UNAVAILABLE";
+      throw error;
+    }
+    return service as NonNullable<PluginDeps[K]>;
+  }
+
+  /**
+   * deps.* 方法 → ctx.deps 直通。
+   * 这里不做超时包装：各宿主服务自带超时/取消语义（LLM 有 timeoutMs），
+   * 处理器在独立任务里执行，不阻塞读循环。
+   */
+  private async dispatchDepsMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    switch (method) {
+      case "deps.channels.has": {
+        return this.requireDep("channels").has(requireStringParam(params.channelId, "deps.channels.has 的 channelId"));
+      }
+      case "deps.llm.generateText": {
+        const llm = this.requireDep("llm");
+        const messages = parseLlmMessages(params.messages);
+        const options = isRecord(params.options) ? (params.options as PluginLlmGenerateOptions) : undefined;
+        return llm.generateText(messages, options);
+      }
+      case "deps.secrets.get": {
+        const value = await this.requireDep("secrets").get(requireStringParam(params.key, "deps.secrets.get 的 key"));
+        return value ?? null;
+      }
+      case "deps.secrets.set": {
+        await this.requireDep("secrets").set(
+          requireStringParam(params.key, "deps.secrets.set 的 key"),
+          requireStringParam(params.value, "deps.secrets.set 的 value"),
+        );
+        return null;
+      }
+      case "deps.secrets.delete": {
+        return this.requireDep("secrets").delete(requireStringParam(params.key, "deps.secrets.delete 的 key"));
+      }
+      case "deps.conversations.list": {
+        const input = isRecord(params.input) ? (params.input as PluginConversationListInput) : undefined;
+        return this.requireDep("conversations").list(input);
+      }
+      case "deps.conversations.getMessages": {
+        return this.requireDep("conversations").getMessages(
+          requireObjectParam<PluginMessagePageInput>(params.input, "deps.conversations.getMessages 的 input"),
+        );
+      }
+      case "deps.workspace.getBinding": {
+        return this.requireDep("workspace").getBinding(
+          requireStringParam(params.conversationId, "deps.workspace.getBinding 的 conversationId"),
+        );
+      }
+      case "deps.scheduler.createTask": {
+        return this.requireDep("scheduler").createTask(
+          requireObjectParam<PluginScheduledTaskInput>(params.input, "deps.scheduler.createTask 的 input"),
+        );
+      }
+      case "deps.scheduler.listTasks": {
+        return this.requireDep("scheduler").listTasks();
+      }
+      case "deps.scheduler.updateTask": {
+        return this.requireDep("scheduler").updateTask(
+          requireStringParam(params.taskId, "deps.scheduler.updateTask 的 taskId"),
+          requireObjectParam<PluginScheduledTaskPatch>(params.patch, "deps.scheduler.updateTask 的 patch"),
+        );
+      }
+      case "deps.scheduler.deleteTask": {
+        return this.requireDep("scheduler").deleteTask(
+          requireStringParam(params.taskId, "deps.scheduler.deleteTask 的 taskId"),
+        );
+      }
+      case "deps.scheduler.getHistory": {
+        const limit = typeof params.limit === "number" && Number.isFinite(params.limit)
+          ? Math.trunc(params.limit)
+          : undefined;
+        return this.requireDep("scheduler").getHistory(
+          requireStringParam(params.taskId, "deps.scheduler.getHistory 的 taskId"),
+          limit,
+        );
       }
       default:
         throw new Error(`未知宿主方法: ${method}`);

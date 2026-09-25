@@ -101,6 +101,8 @@ interface FakeCtx {
   emitted: Array<{ event: string; payload: unknown }>;
   unregisteredIpc: string[];
   unregisteredPrompts: string[];
+  /** manifest.deps 对应的宿主服务（测试按需填充） */
+  deps: Record<string, unknown>;
 }
 
 function makeCtx(): FakeCtx {
@@ -111,6 +113,7 @@ function makeCtx(): FakeCtx {
   const emitted: Array<{ event: string; payload: unknown }> = [];
   const unregisteredIpc: string[] = [];
   const unregisteredPrompts: string[] = [];
+  const deps: Record<string, unknown> = {};
   const ctx = {
     registerTool: (tool: unknown) => registered.push(tool),
     registerIpc: (channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -142,6 +145,7 @@ function makeCtx(): FakeCtx {
     onDispose: vi.fn(),
     signal: new AbortController().signal,
     storage: { rootDir: () => "/data/my-plugin" },
+    deps,
   };
   return {
     ctx: ctx as never,
@@ -152,6 +156,7 @@ function makeCtx(): FakeCtx {
     emitted,
     unregisteredIpc,
     unregisteredPrompts,
+    deps,
   };
 }
 
@@ -176,6 +181,18 @@ function lastFrame(fake: FakeChild): Record<string, unknown> {
 /** 等待 async 派发（handlePluginCall 等）完成 */
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 模拟插件 → 宿主 call，等 reply 帧落盘后返回 */
+async function pluginCall(
+  fake: FakeChild,
+  id: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  fake.emitLine(JSON.stringify({ op: "call", id, method, params }));
+  await flush();
+  return lastFrame(fake);
 }
 
 describe("DotnetPluginAdapter", () => {
@@ -539,5 +556,93 @@ describe("DotnetPluginAdapter", () => {
     expect(ipc.size).toBe(0);
     expect(prompts).toHaveLength(0);
     expect(adapter.open).toBeUndefined();
+  });
+
+  it("deps.* 直通：llm / secrets / channels 路由到 ctx.deps 并回值", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const fakeCtx = makeCtx();
+    const seen: unknown[] = [];
+    fakeCtx.deps.channels = { has: (id: string) => id === "feishu" };
+    fakeCtx.deps.secrets = {
+      get: async (key: string) => {
+        seen.push(["get", key]);
+        return key === "k1" ? "v1" : undefined;
+      },
+      set: async (key: string, value: string) => {
+        seen.push(["set", key, value]);
+      },
+      delete: async () => true,
+    };
+    fakeCtx.deps.llm = {
+      generateText: async (messages: unknown, options: unknown) => {
+        seen.push(["llm", messages, options]);
+        return "llm-out";
+      },
+    };
+    const pendingRegister = adapter.register(fakeCtx.ctx);
+    fake.emitLine(readyFrameV2());
+    await pendingRegister;
+
+    const has = await pluginCall(fake, "d1", "deps.channels.has", { channelId: "feishu" });
+    expect(has).toMatchObject({ op: "reply", id: "d1", ok: true, data: true });
+
+    const got = await pluginCall(fake, "d2", "deps.secrets.get", { key: "k1" });
+    expect(got).toMatchObject({ ok: true, data: "v1" });
+
+    const set = await pluginCall(fake, "d3", "deps.secrets.set", { key: "k2", value: "v2" });
+    expect(set).toMatchObject({ ok: true, data: null });
+
+    const llm = await pluginCall(fake, "d4", "deps.llm.generateText", {
+      messages: [{ role: "user", content: "hi" }],
+      options: { maxTokens: 8, purpose: "probe" },
+    });
+    expect(llm).toMatchObject({ ok: true, data: "llm-out" });
+
+    expect(seen).toEqual([
+      ["get", "k1"],
+      ["set", "k2", "v2"],
+      ["llm", [{ role: "user", content: "hi" }], { maxTokens: 8, purpose: "probe" }],
+    ]);
+  });
+
+  it("deps 缺失 → E_CAPABILITY_UNAVAILABLE；宿主错误 code 透传；非法参数不冒充宿主错误", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake.child);
+    const adapter = new DotnetPluginAdapter(makeRecord());
+    const fakeCtx = makeCtx();
+    fakeCtx.deps.secrets = {
+      get: async () => {
+        const error = new Error("系统安全存储不可用") as Error & { code: string };
+        error.code = "E_STORAGE_UNAVAILABLE";
+        throw error;
+      },
+    };
+    const pendingRegister = adapter.register(fakeCtx.ctx);
+    fake.emitLine(readyFrameV2());
+    await pendingRegister;
+
+    // 未声明 llm：宿主明确回能力不可用，而不是挂起
+    const missing = await pluginCall(fake, "d5", "deps.llm.generateText", {
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(missing).toMatchObject({ ok: false, code: "E_CAPABILITY_UNAVAILABLE" });
+
+    // 声明后参数校验错误是普通 Error，不带 code（插件可按 message 排查）
+    fakeCtx.deps.llm = { generateText: async () => "unused" };
+    const bad = await pluginCall(fake, "d7", "deps.llm.generateText", {
+      messages: [{ role: "tool", content: "x" }],
+    });
+    expect(bad.ok).toBe(false);
+    expect(bad.code).toBeUndefined();
+
+    // 宿主服务抛出的 PluginHostError：code 原样透传
+    const hostErr = await pluginCall(fake, "d6", "deps.secrets.get", { key: "k1" });
+    expect(hostErr).toMatchObject({ ok: false, code: "E_STORAGE_UNAVAILABLE", error: "系统安全存储不可用" });
+
+    const unknown = await pluginCall(fake, "d8", "deps.no.such", {});
+    expect(unknown.ok).toBe(false);
+    expect(unknown.code).toBeUndefined();
   });
 });

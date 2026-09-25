@@ -147,6 +147,42 @@ Storage.Set("lastRun", DateTimeOffset.UtcNow);
 var last = Storage.Get<DateTimeOffset?>("lastRun");
 ```
 
+### 宿主服务（deps）
+
+先在 manifest 声明能力，再用 `Deps.*` 调用（未声明即调用会抛 `NotSupportedException`；
+宿主侧错误以 `PluginHostException.Code` 返回，错误码与 Node 轨 `E_*` 一致）：
+
+```json
+{ "deps": ["llm", "secrets", "conversations", "workspace", "scheduler", "channels"] }
+```
+
+```csharp
+// 复用宿主模型（排队/限流/重试/用量统计全走宿主）
+var text = await Deps.Llm.GenerateTextAsync(
+    new[] { new LlmMessage { Role = "user", Content = "把这段话翻译成英文：……" } },
+    new LlmGenerateOptions { MaxTokens = 512, Purpose = "translate" });
+
+// 宿主安全存储（密文，插件命名空间隔离）
+await Deps.Secrets.SetAsync("apiKey", "sk-...");
+var key = await Deps.Secrets.GetAsync("apiKey");
+
+// 只读会话 / 工作区
+var page = await Deps.Conversations.ListAsync(new ConversationListInput { Limit = 20 });
+var binding = await Deps.Workspace.GetBindingAsync(conversationId);
+
+// 插件定时任务（创建即停用，需用户在宿主界面授权）
+await Deps.Scheduler.CreateTaskAsync(new ScheduledTaskInput
+{
+    Title = "每日提醒", Schedule = ScheduleConfig.Daily("09:00"),
+    Prompt = "提醒我今天的安排", Mode = "work", AllowedToolIds = ["builtin_calendar"],
+});
+
+// 渠道发现
+var hasFeishu = await Deps.Channels.HasAsync("feishu");
+```
+
+> `deps.llm.runGoal`（无头目标循环）尚未开放；渠道 adapter / 语音输入租约规划中。
+
 ### open（自有窗口）
 
 重写 `OnOpenAsync` 即视为声明 open 能力，管理窗「打开」按钮随之可用；
@@ -198,6 +234,12 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 | 插件→宿主 | `events.subscribe` / `events.unsubscribe` | 动态增删宿主事件订阅 |
 | 插件→宿主 | `ipc.register` / `ipc.unregister` | 动态增删 IPC channel |
 | 插件→宿主 | `prompt.register` / `prompt.unregister` | 动态增删提示词 Provider |
+| 插件→宿主 | `deps.channels.has` | 渠道只读发现 |
+| 插件→宿主 | `deps.llm.generateText` | 宿主模型（排队/超时/用量归因全走宿主） |
+| 插件→宿主 | `deps.secrets.get` / `set` / `delete` | 宿主安全存储（E_* 错误码透传） |
+| 插件→宿主 | `deps.conversations.list` / `getMessages` | 只读会话（游标分页） |
+| 插件→宿主 | `deps.workspace.getBinding` | 只读工作区绑定 |
+| 插件→宿主 | `deps.scheduler.createTask` / `listTasks` / `updateTask` / `deleteTask` / `getHistory` | 插件定时任务 |
 
 `ready` 声明（宿主据此注册，不等动态调用）：
 
@@ -238,6 +280,7 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 | `void Log(string, string level = "info")` | 结构化日志（协议 log 帧） |
 | `PluginStorage Storage { get; }` | 私有 KV（与 Node 轨同格式 `<DataDir>/<key>.json`，原子写） |
 | `PluginEvents Events { get; }` | `On/Off` 订阅宿主事件、`EmitAsync` 发布插件事件 |
+| `PluginDeps Deps { get; }` | 宿主服务：`Llm` / `Secrets` / `Conversations` / `Workspace` / `Scheduler` / `Channels`（按 manifest.deps 声明可用） |
 | `void RegisterIpc(string channel, handler)` | 注册私有 IPC（handler 收 `JsonElement[]` + `CancellationToken`） |
 | `void UnregisterIpc(string channel)` | 注销私有 IPC |
 | `void RegisterPromptProvider(PromptProvider)` | 注册每轮提示词 Provider |
@@ -270,12 +313,14 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 | 私有存储 | ✅ `ctx.storage` | ✅ `Storage`（同文件格式，可跨轨复用数据） |
 | 自有窗口 | ✅ `open()`（宿主 BrowserWindow） | ✅ `OnOpenAsync`（插件进程自管 WPF 窗口） |
 | 设置面板（HTML） | ✅ `settingsPanel` | ✅（同一机制，HTML 面板与运行时无关） |
-| LLM 服务注入（deps） | ✅ | ❌（规划中） |
+| LLM 服务注入（deps） | ✅ | ✅ `Deps.Llm.GenerateTextAsync`（`runGoal` 规划中） |
+| 密钥 / 会话 / 工作区 / 定时任务 | ✅ | ✅ `Deps.Secrets / Conversations / Workspace / Scheduler` |
+| 渠道发现 | ✅ | ✅ `Deps.Channels.HasAsync`（注册渠道 adapter 规划中） |
 | 渠道 adapter | ✅ | ❌（规划中） |
-| 定时任务 / 语音输入 | ✅ | ❌（规划中） |
+| 语音输入租约 | ✅ | ❌（规划中） |
 
-> 渠道与 LLM 依赖注入仍是 Node 轨的领域；.NET 轨当前聚焦工具 + 面板交互 + 上下文注入 +
-> 事件互通，适合性能敏感/系统级插件。
+> 渠道 adapter 与语音输入仍是 Node 轨的领域；.NET 轨现已覆盖工具、面板交互、上下文注入、
+> 事件互通、宿主服务（LLM/密钥/会话/工作区/定时任务）与自有窗口。
 
 ## 安全模型（与 Node 轨一致）
 
@@ -289,7 +334,7 @@ SDK 已完整封装——以下仅排查问题或从零实现其他语言时需�
 
 ```text
 dotnet/plugin-sdk/Example/          ← echo（同步）+ echo_async（Task<string>）+ echo_slow（取消）
-                                       + IPC/提示词/事件/open/KV 回归夹具 + manifest 模板
+                                       + IPC/提示词/事件/open/KV/deps 回归夹具 + manifest 模板
 ```
 
 本地自测（不依赖宿主，直接喂协议帧）：

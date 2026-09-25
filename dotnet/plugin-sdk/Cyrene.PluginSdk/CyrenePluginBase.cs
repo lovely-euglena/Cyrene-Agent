@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Cyrene.PluginSdk;
@@ -30,6 +31,11 @@ namespace Cyrene.PluginSdk;
 ///                  插件回 {"op":"reply","id":"h1","ok":true,"data":...}
 ///     plugin → 宿主：{"op":"call","id":"p1","method":"events.emit|ipc.register|ipc.unregister|prompt.register|prompt.unregister|events.subscribe|events.unsubscribe","params":{...}}
 ///     宿主 → 插件通知：{"op":"notify","method":"event.deliver","params":{...}}
+///     plugin → 宿主还可调用宿主服务（manifest.deps 声明后可用）：
+///       deps.channels.has / deps.llm.generateText /
+///       deps.secrets.get|set|delete / deps.conversations.list|getMessages /
+///       deps.workspace.getBinding /
+///       deps.scheduler.createTask|listTasks|updateTask|deleteTask|getHistory
 ///
 /// 注意：stdout 被协议独占——诊断输出必须用 <see cref="Log"/>（走 log 帧）
 /// 或 stderr（自由文本，宿主只打日志不解析）。
@@ -40,8 +46,17 @@ public abstract class CyrenePluginBase
     /// <summary>SDK 支持的 manifest/协议主版本（与宿主 dotnet-adapter.ts 的 PROTOCOL_API_VERSION 对齐）。</summary>
     public const int ApiVersion = 1;
 
-    /// <summary>SDK 支持的桥协议版本（IPC/事件/提示词/open）；宿主 init 携带 protocolVersion 完成协商。</summary>
+    /// <summary>SDK 支持的桥协议版本（IPC/事件/提示词/open/deps）；宿主 init 携带 protocolVersion 完成协商。</summary>
     public const int ProtocolVersion = 2;
+
+    /// <summary>
+    /// SDK 内部 JSON 约定：Web 默认（camelCase + 大小写不敏感）+ 忽略 null 字段，
+    /// 与宿主 JSON 行协议 / Node API 的命名风格保持一致。
+    /// </summary>
+    internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private static readonly Regex IpcChannelRegex = new("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex ProviderIdRegex = new("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$", RegexOptions.Compiled);
@@ -72,11 +87,15 @@ public abstract class CyrenePluginBase
     private bool _hostSupportsV2;
     private bool _readySent;
     private int _hostCallSeq;
+    /** manifest.deps 声明的能力；deps.* 调用前校验，未声明直接抛 NotSupported */
+    private readonly HashSet<string> _declaredDeps = new(StringComparer.Ordinal);
 
+    /// <summary>基类构造：初始化 Storage / Events / Deps 门面（插件子类无需显式调用）。</summary>
     protected CyrenePluginBase()
     {
         Storage = new PluginStorage(this);
         Events = new PluginEvents(this);
+        Deps = new PluginDeps(this);
     }
 
     /// <summary>宿主分配的插件私有数据目录（init 后有效；持久化写这里）。</summary>
@@ -93,6 +112,9 @@ public abstract class CyrenePluginBase
 
     /// <summary>事件：订阅宿主事件（<c>host:*</c>）并向宿主发布插件事件。</summary>
     protected PluginEvents Events { get; }
+
+    /// <summary>宿主服务集合（manifest.deps 声明后可用；未声明调用方法会抛 NotSupportedException）。</summary>
+    protected PluginDeps Deps { get; }
 
     /// <summary>诊断日志（走协议 log 帧，宿主统一打 [plugin:id] 前缀）。</summary>
     protected void Log(string message, string level = "info")
@@ -251,6 +273,19 @@ public abstract class CyrenePluginBase
         if (frame.TryGetProperty("manifest", out var mf) && mf.ValueKind == JsonValueKind.Object)
         {
             if (mf.TryGetProperty("id", out var idEl)) _pluginId = idEl.GetString() ?? "plugin";
+            // manifest.deps → 本地白名单：调用未声明的依赖时明确失败
+            _declaredDeps.Clear();
+            if (mf.TryGetProperty("deps", out var depsEl) && depsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var dep in depsEl.EnumerateArray())
+                {
+                    if (dep.ValueKind == JsonValueKind.String)
+                    {
+                        var name = dep.GetString();
+                        if (!string.IsNullOrEmpty(name)) _declaredDeps.Add(name);
+                    }
+                }
+            }
         }
         if (frame.TryGetProperty("dataDir", out var dd) && dd.ValueKind == JsonValueKind.String)
         {
@@ -454,7 +489,12 @@ public abstract class CyrenePluginBase
         var message = frame.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.String
             ? err.GetString() ?? "宿主调用失败"
             : "宿主调用失败";
-        tcs.TrySetException(new InvalidOperationException(message));
+        var code = frame.TryGetProperty("code", out var codeEl) && codeEl.ValueKind == JsonValueKind.String
+            ? codeEl.GetString()
+            : null;
+        tcs.TrySetException(string.IsNullOrEmpty(code)
+            ? new InvalidOperationException(message)
+            : new PluginHostException(code, message));
     }
 
     private void FailPendingHostCalls(string reason)
@@ -539,6 +579,16 @@ public abstract class CyrenePluginBase
         {
             throw new NotSupportedException(
                 $"宿主协议版本过低，不支持{feature}（需要 Cyrene v2.0+；或改用 Node 插件轨）");
+        }
+    }
+
+    /// <summary>deps 能力校验：未在 manifest.deps 声明时明确失败（与 Node 轨“未注入即不可用”一致）。</summary>
+    internal void RequireDep(string name)
+    {
+        RequireV2($"deps.{name}");
+        if (!_declaredDeps.Contains(name))
+        {
+            throw new NotSupportedException($"manifest.deps 未声明能力: {name}");
         }
     }
 
@@ -670,7 +720,7 @@ public abstract class CyrenePluginBase
     private bool TryWriteLine(object frame, out string? error)
     {
         string json;
-        try { json = JsonSerializer.Serialize(frame); }
+        try { json = JsonSerializer.Serialize(frame, JsonOptions); }
         catch (Exception ex)
         {
             // 序列化失败必须显式暴露：吞掉后调用方只看到宿主 invoke 永久 pending
