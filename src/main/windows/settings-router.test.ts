@@ -67,4 +67,11 @@ describe("openSettingsWindow · 路由", () => {
     await flush();
     expect(mocks.createSettingsWindow).toHaveBeenCalledWith("api");
   });
+
+  it("about 回退 Electron 时归一到默认页（Electron 无 about hash）", async () => {
+    mocks.spawnNativeWindow.mockResolvedValue(false);
+    openSettingsWindow("about");
+    await flush();
+    expect(mocks.createSettingsWindow).toHaveBeenCalledWith(undefined);
+  });
 });

@@ -53,8 +53,9 @@ public sealed class TasksWindow : NativeWindow
         _root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));  // token 图表
 
         // ── titlebar ──
-        var titlebar = new TableLayoutPanel { ColumnCount = 3, Dock = DockStyle.Fill, BackColor = System.Drawing.Color.Transparent };
+        var titlebar = new TableLayoutPanel { ColumnCount = 4, Dock = DockStyle.Fill, BackColor = System.Drawing.Color.Transparent };
         titlebar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        titlebar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         titlebar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         titlebar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         var title = new Label
@@ -66,10 +67,16 @@ public sealed class TasksWindow : NativeWindow
             Font = new Font("Microsoft YaHei UI", 10.5f),
         };
         titlebar.Controls.Add(title, 0, 0);
+        // 设置入口：回发 cmd(kind=tasks, action=openSettings, section=tasks) →
+        // 宿主 openSettingsWindow("tasks") 打开 WPF 设置窗定时任务页。
+        // 旧实现只有最小化/关闭，启用 native 后任务窗无法进设置。
+        var settingsBtn = MakeTitleButton("⚙", () => RequestRouter.SendCommand("tasks", "openSettings", "tasks"));
+        settingsBtn.Font = new Font("Segoe UI Symbol", 10f);
         var minBtn = MakeTitleButton("—", () => _form.WindowState = FormWindowState.Minimized);
         var closeBtn = MakeTitleButton("✕", _form.Close);
-        titlebar.Controls.Add(minBtn, 1, 0);
-        titlebar.Controls.Add(closeBtn, 2, 0);
+        titlebar.Controls.Add(settingsBtn, 1, 0);
+        titlebar.Controls.Add(minBtn, 2, 0);
+        titlebar.Controls.Add(closeBtn, 3, 0);
         // 拖拽移动：记录按下时光标相对窗体左上角的偏移，之后按光标绝对
         // 位置平移（旧实现只在 MouseDown 里设一次 Location，导致窗口
         // 「跳一下但不跟手」）。

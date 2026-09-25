@@ -1665,8 +1665,7 @@ function switchSection(section: string): void {
     !isTokens &&
     !isChannels &&
     !isTts &&
-    !isAsr &&
-    !isFeaturePlugins
+    !isAsr
   ) {
 	    placeholderIcon.innerHTML = label.emoji;
     placeholderTitle.textContent = label.title;

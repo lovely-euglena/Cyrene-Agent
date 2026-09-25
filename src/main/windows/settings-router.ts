@@ -23,6 +23,8 @@ export function openSettingsWindow(section?: string): void {
     return;
   }
   void spawnNativeWindow("settings", section ? { section } : undefined).then((ok) => {
-    if (!ok) createSettingsWindow(section);
+    // 回退 Electron：about 是 WPF 独有 section，Electron 页没有这个 hash
+    //（旧代码会落到未知 section 的占位路径），回退时归一到 settings 默认页。
+    if (!ok) createSettingsWindow(section === "about" ? undefined : section);
   });
 }
