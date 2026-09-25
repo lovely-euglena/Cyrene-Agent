@@ -13,20 +13,23 @@ import type {
 import type { PluginImportResult } from "../plugins/manager";
 
 /**
- * 官方插件市场索引源。
+ * 官方插件市场索引源：Gitee 主源 + GitHub 兜底（面板展示各源死活，
+ * 取优先级最高的可用源）。
  *
- * ⚠️ registry 与 zip 必须同源（同一个 zipUrlPrefix 白名单）：白名单只有一个
- * 前缀，跨仓 registry（条目 zip 指向别的仓库）会被整源丢弃。
- * 当前源 = 上游 playa0/cyrene-plugins——registry 与 zips/ 同仓、raw 可达；
- * 自持的 ygwill/cyrene-plugins 因 raw 接口被 Gitee 拒绝（403）暂不可用，
- * 待其 raw 恢复后可作为备用源加回（需与白名单同源）。
+ * 白名单是 zip 前缀的**并集**：任一官方源的条目 zip 只要落在自己的前缀下
+ * 即可通过；非官方来源仍被拒。自持的 ygwill/cyrene-plugins 因 raw 被
+ * Gitee 拒（403）暂不可用，待恢复后可加入（需与下方白名单同源）。
  */
 export const MARKET_REGISTRY_URLS = [
   "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
+  "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json",
 ] as const;
 
-/** 插件包只允许来自收录仓库 zips/ 目录的直链，防止索引被篡改后下载任意来源的包 */
-export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/";
+/** 插件包只允许来自官方仓库的直链（Gitee raw zips/ 与 GitHub Releases 双前缀），防止索引被篡改后下载任意来源的包 */
+export const MARKET_ZIP_URL_PREFIXES: readonly string[] = [
+  "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/",
+  "https://github.com/Playa-0v0/Cyrene-Plugins/releases/download/",
+];
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -47,7 +50,8 @@ export type MarketplaceFetch = (
 
 export interface PluginMarketplaceDeps {
   registryUrls: readonly string[];
-  zipUrlPrefix: string;
+  /** 允许的 zip 前缀白名单（多源并集） */
+  zipUrlPrefixes: readonly string[];
   /** 下载的插件 zip 临时存放目录（如 userData/plugin-market-cache） */
   cacheDir: string;
   installZip: (
@@ -94,7 +98,7 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
   if (typeof id !== "string" || !ID_PATTERN.test(id)) return null;
   if (!isNonEmptyString(name) || !isNonEmptyString(description) || !isNonEmptyString(author)) return null;
   if (typeof version !== "string" || !isValidPluginVersion(version)) return null;
-  if (typeof zip !== "string" || !zip.startsWith(deps.zipUrlPrefix)) return null;
+  if (typeof zip !== "string" || !deps.zipUrlPrefixes.some((prefix) => zip.startsWith(prefix))) return null;
   if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) return null;
   // downloads 可选（上游新条目会省略）：给出时必须是非负整数，缺省按 0 计
   if (downloads !== undefined && (typeof downloads !== "number" || !Number.isInteger(downloads) || downloads < 0)) return null;

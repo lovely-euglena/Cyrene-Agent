@@ -20,7 +20,7 @@ import { PluginManager } from "../plugins/manager";
 import { pluginPromptRegistry } from "../plugins/prompts";
 import {
   MARKET_REGISTRY_URLS,
-  MARKET_ZIP_URL_PREFIX,
+  MARKET_ZIP_URL_PREFIXES,
   createPluginMarketplaceService,
 } from "./plugin-marketplace";
 import { IPC } from "../shared/ipc-channels";
@@ -153,7 +153,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
   // 插件市场：列表来自官方索引快照，安装下载后走管理器的 ZIP 导入管线（含身份校验与来源记录）
   const market = createPluginMarketplaceService({
     registryUrls: MARKET_REGISTRY_URLS,
-    zipUrlPrefix: MARKET_ZIP_URL_PREFIX,
+    zipUrlPrefixes: MARKET_ZIP_URL_PREFIXES,
     cacheDir: path.join(app.getPath("userData"), "plugin-market-cache"),
     installZip: (zipPath, opts) => manager.installZip(zipPath, opts),
   });

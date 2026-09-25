@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MARKET_ZIP_URL_PREFIX,
+  MARKET_ZIP_URL_PREFIXES,
   createPluginMarketplaceService,
   type MarketplaceFetch,
   type PluginMarketplaceDeps,
@@ -12,7 +12,7 @@ import {
 
 const REGISTRY_URL_A = "https://example.test/registry-a.json";
 const REGISTRY_URL_B = "https://example.test/registry-b.json";
-const ZIP_URL = `${MARKET_ZIP_URL_PREFIX}demo-1.0.0.zip`;
+const ZIP_URL = `${MARKET_ZIP_URL_PREFIXES[0]}demo-1.0.0.zip`;
 
 let tmp = "";
 
@@ -58,7 +58,7 @@ function jsonResponse(data: unknown): Response {
 function makeDeps(overrides: Partial<PluginMarketplaceDeps> = {}): PluginMarketplaceDeps {
   return {
     registryUrls: [REGISTRY_URL_A, REGISTRY_URL_B],
-    zipUrlPrefix: MARKET_ZIP_URL_PREFIX,
+    zipUrlPrefixes: MARKET_ZIP_URL_PREFIXES,
     cacheDir: cacheDir(),
     installZip: vi.fn(async () => ({ ok: true, plugin: { id: "demo", name: "Demo", version: "1.0.0" }, overview: undefined })),
     ...overrides,
