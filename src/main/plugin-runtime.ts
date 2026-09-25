@@ -58,6 +58,19 @@ export function getPluginMarketService(): ReturnType<typeof createPluginMarketpl
   return marketService;
 }
 
+/**
+ * 插件 ZIP 选择对话框（宿主侧弹框）：Electron 设置页插件区与 .NET 插件
+ * 管理窗「导入 ZIP」共用同一入口与过滤器。
+ */
+export async function pickPluginZipFile(): Promise<string | undefined> {
+  const result = await dialog.showOpenDialog({
+    title: "导入 Cyrene 插件",
+    properties: ["openFile"],
+    filters: [{ name: "Cyrene 插件包", extensions: ["zip"] }],
+  });
+  return result.canceled ? undefined : result.filePaths[0];
+}
+
 export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<PluginManager> {
   const userPluginRoot = path.join(app.getPath("userData"), "plugins");
   const pluginDataRoot = path.join(app.getPath("userData"), "plugin-data");
@@ -128,14 +141,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     cleanupPersistentResources: async (pluginId) => {
       deps.schedulerStore.deleteTasksByOwner(pluginId);
     },
-    selectPluginZip: async () => {
-      const result = await dialog.showOpenDialog({
-        title: "导入 Cyrene 插件",
-        properties: ["openFile"],
-        filters: [{ name: "Cyrene 插件包", extensions: ["zip"] }],
-      });
-      return result.canceled ? undefined : result.filePaths[0];
-    },
+    selectPluginZip: async () => pickPluginZipFile(),
     confirmPluginReplace: async (plugin) => {
       const result = await dialog.showMessageBox({
         type: "warning",

@@ -121,7 +121,7 @@ import { testVisionConnection } from "../settings/vision-test";
 import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
-import { startPluginRuntime, getPluginMarketService } from "../plugin-runtime";
+import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
 import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
@@ -232,6 +232,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   };
 
   // 插件快照（.NET 管理窗 state.plugins payload；含运行时开关态）
+  // 最近一次插件操作结果（导入 ZIP / 刷新 / 安装失败等）：随快照下发到
+  // .NET 管理窗状态行显示；下次操作覆盖。
+  let nativePluginNotice: { kind: "ok" | "error"; message: string } | null = null;
+  const setPluginNotice = (kind: "ok" | "error", message: string): void => {
+    nativePluginNotice = { kind, message };
+  };
   const buildPluginSnapshot = async (): Promise<unknown> => {
     const mkt = getPluginMarketService();
     const market = pluginManager && mkt ? await mkt.listMarket() : null;
@@ -244,6 +250,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       market: market?.plugins ?? [],
       marketSources: market?.sources ?? [],
       marketError: market && !market.ok ? (market.error ?? "") : undefined,
+      notice: nativePluginNotice ?? undefined,
     };
   };
 
@@ -804,11 +811,42 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             }
             if (!manager) return;
             try {
-              if (action === "enable" && id) await manager.setEnabled(id, true);
-              else if (action === "disable" && id) await manager.setEnabled(id, false);
-              else if (action === "uninstall" && id) await manager.uninstall(id);
-              else if (action === "install" && id) await market?.installFromMarket(id);
-              else if (action === "openWindow" && id) {
+              if (action === "enable" && id) {
+                await manager.setEnabled(id, true);
+                setPluginNotice("ok", "已启用");
+              } else if (action === "disable" && id) {
+                await manager.setEnabled(id, false);
+                setPluginNotice("ok", "已停用");
+              } else if (action === "uninstall" && id) {
+                await manager.uninstall(id);
+                setPluginNotice("ok", "已卸载");
+              } else if (action === "install" && id) {
+                if (!market) {
+                  setPluginNotice("error", "插件市场服务不可用");
+                } else {
+                  const result = await market.installFromMarket(id);
+                  setPluginNotice(
+                    result.ok ? "ok" : "error",
+                    result.ok ? `已安装：${result.plugin.name} ${result.plugin.version}` : `安装失败：${result.error}`,
+                  );
+                }
+              } else if (action === "refresh") {
+                // 重扫插件目录 + 重拉市场索引（旧版插件页的「刷新」）
+                await manager.rescan();
+                setPluginNotice("ok", "已刷新（插件目录 + 市场索引）");
+              } else if (action === "import-zip") {
+                // 旧版插件页的「导入 ZIP」：宿子弹文件框 → 管理器走同一
+                // 校验/身份记录管线；成功后重扫并重推快照
+                const zipPath = await pickPluginZipFile();
+                if (!zipPath) return; // 用户取消
+                const result = await manager.installZip(zipPath);
+                if (result.canceled) return; // 覆盖确认框取消
+                const imported = result.plugin ? `${result.plugin.name} ${result.plugin.version}` : "插件";
+                setPluginNotice(
+                  result.ok ? "ok" : "error",
+                  result.ok ? `已导入：${imported}` : `导入失败：${result.error ?? "未知错误"}`,
+                );
+              } else if (action === "openWindow" && id) {
                 // 插件自有窗口（.NET 轨 = 子进程 WPF；Node 轨 = 宿主 BrowserWindow）
                 const result = await manager.open(id);
                 if (!result.ok) console.warn("[PluginNative] openWindow failed:", id, result.error);
@@ -817,8 +855,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
                 windowManager.createSettingsWindow("plugins");
                 return;
               }
-              // refresh：仅重拉市场索引
             } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              setPluginNotice("error", `操作失败：${message}`);
               console.warn("[PluginNative] action failed:", action, id, err);
             }
             // 完成后重推快照（installed ± market 索引；与 spawn 初始推送同一构建器）

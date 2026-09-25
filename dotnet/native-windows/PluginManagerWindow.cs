@@ -37,6 +37,10 @@ public sealed class PluginManagerWindow : NativeWindow
     private List<string> _installing = new();
     private List<MarketSource> _marketSources = new();
     private string _marketError = "";
+    /// <summary>搜索关键词（名称 / id / 描述，大小写不敏感；空串 = 不过滤）</summary>
+    private string _search = "";
+    /// <summary>最近一次宿主操作的提示（导入 ZIP / 刷新结果），随快照下发</summary>
+    private (string Kind, string Message)? _notice;
 
     private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime, bool CanOpen);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
@@ -80,6 +84,9 @@ public sealed class PluginManagerWindow : NativeWindow
         var root = new DockPanel();
         DockPanel.SetDock(_status, System.Windows.Controls.Dock.Bottom);
         root.Children.Add(_status);
+        var toolbar = MakeToolbar();
+        DockPanel.SetDock(toolbar, System.Windows.Controls.Dock.Top);
+        root.Children.Add(toolbar);
         root.Children.Add(_tabs);
 
         _window = new Window
@@ -162,12 +169,30 @@ public sealed class PluginManagerWindow : NativeWindow
             _installing = inst.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToList();
         }
         _runtimeEnabled = payload.TryGetProperty("runtimeEnabled", out var rt) && rt.ValueKind == JsonValueKind.True;
+        // 宿主操作提示（导入 ZIP / 刷新结果）：有则显示，否则回落到计数行
+        _notice = null;
+        if (payload.TryGetProperty("notice", out var noticeEl) && noticeEl.ValueKind == JsonValueKind.Object)
+        {
+            var message = Str(noticeEl, "message") ?? "";
+            if (message.Length > 0) _notice = (Str(noticeEl, "kind") ?? "ok", message);
+        }
         RenderInstalled();
         RenderMarket();
         RenderMarketStatus();
-        _status.Text = _installing.Count > 0
-            ? $"正在安装：{string.Join("、", _installing)} …"
-            : $"已安装 {_installed.Count} 个插件 · 市场收录 {_market.Count} 个";
+        if (_notice is { } notice)
+        {
+            _status.Text = notice.Message;
+            _status.Foreground = new SolidColorBrush(notice.Kind == "error"
+                ? Color.FromRgb(0xD3, 0x3A, 0x3A)
+                : Color.FromRgb(0x2E, 0x7D, 0x32));
+        }
+        else
+        {
+            _status.Text = _installing.Count > 0
+                ? $"正在安装：{string.Join("、", _installing)} …"
+                : $"已安装 {_installed.Count} 个插件 · 市场收录 {_market.Count} 个";
+            _status.Foreground = NativeTheme.TextMutedBrush;
+        }
     }
 
     /// <summary>市场索引源状态行：Gitee/GitHub 双源死活 + 失败原因。</summary>
@@ -205,6 +230,69 @@ public sealed class PluginManagerWindow : NativeWindow
         return arr.EnumerateArray().Select(map).ToList();
     }
 
+    /// <summary>工具条：搜索框（左）+ 刷新 / 导入 ZIP（右）。旧版插件页的本地 ZIP 入口。</summary>
+    private Grid MakeToolbar()
+    {
+        var toolbar = new Grid { Margin = new Thickness(12, 8, 12, 4), Height = 34 };
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var searchHost = new Grid
+        {
+            MaxWidth = 300,
+            Height = 30,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var searchBox = new TextBox { FontSize = 12.5, Padding = new Thickness(8, 5, 8, 4) };
+        var hint = new TextBlock
+        {
+            Text = "搜索插件（名称 / id / 描述）",
+            FontSize = 12,
+            Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = NativeTheme.TextMutedBrush,
+            IsHitTestVisible = false,
+        };
+        searchBox.TextChanged += (_, _) =>
+        {
+            _search = searchBox.Text.Trim();
+            hint.Visibility = _search.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            RenderInstalled();
+            RenderMarket();
+        };
+        searchHost.Children.Add(searchBox);
+        searchHost.Children.Add(hint);
+        Grid.SetColumn(searchHost, 0);
+        toolbar.Children.Add(searchHost);
+
+        var actions = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var refreshBtn = MakeMiniButton("刷新");
+        refreshBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "refresh");
+        var importBtn = MakeMiniButton("导入 ZIP", primary: true);
+        importBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "import-zip");
+        actions.Children.Add(refreshBtn);
+        actions.Children.Add(importBtn);
+        Grid.SetColumn(actions, 1);
+        toolbar.Children.Add(actions);
+        return toolbar;
+    }
+
+    /// <summary>搜索过滤：任一字段包含关键词即命中（大小写不敏感）。</summary>
+    private bool MatchesSearch(params string?[] fields)
+    {
+        if (_search.Length == 0) return true;
+        foreach (var field in fields)
+        {
+            if (!string.IsNullOrEmpty(field) && field.Contains(_search, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
     private void RenderInstalled()
     {
         _installedList.Children.Clear();
@@ -240,11 +328,14 @@ public sealed class PluginManagerWindow : NativeWindow
             sp.Children.Add(enableBtn);
             _installedList.Children.Add(tip);
         }
-        if (_installed.Count == 0 && _runtimeEnabled)
+        var matched = _installed.Where(p => MatchesSearch(p.Id, p.Name, p.Description)).ToList();
+        if (matched.Count == 0 && _runtimeEnabled)
         {
             _installedList.Children.Add(new TextBlock
             {
-                Text = "暂无插件。到「插件市场」看看，或从 ZIP 导入（设置 → 旧版插件页）。",
+                Text = _search.Length > 0
+                    ? $"没有匹配「{_search}」的插件"
+                    : "暂无插件。到「插件市场」看看，或用上方「导入 ZIP」安装本地插件包。",
                 FontSize = 12.5,
                 Foreground = NativeTheme.TextMutedBrush,
                 Margin = new Thickness(8, 24, 8, 8),
@@ -252,7 +343,7 @@ public sealed class PluginManagerWindow : NativeWindow
             });
             return;
         }
-        foreach (var p in _installed)
+        foreach (var p in matched)
         {
             _installedList.Children.Add(MakeInstalledCard(p));
         }
@@ -340,9 +431,21 @@ public sealed class PluginManagerWindow : NativeWindow
     {
         _marketList.Children.Clear();
         var installedIds = _installed.Select(p => p.Id).ToHashSet();
-        foreach (var m in _market)
+        var matched = _market.Where(m => MatchesSearch(m.Id, m.Name, m.Description, m.Author)).ToList();
+        foreach (var m in matched)
         {
             _marketList.Children.Add(MakeMarketCard(m, installedIds.Contains(m.Id)));
+        }
+        if (matched.Count == 0 && _market.Count > 0)
+        {
+            _marketList.Children.Add(new TextBlock
+            {
+                Text = $"没有匹配「{_search}」的插件",
+                FontSize = 12.5,
+                Foreground = NativeTheme.TextMutedBrush,
+                Margin = new Thickness(8, 24, 8, 8),
+                TextAlignment = TextAlignment.Center,
+            });
         }
     }
 

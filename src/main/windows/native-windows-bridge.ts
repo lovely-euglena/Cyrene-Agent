@@ -52,8 +52,9 @@ export interface NativeBridgeActions {
   uiFontAction?(verb: "import" | "reset"): void;
   /**
    * 插件操作（.NET 插件管理窗 → 主进程）：
-   * enable/disable/uninstall/install/openPanel/refresh。install 为异步
-   * （下载+校验+解压），完成后由宿主重推 state.plugins 快照。
+   * enable/disable/uninstall/install/openPanel/refresh/import-zip。
+   * install/import-zip 为异步（下载或弹框+校验+解压），完成后由宿主重推
+   * state.plugins 快照（含操作结果 notice）。
    */
   pluginAction?(action: string, id?: string): Promise<void> | void;
 }
@@ -145,6 +146,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "openWindow":
         case "openPanel":
         case "refresh":
+        case "import-zip":
           // 插件管理窗操作：{"kind":"plugins","action":"install","id":...}
           if (frameKind === "plugins") {
             void actions.pluginAction?.(action, typeof frame.id === "string" ? frame.id : undefined);
