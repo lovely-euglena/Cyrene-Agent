@@ -16,6 +16,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
 import { debugLog } from "../agent-log";
+import { trackChildProcess, untrackChildProcess } from "../child-processes";
 
 /**
  * 帧摘要（排障日志用）：op/kind/action 等关键字段 + 载荷字节数，
@@ -143,6 +144,7 @@ export class NativeWindowsClient {
       },
     });
     this.child = child;
+    trackChildProcess(child, "cyrene-native serve");
     const launchedAt = Date.now();
     debugLog(`[NativeWindows] launch ${this.exePath}`);
     this.chunks = [];
@@ -371,6 +373,7 @@ export class NativeWindowsClient {
       child.stdin?.end();
       child.kill();
     }
+    untrackChildProcess(child?.pid);
     this.resetForRespawn();
   }
 

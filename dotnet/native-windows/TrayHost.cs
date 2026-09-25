@@ -75,6 +75,8 @@ public sealed class TrayHost
                     try { p.Kill(entireProcessTree: true); } catch { }
                 }
             }
+            // 扫尾：同安装目录下残留的辅助进程（native 宿主/sidecar/截图）一并清理
+            KillSiblingHelpers();
             app.Dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
         });
 
@@ -287,6 +289,39 @@ public sealed class TrayHost
         var action = _pendingAction;
         if (action is null) return;
         if (TryWriteCmd(pipe, action)) _pendingAction = null;
+    }
+
+    /// <summary>
+    /// 退出兜底：同安装目录下残留的辅助进程（native 宿主 / embed sidecar /
+    /// 截图 helper / 语音）一并清理。Electron 侧已有集中回收
+    /// （src/main/child-processes.ts），这里覆盖 Electron 被强杀或其清理
+    /// 未跑完的路径——托盘是最后退出的进程，负责扫尾。
+    /// </summary>
+    private void KillSiblingHelpers()
+    {
+        try
+        {
+            var root = Path.GetDirectoryName(_electronExe);
+            if (string.IsNullOrEmpty(root)) return;
+            foreach (var name in new[] { "cyrene-native", "CyreneEmbedSidecar", "cyrene-screenshot", "CyreneVoice" })
+            {
+                foreach (var process in System.Diagnostics.Process.GetProcessesByName(name))
+                {
+                    try
+                    {
+                        if (process.Id == Environment.ProcessId) continue;
+                        var path = process.MainModule?.FileName ?? "";
+                        if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                        {
+                            process.Kill(entireProcessTree: true);
+                        }
+                    }
+                    catch { /* 权限/已退出 */ }
+                    finally { process.Dispose(); }
+                }
+            }
+        }
+        catch { /* 扫尾失败不影响托盘退出 */ }
     }
 
     /// <summary>从本 exe 位置推导同级 Electron 主程序（resources/native-windows → ../../Cyrene.exe）。</summary>

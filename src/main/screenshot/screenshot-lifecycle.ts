@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as fs from "fs";
 import { spawn } from "node:child_process";
+import { trackChildProcess } from "../child-processes";
 import { app, BrowserWindow, globalShortcut, nativeImage } from "electron";
 import { randomUUID } from "crypto";
 import { IPC } from "../../shared/ipc-channels";
@@ -91,11 +92,14 @@ export function initializeScreenshotService(
   };
 
   const client = new ElectronScreenshotHelperClient({
-    spawnImpl: (command, args) =>
-      spawn(command, args, {
+    spawnImpl: (command, args) => {
+      const child = spawn(command, args, {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
-      }),
+      });
+      trackChildProcess(child, "cyrene-screenshot");
+      return child;
+    },
     resolveHelperPath: () =>
       resolveScreenshotHelperPath({
         isPackaged: app.isPackaged,

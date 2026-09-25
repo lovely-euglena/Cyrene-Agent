@@ -32,6 +32,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { app } from "electron";
+import { trackChildProcess } from "../child-processes";
 
 interface PendingRequest {
   resolve: (vectors: Float32Array[]) => void;
@@ -196,6 +197,7 @@ export class EmbeddingSidecarClient {
         env: this.buildEnv(),
       });
       this.child = child;
+      trackChildProcess(child, "embedding-sidecar");
       this.chunks = [];
       this.bufferedBytes = 0;
       this.frameState = null;

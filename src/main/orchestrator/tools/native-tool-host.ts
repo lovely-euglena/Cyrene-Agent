@@ -16,6 +16,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import * as readline from "readline";
 import { resolveNativeWindowsExe } from "../../windows/native-windows-host";
+import { trackChildProcess } from "../../child-processes";
 
 const LOG_PREFIX = "[ToolHost]";
 
@@ -61,6 +62,7 @@ export class NativeToolHost {
         windowsHide: true,
       });
       this.proc = child;
+      trackChildProcess(child, "cyrene-native --tool-host");
       this.exited = false;
       child.on("exit", () => {
         this.exited = true;

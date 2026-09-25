@@ -17,6 +17,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import * as readline from "readline";
 import { resolveNativeWindowsExe } from "../windows/native-windows-host";
+import { trackChildProcess } from "../child-processes";
 import { getAdapterForConfig, type ChatMessage, type VendorConfig } from "./vendors";
 import { streamChatWithSdk } from "./vendors/sdk-stream/runtime";
 
@@ -66,6 +67,7 @@ export class AgentProcessManager {
       });
       if (!child || !child.stdout || !child.stdin) return false;
       this.proc = child;
+      trackChildProcess(child, "cyrene-native --agent-host");
       this.exited = false;
       this.wireFrameRouter(child);
       await new Promise<void>((resolve) => {

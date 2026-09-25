@@ -135,6 +135,7 @@ import { installSingleInstanceGuard } from "../single-instance";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
 import { setSidebarWindowVisible, setTasksWindowVisible } from "../windows/create-aux-windows";
+import { installChildProcessReaper } from "../child-processes";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import {
   initNativeWindowsBridge,
@@ -613,7 +614,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     activation,
     shutdown,
 
-    prepare: () => prepareBeforeReady({
+    prepare: () => {
+      // 退出兜底：主进程崩溃/强杀时统一回收登记过的子进程（taskkill /F /T 整树）
+      installChildProcessReaper((listener) => app.on("will-quit", listener));
+      return prepareBeforeReady({
       configureDocumentIndex: () => configureDocumentIndexQueue(runDocumentIndexJob),
       installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
       registerPrivilegedSchemes,
@@ -629,7 +633,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         userDataDir: app.getPath("userData"),
       }),
       activation,
-    }),
+      });
+    },
 
     startShell: () => startShell({
       readiness,
