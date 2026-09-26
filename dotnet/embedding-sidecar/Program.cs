@@ -25,6 +25,9 @@ switch (command)
     case "verify-tokenize":
         VerifyTokenize.Run(args.Length > 2 ? args[2] : "scripts/diagnostics/rag-search-verify-data.json");
         return 0;
+    case "verify-search":
+        VerifySearch.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/rag-search-verify-data.json");
+        return 0;
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
         return 0;
@@ -131,6 +134,82 @@ internal static class Verify
             nb += b[i] * b[i];
         }
         return dot / (Math.Sqrt(na) * Math.Sqrt(nb) + 1e-12);
+    }
+}
+
+/// <summary>
+/// 混合检索对账/质量回归：.NET（JiebaNet 自闭环）vs TS 金样（jieba-rs）。
+/// 输出逐查询并排结果 + 汇总（顺序一致 / top1 一致 / topK 重叠率）。
+/// 方案 B 采用 JiebaNet 分词，本命令是质量差异报告（非门禁）。
+/// </summary>
+internal static class VerifySearch
+{
+    public static void Run(string m3Dir, string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        var root = doc.RootElement;
+        var customWords = root.TryGetProperty("customWords", out var cw)
+            ? cw.EnumerateArray().Select((x) => x.GetString()!).ToArray()
+            : Array.Empty<string>();
+        var baselineFull = Path.GetFullPath(root.GetProperty("baselineStore").GetString()!);
+
+        var workDir = Path.Combine(Path.GetTempPath(), "cyrene-verify-store");
+        Directory.CreateDirectory(workDir);
+        var workStore = Path.Combine(workDir, "memory-store.json");
+
+        using var engine = EmbeddingEngine.Load(m3Dir);
+
+        int comparable = 0, orderEqual = 0, top1Equal = 0, top1Total = 0;
+        double overlapSum = 0;
+
+        foreach (var q in root.GetProperty("queries").EnumerateArray())
+        {
+            if (q.TryGetProperty("ivfSkip", out var skip) && skip.GetBoolean()) continue;
+            comparable++;
+
+            File.Copy(baselineFull, workStore, overwrite: true);
+            var store = new RagStore(workDir);
+
+            var query = q.GetProperty("query").GetString()!;
+            var source = q.TryGetProperty("source", out var s) && s.ValueKind == JsonValueKind.String
+                ? s.GetString()
+                : null;
+            var topK = q.GetProperty("topK").GetInt32();
+            var importIds = ReadStringArray(q, "options", "importIds");
+            var allowedIds = ReadStringArray(q, "options", "allowedEntryIds");
+
+            var results = HybridSearch.Retrieve(store, engine, query, source, topK, importIds, allowedIds, customWords);
+
+            var expected = q.GetProperty("results").EnumerateArray().ToList();
+            var expectedIds = expected.Select((e) => e.GetProperty("id").GetString()!).ToList();
+            var actualIds = results.Select((r) => r.Entry.Id).ToList();
+
+            var ordered = actualIds.SequenceEqual(expectedIds);
+            if (ordered) orderEqual++;
+            if (expectedIds.Count > 0)
+            {
+                top1Total++;
+                if (actualIds.Count > 0 && actualIds[0] == expectedIds[0]) top1Equal++;
+            }
+            var common = actualIds.Intersect(expectedIds).Count();
+            overlapSum += expectedIds.Count > 0 ? (double)common / expectedIds.Count : 1;
+
+            Console.WriteLine($"[verify-search] {(ordered ? "==  " : "DIFF")} \"{query}\" source={(source ?? "-")}");
+            Console.WriteLine(
+                $"  ts : {string.Join(", ", expected.Select((e) => $"{e.GetProperty("id").GetString()}:{e.GetProperty("score").GetDouble():F4}"))}");
+            Console.WriteLine(
+                $"  net: {string.Join(", ", results.Select((r) => $"{r.Entry.Id}:{r.Score:F4}"))}");
+        }
+
+        Console.WriteLine(
+            $"[verify-search] SUMMARY: order-equal={orderEqual}/{comparable}, top1-equal={top1Equal}/{top1Total}, mean-topK-overlap={overlapSum / Math.Max(1, comparable) * 100:F1}%");
+    }
+
+    private static string[]? ReadStringArray(JsonElement q, string optionName, string field)
+    {
+        if (!q.TryGetProperty(optionName, out var options)) return null;
+        if (!options.TryGetProperty(field, out var arr) || arr.ValueKind != JsonValueKind.Array) return null;
+        return arr.EnumerateArray().Select((x) => x.GetString()!).ToArray();
     }
 }
 
