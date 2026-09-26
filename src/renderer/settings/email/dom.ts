@@ -9,3 +9,6 @@ export const emailSmtpSecureInput = document.getElementById("email-smtp-secure")
 export const emailSmtpUserInput = document.getElementById("email-smtp-user") as HTMLInputElement | null;
 export const emailSmtpPassInput = document.getElementById("email-smtp-pass") as HTMLInputElement | null;
 export const emailFromNameInput = document.getElementById("email-from-name") as HTMLInputElement | null;
+export const emailImapHostInput = document.getElementById("email-imap-host") as HTMLInputElement | null;
+export const emailImapPortInput = document.getElementById("email-imap-port") as HTMLInputElement | null;
+export const emailImapSecureInput = document.getElementById("email-imap-secure") as HTMLInputElement | null;

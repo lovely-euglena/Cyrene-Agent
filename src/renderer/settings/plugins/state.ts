@@ -9,4 +9,6 @@ export const pluginsState = {
   emailSmtpUserTimer: undefined as ReturnType<typeof setTimeout> | undefined,
   emailSmtpPassTimer: undefined as ReturnType<typeof setTimeout> | undefined,
   emailFromNameTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+  emailImapHostTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+  emailImapPortTimer: undefined as ReturnType<typeof setTimeout> | undefined,
 };

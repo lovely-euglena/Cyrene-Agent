@@ -257,7 +257,7 @@ export function sanitizeNativePluginsSave(
 ): Partial<GeneralSettings> | null {
   if (!raw || typeof raw !== "object") return null;
   const patch: Record<string, unknown> = {};
-  for (const key of ["weatherEnabled", "travelEnabled", "playwrightMcpEnabled", "emailEnabled", "emailSmtpSecure"]) {
+  for (const key of ["weatherEnabled", "travelEnabled", "playwrightMcpEnabled", "emailEnabled", "emailSmtpSecure", "emailImapSecure"]) {
     if (typeof raw[key] === "boolean") patch[key] = raw[key];
   }
   if (raw.weatherSource === "open-meteo" || raw.weatherSource === "amap") {
@@ -277,12 +277,17 @@ export function sanitizeNativePluginsSave(
     "emailSmtpUser",
     "emailSmtpPass",
     "emailFromName",
+    "emailImapHost",
   ]) {
     if (typeof raw[key] === "string") patch[key] = (raw[key] as string).trim().slice(0, 500);
   }
   if (typeof raw.emailSmtpPort === "number" && Number.isFinite(raw.emailSmtpPort)) {
     const port = Math.round(raw.emailSmtpPort);
     if (port > 0 && port <= 65_535) patch.emailSmtpPort = port;
+  }
+  if (typeof raw.emailImapPort === "number" && Number.isFinite(raw.emailImapPort)) {
+    const port = Math.round(raw.emailImapPort);
+    if (port > 0 && port <= 65_535) patch.emailImapPort = port;
   }
   return Object.keys(patch).length > 0 ? (patch as Partial<GeneralSettings>) : null;
 }

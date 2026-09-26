@@ -663,16 +663,20 @@
           "hint": "选择搜索源后填入对应 Key。MiniMax 需先安装 uvx（Python）。"
         },
         "email": {
-          "title": "邮件发送",
-          "desc": "通过 SMTP 发送邮件，可带附件。需填写邮箱 SMTP 授权码（非登录密码）。",
+          "title": "邮件发送与收信",
+          "desc": "通过 SMTP 发送邮件（可带附件），通过 IMAP 查看与阅读收件箱。收信与发信共用邮箱账号与授权码。",
           "smtpHost": "SMTP 主机",
           "smtpPort": "端口",
           "smtpSecure": "使用 SSL/TLS",
           "smtpSecureHint": "465 端口通常勾选，587 通常不勾",
-          "smtpUser": "发件邮箱",
-          "smtpPass": "SMTP 授权码",
+          "smtpUser": "邮箱账号",
+          "smtpPass": "授权码",
           "fromName": "发件人名称（可选）",
-          "hint": "QQ邮箱 → 设置 → 账户 → 开启 SMTP → 获取授权码；163/Gmail 同理。"
+          "imapHost": "IMAP 主机（收信）",
+          "imapPort": "IMAP 端口",
+          "imapSecure": "IMAP 使用 SSL/TLS",
+          "imapSecureHint": "993 端口通常勾选，143 通常不勾",
+          "hint": "QQ邮箱 → 设置 → 账户 → 开启 SMTP/IMAP → 获取授权码；收信与发信共用邮箱账号与授权码。"
         },
         "file": {
           "title": "本地文件",

@@ -303,6 +303,20 @@ describe("sanitizeNativeCyreneSave / sanitizeNativeStickerAdd（cyrene section �
     expect(sanitizeNativePluginsSave(null)).toBeNull();
   });
 
+  it("save：IMAP 收信字段（host 裁剪 / port 范围 / secure 布尔）", () => {
+    expect(sanitizeNativePluginsSave({
+      emailImapHost: "  imap.qq.com  ",
+      emailImapPort: 993,
+      emailImapSecure: true,
+    })).toEqual({
+      emailImapHost: "imap.qq.com",
+      emailImapPort: 993,
+      emailImapSecure: true,
+    });
+    expect(sanitizeNativePluginsSave({ emailImapPort: 0 })).toBeNull();
+    expect(sanitizeNativePluginsSave({ emailImapPort: 70_000 })).toBeNull();
+  });
+
   it("add-sticker：必填校验 + id 规则 + 相近语义去空/过滤/截断", () => {
     expect(sanitizeNativeStickerAdd({})).toEqual({ ok: false, error: "请先选择图片文件" });
     expect(sanitizeNativeStickerAdd({ sourcePath: "C:/x.png" })).toEqual({

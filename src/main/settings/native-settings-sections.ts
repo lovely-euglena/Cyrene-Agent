@@ -236,6 +236,10 @@ export interface NativePluginsSnapshot {
   emailSmtpUser: string;
   emailSmtpPass: string;
   emailFromName: string;
+  /** IMAP 收信配置（认证复用 emailSmtpUser/emailSmtpPass） */
+  emailImapHost: string;
+  emailImapPort: number;
+  emailImapSecure: boolean;
   /** 文件/命令访问档位（project-read-only/read-only/scoped/per-action/full） */
   permissionLevel: string;
 }
@@ -261,6 +265,9 @@ export function buildPluginsSectionSnapshot(
     | "emailSmtpUser"
     | "emailSmtpPass"
     | "emailFromName"
+    | "emailImapHost"
+    | "emailImapPort"
+    | "emailImapSecure"
   >,
   permissionLevel: string,
 ): NativePluginsSnapshot {
@@ -287,6 +294,9 @@ export function buildPluginsSectionSnapshot(
     emailSmtpUser: str(settings.emailSmtpUser),
     emailSmtpPass: str(settings.emailSmtpPass),
     emailFromName: str(settings.emailFromName),
+    emailImapHost: str(settings.emailImapHost),
+    emailImapPort: Number.isFinite(settings.emailImapPort) ? Math.round(settings.emailImapPort) : 993,
+    emailImapSecure: settings.emailImapSecure !== false,
     permissionLevel: permissionLevel.length > 0 ? permissionLevel : "read-only",
   };
 }
