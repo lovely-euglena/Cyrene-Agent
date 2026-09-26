@@ -427,6 +427,18 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeDescribedRow("聊天记录管理", "清空全部本地聊天会话。",
             MakeButton("清空记录", ClearChatHistory, minWidth: 96)));
 
+        panel.Children.Add(MakeSubHeader("数据与存储"));
+        void OpenDataLocation()
+        {
+            // 迁移/覆盖确认、目录选择与重启都在 Electron 设置页完成
+            // （open-legacy 强制走旧版页，避免再次落到本窗口）。
+            RequestRouter.SendCommand("settings", "open-legacy", "general");
+        }
+        panel.Children.Add(MakeDescribedRow(
+            "便携模式 / 数据目录",
+            "把数据保存到程序目录或自定义文件夹，随程序一起移动；调整后可选择迁移数据，应用会自动重启。",
+            MakeButton("调整…", OpenDataLocation, minWidth: 96)));
+
         panel.Children.Add(MakeSubHeader("语言"));
         panel.Children.Add(MakeDescribedRow("语言", "当前仅支持中文，其他语言待开发。",
             MakeChoiceGroup(
