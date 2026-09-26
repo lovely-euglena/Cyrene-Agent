@@ -30,6 +30,8 @@ interface ChatComposerProps {
   attachments: ComposerAttachment[];
   attachmentBusy?: boolean;
   modelBusy?: boolean;
+  /** 压缩状态机回调：透传给 ContextUsageRing，让消息流渲染「正在触发压缩」占位条。 */
+  onCompactPhaseChange?: (phase: "idle" | "running" | "done" | "error") => void;
   pendingQueue?: PendingQueueDockItem[];
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
@@ -260,6 +262,7 @@ export function ChatComposer({
   attachments,
   attachmentBusy = false,
   modelBusy = false,
+  onCompactPhaseChange,
   pendingQueue = [],
   onChange,
   onSubmit,
@@ -508,7 +511,7 @@ export function ChatComposer({
         {supportsStyle && <StyleControl />}
         {onSelectModelProfile && <ModelSelector activeProfileId={activeModelProfileId} sessionModel={activeSessionModel} onSelect={onSelectModelProfile} onSelectModel={onSelectSessionModel} />}
         <span className="cy-composer__footer-spacer" />
-        <ContextUsageRing usage={contextUsage} sessionId={conversationId} busy={modelBusy} />
+        <ContextUsageRing usage={contextUsage} sessionId={conversationId} busy={modelBusy} onCompactPhaseChange={onCompactPhaseChange} />
         <ReasoningControl sessionId={conversationId} modelProfileId={activeModelProfileId} model={activeSessionModel} />
         </div>
       </div>

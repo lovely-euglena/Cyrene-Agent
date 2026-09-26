@@ -128,10 +128,21 @@ export interface ChatMessageChannelSource {
   senderName?: string;
 }
 
+/**
+ * 上下文压缩标记消息：由轨迹投影层从 compaction_checkpoint 条目生成，
+ * 只存在于 UI 消息流（含投影缓存快照），不进入模型上下文与会话存储。
+ */
+export interface ChatMessageCompactionMark {
+  /** automatic = 发送前预算触发的自动压缩；manual = 环形图手动压缩。 */
+  trigger: "automatic" | "manual";
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
+  /** 存在即表示本条是压缩分隔标记（见 ChatMessageCompactionMark），正文恒为空。 */
+  compaction?: ChatMessageCompactionMark;
   /** 模型公开返回的推理过程；不包含隐藏或加密思考。 */
   reasoning?: string;
   reasoningBlocks?: ReasoningBlock[];
@@ -319,6 +330,12 @@ export interface ChatSession {
    * 避免 UI 显示过期数据（known-issues 问题 3）。
    */
   currentContextUsage?: ContextUsageSnapshot;
+  /**
+   * 派生字段（不落盘）：按当前模型配置实时解析出的上下文容量。
+   * 快照里的 contextWindowTokens 是生成那一刻的口径，模型绑定或模型设置变更后会过期，
+   * 主进程在读出口覆盖此值，渲染端用它替换环形图分母，避免展示陈旧容量。
+   */
+  contextWindowTokens?: number;
   /** 会话级待发队列：旧会话无此字段视为空队列（向后兼容）。 */
   pendingMessages?: PendingChatMessage[];
   /** 待发派发状态：认领后 run 确认接受前存在；残留即恢复入口（向后兼容缺省为无）。 */

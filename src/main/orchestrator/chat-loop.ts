@@ -18,7 +18,6 @@ import { streamChatWithSdk } from "./vendors/sdk-stream/runtime";
 import type { UnifiedStreamDelta } from "./vendors/sdk-stream/types";
 import type { ApprovedStyleSampling } from "./vendors/style-sampling";
 import { getTimeoutSettings } from "../timeout-manager";
-import { compressConversation } from "./context-manager";
 import { buildContextUsageSnapshot } from "./context-usage";
 import { isExplicitStreamUnsupported } from "./vendors/stream-support";
 import { composePromptLayers } from "./prompt-layers";
@@ -41,7 +40,7 @@ export interface ChatLoopOptions {
   fallbackRevealIntervalMs?: number;
   /** 默认使用官方 SDK；测试可注入可控流实现。 */
   streamChat?: typeof streamChatWithSdk;
-  /** 当前对话模式，用于上下文压缩保留的最近轮数。 */
+  /** 当前对话模式：composePromptLayers 按模式选择提示词层组合。 */
   mode?: string;
   /** 权威轨迹提交端：canonical assistant 落盘（CTA Phase 1）。 */
   transcriptSink?: TranscriptSink;
@@ -105,19 +104,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
   const usageRecorder = options.recordUsage ?? ((input, output, calls, cachedInput, cacheCreation) => recordUsage(input, output, calls, cachedInput, options.settings.model, cacheCreation));
   let usedImageCaptionFallback = false;
 
-  const messages = await compressConversation({
-    messages: options.messages,
-    adapter: options.adapter,
-    settings: options.settings,
-    systemContent: options.soulSystemBaseContent,
-    mode: options.mode,
-    onEvent: options.onEvent,
-    signal: options.signal,
-  });
+  const messages = options.messages;
 
-  // 上下文容量快照（preRequest）：压缩后、请求前。
-  // messages 为压缩后的原始消息，不含 composePromptLayers 追加的 runtime_context
-  // 尾部（不变量），runtimeContext 由独立参数计量，避免双重计数。
+  // 上下文容量快照（preRequest）：请求前。
+  // 消息即实际请求所用的历史（超预算压缩已在 buildAgentRunOptions 阶段
+  // 由 transcript 压缩链路完成，产出直接进入 options.messages），
+  // 不含 composePromptLayers 追加的 runtime_context 尾部（不变量），
+  // runtimeContext 由独立参数计量，避免双重计数。
   const emitContextUsage = (phase: "preRequest" | "terminal", extraAssistantReply?: string): void => {
     options.onEvent?.({
       type: "context_usage",

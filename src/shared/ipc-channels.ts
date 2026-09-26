@@ -153,6 +153,8 @@ export const IPC = {
   CTA_PRESENTATION_CHECKPOINT: "cta:presentation-checkpoint",
   // renderer → main：主动压缩会话上下文（模型窗口内旧消息摘要成一条记忆）
   CHATS_COMPACT: "chats:compact",
+  // dev-only：一键生成"压缩演示"会话（假历史 + 真实压缩检查点链路，零 token）
+  CHATS_SEED_COMPACTION_DEMO: "chats:seedCompactionDemo",
   CHATS_RENAME: "chats:rename",
   CHATS_DELETE: "chats:delete",
   // 会话级待发队列（运行中排队、未派发；独立于正式 messages 历史）

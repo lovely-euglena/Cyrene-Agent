@@ -914,6 +914,13 @@ export function registerAgUiIpc(
       complete: async () => {
         perf.mark("agent_run_complete");
         cleanupRunState();
+        // run 终态同步会话统计：assistant 回复只进轨迹投影、不经 chats-store 落盘，
+        // 在 RUN_FINISHED 送达渲染端之前对齐 messageCount/updatedAt，
+        // 侧栏的最近聊天时间、排序与未读检测才能看到本轮新消息
+        try {
+          const projection = await journal.readProjection(sessionId);
+          chatsStore.syncSessionStats(sessionId, projection.messages.length);
+        } catch { /* 统计同步尽力而为：失败不改变 run 终态语义 */ }
         // complete 路径下 settlement 应已由 next(RUN_FINISHED) 写入。
         // 若 upstream 走裸 complete（没有 RUN_FINISHED），必须补发一个合成的 RUN_FINISHED，
         // 否则 renderer 收到零个终态事件，exactly-once 退化为 at-most-once。

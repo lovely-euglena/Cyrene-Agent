@@ -132,6 +132,8 @@
     "userStickerAlt": "用户表情",
     "cyreneAvatarAlt": "昔涟",
     "userAvatarAlt": "用户",
+    "compactionDone": "会话历史已压缩",
+    "compactionRunning": "正在触发压缩",
     "toolExecutionsAria": "工具执行过程",
     "roundChangedFiles": "{{count}} 个文件已被改动",
     "organizingReply": "昔涟正在整理这一轮回复…",
@@ -253,8 +255,7 @@
     "interruptedRun": "昔涟上次任务意外中断（已进行 {{rounds}} 轮）。",
     "resumeTask": "继续任务",
     "sessionTakeover": "当前会话有正在运行的任务（可能来自刷新前），本轮消息尚未执行。",
-    "takeoverAndRestart": "终止并重开",
-    "compressingContext": "昔涟正在压缩上下文…"
+    "takeoverAndRestart": "终止并重开"
   },
   "runOutcome": {
     "directFallback": "已切换为直接执行，接下来会继续完成任务。",

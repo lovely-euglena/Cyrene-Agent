@@ -315,8 +315,6 @@ export function toAguiEvent(event: AgentLoopEvent): BaseEvent {
       return { type: EventType.REASONING_MESSAGE_CONTENT, messageId: event.messageId, delta: event.delta };
     case "reasoning_message_end":
       return { type: EventType.REASONING_MESSAGE_END, messageId: event.messageId };
-    case "compressing_context":
-      return { type: EventType.CUSTOM, name: "cyrene.compressingContext", value: { text: "昔涟正在压缩上下文…" } };
     case "context_usage":
       // 上下文容量快照：与 harness-adapter 的同名 CUSTOM 事件对齐。
       return {

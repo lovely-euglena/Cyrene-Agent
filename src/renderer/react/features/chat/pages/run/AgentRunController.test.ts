@@ -74,7 +74,6 @@ function createRecordingHost() {
     }),
     updateContextUsage: vi.fn(),
     updatePlanReview: vi.fn(),
-    setCompressingContext: vi.fn(),
     setModeBusy: vi.fn(),
     requestTakeover: vi.fn(),
     clearTakeover: vi.fn(),

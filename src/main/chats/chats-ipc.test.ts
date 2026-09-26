@@ -122,6 +122,12 @@ describe("chats IPC mode filtering", () => {
       expect.objectContaining({ kind: "compaction_checkpoint" }),
     ]));
     expect(session.messages).toEqual([]);
+
+    // 压缩完成后：session 级 usage 快照落盘（环形图重载即显示压缩后占用）
+    const { getSessionView } = await import("./chats-store");
+    const afterCompact = getSessionView(session.id);
+    expect(afterCompact?.currentContextUsage?.phase).toBe("preRequest");
+    expect(afterCompact?.currentContextUsage?.totalTokens).toBeGreaterThan(0);
   });
 
   it("normalizes a manual summarizer failure to TRANSCRIPT_COMPACTION_REQUIRED", async () => {
@@ -134,6 +140,34 @@ describe("chats IPC mode filtering", () => {
     await expect(compact({ sender: {} }, { sessionId: "c1" })).resolves.toEqual({
       ok: false, error: "TRANSCRIPT_COMPACTION_REQUIRED",
     });
+  });
+
+  it("dev 演示入口生成独立会话并走真实自动压缩链路", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc(undefined, {
+      // demo 入口内部自建假摘要 compactor，不走全局注入
+      transcriptCompactor: { compact: vi.fn() } as any,
+    });
+    const demo = mocks.handlers.get(IPC.CHATS_SEED_COMPACTION_DEMO);
+    if (!demo) throw new Error("demo IPC handler was not registered");
+    const result = await demo({ sender: {} }) as { ok: boolean; sessionId?: string };
+    expect(result.ok).toBe(true);
+    expect(result.sessionId).toBeTruthy();
+
+    // 投影：假历史（含工具轮合并）+ 自动压缩 marker + 压缩后新消息。
+    // 旧历史压缩后已进归档区，必须走 journal 的 readProjection 合成视图。
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const { ConversationJournalService } = await import("../orchestrator/conversation-journal-service");
+    const journal = new ConversationJournalService(getConversationTranscriptStore(mocks.userDataDir));
+    const messages = (await journal.readProjection(result.sessionId!))?.messages ?? [];
+    const marker = messages.find((item) => item.compaction);
+    expect(marker?.compaction).toEqual({ trigger: "automatic" });
+    expect(messages.some((item) => item.content.includes("TODO 注释整理成清单"))).toBe(true);
+    expect(messages.some((item) => item.content.includes("按优先级排一下"))).toBe(true);
+
+    // session 级 usage 快照已写入（环形图数据源）
+    const { getSessionView } = await import("./chats-store");
+    expect(getSessionView(result.sessionId!)?.currentContextUsage?.totalTokens).toBeGreaterThan(0);
   });
 
   it("runs the controller through the real bridge handler before api.run and fails closed for a deep patch", async () => {

@@ -260,6 +260,23 @@ describe("bound channel message presentation", () => {
   });
 });
 
+describe("compaction marker presentation", () => {
+  it("converts a compaction marker into a single separator bubble entry", () => {
+    const message: ChatMessageItem = {
+      id: "checkpoint-1",
+      role: "assistant",
+      content: "",
+      compaction: { trigger: "manual" },
+    };
+    expect(createMessageItems([message], [])).toEqual([{
+      key: "checkpoint-1",
+      role: "compaction",
+      content: "",
+      extraInfo: { compactionTrigger: "manual" },
+    }]);
+  });
+});
+
 describe("review panel visibility", () => {
   it("appends a review bubble when runId is set and message is not streaming", () => {
     const message: ChatMessageItem = {

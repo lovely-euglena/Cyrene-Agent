@@ -22,6 +22,7 @@ interface ConversationSidebarProps {
   organization: SidebarOrganizationSnapshot | null;
   onSaveOrganization: (draft: SidebarOrganizationDraft) => Promise<boolean>;
   activeSessionId?: string;
+  unreadSessionIds?: ReadonlySet<string>;
   onSelect: (sessionId: string, mode?: ConversationMode) => void;
   onOpenProject: (workspaceRoot: string) => void;
   onRename: (sessionId: string, newTitle: string) => void | Promise<void>;
@@ -289,6 +290,7 @@ function SessionTimeTag({ updatedAt }: { updatedAt: number }) {
 function SidebarSessionRow({
   session,
   active,
+  unread,
   title,
   editingValue,
   onEditingChange,
@@ -299,6 +301,7 @@ function SidebarSessionRow({
 }: {
   session: ChatSessionMeta;
   active: boolean;
+  unread?: boolean;
   title: string;
   editingValue?: string;
   onEditingChange?: (value: string) => void;
@@ -316,6 +319,7 @@ function SidebarSessionRow({
       onContextMenu={onContextMenu}
       title={title}
     >
+      {editingValue === undefined && unread && <span className="cy-session-unread-dot" />}
       {editingValue !== undefined ? (
         <input
           autoFocus
@@ -402,6 +406,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
   organization,
   onSaveOrganization,
   activeSessionId,
+  unreadSessionIds,
   onSelect,
   onOpenProject,
   onRename,
@@ -862,6 +867,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
             />
           ) : (
             <span className="cy-session-label">
+              {unreadSessionIds?.has(session.id) && <span className="cy-session-unread-dot" />}
               <span className="cy-session-label__title">{session.title || t("sidebar.defaultSessionTitle")}</span>
               {session.pinned && <PushpinOutlined className="cy-session-label__pin" />}
               <SessionTimeTag updatedAt={session.updatedAt} />
@@ -870,7 +876,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
         icon: <ConversationIcon />,
         ...(supportsProjects ? { group: session.workspaceRoot ?? `unbound:${session.id}` } : {}),
       })),
-    [sortedSessions, editing, t, supportsProjects, onRename],
+    [sortedSessions, editing, t, supportsProjects, onRename, unreadSessionIds],
   );
 
   function openContextMenu(event: React.MouseEvent, sessionId: string) {
@@ -940,6 +946,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
         key={session.id}
         session={session}
         active={session.id === activeSessionId}
+        unread={unreadSessionIds?.has(session.id) ?? false}
         title={session.title || t("sidebar.defaultSessionTitle")}
         editingValue={editing?.sessionId === session.id ? editing.value : undefined}
         onEditingChange={(value) => setEditing({ sessionId: session.id, value })}

@@ -781,6 +781,48 @@
   color: var(--rb-text-secondary);
 }
 
+/* 压缩分隔条：与 waiting/activity 一样是「无头像整行」形态。
+   必须显式隐藏 avatar 列并让 body 撑满，否则内容会从头像右侧起算、宽度被挤短。 */
+.cy-message--compaction {
+  width: var(--cy-message-reading-width);
+  max-width: var(--cy-message-reading-width);
+  margin: 10px 0;
+}
+
+.cy-message--compaction .ant-bubble-avatar {
+  display: none;
+}
+
+.cy-message--compaction .ant-bubble-body {
+  width: 100%;
+  max-width: none;
+}
+
+.cy-message--compaction .ant-bubble-content {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.cy-message__compaction {
+  width: 100%;
+}
+
+/* 进行中：呼吸占位条（手动压缩摘要期间），完成后由静态 marker 接管 */
+.cy-message__compaction--running {
+  animation: cy-compaction-breath 1.6s ease-in-out infinite;
+}
+
+@keyframes cy-compaction-breath {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
 /* 基础规则只保留跨场景共享的布局与全局字体；字号/行高/字重由各使用场景自己声明，
    调整聊天消息排版时不再波及文件预览、运行时间线、交互面板等复用 MarkdownContent 的区域。 */
 .cy-message-markdown {

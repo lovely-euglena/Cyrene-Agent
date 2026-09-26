@@ -132,6 +132,8 @@
     "userStickerAlt": "Your sticker",
     "cyreneAvatarAlt": "Cyrene",
     "userAvatarAlt": "You",
+    "compactionDone": "History compacted",
+    "compactionRunning": "Compacting",
     "toolExecutionsAria": "Tool execution",
     "roundChangedFiles": "{{count}} files changed",
     "organizingReply": "I'm putting together this reply…",
@@ -253,8 +255,7 @@
     "interruptedRun": "The last task was interrupted after {{rounds}} rounds.",
     "resumeTask": "Resume task",
     "sessionTakeover": "A task is already running in this session (possibly from before a refresh), so this message hasn't been acted on yet.",
-    "takeoverAndRestart": "Stop and restart",
-    "compressingContext": "Compressing context…"
+    "takeoverAndRestart": "Stop and restart"
   },
   "runOutcome": {
     "directFallback": "Switched to direct execution — I'll keep going.",

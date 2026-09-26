@@ -133,6 +133,7 @@ export function toUiMessages(session: ChatSession): ChatMessageItem[] {
       id: message.id,
       role: message.role === "model" ? "assistant" : "user",
       content: message.content,
+      compaction: message.compaction,
       modelContext: message.modelContext,
       channelSource: normalizeChannelSource(message.channelSource),
       at: message.at,

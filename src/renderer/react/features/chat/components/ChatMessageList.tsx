@@ -38,6 +38,8 @@ import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
+import { Archive } from "lucide-react";
+import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
 
 export interface ChatMessageItem {
   id: string;
@@ -73,6 +75,8 @@ export interface ChatMessageItem {
   /** 渠道群聊的发送者/引用等隐藏模型上下文；不直接渲染。 */
   modelContext?: string;
   channelSource?: ChatMessageChannelSource;
+  /** 存在即表示本条是上下文压缩分隔标记，正文恒为空（见 ChatMessageCompactionMark）。 */
+  compaction?: ChatMessage["compaction"];
   /** 回复时间戳：历史消息来自持久化消息的 at，进行中消息由 run 终态回写。 */
   at?: number;
 }
@@ -94,6 +98,8 @@ interface ChatMessageListProps {
   conversationId?: string;
   mode: ConversationMode;
   preferredAddress: string;
+  /** 手动压缩进行中：列表尾部渲染「正在触发压缩」呼吸占位条，完成即由投影 marker 接管。 */
+  compacting?: boolean;
   /** 子代理详情可注入角色状态图；主聊天区不传时继续用默认昔涟素材。 */
   characterMoodAssets?: Partial<Record<CharacterStatusMood, string>>;
   assistantAvatar?: { src: string; alt: string; sprite?: boolean };
@@ -936,6 +942,18 @@ function UserMessageAvatar({ src, alt, sprite }: { src: string | null; alt?: str
   return <span className="cy-message-avatar__user" aria-label={t("messageList.userAvatarAlt")} />;
 }
 
+/** 压缩分隔条：进行中显示呼吸动画的占位条，完成后收敛为静态分隔条。 */
+function CompactionMarkerContent({ running }: { running?: boolean }) {
+  const { t } = useTranslation();
+  const label = running ? t("messageList.compactionRunning") : t("messageList.compactionDone");
+  return (
+    <Marker variant="separator" className={running ? "cy-message__compaction cy-message__compaction--running" : "cy-message__compaction"}>
+      <MarkerIcon><Archive /></MarkerIcon>
+      <MarkerContent>{label}</MarkerContent>
+    </Marker>
+  );
+}
+
 function createRoles(
   userAvatarUrl: string | null,
   userAvatar: { src: string; alt: string; sprite?: boolean } | undefined,
@@ -1115,6 +1133,15 @@ function createRoles(
     variant: "borderless" as const,
     rootClassName: "cy-message cy-message--system",
   },
+  compaction: {
+    placement: "start" as const,
+    variant: "borderless" as const,
+    avatar: null,
+    rootClassName: "cy-message cy-message--compaction",
+    contentRender: (_content: string, info: { extraInfo?: { compactionRunning?: boolean } }) => (
+      <CompactionMarkerContent running={info.extraInfo?.compactionRunning} />
+    ),
+  },
   };
 }
 
@@ -1124,6 +1151,15 @@ function createRoles(
  * 修改本函数时不得引入消息对象与贴纸表之外的输入。
  */
 function convertMessage(message: ChatMessageItem, enabledStickers: readonly EnabledSticker[]): readonly BubbleItemType[] {
+  // 压缩标记：独立一条分隔条目，不走贴纸/正文的常规装配。
+  if (message.compaction) {
+    return [{
+      key: message.id,
+      role: "compaction",
+      content: "",
+      extraInfo: {},
+    }];
+  }
   if (message.role !== "assistant") {
     const stickerId = extractMessageStickerId(message.content, message.sticker);
     return [{
@@ -1290,6 +1326,7 @@ export function ChatMessageList({
   conversationId,
   mode,
   preferredAddress,
+  compacting = false,
   characterMoodAssets,
   assistantAvatar,
   userAvatar,
@@ -1428,8 +1465,11 @@ export function ChatMessageList({
   const items = useMemo(() => {
     const assembled = assembleMessageItems(messages, enabledStickers, messageItemsCacheRef.current);
     messageItemsCacheRef.current = assembled.cache;
-    return assembled.items;
-  }, [messages, enabledStickers]);
+    // 压缩进行中：尾部追加呼吸占位条；完成后投影重载带出静态 marker，占位条随之移除。
+    return compacting
+      ? [...assembled.items, { key: "compaction-running", role: "compaction" as const, content: "", extraInfo: { compactionRunning: true } }]
+      : assembled.items;
+  }, [messages, enabledStickers, compacting]);
   const channelConversationLabel = resolveChannelConversationLabel(messages);
   const fileLinkEnv = useMemo<FileLinkEnv>(
     () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink }),

@@ -287,6 +287,15 @@
   user-select: none;
 }
 
+/* 未读圆点：非当前查看的会话收到新消息时显示在标题前，切换进入后消失 */
+.cy-session-unread-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--rb-radius-full, 9999px);
+  background: var(--rb-accent, #ff5b8a);
+}
+
 /* 时间悬停气泡：与输入框下方下拉菜单（cy-composer-menu-popover）同款浮层配色——
    浅色白底灰描边黑字，深色灰底白字偏白灰描边；去掉默认投影，改用卡片阴影 */
 .cy-session-time-tip.ant-tooltip {

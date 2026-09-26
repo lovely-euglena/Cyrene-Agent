@@ -96,8 +96,6 @@ export interface AgentRunHost {
   updateContextUsage(sessionId: string, snapshot: ContextUsageSnapshot): void;
   /** 会话级计划面板更新：submit_plan 交卷与执行收尾（事件均在 run 内到达）。 */
   updatePlanReview(sessionId: string, update: PlanReviewUpdate): void;
-  /** 上下文压缩中提示。sessionId 供宿主未来按会话映射，当前实现为全局单值。 */
-  setCompressingContext(sessionId: string, value: boolean): void;
   /** 模式级 busy 标记（ref 与渲染状态由宿主同步维护）。 */
   setModeBusy(mode: ConversationMode, busy: boolean): void;
   /** 会话守卫冲突（SESSION_RUN_ACTIVE）：挂起接管操作卡，等用户决定。 */
@@ -883,7 +881,6 @@ export class AgentRunController {
     } else if (event.type === "RUN_STARTED") {
       this.runStarted = true;
       this.runActivity = { startedAt: Date.now(), reasoningMs: 0 };
-      this.deps.host.setCompressingContext(this.input.sessionId, false);
       if (event.runId) {
         // RUN_STARTED.runId 必须与 ack.runId 一致（由 bridge 注入 options.runId 保证）。
         // 不一致时只 warn 不重写，避免渲染端拿到错误 runId 后无法 cancel。
@@ -1129,8 +1126,6 @@ export class AgentRunController {
         ));
         void this.checkpointRun("running", true);
       }
-    } else if (event.type === "CUSTOM" && event.name === "cyrene.compressingContext") {
-      this.deps.host.setCompressingContext(this.input.sessionId, true);
     } else if (event.type === "CUSTOM" && event.name === "cyrene.context.usage") {
       // 上下文容量快照：preRequest 纯内存实时刷新（零 I/O）；
       // terminal 用 debounce 版 checkpointRun，合并进紧随其后的 RUN_FINISHED terminal checkpoint，一次落盘。

@@ -4,6 +4,7 @@ import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { ChatComposer, parseComposerMessage } from "../components/ChatComposer";
+import { collectNewlyUnreadSessionIds } from "../components/session-unread";
 import { ComposerSlot } from "../components/ComposerSlot";
 import { TodoPanel } from "../components/TodoPanel";
 import { CodeGitPanel } from "../components/CodeGitPanel";
@@ -17,7 +18,6 @@ import {
 import { ChatMessageList } from "../components/ChatMessageList";
 import { ChatPageNavigation, type ChatPagePanel } from "../components/ChatPageNavigation";
 import {
-  ContextCompressionNotice,
   FileDropOverlay,
   RunRecoveryNotices,
 } from "../components/ChatWorkspaceNotices";
@@ -147,6 +147,17 @@ interface NavActions {
   openProject: (workspaceRoot: string) => void;
 }
 
+/** 用主进程实时解析出的窗口容量覆盖快照分母。
+ *  快照里的 contextWindowTokens 是生成那一刻（run 前 / 压缩时）的口径，
+ *  切换模型或在设置页改窗口后就会过期；窗口缺失或没变时原样返回以避免多余渲染。 */
+function applyLiveContextWindow(
+  snapshot: ContextUsageSnapshot,
+  liveContextWindow?: number,
+): ContextUsageSnapshot {
+  if (!liveContextWindow || liveContextWindow === snapshot.contextWindowTokens) return snapshot;
+  return { ...snapshot, contextWindowTokens: liveContextWindow };
+}
+
 export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onOpenSettings?: () => void; scheduledTasksNavigation?: number } = {}) {
   const { t } = useTranslation();
   // 统一反馈入口：错误轻提示 / 需阅读的错误弹窗 / 危险确认
@@ -193,14 +204,22 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   >({});
   const [sessionsByMode, setSessionsByMode] = useState<Partial<Record<ConversationMode, ChatSessionMeta[]>>>({});
   const [sidebarSessions, setSidebarSessions] = useState<ChatSessionMeta[]>(EMPTY_SESSIONS);
+  // 会话未读检测：列表刷新时对比新旧 messageCount，非当前查看的会话收到新消息则加入集合
+  const [unreadSessionIds, setUnreadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const prevSidebarSessionsRef = useRef<ChatSessionMeta[] | null>(null);
   const [sidebarOrganization, setSidebarOrganization] = useState<SidebarOrganizationSnapshot | null>(null);
   const [activeSessionIds, setActiveSessionIds] = useState<Partial<Record<ConversationMode, string>>>({});
 
   const [modelBusyByMode, setModelBusyByMode] = useState<Partial<Record<ConversationMode, boolean>>>({});
-  const [isCompressingContext, setIsCompressingContext] = useState(false);
   const [interactionsBySession, setInteractionsBySession] = useState<SessionInteractionState>({});
   const [lastTurnRevisionStarting, setLastTurnRevisionStarting] = useState(false);
   const [stickerSize, setStickerSize] = useState<"small" | "standard" | "large">("standard");
+  // 手动压缩进行中：消息流尾部渲染「正在触发压缩」呼吸占位条（完成后由投影 marker 接管）。
+  const [manualCompacting, setManualCompacting] = useState(false);
+  const handleCompactPhaseChange = useCallback(
+    (phase: "idle" | "running" | "done" | "error") => setManualCompacting(phase === "running"),
+    [],
+  );
 
   const [todoStateBySession, setTodoStateBySession] = useState<TodoStateBySession>({});
   // 计划模式（Plan Mode 二期）：会话级计划面板内容与阶段（review → executing → completed）。
@@ -460,7 +479,17 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           return store.setSessionModel(sessionId, model);
         },
       },
-      onSessionUpdated: (session) => setActiveSession(session),
+      onSessionUpdated: (session) => {
+        setActiveSession(session);
+        // 换档案/换模型后返回值带主进程实时解析的容量：本地直接换掉分母，
+        // 否则发起方窗口不回读会话，环形图会停在旧模型的窗口上。
+        setSessionContextUsageBySession((current) => {
+          const snapshot = current[session.id];
+          if (!snapshot) return current;
+          const next = applyLiveContextWindow(snapshot, session.contextWindowTokens);
+          return next === snapshot ? current : { ...current, [session.id]: next };
+        });
+      },
     });
   }
   const modelSwitcher = modelSwitcherRef.current;
@@ -508,6 +537,23 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     return () => { off(); offOrganization(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 会话未读检测：列表变化时对比新旧 messageCount，消息数增加且不属于任何模式当前查看的
+  // 会话视为收到新消息，标记未读；首次加载（无前值）不检测，避免启动时全量误标。
+  useEffect(() => {
+    const prev = prevSidebarSessionsRef.current;
+    prevSidebarSessionsRef.current = sidebarSessions;
+    if (!prev || prev === sidebarSessions) return;
+    const viewingIds = new Set(Object.values(activeSessionIdsRef.current).filter(Boolean));
+    const newlyUnread = collectNewlyUnreadSessionIds(prev, sidebarSessions, viewingIds);
+    if (newlyUnread.length === 0) return;
+    setUnreadSessionIds((current) => {
+      if (newlyUnread.every((id) => current.has(id))) return current;
+      const next = new Set(current);
+      for (const id of newlyUnread) next.add(id);
+      return next;
+    });
+  }, [sidebarSessions]);
 
   // 模式 effect：bootstrap 完成后才刷新；bootstrap 自身由下方合并 effect 接管
   useEffect(() => {
@@ -695,19 +741,30 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const session = await store.get(sessionId);
     if (!session || generation !== sessionSelectionGeneration.current) return;
     setActiveSession(session);
-    // 环形图快照初始化：session 级（压缩后写入）与消息级（最近 run 留下）取最新。
+    // 环形图快照初始化：session 级（压缩后写入）与消息级（最近 run 留下）取最新；
+    // 分母统一换成主进程实时解析的窗口容量，避免展示陈旧值。
     setSessionContextUsageBySession((current) => {
       const messageLevel = session.messages.findLast((message) => message.contextUsage)?.contextUsage;
       const sessionLevel = session.currentContextUsage;
       const best = sessionLevel && (!messageLevel || sessionLevel.updatedAt >= messageLevel.updatedAt)
         ? sessionLevel
         : messageLevel;
-      if (!best || current[sessionId]?.updatedAt === best.updatedAt) return current;
-      return { ...current, [sessionId]: best };
+      if (!best) return current;
+      const next = applyLiveContextWindow(best, session.contextWindowTokens);
+      if (current[sessionId]?.updatedAt === next.updatedAt
+        && current[sessionId]?.contextWindowTokens === next.contextWindowTokens) return current;
+      return { ...current, [sessionId]: next };
     });
     setActiveSessionIds((current) => {
       const next = { ...current, [targetMode]: sessionId };
       activeSessionIdsRef.current = next;
+      return next;
+    });
+    // 用户切进该会话即视为已读
+    setUnreadSessionIds((current) => {
+      if (!current.has(sessionId)) return current;
+      const next = new Set(current);
+      next.delete(sessionId);
       return next;
     });
     const uiMessages = toUiMessages(session);
@@ -890,7 +947,6 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             ? { ...current, [sessionId]: { ...current[sessionId], phase: "completed" } }
             : current);
         },
-        setCompressingContext: (_sessionId, value) => setIsCompressingContext(value),
         setModeBusy: (targetMode, busy) => {
           if (busy) {
             modelBusyByModeRef.current = { ...modelBusyByModeRef.current, [targetMode]: true };
@@ -1712,6 +1768,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
         sidebarOrganization={sidebarOrganization}
         onSaveSidebarOrganization={saveSidebarOrganization}
         activeSessionId={activeSessionId}
+        unreadSessionIds={unreadSessionIds}
         onToggleCollapsed={navToggleCollapsed}
         onModeChange={navModeChange}
         onNewTask={navNewTask}
@@ -1819,6 +1876,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             conversationId={activeSessionId}
             mode={mode}
             preferredAddress={preferredAddress}
+            compacting={manualCompacting}
             stickerSize={stickerSize}
             revisionBusy={Boolean(modelBusyByMode[mode]) || lastTurnRevisionStarting}
             onEditLastUserMessage={mode === "chat" ? editLastChatUserMessage : undefined}
@@ -1832,7 +1890,6 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onOpenFileLink={openFileTab}
           />
         )}
-        <ContextCompressionNotice visible={isCompressingContext} />
         <div className="cy-workspace-composer">
           {scrollToBottomVisible && (
             <button
@@ -1856,6 +1913,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             attachments={attachments}
             attachmentBusy={attachmentBusy}
             modelBusy={isCurrentScopeRunning}
+            onCompactPhaseChange={handleCompactPhaseChange}
             pendingQueue={currentPendingQueue}
             onChange={(value) => setDrafts((current) => ({ ...current, [scopeKey]: value }))}
             onSubmit={(value) => void sendMessage(value)}

@@ -688,6 +688,13 @@ const chatStoreApi = {
       before?: number;
       after?: number;
     }>,
+  // dev-only：一键生成「压缩演示」会话（假历史 + 真实压缩检查点，零 token）
+  seedCompactionDemo: () =>
+    ipcRenderer.invoke(IPC.CHATS_SEED_COMPACTION_DEMO) as Promise<{
+      ok: boolean;
+      sessionId?: string;
+      error?: string;
+    }>,
   rename: (id: string, title: string) =>
     ipcRenderer.invoke(IPC.CHATS_RENAME, { id, title }),
   delete: (id: string) => ipcRenderer.invoke(IPC.CHATS_DELETE, id),

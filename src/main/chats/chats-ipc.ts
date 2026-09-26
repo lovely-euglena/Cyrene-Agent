@@ -16,7 +16,7 @@
 import { app, BrowserWindow, type WebContents, dialog, shell } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
-import type { ChatMessage, ChatsSetSessionModelResult, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
+import type { ChatMessage, ChatSession, ChatsSetSessionModelResult, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
 import * as chatsStore from "./chats-store";
 import * as sidebarOrganizationStore from "./sidebar-organization-store";
 import { resolveSessionWorkspaceFile } from "./workspace-files-ipc";
@@ -40,12 +40,15 @@ import {
   createTranscriptCompactionRequiredError,
   TRANSCRIPT_COMPACTION_REQUIRED,
 } from "../orchestrator/conversation-transcript-compactor";
+import { buildContextUsageSnapshot } from "../orchestrator/context-usage";
+import type { ContextUsageSnapshot } from "../../shared/context-usage";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import { getTaskSessionStore } from "../tasks/task-session-store";
 import type { LlmClient } from "../services/llm/llm-client";
 import { enqueueLLMTask } from "../llm-queue";
 import { assertValidPresentationPatch, type TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
+import type { ChatMessage as VendorChatMessage } from "../orchestrator/vendors/types";
 import {
   createConversationTitleService,
   type ConversationTitleService,
@@ -56,6 +59,47 @@ import {
   saveGeneralSettings,
   MAX_RECENT_PROJECTS,
 } from "../settings/settings-facade";
+
+/** 压缩（手动/演示）后重算会话的 session 级 context usage 快照：
+ *  消息侧按压缩后的 compaction 视图重算；persona、工具、技能三类与压缩无关，
+ *  继承旧快照口径，避免环形图出现 systemPrompt 归零的跳变。 */
+function recordCompactionUsage(sessionId: string, compactedMessages: VendorChatMessage[]): void {
+  const previous = chatsStore.getSessionView(sessionId)?.currentContextUsage;
+  const inheritable = new Map(
+    (previous?.categories ?? [])
+      .filter((category) => category.key === "systemPrompt" || category.key === "tools" || category.key === "skills")
+      .map((category) => [category.key, category.tokens]),
+  );
+  const sessionRecord = chatsStore.getSessionView(sessionId);
+  const contextWindowTokens = (sessionRecord
+    ? resolveSessionModelSettings(loadModelSettings(), sessionRecord).contextWindowTokens
+    : undefined) ?? 256000;
+  const computed = buildContextUsageSnapshot({
+    phase: "preRequest",
+    contextWindowTokens,
+    personaContent: "",
+    messages: compactedMessages,
+  });
+  const categories = computed.categories.map((category) => {
+    const tokens = inheritable.get(category.key);
+    return tokens === undefined ? category : { ...category, tokens };
+  });
+  const usage: ContextUsageSnapshot = {
+    ...computed,
+    categories,
+    totalTokens: categories.reduce((sum, category) => sum + category.tokens, 0),
+  };
+  chatsStore.setSessionContextUsage(sessionId, usage);
+}
+
+/** 读出口覆盖：把会话的上下文容量刷新为「按当前模型配置解析」的值。
+ *  快照里的 contextWindowTokens 是生成那一刻的口径（run 前 / 压缩时），
+ *  切换模型或在设置页改窗口后就会过期，导致环形图分母停在旧值。
+ *  这里返回新对象而不回写磁盘——它是派生字段（见 ChatSession.contextWindowTokens）。 */
+function withLiveContextWindow(session: ChatSession): ChatSession {
+  const contextWindowTokens = resolveSessionModelSettings(loadModelSettings(), session).contextWindowTokens;
+  return contextWindowTokens ? { ...session, contextWindowTokens } : session;
+}
 
 /** 冷启动回填：按会话最近更新顺序收集已绑定的工作区，去重后截断并落盘。
  *  只在 recentProjects 为空时执行一次；之后由 setWorkspace 绑定继续维护列表。 */
@@ -101,8 +145,8 @@ export function registerChatsIpc(
   const ipc = ipcOption ?? createIpcScope();
   const titleService = options.titleService ?? (options.llmClient
     ? createConversationTitleService({
-        getSession: chatsStore.getSession,
-        setGeneratedTitle: chatsStore.setGeneratedTitle,
+      getSession: chatsStore.getSessionView,
+      setGeneratedTitle: chatsStore.setGeneratedTitle,
         resolveSettings: (session) => resolveSessionModelSettings(loadModelSettings(), session),
         isPrimaryModelBusy: options.isPrimaryModelBusy,
         llmClient: options.llmClient,
@@ -149,7 +193,8 @@ export function registerChatsIpc(
 
   ipc.handle(IPC.CHATS_GET, async (_event, id: string) => {
     if (!id) return null;
-    return sessionMigration.loadComposedSession(id);
+    const session = await sessionMigration.loadComposedSession(id);
+    return session ? withLiveContextWindow(session) : null;
   });
   ipc.handle(IPC.TASK_SESSION_GET, (_event, payload: { taskId?: unknown; parentConversationId?: unknown }) => {
     if (typeof payload?.taskId !== "string" || typeof payload.parentConversationId !== "string") return null;
@@ -235,6 +280,12 @@ export function registerChatsIpc(
           ? { retainTokens: payload.retainTokens }
           : {}),
       });
+      // 压缩只改变消息侧 token；三类无关项继承旧快照，见 recordCompactionUsage。
+      recordCompactionUsage(payload.sessionId, result.compactedMessages);
+      // 压缩是主进程侧的 journal 变更：发起方渲染端没有任何本地乐观更新
+      // （且压缩仅在会话空闲时可用，无 transient 思考消息竞态），必须连同发起方
+      // 一起广播，聊天页重载投影后压缩分隔条与环形图快照立即生效。
+      broadcastChanged();
       return { ok: true as const, ...result };
     } catch (error) {
       return {
@@ -245,6 +296,45 @@ export function registerChatsIpc(
       };
     }
   });
+
+  // dev-only 压缩链路演示：新建独立「压缩演示」会话，写入含工具调用的假历史后
+  // 走真实压缩检查点链路（摘要为本地假文本，零 token），用于在聊天页验证
+  // 压缩分隔条、环形图快照与 rewind 失效行为；不注册进正式包。
+  if (!app.isPackaged) {
+    ipc.handle(IPC.CHATS_SEED_COMPACTION_DEMO, async () => {
+      try {
+        const session = chatsStore.createSession({ title: "压缩演示", identityId: null, mode: "chat" });
+        const conversationId = session.id;
+        let at = 1;
+        // 假历史：两轮带工具调用的任务对话（投影会把同一 turn 的
+        // assistant/tool rounds 合并成一条 UI 消息）+ 一轮普通对话。
+        await transcriptStore.append(conversationId, { id: "demo-u1", at: at++, kind: "user", turnId: "demo-1", revision: 1, payload: { text: "帮我把项目里所有 TODO 注释整理成清单" } });
+        await transcriptStore.append(conversationId, { id: "demo-a1", at: at++, kind: "assistant", turnId: "demo-1-a", payload: { role: "assistant", content: "我先扫描一下源码目录。", toolCalls: [{ id: "demo-call-1", name: "shell", arguments: "{\"command\":\"grep -rn TODO src\"}" }] } });
+        await transcriptStore.append(conversationId, { id: "demo-t1", at: at++, kind: "tool_result", payload: { assistantEntryId: "demo-a1", toolCallId: "demo-call-1", outcome: "success", message: { role: "tool", toolCallId: "demo-call-1", name: "shell", content: "src/main/index.ts:12: TODO 优化启动速度\nsrc/renderer/app.tsx:40: TODO 拆分路由\n...（共 17 条）" } } });
+        await transcriptStore.append(conversationId, { id: "demo-a1b", at: at++, kind: "assistant", turnId: "demo-1-a", payload: { role: "assistant", content: "共找到 17 处 TODO，已按模块整理成清单。" } });
+        await transcriptStore.append(conversationId, { id: "demo-u2", at: at++, kind: "user", turnId: "demo-2", revision: 1, payload: { text: "顺便统计一下测试覆盖率" } });
+        await transcriptStore.append(conversationId, { id: "demo-a2", at: at++, kind: "assistant", turnId: "demo-2-a", payload: { role: "assistant", content: "好的，跑一下覆盖率脚本。", toolCalls: [{ id: "demo-call-2", name: "shell", arguments: "{\"command\":\"npm run test:coverage\"}" }] } });
+        await transcriptStore.append(conversationId, { id: "demo-t2", at: at++, kind: "tool_result", payload: { assistantEntryId: "demo-a2", toolCallId: "demo-call-2", outcome: "success", message: { role: "tool", toolCallId: "demo-call-2", name: "shell", content: "Statements: 73.2% | Branches: 68.5% | Functions: 71.0% | Lines: 74.1%\n未覆盖集中在 plugin-host 与 channels 模块。" } } });
+        await transcriptStore.append(conversationId, { id: "demo-a2b", at: at++, kind: "assistant", turnId: "demo-2-a", payload: { role: "assistant", content: "覆盖率 73.2%，未覆盖集中在 plugin-host 与 channels 模块。" } });
+        await transcriptStore.append(conversationId, { id: "demo-u3", at: at++, kind: "user", turnId: "demo-3", revision: 1, payload: { text: "先记下来，晚点再看" } });
+        await transcriptStore.append(conversationId, { id: "demo-a3", at: at++, kind: "assistant", turnId: "demo-3-a", payload: { role: "assistant", content: "好的，已记录。需要时随时叫我。" } });
+        // 走真实压缩链路：trigger = automatic，摘要本地生成，保留最近一轮不压。
+        const demoCompactor = new ConversationTranscriptCompactor({
+          store: transcriptStore,
+          summarize: async () => "演示摘要：用户要求整理项目里的 TODO 注释，工具扫描到 17 处并按模块汇总成清单；随后统计了测试覆盖率（73.2%，未覆盖集中在 plugin-host 与 channels）。此摘要由演示入口本地生成，未调用模型。",
+        });
+        const result = await demoCompactor.compact({ conversationId, trigger: "automatic", retainTokens: 80 });
+        recordCompactionUsage(conversationId, result.compactedMessages);
+        // 压缩后的一轮新对话：用于观察「压旧留新」的分隔条位置。
+        await transcriptStore.append(conversationId, { id: "demo-u4", at: at++, kind: "user", turnId: "demo-4", revision: 1, payload: { text: "现在把刚才的 TODO 清单按优先级排一下" } });
+        await transcriptStore.append(conversationId, { id: "demo-a4", at: at++, kind: "assistant", turnId: "demo-4-a", payload: { role: "assistant", content: "好的，从压缩摘要里恢复清单并按优先级排序如下：……" } });
+        broadcastChanged();
+        return { ok: true as const, sessionId: conversationId };
+      } catch (error) {
+        return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+      }
+    });
+  }
 
   ipc.handle(
     IPC.CHATS_RENAME,
@@ -405,7 +495,9 @@ export function registerChatsIpc(
       return chatsStore.setSessionModelProfile(payload.id, payload.modelProfileId, target?.model || undefined);
     });
     if (session) broadcastChanged(event.sender);
-    return session;
+    // 返回值带实时容量：发起方窗口不回读 CHATS_GET（来源隔离跳过了自己），
+    // 靠这个派生字段就能把环形图分母换成新模型的窗口。
+    return session ? withLiveContextWindow(session) : session;
   });
 
   // 会话级当前模型窄 IPC：只写会话（绑定 + 模型），不碰档案。
@@ -422,7 +514,7 @@ export function registerChatsIpc(
       if (!plan.ok) return { ok: false as const, error: plan.error };
       const session = chatsStore.setSessionModel(sessionId, plan.modelProfileId, plan.model);
       if (!session) return { ok: false as const, error: "session-not-found" as const };
-      return { ok: true as const, session };
+      return { ok: true as const, session: withLiveContextWindow(session) };
     });
     if (result.ok) broadcastChanged(event.sender);
     return result;
