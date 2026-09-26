@@ -392,6 +392,22 @@ public static class RequestRouter
         }
         Protocol?.SendEvent(payload);
     }
+
+    /// <summary>
+    /// 插件管理窗命令：插件 id 显式放进 "id" 字段。
+    /// 历史 bug：调用 SendCommand 把 id 传进 "section"，宿主只读 frame.id →
+    /// 安装/启用/停用/卸载/打开窗口全部静默 no-op（按钮点了没反应）。
+    /// </summary>
+    public static void SendPluginCommand(string action, string? id = null, Dictionary<string, object?>? extra = null)
+    {
+        var payload = new Dictionary<string, object?> { ["op"] = "event", ["name"] = "cmd", ["kind"] = "plugins", ["action"] = action };
+        if (id is not null) payload["id"] = id;
+        if (extra is not null)
+        {
+            foreach (var pair in extra) payload[pair.Key] = pair.Value;
+        }
+        Protocol?.SendEvent(payload);
+    }
 }
 
 /// <summary>窗口抽象：布局应用 + 生命周期事件（WPF 窗与 WinForms 窗统一）。</summary>

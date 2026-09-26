@@ -540,20 +540,20 @@ public sealed class PluginManagerWindow : NativeWindow
         };
 
         var toggle = new CheckBox { Content = "启用", IsChecked = p.Enabled, VerticalAlignment = VerticalAlignment.Center, Cursor = System.Windows.Input.Cursors.Hand };
-        toggle.Checked += (_, _) => RequestRouter.SendCommand("plugins", "enable", p.Id);
-        toggle.Unchecked += (_, _) => RequestRouter.SendCommand("plugins", "disable", p.Id);
+        toggle.Checked += (_, _) => RequestRouter.SendPluginCommand("enable", p.Id);
+        toggle.Unchecked += (_, _) => RequestRouter.SendPluginCommand("disable", p.Id);
 
         var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         if (p.CanOpen)
         {
             var openBtn = MakeMiniButton("打开");
-            openBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "openWindow", p.Id);
+            openBtn.Click += (_, _) => RequestRouter.SendPluginCommand("openWindow", p.Id);
             btnPanel.Children.Add(openBtn);
         }
         if (p.HasPanel)
         {
             var openBtn = MakeMiniButton("打开面板");
-            openBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "openPanel", p.Id);
+            openBtn.Click += (_, _) => RequestRouter.SendPluginCommand("openPanel", p.Id);
             btnPanel.Children.Add(openBtn);
         }
         if (p.Origin == "user")
@@ -562,7 +562,7 @@ public sealed class PluginManagerWindow : NativeWindow
             delBtn.Click += (_, _) =>
             {
                 delBtn.IsEnabled = false;
-                RequestRouter.SendCommand("plugins", "uninstall", p.Id);
+                RequestRouter.SendPluginCommand("uninstall", p.Id);
             };
             btnPanel.Children.Add(delBtn);
         }
@@ -633,6 +633,12 @@ public sealed class PluginManagerWindow : NativeWindow
     private void RenderMarket()
     {
         _marketList.Children.Clear();
+        // 操作失败横幅：底部状态行字号小、位置低，安装失败这类错误要显眼
+        //（历史体验：失败后按钮悄悄回弹 → 看起来「静默失败」）
+        if (_notice is { Kind: "error" } notice)
+        {
+            _marketList.Children.Add(MakeNoticeBanner(notice.Message));
+        }
         if (!_runtimeEnabled)
         {
             // 市场不是「插件没跑」而是「市场数据本身取不到」：专属空态（与已安装页提示条明显不同）
@@ -658,6 +664,27 @@ public sealed class PluginManagerWindow : NativeWindow
                 TextAlignment = TextAlignment.Center,
             });
         }
+    }
+
+    /// <summary>失败横幅：错误在列表上方显红框（安装失败/操作失败）。</summary>
+    private static Border MakeNoticeBanner(string message)
+    {
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xFD, 0xEC, 0xEC)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xAE, 0xAE)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8),
+            Margin = new Thickness(0, 0, 0, 8),
+            Child = new TextBlock
+            {
+                Text = "⚠ " + message,
+                FontSize = 13.5,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0x2A, 0x2A)),
+                TextWrapping = TextWrapping.Wrap,
+            },
+        };
     }
 
     /// <summary>运行时未启用提示条（仅已安装页：插件存在但没在跑；一键启用）。</summary>
@@ -760,8 +787,9 @@ public sealed class PluginManagerWindow : NativeWindow
         var meta = new TextBlock { Text = $"by {m.Author}", FontSize = 14, Foreground = NativeTheme.TextMutedBrush, Margin = new Thickness(0, 1, 0, 0) };
         var desc = new TextBlock { Text = m.Description, FontSize = 14, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
 
-        var btn = MakeMiniButton(installed ? "已安装" : "安装", primary: !installed);
-        btn.IsEnabled = !installed && !_installing.Contains(m.Id);
+        var installing = _installing.Contains(m.Id);
+        var btn = MakeMiniButton(installed ? "已安装" : installing ? "安装中…" : "安装", primary: !installed && !installing);
+        btn.IsEnabled = !installed && !installing;
         if (installed)
         {
             btn.Style = NativeTheme.SuccessButtonStyle;
@@ -770,7 +798,7 @@ public sealed class PluginManagerWindow : NativeWindow
         {
             btn.IsEnabled = false;
             btn.Content = "安装中…";
-            RequestRouter.SendCommand("plugins", "install", m.Id);
+            RequestRouter.SendPluginCommand("install", m.Id);
         };
 
         var row = new DockPanel();
