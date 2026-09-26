@@ -1,7 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Bug, Check, ChevronRight, Languages, Palette, UserRound } from "lucide-react";
+import { DropdownMenu } from "radix-ui";
+import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
+import { applyUiTheme } from "../../../ui/theme";
 import { useUserAvatar } from "../../hooks/useUserAvatar";
 import { useUserNickname } from "../../hooks/useUserNickname";
-import { useTranslation } from "../../i18n";
+import { setUiLocale, useTranslation } from "../../i18n";
+import { IssueReportDialog } from "./IssueReportDialog";
 import { UserProfileDialog } from "./UserProfileDialog";
 import "./UserAvatar.css";
 
@@ -10,28 +15,135 @@ interface UserAvatarProps {
 }
 
 export function UserAvatar({ label }: UserAvatarProps) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const avatarUrl = useUserAvatar();
   const nickname = useUserNickname();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [theme, setTheme] = useState<UiTheme>(() => normalizeUiTheme(document.documentElement.dataset.uiTheme));
   const displayLabel = (label ?? nickname) || "User";
+  const language = locale === "en" ? "en" : "zh-CN";
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => setTheme(normalizeUiTheme(root.dataset.uiTheme)));
+    observer.observe(root, { attributes: true, attributeFilter: ["data-ui-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  async function selectTheme(next: UiTheme) {
+    if (next === theme) return;
+    const previous = theme;
+    setTheme(next);
+    applyUiTheme(next);
+    try {
+      if (!window.settings) throw new Error("Settings API unavailable");
+      await window.settings.saveGeneral({ uiTheme: next });
+    } catch {
+      setTheme(previous);
+      applyUiTheme(previous);
+    }
+  }
+
+  async function selectLanguage(next: "zh-CN" | "en") {
+    if (next === language) return;
+    setUiLocale(next);
+    try {
+      if (!window.settings) throw new Error("Settings API unavailable");
+      await window.settings.saveGeneral({ language: next });
+    } catch {
+      setUiLocale(language);
+    }
+  }
 
   return (
     <>
-      <button
-        type="button"
-        className="cy-user-avatar cy-user-avatar__trigger"
-        aria-label={t("ui.openUserProfile")}
-        onClick={() => setProfileOpen(true)}
-      >
-        <span className="cy-user-avatar-circle">
-          {avatarUrl
-            ? <img src={avatarUrl} alt={t("ui.userAlt")} draggable={false} />
-            : <span>U</span>}
-        </span>
-        <span className="cy-user-avatar-label">{displayLabel}</span>
-      </button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            type="button"
+            className="cy-user-avatar cy-user-avatar__trigger"
+            aria-label={t("ui.openUserMenu")}
+          >
+            <span className="cy-user-avatar-circle">
+              {avatarUrl
+                ? <img src={avatarUrl} alt={t("ui.userAlt")} draggable={false} />
+                : <span>U</span>}
+            </span>
+            <span className="cy-user-avatar-label">{displayLabel}</span>
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="cy-user-menu" side="top" align="start" sideOffset={10} collisionPadding={12}>
+            <DropdownMenu.Label className="cy-user-menu__identity">
+              <span className="cy-user-menu__avatar">
+                {avatarUrl
+                  ? <img src={avatarUrl} alt="" draggable={false} />
+                  : <span>{displayLabel.slice(0, 1).toUpperCase()}</span>}
+              </span>
+              <span className="cy-user-menu__identity-copy">
+                <strong>{displayLabel}</strong>
+              </span>
+            </DropdownMenu.Label>
+            <DropdownMenu.Separator className="cy-user-menu__separator" />
+            <DropdownMenu.Item className="cy-user-menu__item" onSelect={() => setProfileOpen(true)}>
+              <UserRound size={16} aria-hidden="true" />
+              <span>{t("ui.profile.title")}</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger className="cy-user-menu__item">
+                <Palette size={16} aria-hidden="true" />
+                <span>{t("settingsPage.theme")}</span>
+                <span className="cy-user-menu__value">{t(theme === "pearl-white" ? "settingsPage.themePearlWhite" : "settingsPage.themeCharcoalPink")}</span>
+                <ChevronRight className="cy-user-menu__chevron" size={15} aria-hidden="true" />
+              </DropdownMenu.SubTrigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.SubContent className="cy-user-menu cy-user-menu__submenu" sideOffset={6} collisionPadding={12}>
+                  <DropdownMenu.RadioGroup value={theme} onValueChange={(value) => void selectTheme(value as UiTheme)}>
+                    <DropdownMenu.RadioItem className="cy-user-menu__item" value="pearl-white">
+                      <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
+                      <span>{t("settingsPage.themePearlWhite")}</span>
+                    </DropdownMenu.RadioItem>
+                    <DropdownMenu.RadioItem className="cy-user-menu__item" value="charcoal-pink">
+                      <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
+                      <span>{t("settingsPage.themeCharcoalPink")}</span>
+                    </DropdownMenu.RadioItem>
+                  </DropdownMenu.RadioGroup>
+                </DropdownMenu.SubContent>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Sub>
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger className="cy-user-menu__item">
+                <Languages size={16} aria-hidden="true" />
+                <span>{t("settingsPage.general.language")}</span>
+                <span className="cy-user-menu__value">{language === "zh-CN" ? t("settingsPage.general.chinese") : "English"}</span>
+                <ChevronRight className="cy-user-menu__chevron" size={15} aria-hidden="true" />
+              </DropdownMenu.SubTrigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.SubContent className="cy-user-menu cy-user-menu__submenu" sideOffset={6} collisionPadding={12}>
+                  <DropdownMenu.RadioGroup value={language} onValueChange={(value) => void selectLanguage(value as "zh-CN" | "en")}>
+                    <DropdownMenu.RadioItem className="cy-user-menu__item" value="zh-CN">
+                      <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
+                      <span>{t("settingsPage.general.chinese")}</span>
+                    </DropdownMenu.RadioItem>
+                    <DropdownMenu.RadioItem className="cy-user-menu__item" value="en">
+                      <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
+                      <span>English</span>
+                    </DropdownMenu.RadioItem>
+                  </DropdownMenu.RadioGroup>
+                </DropdownMenu.SubContent>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Sub>
+            <DropdownMenu.Separator className="cy-user-menu__separator" />
+            <DropdownMenu.Item className="cy-user-menu__item" onSelect={() => setReportOpen(true)}>
+              <Bug size={16} aria-hidden="true" />
+              <span>{t("ui.reportIssue.menuEntry")}</span>
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
       <UserProfileDialog open={profileOpen} onOpenChange={setProfileOpen} avatarUrl={avatarUrl} />
+      <IssueReportDialog open={reportOpen} onOpenChange={setReportOpen} />
     </>
   );
 }

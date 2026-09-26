@@ -18,8 +18,9 @@ declare global {
   }
 }
 
-function applyTheme(theme: unknown): void {
+export function applyUiTheme(theme: unknown): void {
   document.documentElement.dataset.uiTheme = normalizeUiTheme(theme);
+  delete document.documentElement.dataset.uiThemePending;
 }
 
 function applyRadius(radius: boolean): void {
@@ -44,14 +45,12 @@ function applyFont(value: unknown): void {
   document.documentElement.dataset.uiFont = "custom";
 }
 
-applyTheme("pearl-white");
-
 void window.cyreneTheme?.get()
-  .then(applyTheme)
-  .catch(() => applyTheme("pearl-white"));
+  .then(applyUiTheme)
+  .catch(() => applyUiTheme("pearl-white"));
 
 window.cyreneTheme?.onChanged((theme) => {
-  applyTheme(theme);
+  applyUiTheme(theme);
 });
 
 void window.cyreneTheme?.getRadius()
