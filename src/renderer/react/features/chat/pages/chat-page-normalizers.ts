@@ -135,6 +135,7 @@ export function toUiMessages(session: ChatSession): ChatMessageItem[] {
       content: message.content,
       modelContext: message.modelContext,
       channelSource: normalizeChannelSource(message.channelSource),
+      at: message.at,
       reasoning: message.reasoning,
       reasoningBlocks: message.reasoningBlocks,
       processMessages: message.processMessages,

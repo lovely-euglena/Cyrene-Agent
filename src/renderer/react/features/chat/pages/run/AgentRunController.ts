@@ -368,6 +368,8 @@ export class AgentRunController {
         loading: false,
         waitingForFirstEvent: false,
         streaming: false,
+        // 回复结算时刻：footer 的回复时间据此展示；会话重载后由持久化消息的 at 接管
+        at: Date.now(),
         reasoning: this.reasoningContent || undefined,
         reasoningBlocks: this.reasoningBlocks,
         processMessages: this.processMessages,

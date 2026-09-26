@@ -73,6 +73,8 @@ export interface ChatMessageItem {
   /** 渠道群聊的发送者/引用等隐藏模型上下文；不直接渲染。 */
   modelContext?: string;
   channelSource?: ChatMessageChannelSource;
+  /** 回复时间戳：历史消息来自持久化消息的 at，进行中消息由 run 终态回写。 */
+  at?: number;
 }
 
 export interface ChatMessageAttachment {
@@ -166,11 +168,12 @@ export function LastTurnEditAction({ messageId, content, disabled, onBeginEdit }
   return <LastTurnActionButton kind="edit" disabled={disabled} onClick={() => onBeginEdit(messageId, content)} />;
 }
 
-/** 助手消息 footer：重生成目标经 context 匹配（点击时读最新值），TTS/复制与本轮无关 */
-export function AssistantMessageFooter({ content, messageId, streaming, conversationId, mode, preferredAddress, revisionBusy, onTtsCacheKey, onRegenerateLastResponse }: {
+/** 助手消息 footer：重生成目标经 context 匹配（点击时读最新值），TTS/复制/回复时间与本轮无关 */
+export function AssistantMessageFooter({ content, messageId, streaming, at, conversationId, mode, preferredAddress, revisionBusy, onTtsCacheKey, onRegenerateLastResponse }: {
   content: string;
   messageId?: string;
   streaming: boolean;
+  at?: number;
   conversationId?: string;
   mode: ConversationMode;
   preferredAddress: string;
@@ -195,6 +198,11 @@ export function AssistantMessageFooter({ content, messageId, streaming, conversa
         />
       )}
       {cleanText && <CopyButton text={cleanText} />}
+      {cleanText && at !== undefined && (
+        <span className="cy-message-time" title={new Date(at).toLocaleString()}>
+          {formatReplyTime(at)}
+        </span>
+      )}
       {canRegenerate && (
         <LastTurnActionButton
           kind="regenerate"
@@ -328,6 +336,14 @@ export function resolveChannelConversationLabel(
   return t("messageList.channelSource.sameConversation", {
     channels: channels.map(channelName).join("、"),
   });
+}
+
+/** 回复时间显示：当天只显示时分，跨天补全日期，数字格式不依赖语言资源。 */
+export function formatReplyTime(at: number, now = Date.now()): string {
+  const reply = new Date(at);
+  const hhmm = `${String(reply.getHours()).padStart(2, "0")}:${String(reply.getMinutes()).padStart(2, "0")}`;
+  if (reply.toDateString() === new Date(now).toDateString()) return hhmm;
+  return `${reply.getFullYear()}/${reply.getMonth() + 1}/${reply.getDate()} ${hhmm}`;
 }
 
 function DotSpinner() {
@@ -987,11 +1003,12 @@ function createRoles(
         channelSource={info.extraInfo?.channelSource}
       />
     ),
-    footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean } }) => (
+    footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean; at?: number } }) => (
       <AssistantMessageFooter
         content={content}
         messageId={info.extraInfo?.messageId}
         streaming={Boolean(info.extraInfo?.streaming)}
+        at={info.extraInfo?.at}
         conversationId={conversationId}
         mode={mode}
         preferredAddress={preferredAddress}
@@ -1211,6 +1228,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
       extraInfo: {
         messageId: message.id,
         streaming: message.streaming,
+        at: message.at,
         ttsCacheKey: message.ttsCacheKey,
         stickerUrl: message.sticker ? resolveStickerUrl(message.sticker, enabledStickers) : undefined,
         channelSource: message.channelSource,

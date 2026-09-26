@@ -1259,6 +1259,18 @@
   gap: 8px;
 }
 
+/* 回复时间：复制按钮右侧的轻提示，与动作按钮同高对齐；随动作条一起悬浮淡入 */
+.cy-message-time {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8e8e93;
+  white-space: nowrap;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
 .cy-tts-button {
   display: inline-flex;
   margin-top: 6px;
@@ -1421,9 +1433,11 @@
 .cy-message:hover .cy-copy-button,
 .cy-message:hover .cy-tts-button,
 .cy-message:hover .cy-last-turn-action,
+.cy-message:hover .cy-message-time,
 .cy-message:focus-within .cy-copy-button,
 .cy-message:focus-within .cy-tts-button,
-.cy-message:focus-within .cy-last-turn-action {
+.cy-message:focus-within .cy-last-turn-action,
+.cy-message:focus-within .cy-message-time {
   opacity: 1;
 }
 
