@@ -36,6 +36,7 @@ import { createModelBackedConversationTranscriptCompactor } from "../orchestrato
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
+import { registerNewsIpc } from "../news/news-feed";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -582,6 +583,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           syncPlaywrightMcp,
           syncFilesystemMcp,
         });
+
+        // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
+        registerNewsIpc(ipc);
 
         registerMemoryUserToolIpc({
           ipc,

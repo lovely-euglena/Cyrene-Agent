@@ -1817,6 +1817,15 @@
       "openFailed": "无法打开外部链接，请稍后重试。",
       "urlTooLong": "报告内容较长，请先复制报告，再打开 GitHub 问题页粘贴。"
     },
+    "news": {
+      "menuEntry": "消息",
+      "title": "项目消息",
+      "description": "来自项目公告栏的最新消息。",
+      "loading": "正在读取消息…",
+      "failed": "暂时获取不到消息，请检查网络后稍后再看。",
+      "empty": "暂时没有新消息。",
+      "close": "关闭"
+    },
     "newButton": "新建任务"
   },
   "scheduler": {

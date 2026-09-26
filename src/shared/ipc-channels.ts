@@ -504,4 +504,9 @@ export const IPC = {
   PLUGINS_MARKET_LIST: "plugins:market:list",
   PLUGINS_MARKET_INSTALL: "plugins:market:install",
 
+  // 项目公告（远端 Markdown 文本）
+  NEWS_GET: "news:get",
+  /** 主进程拉到新版本时反向推送给窗口，渲染端据此更新未读提示 */
+  NEWS_UPDATED: "news:updated",
+
 } as const;

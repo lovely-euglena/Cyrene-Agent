@@ -17,6 +17,7 @@ import type { AguiRunAck } from "../shared/run-terminal";
 import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-types";
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
+import type { NewsApi, NewsPayload } from "../shared/news-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { exposeMusicApi } from "./music";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
@@ -175,6 +176,24 @@ const systemApi = {
 };
 
 contextBridge.exposeInMainWorld("system", systemApi);
+
+// 项目公告：取正文走 invoke，主进程对到新版本时反向推送
+const newsApi: NewsApi = {
+  get: (locale: string) => ipcRenderer.invoke(IPC.NEWS_GET, locale),
+  onUpdated: (callback: (payload: NewsPayload) => void) => {
+    const listener = (_e: unknown, payload: NewsPayload) => {
+      try {
+        callback(payload);
+      } catch (err) {
+        console.error("[Preload] news listener抛错:", err);
+      }
+    };
+    ipcRenderer.on(IPC.NEWS_UPDATED, listener);
+    return () => ipcRenderer.off(IPC.NEWS_UPDATED, listener);
+  },
+};
+
+contextBridge.exposeInMainWorld("news", newsApi);
 
 const schedulerEventsApi = {
   onEvent: (callback: (event: unknown) => void) => {

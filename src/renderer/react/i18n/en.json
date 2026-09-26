@@ -1817,6 +1817,15 @@
       "openFailed": "Couldn't open the external link. Try again later.",
       "urlTooLong": "This report is long. Copy it, then open GitHub Issues and paste it there."
     },
+    "news": {
+      "menuEntry": "News",
+      "title": "Project news",
+      "description": "The latest notes from the project announcement board.",
+      "loading": "Loading news…",
+      "failed": "Couldn't load the news. Check your connection and try again later.",
+      "empty": "Nothing new right now.",
+      "close": "Close"
+    },
     "newButton": "New task"
   },
   "scheduler": {

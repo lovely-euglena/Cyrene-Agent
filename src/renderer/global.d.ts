@@ -146,6 +146,7 @@ declare global {
       quit: () => void;
     };
     system?: SystemApi;
+    news?: import("../shared/news-types").NewsApi;
     review?: ReviewApi;
     workspaceFiles?: WorkspaceFilesApi;
     openInApp?: OpenInAppApi;
