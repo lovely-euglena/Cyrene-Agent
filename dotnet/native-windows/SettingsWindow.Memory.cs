@@ -20,6 +20,9 @@ public sealed partial class SettingsWindow
     /// <summary>L2 搜索词（本地过滤；section 重建后保留）</summary>
     private string _memoryL2Query = "";
 
+    /// <summary>Obsidian 动作内联提示（旧版 vault 卡片 hint；跨 section 重建保留）</summary>
+    private string _memoryVaultHint = "";
+
     private FrameworkElement BuildMemorySection()
     {
         var panel = new StackPanel();
@@ -30,18 +33,6 @@ public sealed partial class SettingsWindow
         panel.Children.Add(MakeSectionStatus("memory"));
 
         var memory = GetNode("memory");
-        var memoryError = GetString(memory, "error");
-        if (memoryError.Length > 0)
-        {
-            panel.Children.Add(new TextBlock
-            {
-                Text = $"⚠ 记忆读取失败：{memoryError}",
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 4, 0, 4),
-            });
-        }
 
         BuildMemoryProfileBlocks(panel, memory);
         BuildMemoryL2Block(panel, memory);
@@ -67,36 +58,30 @@ public sealed partial class SettingsWindow
         var interestsBox = MakeMemoryBox(GetString(l0, "longTermInterests"), multiline: true);
         var languageBox = MakeMemoryBox(GetString(l0, "language"), multiline: false);
         var noteBox = MakeMemoryBox(GetString(l0, "permanentNote"), multiline: true);
-        panel.Children.Add(LabeledBox("称呼 / 姓名", nameBox));
-        panel.Children.Add(LabeledBox("职业 / 身份", occupationBox));
-        panel.Children.Add(LabeledBox("长期兴趣", interestsBox));
-        panel.Children.Add(LabeledBox("语言", languageBox));
-        panel.Children.Add(LabeledBox("长期备注", noteBox));
-        var l0Actions = new StackPanel { Orientation = Orientation.Horizontal };
-        l0Actions.Children.Add(MakeActionButton("保存画像", () =>
-        {
-            RequestRouter.SendSettingsAction("memory", "save-l0", new Dictionary<string, object?>
+        panel.Children.Add(LabeledBox("称呼 / 姓名", MakeInputHost(nameBox, "未设置")));
+        panel.Children.Add(LabeledBox("职业 / 身份", MakeInputHost(occupationBox, "未设置")));
+        panel.Children.Add(LabeledBox("长期兴趣", MakeInputHost(interestsBox, "未设置")));
+        panel.Children.Add(LabeledBox("语言", MakeInputHost(languageBox, "未设置")));
+        panel.Children.Add(LabeledBox("长期备注", MakeInputHost(noteBox, "未设置")));
+        panel.Children.Add(MakeMemoryEditRow(
+            "save-l0",
+            new[] { nameBox, occupationBox, interestsBox, languageBox, noteBox },
+            () => new Dictionary<string, object?>
             {
-                ["fields"] = new Dictionary<string, object?>
-                {
-                    ["preferredName"] = nameBox.Text.Trim(),
-                    ["occupation"] = occupationBox.Text.Trim(),
-                    ["longTermInterests"] = interestsBox.Text.Trim(),
-                    ["language"] = languageBox.Text.Trim(),
-                    ["permanentNote"] = noteBox.Text.Trim(),
-                },
-            });
-        }, primary: true));
-        // 取消修改：回滚到最近一次快照值（对齐 Electron 的编辑/取消两态）
-        l0Actions.Children.Add(MakeActionButton("取消修改", () =>
-        {
-            nameBox.Text = GetString(l0, "preferredName");
-            occupationBox.Text = GetString(l0, "occupation");
-            interestsBox.Text = GetString(l0, "longTermInterests");
-            languageBox.Text = GetString(l0, "language");
-            noteBox.Text = GetString(l0, "permanentNote");
-        }));
-        panel.Children.Add(l0Actions);
+                ["preferredName"] = nameBox.Text.Trim(),
+                ["occupation"] = occupationBox.Text.Trim(),
+                ["longTermInterests"] = interestsBox.Text.Trim(),
+                ["language"] = languageBox.Text.Trim(),
+                ["permanentNote"] = noteBox.Text.Trim(),
+            },
+            () =>
+            {
+                nameBox.Text = GetString(l0, "preferredName");
+                occupationBox.Text = GetString(l0, "occupation");
+                interestsBox.Text = GetString(l0, "longTermInterests");
+                languageBox.Text = GetString(l0, "language");
+                noteBox.Text = GetString(l0, "permanentNote");
+            }));
 
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.MemoryRecent, 18, NativeTheme.TextDefaultBrush),
@@ -104,29 +89,90 @@ public sealed partial class SettingsWindow
         var goalsBox = MakeMemoryBox(GetString(l1, "recentGoals"), multiline: true);
         var preferencesBox = MakeMemoryBox(GetString(l1, "recentPreferences"), multiline: true);
         var projectBox = MakeMemoryBox(GetString(l1, "currentProject"), multiline: true);
-        panel.Children.Add(LabeledBox("近期目标", goalsBox));
-        panel.Children.Add(LabeledBox("近期偏好", preferencesBox));
-        panel.Children.Add(LabeledBox("当前项目", projectBox));
-        var l1Actions = new StackPanel { Orientation = Orientation.Horizontal };
-        l1Actions.Children.Add(MakeActionButton("保存近况", () =>
-        {
-            RequestRouter.SendSettingsAction("memory", "save-l1", new Dictionary<string, object?>
+        panel.Children.Add(LabeledBox("近期目标", MakeInputHost(goalsBox, "未设置")));
+        panel.Children.Add(LabeledBox("近期偏好", MakeInputHost(preferencesBox, "未设置")));
+        panel.Children.Add(LabeledBox("当前项目", MakeInputHost(projectBox, "未设置")));
+        panel.Children.Add(MakeMemoryEditRow(
+            "save-l1",
+            new[] { goalsBox, preferencesBox, projectBox },
+            () => new Dictionary<string, object?>
             {
-                ["fields"] = new Dictionary<string, object?>
-                {
-                    ["recentGoals"] = goalsBox.Text.Trim(),
-                    ["recentPreferences"] = preferencesBox.Text.Trim(),
-                    ["currentProject"] = projectBox.Text.Trim(),
-                },
-            });
-        }, primary: true));
-        l1Actions.Children.Add(MakeActionButton("取消修改", () =>
+                ["recentGoals"] = goalsBox.Text.Trim(),
+                ["recentPreferences"] = preferencesBox.Text.Trim(),
+                ["currentProject"] = projectBox.Text.Trim(),
+            },
+            () =>
+            {
+                goalsBox.Text = GetString(l1, "recentGoals");
+                preferencesBox.Text = GetString(l1, "recentPreferences");
+                projectBox.Text = GetString(l1, "currentProject");
+            }));
+    }
+
+    /// <summary>
+    /// L0/L1 编辑控件组（对齐旧版：默认只读，「编辑」解锁、「保存」等宿主回执，
+    /// 失败保留输入并提示；「取消」恢复快照值并回到只读）。
+    /// </summary>
+    private StackPanel MakeMemoryEditRow(
+        string saveVerb,
+        TextBox[] boxes,
+        Func<Dictionary<string, object?>> collect,
+        Action restoreValues)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var editing = false;
+        var saving = false;
+        Button? action = null;
+        Button? cancel = null;
+        cancel = MakeActionButton("取消", () =>
         {
-            goalsBox.Text = GetString(l1, "recentGoals");
-            preferencesBox.Text = GetString(l1, "recentPreferences");
-            projectBox.Text = GetString(l1, "currentProject");
-        }));
-        panel.Children.Add(l1Actions);
+            restoreValues();
+            editing = false;
+            Apply();
+        });
+        cancel.Visibility = Visibility.Collapsed;
+        void Apply()
+        {
+            foreach (var box in boxes) box.IsEnabled = editing;
+            if (action is not null)
+            {
+                action.Content = editing ? "保存" : "编辑";
+                action.IsEnabled = !saving;
+            }
+            cancel.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+        }
+        action = MakeActionButton("编辑", () =>
+        {
+            if (!editing)
+            {
+                editing = true;
+                Apply();
+                return;
+            }
+            saving = true;
+            Apply();
+            RequestRouter.SendSettingsAction(
+                "memory",
+                saveVerb,
+                new Dictionary<string, object?> { ["fields"] = collect() },
+                (ok, error, _) =>
+                {
+                    saving = false;
+                    if (ok)
+                    {
+                        editing = false;
+                        Apply();
+                        return;
+                    }
+                    Apply();
+                    _lastNotices["memory"] = ($"保存失败：{(error is { Length: > 0 } ? error : "请重试")}", "error");
+                    RenderNotice("memory");
+                });
+        }, primary: true);
+        row.Children.Add(action);
+        row.Children.Add(cancel);
+        Apply();
+        return row;
     }
 
     // ── L2 事件片段（本地搜索过滤） ──
@@ -166,9 +212,15 @@ public sealed partial class SettingsWindow
         panel.Children.Add(searchRow);
 
         var listPanel = new StackPanel();
+        var memoryError = GetString(memory, "error");
         void RenderL2()
         {
             listPanel.Children.Clear();
+            if (memoryError.Length > 0)
+            {
+                AddMemoryBlockError(listPanel, "片段");
+                return;
+            }
             var query = _memoryL2Query.Trim().ToLowerInvariant();
             var items = GetNode(memory, "l2");
             var shown = 0;
@@ -196,6 +248,7 @@ public sealed partial class SettingsWindow
             if (shown == 0)
             {
                 listPanel.Children.Add(MakeHint(query.Length > 0 ? "没有匹配的事件片段" : "暂无事件片段"));
+                listPanel.Children.Add(MakeHint(query.Length > 0 ? "换个关键词试试" : "聊天后昔涟会自动提炼重要信息"));
             }
         }
         searchBox.TextChanged += (_, _) =>
@@ -215,9 +268,15 @@ public sealed partial class SettingsWindow
             NativeTheme.VectorGlyph(Glyphs.BookRag, 22, NativeTheme.TextDefaultBrush),
             "导入知识", description: "用户上传的文档和知识库"));
         var docs = GetNode(memory, "importedDocs");
+        if (GetString(memory, "error").Length > 0)
+        {
+            AddMemoryBlockError(panel, "导入知识");
+            return;
+        }
         if (docs.ValueKind != JsonValueKind.Array || docs.GetArrayLength() == 0)
         {
-            panel.Children.Add(MakeHint("暂无导入文档：在聊天窗口上传文件后会自动索引。"));
+            panel.Children.Add(MakeHint("暂无导入文档"));
+            panel.Children.Add(MakeHint("在聊天窗口上传文件后会自动索引"));
             return;
         }
         foreach (var doc in docs.EnumerateArray())
@@ -251,9 +310,15 @@ public sealed partial class SettingsWindow
             NativeTheme.VectorGlyph(Glyphs.Reflection, 18, NativeTheme.TextDefaultBrush),
             "回顾", description: "AI 自动生成的阶段性回顾"));
         var reflections = GetNode(memory, "reflections");
+        if (GetString(memory, "error").Length > 0)
+        {
+            AddMemoryBlockError(panel, "回顾");
+            return;
+        }
         if (reflections.ValueKind != JsonValueKind.Array || reflections.GetArrayLength() == 0)
         {
-            panel.Children.Add(MakeHint("暂无回顾。"));
+            panel.Children.Add(MakeHint("暂无回顾"));
+            panel.Children.Add(MakeHint("当前项目里回顾还没真正生成落地"));
             return;
         }
         foreach (var item in reflections.EnumerateArray())
@@ -278,19 +343,86 @@ public sealed partial class SettingsWindow
         var vaultPath = GetString(vault, "vaultPath");
         var lastSyncAt = GetDouble(vault, "lastSyncAt", 0);
 
+        // 旧版 obsidian-vault-ui：动作进行中按钮禁用 +「绑定中…/同步中…」，
+        // 结果写在卡片内 hint（跨 section 重建保留）
+        var hintBlock = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 2),
+            Text = _memoryVaultHint,
+            Visibility = _memoryVaultHint.Length > 0 ? Visibility.Visible : Visibility.Collapsed,
+        };
+        void SetVaultHint(string text)
+        {
+            _memoryVaultHint = text;
+            hintBlock.Text = text;
+            hintBlock.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        int FileCountOf(JsonElement? data) =>
+            data is { } payload
+            && payload.ValueKind == JsonValueKind.Object
+            && payload.TryGetProperty("fileCount", out var countEl)
+            && countEl.ValueKind == JsonValueKind.Number
+                ? countEl.GetInt32()
+                : 0;
+        bool CanceledOf(JsonElement? data) =>
+            data is { } payload
+            && payload.ValueKind == JsonValueKind.Object
+            && payload.TryGetProperty("canceled", out var canceledEl)
+            && canceledEl.ValueKind == JsonValueKind.True;
+
+        Button MakeVaultButton(
+            string label,
+            string busyText,
+            string verb,
+            Func<bool, string?, int, bool, string> resultText,
+            bool primary = false)
+        {
+            Button? button = null;
+            button = MakeActionButton(label, () =>
+            {
+                if (button is null || !button.IsEnabled) return;
+                button.IsEnabled = false;
+                button.Content = busyText;
+                SetVaultHint("");
+                RequestRouter.SendSettingsAction("memory", verb, null, (ok, error, data) =>
+                {
+                    if (button is not null)
+                    {
+                        button.IsEnabled = true;
+                        button.Content = label;
+                    }
+                    var text = resultText(ok, error, FileCountOf(data), CanceledOf(data));
+                    if (text.Length > 0) SetVaultHint(text);
+                });
+            }, primary: primary);
+            return button;
+        }
+
         if (vaultPath.Length == 0)
         {
             panel.Children.Add(MakeHint("未绑定 vault：绑定后昔涟的记忆会增量同步为 Markdown；也可只做一次性导出。"));
             var unboundRow = new StackPanel { Orientation = Orientation.Horizontal };
-            unboundRow.Children.Add(MakeActionButton("绑定 vault 文件夹", () =>
-            {
-                RequestRouter.SendSettingsAction("memory", "vault-bind");
-            }, primary: true));
-            unboundRow.Children.Add(MakeActionButton("一键导出", () =>
-            {
-                RequestRouter.SendSettingsAction("memory", "vault-export");
-            }));
+            unboundRow.Children.Add(MakeVaultButton(
+                "绑定 vault 文件夹", "绑定中…", "vault-bind",
+                (ok, error, fileCount, canceled) => canceled
+                    ? ""
+                    : ok
+                        ? $"已绑定并同步 {fileCount} 个文件"
+                        : $"绑定失败：{error}",
+                primary: true));
+            unboundRow.Children.Add(MakeVaultButton(
+                "一键导出", "导出中…", "vault-export",
+                (ok, error, fileCount, canceled) => canceled
+                    ? ""
+                    : ok
+                        ? $"已导出 {fileCount} 个文件"
+                        : $"导出失败：{error}"));
             panel.Children.Add(unboundRow);
+            panel.Children.Add(hintBlock);
             return;
         }
 
@@ -300,16 +432,17 @@ public sealed partial class SettingsWindow
             panel.Children.Add(MakeHint($"上次同步：{FormatUnixMs(lastSyncAt)}"));
         }
         var boundRow = new StackPanel { Orientation = Orientation.Horizontal };
-        boundRow.Children.Add(MakeActionButton("立即同步", () =>
-        {
-            RequestRouter.SendSettingsAction("memory", "vault-sync");
-        }, primary: true));
-        boundRow.Children.Add(MakeActionButton("解绑", () =>
-        {
-            if (MessageBox.Show("解绑后不再自动同步（vault 文件夹里的 md 不会被删除）。确定解绑吗？", "解绑 Obsidian Vault", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
-            RequestRouter.SendSettingsAction("memory", "vault-unbind");
-        }));
+        boundRow.Children.Add(MakeVaultButton(
+            "立即同步", "同步中…", "vault-sync",
+            (ok, error, fileCount, _) => ok
+                ? $"已同步 {fileCount} 个文件 · {DateTime.Now:yyyy/M/d HH:mm:ss}"
+                : $"同步失败：{error}",
+            primary: true));
+        boundRow.Children.Add(MakeVaultButton(
+            "解绑", "解绑中…", "vault-unbind",
+            (ok, _, _, _) => ok ? "已解绑（vault 文件夹里的 md 不会被删除）" : "解绑失败"));
         panel.Children.Add(boundRow);
+        panel.Children.Add(hintBlock);
 
         var autoSync = new CheckBox
         {
@@ -319,12 +452,27 @@ public sealed partial class SettingsWindow
             Margin = new Thickness(0, 4, 0, 4),
             Cursor = System.Windows.Input.Cursors.Hand,
         };
-        autoSync.Checked += (_, _) => RequestRouter.SendSettingsAction("memory", "vault-auto-sync", new Dictionary<string, object?> { ["enabled"] = true });
-        autoSync.Unchecked += (_, _) => RequestRouter.SendSettingsAction("memory", "vault-auto-sync", new Dictionary<string, object?> { ["enabled"] = false });
+        autoSync.Checked += (_, _) =>
+        {
+            SetVaultHint("已开启自动同步");
+            RequestRouter.SendSettingsAction("memory", "vault-auto-sync", new Dictionary<string, object?> { ["enabled"] = true });
+        };
+        autoSync.Unchecked += (_, _) =>
+        {
+            SetVaultHint("已关闭自动同步");
+            RequestRouter.SendSettingsAction("memory", "vault-auto-sync", new Dictionary<string, object?> { ["enabled"] = false });
+        };
         panel.Children.Add(autoSync);
     }
 
     // ── 控件工厂 ──
+
+    /// <summary>块级读取失败空态（旧版记忆面板：各块分别显示「xx读取失败/请查看终端日志」）。</summary>
+    private static void AddMemoryBlockError(StackPanel panel, string what)
+    {
+        panel.Children.Add(MakeHint($"{what}读取失败"));
+        panel.Children.Add(MakeHint("请查看终端日志"));
+    }
 
     private static TextBox MakeMemoryBox(string text, bool multiline)
     {
@@ -342,7 +490,7 @@ public sealed partial class SettingsWindow
         return box;
     }
 
-    private static StackPanel LabeledBox(string label, TextBox box)
+    private static StackPanel LabeledBox(string label, FrameworkElement control)
     {
         var row = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
         row.Children.Add(new TextBlock
@@ -352,7 +500,7 @@ public sealed partial class SettingsWindow
             Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x66)),
             Margin = new Thickness(0, 0, 0, 3),
         });
-        row.Children.Add(box);
+        row.Children.Add(control);
         return row;
     }
 }

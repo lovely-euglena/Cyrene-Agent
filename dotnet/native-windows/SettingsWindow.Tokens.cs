@@ -39,36 +39,71 @@ public sealed partial class SettingsWindow
         }
         panel.Children.Add(rangeRow);
 
-        // ── 总量指标 ──
+        // ── 总量指标（口径对齐旧版：请求 N / M、缓存命中 暂无数据/（部分）、命中率格式化） ──
         var totals = GetNode(tokens, "totals");
         var input = GetInt(totals, "input", 0);
         var output = GetInt(totals, "output", 0);
         var hit = GetInt(totals, "hit", 0);
         var miss = GetInt(totals, "miss", 0);
         var requests = GetInt(totals, "requests", 0);
-        var hitRate = hit + miss > 0 ? (double)hit / (hit + miss) : 0;
+        var attemptedRequests = GetInt(totals, "attemptedRequests", 0);
+        var cacheUsageRequests = GetInt(totals, "cacheUsageRequests", 0);
 
         panel.Children.Add(MakeMetricRow(
-            ("📥 输入 Token", FormatTokensShort(input)),
-            ("📤 输出 Token", FormatTokensShort(output)),
-            ("🔢 请求数", requests.ToString())));
+            ("📥 输入 Token", input.ToString("N0")),
+            ("📤 输出 Token", output.ToString("N0")),
+            ("🔢 请求数", attemptedRequests > 0
+                ? $"{requests:N0} / {attemptedRequests:N0}"
+                : requests.ToString("N0"))));
         panel.Children.Add(MakeMetricRow(
-            ("🎯 缓存命中", FormatTokensShort(hit)),
-            ("缓存命中率", $"{hitRate * 100:0.0}%"),
-            ("合计", FormatTokensShort(input + output))));
+            ("🎯 缓存命中", cacheUsageRequests > 0
+                ? $"{hit:N0}{(cacheUsageRequests < requests ? "（部分）" : "")}"
+                : "暂无数据"),
+            ("缓存命中率", FormatCacheRate(hit, miss, requests, cacheUsageRequests)),
+            ("合计", (input + output).ToString("N0"))));
 
         // ── 每日柱状图 + 趋势折线 ──
         var daily = GetNode(tokens, "daily");
-        if (daily.ValueKind == JsonValueKind.Array && daily.GetArrayLength() > 0)
+        var values = new List<TokenDayView>();
+        if (daily.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var day in daily.EnumerateArray())
+            {
+                values.Add(new TokenDayView(
+                    GetString(day, "date"),
+                    GetString(day, "weekday"),
+                    GetInt(day, "input", 0),
+                    GetInt(day, "output", 0),
+                    GetInt(day, "hit", 0),
+                    GetInt(day, "miss", 0),
+                    GetInt(day, "cacheCreation", 0),
+                    GetInt(day, "requests", 0),
+                    GetInt(day, "attemptedRequests", 0),
+                    GetInt(day, "cacheUsageRequests", 0)));
+            }
+        }
+        var hasData = values.Any((day) => day.Input > 0 || day.Output > 0 || day.Requests > 0 || day.AttemptedRequests > 0);
+        if (!hasData)
+        {
+            // 旧版空态：隐藏图表区，指标卡片归零，提示两行
+            panel.Children.Add(MakeHint("暂无用量数据"));
+            panel.Children.Add(MakeHint("和昔涟聊天后这里会显示真实的 Token 消耗统计。"));
+        }
+        else
         {
             panel.Children.Add(MakeModuleHead(
                 NativeTheme.VectorGlyph(Glyphs.ChartLine, 16, NativeTheme.TextDefaultBrush),
                 "每日消耗柱状图"));
-            var values = new List<(string Date, int Input, int Output)>();
-            foreach (var day in daily.EnumerateArray())
+            // 日均（旧版 #token-avg-label）
+            var average = (long)Math.Round(values.Sum((day) => (double)day.Input + day.Output) / values.Count);
+            panel.Children.Add(new TextBlock
             {
-                values.Add((GetString(day, "date"), GetInt(day, "input", 0), GetInt(day, "output", 0)));
-            }
+                Text = $"日均 {FormatTokensShort(average)}",
+                FontSize = 12,
+                Foreground = NativeTheme.TextMutedBrush,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 0, 2, 2),
+            });
             // 柱状图（对齐 Electron .mini-chart + .token-bar）：
             //   112 高容器（18 顶部 + 76 柱区 + 18 日期区）；每天一列等分整宽；
             //   柱 max-width 24 居中、radius-full、渐变；高度 76*total/max（最低 6）；
@@ -91,7 +126,9 @@ public sealed partial class SettingsWindow
             for (var i = 0; i < values.Count; i++)
             {
                 if (values.Count > 14 && i % 2 != 0) continue;
-                var (date, dayInput, dayOutput) = values[i];
+                var date = values[i].Date;
+                var dayInput = values[i].Input;
+                var dayOutput = values[i].Output;
                 var total = dayInput + dayOutput;
                 barsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
@@ -130,7 +167,7 @@ public sealed partial class SettingsWindow
                     Background = TokenBarBrush(),
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     VerticalAlignment = VerticalAlignment.Bottom,
-                    ToolTip = MakeTokenTooltip(date, dayInput, dayOutput),
+                    ToolTip = MakeTokenTooltip(values[i]),
                     Cursor = System.Windows.Input.Cursors.Hand,
                     // 对齐 .token-bar__fill 的粉色柔光
                     Effect = new DropShadowEffect
@@ -185,9 +222,9 @@ public sealed partial class SettingsWindow
             }
         }
 
-        // ── 模型用量（环形图 + 列表） ──
+        // ── 模型用量（环形图 + 列表；空态隐藏） ──
         var models = GetNode(tokens, "models");
-        if (models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
+        if (hasData && models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
         {
             panel.Children.Add(MakeSubHeader("模型用量"));
             var modelTotals = new List<(string Name, int Total)>();
@@ -221,7 +258,6 @@ public sealed partial class SettingsWindow
             }
             RequestRouter.SendSettingsAction("tokens", "clear", null);
         }));
-        panel.Children.Add(MakeLegacyButton("tokens"));
         return panel;
     }
 
@@ -258,7 +294,7 @@ public sealed partial class SettingsWindow
     // ── 图表绘制（折线 / 环形，对齐旧版 Chart.js 图表语义） ──
 
     /// <summary>输入/输出双折线趋势图（整宽画布，对齐 Electron Chart.js：填充带 + 悬停点）。</summary>
-    private static FrameworkElement MakeTrendChart(List<(string Date, int Input, int Output)> values)
+    private static FrameworkElement MakeTrendChart(List<TokenDayView> values)
     {
         const double chartHeight = 140;
         const double leftPad = 40;
@@ -372,7 +408,7 @@ public sealed partial class SettingsWindow
                 Height = chartHeight,
                 Fill = Brushes.Transparent,
                 Cursor = System.Windows.Input.Cursors.Hand,
-                ToolTip = MakeTokenTooltip(values[i].Date, values[i].Input, values[i].Output),
+                ToolTip = MakeTokenTooltip(values[i]),
             };
             Canvas.SetLeft(hit, XAt(i) - slotWidth / 2);
             Canvas.SetTop(hit, 0);
@@ -462,23 +498,33 @@ public sealed partial class SettingsWindow
         {
             var sweep = 360.0 * slices[i].Total / total;
             if (sweep <= 0) continue;
-            var figure = new PathFigure { StartPoint = PointOn(angle, radius), IsClosed = false };
-            figure.Segments.Add(new ArcSegment
+            // 100%（单模型）扇区：ArcSegment 起点==终点会退化成空路径，直接画整圆
+            Geometry sliceGeometry;
+            if (sweep >= 359.99)
             {
-                Point = PointOn(angle + sweep, radius),
-                Size = new Size(radius, radius),
-                IsLargeArc = sweep > 180,
-                SweepDirection = SweepDirection.Clockwise,
-            });
-            var geometry = new PathGeometry();
-            geometry.Figures.Add(figure);
+                sliceGeometry = new EllipseGeometry(new Point(center, center), radius, radius);
+            }
+            else
+            {
+                var figure = new PathFigure { StartPoint = PointOn(angle, radius), IsClosed = false };
+                figure.Segments.Add(new ArcSegment
+                {
+                    Point = PointOn(angle + sweep, radius),
+                    Size = new Size(radius, radius),
+                    IsLargeArc = sweep > 180,
+                    SweepDirection = SweepDirection.Clockwise,
+                });
+                var geometry = new PathGeometry();
+                geometry.Figures.Add(figure);
+                sliceGeometry = geometry;
+            }
             var sliceName = slices[i].Name;
             var sliceShare = (double)slices[i].Total * 100 / total;
             var path = new Path
             {
                 Stroke = DonutBrush(i),
                 StrokeThickness = thickness,
-                Data = geometry,
+                Data = sliceGeometry,
                 StrokeStartLineCap = PenLineCap.Flat,
                 StrokeEndLineCap = PenLineCap.Flat,
                 Cursor = System.Windows.Input.Cursors.Hand,
@@ -497,31 +543,65 @@ public sealed partial class SettingsWindow
         return canvas;
     }
 
-    /// <summary>Token 数据点提示（日期 + 输入/输出/合计，白卡浮层）。</summary>
-    private static ToolTip MakeTokenTooltip(string date, int input, int output)
+    /// <summary>单日 Token 数据（柱图/tooltip/趋势共用；字段对齐旧版 TokenDayData）。</summary>
+    private readonly record struct TokenDayView(
+        string Date,
+        string Weekday,
+        int Input,
+        int Output,
+        int Hit,
+        int Miss,
+        int CacheCreation,
+        int Requests,
+        int AttemptedRequests,
+        int CacheUsageRequests);
+
+    /// <summary>缓存命中率（旧版 formatCacheRate：无缓存统计字样 / 已统计 N / M 口径）。</summary>
+    private static string FormatCacheRate(int hit, int miss, int requests, int cacheUsageRequests)
+    {
+        var cacheableInput = Math.Max(0, hit) + Math.Max(0, miss);
+        if (cacheUsageRequests <= 0 || cacheableInput <= 0) return "模型未提供缓存统计";
+        var rate = Math.Max(0, hit) / (double)cacheableInput * 100;
+        return $"{rate:0.0}%（已统计 {cacheUsageRequests} / {requests} 次请求）";
+    }
+
+    /// <summary>缓存数值显示（旧版 formatCacheMetric：无数据 /（部分请求未提供））。</summary>
+    private static string FormatCacheMetric(int value, TokenDayView day)
+    {
+        if (day.CacheUsageRequests <= 0) return "暂无数据";
+        var suffix = day.CacheUsageRequests < day.Requests ? "（部分请求未提供）" : "";
+        return $"{value:N0}{suffix}";
+    }
+
+    /// <summary>Token 数据点提示（日期 + 周几 + 输入/输出/缓存/请求 全覆盖，对齐旧版 tooltip）。</summary>
+    private static ToolTip MakeTokenTooltip(TokenDayView day)
     {
         var stack = new StackPanel();
         stack.Children.Add(new TextBlock
         {
-            Text = date,
+            Text = day.Weekday.Length > 0 ? $"{day.Date} {day.Weekday}" : day.Date,
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
         });
-        stack.Children.Add(new TextBlock
+        void AddRow(string label, string value)
         {
-            Text = $"输入 {FormatTokensShort(input)} · 输出 {FormatTokensShort(output)}",
-            FontSize = 14,
-            Foreground = NativeTheme.TextMutedBrush,
-            Margin = new Thickness(0, 2, 0, 0),
-        });
-        stack.Children.Add(new TextBlock
-        {
-            Text = $"合计 {FormatTokensShort(input + output)}",
-            FontSize = 14,
-            Foreground = NativeTheme.PinkDarkBrush,
-            Margin = new Thickness(0, 2, 0, 0),
-        });
+            var row = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var left = new TextBlock { Text = label, FontSize = 14, Foreground = NativeTheme.TextMutedBrush };
+            var right = new TextBlock { Text = value, FontSize = 14, Foreground = NativeTheme.TextStrongBrush };
+            Grid.SetColumn(right, 1);
+            row.Children.Add(left);
+            row.Children.Add(right);
+            stack.Children.Add(row);
+        }
+        AddRow("📥 输入", day.Input.ToString("N0"));
+        AddRow("📤 输出", day.Output.ToString("N0"));
+        AddRow("🎯 缓存命中", FormatCacheMetric(day.Hit, day));
+        AddRow("❌ 缓存未命中", FormatCacheMetric(day.Miss, day));
+        AddRow("📝 缓存创建", day.CacheCreation > 0 ? day.CacheCreation.ToString("N0") : "暂无数据");
+        AddRow("🔢 请求", $"{day.Requests:N0} / {day.AttemptedRequests:N0}");
         return new ToolTip { Content = stack, Style = NativeTheme.ToolTipStyle };
     }
 

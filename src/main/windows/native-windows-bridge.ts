@@ -36,24 +36,28 @@ export interface NativeBridgeActions {
    * native 设置窗「API 与模型」section 动作。verb:
    * save / test / test-vision / set-default-profile / delete-profile；
    * payload 为对应参数对象（config / id 等）。
+   * 返回值：`{ok, error?, data?}`；带 requestId 的动作帧会收到
+   * state.settings-action-result 回执（见 completeAction）。
    */
-  apiAction?(verb: string, payload: Record<string, unknown>): void;
+  apiAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「通用」section 动作。verb: clear-chat-history / open-gpu-internals */
+  generalAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「记忆」section 动作。verb: save-l0/save-l1/delete-doc/vault-bind/vault-unbind/vault-export/vault-sync/vault-auto-sync */
-  memoryAction?(verb: string, payload: Record<string, unknown>): void;
+  memoryAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「定时任务」section 动作。verb: add/update/toggle/fire/delete/history */
-  schedulerAction?(verb: string, payload: Record<string, unknown>): void;
+  schedulerAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「高级设置」section 动作。verb: save（超时 + 工具并发） */
-  runtimeAction?(verb: string, payload: Record<string, unknown>): void;
+  runtimeAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「Token 用量」section 动作。verb: set-days / clear */
-  tokensAction?(verb: string, payload: Record<string, unknown>): void;
+  tokensAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「偏好设置」section 动作。verb: open-prompt（定位自定义 Prompt 文件） */
-  preferencesAction?(verb: string, payload: Record<string, unknown>): void;
+  preferencesAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /**
    * native 设置窗「昔涟设置」section 动作：
    * save（状态栏实时更新 / 表情包开关·大小·阈值，写 model settings）/
    * open-sticker-manager（Electron 表情包管理窗）/ add-sticker（用户表情包入库）。
    */
-  cyreneAction?(verb: string, payload: Record<string, unknown>): void;
+  cyreneAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
   /** 界面字体导入/恢复（宿主弹文件框/清理文件；native 不传路径）。 */
@@ -80,6 +84,44 @@ let windowRadiusProvider: (() => number) | null = null;
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+/**
+ * 动作回执：动作帧带 requestId 时，把处理器结果回推
+ * state.settings-action-result（{requestId, kind, action, ok, error?, data?}）。
+ * 处理器可同步/异步返回 {ok,error?,data?}（返回空按 ok=true）；未带 requestId
+ * 的动作保持旧单向语义（不产生回执帧）。
+ */
+function completeAction(frame: Record<string, unknown>, result: unknown): void {
+  if (typeof frame.requestId !== "number") return;
+  const requestId = frame.requestId;
+  const kind = asString(frame.kind);
+  const action = asString(frame.action);
+  const deliver = (value: unknown): void => {
+    const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    const ok = record.ok === undefined ? true : record.ok === true;
+    const error = typeof record.error === "string" ? record.error : undefined;
+    const data = record.data && typeof record.data === "object"
+      ? (record.data as Record<string, unknown>)
+      : undefined;
+    void activeClient()
+      ?.pushSettingsActionResult({
+        requestId,
+        kind,
+        action,
+        ok,
+        ...(error ? { error } : {}),
+        ...(data ? { data } : {}),
+      })
+      .catch(() => undefined);
+  };
+  if (result && typeof (result as Promise<unknown>).then === "function") {
+    void (result as Promise<unknown>).then(deliver, (error: unknown) => {
+      deliver({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+  } else {
+    deliver(result);
+  }
+}
 
 /**
  * 初始化桥接（应用启动时调用一次）。未启用 native 窗口时 no-op。
@@ -129,25 +171,28 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           }
           break;
         case "api":
-          actions.apiAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.apiAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "general":
+          completeAction(frame, actions.generalAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "memory":
-          actions.memoryAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.memoryAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "scheduler":
-          actions.schedulerAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.schedulerAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "runtime":
-          actions.runtimeAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.runtimeAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "tokens":
-          actions.tokensAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.tokensAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "preferences":
-          actions.preferencesAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.preferencesAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "cyrene":
-          actions.cyreneAction?.(asString(frame.verb), asRecord(frame.payload));
+          completeAction(frame, actions.cyreneAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "openChannels":
           actions.openChannelsWindow?.();

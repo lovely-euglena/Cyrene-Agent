@@ -87,7 +87,7 @@ public sealed partial class SettingsWindow
         content.Children.Add(MakeDisclaimerSection("9. 贡献者致谢",
             DisclaimerParagraph(
                 RunText("感谢所有通过 GitHub 提交 Pull Request 为项目做出贡献的开发者。完整贡献者列表请查看："),
-                RunLink("Cyrene-Agent 贡献者页面 →", "https://github.com/Playa-0v0/Cyrene-Agent/graphs/contributors")),
+                RunLink("Cyrene-Agent 贡献者页面 →", "https://github.com/Playa-0v0/Cyrene-Agent/graphs/contributors?from=2026%2F5%2F30")),
             DisclaimerParagraph(RunText("同时也感谢所有在 Issues 中提交反馈、建议以及 Star 支持本项目的朋友。"))));
 
         content.Children.Add(MakeDisclaimerSection("10. 协议效力",

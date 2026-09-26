@@ -355,6 +355,12 @@ export class NativeWindowsClient {
     await this.request({ op: "state.settings-notice", notice: notice ?? {} });
   }
 
+  /** section 动作结果回执（带 requestId 的动作帧 → WPF 等待中的回调）。 */
+  async pushSettingsActionResult(result: unknown): Promise<void> {
+    await this.ensureStarted();
+    await this.request({ op: "state.settings-action-result", result: result ?? {} });
+  }
+
   async pushTasks(tasks: unknown, usage: unknown): Promise<void> {
     await this.request({ op: "state.tasks", tasks, usage });
   }

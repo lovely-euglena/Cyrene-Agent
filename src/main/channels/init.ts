@@ -32,6 +32,7 @@ import { NapCatAdapter } from "./adapters/qq/napcat-adapter";
 import { QqBotAdapter } from "./adapters/qqbot/qqbot-adapter";
 import { getRecentLog, clearLog, reloadLogFromDisk } from "./message-log";
 import { logger, LogTag } from "../logger";
+import { pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 
 const LOG = "[ChannelsInit]";
 
@@ -339,6 +340,8 @@ export function broadcastChannelsStatus(): void {
       console.warn(LOG, "广播失败:", err);
     }
   }
+  // 渠道启停会影响设置页「主动消息渠道」可用性：同步刷新 native 设置快照
+  pushSettingsSnapshotToNative();
 }
 
 /** 工具：把所有 BrowserWindow 广播安装进度。 */
