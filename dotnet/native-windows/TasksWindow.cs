@@ -425,7 +425,7 @@ public sealed class TasksWindow : NativeWindow
                     RadiusY = 5,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Bottom,
-                    ToolTip = $"{weekday} · 尚未到来",
+                    ToolTip = NativeTheme.MakeTooltip($"{weekday} · 尚未到来"),
                 });
             }
             else if (total > 0)
@@ -439,7 +439,7 @@ public sealed class TasksWindow : NativeWindow
                     Background = isToday ? NativeTheme.PinkBrush : NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB)),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Bottom,
-                    ToolTip = $"{weekday} · {FormatTokenShort(total)} tokens",
+                    ToolTip = NativeTheme.MakeTooltip($"{weekday} · {FormatTokenShort(total)} tokens"),
                     Cursor = System.Windows.Input.Cursors.Hand,
                 };
                 bar.MouseEnter += (_, _) => bar.Opacity = 0.82;
