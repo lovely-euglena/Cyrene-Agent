@@ -537,12 +537,18 @@ public sealed partial class SettingsWindow : NativeWindow
             Height = 64,
             CornerRadius = new CornerRadius(32),
             Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xF0)),
-            ClipToBounds = true,
         };
-        var avatarImage = new Image { Stretch = Stretch.UniformToFill };
         var decoded = TryDecodeDataUrl(GetString(user, "avatarDataUrl"));
-        if (decoded != null) avatarImage.Source = decoded;
-        avatarBox.Child = avatarImage;
+        // ImageBrush 背景：CornerRadius 会把背景裁成圆形（Border 圆角不裁子元素）
+        if (decoded != null)
+        {
+            avatarBox.Background = new ImageBrush(decoded)
+            {
+                Stretch = Stretch.UniformToFill,
+                AlignmentX = AlignmentX.Center,
+                AlignmentY = AlignmentY.Center,
+            };
+        }
         avatarRow.Children.Add(avatarBox);
         var uploadButton = new Button
         {
