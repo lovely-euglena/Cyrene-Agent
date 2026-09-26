@@ -16,8 +16,8 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildRuntimeSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("高级设置"));
-        panel.Children.Add(MakeHint("运行期参数；保存后从下一个请求/任务生效。"));
+        panel.Children.Add(MakeHeader("运行设置"));
+        panel.Children.Add(MakeHint("控制模型请求、询问用户等待时间与 Harness 工具执行方式。"));
         panel.Children.Add(MakeSectionStatus("runtime"));
 
         var runtime = GetNode("runtime");

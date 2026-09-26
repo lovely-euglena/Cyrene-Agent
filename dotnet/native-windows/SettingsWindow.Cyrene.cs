@@ -20,8 +20,10 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildCyreneSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("昔涟设置"));
-        panel.Children.Add(MakeHint("Agent 行为、表情包与 RAG / 文档导入（对齐 Electron 昔涟设置）。"));
+        panel.Children.Add(MakePanelHeading(
+            MakeHeadingAvatar(System.IO.Path.Combine("icons", "cyrene-avatar-line.png"), tint: false),
+            "昔涟设置",
+            "这里集中管理昔涟的 Agent 行为、状态更新、表情包、记忆和本地检索能力。"));
         var sectionStatus = MakeSectionStatus("cyrene");
         panel.Children.Add(sectionStatus);
         void ShowStatus(string text, string level)
@@ -33,7 +35,9 @@ public sealed partial class SettingsWindow
         var cyrene = GetNode("cyrene");
 
         // ── 状态栏实时更新 ──
-        panel.Children.Add(MakeSubHeader("状态栏实时更新"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.Heart, 22, NativeTheme.TextDefaultBrush),
+            "状态栏实时更新"));
         var syncNote = MakeHint("LLM 模式每轮会额外调用一次模型，产生额外 Token 用量。");
         syncNote.Visibility = GetString(cyrene, "runtimeSync", "off") == "llm"
             ? Visibility.Visible
@@ -56,7 +60,9 @@ public sealed partial class SettingsWindow
         panel.Children.Add(syncNote);
 
         // ── 表情包发送 ──
-        panel.Children.Add(MakeSubHeader("表情包发送"));
+        panel.Children.Add(MakeModuleHead(
+            MakeHeadingAvatar(System.IO.Path.Combine("icons", "sticker-picker.png"), tint: false, size: 22),
+            "表情包发送"));
         panel.Children.Add(MakeDescribedToggleRow("允许发送表情包",
             "控制昔涟是否在聊天框里发送表情包。",
             GetBool(cyrene, "stickerEnabled", true),
@@ -95,7 +101,9 @@ public sealed partial class SettingsWindow
             stickerActions));
 
         // ── RAG / 文档导入 ──
-        panel.Children.Add(MakeSubHeader("RAG / 文档导入"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.BookRag, 22, NativeTheme.TextDefaultBrush),
+            "RAG / 文档导入"));
         var embeddingInstalled = GetBool(cyrene, "embeddingInstalled");
         var rerankerInstalled = GetBool(cyrene, "rerankerInstalled");
         var rerankerMode = GetString(cyrene, "rerankerMode", "standard");
@@ -158,7 +166,9 @@ public sealed partial class SettingsWindow
                 ApplyRerankerSelection("none");
                 SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "none" });
             });
-        panel.Children.Add(MakeSubHeader("Rerank 重排序"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.Reflection, 18, NativeTheme.TextDefaultBrush),
+            "Rerank 重排序"));
         panel.Children.Add(rerankerStandardCard);
         panel.Children.Add(rerankerNoneCard);
 

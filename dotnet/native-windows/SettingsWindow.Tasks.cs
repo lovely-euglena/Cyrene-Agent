@@ -24,8 +24,10 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildTasksSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("定时任务"));
-        panel.Children.Add(MakeHint("定时任务的新建/编辑/启停/立即运行/历史；插件任务启用时需确认授权。"));
+        panel.Children.Add(MakePanelHeading(
+            NativeTheme.VectorGlyph(Glyphs.Clock, 24, NativeTheme.TextDefaultBrush),
+            "定时任务",
+            "管理自动触发的 agent 任务。到点后会根据提示词调用当前允许的工具。"));
         panel.Children.Add(MakeSectionStatus("tasks"));
 
         var tasksNode = GetNode("tasks");

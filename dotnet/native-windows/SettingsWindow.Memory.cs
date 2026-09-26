@@ -23,8 +23,10 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildMemorySection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("记忆"));
-        panel.Children.Add(MakeHint("L0 画像与 L1 近况可编辑；事件片段与导入知识在下方查看/管理。"));
+        panel.Children.Add(MakePanelHeading(
+            MakeHeadingAvatar(System.IO.Path.Combine("icons", "mimi.png"), tint: false),
+            "昔涟记忆",
+            "昔涟对你的认知和记忆，你可以查看、编辑和管理。"));
         panel.Children.Add(MakeSectionStatus("memory"));
 
         var memory = GetNode("memory");
@@ -57,7 +59,9 @@ public sealed partial class SettingsWindow
         var l0 = GetNode(memory, "l0");
         var l1 = GetNode(memory, "l1");
 
-        panel.Children.Add(MakeSubHeader("画像（L0）"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.MemoryProfile, 18, NativeTheme.TextDefaultBrush),
+            "长期画像", "L0", "昔涟一直记得、基本不会变化的信息", "手动修改的内容优先级高于自动推断"));
         var nameBox = MakeMemoryBox(GetString(l0, "preferredName"), multiline: false);
         var occupationBox = MakeMemoryBox(GetString(l0, "occupation"), multiline: false);
         var interestsBox = MakeMemoryBox(GetString(l0, "longTermInterests"), multiline: true);
@@ -94,7 +98,9 @@ public sealed partial class SettingsWindow
         }));
         panel.Children.Add(l0Actions);
 
-        panel.Children.Add(MakeSubHeader("近况（L1）"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.MemoryRecent, 18, NativeTheme.TextDefaultBrush),
+            "近况", "L1", "最近的目标、偏好和状态，会随时间变化", "手动修改的内容优先级高于自动推断"));
         var goalsBox = MakeMemoryBox(GetString(l1, "recentGoals"), multiline: true);
         var preferencesBox = MakeMemoryBox(GetString(l1, "recentPreferences"), multiline: true);
         var projectBox = MakeMemoryBox(GetString(l1, "currentProject"), multiline: true);
@@ -127,7 +133,9 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryL2Block(StackPanel panel, JsonElement memory)
     {
-        panel.Children.Add(MakeSubHeader("事件片段（L2）"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.MemoryEvents, 18, NativeTheme.TextDefaultBrush),
+            "事件片段", "L2", "从聊天中提炼的重要事件，可搜索和管理"));
         var searchRow = new StackPanel { Orientation = Orientation.Horizontal };
         var searchBox = new TextBox
         {
@@ -203,7 +211,9 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryImportedDocsBlock(StackPanel panel, JsonElement memory)
     {
-        panel.Children.Add(MakeSubHeader("导入知识"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.BookRag, 22, NativeTheme.TextDefaultBrush),
+            "导入知识", description: "用户上传的文档和知识库"));
         var docs = GetNode(memory, "importedDocs");
         if (docs.ValueKind != JsonValueKind.Array || docs.GetArrayLength() == 0)
         {
@@ -237,7 +247,9 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryReflectionsBlock(StackPanel panel, JsonElement memory)
     {
-        panel.Children.Add(MakeSubHeader("回顾"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.Reflection, 18, NativeTheme.TextDefaultBrush),
+            "回顾", description: "AI 自动生成的阶段性回顾"));
         var reflections = GetNode(memory, "reflections");
         if (reflections.ValueKind != JsonValueKind.Array || reflections.GetArrayLength() == 0)
         {
@@ -258,7 +270,10 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryVaultBlock(StackPanel panel, JsonElement memory)
     {
-        panel.Children.Add(MakeSubHeader("Obsidian Vault"));
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.CircleCheck, 18, NativeTheme.TextDefaultBrush),
+            "Obsidian Vault 绑定", description: "绑定一个文件夹，把记忆同步成 .md 文件，用 [[双链]] 互连",
+            hint: "用 Obsidian 打开绑定的文件夹，即可看到关系图谱"));
         var vault = GetNode(memory, "vault");
         var vaultPath = GetString(vault, "vaultPath");
         var lastSyncAt = GetDouble(vault, "lastSyncAt", 0);
