@@ -273,6 +273,7 @@ describe("buildCyreneSectionSnapshot", () => {
     const snapshot = buildCyreneSectionSnapshot(
       modelSettings({ embeddingDimensions: 1024, rerankerMode: "none" }),
       { embedding: { bgem3: true }, reranker: { standard: false } },
+      "D:/cyrene/models",
     );
     expect(snapshot).toMatchObject({
       embeddingModel: "bgem3",
@@ -280,12 +281,14 @@ describe("buildCyreneSectionSnapshot", () => {
       rerankerMode: "none",
       embeddingInstalled: true,
       rerankerInstalled: false,
+      modelsDir: "D:/cyrene/models",
     });
 
     const auto = buildCyreneSectionSnapshot(modelSettings({ embeddingDimensions: undefined }));
     expect(auto.embeddingDimensions).toBeNull();
     expect(auto.embeddingInstalled).toBe(false);
     expect(auto.rerankerInstalled).toBe(false);
+    expect(auto.modelsDir).toBe("");
   });
 });
 

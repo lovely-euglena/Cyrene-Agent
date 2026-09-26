@@ -311,6 +311,8 @@ public sealed partial class SettingsWindow
         {
             SelectionMode = CalendarSelectionMode.SingleDate,
             DisplayDate = TryParseDateOnly(initial) ?? DateTime.Today,
+            // 统一主题（大字号圆角日格；默认 WPF 日历又小又旧）
+            Style = NativeTheme.CalendarStyle,
         };
         if (TryParseDateOnly(initial) is { } selected) calendar.SelectedDate = selected;
         var popup = new Popup

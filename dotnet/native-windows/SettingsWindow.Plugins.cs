@@ -76,7 +76,8 @@ public sealed partial class SettingsWindow
         var weatherCard = MakeToolCard("⛅", "天气查询",
             "查指定城市的实时天气与预报。Open-Meteo 免配置，或用高德 Key。",
             Toggle(GetBool(plugins, "weatherEnabled"), v => SaveField("weatherEnabled", v)),
-            out var weatherBody);
+            out var weatherBody,
+            collapseKey: "weather");
         if (GetBool(plugins, "weatherEnabled"))
         {
             weatherBody.Children.Add(MakeDescribedRow("天气源", "Open-Meteo 免配置；高德天气国内更准。",
@@ -102,7 +103,8 @@ public sealed partial class SettingsWindow
         var travelCard = MakeToolCard("🚗", "高德出行",
             "查驾车/步行/骑行/公交的路线规划和预计时间。需要高德 Key。",
             Toggle(GetBool(plugins, "travelEnabled"), v => SaveField("travelEnabled", v)),
-            out var travelBody);
+            out var travelBody,
+            collapseKey: "travel");
         if (GetBool(plugins, "travelEnabled"))
         {
             var travelKey = MakePluginsPasswordBox(amapKey);
@@ -120,7 +122,8 @@ public sealed partial class SettingsWindow
                 if (v) SaveField("searchEngine", searchEngine == "off" ? "bocha" : searchEngine);
                 else SaveField("searchEngine", "off");
             }),
-            out var searchBody);
+            out var searchBody,
+            collapseKey: "search");
         if (searchEngine != "off")
         {
             searchBody.Children.Add(MakeDescribedRow("搜索源", "切换后展开对应 Key 输入。",
@@ -151,7 +154,8 @@ public sealed partial class SettingsWindow
         var emailCard = MakeToolCard("✉️", "邮件发送与收信",
             "通过 SMTP 发送邮件（可带附件），通过 IMAP 查看与阅读收件箱。收信与发信共用发件邮箱与授权码。",
             Toggle(GetBool(plugins, "emailEnabled"), v => SaveField("emailEnabled", v)),
-            out var emailBody);
+            out var emailBody,
+            collapseKey: "email");
         if (GetBool(plugins, "emailEnabled"))
         {
             var hostBox = MakePluginsTextBox(GetString(plugins, "emailSmtpHost"), 220);
@@ -221,7 +225,8 @@ public sealed partial class SettingsWindow
         var fileCard = MakeToolCard("📁", "本地文件",
             "控制昔涟对本地文件的访问范围与命令执行方式。",
             null,
-            out var fileBody);
+            out var fileBody,
+            collapseKey: "file");
         fileBody.Children.Add(new TextBlock
         {
             Text = PermissionNote(permissionLevel),
@@ -299,13 +304,15 @@ public sealed partial class SettingsWindow
 
     // ── 控件工厂 ──
 
-    /// <summary>内置工具卡（图标 + 标题/说明 + 可选开关 + 配置区）。</summary>
-    private static Border MakeToolCard(
+    /// <summary>内置工具卡（图标 + 标题/说明 + 可选开关 + 配置区）。
+    /// collapseKey 非空时配置区带折叠按钮，状态在窗口生命周期内记忆（快照重建不丢）。</summary>
+    private Border MakeToolCard(
         string glyph,
         string title,
         string description,
         CheckBox? toggle,
-        out StackPanel body)
+        out StackPanel body,
+        string? collapseKey = null)
     {
         var head = new Grid();
         head.ColumnDefinitions.Add(new ColumnDefinition());
@@ -338,16 +345,49 @@ public sealed partial class SettingsWindow
         });
         Grid.SetColumn(copy, 0);
         head.Children.Add(copy);
-        if (toggle is not null)
-        {
-            Grid.SetColumn(toggle, 1);
-            head.Children.Add(toggle);
-        }
 
         body = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        var bodyPanel = body;
+        var collapsed = collapseKey is not null && _collapsedToolCards.Contains(collapseKey);
+        if (collapsed) bodyPanel.Visibility = Visibility.Collapsed;
+
+        var right = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (collapseKey is not null)
+        {
+            var chevron = new Button
+            {
+                Content = collapsed ? "▸" : "▾",
+                Width = 28,
+                Height = 28,
+                FontSize = 13,
+                Style = NativeTheme.FlatIconButtonStyle,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = "展开 / 收起设置",
+                Margin = new Thickness(0, 0, toggle is not null ? 8 : 0, 0),
+            };
+            chevron.Click += (_, _) =>
+            {
+                var nowCollapsed = !_collapsedToolCards.Remove(collapseKey);
+                if (nowCollapsed) _collapsedToolCards.Add(collapseKey);
+                chevron.Content = nowCollapsed ? "▸" : "▾";
+                bodyPanel.Visibility = nowCollapsed ? Visibility.Collapsed : Visibility.Visible;
+            };
+            right.Children.Add(chevron);
+        }
+        if (toggle is not null)
+        {
+            right.Children.Add(toggle);
+        }
+        Grid.SetColumn(right, 1);
+        head.Children.Add(right);
+
         var content = new StackPanel();
         content.Children.Add(head);
-        content.Children.Add(body);
+        content.Children.Add(bodyPanel);
         return new Border
         {
             Child = content,

@@ -139,6 +139,8 @@ export const NATIVE_SECTION_ACTIONS = {
     "open-sticker-manager",
     "add-sticker",
     "open-model-docs",
+    "open-model-dir",
+    "open-model-site",
     "delete-embedding",
     "check-model-update",
   ],

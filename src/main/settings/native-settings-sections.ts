@@ -444,6 +444,8 @@ export interface NativeCyreneSnapshot {
   rerankerMode: "standard" | "none";
   embeddingInstalled: boolean;
   rerankerInstalled: boolean;
+  /** 首选模型目录（手动安装落点；展示在安装说明弹窗） */
+  modelsDir: string;
 }
 
 /** 模型安装状态（结构投影；实际探测在 main/rag/model-status，避免本模块依赖 electron）。 */
@@ -469,6 +471,7 @@ export function buildCyreneSectionSnapshot(
     | "rerankerMode"
   >,
   status?: NativeModelInstallStatus,
+  modelsDir = "",
 ): NativeCyreneSnapshot {
   const runtimeSync = settings.runtimeSync === "llm"
     ? "llm"
@@ -494,6 +497,7 @@ export function buildCyreneSectionSnapshot(
     rerankerMode: settings.rerankerMode === "none" ? "none" : "standard",
     embeddingInstalled: status?.embedding?.bgem3 === true,
     rerankerInstalled: status?.reranker?.standard === true,
+    modelsDir,
   };
 }
 
