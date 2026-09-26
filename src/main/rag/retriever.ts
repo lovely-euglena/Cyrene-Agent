@@ -7,7 +7,7 @@ import { Jieba } from "@node-rs/jieba";
 
 const jieba = new Jieba();
 
-interface TokenInfo {
+export interface TokenInfo {
   word: string;
   tag: string;       // 词性标注：n/ns/nr/v/a/d/p/c/u 等
   isStop: boolean;   // 是否为停用词/高频词
@@ -105,7 +105,11 @@ function mergeCustomWords(tokens: string[]): string[] {
   return result;
 }
 
-function tokenize(text: string): TokenInfo[] {
+/**
+ * 分词（jieba + 自定义词重组 + 纯 ASCII 快捷路径）。
+ * 导出供 scripts/diagnostics 对账工具使用（.NET BM25 移植需逐词对齐）。
+ */
+export function tokenize(text: string): TokenInfo[] {
   // 纯英文/数字文本走原来的空格分词逻辑（jieba 不适合纯英文）
   if (/^[a-zA-Z0-9\s]+$/.test(text)) {
     return text.split(/\s+/).filter(Boolean).map((word) => ({
