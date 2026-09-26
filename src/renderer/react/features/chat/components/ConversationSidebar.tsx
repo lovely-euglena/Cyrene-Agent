@@ -248,6 +248,44 @@ function SidebarUncategorizedDropTarget({ categoryId, children }: { categoryId: 
   return <div ref={setNodeRef} className={`cy-sidebar-uncategorized-drop ${isOver ? "is-drop-target" : ""}`}>{children}</div>;
 }
 
+// 会话最近聊天时间的分级阈值：1 分钟内算"刚刚"，超过 7 天算"很久之前"
+const RELATIVE_TIME_LONG_AGO_DAYS = 7;
+
+// 侧栏会话行的相对时间标签：右侧小字显示"刚刚 / N分钟前 / N小时前 / N天前 / 很久之前"，
+// 悬停 tooltip 展示精确时间；超过一周时附一句趣味提示。
+function SessionTimeTag({ updatedAt }: { updatedAt: number }) {
+  const { t } = useTranslation();
+  const minutes = Math.floor(Math.max(0, Date.now() - updatedAt) / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const isLongAgo = days >= RELATIVE_TIME_LONG_AGO_DAYS;
+  const label = minutes < 1
+    ? t("sidebar.timeJustNow")
+    : minutes < 60
+      ? t("sidebar.timeMinutesAgo", { n: minutes })
+      : hours < 24
+        ? t("sidebar.timeHoursAgo", { n: hours })
+        : !isLongAgo
+          ? t("sidebar.timeDaysAgo", { n: days })
+          : t("sidebar.timeLongAgo");
+  return (
+    <Tooltip
+      rootClassName="cy-session-time-tip"
+      arrow={false}
+      mouseEnterDelay={0.25}
+      mouseLeaveDelay={0.12}
+      title={(
+        <div className="cy-session-time-tooltip">
+          <div>{t("sidebar.timeLastChat", { time: formatModifiedTime(updatedAt) })}</div>
+          {isLongAgo && <div className="cy-session-time-tooltip__hint">{t("sidebar.timeLongAgoHint")}</div>}
+        </div>
+      )}
+    >
+      <span className="cy-session-time">{label}</span>
+    </Tooltip>
+  );
+}
+
 function SidebarSessionRow({
   session,
   active,
@@ -293,6 +331,7 @@ function SidebarSessionRow({
         />
       ) : <span className="cy-sidebar-session__title">{title}</span>}
       {session.pinned && <PushpinOutlined className="cy-session-label__pin" />}
+      {editingValue === undefined && <SessionTimeTag updatedAt={session.updatedAt} />}
     </button>
   );
 }
@@ -825,6 +864,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
             <span className="cy-session-label">
               <span className="cy-session-label__title">{session.title || t("sidebar.defaultSessionTitle")}</span>
               {session.pinned && <PushpinOutlined className="cy-session-label__pin" />}
+              <SessionTimeTag updatedAt={session.updatedAt} />
             </span>
           ),
         icon: <ConversationIcon />,

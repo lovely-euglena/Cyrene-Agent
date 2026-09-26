@@ -265,6 +265,7 @@
 
 .cy-session-label__title {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -274,6 +275,34 @@
   flex: none;
   color: var(--rb-accent, #ff5b8a);
   font-size: 10px;
+  opacity: 0.85;
+}
+
+/* 会话行右侧的最近聊天时间：固定宽度不参与收缩，标题自动让位出省略号 */
+.cy-session-time {
+  flex: none;
+  color: var(--rb-text-secondary, #8e8e93);
+  font-size: 10.5px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* 时间悬停气泡：与输入框下方下拉菜单（cy-composer-menu-popover）同款浮层配色——
+   浅色白底灰描边黑字，深色灰底白字偏白灰描边；去掉默认投影，改用卡片阴影 */
+.cy-session-time-tip.ant-tooltip {
+  --ant-tooltip-overlay-color: var(--rb-text-primary);
+  filter: none;
+}
+
+.cy-session-time-tip .ant-tooltip-container {
+  background: var(--rb-surface-elevated);
+  border: 1px solid var(--rb-border-elevated);
+  border-radius: 10px;
+  box-shadow: var(--rb-shadow-elevated);
+}
+
+.cy-session-time-tooltip__hint {
+  margin-top: 2px;
   opacity: 0.85;
 }
 
