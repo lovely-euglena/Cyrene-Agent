@@ -24,6 +24,7 @@ import type { ModelSettings } from "./model-settings";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
 import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
+import { broadcastChatsChanged } from "../chats/chats-ipc";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -83,6 +84,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   function broadcastModelConfigChanged(settings = getModelSettings()): void {
     broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig(settings));
+    // 聊天窗口不在 aux 窗口里：模型窗口容量变更后它不会自己重读会话，
+    // 环形图分母会停在旧快照上。这里顺带广播一次会话变更，触发聊天窗口重载。
+    broadcastChatsChanged();
   }
 
   function broadcastRuntimeStateChanged(): void {

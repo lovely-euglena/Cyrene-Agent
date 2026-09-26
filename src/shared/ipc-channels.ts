@@ -219,6 +219,9 @@ export const IPC = {
   CHATS_INIT_LEARN_WORKSPACE: "chats:init-learn-workspace",
   // main → 所有窗口：工作区绑定变更广播
   CHATS_WORKSPACE_CHANGED: "chats:workspace-changed",
+  // main → 所有窗口：上下文压缩阶段（running/finished），驱动消息流尾部的呼吸提示。
+  // 自动压缩发生在 run 开始前的主进程侧，渲染端拿不到 AG-UI 事件，只能靠这条推送。
+  CHATS_COMPACTION_PHASE: "chats:compaction-phase",
 
   // Review 快照（不可变文件变更审查）
   // renderer → main：获取指定 Run 的 ReviewSnapshot（不存在时按 halted 补生成）

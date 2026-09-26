@@ -129,6 +129,19 @@ function broadcastChanged(senderWebContents?: WebContents | null): void {
   }
 }
 
+/** 广播上下文压缩阶段：run 开始前的自动压缩只在主进程发生，
+ *  渲染端靠这条推送在消息流尾部显示「正在触发压缩」的呼吸提示。 */
+export function broadcastCompactionPhase(sessionId: string, phase: "running" | "finished"): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.webContents.send(IPC.CHATS_COMPACTION_PHASE, { sessionId, phase });
+    } catch {
+      // 窗口可能正在关闭，忽略
+    }
+  }
+}
+
 function visibleUserText(content: string): string {
   return content.replace(/\[sticker:[^\]]+\]/gi, "").trim();
 }

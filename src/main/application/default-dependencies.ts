@@ -89,7 +89,7 @@ import {
 } from "../protocols/bootstrap";
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
-import { registerChatsIpc } from "../chats/chats-ipc";
+import { broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
 import { registerWorkspaceFilesIpc } from "../chats/workspace-files-ipc";
 import { registerOpenInAppIpc } from "../chats/open-in-app";
 import { registerMomentsIpc } from "../moments/moments-ipc";
@@ -217,6 +217,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       store: getConversationTranscriptStore(app.getPath("userData")),
       runReader: getHarnessRunStore(app.getPath("userData")),
       loadModelSettings: () => resolveModelSettingsProfile(loadModelSettings()),
+      // 压缩阶段推给窗口：自动压缩发生在 run 开始前的主进程侧，
+      // 渲染端拿不到 AG-UI 事件，靠这条推送显示消息流尾部的呼吸提示。
+      onPhase: (phase, conversationId) => broadcastCompactionPhase(conversationId, phase),
     }));
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({
