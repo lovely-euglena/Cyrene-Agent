@@ -720,7 +720,8 @@ public sealed class TasksWindow : NativeWindow
                 {
                     Width = 24,
                     Height = 0,
-                    CornerRadius = new CornerRadius(12),
+                    // 圆角按柱高夹住：低柱（6px）不再被固定 12 圆角画成椭圆
+                    CornerRadius = new CornerRadius(Math.Min(12, target / 2)),
                     Background = new LinearGradientBrush(
                         Color.FromRgb(0xEC, 0x48, 0x99), Color.FromRgb(0xFF, 0x8C, 0xCC),
                         new Point(0.5, 0), new Point(0.5, 1)),

@@ -116,11 +116,14 @@ public sealed partial class SettingsWindow
                     column.Children.Add(dot);
                 }
 
+                // 目标高度（76 基准，最低 6）；圆角按柱高夹住（等价 CSS border-radius 的
+                // 等比收缩）：低柱不再被固定 12 圆角画成椭圆
+                var target = Math.Max(6, 76.0 * total / max);
                 var bar = new Border
                 {
                     MaxWidth = 24,
                     Height = 0,
-                    CornerRadius = new CornerRadius(12),
+                    CornerRadius = new CornerRadius(Math.Min(12, target / 2)),
                     Background = TokenBarBrush(),
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     VerticalAlignment = VerticalAlignment.Bottom,
@@ -136,9 +139,9 @@ public sealed partial class SettingsWindow
                         RenderingBias = RenderingBias.Performance,
                     },
                 };
-                // 入场动画：0 → 目标高度（76 基准，最低 6；按列错峰 25ms）
+                // 入场动画：0 → 目标高度（按列错峰 25ms）
                 bar.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(
-                    Math.Max(6, 76.0 * total / max), TimeSpan.FromMilliseconds(320))
+                    target, TimeSpan.FromMilliseconds(320))
                 {
                     BeginTime = TimeSpan.FromMilliseconds(Math.Min(visibleIndex, 10) * 25),
                     EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
