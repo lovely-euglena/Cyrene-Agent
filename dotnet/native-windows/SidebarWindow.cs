@@ -19,15 +19,15 @@ namespace CyreneNative;
 public sealed class SidebarWindow : NativeWindow
 {
     private readonly Window _window;
-    private readonly TextBlock _statusLabel = new() { FontSize = 16, FontWeight = FontWeights.Medium };
-    private readonly TextBlock _feelingLabel = new() { FontSize = 16, FontWeight = FontWeights.Medium };
+    private readonly TextBlock _statusLabel = new() { FontSize = 16, FontWeight = FontWeights.Medium, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+    private readonly TextBlock _feelingLabel = new() { FontSize = 16, FontWeight = FontWeights.Medium, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
     private readonly System.Windows.Controls.Image _statusIcon = new() { Width = 46, Height = 46, Stretch = Stretch.UniformToFill };
     private readonly System.Windows.Controls.Image _feelingIcon = new() { Width = 46, Height = 46, Stretch = Stretch.UniformToFill };
     /// <summary>状态同步关闭时的占位齿轮（对齐 Electron applyRuntimeDisabled）。</summary>
     private readonly FrameworkElement _statusGear = NativeTheme.VectorGlyph(Glyphs.Gear, 22, NativeTheme.TextMutedBrush);
     private readonly FrameworkElement _feelingGear = NativeTheme.VectorGlyph(Glyphs.Gear, 22, NativeTheme.TextMutedBrush);
     /// <summary>资料区在线胶囊（对齐 .profile__online / pearl-white 覆盖）。</summary>
-    private readonly TextBlock _onlineLabel = new() { FontSize = 14 };
+    private readonly TextBlock _onlineLabel = new() { FontSize = 14, LineHeight = 21, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
     private readonly Border _onlinePill = new();
     private readonly Border _onlineDot = new();
     private readonly Border _root;
@@ -80,8 +80,8 @@ public sealed class SidebarWindow : NativeWindow
             pinBtn.Foreground = new SolidColorBrush(_pinned ? NativeTheme.Pink : NativeTheme.TextDefault);
             pinBtn.ToolTip = _pinned ? "取消置顶" : "置顶";
         }
-        pinBtn = NativeTheme.MakeCircleButton(NativeTheme.VectorGlyph(Glyphs.Pin, 15), 28, "置顶", TogglePin);
-        pinBtn.Margin = new Thickness(10, 0, 2, 0);
+        pinBtn = NativeTheme.MakeCircleButton(NativeTheme.VectorGlyph(Glyphs.Pin, 16), 28, "置顶", TogglePin);
+        pinBtn.Margin = new Thickness(14, 0, 0, 0); // 对齐 titlebar padding-left 14
         Grid.SetColumn(pinBtn, 0);
         titlebar.Children.Add(pinBtn);
 
@@ -98,6 +98,8 @@ public sealed class SidebarWindow : NativeWindow
             Text = "昔涟",
             FontSize = 16,
             FontWeight = FontWeights.Medium,
+            LineHeight = 24,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             Foreground = NativeTheme.TextStrongBrush,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
@@ -107,18 +109,26 @@ public sealed class SidebarWindow : NativeWindow
             Background = NativeTheme.SurfaceAppBrush,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(11),
+            CornerRadius = new CornerRadius(13), // 对齐 .sidebar__hint radius-full（h26 → 13）
             Padding = new Thickness(9, 3, 9, 3),
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock { Text = "状态面板", FontSize = 12, Foreground = NativeTheme.TextMutedBrush },
+            Child = new TextBlock
+            {
+                Text = "状态面板",
+                FontSize = 12,
+                LineHeight = 18,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                Foreground = NativeTheme.TextMutedBrush,
+            },
         });
         Grid.SetColumn(titleRow, 1);
         titlebar.Children.Add(titleRow);
 
         var minBtn = NativeTheme.MakeMinimizeButton(() => _window, 28);
+        minBtn.Margin = new Thickness(0, 0, 3, 0); // 与关闭按钮间距 6（对齐 actions gap）
         var closeBtn = NativeTheme.MakeCloseButton(() => _window, 28);
-        closeBtn.Margin = new Thickness(2, 0, 10, 0);
+        closeBtn.Margin = new Thickness(3, 0, 12, 0); // 右距 12（对齐 titlebar padding-right）
         Grid.SetColumn(minBtn, 2);
         Grid.SetColumn(closeBtn, 3);
         titlebar.Children.Add(minBtn);
@@ -146,7 +156,7 @@ public sealed class SidebarWindow : NativeWindow
         var body = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Padding = new Thickness(14, 10, 14, 14),
+            Padding = new Thickness(14, 14, 14, 16), // 对齐 .sidebar__body padding: 14px 14px 16px
         };
         var bodyPanel = new StackPanel();
         bodyPanel.Children.Add(BuildProfile());
@@ -240,6 +250,9 @@ public sealed class SidebarWindow : NativeWindow
     /// <summary>资料区（对齐 .profile）：70px 圆头像 + 名字 + 在线胶囊。</summary>
     private FrameworkElement BuildProfile()
     {
+        // 头像用 Border 背景画（CornerRadius 会裁背景；WPF 的 Border 圆角不裁子元素，
+        // 放 Image 子元素会露出方角，Electron 侧是 border-radius:full 圆形）
+        var avatarSource = NativeTheme.TryLoadAssetImage("icons/cyrene-avatar.png");
         var avatar = new Border
         {
             Width = 70,
@@ -247,7 +260,14 @@ public sealed class SidebarWindow : NativeWindow
             CornerRadius = new CornerRadius(35),
             BorderBrush = NativeTheme.Brush(Color.FromArgb(0x75, 0xFF, 0xB6, 0xDC)),
             BorderThickness = new Thickness(2),
-            ClipToBounds = true,
+            Background = avatarSource is null
+                ? NativeTheme.PinkSoftBrush
+                : new ImageBrush(avatarSource)
+                {
+                    Stretch = Stretch.UniformToFill,
+                    AlignmentX = AlignmentX.Center,
+                    AlignmentY = AlignmentY.Center,
+                },
             HorizontalAlignment = HorizontalAlignment.Center,
             Effect = new DropShadowEffect
             {
@@ -256,12 +276,6 @@ public sealed class SidebarWindow : NativeWindow
                 ShadowDepth = 0,
                 Opacity = 0.18,
                 RenderingBias = RenderingBias.Performance,
-            },
-            Child = new Image
-            {
-                // Electron 侧栏资料头像（/avatars/cyrene-avatar.png）
-                Source = NativeTheme.TryLoadAssetImage("icons/cyrene-avatar.png"),
-                Stretch = Stretch.UniformToFill,
             },
         };
 
@@ -274,24 +288,26 @@ public sealed class SidebarWindow : NativeWindow
         var pillRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         pillRow.Children.Add(_onlineDot);
         pillRow.Children.Add(_onlineLabel);
-        _onlinePill.CornerRadius = new CornerRadius(11);
+        _onlinePill.CornerRadius = new CornerRadius(14); // 对齐 .profile__online radius-full
         _onlinePill.BorderThickness = new Thickness(1);
         _onlinePill.Padding = new Thickness(10, 3, 10, 3);
         _onlinePill.HorizontalAlignment = HorizontalAlignment.Center;
-        _onlinePill.Margin = new Thickness(0, 8, 0, 0);
+        _onlinePill.Margin = new Thickness(0, 6, 0, 0);
         _onlinePill.Child = pillRow;
         ApplyOnlineState(false); // 未收到 model config 前按离线显示
 
-        var stack = new StackPanel { Margin = new Thickness(0, 4, 0, 6) };
+        var stack = new StackPanel { Margin = new Thickness(0, 4, 0, 16) }; // 4 上边距 + 6 下内边 + 10 body gap
         stack.Children.Add(avatar);
         stack.Children.Add(new TextBlock
         {
             Text = "昔涟",
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
+            LineHeight = 28,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             Foreground = NativeTheme.TextStrongBrush,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0, 6, 0, 0),
         });
         stack.Children.Add(_onlinePill);
         return stack;
@@ -323,12 +339,14 @@ public sealed class SidebarWindow : NativeWindow
         {
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 0, 0),
+            Margin = new Thickness(12, 0, 0, 0), // 对齐 .indicator grid 52px 列 + 8 gap（48 瓦片右侧留 12）
         };
         text.Children.Add(new TextBlock
         {
             Text = prefix,
             FontSize = 14,
+            LineHeight = 21,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             Foreground = NativeTheme.TextMutedBrush,
             VerticalAlignment = VerticalAlignment.Center,
         });
@@ -363,12 +381,13 @@ public sealed class SidebarWindow : NativeWindow
         var callBtn = MakeModelButton("语音通话", Glyphs.Phone, null, () => RequestRouter.SendCommand(Kind, "openCall"));
         // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
         var switchBtn = MakeModelButton("切换模型", Glyphs.Sync, null, () => RequestRouter.SendCommand(Kind, "openSettings", "api"));
+        // 对齐 .model-card gap 8 + .model-switch-btn margin-top 2 → 相邻间距 10
         foreach (var btn in new[] { chatBtn, callBtn, switchBtn })
         {
-            btn.Margin = new Thickness(0, 0, 0, 8);
+            btn.Margin = new Thickness(0, 2, 0, 8);
             stack.Children.Add(btn);
         }
-        switchBtn.Margin = new Thickness(0);
+        switchBtn.Margin = new Thickness(0, 2, 0, 0);
 
         return new Border
         {
@@ -393,13 +412,15 @@ public sealed class SidebarWindow : NativeWindow
             Text = "设置",
             FontSize = 14,
             FontWeight = FontWeights.Medium,
+            LineHeight = 21,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
         });
         var btn = new Button
         {
             Style = NativeTheme.PrimaryButtonStyle,
-            Height = 38,
+            Height = 41, // 对齐 .settings-btn padding 9px 12px + 21 行高 + 边框
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Content = row,
         };
@@ -427,12 +448,14 @@ public sealed class SidebarWindow : NativeWindow
             Text = text,
             FontSize = 14,
             FontWeight = FontWeights.Medium,
+            LineHeight = 21,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
         });
 
         var style = new Style(typeof(Button));
-        style.Setters.Add(new Setter(FrameworkElement.HeightProperty, 36.0));
+        style.Setters.Add(new Setter(FrameworkElement.HeightProperty, 41.0)); // 9px 上下内边 + 21 行高 + 2 边框
         style.Setters.Add(new Setter(Control.ForegroundProperty, NativeTheme.TextDefaultBrush));
         style.Setters.Add(new Setter(Control.CursorProperty, Cursors.Hand));
         var template = new ControlTemplate(typeof(Button));
@@ -440,8 +463,9 @@ public sealed class SidebarWindow : NativeWindow
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
         border.SetValue(Border.BorderBrushProperty, NativeTheme.BorderSoftBrush);
         border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        // rgba(236,72,153,0.20) / rgba(168,85,247,0.18) 叠白后的等效渐变
         border.SetValue(Border.BackgroundProperty, new LinearGradientBrush(
-            Color.FromRgb(0xFB, 0xE3, 0xEF), Color.FromRgb(0xF1, 0xE6, 0xF8),
+            Color.FromRgb(0xFB, 0xD9, 0xEA), Color.FromRgb(0xEF, 0xE0, 0xFE),
             new Point(0, 0), new Point(1, 1)));
         border.SetValue(UIElement.RenderTransformProperty, new TranslateTransform());
         var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
@@ -450,8 +474,8 @@ public sealed class SidebarWindow : NativeWindow
         border.AppendChild(presenter);
         template.VisualTree = border;
         var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.Brush(Color.FromRgb(0xFB, 0xDA, 0xEB))) { TargetName = "bd" });
-        hover.Setters.Add(new Setter(Border.BorderBrushProperty, NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB))) { TargetName = "bd" });
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.Brush(Color.FromRgb(0xFB, 0xD9, 0xEA))) { TargetName = "bd" });
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, NativeTheme.Brush(Color.FromRgb(0xFF, 0xE5, 0xF2))) { TargetName = "bd" });
         hover.Setters.Add(new Setter(Control.ForegroundProperty, NativeTheme.TextStrongBrush));
         hover.Setters.Add(new Setter(UIElement.RenderTransformProperty,
             new TranslateTransform(0, -1)) { TargetName = "bd" });
@@ -466,11 +490,11 @@ public sealed class SidebarWindow : NativeWindow
         return btn;
     }
 
-    /// <summary>分隔线（对齐 .sidebar__divider：透明→浅粉→透明）。</summary>
+    /// <summary>分隔线（对齐 .sidebar__divider：透明→浅粉→透明；上下 4px + body gap 10）。</summary>
     private static FrameworkElement MakeDivider() => new System.Windows.Shapes.Rectangle
     {
         Height = 1,
-        Margin = new Thickness(2, 4, 2, 4),
+        Margin = new Thickness(2, 4, 2, 14),
         Fill = new LinearGradientBrush(
             [
                 new GradientStop(Colors.Transparent, 0),
