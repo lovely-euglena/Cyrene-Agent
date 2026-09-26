@@ -554,6 +554,7 @@
   },
   "style": {
     "panelTitle": "Reply style",
+    "optionNative": "Default · native",
     "optionDefault": "Gentle & warm",
     "optionLively": "Energetic & playful",
     "optionHealing": "Soothing & comforting",

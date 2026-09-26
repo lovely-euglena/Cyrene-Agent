@@ -554,6 +554,7 @@
   },
   "style": {
     "panelTitle": "回复风格",
+    "optionNative": "默认 · 原生",
     "optionDefault": "温柔 · 和善",
     "optionLively": "元气 · 活泼",
     "optionHealing": "治愈 · 安心",

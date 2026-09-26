@@ -64,7 +64,7 @@ export function StyleControl() {
       placement="topRight"
       open={open}
       onOpenChange={setOpen}
-      overlayClassName="cy-style-popover"
+      rootClassName="cy-composer-menu-popover"
       content={
         <div className="cy-style-panel">
           <strong>{t("style.panelTitle")}</strong>

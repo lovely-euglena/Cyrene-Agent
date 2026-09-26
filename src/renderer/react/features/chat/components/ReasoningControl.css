@@ -31,16 +31,10 @@
   font: 400 12px/1.35 var(--rb-font-sans, sans-serif);
 }
 
-.cy-reasoning-popover .ant-popover-inner {
-  border: 1px solid color-mix(in srgb, var(--rb-accent, #FF5B8A) 42%, #e6e0e5);
-  border-radius: 14px;
-  box-shadow: 0 2px 8px rgba(111, 62, 84, 0.08), 0 14px 32px rgba(111, 62, 84, 0.17);
-}
-
 .cy-reasoning-popover .ant-segmented {
   padding: 3px;
   border-radius: 10px;
-  background: #f7f7f7;
+  background: color-mix(in srgb, var(--rb-text-primary) 5%, var(--rb-surface-elevated));
 }
 
 .cy-reasoning-popover .ant-segmented-item {

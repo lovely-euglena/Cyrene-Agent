@@ -23,3 +23,25 @@
   color: inherit;
   font: inherit;
 }
+
+/* Ant Design X supplies a light Prism pre background inline; keep the wrapper and
+   code surface on the app theme tokens while leaving Prism's syntax colors intact. */
+.cy-message-code-block pre[class*="language-"] {
+  background: var(--rb-code-bg) !important;
+  color: var(--rb-text-primary) !important;
+}
+
+.cy-message-code-block code[class*="language-"] {
+  background: transparent !important;
+  color: var(--rb-text-primary) !important;
+}
+
+/* CodeHighlighter forwards its custom class to a wrapper. Override the inline
+   Prism surface on the actual pre/code elements inside that wrapper. */
+.cy-message-code-block pre,
+.cy-message-code-block pre[class*="language-"] {
+  background-color: var(--rb-code-bg) !important;
+  color: var(--rb-text-primary) !important;
+}
+
+.cy-message-code-block pre code { background: transparent !important; }

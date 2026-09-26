@@ -21,6 +21,7 @@ import {
   resolveRunFinishedStage,
   resolveTerminalContent,
   shouldClearComposerInteractionForTerminal,
+  type AgentRunStage,
   type ComposerInteraction,
 } from "../../components/run-presentation";
 import { applyAgentRoundBoundary, createRoundProcessMessage } from "../../components/agent-rounds";
@@ -157,6 +158,8 @@ export class AgentRunController {
   private streamContent = "";
   /** RUN_FINISHED.result.status：success / cancelled / timeout / runtime_error。 */
   private terminalStatus: string | undefined;
+  /** 终态阶段文案：结算后候选正文还会逐帧补完，用它挡住把阶段退回「组织回复」的后续帧。 */
+  private terminalStage: AgentRunStage | undefined;
   private reasoningContent = "";
   private reasoningBlocks: ReasoningBlock[] = [];
   private processMessages: ProcessMessageRecord[] = [];
@@ -370,6 +373,8 @@ export class AgentRunController {
         processMessages: this.processMessages,
         agentRounds: this.agentRounds,
         reasoningStreaming: false,
+        // 结算收尾统一回写终态阶段，避免停在流式过程的「组织回复」上
+        runStage: this.terminalStage,
         runActivity: this.runActivity,
         responseStarted: formalAnswerCommitted,
         sticker: this.sticker,
@@ -611,7 +616,9 @@ export class AgentRunController {
       waitingForFirstEvent: false,
       streaming: true,
       responseStarted: true,
-      runStage: { kind: "responding" },
+      // 终态已定：后面几帧只是把正文补完，不能再把阶段退回「组织回复」，
+      // 否则回复都出完了，面板头还挂着"昔涟正在组织回复…"。
+      ...(this.terminalStage ? {} : { runStage: { kind: "responding" } as AgentRunStage }),
     });
   }
 
@@ -1150,6 +1157,7 @@ export class AgentRunController {
         this.abortCandidateReveal();
       }
       const stage = resolveRunFinishedStage(result);
+      this.terminalStage = stage;
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: stage });
       const activeRunId = this.deps.registries.activeRuns.current[this.input.sessionId]?.runId;
       if (shouldClearComposerInteractionForTerminal(activeRunId, event.runId)) {
@@ -1160,7 +1168,8 @@ export class AgentRunController {
       this.revealCancelled = true;
       this.abortCandidateReveal();
       this.completeRunActivity(true);
-      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: { kind: "failed" } });
+      this.terminalStage = { kind: "failed" };
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: this.terminalStage });
       const activeRunId = this.deps.registries.activeRuns.current[this.input.sessionId]?.runId;
       if (shouldClearComposerInteractionForTerminal(activeRunId, event.runId)) {
         this.deps.host.clearInteraction(this.input.sessionId);

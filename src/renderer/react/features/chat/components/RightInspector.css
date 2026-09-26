@@ -7,7 +7,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: #FFFBFC;
+  background-color: var(--rb-bg-1, #FFFBFC);
   background-image: url("../../../../../../assets/ui/cyrene-surface-pattern.svg");
   background-position: center;
   background-repeat: no-repeat;
@@ -15,7 +15,8 @@
   border: 1px solid var(--rb-border-default, #f2f2f2);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: -4px 0 16px rgb(44 31 38 / 5%);
+  color: var(--rb-text-primary, #1d1d1f);
+  box-shadow: var(--rb-shadow-card, -4px 0 16px rgb(44 31 38 / 5%));
   animation: cy-right-inspector-slide-in 0.22s ease;
   app-region: no-drag;
 }
@@ -39,7 +40,7 @@
   margin: 0;
   min-height: 38px;
   border-bottom: 1px solid var(--rb-border-default, #f0ebee);
-  background: rgb(255 247 250 / 92%);
+  background: color-mix(in srgb, var(--rb-bg-2, #fafafc) 92%, transparent);
   padding: 0 2px;
 }
 
@@ -71,11 +72,11 @@
 
 .cy-right-inspector__tabs .ant-tabs-tab:hover {
   color: var(--rb-text-primary, #2f2d31);
-  background: rgb(0 0 0 / 2%);
+  background: var(--rb-surface-hover, #fff1f6);
 }
 
 .cy-right-inspector__tabs .ant-tabs-tab.ant-tabs-tab-active {
-  background: rgb(255 251 252 / 96%);
+  background: var(--rb-bg-1, #fffbfc);
   color: var(--rb-text-primary, #2f2d31);
   box-shadow: inset 0 -2px 0 var(--rb-accent, #ff5b8a);
 }

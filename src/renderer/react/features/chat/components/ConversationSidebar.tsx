@@ -1122,7 +1122,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                       placement="rightTop"
                       mouseEnterDelay={0.25}
                       mouseLeaveDelay={0.12}
-                      overlayClassName="cy-project-popover"
+                      rootClassName="cy-composer-menu-popover cy-project-popover"
                       content={(
                         <ProjectInfoCard
                           mode={mode}

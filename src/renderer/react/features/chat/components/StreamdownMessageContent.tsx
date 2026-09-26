@@ -56,7 +56,26 @@ function StreamdownPre({ children }: { children?: ReactNode }) {
   if (info.lang === "mermaid") return <MermaidBlock code={info.code} streaming={streaming} />;
   if (info.lang === "svg") return <SvgCardBlock code={info.code} streaming={streaming} />;
   return (
-    <CodeHighlighter lang={info.lang || "text"} prismLightMode={false}>
+    <CodeHighlighter
+      className="cy-message-code-block"
+      lang={info.lang || "text"}
+      prismLightMode={false}
+      styles={{
+        root: {
+          color: "var(--rb-text-primary)",
+          background: "var(--rb-code-bg)",
+        },
+        header: {
+          color: "var(--rb-text-primary)",
+          background: "var(--rb-bg-2)",
+        },
+        code: {
+          color: "var(--rb-text-primary)",
+          background: "transparent",
+          borderColor: "var(--rb-border-default)",
+        },
+      }}
+    >
       {info.code}
     </CodeHighlighter>
   );

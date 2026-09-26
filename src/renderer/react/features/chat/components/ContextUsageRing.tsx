@@ -238,7 +238,7 @@ export function ContextUsageRing({ usage, sessionId, busy }: ContextUsageRingPro
       placement="topRight"
       open={open}
       onOpenChange={setOpen}
-      rootClassName="cy-context-usage-popover"
+      rootClassName="cy-composer-menu-popover"
     >
       <button
         type="button"

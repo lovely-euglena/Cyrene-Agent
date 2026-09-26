@@ -90,6 +90,12 @@
   animation: cyrene-avatar-float 3s ease-in-out infinite;
 }
 
+.cy-message-avatar__image--sprite {
+  border: 0;
+  border-radius: 0;
+  object-fit: contain;
+}
+
 @keyframes cyrene-avatar-float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-3px); }
@@ -617,9 +623,10 @@
 }
 
 .cy-tool-executions__detail {
-  flex: 0 1 64ch;
+  flex: 0 1 56ch;
   min-width: 0;
-  max-width: 64ch;
+  width: min(56ch, 48vw);
+  max-width: min(56ch, 48vw);
   overflow: hidden;
   padding: 2px 6px;
   border: 1px solid rgb(31 35 48 / 8%);
@@ -1177,9 +1184,9 @@
   margin: 16px 0;
   gap: 0;
   padding: 0;
-  border: 1px solid #eadde3;
+  border: 1px solid var(--rb-border-default);
   border-radius: 10px;
-  background: #fffdfd;
+  background: var(--rb-bg-2);
   overflow: hidden;
 }
 
@@ -1188,7 +1195,9 @@
   border-radius: 0;
   background: transparent;
   overflow-x: auto;
-  overflow-y: hidden;
+  /* streamdown 给这层 div 挂了内联 max-height（tableMaxHeight 默认 300px），
+     纵向必须保持可滚，否则超出的行会被硬裁掉且没有滚动条 */
+  overflow-y: auto;
 }
 
 .cy-message-markdown [data-streamdown="table"] {
@@ -1208,19 +1217,19 @@
 }
 
 .cy-message-markdown [data-streamdown="table"] th {
-  background: #fff5f8;
-  color: #5f4b54;
+  background: var(--rb-surface-hover);
+  color: var(--rb-text-primary);
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.45;
 }
 
 .cy-message-markdown [data-streamdown="table"] :is(th, td):not(:last-child) {
-  border-right: 1px solid #eee3e7;
+  border-right: 1px solid var(--rb-border-default);
 }
 
 .cy-message-markdown [data-streamdown="table"] tbody tr + tr > td {
-  border-top: 1px solid #f0e7ea;
+  border-top: 1px solid var(--rb-border-default);
 }
 
 .cy-message-markdown hr[data-streamdown="horizontal-rule"] {

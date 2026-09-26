@@ -32,6 +32,47 @@ function PanelShell({ children, title }: { children: ReactNode; title: string })
   );
 }
 
+function QuestionnaireChoice({
+  name,
+  value,
+  index,
+  multiple = false,
+  selected,
+  disabled = false,
+  onChange,
+  children,
+}: {
+  name: string;
+  value: string;
+  index: number;
+  multiple?: boolean;
+  selected: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className={`cy-questionnaire-choice${selected ? " is-selected" : ""}${multiple ? " is-multiple" : ""}`}>
+      <input
+        className="cy-questionnaire-choice__input"
+        type={multiple ? "checkbox" : "radio"}
+        name={name}
+        value={value}
+        checked={selected}
+        disabled={disabled}
+        onClick={() => {
+          // 重新选择已选中的单选项也应继续前进；此时浏览器不会触发 change。
+          if (!multiple && selected) onChange();
+        }}
+        onChange={onChange}
+      />
+      <span className="cy-questionnaire-choice__index" aria-hidden="true">{index + 1}</span>
+      <span className="cy-questionnaire-choice__body">{children}</span>
+      <span className="cy-questionnaire-choice__indicator" aria-hidden="true" />
+    </label>
+  );
+}
+
 export function AskUserPanel({
   interaction,
   disabled = false,
@@ -103,23 +144,26 @@ export function AskUserPanel({
       {current.options.length > 0 && (
         <div className="cy-interaction-panel__options" role={current.multiple ? "group" : "radiogroup"} aria-label={current.question}>
           {current.options.map((option, index) => (
-            <button
-              type="button"
+            <QuestionnaireChoice
               key={option.id}
-              className={currentDraft.optionIds.includes(option.id) ? "is-selected" : ""}
-              role={current.multiple ? "checkbox" : "radio"}
-              aria-checked={currentDraft.optionIds.includes(option.id)}
+              name={`ask-${interaction.id}-${current.id}`}
+              value={option.id}
+              index={index}
+              multiple={current.multiple}
+              selected={currentDraft.optionIds.includes(option.id)}
               disabled={disabled}
-              onClick={() => {
+              onChange={() => {
                 setDrafts((values) => selectAskOption(values, current, option.id));
+                if (!current.multiple && questions.length > 1) {
+                  setPage((value) => Math.min(questions.length - 1, value + 1));
+                }
               }}
             >
-              <span className="cy-interaction-panel__option-index">{index + 1}.</span>
-              <div className="cy-interaction-panel__option-body">
+              <span className="cy-interaction-panel__option-body">
                 <MarkdownContent content={option.label} />
                 {option.description && <small>{option.description}</small>}
-              </div>
-            </button>
+              </span>
+            </QuestionnaireChoice>
           ))}
         </div>
       )}
@@ -195,7 +239,6 @@ export function PlanApprovalPanel({
 
   return (
     <PanelShell title={t("interaction.planApprovalTitle")}>
-      <img src={moodWarmUrl} className="cy-interaction-panel__mood-bottom-left" alt="" />
       <div className="cy-interaction-panel__heading">
         <span className="cy-interaction-panel__status"><img src={moodCompanyUrl} alt="" />{t("interaction.planApprovalTitle")}</span>
       </div>
@@ -497,14 +540,15 @@ export function PopQuizPanel({
               ? drafts[current.id]?.optionId === option.id
               : (drafts[current.id]?.optionIds ?? []).includes(option.id);
             return (
-              <button
-                type="button"
+              <QuestionnaireChoice
                 key={option.id}
-                className={selected ? "is-selected" : ""}
-                role={current.type === "multi" ? "checkbox" : "radio"}
-                aria-checked={selected}
+                name={`quiz-${interaction.id}-${current.id}`}
+                value={option.id}
+                index={index}
+                multiple={current.type === "multi"}
+                selected={selected}
                 disabled={disabled || phase === "submitting"}
-                onClick={() => {
+                onChange={() => {
                   setDrafts((values) => {
                     const prev = values[current.id] ?? {};
                     if (current.type === "choice") {
@@ -516,32 +560,38 @@ export function PopQuizPanel({
                       : [...prevIds, option.id];
                     return { ...values, [current.id]: { ...prev, optionIds } };
                   });
+                  if (current.type === "choice" && questions.length > 1) {
+                    setPage((value) => Math.min(questions.length - 1, value + 1));
+                  }
                 }}
               >
-                <span className="cy-interaction-panel__option-index">{index + 1}.</span>
-                <div className="cy-interaction-panel__option-body">
+                <span className="cy-interaction-panel__option-body">
                   <MarkdownContent content={option.label} />
-                </div>
-              </button>
+                </span>
+              </QuestionnaireChoice>
             );
           })}
         </div>
       )}
       {current.type === "true_false" && (
         <div className="cy-interaction-panel__options" role="radiogroup" aria-label={current.question}>
-          {trueFalseOptions.map((option) => (
-            <button
-              type="button"
+          {trueFalseOptions.map((option, index) => (
+            <QuestionnaireChoice
               key={String(option.value)}
-              className={drafts[current.id]?.boolean === option.value ? "is-selected" : ""}
-              role="radio"
-              aria-checked={drafts[current.id]?.boolean === option.value}
+              name={`quiz-${interaction.id}-${current.id}`}
+              value={String(option.value)}
+              index={index}
+              selected={drafts[current.id]?.boolean === option.value}
               disabled={disabled || phase === "submitting"}
-              onClick={() => setDrafts((values) => ({ ...values, [current.id]: { ...values[current.id], boolean: option.value } }))}
+              onChange={() => {
+                setDrafts((values) => ({ ...values, [current.id]: { ...values[current.id], boolean: option.value } }));
+                if (questions.length > 1) {
+                  setPage((value) => Math.min(questions.length - 1, value + 1));
+                }
+              }}
             >
-              <span className="cy-interaction-panel__option-index">◦</span>
               <span><strong>{option.label}</strong></span>
-            </button>
+            </QuestionnaireChoice>
           ))}
         </div>
       )}
