@@ -67,6 +67,7 @@ import type { UncertainEffect } from "./harness/types";
 import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
 import { estimateMessageTokens } from "./context-manager";
 import { createTranscriptCompactionRequiredError } from "./conversation-transcript-compactor";
+import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 
 /** index.ts 模块级符号的最小可注入子集。
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
@@ -465,6 +466,11 @@ function resolveRunStyleId(input: AguiRunInput, saved: StyleSettingsLite): Style
   return normalizeStyleId(undefined);
 }
 
+/** 采样完全走模型默认的风格：native 连风格提示词都不注入，default 仅跳过采样。 */
+function usesModelDefaultSampling(styleId: StyleId): boolean {
+  return styleId === "native" || styleId === "default";
+}
+
 /**
  * 读取工作区静态元数据（项目名 + 是否 git 仓库）。
  * 刻意只提供这两项稳定事实，不注入 branch 等动态状态——branch 会随
@@ -748,12 +754,12 @@ export async function buildAgentRunOptions(
   const styleId = resolveRunStyleId(input, styleSettings);
   const isTaskMode = resolvedMode === "work" || resolvedMode === "code";
   // work/code 完全不受 style 影响：不注入风格 prompt，采样走厂商默认。
-  // chat/learn + default 也走厂商默认采样（不自己设 0.65）；
-  // 只有显式选了非 default 的具体 style 才用预设采样。
+  // chat/learn 下 native/default 也走厂商默认采样（不自己设 0.65）；
+  // 只有显式选了带预设采样的具体 style 才用预设采样。
   const stylePromptBlock = isTaskMode
     ? ""
     : buildStylePromptBlock(deps.readStylePrompt(styleId));
-  const soulSampling = (!isTaskMode && styleId !== "default")
+  const soulSampling = (!isTaskMode && !usesModelDefaultSampling(styleId))
     ? deps.resolveSoulSampling({
       styleId,
       settings,
@@ -977,7 +983,7 @@ export async function buildAgentRunOptions(
         contextWindowTokens: settings.contextWindowTokens ?? 256000,
       },
       maxParallelToolCalls: typeof generalSettings.maxParallelToolCalls === "number"
-        ? Math.max(1, Math.min(8, Math.trunc(generalSettings.maxParallelToolCalls)))
+        ? Math.max(1, Math.min(MAX_PARALLEL_TOOL_CALLS, Math.trunc(generalSettings.maxParallelToolCalls)))
         : 4,
       messages: fcMessages,
       cleanMessages: cleanFcMessages,

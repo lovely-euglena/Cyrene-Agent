@@ -1,4 +1,4 @@
-import type { TaskSessionStatus, TaskSubagentType, TaskTranscriptMessage } from "../../shared/task-session";
+import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSessionStatus, type TaskSubagentType, type TaskTranscriptMessage } from "../../shared/task-session";
 import { TaskSessionStore } from "../tasks/task-session-store";
 import { projectTaskTraceEvent } from "./task-events";
 import { getTaskAgentProfile, resolveTaskTools } from "./task-profiles";
@@ -18,6 +18,8 @@ export interface TaskExecuteRequest {
   prompt: string;
   subagentType: TaskSubagentType;
   companionId: string;
+  accessMode?: TaskAccessMode;
+  maxParallelToolCalls?: number;
   taskId?: string;
 }
 
@@ -55,12 +57,21 @@ function taskStatus(result: HarnessResult): { status: Exclude<TaskSessionStatus,
   return { status: "completed" };
 }
 
-export function buildChildPromptLayers(parent: TaskRuntimeParentContext, profilePrompt: string): PromptLayers {
+export function buildChildPromptLayers(
+  parent: TaskRuntimeParentContext,
+  profilePrompt: string,
+  accessMode: TaskAccessMode = "write",
+): PromptLayers {
   const workspace = parent.resolvedWorkspaceRoot
     ? `可信工作目录：${parent.resolvedWorkspaceRoot}`
     : "当前没有绑定工作目录。";
   return {
-    stablePrefix: profilePrompt,
+    stablePrefix: [
+      profilePrompt,
+      accessMode === "read_only"
+        ? "本任务处于只读模式：只检查和读取信息，不修改文件、仓库或外部状态。你可用的工具也已按只读能力限制。"
+        : "本任务允许按指令执行写入；若同一轮存在并行委派，只读子任务可并行，写入子任务会排队串行执行。",
+    ].join("\n"),
     sessionPrefix: `${workspace}\n会话模式：${parent.mode}`,
     mode: parent.mode,
   };
@@ -113,17 +124,22 @@ export function createTaskExecutor(input: {
       nickname: lease.nickname,
       assetFileName: lease.assetFileName,
     };
+    let taskTrace = session.trace;
     input.onLifecycle?.({ ...presentation, status: "running" });
 
     try {
-      const promptLayers = buildChildPromptLayers(input.parent, profile.systemPrompt);
+      const promptLayers = buildChildPromptLayers(input.parent, profile.systemPrompt, request.accessMode ?? "write");
+      let activeRoundId: string | undefined;
       const result = await runHarness({
         systemPrompt: promptLayers.stablePrefix,
         promptLayers,
         messages: session.messages as ChatMessage[],
-        tools: resolveTaskTools(profile, input.parent.tools),
+        tools: resolveTaskTools(profile, input.parent.tools, request.accessMode ?? "write"),
         vendorConfig: input.parent.vendorConfig,
-        config: { totalTimeoutMs: profile.timeoutMs },
+        config: {
+          totalTimeoutMs: profile.timeoutMs,
+          maxParallelToolCalls: request.maxParallelToolCalls ?? DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS,
+        },
         initialState: {
           todoItems: session.todoItems,
           uncertainEffects: [],
@@ -134,11 +150,16 @@ export function createTaskExecutor(input: {
         checkPermission: input.parent.checkPermission,
         includeInteractiveTools: input.parent.includeInteractiveTools,
         onEvent: (event) => {
+          if (event.type === "round_start") activeRoundId = event.roundId;
           const trace = projectTaskTraceEvent(event);
           if (trace) {
-            const current = input.store.get(session.id);
-            if (current) input.store.checkpoint(session.id, { trace: [...current.trace, trace] });
+            if (event.type !== "round_start" && event.type !== "round_end" && activeRoundId) {
+              trace.roundId = activeRoundId;
+            }
+            taskTrace = [...taskTrace, trace].slice(-2_000);
+            input.store.checkpoint(session.id, { trace: taskTrace });
           }
+          if (event.type === "round_end") activeRoundId = undefined;
         },
         onCheckpoint: (checkpoint) => {
           input.store.checkpoint(session.id, {

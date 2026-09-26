@@ -22,7 +22,8 @@ import type { HarnessToolFinishedEvent, SideEffectKind, ToolCallOutcome, ToolObs
 import type { ToolRiskLevel } from "../../permission-policy";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
 import { dispatchToolCall, persistToolDispatchResult, type ToolDispatchResult } from "./tool-dispatcher";
-import { classifyToolExecutionMode, scheduleToolCalls, type ToolCallScheduleResult, type ToolScheduleCommitDecision } from "./tool-call-scheduler";
+import { classifyToolExecutionMode, scheduleToolCalls, type ToolCallScheduleResult, type ToolExecutionMode, type ToolScheduleCommitDecision } from "./tool-call-scheduler";
+import { TASK_TOOL_ID } from "./builtin-tools";
 import { resolveSideEffect } from "./side-effect-resolver";
 import { extractFileChangesFromOutput } from "../tools/registry/tool-evidence";
 import { classifyToolResultError } from "./error-classifier";
@@ -74,6 +75,28 @@ export async function runToolRound(run: HarnessRun, toolCalls: ToolCall[]): Prom
   const askCalls = toolCalls.filter((c) => exclusiveToolNames.has(c.name));
   const otherCalls = toolCalls.filter((c) => !exclusiveToolNames.has(c.name));
 
+  // 同一批只读委派若选中同一角色，只并行第一个；后续调用作为独占任务排队，避免角色租约冲突。
+  const executionModes = new Map<string, ToolExecutionMode>();
+  const parallelTaskCompanions = new Set<string>();
+  const parallelTaskIds = new Set<string>();
+  for (const call of otherCalls) {
+    let mode = classifyToolExecutionMode(call, input.tools);
+    if (mode === "parallel" && call.name === TASK_TOOL_ID) {
+      const args = parseToolCallArgs(call);
+      const companionId = args.companion_id;
+      const taskId = args.task_id;
+      if (typeof companionId !== "string" || !companionId.trim() || parallelTaskCompanions.has(companionId.trim())) {
+        mode = "exclusive";
+      } else if (typeof taskId === "string" && taskId.trim() && parallelTaskIds.has(taskId.trim())) {
+        mode = "exclusive";
+      } else {
+        parallelTaskCompanions.add(companionId.trim());
+        if (typeof taskId === "string" && taskId.trim()) parallelTaskIds.add(taskId.trim());
+      }
+    }
+    executionModes.set(call.id, mode);
+  }
+
   // ── ask_user 排他分支 ──
   if (askCalls.length > 0) {
     input.onEvent?.({ type: "candidate_text_discard", roundId: `round-${run.rounds}` });
@@ -102,7 +125,7 @@ export async function runToolRound(run: HarnessRun, toolCalls: ToolCall[]): Prom
       calls: otherCalls,
       maxParallel: run.config.maxParallelToolCalls,
       signal: input.signal,
-      classify: (call) => classifyToolExecutionMode(call, input.tools),
+      classify: (call) => executionModes.get(call.id) ?? "exclusive",
       execute: ({ call }) => executeToolCallWithRetry(run, call),
       commit: ({ call }, result) => commitToolResult(run, call, result),
       notExecuted: async ({ call }, reason): Promise<ToolDispatchResult> =>

@@ -1,5 +1,5 @@
 /**
- * search_code 工具测试
+ * search_text 工具测试
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -16,14 +16,14 @@ vi.mock("./registry/tool-registry", () => ({
   },
 }));
 
-import { registerSearchCodeTool } from "./search-code-tools";
+import { registerSearchTextTool } from "./search-text-tools";
 import { toolRegistry } from "./registry/tool-registry";
 
 let tmpDir: string;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "search-code-test-"));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "search-text-test-"));
   vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
 });
 
@@ -32,13 +32,13 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("search_code tool", () => {
+describe("search_text tool", () => {
 
-  it("registers search_code tool with correct metadata", () => {
-    registerSearchCodeTool();
+  it("registers search_text tool with correct metadata", () => {
+    registerSearchTextTool();
     const registerCall = vi.mocked(toolRegistry.register).mock.calls[0];
     const toolDef = registerCall[0];
-    expect(toolDef.id).toBe("search_code");
+    expect(toolDef.id).toBe("search_text");
     expect(toolDef.effectKind).toBe("read");
     expect(toolDef.verificationPolicy).toBe("none");
     expect(toolDef.needsContext).toBe(true);
@@ -52,7 +52,7 @@ describe("search_code tool", () => {
     // 直接调用 execute
     const toolDef = vi.mocked(toolRegistry.register).mock.calls[0]?.[0];
     if (!toolDef) {
-      registerSearchCodeTool();
+      registerSearchTextTool();
     }
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
@@ -65,7 +65,7 @@ describe("search_code tool", () => {
   });
 
   it("returns error for empty query", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const result = JSON.parse(await tool.execute({ query: "" }, { userQuery: "test" } as any));
@@ -74,7 +74,7 @@ describe("search_code tool", () => {
   });
 
   it("returns no matches for an invalid regular expression", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
     fs.writeFileSync(path.join(tmpDir, "regex.ts"), "const value = 1;");
 
@@ -84,7 +84,7 @@ describe("search_code tool", () => {
   });
 
   it("respects maxMatches limit", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const result = JSON.parse(await tool.execute({ query: "test", maxMatches: 5 }, { userQuery: "test" } as any));
@@ -92,7 +92,7 @@ describe("search_code tool", () => {
   });
 
   it("respects contextLines limit", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const result = JSON.parse(await tool.execute({ query: "test", contextLines: 1 }, { userQuery: "test" } as any));
@@ -104,7 +104,7 @@ describe("search_code tool", () => {
   });
 
   it("handles fileGlobs filter", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const result = JSON.parse(await tool.execute(
@@ -115,7 +115,7 @@ describe("search_code tool", () => {
   });
 
   it("skips .worktrees mirror directories and reports them in skippedDirs", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     // 当前工作区真实代码 + worktree 里的旧副本（同名符号残留）
@@ -145,7 +145,7 @@ describe("search_code tool", () => {
   });
 
   it("handles caseSensitive option", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const result = JSON.parse(await tool.execute(
@@ -156,7 +156,7 @@ describe("search_code tool", () => {
   });
 
   it("handles AbortSignal", async () => {
-    registerSearchCodeTool();
+    registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const controller = new AbortController();
@@ -170,7 +170,7 @@ describe("search_code tool", () => {
   });
 });
 
-describe("search_code path safety", () => {
+describe("search_text path safety", () => {
   it("rejects path traversal attempts", () => {
     // 测试路径逃逸检测（使用 tmpDir 确保跨平台）
     const workspaceRoot = tmpDir;
@@ -195,7 +195,7 @@ describe("search_code path safety", () => {
   });
 });
 
-describe("search_code glob matching", () => {
+describe("search_text glob matching", () => {
   it("matches simple glob patterns", () => {
     // 测试 glob 匹配逻辑
     function matchesGlob(filePath: string, pattern: string): boolean {

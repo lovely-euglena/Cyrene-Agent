@@ -1,6 +1,6 @@
 // 文本搜索工具 — 在工作区文件内容中搜索字面文本或正则匹配
 //
-// search_text 替代旧 search_code（已 deprecated），修复：
+// search_text 在工作区文件内容中做安全的文本搜索：
 // - workspaceRoot 改用 ctx.resolvedWorkspaceRoot，不再依赖 process.cwd()
 // - glob 自动扩展：*.ts → **/*.ts，覆盖子目录
 // - 名字和描述明确声明为"文本搜索"，避免误导模型
@@ -196,6 +196,7 @@ function walkDir(
   contextLines: number,
   maxMatches: number,
   fileGlobs: string[] | undefined,
+  fileExtension: string | undefined,
   signal?: AbortSignal,
   skippedDirs?: Set<string>,
 ): SearchMatch[] {
@@ -217,7 +218,7 @@ function walkDir(
       if (allMatches.length >= maxMatches) return;
 
       const fullPath = path.join(currentDir, entry.name);
-      const relativePath = path.relative(workspaceRoot, fullPath);
+      const relativePath = path.relative(workspaceRoot, fullPath).split(path.sep).join("/");
 
       if (entry.isDirectory()) {
         if (shouldIgnoreDir(entry.name)) {
@@ -227,6 +228,7 @@ function walkDir(
         }
       } else if (entry.isFile()) {
         if (shouldIgnoreFile(entry.name)) continue;
+        if (fileExtension && path.extname(entry.name).toLowerCase() !== `.${fileExtension}`) continue;
 
         // 文件 glob 过滤
         if (fileGlobs && fileGlobs.length > 0) {
@@ -254,7 +256,7 @@ function safeStat(p: string): fs.Stats | null {
 
 // ── 工具执行器 ────────────────────────────────────────────
 
-async function executeSearchCode(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+async function executeSearchText(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const query = String(args.query || "").trim();
   if (!query) return JSON.stringify({ success: false, errorCode: "INVALID_QUERY", error: "query 不能为空", retryable: false, matches: [], totalMatches: 0, returnedMatches: 0, truncated: false });
 
@@ -266,6 +268,9 @@ async function executeSearchCode(args: Record<string, unknown>, ctx?: ToolContex
   // 路径参数：默认工作区根目录
   const paths = Array.isArray(args.paths) ? args.paths.map(String) : ["."];
   const fileGlobs = Array.isArray(args.fileGlobs) ? args.fileGlobs.map(String) : undefined;
+  const fileExtension = typeof args.fileExtension === "string"
+    ? args.fileExtension.trim().replace(/^\./, "").toLowerCase()
+    : undefined;
 
   // 工作区根目录：优先从 ToolContext 获取，再回退到 process.cwd()
   const workspaceRoot = ctx?.resolvedWorkspaceRoot ?? path.resolve(process.cwd());
@@ -305,12 +310,13 @@ async function executeSearchCode(args: Record<string, unknown>, ctx?: ToolContex
         if (stat.isDirectory()) {
           const dirMatches = walkDir(
             resolvedPath, workspaceRoot, query, mode, caseSensitive,
-            contextLines, maxMatches - allMatches.length, fileGlobs, signal, skippedDirs,
+            contextLines, maxMatches - allMatches.length, fileGlobs, fileExtension, signal, skippedDirs,
           );
           allMatches.push(...dirMatches);
         } else if (stat.isFile()) {
-          const relativePath = path.relative(workspaceRoot, resolvedPath);
+          const relativePath = path.relative(workspaceRoot, resolvedPath).split(path.sep).join("/");
           if (!shouldIgnoreFile(path.basename(resolvedPath))) {
+            if (fileExtension && path.extname(resolvedPath).toLowerCase() !== `.${fileExtension}`) continue;
             if (fileGlobs && fileGlobs.length > 0) {
               const matchesAny = fileGlobs.some(g => matchesGlob(relativePath, g));
               if (!matchesAny) continue;
@@ -327,11 +333,11 @@ async function executeSearchCode(args: Record<string, unknown>, ctx?: ToolContex
       // 根据搜索结果生成明确的 message
       let message: string | undefined;
       if (rejectedPaths.length > 0 && allMatches.length === 0) {
-        message = `路径 ${rejectedPaths.join(", ")} 在工作区外被拒绝，搜索未执行。search_text 只能搜索工作区内文件。要确认工作区外文件是否存在，请用 list_dir 或 run_shell。`;
+        message = `路径 ${rejectedPaths.join(", ")} 在工作区外被拒绝，搜索未执行。Grep 只能搜索工作区内文件。要确认工作区外文件是否存在，请用 Glob 或 run_shell。`;
       } else if (rejectedPaths.length > 0) {
         message = `路径 ${rejectedPaths.join(", ")} 在工作区外被拒绝，已跳过。`;
       } else if (allMatches.length === 0) {
-        message = "未找到匹配内容。这不代表目标文件不存在——search_text 搜索的是文件内容，不是文件名。要查找文件请用 list_dir。";
+        message = "未找到匹配内容。这不代表目标文件不存在——Grep 搜索的是文件内容，不是文件名。要查找文件请用 Glob。";
       }
       if (skippedDirs.size > 0) {
         const note = `已排除镜像/依赖目录：${[...skippedDirs].slice(0, 5).join(", ")}。这些目录里的内容不是当前工作区代码，不参与匹配。`;
@@ -364,39 +370,6 @@ async function executeSearchCode(args: Record<string, unknown>, ctx?: ToolContex
 }
 
 // ── 注册 ──────────────────────────────────────────────────
-
-export function registerSearchCodeTool(): void {
-  toolRegistry.register({
-    id: "search_code",
-    name: "搜索代码",
-    deprecated: true,
-    description:
-      "【已废弃】请改用 search_text。旧 search_code 存在精度问题：纯文本匹配会命中注释和字符串，且 workspaceRoot 依赖 process.cwd()。",
-    enabled: true,
-    risk: "safe",
-    modes: ["code", "work"],
-    effectKind: "read" as const,
-    isConcurrencySafe: () => true,
-    verificationPolicy: "none" as const,
-    needsContext: true,
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "搜索文本" },
-        paths: { type: "array", description: "搜索路径（相对于工作区根目录，默认 '.'）", items: { type: "string" } },
-        fileGlobs: { type: "array", description: "文件过滤 glob（如 '*.ts', 'src/**/*.js'）", items: { type: "string" } },
-        mode: { type: "string", enum: ["literal", "regex"], description: "搜索模式：literal（默认）或 regex" },
-        maxMatches: { type: "number", description: "最多返回匹配数（默认 20，上限 100）" },
-        contextLines: { type: "number", description: "上下文行数（默认 2，上限 5）" },
-        caseSensitive: { type: "boolean", description: "是否区分大小写（默认 false）" },
-      },
-      required: ["query"],
-    },
-    execute: executeSearchCode,
-  });
-
-  console.log(LOG_PREFIX, "已注册：search_code (deprecated)");
-}
 
 export function registerSearchTextTool(): void {
   toolRegistry.register({
@@ -438,7 +411,7 @@ export function registerSearchTextTool(): void {
       },
       required: ["query"],
     },
-    execute: executeSearchCode,
+    execute: executeSearchText,
   });
 
   console.log(LOG_PREFIX, "已注册：search_text");

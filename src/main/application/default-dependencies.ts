@@ -469,7 +469,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
       // 工具注册：集中到一个显式入口（依赖沙箱/Git/LSP 就绪）
-      registerAllTools: (services) => registerAllTools({ codeGitService: services.git, lspManager: services.lsp }),
+      registerAllTools: (services) => registerAllTools({ lspManager: services.lsp }),
 
       initRag: async () => {
         const modelSettings = loadModelSettings();

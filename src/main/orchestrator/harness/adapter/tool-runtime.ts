@@ -6,7 +6,7 @@ import { checkPermission, type ToolRiskLevel } from "../../../permission";
 import { isPlanReadOnly } from "../../plan-mode";
 import { contextRefRegistry, extractLastUserQuery, type ToolContext } from "../../tools/registry/tool-context";
 import type { HarnessInput } from "../index";
-import { TaskSessionStore } from "../../../tasks/task-session-store";
+import { getTaskSessionStore } from "../../../tasks/task-session-store";
 import { createTaskExecutor } from "../../task-runtime";
 import { FileToolOutputStore } from "../tool-output/file-tool-output-store";
 import { sendTaskLifecycleAsAgui } from "./event-mapper";
@@ -98,7 +98,7 @@ export function prepareToolRuntime(input: {
         permissionMode: options.permissionMode,
         toolOutputStore,
       },
-      store: new TaskSessionStore(app.getPath("userData")),
+      store: getTaskSessionStore(app.getPath("userData")),
       onLifecycle: (event) => sendTaskLifecycleAsAgui(event, threadId, runId, input.sendBaseEvent),
     })
     : undefined;

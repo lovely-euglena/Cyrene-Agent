@@ -1,4 +1,4 @@
-import type { TaskSubagentType } from "../../shared/task-session";
+import type { TaskAccessMode, TaskSubagentType } from "../../shared/task-session";
 import type { ToolDefinition } from "./tools/registry/tool-registry";
 
 /** 子任务永远不能再委托、直接等待用户或替父任务确认危险副作用。 */
@@ -46,9 +46,9 @@ const profiles: Record<TaskSubagentType, TaskAgentProfile> = {
       "write_word",
       "write_excel",
       "write_pdf",
-      "write_file",
-      "read_file",
-      "list_dir",
+      "Write",
+      "Read",
+      "Glob",
     ],
     timeoutMs: 0,
   },
@@ -72,8 +72,16 @@ export function getTaskAgentProfile(type: TaskSubagentType): TaskAgentProfile {
 }
 
 /** 只能缩小父工具集，绝不通过 profile 给子任务凭空增加工具。 */
-export function resolveTaskTools(profile: TaskAgentProfile, parentTools: ToolDefinition[]): ToolDefinition[] {
+export function resolveTaskTools(
+  profile: TaskAgentProfile,
+  parentTools: ToolDefinition[],
+  accessMode: TaskAccessMode = "write",
+): ToolDefinition[] {
   const allowed = profile.allowedToolIds === "inherit" ? null : new Set(profile.allowedToolIds);
-  return parentTools.filter((tool) => !CHILD_BLOCKED_TOOL_IDS.has(tool.id)
-    && (allowed === null || allowed.has(tool.id)));
+  return parentTools.filter((tool) => {
+    if (CHILD_BLOCKED_TOOL_IDS.has(tool.id) || (allowed !== null && !allowed.has(tool.id))) return false;
+    if (accessMode !== "read_only") return true;
+    // 动态副作用分类在模型提供真实参数前无法证明只读，保守地不暴露给只读子任务。
+    return tool.effectKind === "read" && tool.effectResolver === undefined;
+  });
 }
