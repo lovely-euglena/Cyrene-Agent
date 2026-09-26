@@ -498,8 +498,9 @@ public sealed class PluginManagerWindow : NativeWindow
         _installedList.Children.Clear();
         if (!_runtimeEnabled)
         {
-            // 运行时未启用（默认关省内存）：给一键启用提示条
-            _installedList.Children.Add(MakeRuntimeBanner("插件运行时未启用——已跳过插件系统以节省内存。"));
+            // 运行时未启用（默认关省内存）：已安装页是「插件存在但没在跑」——
+            // 用提示条说明现状 + 一键启用；与市场页的专属空态区分（见 MakeMarketRuntimeEmptyState）
+            _installedList.Children.Add(MakeRuntimeBanner("插件运行时未启用——已安装插件当前都不会运行（省内存模式）。"));
         }
         var matched = _installed.Where(p => MatchesSearch(p.Id, p.Name, p.Description)).ToList();
         if (matched.Count == 0 && _runtimeEnabled)
@@ -634,8 +635,8 @@ public sealed class PluginManagerWindow : NativeWindow
         _marketList.Children.Clear();
         if (!_runtimeEnabled)
         {
-            // 市场依赖插件系统：未启用时给出说明与一键启用（否则空列表毫无提示）
-            _marketList.Children.Add(MakeRuntimeBanner("插件运行时未启用——市场浏览与安装依赖插件系统，启用后自动加载。"));
+            // 市场不是「插件没跑」而是「市场数据本身取不到」：专属空态（与已安装页提示条明显不同）
+            _marketList.Children.Add(MakeMarketRuntimeEmptyState());
             return;
         }
         var installedIds = _installed.Select(p => p.Id).ToHashSet();
@@ -659,7 +660,7 @@ public sealed class PluginManagerWindow : NativeWindow
         }
     }
 
-    /// <summary>运行时未启用提示条（已安装/市场两个 tab 共用；一键启用）。</summary>
+    /// <summary>运行时未启用提示条（仅已安装页：插件存在但没在跑；一键启用）。</summary>
     private Border MakeRuntimeBanner(string message)
     {
         var sp = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
@@ -673,7 +674,7 @@ public sealed class PluginManagerWindow : NativeWindow
         });
         var enableBtn = new Button
         {
-            Content = "启用插件运行时",
+            Content = "启用并恢复插件",
             Width = 150,
             Height = 28,
             FontSize = 14,
@@ -690,6 +691,66 @@ public sealed class PluginManagerWindow : NativeWindow
             Padding = new Thickness(12, 8, 12, 8),
             Margin = new Thickness(0, 0, 0, 8),
             Child = sp,
+        };
+    }
+
+    /// <summary>
+    /// 市场页运行时未启用专属空态（与已安装页的提示条不同）：市场索引/安装都依赖
+    /// 插件系统，这里居中说明原因 + 一键启用并加载市场。
+    /// </summary>
+    private Border MakeMarketRuntimeEmptyState()
+    {
+        var content = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(16, 30, 16, 30),
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = "🛒",
+            FontSize = 30,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "插件市场需要插件运行时",
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 10, 0, 0),
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "市场索引的拉取与插件安装都依赖插件系统。启用运行时后，市场会自动加载并显示可安装的插件。",
+            FontSize = 13,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 420,
+            Margin = new Thickness(0, 6, 0, 0),
+        });
+        var enableBtn = new Button
+        {
+            Content = "启用插件运行时并加载市场",
+            MinWidth = 220,
+            Height = 32,
+            FontSize = 14,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Style = NativeTheme.PrimaryButtonStyle,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+        enableBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "enable-runtime");
+        content.Children.Add(enableBtn);
+        return new Border
+        {
+            Child = content,
+            Background = Brushes.White,
+            CornerRadius = new CornerRadius(14),
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(0, 10, 0, 8),
+            Effect = NativeTheme.CardShadow(),
         };
     }
 

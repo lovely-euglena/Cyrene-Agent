@@ -386,7 +386,6 @@ internal sealed class FullAccessConfirmDialog : Window
         NativeTheme.Apply(this);
 
         var root = new StackPanel { Margin = new Thickness(20, 14, 20, 16) };
-        root.Children.Add(NativeTheme.BuildTitleBar(this, "切换到完全访问？"));
         root.Children.Add(new TextBlock
         {
             Text = "⚠️ 这意味着昔涟可以在你的电脑上自由执行命令，包括 git clone、npm install、删除文件等。请只在你完全信任她的判断时启用。",
@@ -414,7 +413,7 @@ internal sealed class FullAccessConfirmDialog : Window
         _confirm.IsEnabled = false;
         actions.Children.Add(_confirm);
         root.Children.Add(actions);
-        Content = root;
+        NativeTheme.ApplyDialogShell(this, "切换到完全访问？", root);
 
         _timer.Tick += (_, _) =>
         {
@@ -476,20 +475,19 @@ internal sealed class McpAddDialog : Window
         NativeTheme.Apply(this);
 
         var root = new StackPanel { Margin = new Thickness(20, 14, 20, 16) };
-        root.Children.Add(NativeTheme.BuildTitleBar(this, "添加 MCP Server"));
         root.Children.Add(new TextBlock
         {
             Text = "填写 MCP Server 启动命令（如 node C:\\my-mcp-server\\index.js），添加后会自动连接并注册其工具。",
             FontSize = 13,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0, 0, 0, 4),
         });
 
-        Configure(_commandBox, 440, "node path\\to\\server.js --flag");
-        root.Children.Add(Field("启动命令", _commandBox));
+        Configure(_commandBox, 480, "node C:\\my-mcp-server\\index.js --flag");
+        root.Children.Add(Field("启动命令", _commandBox, "走 MCP stdio 协议；命令不存在或启动即退出时添加会失败。"));
         Configure(_nameBox, 240, "如：我的工具");
-        root.Children.Add(Field("名称（可选）", _nameBox));
+        root.Children.Add(Field("名称（可选）", _nameBox, "留空默认「未命名 MCP」；名称用于工具列表展示。"));
         root.Children.Add(_status);
 
         var actions = new StackPanel
@@ -505,7 +503,7 @@ internal sealed class McpAddDialog : Window
         }));
         actions.Children.Add(MakeButton("添加", Save, primary: true));
         root.Children.Add(actions);
-        Content = root;
+        NativeTheme.ApplyDialogShell(this, "添加 MCP Server", root);
     }
 
     private static void Configure(TextBox box, double width, string placeholder)
@@ -514,10 +512,11 @@ internal sealed class McpAddDialog : Window
         box.FontSize = 14;
         box.Padding = new Thickness(6, 4, 6, 4);
         box.VerticalContentAlignment = VerticalAlignment.Center;
+        box.HorizontalAlignment = HorizontalAlignment.Left;
         box.ToolTip = placeholder;
     }
 
-    private static StackPanel Field(string label, TextBox box)
+    private static StackPanel Field(string label, TextBox box, string? hint = null)
     {
         var row = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         row.Children.Add(new TextBlock
@@ -528,6 +527,17 @@ internal sealed class McpAddDialog : Window
             Margin = new Thickness(0, 0, 0, 4),
         });
         row.Children.Add(box);
+        if (!string.IsNullOrEmpty(hint))
+        {
+            row.Children.Add(new TextBlock
+            {
+                Text = hint,
+                FontSize = 12.5,
+                Foreground = NativeTheme.TextMutedBrush,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+        }
         return row;
     }
 

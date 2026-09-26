@@ -42,11 +42,13 @@ public sealed partial class SettingsWindow
         var engineCard = MakeToolCard("🎧", "语音识别引擎", "通话与语音输入使用的识别服务商。", null, out var engineBody);
         var aliyunConfig = BuildAsrAliyunConfig(asr);
         var mosslandConfig = BuildAsrMosslandConfig(asr);
+        var localConfig = BuildAsrLocalConfig(asr);
 
         void SelectEngine(string value)
         {
             aliyunConfig.Visibility = value == "aliyun" ? Visibility.Visible : Visibility.Collapsed;
             mosslandConfig.Visibility = value == "mossland" ? Visibility.Visible : Visibility.Collapsed;
+            localConfig.Visibility = value == "local" ? Visibility.Visible : Visibility.Collapsed;
             SaveAsrField("asrEngine", value);
         }
 
@@ -56,17 +58,19 @@ public sealed partial class SettingsWindow
                 ("off", "关闭", true),
                 ("aliyun", "阿里云（实时）", true),
                 ("mossland", "Mossland（轮次转写）", true),
-                ("local", "本地（敬请期待）", false),
+                ("local", "本地（插件）", true),
             },
             engine,
             SelectEngine));
-        engineBody.Children.Add(MakeHint("阿里云支持实时中间结果；Mossland 会在每轮说话结束后返回完整文本。"));
+        engineBody.Children.Add(MakeHint("阿里云支持实时中间结果；Mossland 会在每轮说话结束后返回完整文本；本地识别由语音输入插件提供。"));
         panel.Children.Add(engineCard);
 
         aliyunConfig.Visibility = engine == "aliyun" ? Visibility.Visible : Visibility.Collapsed;
         mosslandConfig.Visibility = engine == "mossland" ? Visibility.Visible : Visibility.Collapsed;
+        localConfig.Visibility = engine == "local" ? Visibility.Visible : Visibility.Collapsed;
         panel.Children.Add(aliyunConfig);
         panel.Children.Add(mosslandConfig);
+        panel.Children.Add(localConfig);
 
         // ── 通话设置 ──
         var callCard = MakeToolCard("📞", "通话设置", "语音通话的断句与字幕显示。", null, out var callBody);
@@ -106,6 +110,50 @@ public sealed partial class SettingsWindow
         panel.Children.Add(callCard);
 
         return panel;
+    }
+
+    // ── 本地 ASR 配置（engine=local 时显示；识别由语音输入插件提供） ──
+
+    private FrameworkElement BuildAsrLocalConfig(JsonElement asr)
+    {
+        var card = MakeCard(out var body);
+        body.Children.Add(MakeSubHeader("本地语音识别（插件）"));
+        card.Margin = new Thickness(0, 6, 0, 6);
+        body.Children.Add(MakeHint(
+            "本地识别由「语音输入」插件提供：模型、运行时、麦克风采集与识别窗口全部由插件自行维护，"
+            + "Cyrene 只接收最终文本。通话开始后插件取得输入租约即自动接管（内置云 ASR 不启动），"
+            + "释放后回到等待状态。"));
+        body.Children.Add(MakeHint("选择本地后，通话不再请求阿里云 / Mossland；聊天窗口同样可由插件的租约提交文本。"));
+
+        var plugins = GetNode(asr, "localPlugins");
+        var names = new List<string>();
+        if (plugins.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in plugins.EnumerateArray())
+            {
+                var name = item.ValueKind == JsonValueKind.String ? item.GetString() ?? "" : "";
+                if (name.Length > 0) names.Add(name);
+            }
+        }
+        var status = new TextBlock
+        {
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        if (names.Count > 0)
+        {
+            status.Text = "✅ 已检测到运行中的语音输入插件：" + string.Join("、", names);
+            status.Foreground = new SolidColorBrush(Color.FromRgb(0x1D, 0x9A, 0x54));
+        }
+        else
+        {
+            status.Text = "⚠️ 未检测到运行中的语音输入插件：请到「工具配置 → 管理已安装插件 → 插件市场」"
+                + "安装并启用支持本地语音识别的插件（依赖 speech-input）。";
+            status.Foreground = new SolidColorBrush(Color.FromRgb(0xB4, 0x7A, 0x00));
+        }
+        body.Children.Add(status);
+        return card;
     }
 
     // ── 阿里云配置（engine=aliyun 时显示） ──

@@ -33,6 +33,8 @@ public sealed partial class SettingsWindow
         var prefs = GetNode("preferences");
 
         // ── 只读占位（旧版即禁用控件：默认模式 / 分段输出） ──
+        panel.Children.Add(BlockMark());
+        panel.Children.Add(MakeSubHeader("默认行为"));
         panel.Children.Add(MakeDescribedRow("默认模式",
             "打开聊天窗口时默认使用的模式；窗口内仍可临时切换。",
             MakeChoiceGroup(
@@ -45,6 +47,7 @@ public sealed partial class SettingsWindow
                 GetString(prefs, "segmentedOutputMode", "off"), null)));
 
         // ── 截图 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("截图"));
         var snipastePathRow = MakeDescribedRow("Snipaste 路径",
             "留空自动检测；也可填写 Snipaste.exe 的完整路径。",
@@ -66,6 +69,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(snipastePathRow);
 
         // ── 消息 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("消息"));
         panel.Children.Add(MakeDescribedRow("手机信息分段",
             "连接手机回复会按 。！？； 拆成多条发送；请在关闭工具使用后开启。",
@@ -75,6 +79,7 @@ public sealed partial class SettingsWindow
                 v => SetSetting("mobileMessageSegmentation", v))));
 
         // ── 自定义风格 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("自定义风格"));
         var styleActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         styleActions.Children.Add(MakeActionButton("自定义风格采样", OpenCustomStyleDialog, minWidth: 130));
@@ -85,6 +90,7 @@ public sealed partial class SettingsWindow
             styleActions));
 
         // ── 主动聊天 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("主动聊天"));
         // 渠道可用性：仅运行中的渠道可选（与渲染页 isProactiveDeliveryTargetSelectable 同口径）
         var deliveryAvailability = GetNode(prefs, "proactiveDelivery");
@@ -117,6 +123,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(deliveryRow);
 
         // ── 朋友圈动态 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("朋友圈动态"));
         var postingRow = MakeDescribedToggleRow("昔涟主动发动态",
             "对话结束后，昔涟会把值得记录的时刻发成动态；每天最多 2 条，间隔至少 6 小时。",
@@ -160,6 +167,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(livelinessRow);
 
         // ── 上下文 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("上下文"));
         panel.Children.Add(MakeDescribedToggleRow("聊天上下文增强",
             "仅在 Chat 模式下使用相关的过去信息和未接话题，让连续交流更自然；每轮最多增加一次异步模型调用。",
@@ -167,6 +175,7 @@ public sealed partial class SettingsWindow
             v => SetSetting("chatSocialContextEnabled", v)));
 
         // ── CITA ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("CITA 上下文认知"));
         // 旧版：语义认知方式行始终显示，仅「本地语义模型」禁用占位
         panel.Children.Add(MakeDescribedToggleRow("CITA 上下文认知",
@@ -178,6 +187,7 @@ public sealed partial class SettingsWindow
             MakeChoiceGroup(
                 new[] { ("remote", "在线大模型", true), ("local", "本地语义模型（暂不可用）", false) },
                 GetString(prefs, "citaSemanticEngine", "remote"), null)));
+        CardifySubBlocks(panel);
 
         return panel;
     }

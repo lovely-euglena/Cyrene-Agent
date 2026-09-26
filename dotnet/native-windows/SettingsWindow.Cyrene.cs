@@ -35,6 +35,7 @@ public sealed partial class SettingsWindow
         var cyrene = GetNode("cyrene");
 
         // ── 状态栏实时更新 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.Heart, 22, NativeTheme.TextDefaultBrush),
             "状态栏实时更新"));
@@ -60,6 +61,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(syncNote);
 
         // ── 表情包发送 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             MakeHeadingAvatar(System.IO.Path.Combine("icons", "sticker-picker.png"), tint: false, size: 22),
             "表情包发送"));
@@ -101,6 +103,7 @@ public sealed partial class SettingsWindow
             stickerActions));
 
         // ── RAG / 文档导入 ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.BookRag, 22, NativeTheme.TextDefaultBrush),
             "RAG / 文档导入"));
@@ -208,6 +211,7 @@ public sealed partial class SettingsWindow
                 GetString("ragDownloadMirror", "official"),
                 v => SetSetting("ragDownloadMirror", v))));
         panel.Children.Add(MakeHint("模型状态随设置快照刷新；安装步骤见「模型安装说明」。"));
+        CardifySubBlocks(panel);
 
         return panel;
     }
