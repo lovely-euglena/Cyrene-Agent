@@ -428,6 +428,7 @@ export function resetRAG(): void {
 }
 
 export function getRAGStats() {
+  store?.ensureFresh();
   return store?.stats ?? { total: 0, sources: {} };
 }
 
@@ -441,6 +442,7 @@ export function isUserMemoryVectorStoreReady(): boolean {
  */
 export function getEntriesBySource(source: string): Array<{ id: string; text: string; embedding: number[]; createdAt: number; weight: number; metadata?: Record<string, unknown> }> {
   if (!store) return [];
+  store.ensureFresh();
   return ((store as any).entries as MemoryEntry[])
     .filter((e) => e.source === source)
     .map((e) => ({ id: e.id, text: e.text, embedding: e.embedding, createdAt: e.createdAt, weight: e.weight, metadata: e.metadata }));
@@ -457,5 +459,6 @@ export function deleteImportedDoc(importId: string, fileName?: string): number {
 }
 
 export function hasImportedDocumentChunks(importId: string): boolean {
+  store?.ensureFresh();
   return store?.hasImportedDocumentChunks(importId) ?? false;
 }

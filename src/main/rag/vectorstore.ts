@@ -165,6 +165,9 @@ export class JsonVectorStore {
   private entries: MemoryEntry[] = [];
   private dirty = false;
   private indexMeta: EmbeddingIndexMetadata | null = null;
+  // 磁盘文件快照（跨进程一致性用；见 ensureFresh）
+  private fileWriteTicks = 0;
+  private fileLength = -1;
 
   /** IVF 索引，null = 未构建或需要重建 */
   private ivf: IvfIndex | null = null;
@@ -181,12 +184,46 @@ export class JsonVectorStore {
   private load(): void {
     try {
       if (fs.existsSync(this.filePath)) {
+        const info = fs.statSync(this.filePath);
+        this.fileWriteTicks = info.mtimeMs;
+        this.fileLength = info.size;
         const raw = fs.readFileSync(this.filePath, "utf8");
         this.entries = JSON.parse(raw) as MemoryEntry[];
+      } else {
+        this.fileWriteTicks = 0;
+        this.fileLength = -1;
+        this.entries = [];
       }
     } catch (err) {
       console.warn("[RAG] failed to load vector store:", err);
       this.entries = [];
+    }
+  }
+
+  /**
+   * 跨进程一致性：文件被外部（.NET sidecar 的召回回写 / 记忆写入）改写时重载。
+   * 同步读路径（getEntriesBySource / stats / hasImported）调用前应先 ensureFresh()；
+   * 无变化时仅一次 stat，不重解析。
+   */
+  ensureFresh(): void {
+    try {
+      if (!fs.existsSync(this.filePath)) {
+        if (this.fileLength !== -1) {
+          this.fileWriteTicks = 0;
+          this.fileLength = -1;
+          this.entries = [];
+          this.markIndexDirty();
+        }
+        return;
+      }
+      const info = fs.statSync(this.filePath);
+      if (info.mtimeMs !== this.fileWriteTicks || info.size !== this.fileLength) {
+        this.load();
+        this.loadIndexMeta();
+        this.markIndexDirty();
+      }
+    } catch {
+      // 读不到时保持现状（调用方按内存副本继续）
     }
   }
 
@@ -218,6 +255,9 @@ export class JsonVectorStore {
       const dir = path.dirname(this.filePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(this.filePath, JSON.stringify(this.entries, null, 2), "utf8");
+      const info = fs.statSync(this.filePath);
+      this.fileWriteTicks = info.mtimeMs;
+      this.fileLength = info.size;
       this.dirty = false;
     } catch (err) {
       console.warn("[RAG] failed to save vector store:", err);
