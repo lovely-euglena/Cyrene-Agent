@@ -83,8 +83,9 @@ for (let i = 0; i < docs.length; i++) {
 fs.mkdirSync(fixtureDir, { recursive: true });
 fs.mkdirSync(baselineDir, { recursive: true });
 const storePath = path.join(fixtureDir, "memory-store.json");
+const baselinePath = path.join(baselineDir, "memory-store.json");
 fs.writeFileSync(storePath, JSON.stringify(entries, null, 2), "utf8");
-fs.copyFileSync(storePath, path.join(baselineDir, "memory-store.json"));
+fs.copyFileSync(storePath, baselinePath);
 fs.writeFileSync(
   path.join(fixtureDir, "memory-store-meta.json"),
   JSON.stringify(
@@ -131,11 +132,12 @@ const queries = [
   { query: "昔涟 陪伴", source: undefined, topK: 5, ivfSkip: true },
 ];
 
-const store = new JsonVectorStore(fixtureDir);
-const retriever = new HybridRetriever(store, provider);
-
 const expectedQueries = [];
 for (const q of queries) {
+  // 逐查询重置为基线库（隔离召回回写对后续查询的级联影响，.NET 对账同法）
+  fs.copyFileSync(baselinePath, storePath);
+  const store = new JsonVectorStore(fixtureDir);
+  const retriever = new HybridRetriever(store, provider);
   const results = await retriever.retrieve(q.query, q.source, q.topK, q.options ?? {});
   expectedQueries.push({
     ...q,
