@@ -47,14 +47,12 @@ public sealed partial class SettingsWindow : NativeWindow
     private readonly string? _initialSection;
     /// <summary>用户已输入但尚未提交的控件刷新（快照重建时停掉）</summary>
     private readonly List<DispatcherTimer> _debounceTimers = new();
-    private readonly string _genderGroupId = Guid.NewGuid().ToString("N");
     private string _activeSection = "general";
 
     public override string Kind => "settings";
     public override bool IsClosed => _window == null;
 
     private JsonElement _settings;
-
     public SettingsWindow(JsonElement layout)
     {
         _settings = layout.ValueKind == JsonValueKind.Object && layout.TryGetProperty("settings", out var s)
@@ -519,72 +517,6 @@ public sealed partial class SettingsWindow : NativeWindow
         row.Children.Add(importBtn);
         row.Children.Add(resetBtn);
         return MakeRow("界面字体", row);
-    }
-
-    private FrameworkElement BuildUserSection()
-    {
-        var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("用户信息"));
-        panel.Children.Add(MakeHint("昔涟对你的称呼与本地资料；字段失焦或回车即保存"));
-
-        var user = GetNode("user");
-
-        // 头像：快照 data URL 解码显示；「更换头像」由宿主弹文件框（native 不传路径）
-        var avatarRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 10) };
-        var avatarBox = new Border
-        {
-            Width = 64,
-            Height = 64,
-            CornerRadius = new CornerRadius(32),
-            Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xF0)),
-        };
-        var decoded = TryDecodeDataUrl(GetString(user, "avatarDataUrl"));
-        // ImageBrush 背景：CornerRadius 会把背景裁成圆形（Border 圆角不裁子元素）
-        if (decoded != null)
-        {
-            avatarBox.Background = new ImageBrush(decoded)
-            {
-                Stretch = Stretch.UniformToFill,
-                AlignmentX = AlignmentX.Center,
-                AlignmentY = AlignmentY.Center,
-            };
-        }
-        avatarRow.Children.Add(avatarBox);
-        var uploadButton = new Button
-        {
-            Content = "更换头像",
-            Width = 120,
-            Height = 32,
-            Margin = new Thickness(16, 16, 0, 0),
-            FontSize = 14,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Style = NativeTheme.SecondaryButtonStyle,
-        };
-        uploadButton.Click += (_, _) => RequestRouter.SendPickAvatar();
-        avatarRow.Children.Add(uploadButton);
-        panel.Children.Add(avatarRow);
-
-        panel.Children.Add(MakeTextRow("昵称", GetString(user, "nickname"), v => SetUserProfile("nickname", v),
-            placeholder: "你想让昔涟怎么称呼你"));
-        panel.Children.Add(MakeTextRow("称呼偏好", GetString(user, "callPreference"), v => SetUserProfile("callPreference", v),
-            placeholder: "例如：伙伴（留空用昵称）"));
-        // 生日用日期选择器（旧实现自由文本，可写入非法值）
-        var birthdayPicker = new DatePicker
-        {
-            Width = 260,
-            FontSize = 14,
-            SelectedDate = TryParseDateOnly(GetString(user, "birthday")),
-        };
-        birthdayPicker.SelectedDateChanged += (_, _) =>
-        {
-            SetUserProfile("birthday", birthdayPicker.SelectedDate?.ToString("yyyy-MM-dd") ?? "");
-        };
-        panel.Children.Add(MakeRow("生日", birthdayPicker));
-        panel.Children.Add(MakeTextRow("默认城市", GetString(user, "defaultCity"), v => SetUserProfile("defaultCity", v),
-            placeholder: "例如：上海、北京、广州"));
-        panel.Children.Add(MakeTimezoneRow(user));
-        panel.Children.Add(MakeGenderRow(user));
-        return panel;
     }
 
     private FrameworkElement BuildAboutSection()
@@ -1215,80 +1147,12 @@ public sealed partial class SettingsWindow : NativeWindow
         return MakeRow(label, host);
     }
 
-    /** 解析 yyyy-MM-dd（非法返回 null，DatePicker 显示空） */
+    /** 解析 yyyy-MM-dd（非法返回 null，日期框显示空） */
     private static DateTime? TryParseDateOnly(string value)
         => DateTime.TryParseExact(value, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.None, out var date)
             ? date
             : null;
-
-    /// <summary>时区行：选项来自宿主快照（与渲染页共享白名单）。</summary>
-    private Border MakeTimezoneRow(JsonElement user)
-    {
-        var current = GetString(user, "timezone", "Asia/Shanghai");
-        var options = user.ValueKind == JsonValueKind.Object
-            && user.TryGetProperty("timezoneOptions", out var opts)
-            && opts.ValueKind == JsonValueKind.Array ? opts : default;
-
-        var combo = new ComboBox { Width = 260, FontSize = 14 };
-        var selectedIndex = 0;
-        if (options.ValueKind == JsonValueKind.Array)
-        {
-            var index = 0;
-            foreach (var opt in options.EnumerateArray())
-            {
-                var value = GetString(opt, "value");
-                combo.Items.Add(GetString(opt, "label", value));
-                if (value == current) selectedIndex = index;
-                index++;
-            }
-        }
-        combo.SelectedIndex = combo.Items.Count > 0 ? selectedIndex : -1;
-        combo.SelectionChanged += (_, _) =>
-        {
-            var index = combo.SelectedIndex;
-            if (options.ValueKind != JsonValueKind.Array || index < 0 || index >= options.GetArrayLength()) return;
-            var value = GetString(options[index], "value");
-            if (value.Length > 0 && value != current)
-            {
-                current = value;
-                SetUserProfile("timezone", value);
-            }
-        };
-        return MakeRow("时区", combo);
-    }
-
-    /// <summary>性别行：三档单选，点击即写。</summary>
-    private Border MakeGenderRow(JsonElement user)
-    {
-        var current = GetString(user, "gender", "secret");
-        var group = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-
-        void AddGender(string value, string label)
-        {
-            var radio = new RadioButton
-            {
-                Content = label,
-                GroupName = _genderGroupId,
-                IsChecked = current == value,
-                Margin = new Thickness(0, 0, 16, 0),
-                FontSize = 14,
-                Cursor = System.Windows.Input.Cursors.Hand,
-            };
-            radio.Checked += (_, _) =>
-            {
-                if (current == value) return;
-                current = value;
-                SetUserProfile("gender", value);
-            };
-            group.Children.Add(radio);
-        }
-
-        AddGender("secret", "保密");
-        AddGender("male", "男");
-        AddGender("female", "女");
-        return MakeRow("性别", group);
-    }
 
     /// <summary>头像 data URL → BitmapImage（解码失败返回 null，显示占位底色）。</summary>
     private static ImageSource? TryDecodeDataUrl(string dataUrl)
