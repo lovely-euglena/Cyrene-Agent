@@ -3,12 +3,16 @@
 import { describe, expect, it } from "vitest";
 import {
   buildApiSectionSnapshot,
+  buildAsrSectionSnapshot,
   buildCyreneSectionSnapshot,
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
   buildTokensSectionSnapshot,
+  buildTtsSectionSnapshot,
   buildPluginsSectionSnapshot,
+  type AsrSettingsView,
   type NativeMemoryData,
+  type TtsSettingsView,
 } from "./native-settings-sections";
 import type { ModelSettings } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
@@ -276,5 +280,143 @@ describe("buildCyreneSectionSnapshot", () => {
     expect(auto.embeddingDimensions).toBeNull();
     expect(auto.embeddingInstalled).toBe(false);
     expect(auto.rerankerInstalled).toBe(false);
+  });
+});
+
+describe("buildTtsSectionSnapshot", () => {
+  const base: TtsSettingsView = {
+    ttsEngine: "off",
+    ttsAutoRead: true,
+    ttsEarlyReadSplitEnabled: true,
+    ttsEarlyReadSplitMode: "sentence",
+    ttsSpeed: 1,
+    ttsVolume: 1,
+    ttsMinimaxKey: "mini-key",
+    ttsMinimaxVoiceId: "voice-id",
+    ttsMinimaxModel: "speech-2.8-turbo",
+    ttsStreaming: true,
+    ttsMinimaxVocalEnhance: true,
+    ttsGptsovitsBaseUrl: "",
+    ttsGptsovitsRefAudioPath: "",
+    ttsGptsovitsPromptText: "",
+    ttsGptsovitsFormat: "wav",
+    ttsGptsovitsTimeoutMs: 180_000,
+    ttsCustomCloudEndpointUrl: "",
+    ttsCustomCloudApiKey: "",
+    ttsCustomCloudVoiceId: "",
+    ttsCustomCloudFormat: "mp3",
+    ttsCustomCloudTimeoutMs: 30_000,
+    ttsMimoKey: "",
+    ttsMimoVoiceAudioPath: "",
+    ttsMimoStylePrompt: "",
+    ttsMosslandKey: "",
+    ttsMosslandVoiceId: "",
+    ttsMosslandModel: "",
+    ttsMosslandTestText: "",
+    ttsMosslandFormat: "mp3",
+  };
+
+  it("旧页默认回填：空串回落（baseUrl / 风格提示 / 试听文本 / Mossland 模型），布尔缺省按开", () => {
+    const snapshot = buildTtsSectionSnapshot({ ...base });
+    expect(snapshot).toMatchObject({
+      engine: "off",
+      autoRead: true,
+      earlyReadSplitEnabled: true,
+      earlyReadSplitMode: "sentence",
+      speed: 1,
+      volume: 1,
+      minimaxKey: "mini-key",
+      minimaxModel: "speech-2.8-turbo",
+      streaming: true,
+      minimaxVocalEnhance: true,
+      gptsovitsBaseUrl: "http://localhost:9880",
+      gptsovitsFormat: "wav",
+      gptsovitsTimeoutMs: 180_000,
+      customCloudFormat: "mp3",
+      customCloudTimeoutMs: 30_000,
+      mimoStylePrompt: "温柔、自然、略带亲近感，像在轻声陪用户聊天。",
+      mosslandModel: "moss-tts-1.5-flash",
+      mosslandTestText: "你好，我是昔涟，很高兴见到你。",
+      mosslandFormat: "mp3",
+    });
+  });
+
+  it("非法枚举回落 + 越界数值 clamp（历史值 moss-tts 回落默认模型）", () => {
+    const snapshot = buildTtsSectionSnapshot({
+      ...base,
+      ttsEngine: "bogus" as never,
+      ttsEarlyReadSplitMode: "word" as never,
+      ttsMinimaxModel: "speech-3.0" as never,
+      ttsGptsovitsFormat: "ogg" as never,
+      ttsMosslandFormat: "flac" as never,
+      ttsMosslandModel: "moss-tts",
+      ttsSpeed: 9,
+      ttsVolume: -1,
+      ttsGptsovitsTimeoutMs: 100,
+      ttsCustomCloudTimeoutMs: 999_999,
+    });
+    expect(snapshot.engine).toBe("off");
+    expect(snapshot.earlyReadSplitMode).toBe("sentence");
+    expect(snapshot.minimaxModel).toBe("speech-2.8-turbo");
+    expect(snapshot.gptsovitsFormat).toBe("wav");
+    expect(snapshot.mosslandFormat).toBe("mp3");
+    expect(snapshot.mosslandModel).toBe("moss-tts-1.5-flash");
+    expect(snapshot.speed).toBe(2);
+    expect(snapshot.volume).toBe(0);
+    expect(snapshot.gptsovitsTimeoutMs).toBe(10_000);
+    expect(snapshot.customCloudTimeoutMs).toBe(120_000);
+  });
+});
+
+describe("buildAsrSectionSnapshot", () => {
+  const base: AsrSettingsView = {
+    asrEngine: "off",
+    asrAliyunAppKey: "",
+    asrAliyunAccessKeyId: "",
+    asrAliyunAccessKeySecret: "",
+    ttsMosslandKey: "moss-key",
+    asrLanguage: "zh",
+    asrVadSilenceMs: 1000,
+    asrVadThreshold: 0.01,
+    asrShowTranscript: false,
+  };
+
+  it("投影引擎 / 凭据 / VAD / 转写开关（mossland key 与 TTS 共用）", () => {
+    const snapshot = buildAsrSectionSnapshot({
+      ...base,
+      asrEngine: "aliyun",
+      asrAliyunAppKey: "app",
+      asrAliyunAccessKeyId: "id",
+      asrAliyunAccessKeySecret: "secret",
+      asrLanguage: "en",
+      asrVadSilenceMs: 3000,
+      asrVadThreshold: 0.02,
+      asrShowTranscript: true,
+    });
+    expect(snapshot).toEqual({
+      engine: "aliyun",
+      aliyunAppKey: "app",
+      aliyunAccessKeyId: "id",
+      aliyunAccessKeySecret: "secret",
+      mosslandKey: "moss-key",
+      language: "en",
+      vadSilenceMs: 3000,
+      vadThreshold: 0.02,
+      showTranscript: true,
+    });
+  });
+
+  it("非法引擎 / 语言回落；VAD 越界 clamp", () => {
+    const snapshot = buildAsrSectionSnapshot({
+      ...base,
+      asrEngine: "azure" as never,
+      asrLanguage: "ja" as never,
+      asrVadSilenceMs: 10,
+      asrVadThreshold: 5,
+    });
+    expect(snapshot.engine).toBe("off");
+    expect(snapshot.language).toBe("zh");
+    expect(snapshot.vadSilenceMs).toBe(100);
+    expect(snapshot.vadThreshold).toBe(0.5);
   });
 });
