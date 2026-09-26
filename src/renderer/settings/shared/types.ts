@@ -110,11 +110,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   mobileMessageSegmentation: MobileMessageSegmentationMode;
   proactiveChatMode: ProactiveChatMode;
   proactiveDeliveryTarget: ProactiveDeliveryTarget;
-  /** 聊天段落间距（em）。目前仅设置窗口 UI 使用，主进程归一化尚未持久化该字段。 */
+  /** 聊天段落间距（em）；主进程已持久化（general settings chatParaSpacing）。 */
   chatParaSpacing?: number;
   screenshotHotkey?: string;
   screenshotBackend?: "builtin" | "snipaste";
   snipastePath?: string;
+  /** RAG 模型下载镜像源（通用设置同名字段；官方源 / hf-mirror） */
+  ragDownloadMirror?: "official" | "hf-mirror";
 }
 
 export interface UserApi {

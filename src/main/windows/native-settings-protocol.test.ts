@@ -176,6 +176,7 @@ describe("sanitizeNativeGeneralSetting", () => {
       "momentsLiveliness",
       "citaEnabled",
       "customStyle",
+      "ragDownloadMirror",
     ]);
   });
 
@@ -211,6 +212,11 @@ describe("sanitizeNativeGeneralSetting", () => {
     })).toEqual({
       customStyle: { diversity: { driver: "temperature", value: 2 }, repetition: "strong" },
     });
+    // RAG 下载镜像源（真实通用设置；非法值拒绝）
+    expect(sanitizeNativeGeneralSetting("ragDownloadMirror", "hf-mirror")).toEqual({
+      ragDownloadMirror: "hf-mirror",
+    });
+    expect(sanitizeNativeGeneralSetting("ragDownloadMirror", "aliyun")).toBeNull();
   });
 });
 
@@ -233,6 +239,21 @@ describe("sanitizeNativeCyreneSave / sanitizeNativeStickerAdd（cyrene section �
       stickerSimilarityThreshold: "0.5",
     })).toBeNull();
     expect(sanitizeNativeCyreneSave(null)).toBeNull();
+  });
+
+  it("save：RAG 字段（维度 clamp/清空、reranker 档位）", () => {
+    expect(sanitizeNativeCyreneSave({ embeddingDimensions: 1024 })).toEqual({ embeddingDimensions: 1024 });
+    expect(sanitizeNativeCyreneSave({ embeddingDimensions: 300000 })).toEqual({ embeddingDimensions: 65_536 });
+    expect(sanitizeNativeCyreneSave({ embeddingDimensions: 0 })).toBeNull();
+    expect(sanitizeNativeCyreneSave({ embeddingDimensions: -3 })).toBeNull();
+    expect(sanitizeNativeCyreneSave({ embeddingDimensions: "1024" })).toBeNull();
+    // null = 清空（键保留，值为 undefined → merge 覆盖后落盘时被剔除）
+    const cleared = sanitizeNativeCyreneSave({ embeddingDimensions: null });
+    expect(cleared).toEqual({ embeddingDimensions: undefined });
+    expect(Object.keys(cleared ?? {})).toContain("embeddingDimensions");
+    expect(sanitizeNativeCyreneSave({ rerankerMode: "none" })).toEqual({ rerankerMode: "none" });
+    expect(sanitizeNativeCyreneSave({ rerankerMode: "standard" })).toEqual({ rerankerMode: "standard" });
+    expect(sanitizeNativeCyreneSave({ rerankerMode: "huge" })).toBeNull();
   });
 
   it("add-sticker：必填校验 + id 规则 + 相近语义去空/过滤/截断", () => {
@@ -416,7 +437,14 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
   it("各 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
     expect([...NATIVE_SECTION_ACTIONS.api]).toEqual(["save", "test", "test-vision", "set-default-profile", "delete-profile"]);
     expect([...NATIVE_SECTION_ACTIONS.preferences]).toEqual(["open-prompt"]);
-    expect([...NATIVE_SECTION_ACTIONS.cyrene]).toEqual(["save", "open-sticker-manager", "add-sticker"]);
+    expect([...NATIVE_SECTION_ACTIONS.cyrene]).toEqual([
+      "save",
+      "open-sticker-manager",
+      "add-sticker",
+      "open-model-docs",
+      "delete-embedding",
+      "check-model-update",
+    ]);
     expect([...NATIVE_SECTION_ACTIONS.memory]).toEqual([
       "save-l0",
       "save-l1",

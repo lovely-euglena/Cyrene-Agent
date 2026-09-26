@@ -61,6 +61,7 @@ export const NATIVE_GENERAL_SETTING_KEYS = [
   "momentsLiveliness",
   "citaEnabled",
   "customStyle",
+  "ragDownloadMirror",
 ] as const;
 
 export type NativeGeneralSettingKey = (typeof NATIVE_GENERAL_SETTING_KEYS)[number];
@@ -131,7 +132,14 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
 export const NATIVE_SECTION_ACTIONS = {
   api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
   preferences: ["open-prompt"],
-  cyrene: ["save", "open-sticker-manager", "add-sticker"],
+  cyrene: [
+    "save",
+    "open-sticker-manager",
+    "add-sticker",
+    "open-model-docs",
+    "delete-embedding",
+    "check-model-update",
+  ],
   runtime: ["save"],
   tokens: ["set-days", "clear"],
   memory: [
@@ -225,6 +233,8 @@ export function sanitizeNativeGeneralSetting(
       return value !== null && typeof value === "object"
         ? { customStyle: normalizeCustomStyleConfig(value) }
         : null;
+    case "ragDownloadMirror":
+      return value === "official" || value === "hf-mirror" ? { ragDownloadMirror: value } : null;
     default:
       return null;
   }
@@ -271,14 +281,23 @@ const STICKER_TEXT_MAX_LENGTH = 200;
 const STICKER_PHRASE_LIMIT = 50;
 const STICKER_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
-/** cyrene save 动作（状态栏实时更新 / 表情包发送）可写字段（model settings 子集）。 */
+/** cyrene save 动作（状态栏实时更新 / 表情包发送 / RAG 模型）可写字段（model settings 子集）。 */
 export type NativeCyreneSavePatch = Partial<
-  Pick<ModelSettings, "runtimeSync" | "stickerEnabled" | "stickerSize" | "stickerSimilarityThreshold">
+  Pick<
+    ModelSettings,
+    | "runtimeSync"
+    | "stickerEnabled"
+    | "stickerSize"
+    | "stickerSimilarityThreshold"
+    | "embeddingDimensions"
+    | "rerankerMode"
+  >
 >;
 
 /**
  * cyrene save payload 校验：只保留合法字段（未知档位丢弃、阈值 clamp 0.3~0.9
- * 两位小数）；无有效字段返回 null（宿主静默忽略）。
+ * 两位小数、embedding 维度 clamp 1~65536 取整）；无有效字段返回 null
+ * （宿主静默忽略）。embeddingDimensions: null = 清空（留空自动探测）。
  */
 export function sanitizeNativeCyreneSave(raw: Record<string, unknown> | null | undefined): NativeCyreneSavePatch | null {
   if (!raw || typeof raw !== "object") return null;
@@ -293,6 +312,17 @@ export function sanitizeNativeCyreneSave(raw: Record<string, unknown> | null | u
   if (typeof raw.stickerSimilarityThreshold === "number" && Number.isFinite(raw.stickerSimilarityThreshold)) {
     patch.stickerSimilarityThreshold =
       Math.round(Math.min(0.9, Math.max(0.3, raw.stickerSimilarityThreshold)) * 100) / 100;
+  }
+  // RAG：embedding 维度（null = 清空 → 首次请求自动探测）
+  if (raw.embeddingDimensions === null) {
+    patch.embeddingDimensions = undefined;
+  } else if (typeof raw.embeddingDimensions === "number" && Number.isFinite(raw.embeddingDimensions)) {
+    const dimensions = Math.round(raw.embeddingDimensions);
+    if (dimensions > 0) patch.embeddingDimensions = Math.min(65_536, dimensions);
+  }
+  // RAG：reranker 模式（写入后由宿主重新 initReranker）
+  if (raw.rerankerMode === "standard" || raw.rerankerMode === "none") {
+    patch.rerankerMode = raw.rerankerMode;
   }
   return Object.keys(patch).length > 0 ? patch : null;
 }

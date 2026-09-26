@@ -229,6 +229,7 @@ public static class RequestRouter
             "proactiveChatMode", "proactiveDeliveryTarget", "chatSocialContextEnabled",
             "momentsEnabled", "cyreneMomentsPostingEnabled", "cyreneMomentsReactionsEnabled",
             "momentsCharacterReactionsEnabled", "momentsLiveliness", "citaEnabled", "customStyle",
+            "ragDownloadMirror",
         };
         if (string.IsNullOrEmpty(key) || !allowed.Contains(key)) return;
         SendSetting(key, value.HasValue ? value.Value : null);

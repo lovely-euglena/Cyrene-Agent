@@ -192,27 +192,30 @@
     }
   });
 
-  // Mirror source toggle
+  // Mirror source toggle：写入通用设置（与 .NET 设置窗「昔涟设置」同源；
+  // 旧实现只写 localStorage，导致两处设置页各存一份、模型下载拿不到偏好）
+  function applyMirrorSelection(value: string): void {
+    const selected = value === "hf-mirror" ? "hf-mirror" : "official";
+    mirrorGroup?.querySelectorAll(".option-block").forEach((b) => {
+      const v = b.getAttribute("data-value");
+      b.classList.toggle("is-active", v === selected);
+      b.setAttribute("aria-pressed", v === selected ? "true" : "false");
+    });
+  }
+
   mirrorGroup?.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest("[data-value]") as HTMLElement | null;
     if (!btn) return;
     const value = btn.dataset.value;
     if (!value) return;
-    mirrorGroup.querySelectorAll(".option-block").forEach((b) => {
-      const v = b.getAttribute("data-value");
-      b.classList.toggle("is-active", v === value);
-      b.setAttribute("aria-pressed", v === value ? "true" : "false");
-    });
-    localStorage.setItem("cyrene.rag.mirror", value);
+    applyMirrorSelection(value);
+    void window.settings?.saveGeneral?.({ ragDownloadMirror: value === "hf-mirror" ? "hf-mirror" : "official" });
   });
 
-  // Restore saved mirror on load
-  const savedMirror = localStorage.getItem("cyrene.rag.mirror") || "official";
-  mirrorGroup?.querySelectorAll(".option-block").forEach((b) => {
-    const v = b.getAttribute("data-value");
-    b.classList.toggle("is-active", v === savedMirror);
-    b.setAttribute("aria-pressed", v === savedMirror ? "true" : "false");
-  });
+  // Restore saved mirror on load（通用设置为准）
+  void window.settings?.getGeneral?.()
+    .then((cfg) => applyMirrorSelection(cfg.ragDownloadMirror ?? "official"))
+    .catch(() => applyMirrorSelection("official"));
 })();
 (function () {
   const updateBtn = document.getElementById("embedding-update-btn") as HTMLButtonElement | null;

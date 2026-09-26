@@ -135,12 +135,13 @@ describe("buildSchedulerSectionSnapshot", () => {
 
 describe("buildCyreneSectionSnapshot", () => {
   it("状态栏 / 表情包投影：阈值 clamp 到 0.3~0.9，非法档位回落默认", () => {
-    expect(buildCyreneSectionSnapshot(modelSettings({
+    const snapshot = buildCyreneSectionSnapshot(modelSettings({
       runtimeSync: "llm",
       stickerEnabled: false,
       stickerSize: "large",
       stickerSimilarityThreshold: 0.2,
-    }))).toEqual({
+    }));
+    expect(snapshot).toMatchObject({
       runtimeSync: "llm",
       stickerEnabled: false,
       stickerSize: "large",
@@ -151,11 +152,30 @@ describe("buildCyreneSectionSnapshot", () => {
       runtimeSync: "bogus" as never,
       stickerSize: "huge" as never,
       stickerSimilarityThreshold: Number.NaN,
-    }))).toEqual({
+    }))).toMatchObject({
       runtimeSync: "off",
       stickerEnabled: true,
       stickerSize: "standard",
       stickerSimilarityThreshold: 0.55,
     });
+  });
+
+  it("RAG 投影：embedding 模型/维度与 reranker 模式 + 安装状态（缺省未安装）", () => {
+    const snapshot = buildCyreneSectionSnapshot(
+      modelSettings({ embeddingDimensions: 1024, rerankerMode: "none" }),
+      { embedding: { bgem3: true }, reranker: { standard: false } },
+    );
+    expect(snapshot).toMatchObject({
+      embeddingModel: "bgem3",
+      embeddingDimensions: 1024,
+      rerankerMode: "none",
+      embeddingInstalled: true,
+      rerankerInstalled: false,
+    });
+
+    const auto = buildCyreneSectionSnapshot(modelSettings({ embeddingDimensions: undefined }));
+    expect(auto.embeddingDimensions).toBeNull();
+    expect(auto.embeddingInstalled).toBe(false);
+    expect(auto.rerankerInstalled).toBe(false);
   });
 });

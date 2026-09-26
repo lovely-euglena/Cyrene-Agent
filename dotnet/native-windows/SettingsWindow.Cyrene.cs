@@ -21,8 +21,14 @@ public sealed partial class SettingsWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakeHeader("昔涟设置"));
-        panel.Children.Add(MakeHint("Agent 行为与表情包（对齐 Electron 昔涟设置；RAG / 文档导入暂在旧版页）。"));
-        panel.Children.Add(MakeSectionStatus("cyrene"));
+        panel.Children.Add(MakeHint("Agent 行为、表情包与 RAG / 文档导入（对齐 Electron 昔涟设置）。"));
+        var sectionStatus = MakeSectionStatus("cyrene");
+        panel.Children.Add(sectionStatus);
+        void ShowStatus(string text, string level)
+        {
+            _lastNotices["cyrene"] = (text, level);
+            RenderNotice("cyrene");
+        }
 
         var cyrene = GetNode("cyrene");
 
@@ -88,13 +94,187 @@ public sealed partial class SettingsWindow
             "在管理窗启停内置表情包，或添加自己的表情包（含相近语义，用于语义匹配）。",
             stickerActions));
 
-        // ── RAG（阶段 2 指引） ──
+        // ── RAG / 文档导入 ──
         panel.Children.Add(MakeSubHeader("RAG / 文档导入"));
-        panel.Children.Add(MakeHint("Embedding 模型安装说明、缓存管理与下载镜像源暂在旧版设置中操作。"));
-        panel.Children.Add(MakeButton("在旧版设置中打开（RAG / 文档导入）",
-            () => RequestRouter.SendCommand("settings", "open-legacy", "cyrene"), minWidth: 280));
+        var embeddingInstalled = GetBool(cyrene, "embeddingInstalled");
+        var rerankerInstalled = GetBool(cyrene, "rerankerInstalled");
+        var rerankerMode = GetString(cyrene, "rerankerMode", "standard");
+
+        panel.Children.Add(MakeModelCard(
+            "BGE-M3",
+            "中文效果优秀，支持贴纸语义匹配和场景语气注入。",
+            embeddingInstalled ? "已下载 · 约 570MB" : "未下载 · 约 570MB",
+            selected: true,
+            onClick: null));
+
+        var dimensionsInput = GetInt(cyrene, "embeddingDimensions", 0);
+        panel.Children.Add(MakeDescribedRow("Embedding 维度",
+            "留空 = 首次请求自动检测；填写 = 严格校验（仅 Cloud 模式）。",
+            MakeTextControl(
+                dimensionsInput > 0 ? dimensionsInput.ToString() : "",
+                value =>
+                {
+                    if (value.Length == 0)
+                    {
+                        // null = 清空（回落到自动探测）
+                        SendCyreneSave(new Dictionary<string, object?> { ["embeddingDimensions"] = null });
+                        ShowStatus("Embedding 维度已清空（首次请求自动探测）", "ok");
+                        return;
+                    }
+                    if (!int.TryParse(value, out var parsed) || parsed <= 0 || parsed > 65536)
+                    {
+                        ShowStatus("维度需为 1~65536 的整数（留空 = 自动探测）", "error");
+                        return;
+                    }
+                    SendCyreneSave(new Dictionary<string, object?> { ["embeddingDimensions"] = parsed });
+                    ShowStatus($"Embedding 维度已保存：{parsed}", "ok");
+                },
+                160, "留空自动探测")));
+
+        Border? rerankerStandardCard = null;
+        Border? rerankerNoneCard = null;
+        void ApplyRerankerSelection(string mode)
+        {
+            if (rerankerStandardCard is not null) ApplyModelCardSelected(rerankerStandardCard, mode == "standard");
+            if (rerankerNoneCard is not null) ApplyModelCardSelected(rerankerNoneCard, mode == "none");
+        }
+        rerankerStandardCard = MakeModelCard(
+            "bge-reranker-base",
+            "精准重排，适合长文档和专业检索，约 200ms/对。",
+            rerankerInstalled ? "已下载 · 约 279MB" : "未下载 · 可选",
+            rerankerMode == "standard",
+            () =>
+            {
+                ApplyRerankerSelection("standard");
+                SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "standard" });
+            });
+        rerankerNoneCard = MakeModelCard(
+            "关闭",
+            "不进行重排序，检索后直接使用。",
+            "无需模型",
+            rerankerMode == "none",
+            () =>
+            {
+                ApplyRerankerSelection("none");
+                SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "none" });
+            });
+        panel.Children.Add(MakeSubHeader("Rerank 重排序"));
+        panel.Children.Add(rerankerStandardCard);
+        panel.Children.Add(rerankerNoneCard);
+
+        var effectiveMode = rerankerMode == "standard"
+            ? (rerankerInstalled ? "自动（优先使用已安装模型）" : "自动（bge-reranker-base 未安装，检索时按关闭处理）")
+            : "关闭（不进行重排序）";
+        panel.Children.Add(MakeDescribedRow("当前模式",
+            "重排序在检索后按 Rerank 模式生效。",
+            new TextBlock
+            {
+                Text = effectiveMode,
+                FontSize = 12,
+                Foreground = NativeTheme.TextDefaultBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 300,
+            }));
+
+        var ragActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ragActions.Children.Add(MakeButton("📖 模型安装说明",
+            () => RequestRouter.SendSettingsAction("cyrene", "open-model-docs"), minWidth: 130));
+        ragActions.Children.Add(MakeButton("删除缓存", ConfirmDeleteEmbeddingCache, minWidth: 90));
+        ragActions.Children.Add(MakeButton("检查更新",
+            () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 90));
+        panel.Children.Add(MakeDescribedRow("模型操作",
+            "模型为手动安装；删除缓存后需重新安装。",
+            ragActions));
+
+        panel.Children.Add(MakeDescribedRow("下载镜像源",
+            "模型下载使用的源；手动安装不受影响。",
+            MakeChoiceGroup(
+                new[] { ("official", "官方源", true), ("hf-mirror", "hf-mirror", true) },
+                GetString("ragDownloadMirror", "official"),
+                v => SetSetting("ragDownloadMirror", v))));
+        panel.Children.Add(MakeHint("模型状态随设置快照刷新；安装步骤见「模型安装说明」。"));
 
         return panel;
+    }
+
+    /// <summary>RAG 模型卡片：标题 + 说明 + 状态；selected = 高亮，onClick 为空则只读。</summary>
+    private static Border MakeModelCard(
+        string title,
+        string description,
+        string status,
+        bool selected,
+        Action? onClick)
+    {
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 11.5,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = status,
+            FontSize = 11,
+            Foreground = selected ? NativeTheme.PinkBrush : NativeTheme.TextMutedBrush,
+            Margin = new Thickness(0, 4, 0, 0),
+        });
+        var card = new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 6, 0, 6),
+            Child = content,
+            Cursor = onClick is null ? System.Windows.Input.Cursors.Arrow : System.Windows.Input.Cursors.Hand,
+            Tag = selected,
+        };
+        ApplyModelCardSelected(card, selected);
+        if (onClick is not null)
+        {
+            card.MouseLeftButtonUp += (_, _) => onClick();
+        }
+        return card;
+    }
+
+    /// <summary>切换模型卡片选中态（边框/底色/状态行色）。</summary>
+    private static void ApplyModelCardSelected(Border card, bool selected)
+    {
+        card.Tag = selected;
+        card.BorderBrush = selected ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush;
+        card.BorderThickness = new Thickness(selected ? 2 : 1);
+        card.Background = selected
+            ? new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0x5B, 0x8A))
+            : Brushes.White;
+        if (card.Child is StackPanel content && content.Children.Count >= 3
+            && content.Children[2] is TextBlock status)
+        {
+            status.Foreground = selected ? NativeTheme.PinkBrush : NativeTheme.TextMutedBrush;
+        }
+    }
+
+    /// <summary>删除 embedding 缓存（native 侧确认框；宿主只做删除）。</summary>
+    private void ConfirmDeleteEmbeddingCache()
+    {
+        if (MessageBox.Show("确定删除 BGE-M3 模型缓存？下次使用需重新安装（见「模型安装说明」）。", "删除模型缓存",
+                MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+        {
+            return;
+        }
+        RequestRouter.SendSettingsAction("cyrene", "delete-embedding");
     }
 
     private static void SendCyreneSave(Dictionary<string, object?> patch)

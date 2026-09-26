@@ -124,6 +124,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   asrVadSilenceMs: 1000,
   asrVadThreshold: 0.01,
   asrShowTranscript: false,
+  ragDownloadMirror: "official",
   screenshotHotkey: "Alt+Shift+S",
   screenshotBackend: "builtin",
   snipastePath: "",
@@ -337,6 +338,7 @@ export function normalizeGeneralSettings(
       ? Math.max(0.001, Math.min(0.5, Number(input.asrVadThreshold)))
       : DEFAULT_GENERAL_SETTINGS.asrVadThreshold,
     asrShowTranscript: Boolean(input?.asrShowTranscript),
+    ragDownloadMirror: input?.ragDownloadMirror === "hf-mirror" ? "hf-mirror" : "official",
     screenshotHotkey: typeof input?.screenshotHotkey === "string" && input.screenshotHotkey.trim()
       ? input.screenshotHotkey.trim()
       : DEFAULT_GENERAL_SETTINGS.screenshotHotkey,

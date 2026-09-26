@@ -340,7 +340,8 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.EMBEDDING_DOWNLOAD, async (_event, payload: unknown) => {
     const p = payload as { model?: string; mirror?: string };
     const model = p.model || "bgem3";
-    const mirror = p.mirror || "official";
+    // 镜像源：调用方显式传参优先；否则用设置页偏好（ragDownloadMirror）
+    const mirror = p.mirror || getGeneralSettings().ragDownloadMirror || "official";
     try {
       const win = BrowserWindow.getFocusedWindow();
       await downloadEmbeddingModel(model, mirror, (info) => {

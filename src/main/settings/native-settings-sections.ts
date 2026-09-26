@@ -316,14 +316,38 @@ export interface NativeCyreneSnapshot {
   stickerEnabled: boolean;
   stickerSize: "small" | "standard" | "large";
   stickerSimilarityThreshold: number;
+  /** RAG / 文档导入：embedding 模型与维度（null = 自动探测） */
+  embeddingModel: "bgem3";
+  embeddingDimensions: number | null;
+  /** RAG：reranker 模式 + 两个模型的安装状态（来自 model-status 体检） */
+  rerankerMode: "standard" | "none";
+  embeddingInstalled: boolean;
+  rerankerInstalled: boolean;
+}
+
+/** 模型安装状态（结构投影；实际探测在 main/rag/model-status，避免本模块依赖 electron）。 */
+export interface NativeModelInstallStatus {
+  embedding: { bgem3: boolean };
+  reranker: { standard: boolean };
 }
 
 /**
  * 昔涟设置快照（与渲染页 loadGeneralSettings 读的是同一份 model settings；
  * 写入由 cyrene section 动作 save 走 saveModelSettings，读/写归一化同口径）。
+ * status 由调用方传入（getModelInstallStatus()），缺省按未安装。
  */
 export function buildCyreneSectionSnapshot(
-  settings: Pick<ModelSettings, "runtimeSync" | "stickerEnabled" | "stickerSize" | "stickerSimilarityThreshold">,
+  settings: Pick<
+    ModelSettings,
+    | "runtimeSync"
+    | "stickerEnabled"
+    | "stickerSize"
+    | "stickerSimilarityThreshold"
+    | "embeddingModel"
+    | "embeddingDimensions"
+    | "rerankerMode"
+  >,
+  status?: NativeModelInstallStatus,
 ): NativeCyreneSnapshot {
   const runtimeSync = settings.runtimeSync === "llm"
     ? "llm"
@@ -340,5 +364,14 @@ export function buildCyreneSectionSnapshot(
       && Number.isFinite(settings.stickerSimilarityThreshold)
       ? Math.min(0.9, Math.max(0.3, settings.stickerSimilarityThreshold))
       : 0.55,
+    embeddingModel: "bgem3",
+    embeddingDimensions: typeof settings.embeddingDimensions === "number"
+      && Number.isFinite(settings.embeddingDimensions)
+      && settings.embeddingDimensions > 0
+      ? Math.round(settings.embeddingDimensions)
+      : null,
+    rerankerMode: settings.rerankerMode === "none" ? "none" : "standard",
+    embeddingInstalled: status?.embedding?.bgem3 === true,
+    rerankerInstalled: status?.reranker?.standard === true,
   };
 }

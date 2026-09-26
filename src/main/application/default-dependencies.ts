@@ -125,6 +125,8 @@ import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
 import { ensureCustomStylePrompt } from "../style-prompt";
+import { deleteEmbeddingModel } from "../embedding-manager";
+import { getModelInstallStatus } from "../rag/model-status";
 import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 import {
   MAX_PLUGIN_MEMORY_LIMIT_MB,
@@ -295,13 +297,16 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖）；error 为空串表示成功 */
   let nativeTaskHistory: { taskId: string; rows: unknown[]; error: string } | null = null;
 
-/** core 阶段绑定的表情包向量索引（native 昔涟 section 添加表情包后刷新；未绑定=不刷新）。 */
-let stickerEmbeddingIndexService: {
-  invalidateStickerEmbeddingIndex(): void;
-  refreshStickerEmbeddingIndex(reason: string): void;
-} | null = null;
+  /** core 阶段绑定的表情包向量索引（native 昔涟 section 添加表情包后刷新；未绑定=不刷新）。 */
+  let stickerEmbeddingIndexService: {
+    invalidateStickerEmbeddingIndex(): void;
+    refreshStickerEmbeddingIndex(reason: string): void;
+  } | null = null;
   /** Token 用量 section 当前统计窗口（7/14/30 天） */
   let nativeTokenDays = 7;
+
+  /** 本地模型安装说明（native 昔涟设置「模型安装说明」与渲染页同一文档）。 */
+  const LOCAL_MODELS_DOC_URL = "https://github.com/Playa-0v0/Cyrene-Agent/blob/master/docs/local-models.md";
 
   const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
   const asObj = (value: unknown): Record<string, unknown> =>
@@ -817,8 +822,9 @@ let stickerEmbeddingIndexService: {
               nativeNotice("preferences", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`);
             }
           },
-          // 「昔涟设置」section（阶段 1）：状态栏实时更新 + 表情包发送。
-          // 与渲染页 saveConfig 同源（saveModelSettings + model-config 广播）。
+          // 「昔涟设置」section：状态栏实时更新 + 表情包 + RAG（阶段 2）。
+          // 与渲染页 saveConfig 同源（saveModelSettings + model-config 广播）；
+          // reranker 模式变更后重新 initReranker（与 RERANKER_SET_MODE IPC 同口径）。
           cyreneAction: (verb, payload) => {
             if (verb === "save") {
               const patch = sanitizeNativeCyreneSave(payload);
@@ -826,6 +832,14 @@ let stickerEmbeddingIndexService: {
               try {
                 saveModelSettings(patch);
                 broadcastModelChanged();
+                if (patch.rerankerMode) {
+                  const mode = patch.rerankerMode;
+                  void import("../rag/reranker")
+                    .then(({ initReranker }) => initReranker(mode))
+                    .then(() => nativeNotice("cyrene", "ok", `重排序已${mode === "none" ? "关闭" : "开启（bge-reranker-base）"}`))
+                    .catch((err) =>
+                      nativeNotice("cyrene", "error", `重排序初始化失败：${err instanceof Error ? err.message : String(err)}`));
+                }
               } catch (err) {
                 nativeNotice("cyrene", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
               }
@@ -833,6 +847,31 @@ let stickerEmbeddingIndexService: {
             }
             if (verb === "open-sticker-manager") {
               windowManager.createStickerManagerWindow();
+              return;
+            }
+            // RAG：模型安装说明（旧版 openExternal 同一文档）
+            if (verb === "open-model-docs") {
+              void electronShell.openExternal(LOCAL_MODELS_DOC_URL)
+                .then(() => nativeNotice("cyrene", "ok", "已在浏览器打开模型安装说明"))
+                .catch((err) =>
+                  nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
+              return;
+            }
+            // RAG：删除 embedding 缓存（确认框在 native 侧弹；宿主只做删除）
+            if (verb === "delete-embedding") {
+              try {
+                deleteEmbeddingModel("bgem3");
+                nativeNotice("cyrene", "ok", "BGE-M3 模型缓存已删除（下次使用需重新安装）");
+              } catch (err) {
+                nativeNotice("cyrene", "error", `删除失败：${err instanceof Error ? err.message : String(err)}`);
+              }
+              pushSettingsSnapshotToNative();
+              return;
+            }
+            // RAG：重新体检模型状态（更新=手动替换后回到本页看状态）
+            if (verb === "check-model-update") {
+              pushSettingsSnapshotToNative();
+              nativeNotice("cyrene", "info", "已重新检测模型状态；模型为手动安装，更新请按「模型安装说明」替换");
               return;
             }
             if (verb === "add-sticker") {
@@ -1234,8 +1273,8 @@ createTray: (input) => {
                   nativeTaskHistory,
                 ),
                 tokens: buildTokensSectionSnapshot(getUsageReport(nativeTokenDays), nativeTokenDays),
-                // 昔涟设置（阶段 1）：状态栏实时更新 + 表情包发送
-                cyrene: buildCyreneSectionSnapshot(modelSettings),
+                // 昔涟设置（阶段 1+2）：状态栏实时更新 + 表情包发送 + RAG 模型
+                cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus()),
               };
             }
           : undefined,

@@ -178,6 +178,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   asrVadThreshold: number;
   /** 通话中显示文字转写 */
   asrShowTranscript: boolean;
+  /** RAG 模型下载镜像源：official=官方源；hf-mirror=国内镜像。模型为手动安装时不影响。 */
+  ragDownloadMirror: "official" | "hf-mirror";
   /** 截图全局热键（Electron Accelerator 格式，如 "Alt+Shift+S"） */
   screenshotHotkey: string;
   /** 截图后端：builtin=内置原生助手；snipaste=外部 Snipaste 命令行 */
