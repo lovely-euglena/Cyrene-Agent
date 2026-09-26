@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 
 namespace CyreneNative;
@@ -65,6 +66,10 @@ public sealed partial class SettingsWindow
             {
                 values.Add((GetString(day, "date"), GetInt(day, "input", 0), GetInt(day, "output", 0)));
             }
+            // 柱状图（对齐 Electron .mini-chart + .token-bar）：
+            //   112 高容器（18 顶部 + 76 柱区 + 18 日期区）；每天一列等分整宽；
+            //   柱 max-width 24 居中、radius-full、渐变；高度 76*total/max（最低 6）；
+            //   >14 天隔天显示；峰值白点叠在柱顶区域（top 12）；仅显示「日」号。
             var max = 1;
             var peakIndex = -1;
             for (var i = 0; i < values.Count; i++)
@@ -77,22 +82,24 @@ public sealed partial class SettingsWindow
                 }
             }
 
-            var bars = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 4) };
-            var barIndex = 0;
-            foreach (var (date, dayInput, dayOutput) in values)
+            var chart = new Grid { Height = 112, Margin = new Thickness(0, 2, 0, 6) };
+            var barsGrid = new Grid { Margin = new Thickness(0, 18, 0, 0), ClipToBounds = false };
+            var visibleIndex = 0;
+            for (var i = 0; i < values.Count; i++)
             {
+                if (values.Count > 14 && i % 2 != 0) continue;
+                var (date, dayInput, dayOutput) = values[i];
                 var total = dayInput + dayOutput;
-                var column = new StackPanel
+                barsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                var column = new Grid();
+                column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 76 柱区
+                column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });                  // 日期
+
+                if (i == peakIndex)
                 {
-                    Orientation = Orientation.Vertical,
-                    VerticalAlignment = VerticalAlignment.Bottom,
-                    Width = 28,
-                    Margin = new Thickness(2, 0, 2, 0),
-                };
-                if (barIndex == peakIndex && total > 0)
-                {
-                    // 峰值白点（Electron .token-bar--peak::after）
-                    column.Children.Add(new Ellipse
+                    // .token-bar--peak::after：top 12pt / 8×8 白点 + 粉描边（叠在柱顶上层）
+                    var dot = new Ellipse
                     {
                         Width = 8,
                         Height = 8,
@@ -100,59 +107,66 @@ public sealed partial class SettingsWindow
                         Stroke = NativeTheme.Brush(Color.FromRgb(0xFF, 0x8C, 0xCC)),
                         StrokeThickness = 1.5,
                         HorizontalAlignment = HorizontalAlignment.Center,
-                        Margin = new Thickness(0, 0, 0, 2),
-                    });
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(0, 12, 0, 0),
+                        IsHitTestVisible = false,
+                    };
+                    Panel.SetZIndex(dot, 1);
+                    Grid.SetRow(dot, 0);
+                    column.Children.Add(dot);
                 }
-                column.Children.Add(new TextBlock
-                {
-                    Text = FormatTokensShort(total),
-                    FontSize = 10,
-                    Foreground = NativeTheme.TextMutedBrush,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                });
+
                 var bar = new Border
                 {
-                    Width = 24,
+                    MaxWidth = 24,
                     Height = 0,
                     CornerRadius = new CornerRadius(12),
-                    Background = total > 0 ? TokenBarBrush() : NativeTheme.BorderSoftBrush,
-                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Background = TokenBarBrush(),
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
                     VerticalAlignment = VerticalAlignment.Bottom,
                     ToolTip = MakeTokenTooltip(date, dayInput, dayOutput),
-                };
-                if (total > 0)
-                {
-                    // 入场动画：从 0 长到目标高度（按列错峰 25ms，最多前 10 列错峰）
-                    bar.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(
-                        Math.Max(4, 64.0 * total / max), TimeSpan.FromMilliseconds(320))
+                    Cursor = System.Windows.Input.Cursors.Hand,
+                    // 对齐 .token-bar__fill 的粉色柔光
+                    Effect = new DropShadowEffect
                     {
-                        BeginTime = TimeSpan.FromMilliseconds(Math.Min(barIndex, 10) * 25),
-                        EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
-                    });
-                    // hover 高亮（柱图交互）
-                    bar.Cursor = System.Windows.Input.Cursors.Hand;
-                    bar.MouseEnter += (_, _) => bar.Opacity = 0.82;
-                    bar.MouseLeave += (_, _) => bar.Opacity = 1;
-                }
-                column.Children.Add(bar);
-                column.Children.Add(new TextBlock
+                        Color = NativeTheme.Pink,
+                        BlurRadius = 10,
+                        ShadowDepth = 0,
+                        Opacity = 0.22,
+                        RenderingBias = RenderingBias.Performance,
+                    },
+                };
+                // 入场动画：0 → 目标高度（76 基准，最低 6；按列错峰 25ms）
+                bar.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(
+                    Math.Max(6, 76.0 * total / max), TimeSpan.FromMilliseconds(320))
                 {
-                    Text = date,
+                    BeginTime = TimeSpan.FromMilliseconds(Math.Min(visibleIndex, 10) * 25),
+                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                });
+                bar.MouseEnter += (_, _) => bar.Opacity = 0.82;
+                bar.MouseLeave += (_, _) => bar.Opacity = 1;
+                Grid.SetRow(bar, 0);
+                column.Children.Add(bar);
+
+                var label = new TextBlock
+                {
+                    Text = date.Contains('-') ? date.Split('-')[^1] : date, // Electron 只显示日号
                     FontSize = 10,
+                    FontWeight = FontWeights.Bold,
                     Foreground = NativeTheme.TextMutedBrush,
                     HorizontalAlignment = HorizontalAlignment.Center,
-                    Margin = new Thickness(0, 2, 0, 0),
-                });
-                bars.Children.Add(column);
-                barIndex++;
+                    VerticalAlignment = VerticalAlignment.Bottom,
+                    Margin = new Thickness(0, 0, 0, 2),
+                };
+                Grid.SetRow(label, 1);
+                column.Children.Add(label);
+
+                Grid.SetColumn(column, visibleIndex);
+                barsGrid.Children.Add(column);
+                visibleIndex++;
             }
-            panel.Children.Add(new ScrollViewer
-            {
-                Content = bars,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Margin = new Thickness(0, 0, 0, 6),
-            });
+            chart.Children.Add(barsGrid);
+            panel.Children.Add(chart);
 
             // 使用趋势（输入/输出双折线；配色对齐 Electron Chart.js：输入 #3B82F6 / 输出 #FF8CCC）
             if (values.Count > 1)
@@ -235,14 +249,15 @@ public sealed partial class SettingsWindow
 
     // ── 图表绘制（折线 / 环形，对齐旧版 Chart.js 图表语义） ──
 
-    /// <summary>输入/输出双折线趋势图（固定宽度画布 + 横向滚动）。</summary>
+    /// <summary>输入/输出双折线趋势图（整宽画布，对齐 Electron Chart.js：填充带 + 悬停点）。</summary>
     private static FrameworkElement MakeTrendChart(List<(string Date, int Input, int Output)> values)
     {
-        const double chartHeight = 120;
-        const double slotWidth = 26;
-        const double leftPad = 36;
+        const double chartHeight = 140;
+        const double leftPad = 40;
         const double bottomPad = 20;
-        var width = leftPad + values.Count * slotWidth + 8;
+        // 设置窗定宽：内容区约 830；固定画布宽对齐 Electron 的整宽趋势图
+        const double width = 820;
+        var slotWidth = Math.Max(12, (width - leftPad - 10) / Math.Max(values.Count, 1));
         var max = 1;
         foreach (var value in values) max = Math.Max(max, Math.Max(value.Input, value.Output));
 
@@ -285,9 +300,31 @@ public sealed partial class SettingsWindow
         double XAt(int index) => leftPad + index * slotWidth + slotWidth / 2.0;
         double YAt(int amount) => chartHeight - chartHeight * ((double)amount / max);
 
-        // 折线（淡入入场）
+        // 折线与填充带（对齐 Electron fill:true；淡入入场）
         void AddSeries(bool useInput, Brush brush)
         {
+            var points = new List<Point>();
+            for (var i = 0; i < values.Count; i++)
+            {
+                var amount = useInput ? values[i].Input : values[i].Output;
+                points.Add(new Point(XAt(i), YAt(amount)));
+            }
+            if (brush is SolidColorBrush solid)
+            {
+                var fill = new Polygon
+                {
+                    Fill = new SolidColorBrush(Color.FromArgb(0x26, solid.Color.R, solid.Color.G, solid.Color.B)),
+                    Opacity = 0,
+                };
+                foreach (var point in points) fill.Points.Add(point);
+                fill.Points.Add(new Point(XAt(values.Count - 1), chartHeight));
+                fill.Points.Add(new Point(XAt(0), chartHeight));
+                fill.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(360))
+                {
+                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                });
+                canvas.Children.Add(fill);
+            }
             var polyline = new Polyline
             {
                 Stroke = brush,
@@ -295,11 +332,7 @@ public sealed partial class SettingsWindow
                 StrokeLineJoin = PenLineJoin.Round,
                 Opacity = 0,
             };
-            for (var i = 0; i < values.Count; i++)
-            {
-                var amount = useInput ? values[i].Input : values[i].Output;
-                polyline.Points.Add(new Point(XAt(i), YAt(amount)));
-            }
+            foreach (var point in points) polyline.Points.Add(point);
             polyline.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(360))
             {
                 EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
@@ -342,23 +375,18 @@ public sealed partial class SettingsWindow
             canvas.Children.Add(hit);
         }
 
-        // x 轴日期（slot 较窄：>5 个时段隔位显示；非常密的 14/30 天再放宽到每 3 个）
+        // x 轴日期（整宽画布下按密度隔位：7 天全显，14 天隔一，30 天隔二）
         for (var i = 0; i < values.Count; i++)
         {
-            var step = values.Count > 12 ? 3 : values.Count > 5 ? 2 : 1;
+            var step = values.Count > 20 ? 3 : values.Count > 7 ? 2 : 1;
             if (i % step != 0 && i != values.Count - 1) continue;
-            var label = new TextBlock { Text = values[i].Date, FontSize = 9, Foreground = NativeTheme.TextMutedBrush };
+            var label = new TextBlock { Text = values[i].Date, FontSize = 10, Foreground = NativeTheme.TextMutedBrush };
             Canvas.SetLeft(label, leftPad + i * slotWidth + slotWidth / 2.0 - 12);
             Canvas.SetTop(label, chartHeight + 3);
             canvas.Children.Add(label);
         }
 
-        return new ScrollViewer
-        {
-            Content = canvas,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        };
+        return canvas;
     }
 
     /// <summary>模型占比配色（对齐 Electron tokens/panel.ts modelColors）。</summary>
