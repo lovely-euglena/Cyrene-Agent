@@ -190,8 +190,9 @@ public static class NativeTheme
         });
 
     /// <summary>SVG path 数据 → WPF 轮廓图标（48 视框等比缩放到 size；可选固定颜色）。</summary>
-    public static FrameworkElement VectorGlyph(string svgData, double size = 16, Brush? color = null, double strokeWidth = 4)
+    public static FrameworkElement VectorGlyph(string svgData, double size = 16, Brush? color = null, double strokeWidth = 4, string? fillData = null)
     {
+        var canvas = new Canvas { Width = 48, Height = 48, IsHitTestVisible = false };
         var path = new System.Windows.Shapes.Path
         {
             Data = Geometry.Parse(svgData),
@@ -203,8 +204,19 @@ public static class NativeTheme
             Stroke = color ?? TextMutedBrush,
         };
         if (color is null) BindToButtonForeground(path, System.Windows.Shapes.Shape.StrokeProperty);
-        var canvas = new Canvas { Width = 48, Height = 48, IsHitTestVisible = false };
         canvas.Children.Add(path);
+        if (fillData is not null)
+        {
+            // 同一图标里的实心部分（如聊天气泡的三个点）：填充跟随 Foreground
+            var filled = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse(fillData),
+                Fill = color ?? TextMutedBrush,
+                Stroke = null,
+            };
+            if (color is null) BindToButtonForeground(filled, System.Windows.Shapes.Shape.FillProperty);
+            canvas.Children.Add(filled);
+        }
         return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform, IsHitTestVisible = false };
     }
 

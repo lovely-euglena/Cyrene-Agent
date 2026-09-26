@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 namespace CyreneNative;
@@ -18,12 +19,17 @@ namespace CyreneNative;
 public sealed class SidebarWindow : NativeWindow
 {
     private readonly Window _window;
-    private readonly TextBlock _statusLabel = new() { FontSize = 14, FontWeight = FontWeights.Medium };
-    private readonly TextBlock _feelingLabel = new() { FontSize = 14, FontWeight = FontWeights.Medium };
-    private readonly System.Windows.Controls.Image _statusIcon = new() { Width = 48, Height = 48 };
-    private readonly System.Windows.Controls.Image _feelingIcon = new() { Width = 48, Height = 48 };
-    private readonly TextBlock _modelLabel = new() { FontSize = 12, Opacity = 0.9, TextTrimming = TextTrimming.CharacterEllipsis };
-    private readonly TextBlock _onlineLabel = new() { FontSize = 11, Opacity = 0.65 };
+    private readonly TextBlock _statusLabel = new() { FontSize = 16, FontWeight = FontWeights.Medium };
+    private readonly TextBlock _feelingLabel = new() { FontSize = 16, FontWeight = FontWeights.Medium };
+    private readonly System.Windows.Controls.Image _statusIcon = new() { Width = 46, Height = 46, Stretch = Stretch.UniformToFill };
+    private readonly System.Windows.Controls.Image _feelingIcon = new() { Width = 46, Height = 46, Stretch = Stretch.UniformToFill };
+    /// <summary>状态同步关闭时的占位齿轮（对齐 Electron applyRuntimeDisabled）。</summary>
+    private readonly FrameworkElement _statusGear = NativeTheme.VectorGlyph(Glyphs.Gear, 22, NativeTheme.TextMutedBrush);
+    private readonly FrameworkElement _feelingGear = NativeTheme.VectorGlyph(Glyphs.Gear, 22, NativeTheme.TextMutedBrush);
+    /// <summary>资料区在线胶囊（对齐 .profile__online / pearl-white 覆盖）。</summary>
+    private readonly TextBlock _onlineLabel = new() { FontSize = 14 };
+    private readonly Border _onlinePill = new();
+    private readonly Border _onlineDot = new();
     private readonly Border _root;
 
     private bool _pinned;
@@ -53,8 +59,7 @@ public sealed class SidebarWindow : NativeWindow
         };
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) }); // titlebar
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(68) }); // 底部按钮排
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 主体（滚动）
         _root.Child = grid;
 
         // ── titlebar（拖拽区；对齐 Electron sidebar：左置顶 → 头像/名字/胶囊 → 最小化/关闭） ──
@@ -137,34 +142,23 @@ public sealed class SidebarWindow : NativeWindow
         Grid.SetRow(titlebar, 0);
         grid.Children.Add(titlebar);
 
-        // ── 主体：状态/心情/模型（白卡 + 轻投影，对齐 pearl-white 卡片语言） ──
-        var body = new StackPanel { Margin = new Thickness(14, 14, 14, 8) };
-        body.Children.Add(MakeCard(MakeStatusRow()));
-        body.Children.Add(MakeCard(MakeFeelingRow()));
-        body.Children.Add(MakeCard(MakeModelBlock()));
+        // ── 主体（对齐 Electron sidebar：资料 → 状态/心情卡 → 模型按钮卡 → 设置卡） ──
+        var body = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(14, 10, 14, 14),
+        };
+        var bodyPanel = new StackPanel();
+        bodyPanel.Children.Add(BuildProfile());
+        bodyPanel.Children.Add(MakeDivider());
+        bodyPanel.Children.Add(MakeIndicatorCard("状态：", _statusIcon, _statusGear, _statusLabel));
+        bodyPanel.Children.Add(MakeIndicatorCard("心情：", _feelingIcon, _feelingGear, _feelingLabel));
+        bodyPanel.Children.Add(BuildModelCard());
+        bodyPanel.Children.Add(BuildActionCard());
+        bodyPanel.Children.Add(MakeDivider());
+        body.Content = bodyPanel;
         Grid.SetRow(body, 1);
         grid.Children.Add(body);
-
-        // ── 底部：打开聊天 / 语音通话 / 设置（等宽铺满，旧版按钮为整行大按钮） ──
-        var footer = new UniformGrid
-        {
-            Columns = 3,
-            Margin = new Thickness(12, 0, 12, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var chatBtn = MakePillButton("打开聊天", large: true);
-        chatBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openChat");
-        var callBtn = MakePillButton("语音通话", large: true);
-        callBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openCall");
-        var settingsBtn = MakePillButton("设置", large: true);
-        settingsBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings");
-        foreach (var (btn, isLast) in new[] { (chatBtn, false), (callBtn, false), (settingsBtn, true) })
-        {
-            btn.Margin = new Thickness(0, 0, isLast ? 0 : 8, 0);
-            footer.Children.Add(btn);
-        }
-        Grid.SetRow(footer, 2);
-        grid.Children.Add(footer);
 
         // 窗口投影：内容壳四周留 16px 透明边（窗口整体 +32，位置在 ApplyLayout 补偿）
         _root.Margin = new Thickness(WindowShadowMargin);
@@ -210,12 +204,19 @@ public sealed class SidebarWindow : NativeWindow
 
         if (runtimeSync == "off")
         {
-            _statusLabel.Text = "运行状态同步未启用";
+            // 对齐 Electron applyRuntimeDisabled：两格都显示齿轮 + 「请到设置里开启」
+            _statusLabel.Text = "请到设置里开启";
             _feelingLabel.Text = "请到设置里开启";
-            _statusIcon.Source = null;
-            _feelingIcon.Source = null;
+            _statusIcon.Visibility = Visibility.Collapsed;
+            _feelingIcon.Visibility = Visibility.Collapsed;
+            _statusGear.Visibility = Visibility.Visible;
+            _feelingGear.Visibility = Visibility.Visible;
             return;
         }
+        _statusGear.Visibility = Visibility.Collapsed;
+        _feelingGear.Visibility = Visibility.Collapsed;
+        _statusIcon.Visibility = Visibility.Visible;
+        _feelingIcon.Visibility = Visibility.Visible;
         _statusLabel.Text = status ?? "陪伴中";
         _feelingLabel.Text = feeling ?? "平静";
         _statusIcon.Source = LoadStatusIcon(status ?? "陪伴中", "status");
@@ -224,14 +225,8 @@ public sealed class SidebarWindow : NativeWindow
 
     public void ApplyModelConfig(JsonElement config)
     {
-        var displayName = config.TryGetProperty("displayName", out var d) ? d.GetString() : null;
-        var shortName = config.TryGetProperty("shortName", out var s) ? s.GetString() : null;
         var connected = config.TryGetProperty("connected", out var c) && c.GetBoolean();
-        _modelLabel.Text = displayName ?? shortName ?? "未配置";
-        _onlineLabel.Text = connected ? "在线" : "离线";
-        _onlineLabel.Foreground = new SolidColorBrush(connected
-            ? (Color)ColorConverter.ConvertFromString("#15803D")
-            : (Color)ColorConverter.ConvertFromString("#B91C1C"));
+        ApplyOnlineState(connected);
     }
 
     private ImageSource? LoadStatusIcon(string name, string category)
@@ -242,71 +237,269 @@ public sealed class SidebarWindow : NativeWindow
         return File.Exists(path) ? new BitmapImage(new Uri(path)) : null;
     }
 
-    private StackPanel MakeStatusRow()
+    /// <summary>资料区（对齐 .profile）：70px 圆头像 + 名字 + 在线胶囊。</summary>
+    private FrameworkElement BuildProfile()
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        _statusIcon.VerticalAlignment = VerticalAlignment.Center;
-        _statusLabel.VerticalAlignment = VerticalAlignment.Center;
-        _statusLabel.Foreground = NativeTheme.TextStrongBrush;
-        _statusLabel.Margin = new Thickness(10, 0, 0, 0);
-        row.Children.Add(_statusIcon);
-        row.Children.Add(_statusLabel);
-        return row;
-    }
+        var avatar = new Border
+        {
+            Width = 70,
+            Height = 70,
+            CornerRadius = new CornerRadius(35),
+            BorderBrush = NativeTheme.Brush(Color.FromArgb(0x75, 0xFF, 0xB6, 0xDC)),
+            BorderThickness = new Thickness(2),
+            ClipToBounds = true,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Effect = new DropShadowEffect
+            {
+                Color = NativeTheme.Pink,
+                BlurRadius = 14,
+                ShadowDepth = 0,
+                Opacity = 0.18,
+                RenderingBias = RenderingBias.Performance,
+            },
+            Child = new Image
+            {
+                Source = NativeTheme.TryLoadAssetImage("icons/cyrene-pink.png"),
+                Stretch = Stretch.UniformToFill,
+            },
+        };
 
-    private StackPanel MakeFeelingRow()
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        _feelingIcon.VerticalAlignment = VerticalAlignment.Center;
-        _feelingLabel.VerticalAlignment = VerticalAlignment.Center;
-        _feelingLabel.Foreground = NativeTheme.TextStrongBrush;
-        _feelingLabel.Margin = new Thickness(10, 0, 0, 0);
-        row.Children.Add(_feelingIcon);
-        row.Children.Add(_feelingLabel);
-        return row;
-    }
+        _onlineDot.Width = 7;
+        _onlineDot.Height = 7;
+        _onlineDot.CornerRadius = new CornerRadius(4);
+        _onlineDot.VerticalAlignment = VerticalAlignment.Center;
+        _onlineLabel.VerticalAlignment = VerticalAlignment.Center;
+        _onlineLabel.Margin = new Thickness(6, 0, 0, 0);
+        var pillRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        pillRow.Children.Add(_onlineDot);
+        pillRow.Children.Add(_onlineLabel);
+        _onlinePill.CornerRadius = new CornerRadius(11);
+        _onlinePill.BorderThickness = new Thickness(1);
+        _onlinePill.Padding = new Thickness(10, 3, 10, 3);
+        _onlinePill.HorizontalAlignment = HorizontalAlignment.Center;
+        _onlinePill.Margin = new Thickness(0, 8, 0, 0);
+        _onlinePill.Child = pillRow;
+        ApplyOnlineState(false); // 未收到 model config 前按离线显示
 
-    /// <summary>模型块：小标题 + 模型名 + 切换按钮 + 在线状态。</summary>
-    private StackPanel MakeModelBlock()
-    {
-        var stack = new StackPanel();
+        var stack = new StackPanel { Margin = new Thickness(0, 4, 0, 6) };
+        stack.Children.Add(avatar);
         stack.Children.Add(new TextBlock
         {
-            Text = "模型",
-            FontSize = 11,
-            Foreground = NativeTheme.TextMutedBrush,
-            Margin = new Thickness(0, 0, 0, 6),
+            Text = "昔涟",
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 8, 0, 0),
         });
-        var modelRow = new StackPanel { Orientation = Orientation.Horizontal };
-        _modelLabel.VerticalAlignment = VerticalAlignment.Center;
-        _modelLabel.Foreground = NativeTheme.TextDefaultBrush;
-        _modelLabel.FontSize = 13;
-        _modelLabel.Margin = new Thickness(0, 0, 10, 0);
-        _modelLabel.MaxWidth = 170; // 给「切换」按钮留位，长模型名省略号截断
-        modelRow.Children.Add(_modelLabel);
-        var switchBtn = MakePillButton("切换");
-        // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
-        switchBtn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings", "api");
-        modelRow.Children.Add(switchBtn);
-        stack.Children.Add(modelRow);
-        _onlineLabel.Foreground = NativeTheme.TextMutedBrush;
-        _onlineLabel.Margin = new Thickness(0, 6, 0, 0);
-        stack.Children.Add(_onlineLabel);
+        stack.Children.Add(_onlinePill);
         return stack;
     }
 
-    /// <summary>白卡容器（pearl-white：白底 + 软边框 + 轻投影）。</summary>
-    private static Border MakeCard(FrameworkElement content) => new()
+    /// <summary>状态/心情卡（对齐 .panel-card + .indicator）：48px 图标砖 + 「前缀：标签」。</summary>
+    private static Border MakeIndicatorCard(string prefix, Image icon, FrameworkElement fallback, TextBlock label)
     {
-        Background = Brushes.White,
-        BorderBrush = NativeTheme.BorderSoftBrush,
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(12),
-        Padding = new Thickness(14, 12, 14, 12),
-        Margin = new Thickness(0, 0, 0, 10),
-        Child = content,
-        Effect = NativeTheme.CardShadow(),
+        var tileContent = new Grid();
+        tileContent.Children.Add(fallback);
+        tileContent.Children.Add(icon);
+        fallback.Visibility = Visibility.Collapsed;
+        var tile = new Border
+        {
+            Width = 48,
+            Height = 48,
+            CornerRadius = new CornerRadius(16),
+            Background = NativeTheme.Brush(Color.FromRgb(0xFF, 0xF1, 0xF6)),
+            BorderBrush = NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB)),
+            BorderThickness = new Thickness(1),
+            ClipToBounds = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = tileContent,
+        };
+
+        label.Foreground = NativeTheme.TextStrongBrush;
+        label.VerticalAlignment = VerticalAlignment.Center;
+        var text = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        text.Children.Add(new TextBlock
+        {
+            Text = prefix,
+            FontSize = 14,
+            Foreground = NativeTheme.TextMutedBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        text.Children.Add(label);
+
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(tile, 0);
+        Grid.SetColumn(text, 1);
+        row.Children.Add(tile);
+        row.Children.Add(text);
+
+        return new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(18),
+            Padding = new Thickness(12),
+            Margin = new Thickness(0, 0, 0, 10),
+            Child = row,
+            Effect = NativeTheme.CardShadow(),
+        };
+    }
+
+    /// <summary>模型卡（对齐 .model-card）：打开聊天 / 语音通话 / 切换模型。</summary>
+    private FrameworkElement BuildModelCard()
+    {
+        var stack = new StackPanel();
+        var chatBtn = MakeModelButton("打开聊天", Glyphs.Chat, Glyphs.ChatDots, () => RequestRouter.SendCommand(Kind, "openChat"));
+        var callBtn = MakeModelButton("语音通话", Glyphs.Phone, null, () => RequestRouter.SendCommand(Kind, "openCall"));
+        // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
+        var switchBtn = MakeModelButton("切换模型", Glyphs.Sync, null, () => RequestRouter.SendCommand(Kind, "openSettings", "api"));
+        foreach (var btn in new[] { chatBtn, callBtn, switchBtn })
+        {
+            btn.Margin = new Thickness(0, 0, 0, 8);
+            stack.Children.Add(btn);
+        }
+        switchBtn.Margin = new Thickness(0);
+
+        return new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(18),
+            Padding = new Thickness(12),
+            Margin = new Thickness(0, 0, 0, 10),
+            Child = stack,
+            Effect = NativeTheme.CardShadow(),
+        };
+    }
+
+    /// <summary>设置卡（对齐 .action-card）：粉色主按钮。</summary>
+    private FrameworkElement BuildActionCard()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        row.Children.Add(NativeTheme.VectorGlyph(Glyphs.Gear, 18));
+        row.Children.Add(new TextBlock
+        {
+            Text = "设置",
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+        var btn = new Button
+        {
+            Style = NativeTheme.PrimaryButtonStyle,
+            Height = 38,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Content = row,
+        };
+        btn.Click += (_, _) => RequestRouter.SendCommand(Kind, "openSettings");
+        return new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(18),
+            Padding = new Thickness(10),
+            Margin = new Thickness(0, 0, 0, 10),
+            Child = btn,
+            Effect = NativeTheme.CardShadow(),
+        };
+    }
+
+    /// <summary>模型按钮（对齐 pearl-white .model-switch-btn：粉紫渐变底 + 图标 + 文本）。</summary>
+    private static Button MakeModelButton(string text, string glyphData, string? fillData, Action onClick)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        row.Children.Add(NativeTheme.VectorGlyph(glyphData, 15, fillData: fillData));
+        row.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(FrameworkElement.HeightProperty, 36.0));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, NativeTheme.TextDefaultBrush));
+        style.Setters.Add(new Setter(Control.CursorProperty, Cursors.Hand));
+        var template = new ControlTemplate(typeof(Button));
+        var border = new FrameworkElementFactory(typeof(Border), "bd");
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        border.SetValue(Border.BorderBrushProperty, NativeTheme.BorderSoftBrush);
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        border.SetValue(Border.BackgroundProperty, new LinearGradientBrush(
+            Color.FromRgb(0xFB, 0xE3, 0xEF), Color.FromRgb(0xF1, 0xE6, 0xF8),
+            new Point(0, 0), new Point(1, 1)));
+        border.SetValue(UIElement.RenderTransformProperty, new TranslateTransform());
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(presenter);
+        template.VisualTree = border;
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.Brush(Color.FromRgb(0xFB, 0xDA, 0xEB))) { TargetName = "bd" });
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB))) { TargetName = "bd" });
+        hover.Setters.Add(new Setter(Control.ForegroundProperty, NativeTheme.TextStrongBrush));
+        hover.Setters.Add(new Setter(UIElement.RenderTransformProperty,
+            new TranslateTransform(0, -1)) { TargetName = "bd" });
+        template.Triggers.Add(hover);
+        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
+        pressed.Setters.Add(new Setter(UIElement.RenderTransformProperty, new TranslateTransform(0, 0)) { TargetName = "bd" });
+        template.Triggers.Add(pressed);
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+
+        var btn = new Button { Content = row, Style = style };
+        btn.Click += (_, _) => onClick();
+        return btn;
+    }
+
+    /// <summary>分隔线（对齐 .sidebar__divider：透明→浅粉→透明）。</summary>
+    private static FrameworkElement MakeDivider() => new System.Windows.Shapes.Rectangle
+    {
+        Height = 1,
+        Margin = new Thickness(2, 4, 2, 4),
+        Fill = new LinearGradientBrush(
+            [
+                new GradientStop(Colors.Transparent, 0),
+                new GradientStop(NativeTheme.BorderSoft, 0.5),
+                new GradientStop(Colors.Transparent, 1),
+            ],
+            new Point(0, 0), new Point(1, 0)),
     };
+
+    /// <summary>在线胶囊配色（对齐 pearl-white .profile__online / .is-offline）。</summary>
+    private void ApplyOnlineState(bool connected)
+    {
+        _onlineLabel.Text = connected ? "在线" : "离线";
+        if (connected)
+        {
+            _onlinePill.Background = NativeTheme.Brush(Color.FromArgb(0xB8, 0xDC, 0xFC, 0xE7));
+            _onlinePill.BorderBrush = NativeTheme.Brush(Color.FromArgb(0x3D, 0x22, 0xC5, 0x5E));
+            _onlineLabel.Foreground = NativeTheme.Brush(Color.FromRgb(0x15, 0x80, 0x3D));
+            _onlineDot.Background = new LinearGradientBrush(
+                Color.FromRgb(0x4A, 0xDE, 0x80), Color.FromRgb(0x22, 0xC5, 0x5E),
+                new Point(0, 0), new Point(1, 1));
+        }
+        else
+        {
+            _onlinePill.Background = NativeTheme.SurfaceAppBrush;
+            _onlinePill.BorderBrush = NativeTheme.BorderSoftBrush;
+            _onlineLabel.Foreground = NativeTheme.TextMutedBrush;
+            _onlineDot.Background = NativeTheme.BorderStrongBrush;
+        }
+    }
 
     /// <summary>标题栏线稿头像：白色线稿 PNG 作 OpacityMask 染成深色（叠两层加强线感）。</summary>
     private static FrameworkElement? MakeTitleAvatar(double size)
@@ -327,48 +520,6 @@ public sealed class SidebarWindow : NativeWindow
             });
         }
         return grid;
-    }
-
-    private static System.Windows.Controls.Button MakePillButton(string text, bool large = false)
-    {
-        var normalFill = Brushes.White;
-        var normalBorder = NativeTheme.BorderStrongBrush;
-        var hoverFill = NativeTheme.PinkSoftBrush;
-        var hoverBorder = NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB));
-        var pressedFill = NativeTheme.Brush(Color.FromRgb(0xFF, 0xD6, 0xE4));
-
-        var style = new Style(typeof(System.Windows.Controls.Button));
-        style.Setters.Add(new Setter(Button.ForegroundProperty, NativeTheme.TextDefaultBrush));
-        // 底部三个主操作按钮加大：与旧版整行按钮的体量对齐
-        style.Setters.Add(new Setter(Button.FontSizeProperty, large ? 14.0 : 12.0));
-        style.Setters.Add(new Setter(Button.MinHeightProperty, large ? 40.0 : 28.0));
-        style.Setters.Add(new Setter(Button.PaddingProperty, large ? new Thickness(12, 9, 12, 9) : new Thickness(14, 6, 14, 6)));
-        style.Setters.Add(new Setter(Button.CursorProperty, Cursors.Hand));
-        style.Setters.Add(new Setter(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
-        style.Setters.Add(new Setter(Button.VerticalContentAlignmentProperty, VerticalAlignment.Center));
-
-        var template = new ControlTemplate(typeof(System.Windows.Controls.Button));
-        var border = new FrameworkElementFactory(typeof(Border), "pill");
-        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
-        border.SetValue(Border.BackgroundProperty, normalFill);
-        border.SetValue(Border.BorderBrushProperty, normalBorder);
-        border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        border.AppendChild(presenter);
-        template.VisualTree = border;
-
-        var hover = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, hoverFill) { TargetName = "pill" });
-        hover.Setters.Add(new Setter(Border.BorderBrushProperty, hoverBorder) { TargetName = "pill" });
-        template.Triggers.Add(hover);
-        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
-        pressed.Setters.Add(new Setter(Border.BackgroundProperty, pressedFill) { TargetName = "pill" });
-        template.Triggers.Add(pressed);
-
-        style.Setters.Add(new Setter(Button.TemplateProperty, template));
-        return new System.Windows.Controls.Button { Content = text, Style = style };
     }
 
     /// <summary>pearl-white 浅色壳：白底 + 左上淡粉环境渐变（对齐 theme.css 的淡粉渐变层）。</summary>
