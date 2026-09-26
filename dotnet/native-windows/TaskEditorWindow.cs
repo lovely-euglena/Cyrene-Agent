@@ -20,7 +20,7 @@ namespace CyreneNative;
 /// </summary>
 public sealed class TaskEditorWindow : Window
 {
-    private readonly Action<string?, Dictionary<string, object?>> _onSave;
+    private readonly Action<string?, Dictionary<string, object?>, Action<bool, string?, JsonElement?>> _onSave;
     private readonly string? _editingId;
     private readonly bool _isPluginTask;
 
@@ -42,12 +42,14 @@ public sealed class TaskEditorWindow : Window
     private readonly StackPanel _toolsPanel = new();
     private readonly ScrollViewer _toolsScroll = new();
     private readonly TextBlock _status = new();
+    private Button? _saveButton;
+    private bool _saving;
     /// <summary>窗口圆角（构造时取宿主广播值；模态窗不跟随运行期变更）。</summary>
     private readonly double _cornerRadius = 12;
 
     private static readonly Regex TimePattern = new("^([01]\\d|2[0-3]):[0-5]\\d$", RegexOptions.Compiled);
 
-    public TaskEditorWindow(JsonElement? task, JsonElement tools, Action<string?, Dictionary<string, object?>> onSave)
+    public TaskEditorWindow(JsonElement? task, JsonElement tools, Action<string?, Dictionary<string, object?>, Action<bool, string?, JsonElement?>> onSave)
     {
         _onSave = onSave;
         var hasTask = task.HasValue && task.Value.ValueKind == JsonValueKind.Object;
@@ -170,7 +172,8 @@ public sealed class TaskEditorWindow : Window
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
         actions.Children.Add(MakeDialogButton("取消", () => Close(), primary: false));
-        actions.Children.Add(MakeDialogButton("保存", Save, primary: true));
+        _saveButton = MakeDialogButton("保存", Save, primary: true);
+        actions.Children.Add(_saveButton);
         panel.Children.Add(actions);
 
         _titleBox.Focus();
@@ -297,6 +300,7 @@ public sealed class TaskEditorWindow : Window
 
     private void Save()
     {
+        if (_saving) return;
         var title = _titleBox.Text.Trim();
         var prompt = _promptBox.Text.Trim();
         if (title.Length == 0)
@@ -408,8 +412,22 @@ public sealed class TaskEditorWindow : Window
             payload["toolMode"] = "allow-list";
         }
 
-        _onSave(_editingId, payload);
-        Close();
+        _saving = true;
+        _status.Foreground = NativeTheme.TextMutedBrush;
+        _status.Text = "保存中…";
+        if (_saveButton is not null) _saveButton.IsEnabled = false;
+        _onSave(_editingId, payload, (ok, error, _) =>
+        {
+            _saving = false;
+            if (ok)
+            {
+                Close();
+                return;
+            }
+            _status.Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A));
+            _status.Text = error is { Length: > 0 } ? $"保存失败：{error}" : "保存失败，请查看终端日志";
+            if (_saveButton is not null) _saveButton.IsEnabled = true;
+        });
     }
 
     // ── 文案/控件工厂（与设置窗风格一致） ──

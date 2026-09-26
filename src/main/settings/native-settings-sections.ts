@@ -121,11 +121,19 @@ export interface NativeSchedulerSnapshot {
 
 export interface NativeTokensDay {
   date: string;
+  /** 中文周几（"周一"…；旧版 tooltip/图表 title 用） */
+  weekday: string;
   input: number;
   output: number;
   hit: number;
   miss: number;
+  /** 缓存创建 token；0 = 未提供 */
+  cacheCreation: number;
   requests: number;
+  /** 有 usage 回执的请求数（请求数显示 N / M） */
+  attemptedRequests: number;
+  /** 厂商实际返回缓存统计的请求数；0 = 暂无缓存数据 */
+  cacheUsageRequests: number;
 }
 
 export interface NativeTokensModel {
@@ -140,24 +148,47 @@ export interface NativeTokensSnapshot {
   days: number;
   daily: NativeTokensDay[];
   models: NativeTokensModel[];
-  totals: { input: number; output: number; hit: number; miss: number; requests: number };
+  totals: {
+    input: number;
+    output: number;
+    hit: number;
+    miss: number;
+    requests: number;
+    attemptedRequests: number;
+    cacheUsageRequests: number;
+  };
 }
 
 /** 投影 token 用量报告（不依赖 electron，纯结构类型便于单测）。 */
 export function buildTokensSectionSnapshot(
   report: {
-    days: Array<{ date: string; input: number; output: number; hit: number; miss: number; requests: number }>;
+    days: Array<{
+      date: string;
+      weekday: string;
+      input: number;
+      output: number;
+      hit: number;
+      miss: number;
+      cacheCreation: number;
+      requests: number;
+      attemptedRequests: number;
+      cacheUsageRequests: number;
+    }>;
     models: Array<{ model: string; input: number; output: number; requests: number }>;
   },
   days: number,
 ): NativeTokensSnapshot {
   const daily: NativeTokensDay[] = report.days.map((day) => ({
     date: day.date,
+    weekday: day.weekday,
     input: day.input,
     output: day.output,
     hit: day.hit,
     miss: day.miss,
+    cacheCreation: day.cacheCreation,
     requests: day.requests,
+    attemptedRequests: day.attemptedRequests,
+    cacheUsageRequests: day.cacheUsageRequests,
   }));
   const totals = daily.reduce(
     (acc, day) => ({
@@ -166,8 +197,10 @@ export function buildTokensSectionSnapshot(
       hit: acc.hit + day.hit,
       miss: acc.miss + day.miss,
       requests: acc.requests + day.requests,
+      attemptedRequests: acc.attemptedRequests + day.attemptedRequests,
+      cacheUsageRequests: acc.cacheUsageRequests + day.cacheUsageRequests,
     }),
-    { input: 0, output: 0, hit: 0, miss: 0, requests: 0 },
+    { input: 0, output: 0, hit: 0, miss: 0, requests: 0, attemptedRequests: 0, cacheUsageRequests: 0 },
   );
   const models: NativeTokensModel[] = report.models.slice(0, 12).map((model) => ({
     name: model.model,

@@ -17,6 +17,12 @@ public static class RequestRouter
     /// <summary>当前窗口圆角（供模态子窗如任务编辑器取初值）。</summary>
     public static double? WindowRadius => _windowRadius;
 
+    // ── section 动作结果回执（任务编辑器等「成功才关窗」的交互） ──
+
+    private static int _nextActionRequestId = 1;
+    private static readonly Dictionary<int, Action<bool, string?, JsonElement?>> PendingActionResults = new();
+    private static readonly Dictionary<int, System.Windows.Threading.DispatcherTimer> PendingActionTimers = new();
+
     public static async Task Handle(System.Windows.Application app, int id, JsonElement element)
     {
         var op = element.TryGetProperty("op", out var opEl) ? opEl.GetString() : null;
@@ -181,6 +187,17 @@ public static class RequestRouter
                 });
                 break;
             }
+            case "state.settings-action-result":
+            {
+                // section 动作回执（含 requestId）：唤醒 SendSettingsAction 的等待回调
+                var result = element.TryGetProperty("result", out var resultEl) ? resultEl : default;
+                app.Dispatcher.Invoke(() =>
+                {
+                    CompleteActionResult(result);
+                    Protocol?.ReplyOk(id);
+                });
+                break;
+            }
             case "settings.set":
             {
                 // native 设置窗 → 宿主：写设置键（白名单在 SendSettingForwarded）
@@ -306,6 +323,61 @@ public static class RequestRouter
         };
         if (payload is not null) body["payload"] = payload;
         Protocol?.SendEvent(body);
+    }
+
+    /// <summary>
+    /// 发送 section 动作；onResult 非空时携带 requestId，等待宿主
+    /// state.settings-action-result 回执（15s 未响应按失败回调，避免卡窗）。
+    /// 回调在 UI 线程执行（事件帧经 Dispatcher.Invoke 分发）。
+    /// </summary>
+    public static void SendSettingsAction(
+        string kind,
+        string verb,
+        Dictionary<string, object?>? payload,
+        Action<bool, string?, JsonElement?> onResult)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["op"] = "event",
+            ["name"] = "cmd",
+            ["kind"] = "settings",
+            ["action"] = kind,
+            ["verb"] = verb,
+        };
+        if (payload is not null) body["payload"] = payload;
+
+        var requestId = _nextActionRequestId++;
+        body["requestId"] = requestId;
+        PendingActionResults[requestId] = onResult;
+        var timer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(15),
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            PendingActionTimers.Remove(requestId);
+            if (PendingActionResults.Remove(requestId, out var callback)) callback(false, "宿主未响应（超时）", null);
+        };
+        PendingActionTimers[requestId] = timer;
+        timer.Start();
+        Protocol?.SendEvent(body);
+    }
+
+    /// <summary>宿主动作结果回执（state.settings-action-result）：唤醒等待中的回调。</summary>
+    private static void CompleteActionResult(JsonElement result)
+    {
+        if (!result.TryGetProperty("requestId", out var idEl) || !idEl.TryGetInt32(out var requestId)) return;
+        if (PendingActionTimers.Remove(requestId, out var timer)) timer.Stop();
+        if (!PendingActionResults.Remove(requestId, out var callback)) return;
+        var ok = result.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+        var error = result.TryGetProperty("error", out var errorEl) && errorEl.ValueKind == JsonValueKind.String
+            ? errorEl.GetString()
+            : null;
+        var data = result.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Object
+            ? dataEl.Clone()
+            : (JsonElement?)null;
+        callback(ok, error, data);
     }
 
     /// <summary>窗口请求宿主动作（openSettings 等）；extra 附加字段随 cmd 帧透传。</summary>

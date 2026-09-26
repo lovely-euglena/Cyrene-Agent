@@ -73,7 +73,7 @@ import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manage
 import { syncPlaywrightMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
 import { registerAppUpdateIpc } from "../updater/app-update-ipc";
 import { createGitHubAppUpdateService, scheduleStartupUpdateCheck } from "../updater/github-app-updater";
-import { registerWindowSystemIpc } from "../windows/window-system-ipc";
+import { registerWindowSystemIpc, openChromeGpuWindow } from "../windows/window-system-ipc";
 import { enqueueLLMTask } from "../llm-queue";
 import {
   registerPrivilegedSchemes,
@@ -484,12 +484,47 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     }
   };
 
-  /** WPF「记忆」section 动作（与渲染设置页同口径；实现见 memory/memory-actions.ts） */
-  const nativeMemoryAction = (verb: string, payload: Record<string, unknown>): void => {
+  /** WPF「通用」section 动作（清空聊天记录 / 打开 chrome://gpu）。
+   *  返回值用于动作回执：WPF 据此更新状态行并结束「进行中」态。 */
+  const nativeGeneralAction = (verb: string, __payload: Record<string, unknown>): unknown => {
+    switch (verb) {
+      case "clear-chat-history": {
+        // 旧版渲染页逐条调 chatStore.delete；宿主侧走同一 chats-store（串行删除）
+        try {
+          const sessions = chatsStore.listSessions();
+          let deleted = 0;
+          for (const session of sessions) {
+            if (chatsStore.deleteSession(session.id)) deleted++;
+          }
+          nativeNotice("general", "ok", "所有聊天会话已清空");
+          return { ok: true, data: { deleted } };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          nativeNotice("general", "error", "清空失败，请查看终端日志");
+          return { ok: false, error: message };
+        }
+      }
+      case "open-gpu-internals": {
+        try {
+          openChromeGpuWindow();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+      default:
+        console.warn("[NativeSettings] unhandled general action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「记忆」section 动作（与渲染设置页同口径；实现见 memory/memory-actions.ts）。
+   *  返回值用于动作回执：WPF 据此结束「进行中」态并就地显示错误。 */
+  const nativeMemoryAction = (verb: string, payload: Record<string, unknown>): unknown => {
     switch (verb) {
       case "save-l0":
       case "save-l1":
-        void (async () => {
+        return (async () => {
           const result = verb === "save-l0"
             ? await saveMemoryL0(payload.fields)
             : await saveMemoryL1(payload.fields);
@@ -498,100 +533,123 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             result.ok ? "ok" : "error",
             result.ok ? (verb === "save-l0" ? "画像已保存" : "近况已保存") : `保存失败：${result.error ?? "未知错误"}`,
           );
-          pushSettingsSnapshotToNative();
+          // 失败不推快照：WPF 编辑态保留用户输入，仅成功才刷新
+          if (result.ok) pushSettingsSnapshotToNative();
+          return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
         })();
-        return;
       case "delete-doc": {
         const importId = asStr(payload.importId);
         const fileName = asStr(payload.fileName);
-        if (!importId && !fileName) return;
-        const deleted = removeImportedDocEntry(importId, fileName || undefined);
-        nativeNotice(
-          "memory",
-          deleted > 0 ? "ok" : "info",
-          deleted > 0 ? `已删除（${deleted} 个片段）` : "没有找到可删除的片段",
-        );
-        pushSettingsSnapshotToNative();
-        return;
-      }
-      case "vault-bind":
-        void bindMemoryVault().then((result) => {
-          if (result.canceled) return;
+        if (!importId && !fileName) return { ok: false, error: "缺少文档标识" };
+        try {
+          const deleted = removeImportedDocEntry(importId, fileName || undefined);
           nativeNotice(
             "memory",
-            result.ok ? "ok" : "error",
-            result.ok ? `已绑定并同步 ${result.fileCount ?? 0} 个文件` : `绑定失败：${result.error ?? "未知错误"}`,
+            deleted > 0 ? "ok" : "info",
+            deleted > 0 ? `已删除（${deleted} 个片段）` : "没有找到可删除的片段",
           );
           pushSettingsSnapshotToNative();
+          return { ok: true, data: { deleted } };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          nativeNotice("memory", "error", `删除失败：${message}`);
+          return { ok: false, error: message };
+        }
+      }
+      case "vault-bind":
+        return bindMemoryVault().then((result) => {
+          if (!result.canceled) {
+            nativeNotice(
+              "memory",
+              result.ok ? "ok" : "error",
+              result.ok ? `已绑定并同步 ${result.fileCount ?? 0} 个文件` : `绑定失败：${result.error ?? "未知错误"}`,
+            );
+            pushSettingsSnapshotToNative();
+          }
+          return result.canceled
+            ? { ok: true, data: { canceled: true } }
+            : { ok: result.ok, ...(result.error ? { error: result.error } : {}), data: { fileCount: result.fileCount ?? 0 } };
         });
-        return;
       case "vault-unbind":
-        unbindMemoryVault();
-        nativeNotice("memory", "ok", "已解绑（vault 文件夹里的 md 不会被删除）");
-        pushSettingsSnapshotToNative();
-        return;
+        try {
+          unbindMemoryVault();
+          nativeNotice("memory", "ok", "已解绑（vault 文件夹里的 md 不会被删除）");
+          pushSettingsSnapshotToNative();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
       case "vault-export":
-        void exportMemoryVault().then((result) => {
-          if (result.canceled) return;
-          nativeNotice(
-            "memory",
-            result.ok ? "ok" : "error",
-            result.ok ? `已导出 ${result.fileCount ?? 0} 个文件` : `导出失败：${result.error ?? "未知错误"}`,
-          );
+        return exportMemoryVault().then((result) => {
+          if (!result.canceled) {
+            nativeNotice(
+              "memory",
+              result.ok ? "ok" : "error",
+              result.ok ? `已导出 ${result.fileCount ?? 0} 个文件` : `导出失败：${result.error ?? "未知错误"}`,
+            );
+          }
+          return result.canceled
+            ? { ok: true, data: { canceled: true } }
+            : { ok: result.ok, ...(result.error ? { error: result.error } : {}), data: { fileCount: result.fileCount ?? 0 } };
         });
-        return;
       case "vault-sync":
-        void syncMemoryVaultNow().then((result) => {
+        return syncMemoryVaultNow().then((result) => {
           nativeNotice(
             "memory",
             result.ok ? "ok" : "error",
             result.ok ? `已同步 ${result.fileCount ?? 0} 个文件` : `同步失败：${result.error ?? "未知错误"}`,
           );
           pushSettingsSnapshotToNative();
+          return { ok: result.ok, ...(result.error ? { error: result.error } : {}), data: { fileCount: result.fileCount ?? 0 } };
         });
-        return;
       case "vault-auto-sync":
-        setMemoryVaultAutoSync(payload.enabled === true);
-        nativeNotice("memory", "info", payload.enabled === true ? "已开启自动同步" : "已关闭自动同步");
-        pushSettingsSnapshotToNative();
-        return;
+        try {
+          setMemoryVaultAutoSync(payload.enabled === true);
+          nativeNotice("memory", "info", payload.enabled === true ? "已开启自动同步" : "已关闭自动同步");
+          pushSettingsSnapshotToNative();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
       default:
         console.warn("[NativeSettings] unhandled memory action:", verb);
+        return undefined;
     }
   };
 
-  /** WPF「定时任务」section 动作（动作层与 scheduler IPC 共用；写操作自动广播刷新） */
-  const nativeSchedulerAction = (verb: string, payload: Record<string, unknown>): void => {
+  /** WPF「定时任务」section 动作（动作层与 scheduler IPC 共用；写操作自动广播刷新）。
+   *  返回值用于动作回执：任务编辑器据此决定关窗（成功）或就地报错（失败）。 */
+  const nativeSchedulerAction = (verb: string, payload: Record<string, unknown>): unknown => {
     const actions = nativeSchedulerActions;
     if (!actions) {
       nativeNotice("tasks", "error", "调度器尚未就绪");
-      return;
+      return { ok: false, error: "调度器尚未就绪" };
     }
     switch (verb) {
       case "add": {
         const result = actions.add(asObj(payload.input) as unknown as Parameters<typeof actions.add>[0]);
         nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已创建" : `创建失败：${result.error ?? "未知错误"}`);
-        return;
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "update": {
         const id = asStr(payload.id);
-        if (!id) return;
+        if (!id) return { ok: false, error: "缺少任务 id" };
         const result = actions.update(id, asObj(payload.patch) as unknown as Parameters<typeof actions.update>[1]);
         nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已保存" : `保存失败：${result.error ?? "未知错误"}`);
-        return;
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "toggle": {
         const id = asStr(payload.id);
-        if (!id) return;
+        if (!id) return { ok: false, error: "缺少任务 id" };
         const result = actions.toggle(id, payload.enabled === true);
         if (!result.ok) nativeNotice("tasks", "error", `启停失败：${result.error ?? "未知错误"}`);
-        return;
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "fire": {
         const id = asStr(payload.id);
-        if (!id) return;
-        void actions.fireNow(id).then((result) => {
-          if (result.ok) return;
+        if (!id) return { ok: false, error: "缺少任务 id" };
+        return actions.fireNow(id).then((result) => {
+          if (result.ok) return { ok: true };
           const reason = "reason" in result ? result.reason : undefined;
           const errorText = "error" in result ? result.error : undefined;
           const message = reason === "task already running"
@@ -600,19 +658,19 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               ? "插件已停用，等待插件启用后再运行"
               : (errorText ?? reason ?? "立即运行失败");
           nativeNotice("tasks", "error", message);
+          return { ok: false, error: message };
         });
-        return;
       }
       case "delete": {
         const id = asStr(payload.id);
-        if (!id) return;
+        if (!id) return { ok: false, error: "缺少任务 id" };
         const result = actions.remove(id);
         nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已删除" : `删除失败：${result.error ?? "未知错误"}`);
-        return;
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "history": {
         const id = asStr(payload.id);
-        if (!id) return;
+        if (!id) return { ok: false, error: "缺少任务 id" };
         const result = actions.history(id, 10);
         // 读取失败也写 error：WPF 据此显示错误行（旧实现只存 rows，失败被吞成「暂无运行历史」）
         nativeTaskHistory = {
@@ -621,10 +679,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           error: result.ok ? "" : (result.error ?? "读取历史失败"),
         };
         pushSettingsSnapshotToNative();
-        return;
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       default:
         console.warn("[NativeSettings] unhandled scheduler action:", verb);
+        return undefined;
     }
   };
 
@@ -777,8 +836,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               if (!ok) windowManager.createSettingsWindow("plugins");
             });
           },
-          // WPF 设置窗三个 section 的动作（与渲染设置页同口径，见上方动作函数）
+          // WPF 设置窗若干 section 的动作（与渲染设置页同口径，见上方动作函数）
           apiAction: nativeApiAction,
+          generalAction: nativeGeneralAction,
           memoryAction: nativeMemoryAction,
           schedulerAction: nativeSchedulerAction,
           // 「高级设置」section：超时（秒→ms）+ 工具并发

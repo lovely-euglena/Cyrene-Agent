@@ -6,6 +6,7 @@ import {
   buildCyreneSectionSnapshot,
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
+  buildTokensSectionSnapshot,
   type NativeMemoryData,
 } from "./native-settings-sections";
 import type { ModelSettings } from "./model-settings";
@@ -130,6 +131,59 @@ describe("buildSchedulerSectionSnapshot", () => {
     expect(snapshot.tools[0].id).toBe("tool");
     expect(snapshot.pluginRunning["plugin-a"]).toBe(true);
     expect(snapshot.history?.taskId).toBe("t1");
+  });
+});
+
+describe("buildTokensSectionSnapshot", () => {
+  it("投影缓存口径字段（weekday/cacheCreation/attempted/cacheUsage）与汇总", () => {
+    const snapshot = buildTokensSectionSnapshot(
+      {
+        days: [
+          {
+            date: "06-15",
+            weekday: "周日",
+            input: 100,
+            output: 50,
+            hit: 30,
+            miss: 10,
+            cacheCreation: 5,
+            requests: 3,
+            attemptedRequests: 4,
+            cacheUsageRequests: 2,
+          },
+          {
+            date: "06-16",
+            weekday: "周一",
+            input: 200,
+            output: 80,
+            hit: 40,
+            miss: 20,
+            cacheCreation: 0,
+            requests: 5,
+            attemptedRequests: 5,
+            cacheUsageRequests: 5,
+          },
+        ],
+        models: [{ model: "m", input: 300, output: 130, requests: 8 }],
+      },
+      7,
+    );
+    expect(snapshot.daily[0]).toMatchObject({
+      weekday: "周日",
+      cacheCreation: 5,
+      attemptedRequests: 4,
+      cacheUsageRequests: 2,
+    });
+    expect(snapshot.totals).toEqual({
+      input: 300,
+      output: 130,
+      hit: 70,
+      miss: 30,
+      requests: 8,
+      attemptedRequests: 9,
+      cacheUsageRequests: 7,
+    });
+    expect(snapshot.models[0]).toEqual({ name: "m", input: 300, output: 130, requests: 8 });
   });
 });
 

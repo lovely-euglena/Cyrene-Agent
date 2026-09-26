@@ -182,7 +182,7 @@ public sealed partial class SettingsWindow
             var summary = GetString(row, "outputPreview");
             if (summary.Length == 0) summary = GetString(row, "errorMessage");
             if (summary.Length == 0) summary = GetString(row, "reason");
-            var line = $"{firedAt} {status}{duration}：{Truncate(summary, 160)}";
+            var line = $"{firedAt} {status}{duration}：{summary}";
             box.Children.Add(new TextBlock
             {
                 Text = line,
@@ -220,15 +220,17 @@ public sealed partial class SettingsWindow
         var editor = new TaskEditorWindow(
             task,
             tools,
-            onSave: (editingId, payload) =>
+            onSave: (editingId, payload, done) =>
             {
                 if (editingId is null)
                 {
-                    RequestRouter.SendSettingsAction("scheduler", "add", new Dictionary<string, object?> { ["input"] = payload });
+                    RequestRouter.SendSettingsAction(
+                        "scheduler", "add", new Dictionary<string, object?> { ["input"] = payload }, done);
                 }
                 else
                 {
-                    RequestRouter.SendSettingsAction("scheduler", "update", new Dictionary<string, object?> { ["id"] = editingId, ["patch"] = payload });
+                    RequestRouter.SendSettingsAction(
+                        "scheduler", "update", new Dictionary<string, object?> { ["id"] = editingId, ["patch"] = payload }, done);
                 }
             })
         {

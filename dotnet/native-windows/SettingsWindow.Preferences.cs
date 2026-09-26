@@ -168,21 +168,16 @@ public sealed partial class SettingsWindow
 
         // ── CITA ──
         panel.Children.Add(MakeSubHeader("CITA 上下文认知"));
-        var engineRow = MakeDescribedRow("语义认知方式",
-            "本地语义模型将在后续版本开放。",
-            MakeChoiceGroup(
-                new[] { ("remote", "在线大模型", true), ("local", "本地语义模型（暂不可用）", false) },
-                GetString(prefs, "citaSemanticEngine", "remote"), null));
-        engineRow.Visibility = GetBool(prefs, "citaEnabled") ? Visibility.Visible : Visibility.Collapsed;
+        // 旧版：语义认知方式行始终显示，仅「本地语义模型」禁用占位
         panel.Children.Add(MakeDescribedToggleRow("CITA 上下文认知",
             "辅助昔涟理解跨轮状态、指代和省略表达。",
             GetBool(prefs, "citaEnabled"),
-            v =>
-            {
-                engineRow.Visibility = v ? Visibility.Visible : Visibility.Collapsed;
-                SetSetting("citaEnabled", v);
-            }));
-        panel.Children.Add(engineRow);
+            v => SetSetting("citaEnabled", v)));
+        panel.Children.Add(MakeDescribedRow("语义认知方式",
+            "本地语义模型将在后续版本开放。",
+            MakeChoiceGroup(
+                new[] { ("remote", "在线大模型", true), ("local", "本地语义模型（暂不可用）", false) },
+                GetString(prefs, "citaSemanticEngine", "remote"), null)));
 
         return panel;
     }
@@ -315,7 +310,9 @@ internal sealed class CustomStyleDialog : Window
         _driverDefault.IsChecked = driver == "model-default";
         _driverTemperature.IsChecked = driver == "temperature";
         _driverTopP.IsChecked = driver == "top-p";
-        _valueBox.Text = driver == "model-default" ? "" : value.ToString("0.##", CultureInfo.InvariantCulture);
+        // 旧版 renderCustomStyleModal：数值框始终带值（model-default 时显示 0.65 默认），
+        // 切到 Temperature/Top-P 后直接可保存
+        _valueBox.Text = value.ToString("0.##", CultureInfo.InvariantCulture);
         foreach (var (key, radio) in _repetitionButtons) radio.IsChecked = key == repetition;
         UpdateDiversityRow();
         _driverDefault.Checked += (_, _) => UpdateDiversityRow();
@@ -332,7 +329,7 @@ internal sealed class CustomStyleDialog : Window
         {
             _driverDefault.IsChecked = true;
             foreach (var (key, radio) in _repetitionButtons) radio.IsChecked = key == "model-default";
-            _valueBox.Text = "";
+            _valueBox.Text = "0.65";
             UpdateDiversityRow();
         }));
         actions.Children.Add(MakeDialogButton("取消", () =>
@@ -347,7 +344,7 @@ internal sealed class CustomStyleDialog : Window
     private static (string Driver, double Value, string Repetition) ParseConfig(JsonElement config)
     {
         var driver = "model-default";
-        var value = 0.7;
+        var value = 0.65;
         var repetition = "model-default";
         if (config.ValueKind == JsonValueKind.Object)
         {
@@ -388,6 +385,8 @@ internal sealed class CustomStyleDialog : Window
         var driver = SelectedDriver;
         _valueRow.Visibility = driver == "model-default" ? Visibility.Collapsed : Visibility.Visible;
         _valueLabel.Text = driver == "top-p" ? "Top-P" : "Temperature";
+        // 防御：切到数值驱动时若为空则补默认 0.65（旧版恒有值）
+        if (driver != "model-default" && _valueBox.Text.Trim().Length == 0) _valueBox.Text = "0.65";
     }
 
     private void Save()

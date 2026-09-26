@@ -26,6 +26,10 @@ const settingsWindowCs = fs.readFileSync(
   fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.cs", import.meta.url)),
   "utf8",
 );
+const settingsUserCs = fs.readFileSync(
+  fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.User.cs", import.meta.url)),
+  "utf8",
+);
 const requestRouterCs = fs.readFileSync(
   fileURLToPath(new URL("../../../dotnet/native-windows/RequestRouter.cs", import.meta.url)),
   "utf8",
@@ -355,8 +359,8 @@ describe("跨语言契约：C# 设置窗 ↔ 宿主白名单", () => {
     expect(new Set(extractCsAllowedSet(requestRouterCs))).toEqual(new Set(NATIVE_GENERAL_SETTING_KEYS));
   });
 
-  it("SettingsWindow.cs 用户资料写入字段都在宿主白名单内（含时区/性别）", () => {
-    const fields = new Set(extractCsUserProfileFields(settingsWindowCs));
+  it("SettingsWindow.User.cs 用户资料写入字段都在宿主白名单内（含时区/性别）", () => {
+    const fields = new Set(extractCsUserProfileFields(settingsUserCs));
     expect(fields.size).toBeGreaterThan(0);
     for (const field of fields) {
       expect(NATIVE_USER_PROFILE_FIELDS).toContain(field);
@@ -436,6 +440,7 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
 
   it("各 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
     expect([...NATIVE_SECTION_ACTIONS.api]).toEqual(["save", "test", "test-vision", "set-default-profile", "delete-profile"]);
+    expect([...NATIVE_SECTION_ACTIONS.general]).toEqual(["clear-chat-history", "open-gpu-internals"]);
     expect([...NATIVE_SECTION_ACTIONS.preferences]).toEqual(["open-prompt"]);
     expect([...NATIVE_SECTION_ACTIONS.cyrene]).toEqual([
       "save",

@@ -131,6 +131,7 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
  */
 export const NATIVE_SECTION_ACTIONS = {
   api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
+  general: ["clear-chat-history", "open-gpu-internals"],
   preferences: ["open-prompt"],
   cyrene: [
     "save",

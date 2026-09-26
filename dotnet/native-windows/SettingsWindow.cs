@@ -371,6 +371,7 @@ public sealed partial class SettingsWindow : NativeWindow
             NativeTheme.VectorGlyph(Glyphs.Gear, 24, NativeTheme.TextDefaultBrush),
             "通用设置",
             "控制状态栏、日程栏、基础音频和系统行为。"));
+        panel.Children.Add(MakeSectionStatus("general"));
         panel.Children.Add(MakeSubHeader("启动与提醒"));
         panel.Children.Add(MakeToggleRow("开机自启", GetBool("launchAtLogin"), v => SetSetting("launchAtLogin", v)));
         panel.Children.Add(MakeToggleRow("提醒音效", GetBool("toastSoundEnabled", true),
@@ -386,7 +387,55 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeSubHeader("性能"));
         panel.Children.Add(MakeToggleRow("禁用 GPU 渲染", GetBool("disableGpuElectron"),
             v => SetSetting("disableGpuElectron", v)));
-        panel.Children.Add(MakeHint("无 GPU 或花屏时开启；下次启动生效。"));
+        // 旧版行内链接：查看 chrome://gpu 判断当前是否使用 GPU 渲染
+        var gpuHint = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 2, 0, 2),
+        };
+        gpuHint.Children.Add(MakeHint("无 GPU 或花屏时开启；下次启动生效。可以通过查看"));
+        var gpuLink = new TextBlock
+        {
+            Text = "GPU Internals 页面",
+            FontSize = 12.5,
+            Foreground = NativeTheme.Pink600Brush,
+            TextDecorations = TextDecorations.Underline,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        gpuLink.MouseLeftButtonUp += (_, _) => RequestRouter.SendSettingsAction("general", "open-gpu-internals");
+        gpuHint.Children.Add(gpuLink);
+        gpuHint.Children.Add(MakeHint("得知当前是否使用 GPU 渲染。"));
+        panel.Children.Add(gpuHint);
+
+        panel.Children.Add(MakeSubHeader("聊天记录"));
+        void ClearChatHistory()
+        {
+            var confirm = MessageBox.Show(
+                "清空所有聊天会话？\n此操作会删除全部历史对话，无法恢复。",
+                "清空聊天记录",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning);
+            if (confirm != MessageBoxResult.OK) return;
+            // 结果反馈走宿主 notice（general 状态行）
+            RequestRouter.SendSettingsAction("general", "clear-chat-history");
+        }
+        panel.Children.Add(MakeDescribedRow("聊天记录管理", "清空全部本地聊天会话。",
+            MakeButton("清空记录", ClearChatHistory, minWidth: 96)));
+
+        panel.Children.Add(MakeSubHeader("语言"));
+        panel.Children.Add(MakeDescribedRow("语言", "当前仅支持中文，其他语言待开发。",
+            MakeChoiceGroup(
+                new[]
+                {
+                    ("zh-CN", "中文", true),
+                    ("en", "EN", false),
+                    ("ja", "日文", false),
+                    ("ko", "韩语", false),
+                },
+                GetString("language", "zh-CN"),
+                _ => { })));
 
         panel.Children.Add(MakeSubHeader("Git 提交身份"));
         panel.Children.Add(MakeHint("代码 Git 面板提交时使用；邮箱必填。"));
@@ -395,8 +444,6 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeTextRow("邮箱", GetString("gitCommitAuthorEmail"),
             v => SetSetting("gitCommitAuthorEmail", v)));
 
-        panel.Children.Add(MakeHint("其余通用设置项（语言等）在旧版设置中。"));
-        panel.Children.Add(MakeLegacyButton("general"));
         return panel;
     }
 
@@ -408,6 +455,14 @@ public sealed partial class SettingsWindow : NativeWindow
             "外观设置",
             "调整白调界面的窗口布局与昔涟桌宠显示方式。"));
         panel.Children.Add(MakeSectionStatus("appearance"));
+
+        // ── 布局（旧版 appearance-section：多窗口选中 / 单窗口 SOON 占位） ──
+        panel.Children.Add(MakeSubHeader("布局"));
+        panel.Children.Add(MakeHint("选择昔涟与聊天、状态和日程窗口的组织方式。"));
+        var layoutRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
+        layoutRow.Children.Add(MakeLayoutCard("▦", "多窗口", "各功能使用独立窗口", active: true, soon: false));
+        layoutRow.Children.Add(MakeLayoutCard("▣", "单窗口", "集中在一个主窗口中", active: false, soon: true));
+        panel.Children.Add(layoutRow);
 
         panel.Children.Add(MakeSubHeader("昔涟桌宠"));
         panel.Children.Add(MakeToggleRow("桌宠显示", GetBool("petVisible", true), v => SetSetting("petVisible", v)));
@@ -423,6 +478,7 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeSubHeader("界面"));
         panel.Children.Add(MakeUiIconRow(GetString("uiIcon", "cyrene-sun")));
         panel.Children.Add(MakeUiFontRow());
+        panel.Children.Add(MakeSoonPlaceholderRow("聊天背景"));
 
         panel.Children.Add(MakeSubHeader("聊天排版"));
         panel.Children.Add(MakeDoubleSliderRow("行间距", GetDouble("chatLineHeight", 1.75), 1.2, 2.0, 0.05, "",
@@ -432,9 +488,92 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeToggleRow("昔涟回复气泡", GetBool("assistantBubbleEnabled"),
             v => SetSetting("assistantBubbleEnabled", v)));
 
-        panel.Children.Add(MakeLegacyButton("appearance"));
         return panel;
     }
+
+    /// <summary>外观「布局」卡（旧版 appearance-option：图标 + 标题/说明；SOON = 禁用占位）。</summary>
+    private static Border MakeLayoutCard(string glyph, string title, string description, bool active, bool soon)
+    {
+        var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 13.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (soon) titleRow.Children.Add(MakeSoonBadge());
+        copy.Children.Add(titleRow);
+        copy.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 12,
+            Foreground = NativeTheme.TextMutedBrush,
+            Margin = new Thickness(0, 3, 0, 0),
+        });
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(new TextBlock
+        {
+            Text = glyph,
+            FontSize = 18,
+            Foreground = active ? NativeTheme.PinkBrush : NativeTheme.TextMutedBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+        });
+        content.Children.Add(copy);
+        return new Border
+        {
+            Child = content,
+            Width = 236,
+            CornerRadius = new CornerRadius(12),
+            BorderThickness = new Thickness(active ? 2 : 1),
+            BorderBrush = active ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush,
+            Background = Brushes.White,
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 0, 10, 0),
+            Opacity = soon ? 0.6 : 1,
+        };
+    }
+
+    /// <summary>外观占位行（旧版 appearance-placeholder：禁用 + SOON 徽标）。</summary>
+    private static Border MakeSoonPlaceholderRow(string label)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        content.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 14,
+            Foreground = NativeTheme.TextMutedBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        content.Children.Add(MakeSoonBadge());
+        return new Border
+        {
+            Child = content,
+            CornerRadius = new CornerRadius(12),
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Background = NativeTheme.CardSoftBgBrush,
+            Padding = new Thickness(14, 10, 14, 10),
+            Margin = new Thickness(0, 6, 0, 6),
+            Opacity = 0.7,
+        };
+    }
+
+    /// <summary>SOON 徽标（外观布局/聊天背景占位；同旧版 .soon-badge）。</summary>
+    private static Border MakeSoonBadge() => new()
+    {
+        CornerRadius = new CornerRadius(9),
+        Background = NativeTheme.Pink50Brush,
+        BorderBrush = NativeTheme.Pink200Brush,
+        BorderThickness = new Thickness(1),
+        Padding = new Thickness(6, 1, 6, 1),
+        Margin = new Thickness(8, 0, 0, 0),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock { Text = "SOON", FontSize = 10.5, Foreground = NativeTheme.Pink600Brush },
+    };
 
     /// <summary>桌面图标二选一（绮梦/晴光）：显示预设图片，选中带粉色描边。</summary>
     private FrameworkElement MakeUiIconRow(string current)
@@ -518,6 +657,10 @@ public sealed partial class SettingsWindow : NativeWindow
         row.Children.Add(label);
         var importBtn = MakeActionButton("导入字体", () => RequestRouter.SendCommand("settings", "ui-font-import"), minWidth: 88);
         var resetBtn = MakeActionButton("恢复默认", () => RequestRouter.SendCommand("settings", "ui-font-reset"), minWidth: 84);
+        // 旧版：仅自定义字体（kind=custom）显示「恢复默认」
+        resetBtn.Visibility = GetString(font, "kind", "source-han") == "custom"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         row.Children.Add(importBtn);
         row.Children.Add(resetBtn);
         return MakeRow("界面字体", row);
@@ -630,7 +773,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "general" => string.Join("|",
             GetBool("launchAtLogin"), GetBool("toastSoundEnabled", true),
             GetBool("sidebarVisible", true), GetBool("tasksVisible", true),
-            GetBool("disableGpuElectron"),
+            GetBool("disableGpuElectron"), GetString("language", "zh-CN"),
             GetString("gitCommitAuthorName"), GetString("gitCommitAuthorEmail")),
         "appearance" => string.Join("|",
             GetBool("petVisible", true), GetBool("petAlwaysOnTop", true), GetDouble("petZoom", 1),
