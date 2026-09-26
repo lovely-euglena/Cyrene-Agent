@@ -37,6 +37,12 @@ while ((m = navRe.exec(html)) !== null) {
   const filled = !hasStroke;
   const parts = [];
   for (const p of svgText.matchAll(/<path[^>]*d="([^"]+)"/g)) parts.push(p[1].trim());
+  for (const c of svgText.matchAll(/<circle[^>]*\/?>/g)) {
+    const get = (k) => (c[0].match(new RegExp(k + '="([^"]+)"')) || [])[1];
+    const cx = +(get("cx") ?? 0), cy = +(get("cy") ?? 0), r = +(get("r") ?? 0);
+    // 圆 → 两段半圆弧（48 视框）；此前漏转导致 api/user 导航图标丢圆
+    if (r > 0) parts.push(`M${cx - r} ${cy} A${r} ${r} 0 1 1 ${cx + r} ${cy} A${r} ${r} 0 1 1 ${cx - r} ${cy} Z`);
+  }
   for (const r of svgText.matchAll(/<rect[^>]*\/>/g)) {
     const get = (k) => (r[0].match(new RegExp(k + '="([^"]+)"')) || [])[1];
     const x = +(get("x") ?? 0), y = +(get("y") ?? 0), w = +(get("width") ?? 0), h = +(get("height") ?? 0);
