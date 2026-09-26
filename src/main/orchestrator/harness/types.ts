@@ -220,6 +220,12 @@ export interface HarnessToolSpec extends ToolSpec {
   harnessBuiltin?: boolean;
 }
 
+/**
+ * 权限判定结果：boolean 兼容旧签名；带 reason 时会被透传给模型
+ * （例如「当前档位不允许此操作，可到设置提升档位」），避免只有干巴巴的「被拒绝」。
+ */
+export type HarnessPermissionDecision = { allowed: boolean; reason?: string };
+
 export interface HarnessInput {
   /**
    * 兼容旧调用方的扁平系统提示词。新调用方应使用 promptLayers，
@@ -282,8 +288,11 @@ export interface HarnessInput {
   planState?: import("../plan-mode").PlanStateName;
   /** 工具上下文（权限检查等） */
   toolContext?: import("../tools/registry/tool-context").ToolContext;
-  /** 权限检查函数 */
-  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<boolean>;
+  /**
+   * 权限检查函数。返回 false / {allowed:false} 视为拒绝；
+   * reason 会被透传给模型（给出可操作提示，如「提升档位」）。
+   */
+  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<HarnessPermissionDecision | boolean>;
   /** ExecutionLedger：可选的同进程工具去重缓存（用于副作用重复执行防护） */
   executionLedger?: import("../execution-ledger").ExecutionLedger;
   /** ToolOutputStore：生产 Harness 注入的完整工具结果存储。 */

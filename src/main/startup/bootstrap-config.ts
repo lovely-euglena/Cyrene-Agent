@@ -73,26 +73,30 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
   setUtilityClipboardConfig(() => require("electron").clipboard);
 
   // 注入用户选择卡片回调：工具调 ask_user_choice 时发 Custom 事件给 react 聊天窗口
-  setChoiceCardSender((cardData) => {
+  setChoiceCardSender((cardData, context) => {
     const win = getReactChatWindow();
     if (win) {
       win.webContents.send(IPC.AGUI_EVENT, {
         type: "CUSTOM",
         name: "cyrene.choice",
         value: cardData,
+        // run 内工具发卡必须归属该 run：渲染端 RunEventGate 按 runId 过滤，
+        // 缺失时卡片被丢弃 → 工具等到超时按默认值结算（历史 bug：发邮件确认卡不显示）。
+        ...(context?.runId ? { runId: context.runId } : {}),
       });
     }
   });
 
   // 注入选择卡结算回调：老版 requestUserChoice 超时结算时通知渲染端清卡，
   // 避免留下「点了没反应」的僵尸卡（与澄清卡的 cyrene.choice.dismiss 同机制）。
-  setChoiceDismissSender((settlement) => {
+  setChoiceDismissSender((settlement, context) => {
     const win = getReactChatWindow();
     if (win) {
       win.webContents.send(IPC.AGUI_EVENT, {
         type: "CUSTOM",
         name: "cyrene.choice.dismiss",
         value: settlement,
+        ...(context?.runId ? { runId: context.runId } : {}),
       });
     }
   });
@@ -108,7 +112,8 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
   // 注入出行工具 amapKey 获取器（复用 GeneralSettings 中的 amapKey）
   setTravelConfig(() => loadGeneralSettings().amapKey, () => loadGeneralSettings().travelEnabled);
 
-  // 注入邮件工具 SMTP 配置获取器（每次执行实时读 GeneralSettings）
+  // 注入邮件工具 SMTP/IMAP 配置获取器（每次执行实时读 GeneralSettings；
+  // IMAP 收信认证复用 emailSmtpUser/emailSmtpPass）
   setEmailConfig(
     () => loadGeneralSettings().emailEnabled,
     () => loadGeneralSettings().emailSmtpHost,
@@ -117,6 +122,9 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
     () => loadGeneralSettings().emailSmtpUser,
     () => loadGeneralSettings().emailSmtpPass,
     () => loadGeneralSettings().emailFromName,
+    () => loadGeneralSettings().emailImapHost,
+    () => loadGeneralSettings().emailImapPort,
+    () => loadGeneralSettings().emailImapSecure,
   );
 
   // 注入 ASR 配置获取器（通话功能用，实时读 GeneralSettings）
