@@ -24,7 +24,6 @@ vi.mock("../../../components/ui/UserAvatar", () => ({ UserAvatar: () => createEl
 vi.mock("../../../components/ui/NewTaskButton", () => ({
   NewTaskButton: () => createElement("span", null, "new-task-button"),
 }));
-vi.mock("./AppUpdateEntry", () => ({ AppUpdateEntry: () => createElement("span", null, "app-update-entry") }));
 vi.mock("./ConversationSidebar", () => ({
   ConversationSidebar: () => createElement("span", null, "conversation-sidebar"),
 }));

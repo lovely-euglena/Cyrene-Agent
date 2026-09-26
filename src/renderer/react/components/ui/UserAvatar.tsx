@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
-import { Bug, Check, ChevronRight, Languages, Megaphone, Palette, UserRound } from "lucide-react";
+import { Bug, Check, ChevronRight, Languages, Megaphone, Package, Palette, UserRound } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
+import packageJson from "../../../../../package.json";
 import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
 import { applyUiTheme } from "../../../ui/theme";
+import { useAppUpdate } from "../../hooks/useAppUpdate";
 import { useNewsFeed } from "../../hooks/useNewsFeed";
 import { useUserAvatar } from "../../hooks/useUserAvatar";
 import { useUserNickname } from "../../hooks/useUserNickname";
 import { setUiLocale, useTranslation } from "../../i18n";
+import { resolveAppUpdateView } from "../../features/settings/app-update-view";
 import { IssueReportDialog } from "./IssueReportDialog";
 import { NewsDialog } from "./NewsDialog";
 import { UserProfileDialog } from "./UserProfileDialog";
@@ -29,6 +32,10 @@ export function UserAvatar({ label }: UserAvatarProps) {
   const displayLabel = (label ?? nickname) || "User";
   const language = locale === "en" ? "en" : "zh-CN";
   const news = useNewsFeed(language);
+  // 更新红点与版本行共用同一状态源；有待处理的更新（发现/下载中/已下载）就亮
+  const updateState = useAppUpdate();
+  const updateView = resolveAppUpdateView(updateState);
+  const version = updateState.currentVersion || packageJson.version;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -79,6 +86,10 @@ export function UserAvatar({ label }: UserAvatarProps) {
                 <span className="cy-user-avatar-dot" aria-hidden="true">
                   {news.unreadCount > 1 ? news.unreadCount : ""}
                 </span>
+              )}
+              {/* 更新提示点放左上角，避开右上角的公告未读点 */}
+              {updateView.badge && (
+                <span className="cy-user-avatar-dot cy-user-avatar-dot--update" aria-hidden="true" />
               )}
             </span>
             <span className="cy-user-avatar-label">{displayLabel}</span>
@@ -149,6 +160,16 @@ export function UserAvatar({ label }: UserAvatarProps) {
             <DropdownMenu.Item className="cy-user-menu__item" onSelect={() => setReportOpen(true)}>
               <Bug size={16} aria-hidden="true" />
               <span>{t("ui.reportIssue.menuEntry")}</span>
+            </DropdownMenu.Item>
+            {/* 版本行：点开跳到设置页"常规"的软件更新处 */}
+            <DropdownMenu.Item
+              className="cy-user-menu__item"
+              onSelect={() => void window.settings?.openSection?.("general")}
+            >
+              <Package size={16} aria-hidden="true" />
+              <span>{t("ui.version.menuEntry")}</span>
+              <span className="cy-user-menu__value">v{version}</span>
+              {updateView.badge && <span className="cy-user-menu__dot" aria-hidden="true" />}
             </DropdownMenu.Item>
             <DropdownMenu.Item
               className="cy-user-menu__item"

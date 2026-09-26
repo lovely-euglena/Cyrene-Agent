@@ -625,10 +625,22 @@
     "switchSessionModelTitle": "Switch the model for this conversation"
   },
   "appUpdate": {
+    "idle": "Ready to check for updates",
+    "checking": "Checking for updates…",
     "availableWithVersion": "New version v{{version}} available",
     "available": "New version available",
     "downloading": "Downloading {{percent}}%",
-    "restart": "Restart & update"
+    "downloaded": "Update downloaded",
+    "upToDate": "You're up to date",
+    "checkAction": "Check for updates",
+    "downloadAction": "Download update",
+    "retryAction": "Retry",
+    "restartAction": "Restart & update",
+    "error": {
+      "check_failed": "Couldn't check for updates right now. Please try again later.",
+      "download_failed": "Update download failed. Please try again later.",
+      "default": "Something went wrong with updates. Please try again later."
+    }
   },
   "lastTurn": {
     "editMessage": "Edit last message",
@@ -1184,6 +1196,7 @@
       "gpuInternals": "View GPU status",
       "about": "About Cyrene",
       "aboutDescription": "A lightweight desktop companion for emotional support.",
+      "softwareUpdate": "Software update",
       "save": "Save settings"
     },
     "usage": {
@@ -1855,6 +1868,9 @@
       "failed": "Couldn't load the news. Check your connection and try again later.",
       "empty": "Nothing new right now.",
       "close": "Close"
+    },
+    "version": {
+      "menuEntry": "Version"
     },
     "newButton": "New task"
   },

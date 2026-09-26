@@ -107,6 +107,8 @@ export const IPC = {
   // settings window
   // main → settings 窗口：要求切到指定标签（已打开时用）
   SETTINGS_SWITCH_SECTION: "settings:switch-section",
+  // renderer → main：请求打开设置页并定位到指定标签（main 回推上面的 switch-section）
+  SETTINGS_REQUEST_SWITCH_SECTION: "settings:request-switch-section",
   SETTINGS_GET_CONFIG: "settings:get-config",
   SETTINGS_SAVE_CONFIG: "settings:save-config",
   SETTINGS_MODEL_PROFILES_LIST: "settings:model-profiles:list",

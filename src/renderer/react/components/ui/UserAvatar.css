@@ -58,6 +58,13 @@
   padding: 0 3px;
 }
 
+/* 有待处理的更新时头像左上角的提示点：固定小圆，避开右上角的公告未读点 */
+.cy-user-avatar-circle .cy-user-avatar-dot--update {
+  top: -2px;
+  right: auto;
+  left: -3px;
+}
+
 .cy-user-avatar-circle span {
   color: #c46a8a;
   font-size: 14px;

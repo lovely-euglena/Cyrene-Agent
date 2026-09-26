@@ -5,6 +5,8 @@ import packageJson from "../../../../../package.json";
 import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { setUiLocale, useTranslation } from "../../i18n";
 import { Card } from "../../components/ui/Card";
+import { useAppUpdate } from "../../hooks/useAppUpdate";
+import { resolveAppUpdateView } from "./app-update-view";
 
 interface GeneralValues {
   rememberWindowState: boolean;
@@ -40,6 +42,8 @@ export function GeneralSettingsPanel() {
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const updateState = useAppUpdate();
+  const updateView = resolveAppUpdateView(updateState);
 
   useEffect(() => {
     let disposed = false;
@@ -92,6 +96,15 @@ export function GeneralSettingsPanel() {
     }
   }
 
+  /** 更新按钮：下载/安装按当前动作执行，检查与重试都从头查一遍 */
+  function triggerUpdateAction() {
+    const api = window.appUpdate;
+    if (!api) return;
+    if (updateView.action === "download") void api.download();
+    else if (updateView.action === "install") void api.install();
+    else if (updateView.action !== null) void api.check();
+  }
+
   /** 切换界面语言：先即时生效再落盘，落盘失败时回滚，避免界面与配置不一致。 */
   async function changeLanguage(next: "zh-CN" | "en") {
     const previous = values.language;
@@ -136,6 +149,24 @@ export function GeneralSettingsPanel() {
         <section className="cy-settings-section">
           <Card>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong><Info size={16} /> {t("settingsPage.general.about")}</strong><span>{t("settingsPage.general.aboutDescription")} · v{packageJson.version}</span></div></div>
+            <div className="cy-settings-row">
+              <div className="cy-settings-row__copy">
+                <strong>{t("settingsPage.general.softwareUpdate")}</strong>
+                <span>{t(updateView.label.key, updateView.label.params)}</span>
+                {updateState.releaseNotes && <span className="cy-settings-general__notice">{updateState.releaseNotes}</span>}
+              </div>
+              <div className="cy-settings-row__control">
+                {updateView.busy && <Spin size="small" />}
+                {updateView.action && (
+                  <Button
+                    type={updateView.action === "install" ? "primary" : "default"}
+                    onClick={triggerUpdateAction}
+                  >
+                    {t(updateView.actionLabel ?? "")}
+                  </Button>
+                )}
+              </div>
+            </div>
           </Card>
         </section>
 

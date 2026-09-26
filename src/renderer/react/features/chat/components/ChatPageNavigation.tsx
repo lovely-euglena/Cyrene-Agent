@@ -12,7 +12,6 @@ import { SidebarToggle } from "../../../components/ui/SidebarToggle";
 import { UserAvatar } from "../../../components/ui/UserAvatar";
 import { WindowControls } from "../../../components/ui/WindowControls";
 import { CharacterInfoPopover } from "../../character/CharacterInfoPopover";
-import { AppUpdateEntry } from "./AppUpdateEntry";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { SidebarSearchDialog } from "./SidebarSearchDialog";
 import { reportChatPerfRender } from "./chat-perf-probe";
@@ -138,7 +137,6 @@ export const ChatPageNavigation = React.memo(function ChatPageNavigation({
             onTogglePin={onTogglePinSession}
           />
         </div>
-        <AppUpdateEntry />
         <div className="cy-page-sidebar-bottom">
           <UserAvatar />
           <SettingsButton onClick={onOpenSettings} />
