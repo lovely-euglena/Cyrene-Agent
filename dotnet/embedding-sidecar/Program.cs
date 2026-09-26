@@ -3,10 +3,12 @@ using CyreneEmbedSidecar;
 
 // 用法：
 //   verify <modelDir> <dump.json>   数值一致性验证：tokenIds 对账 + 向量余弦
+//   verify-rerank <rerankerDir> <dump.json>  reranker 句对 tokenIds + logits 对账
 //   bench  <modelDir> [textCount]   性能基准（自生成混合长短文本）
 //   serve  <modelDir>               stdio 帧协议服务（Electron spawn）
 //
 // modelDir 指向 Xenova/bge-m3 布局（tokenizer.json + onnx/model_quantized.onnx）
+// rerankerDir 指向 bge-reranker-base 布局（同构）
 
 var command = args.Length > 0 ? args[0] : "serve";
 var modelDir = args.Length > 1 ? args[1]
@@ -16,6 +18,9 @@ switch (command)
 {
     case "verify":
         Verify.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/embedding-verify-data.json");
+        return 0;
+    case "verify-rerank":
+        VerifyRerank.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/reranker-verify-data.json");
         return 0;
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
@@ -126,6 +131,62 @@ internal static class Verify
     }
 }
 
+/// <summary>
+/// reranker 数值对账：句对 tokenIds（EncodePairToIds vs transformers.js）
+/// + 原始 logits（RerankerEngine vs JS AutoModelForSequenceClassification）。
+/// </summary>
+internal static class VerifyRerank
+{
+    public static void Run(string rerankerDir, string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        var root = doc.RootElement;
+        var pairs = root.GetProperty("pairs").EnumerateArray()
+            .Select(p => (Query: p.GetProperty("query").GetString()!, Doc: p.GetProperty("doc").GetString()!))
+            .ToArray();
+        var expectedIds = root.GetProperty("tokenIds").EnumerateArray()
+            .Select(a => a.EnumerateArray().Select(v => v.GetInt32()).ToArray()).ToArray();
+        var expectedScores = root.GetProperty("scores").EnumerateArray()
+            .Select(v => (float)v.GetDouble()).ToArray();
+
+        Console.WriteLine($"[verify-rerank] reranker dir: {rerankerDir}");
+
+        // 1) 句对 tokenIds 对账（含 longest_first 截断）
+        var tokenizer = HfUnigramTokenizer.FromTokenizerJson(Path.Combine(rerankerDir, "tokenizer.json"));
+        int tokenMatches = 0, tokenTotal = 0;
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            tokenTotal += expectedIds[i].Length;
+            var actual = tokenizer.EncodePairToIds(pairs[i].Query, pairs[i].Doc, 512);
+            if (actual.SequenceEqual(expectedIds[i]))
+            {
+                tokenMatches += actual.Length;
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"[verify-rerank] tokenIds mismatch #{i}: actual len={actual.Length}, expected len={expectedIds[i].Length}");
+            }
+        }
+        Console.WriteLine($"[verify-rerank] tokenizer: {tokenMatches}/{tokenTotal} tokens exact match");
+
+        // 2) 分数对账（原始 logits，逐条前向）
+        using var engine = RerankerEngine.Load(rerankerDir);
+        var maxDiff = 0.0;
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            var actual = engine.Score(pairs[i].Query, new[] { pairs[i].Doc })[0];
+            var diff = Math.Abs(actual - expectedScores[i]);
+            maxDiff = Math.Max(maxDiff, diff);
+            Console.WriteLine($"[verify-rerank] #{i}: .net={actual:F6} js={expectedScores[i]:F6} |diff|={diff:E2}");
+        }
+
+        var pass = maxDiff <= 5e-3 && tokenMatches == tokenTotal;
+        Console.WriteLine($"[verify-rerank] {(pass ? "PASS" : "FAIL")} (threshold max|diff| <= 5e-3, tokenIds exact)");
+        if (!pass) Environment.Exit(1);
+    }
+}
+
 internal static class Bench
 {
     public static void Run(string modelDir, int textCount)
@@ -187,6 +248,21 @@ internal static class Server
     ///
     /// stderr 只用于诊断日志（进程崩溃前的输出不受帧协议污染）。
     /// </summary>
+    /// <summary>reranker 惰性加载 + 目录变更重载（单进程内单实例）。</summary>
+    private static RerankerEngine? _reranker;
+    private static string? _rerankerDir;
+
+    private static RerankerEngine GetReranker(string dir)
+    {
+        if (_reranker is null || _rerankerDir != dir)
+        {
+            _reranker?.Dispose();
+            _reranker = RerankerEngine.Load(dir);
+            _rerankerDir = dir;
+        }
+        return _reranker;
+    }
+
     public static void Run(string modelDir)
     {
         Console.Error.WriteLine($"[serve] model dir: {modelDir}");
@@ -297,6 +373,32 @@ internal static class Server
                 continue;
             }
             if (request is null) continue;
+
+            if (request.Op == "rerank")
+            {
+                try
+                {
+                    var rerankerDir = request.RerankerDir;
+                    if (string.IsNullOrEmpty(rerankerDir))
+                    {
+                        throw new InvalidOperationException("rerank requires rerankerDir");
+                    }
+                    if (request.Documents is null || request.Documents.Length == 0)
+                    {
+                        throw new InvalidOperationException("rerank requires non-empty documents");
+                    }
+                    var reranker = GetReranker(rerankerDir);
+                    var scores = reranker.Score(request.Query ?? "", request.Documents);
+                    WriteScoreResponse(stdout, request.Id, scores);
+                }
+                catch (Exception ex)
+                {
+                    WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = ex.Message });
+                    Console.Error.WriteLine($"[serve] rerank failed: {ex}");
+                }
+                continue;
+            }
+
             if (request.Op != "embed")
             {
                 WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = $"unsupported op: {request.Op}" });
@@ -328,14 +430,32 @@ internal static class Server
         var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
         var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
 
-        var prefix = BitConverter.GetBytes((int)headerBytes.Length);
-        stdout.Write(prefix);
-        stdout.Write(headerBytes);
+        // 长度前缀 + JSON 头合并为一次 Write：无缓冲 stdout 上分开写可能被
+        // 客户端切成两次 read（历史 P0 的诱因之一；客户端解码器已按跨 chunk
+        // 状态机加固，这里再消掉最常见分片点）。二进制段仍逐段写、零拷贝。
+        var frameHead = new byte[4 + headerBytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
+        headerBytes.CopyTo(frameHead.AsSpan(4));
+        stdout.Write(frameHead, 0, frameHead.Length);
         // float[] 的二进制布局即小端 float32，与协议一致，直接按段写出
         foreach (var v in vectors)
         {
             stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
         }
+        stdout.Flush();
+    }
+
+    /// <summary>rerank 响应：分数按 float32 段写出（协议上与 count×dim(1) 等价）。</summary>
+    private static void WriteScoreResponse(Stream stdout, int id, float[] scores)
+    {
+        var header = new ResponseHeader { Id = id, Ok = true, Count = scores.Length, Dim = 1 };
+        var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+        var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
+        var frameHead = new byte[4 + headerBytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
+        headerBytes.CopyTo(frameHead.AsSpan(4));
+        stdout.Write(frameHead, 0, frameHead.Length);
+        stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(scores.AsSpan()));
         stdout.Flush();
     }
 
@@ -347,6 +467,10 @@ internal static class Server
         public int Id { get; set; }
         public string Op { get; set; } = "embed";
         public string[]? Texts { get; set; }
+        // rerank op：query + documents + 显式模型目录
+        public string? Query { get; set; }
+        public string[]? Documents { get; set; }
+        public string? RerankerDir { get; set; }
     }
 
     private sealed class ResponseHeader
@@ -390,9 +514,10 @@ internal static class Server
         var json = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
         var bytes = System.Text.Encoding.UTF8.GetBytes(json);
         var stdout = Console.OpenStandardOutput();
-        var prefix = BitConverter.GetBytes((int)bytes.Length);
-        stdout.Write(prefix, 0, 4);
-        stdout.Write(bytes, 0, bytes.Length);
+        var frameHead = new byte[4 + bytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), bytes.Length);
+        bytes.CopyTo(frameHead.AsSpan(4));
+        stdout.Write(frameHead, 0, frameHead.Length);
         stdout.Flush();
     }
 }

@@ -96,7 +96,7 @@ public sealed class EmbeddingEngine : IDisposable
 
     private static readonly string[] OutputNames = { "last_hidden_state" };
 
-    private static int ReadThreadsEnv()
+    internal static int ReadThreadsEnv()
     {
         var raw = Environment.GetEnvironmentVariable("CYRENE_EMBED_THREADS");
         return int.TryParse(raw, out var v) && v >= 0 ? v : -1;

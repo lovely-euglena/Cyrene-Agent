@@ -223,3 +223,4 @@ sticker-descriptions/
 dotnet/**/bin/
 dotnet/**/obj/
 scripts/diagnostics/embedding-verify-data.json
+scripts/diagnostics/reranker-verify-data.json
