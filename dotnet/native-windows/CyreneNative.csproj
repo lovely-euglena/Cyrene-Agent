@@ -28,6 +28,7 @@
     <Content Include="assets\status\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets\feeling\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets\icons\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\providers\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets\loading.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

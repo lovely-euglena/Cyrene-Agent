@@ -39,6 +39,43 @@ public static class NativeTheme
     public static readonly Color SurfaceApp = Color.FromRgb(0xF7, 0xF7, 0xFA);
     public static readonly Color SurfaceNav = Color.FromRgb(0xF5, 0xF5, 0xF7);
 
+    // ── pearl-white 设置页组件原语（settings.css / theme.css 的浅色实现合成到白底） ──
+    /// <summary>--rb-pink-50（选中卡/图标砖底色）。</summary>
+    public static readonly Color Pink50 = Color.FromRgb(0xFF, 0xF1, 0xF6);
+    /// <summary>--rb-pink-200（卡片描边）。</summary>
+    public static readonly Color Pink200 = Color.FromRgb(0xFF, 0xB1, 0xCB);
+    /// <summary>--rb-pink-600（选中态文字/hover）。</summary>
+    public static readonly Color Pink600 = Color.FromRgb(0xE8, 0x4A, 0x78);
+    /// <summary>预设卡未选中底（rgba(0,0,0,0.02) 合成白）。</summary>
+    public static readonly Color CardSoftBg = Color.FromRgb(0xFA, 0xFA, 0xFA);
+    /// <summary>浅色按钮底（--rb-bg-2 #FAFAFC，官网链/重置钮）。</summary>
+    public static readonly Color ButtonSoftBg = Color.FromRgb(0xFA, 0xFA, 0xFC);
+    /// <summary>默认徽标底（rgba(236,72,153,0.22) 合成白）。</summary>
+    public static readonly Color BadgePinkBg = Color.FromRgb(0xFB, 0xD7, 0xE9);
+    /// <summary>视觉徽标底（rgba(120,180,255,0.20) 合成白）。</summary>
+    public static readonly Color BadgeVisionBg = Color.FromRgb(0xE4, 0xF0, 0xFF);
+    /// <summary>档案卡选中底（rgba(236,72,153,0.16) 合成白）。</summary>
+    public static readonly Color ProfileActiveBg = Color.FromRgb(0xFC, 0xE2, 0xEF);
+    /// <summary>档案卡选中描边（rgba(255,182,220,0.30) 合成白）。</summary>
+    public static readonly Color ProfileActiveBorder = Color.FromRgb(0xFF, 0xE9, 0xF5);
+    /// <summary>档案卡未选中描边（rgba(255,182,220,0.14) 合成白）。</summary>
+    public static readonly Color ProfileIdleBorder = Color.FromRgb(0xFF, 0xF5, 0xFA);
+    /// <summary>开关未选中轨道（pearl-white .switch__track #F1EEF4）。</summary>
+    public static readonly Color SwitchOffTrack = Color.FromRgb(0xF1, 0xEE, 0xF4);
+    /// <summary>开关描边（pearl-white #D8D2DC）。</summary>
+    public static readonly Color SwitchBorder = Color.FromRgb(0xD8, 0xD2, 0xDC);
+    /// <summary>API 提示条描边（rgba(255,182,220,0.13) 合成白）。</summary>
+    public static readonly Color NoteBorder = Color.FromRgb(0xFF, 0xF6, 0xFA);
+
+    public static readonly SolidColorBrush Pink50Brush = Brush(Pink50);
+    public static readonly SolidColorBrush Pink200Brush = Brush(Pink200);
+    public static readonly SolidColorBrush Pink600Brush = Brush(Pink600);
+    public static readonly SolidColorBrush CardSoftBgBrush = Brush(CardSoftBg);
+    public static readonly SolidColorBrush ButtonSoftBgBrush = Brush(ButtonSoftBg);
+    public static readonly SolidColorBrush BadgePinkBrush = Brush(BadgePinkBg);
+    public static readonly SolidColorBrush BadgeVisionBrush = Brush(BadgeVisionBg);
+    public static readonly SolidColorBrush NoteBorderBrush = Brush(NoteBorder);
+
     public static SolidColorBrush Brush(Color color)
     {
         var brush = new SolidColorBrush(color);
@@ -465,9 +502,11 @@ public static class NativeTheme
     <Setter.Value>
       <ControlTemplate TargetType="CheckBox">
         <StackPanel Orientation="Horizontal" Background="Transparent">
-          <Border x:Name="track" Width="40" Height="22" CornerRadius="11" Background="#E5E5EA" VerticalAlignment="Center">
-            <Border x:Name="thumb" Width="16" Height="16" CornerRadius="8" Background="White"
-                    HorizontalAlignment="Left" Margin="3,0,0,0">
+          <Border x:Name="track" Width="54" Height="30" CornerRadius="15" Background="#F1EEF4"
+                  BorderBrush="#D8D2DC" BorderThickness="1" VerticalAlignment="Center">
+            <Border x:Name="thumb" Width="20" Height="20" CornerRadius="10" Background="White"
+                    BorderBrush="#D8D2DC" BorderThickness="1"
+                    HorizontalAlignment="Left" Margin="4,0,0,0">
               <Border.RenderTransform>
                 <TranslateTransform/>
               </Border.RenderTransform>
@@ -480,16 +519,31 @@ public static class NativeTheme
         </StackPanel>
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True">
-            <Setter TargetName="track" Property="Background" Value="#D8D2DC"/>
+            <Setter TargetName="track" Property="BorderBrush" Value="#FFB1CB"/>
           </Trigger>
           <Trigger Property="IsChecked" Value="True">
-            <Setter TargetName="track" Property="Background" Value="#FF5B8A"/>
+            <Setter TargetName="track" Property="Background">
+              <Setter.Value>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                  <GradientStop Color="#FFE5EF" Offset="0"/>
+                  <GradientStop Color="#FFD6E4" Offset="1"/>
+                </LinearGradientBrush>
+              </Setter.Value>
+            </Setter>
+            <Setter TargetName="track" Property="BorderBrush" Value="#FFB1CB"/>
+            <Setter TargetName="thumb" Property="BorderBrush" Value="#FFB1CB"/>
+            <Setter TargetName="track" Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect Color="#FFD6E4" BlurRadius="10" ShadowDepth="0" Opacity="0.85"
+                                  RenderingBias="Performance"/>
+              </Setter.Value>
+            </Setter>
             <Trigger.EnterActions>
               <BeginStoryboard>
                 <Storyboard>
                   <DoubleAnimation Storyboard.TargetName="thumb"
                                    Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
-                                   To="18" Duration="0:0:0.18">
+                                   To="24" Duration="0:0:0.18">
                     <DoubleAnimation.EasingFunction>
                       <CubicEase EasingMode="EaseOut"/>
                     </DoubleAnimation.EasingFunction>
@@ -681,6 +735,138 @@ public static class NativeTheme
   </Setter>
 </Style>
 """));
+
+    /// <summary>
+    /// 设置页大输入框（对齐 Electron .field input pearl-white）：
+    /// 高 48、圆角 14、字号 16、内边距 11/12、白底 + #D2D2D7 描边，聚焦粉色描边 + 柔光。
+    /// </summary>
+    private static readonly System.Lazy<Style> InputLargeLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="TextBox">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="16"/>
+  <Setter Property="Height" Value="48"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="CaretBrush" Value="#FF5B8A"/>
+  <Setter Property="SelectionBrush" Value="#FFB1CB"/>
+  <Setter Property="Background" Value="White"/>
+  <Setter Property="BorderBrush" Value="#D2D2D7"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="Padding" Value="12,0"/>
+  <Setter Property="VerticalContentAlignment" Value="Center"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="TextBox">
+        <Border x:Name="bd" CornerRadius="14" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+          <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsKeyboardFocused" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FF5B8A"/>
+            <Setter TargetName="bd" Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect Color="#FF5B8A" BlurRadius="10" ShadowDepth="0" Opacity="0.22" RenderingBias="Performance"/>
+              </Setter.Value>
+            </Setter>
+          </Trigger>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
+    /// <summary>同 InputLarge 的密码框（API Key 遮蔽；模板要素与 TextBox 一致）。</summary>
+    private static readonly System.Lazy<Style> PasswordLargeLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="PasswordBox">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="16"/>
+  <Setter Property="Height" Value="48"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="CaretBrush" Value="#FF5B8A"/>
+  <Setter Property="SelectionBrush" Value="#FFB1CB"/>
+  <Setter Property="Background" Value="White"/>
+  <Setter Property="BorderBrush" Value="#D2D2D7"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="Padding" Value="12,0"/>
+  <Setter Property="VerticalContentAlignment" Value="Center"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="PasswordBox">
+        <Border x:Name="bd" CornerRadius="14" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+          <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsKeyboardFocused" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FF5B8A"/>
+            <Setter TargetName="bd" Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect Color="#FF5B8A" BlurRadius="10" ShadowDepth="0" Opacity="0.22" RenderingBias="Performance"/>
+              </Setter.Value>
+            </Setter>
+          </Trigger>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
+    /// <summary>
+    /// 胶囊主按钮（对齐 Electron pearl-white .save-btn）：全圆角、粉底白字、
+    /// 内边距 10/16、行高 42；hover 深一档 + 粉色柔光。
+    /// </summary>
+    private static readonly System.Lazy<Style> PillPrimaryLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="Button">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="14"/>
+  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="Foreground" Value="White"/>
+  <Setter Property="Padding" Value="16,0"/>
+  <Setter Property="Height" Value="42"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Button">
+        <Border x:Name="bd" CornerRadius="21" Background="#FF5B8A" BorderBrush="#FF5B8A" BorderThickness="1">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#E84A78"/>
+            <Setter TargetName="bd" Property="BorderBrush" Value="#E84A78"/>
+            <Setter TargetName="bd" Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect Color="#FF5B8A" BlurRadius="16" ShadowDepth="2" Direction="270"
+                                  Opacity="0.32" RenderingBias="Performance"/>
+              </Setter.Value>
+            </Setter>
+          </Trigger>
+          <Trigger Property="IsPressed" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#C43A64"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
 
     private static readonly System.Lazy<Style> TabItemLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="TabItem">
@@ -1009,6 +1195,9 @@ public static class NativeTheme
     }
 
     public static Style TextBoxStyle => TextBoxLazy.Value;
+    public static Style InputLargeStyle => InputLargeLazy.Value;
+    public static Style PasswordLargeStyle => PasswordLargeLazy.Value;
+    public static Style PillPrimaryStyle => PillPrimaryLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;
     public static Style DangerButtonStyle => DangerButtonLazy.Value;
