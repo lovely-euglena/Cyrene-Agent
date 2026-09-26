@@ -178,7 +178,7 @@ describe("startCore", () => {
     expect(markReadySpy).not.toHaveBeenCalled();
   });
 
-  it("creates the pet window only when petVisible is enabled", async () => {
+  it("creates the pet window only when petVisible is enabled（隐藏不建窗，省渲染进程）", async () => {
     const deps = makeCoreDeps([]);
     await startCore(deps);
     expect(deps.petWindowCreated).toBe(true);
@@ -187,10 +187,9 @@ describe("startCore", () => {
       loadGeneralSettings: () => ({ petVisible: false, sidebarVisible: false, tasksVisible: false }) as never,
     });
     await startCore(hidden);
-    // 上游语义（c2a14d75）：窗口始终创建，petVisible 只决定是否显示——
-    // 托盘「显示/隐藏桌宠」与设置开关随时可救回
-    expect(hidden.petWindowCreated).toBe(true);
-    expect(hidden.petShowOnReadyArgs.at(-1)).toBe(false);
+    // 隐藏桌宠时窗口不创建（显示时经 showPetWindow 按需重建）；
+    // 托盘「显示/隐藏桌宠」与设置开关仍然随时可救回（windowManager 懒建）
+    expect(hidden.petWindowCreated).toBe(false);
     expect(hidden.shell.windowManager.createSidebarWindow).not.toHaveBeenCalled();
     expect(hidden.shell.windowManager.createTasksWindow).not.toHaveBeenCalled();
   });
