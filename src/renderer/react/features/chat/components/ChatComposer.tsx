@@ -321,6 +321,9 @@ export function ChatComposer({
   const [enabledStickers, setEnabledStickers] = useState<EnabledSticker[]>([]);
   const supportsWorkFiles = ["work", "code"].includes(mode);
   const supportsObsidianLibrary = mode === "learn";
+  // 会话开启且已绑定工作区即锁定：工作区按钮只作为"开始对话前"的选择入口，
+  // 保留给未绑定会话仅作补救（换工作区 = 新开对话，避免运行中换绑与旧引用失效）
+  const workspaceSelectable = !conversationId || !workspaceRoot;
   const supportsPermission = supportsWorkFiles || supportsObsidianLibrary;
   const supportsPlanToggle = mode === "code";
   const supportsStyle = mode === "chat" || mode === "learn";
@@ -503,7 +506,7 @@ export function ChatComposer({
         }
         />
         <div className="cy-composer__footer">
-        {supportsWorkFiles && (
+        {supportsWorkFiles && workspaceSelectable && (
           <WorkspaceFolderButton
             icon={<FolderOpen />}
             label={workspaceName ?? (docked ? t("composer.workspaceFolder") : t("composer.workspaceEnter"))}
@@ -514,7 +517,7 @@ export function ChatComposer({
             onChooseWorkspace={onChooseWorkspace}
           />
         )}
-        {supportsObsidianLibrary && (
+        {supportsObsidianLibrary && workspaceSelectable && (
           <WorkspaceFolderButton
             icon={<ObsidianVaultIcon />}
             label={workspaceName ?? t("composer.obsidianLibrary")}
