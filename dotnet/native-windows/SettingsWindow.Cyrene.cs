@@ -86,9 +86,9 @@ public sealed partial class SettingsWindow
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        stickerActions.Children.Add(MakeButton("管理表情包",
+        stickerActions.Children.Add(MakeActionButton("管理表情包",
             () => RequestRouter.SendSettingsAction("cyrene", "open-sticker-manager"), minWidth: 110));
-        stickerActions.Children.Add(MakeButton("＋ 添加表情包",
+        stickerActions.Children.Add(MakeActionButton("＋ 添加表情包",
             OpenStickerAddDialog, minWidth: 120));
         panel.Children.Add(MakeDescribedRow("表情包管理",
             "在管理窗启停内置表情包，或添加自己的表情包（含相近语义，用于语义匹配）。",
@@ -182,10 +182,10 @@ public sealed partial class SettingsWindow
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        ragActions.Children.Add(MakeButton("📖 模型安装说明",
+        ragActions.Children.Add(MakeActionButton("📖 模型安装说明",
             () => RequestRouter.SendSettingsAction("cyrene", "open-model-docs"), minWidth: 130));
-        ragActions.Children.Add(MakeButton("删除缓存", ConfirmDeleteEmbeddingCache, minWidth: 90));
-        ragActions.Children.Add(MakeButton("检查更新",
+        ragActions.Children.Add(MakeActionButton("删除缓存", ConfirmDeleteEmbeddingCache, minWidth: 90));
+        ragActions.Children.Add(MakeActionButton("检查更新",
             () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 90));
         panel.Children.Add(MakeDescribedRow("模型操作",
             "模型为手动安装；删除缓存后需重新安装。",

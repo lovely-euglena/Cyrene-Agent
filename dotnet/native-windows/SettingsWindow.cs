@@ -512,8 +512,8 @@ public sealed partial class SettingsWindow : NativeWindow
             Margin = new Thickness(0, 0, 10, 0),
         };
         row.Children.Add(label);
-        var importBtn = MakeButton("导入字体", () => RequestRouter.SendCommand("settings", "ui-font-import"), minWidth: 88);
-        var resetBtn = MakeButton("恢复默认", () => RequestRouter.SendCommand("settings", "ui-font-reset"), minWidth: 84);
+        var importBtn = MakeActionButton("导入字体", () => RequestRouter.SendCommand("settings", "ui-font-import"), minWidth: 88);
+        var resetBtn = MakeActionButton("恢复默认", () => RequestRouter.SendCommand("settings", "ui-font-reset"), minWidth: 84);
         row.Children.Add(importBtn);
         row.Children.Add(resetBtn);
         return MakeRow("界面字体", row);
@@ -560,11 +560,11 @@ public sealed partial class SettingsWindow : NativeWindow
             Content = pluginManager ? "打开插件管理（原生窗口）"
               : section == "channels" ? "打开渠道配置（独立窗口）" : "在旧版设置中打开",
             Width = 220,
-            Height = 32,
             Margin = new Thickness(0, 14, 0, 0),
             FontSize = 14,
             Cursor = System.Windows.Input.Cursors.Hand,
-            Style = NativeTheme.SecondaryButtonStyle,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Style = NativeTheme.GhostPillStyle,
         };
         if (pluginManager)
         {
@@ -787,6 +787,19 @@ public sealed partial class SettingsWindow : NativeWindow
         Margin = new Thickness(0, 16, 0, 6),
     };
 
+    /// <summary>时间范围小胶囊（.token-range__btn：12/600、padding 5/16、全圆角）。</summary>
+    private static Button MakeRangeButton(string text, bool active, Action onClick)
+    {
+        var button = new Button
+        {
+            Content = text,
+            Style = active ? NativeTheme.PillSmallStyle : NativeTheme.GhostPillSmallStyle,
+            Margin = new Thickness(0, 0, 6, 0),
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
     private static Button MakeButton(string text, Action onClick, bool primary = false, double minWidth = 96)
     {
         var button = new Button
@@ -796,6 +809,25 @@ public sealed partial class SettingsWindow : NativeWindow
             Margin = new Thickness(0, 4, 8, 4),
             Style = primary ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle,
         };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    /// <summary>
+    /// 设置页操作按钮（pearl-white 胶囊）：次要 = 幽灵白底描边（.ghost-btn），
+    /// 主操作 = 粉色实心（.save-btn）。尺寸随内容，不再固定 96 最小宽。
+    /// </summary>
+    private static Button MakeActionButton(string text, Action onClick, bool primary = false, double minWidth = 0)
+    {
+        var button = new Button
+        {
+            Content = text,
+            Style = primary ? NativeTheme.PillPrimaryStyle : NativeTheme.GhostPillStyle,
+            Margin = new Thickness(0, 4, 8, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (minWidth > 0) button.MinWidth = minWidth;
         button.Click += (_, _) => onClick();
         return button;
     }

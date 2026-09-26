@@ -46,6 +46,8 @@ public static class NativeTheme
     public static readonly Color Pink200 = Color.FromRgb(0xFF, 0xB1, 0xCB);
     /// <summary>--rb-pink-600（选中态文字/hover）。</summary>
     public static readonly Color Pink600 = Color.FromRgb(0xE8, 0x4A, 0x78);
+    /// <summary>--rb-pink-700（链接 hover 深一档）。</summary>
+    public static readonly Color Pink700 = Color.FromRgb(0xC4, 0x3A, 0x64);
     /// <summary>预设卡未选中底（rgba(0,0,0,0.02) 合成白）。</summary>
     public static readonly Color CardSoftBg = Color.FromRgb(0xFA, 0xFA, 0xFA);
     /// <summary>浅色按钮底（--rb-bg-2 #FAFAFC，官网链/重置钮）。</summary>
@@ -70,6 +72,7 @@ public static class NativeTheme
     public static readonly SolidColorBrush Pink50Brush = Brush(Pink50);
     public static readonly SolidColorBrush Pink200Brush = Brush(Pink200);
     public static readonly SolidColorBrush Pink600Brush = Brush(Pink600);
+    public static readonly SolidColorBrush Pink700Brush = Brush(Pink700);
     public static readonly SolidColorBrush CardSoftBgBrush = Brush(CardSoftBg);
     public static readonly SolidColorBrush ButtonSoftBgBrush = Brush(ButtonSoftBg);
     public static readonly SolidColorBrush BadgePinkBrush = Brush(BadgePinkBg);
@@ -947,6 +950,70 @@ public static class NativeTheme
 </Style>
 """)));
 
+    /// <summary>
+    /// 小胶囊·选中（对齐 .token-range__btn.is-active）：粉底白字、12/600、27 高。
+    /// </summary>
+    private static readonly System.Lazy<Style> PillSmallLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="Button">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="12"/>
+  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="Foreground" Value="White"/>
+  <Setter Property="Padding" Value="16,0"/>
+  <Setter Property="Height" Value="27"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Button">
+        <Border x:Name="bd" CornerRadius="14" Background="#FF5B8A" BorderBrush="Transparent" BorderThickness="1">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#E84A78"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
+    /// <summary>小胶囊·未选中（透明底 + 浅粉描边，文字 muted；hover 粉字浅底）。</summary>
+    private static readonly System.Lazy<Style> GhostPillSmallLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="Button">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="12"/>
+  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="Foreground" Value="#4F4A57"/>
+  <Setter Property="Padding" Value="16,0"/>
+  <Setter Property="Height" Value="27"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Button">
+        <Border x:Name="bd" CornerRadius="14" Background="Transparent" BorderBrush="#FFE9F4" BorderThickness="1">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter Property="Foreground" Value="#E84A78"/>
+            <Setter TargetName="bd" Property="Background" Value="#FFF1F6"/>
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
     private static readonly System.Lazy<Style> TabItemLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="TabItem">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
@@ -1279,6 +1346,8 @@ public static class NativeTheme
     public static Style PillPrimaryStyle => PillPrimaryLazy.Value;
     public static Style InputSmallStyle => InputSmallLazy.Value;
     public static Style GhostPillStyle => GhostPillLazy.Value;
+    public static Style PillSmallStyle => PillSmallLazy.Value;
+    public static Style GhostPillSmallStyle => GhostPillSmallLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;
     public static Style DangerButtonStyle => DangerButtonLazy.Value;

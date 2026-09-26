@@ -69,7 +69,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(LabeledBox("语言", languageBox));
         panel.Children.Add(LabeledBox("长期备注", noteBox));
         var l0Actions = new StackPanel { Orientation = Orientation.Horizontal };
-        l0Actions.Children.Add(MakeButton("保存画像", () =>
+        l0Actions.Children.Add(MakeActionButton("保存画像", () =>
         {
             RequestRouter.SendSettingsAction("memory", "save-l0", new Dictionary<string, object?>
             {
@@ -84,7 +84,7 @@ public sealed partial class SettingsWindow
             });
         }, primary: true));
         // 取消修改：回滚到最近一次快照值（对齐 Electron 的编辑/取消两态）
-        l0Actions.Children.Add(MakeButton("取消修改", () =>
+        l0Actions.Children.Add(MakeActionButton("取消修改", () =>
         {
             nameBox.Text = GetString(l0, "preferredName");
             occupationBox.Text = GetString(l0, "occupation");
@@ -102,7 +102,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(LabeledBox("近期偏好", preferencesBox));
         panel.Children.Add(LabeledBox("当前项目", projectBox));
         var l1Actions = new StackPanel { Orientation = Orientation.Horizontal };
-        l1Actions.Children.Add(MakeButton("保存近况", () =>
+        l1Actions.Children.Add(MakeActionButton("保存近况", () =>
         {
             RequestRouter.SendSettingsAction("memory", "save-l1", new Dictionary<string, object?>
             {
@@ -114,7 +114,7 @@ public sealed partial class SettingsWindow
                 },
             });
         }, primary: true));
-        l1Actions.Children.Add(MakeButton("取消修改", () =>
+        l1Actions.Children.Add(MakeActionButton("取消修改", () =>
         {
             goalsBox.Text = GetString(l1, "recentGoals");
             preferencesBox.Text = GetString(l1, "recentPreferences");
@@ -219,7 +219,7 @@ public sealed partial class SettingsWindow
             var card = MakeCard(out var body);
             body.Children.Add(MakeCardTitle(fileName));
             body.Children.Add(MakeCardMeta($"已索引 {chunkCount} 个片段 · 最近导入：{FormatUnixMs(lastImportedAt)}"));
-            var deleteButton = MakeButton("删除", () =>
+            var deleteButton = MakeActionButton("删除", () =>
             {
                 if (MessageBox.Show($"删除导入文档「{fileName}」及其索引片段？此操作不可恢复。", "删除导入文档", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
                 RequestRouter.SendSettingsAction("memory", "delete-doc", new Dictionary<string, object?>
@@ -267,11 +267,11 @@ public sealed partial class SettingsWindow
         {
             panel.Children.Add(MakeHint("未绑定 vault：绑定后昔涟的记忆会增量同步为 Markdown；也可只做一次性导出。"));
             var unboundRow = new StackPanel { Orientation = Orientation.Horizontal };
-            unboundRow.Children.Add(MakeButton("绑定 vault 文件夹", () =>
+            unboundRow.Children.Add(MakeActionButton("绑定 vault 文件夹", () =>
             {
                 RequestRouter.SendSettingsAction("memory", "vault-bind");
             }, primary: true));
-            unboundRow.Children.Add(MakeButton("一键导出", () =>
+            unboundRow.Children.Add(MakeActionButton("一键导出", () =>
             {
                 RequestRouter.SendSettingsAction("memory", "vault-export");
             }));
@@ -285,11 +285,11 @@ public sealed partial class SettingsWindow
             panel.Children.Add(MakeHint($"上次同步：{FormatUnixMs(lastSyncAt)}"));
         }
         var boundRow = new StackPanel { Orientation = Orientation.Horizontal };
-        boundRow.Children.Add(MakeButton("立即同步", () =>
+        boundRow.Children.Add(MakeActionButton("立即同步", () =>
         {
             RequestRouter.SendSettingsAction("memory", "vault-sync");
         }, primary: true));
-        boundRow.Children.Add(MakeButton("解绑", () =>
+        boundRow.Children.Add(MakeActionButton("解绑", () =>
         {
             if (MessageBox.Show("解绑后不再自动同步（vault 文件夹里的 md 不会被删除）。确定解绑吗？", "解绑 Obsidian Vault", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
             RequestRouter.SendSettingsAction("memory", "vault-unbind");

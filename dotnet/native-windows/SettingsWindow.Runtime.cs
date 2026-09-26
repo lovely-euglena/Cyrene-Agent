@@ -42,7 +42,7 @@ public sealed partial class SettingsWindow
         panel.Children.Add(MakeRow("工具并发数", parallelBox));
         panel.Children.Add(MakeHint("1–8，1 = 串行；保存后从下一个任务生效。"));
 
-        panel.Children.Add(MakeButton("保存设置", () =>
+        panel.Children.Add(MakeActionButton("保存设置", () =>
         {
             int? modelTimeoutSec = int.TryParse(modelTimeoutBox.Text.Trim(), out var mt)
                 ? Math.Clamp(mt, 10, 600)

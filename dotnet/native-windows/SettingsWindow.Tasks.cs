@@ -34,7 +34,7 @@ public sealed partial class SettingsWindow
         var pluginRunning = GetNode(tasksNode, "pluginRunning");
         var history = GetNode(tasksNode, "history");
 
-        panel.Children.Add(MakeButton("新建任务", () => OpenTaskEditor(null, tools), primary: true));
+        panel.Children.Add(MakeActionButton("新建任务", () => OpenTaskEditor(null, tools), primary: true));
 
         if (tasks.ValueKind != JsonValueKind.Array || tasks.GetArrayLength() == 0)
         {
@@ -91,19 +91,19 @@ public sealed partial class SettingsWindow
 
         // 操作行
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
-        var fireButton = MakeButton("立即运行", () =>
+        var fireButton = MakeActionButton("立即运行", () =>
         {
             RequestRouter.SendSettingsAction("scheduler", "fire", new Dictionary<string, object?> { ["id"] = id });
         }, minWidth: 76);
         WithEnabled(fireButton, pluginRunningHere);
         actions.Children.Add(fireButton);
-        actions.Children.Add(MakeButton("编辑", () => OpenTaskEditor(task.Clone(), tools), minWidth: 60));
-        actions.Children.Add(MakeButton(enabled ? "停用" : "启用", () =>
+        actions.Children.Add(MakeActionButton("编辑", () => OpenTaskEditor(task.Clone(), tools), minWidth: 60));
+        actions.Children.Add(MakeActionButton(enabled ? "停用" : "启用", () =>
         {
             if (!enabled && isPluginTask && !ConfirmPluginTaskEnable(task)) return;
             RequestRouter.SendSettingsAction("scheduler", "toggle", new Dictionary<string, object?> { ["id"] = id, ["enabled"] = !enabled });
         }, minWidth: 60));
-        actions.Children.Add(MakeButton("历史", () =>
+        actions.Children.Add(MakeActionButton("历史", () =>
         {
             _tasksHistoryTaskId = _tasksHistoryTaskId == id ? null : id;
             if (_tasksHistoryTaskId == id)
@@ -116,7 +116,7 @@ public sealed partial class SettingsWindow
                 RefreshSection("tasks");
             }
         }, minWidth: 60));
-        actions.Children.Add(MakeButton("删除", () =>
+        actions.Children.Add(MakeActionButton("删除", () =>
         {
             if (MessageBox.Show($"确定删除定时任务「{title}」吗？", "删除定时任务", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
             if (_tasksHistoryTaskId == id) _tasksHistoryTaskId = null;

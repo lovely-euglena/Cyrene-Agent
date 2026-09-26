@@ -32,9 +32,8 @@ public sealed partial class SettingsWindow
         foreach (var days in new[] { 7, 14, 30 })
         {
             var value = days;
-            rangeRow.Children.Add(MakeButton($"近 {days} 天", () =>
-                RequestRouter.SendSettingsAction("tokens", "set-days", new Dictionary<string, object?> { ["days"] = value }),
-                primary: value == activeDays, minWidth: 84));
+            rangeRow.Children.Add(MakeRangeButton($"{days}d", value == activeDays, () =>
+                RequestRouter.SendSettingsAction("tokens", "set-days", new Dictionary<string, object?> { ["days"] = value })));
         }
         panel.Children.Add(rangeRow);
 
@@ -207,7 +206,7 @@ public sealed partial class SettingsWindow
             panel.Children.Add(chartRow);
         }
 
-        panel.Children.Add(MakeButton("重置统计", () =>
+        panel.Children.Add(MakeActionButton("重置统计", () =>
         {
             if (MessageBox.Show("确定重置本地 Token 用量统计？该操作不可撤销。", "重置统计",
                     MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
