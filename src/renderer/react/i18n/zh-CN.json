@@ -1108,6 +1108,7 @@
       "saveProfile": "保存档案",
       "saving": "正在保存档案与配置…",
       "saved": "模型档案已保存",
+      "unsavedProfileChanges": "检测到档案有改动，请移到下方点击保存档案。",
       "duplicate": "该模型档案已存在，未创建重复项。",
       "deleted": "模型档案已删除",
       "deleteFailed": "删除档案失败，请重试。",

@@ -1108,6 +1108,7 @@
       "saveProfile": "Save profile",
       "saving": "Saving profile and settings…",
       "saved": "Model profile saved",
+      "unsavedProfileChanges": "Profile changes detected. Scroll down and click Save profile.",
       "duplicate": "This model profile already exists; no duplicate was created.",
       "deleted": "Model profile deleted",
       "deleteFailed": "Could not delete the profile. Please try again.",
