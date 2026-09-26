@@ -75,7 +75,7 @@ public sealed class SidebarWindow : NativeWindow
         Grid.SetColumn(title, 0);
         titlebar.Children.Add(title);
 
-        var btnStyle = MakeTitleButtonStyle();
+        var btnStyle = NativeTheme.WindowButtonStyle;
         // 置顶：本地切换 Topmost（对齐 Electron 状态栏 SIDEBAR_TOGGLE_ALWAYS_ON_TOP
         // 的语义），并同步按钮高亮/提示。旧实现发 togglePin 给宿主，宿主只重新
         // 显示窗口；_pinned 从未赋值 → 置顶永远无效。
@@ -283,37 +283,6 @@ public sealed class SidebarWindow : NativeWindow
         Child = content,
         Effect = NativeTheme.CardShadow(),
     };
-
-    private static Style MakeTitleButtonStyle()
-    {
-        var style = new Style(typeof(Button));
-        style.Setters.Add(new Setter(Button.ForegroundProperty, NativeTheme.TextMutedBrush));
-        style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
-        style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
-        style.Setters.Add(new Setter(Button.FontSizeProperty, 11.0));
-        style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(7, 3, 7, 3)));
-        style.Setters.Add(new Setter(Button.MarginProperty, new Thickness(2, 0, 2, 0)));
-        style.Setters.Add(new Setter(Button.CursorProperty, Cursors.Hand));
-        // 圆角 hover 底（对齐 pearl-white 窗口按钮的 hover 语言）
-        var template = new ControlTemplate(typeof(Button));
-        var bd = new FrameworkElementFactory(typeof(Border), "bg");
-        bd.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        bd.AppendChild(presenter);
-        template.VisualTree = bd;
-        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.BorderSoftBrush) { TargetName = "bg" });
-        hover.Setters.Add(new Setter(Control.ForegroundProperty, NativeTheme.TextStrongBrush));
-        template.Triggers.Add(hover);
-        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
-        pressed.Setters.Add(new Setter(Border.BackgroundProperty, NativeTheme.BorderStrongBrush) { TargetName = "bg" });
-        template.Triggers.Add(pressed);
-        style.Setters.Add(new Setter(Button.TemplateProperty, template));
-        return style;
-    }
 
     private static System.Windows.Controls.Button MakeTitleButton(string tip, string glyph, Style style, Action onClick)
     {

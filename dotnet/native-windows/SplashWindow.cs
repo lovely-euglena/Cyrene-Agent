@@ -187,10 +187,6 @@ internal static class NativeMethods
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
     public static extern int SetWindowLong(System.IntPtr hWnd, int nIndex, int dwNewLong);
 
-    /// <summary>WinForms 窗无边框圆角：用区域（Region）裁剪出圆角矩形。</summary>
-    [System.Runtime.InteropServices.DllImport("gdi32.dll")]
-    public static extern System.IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int widthEllipse, int heightEllipse);
-
     /// <summary>托盘 PNG→HICON 转换后的句柄回收（Icon.FromHandle 不接管句柄所有权）。</summary>
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     public static extern bool DestroyIcon(System.IntPtr hIcon);

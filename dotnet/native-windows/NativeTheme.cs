@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -132,6 +133,58 @@ public static class NativeTheme
         style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, FocusRingStyle));
         return style;
     }
+
+    /// <summary>窗口标题栏按钮（置顶/最小化/关闭）：圆角 hover 底、无边框。</summary>
+    private static readonly System.Lazy<Style> WindowButtonLazy = new(() =>
+    {
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, TextMutedBrush));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(Control.FontSizeProperty, 11.0));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(7, 3, 7, 3)));
+        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(2, 0, 2, 0)));
+        style.Setters.Add(new Setter(Control.CursorProperty, Cursors.Hand));
+        var template = new ControlTemplate(typeof(Button));
+        var bg = new FrameworkElementFactory(typeof(Border), "bg");
+        bg.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        bg.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        bg.AppendChild(presenter);
+        template.VisualTree = bg;
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, BorderSoftBrush) { TargetName = "bg" });
+        hover.Setters.Add(new Setter(Control.ForegroundProperty, TextStrongBrush));
+        template.Triggers.Add(hover);
+        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
+        pressed.Setters.Add(new Setter(Border.BackgroundProperty, BorderStrongBrush) { TargetName = "bg" });
+        template.Triggers.Add(pressed);
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        return WithFocusRing(style);
+    });
+
+    /// <summary>白卡浮层 Tooltip（图表/数据点提示；对齐 pearl-white 阴影语言）。</summary>
+    private static readonly System.Lazy<Style> ToolTipLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="ToolTip">
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="FontSize" Value="11.5"/>
+  <Setter Property="HasDropShadow" Value="False"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="ToolTip">
+        <Border Background="White" BorderBrush="#E5E5EA" BorderThickness="1" CornerRadius="8" Padding="10,7">
+          <Border.Effect>
+            <DropShadowEffect Color="#1F2330" BlurRadius="14" ShadowDepth="2" Direction="270" Opacity="0.16" RenderingBias="Performance"/>
+          </Border.Effect>
+          <ContentPresenter/>
+        </Border>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
 
     private static readonly System.Lazy<Style> TextBoxLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="TextBox">
@@ -837,6 +890,8 @@ public static class NativeTheme
     public static Style TabItemStyle => TabItemLazy.Value;
     public static Style TabControlStyle => TabControlLazy.Value;
     public static Style ScrollBarStyle => ScrollBarLazy.Value;
+    public static Style WindowButtonStyle => WindowButtonLazy.Value;
+    public static Style ToolTipStyle => ToolTipLazy.Value;
 
     /// <summary>把主题套到窗口：字体 + 隐式控件样式（只影响未显式设置 Style 的控件）。</summary>
     public static void Apply(Window window)
@@ -850,6 +905,7 @@ public static class NativeTheme
         window.Resources[typeof(TabItem)] = TabItemStyle;
         window.Resources[typeof(TabControl)] = TabControlStyle;
         window.Resources[typeof(ScrollBar)] = ScrollBarStyle;
+        window.Resources[typeof(ToolTip)] = ToolTipStyle;
         // ComboBox 模板仅支持非可编辑模式（可编辑下拉需 PART_EditableTextBox 特殊处理，
         // 代码库中的可编辑模型下拉已改为「文本框 + 建议下拉」组合）
         window.Resources[typeof(ComboBox)] = ComboBoxStyle;
