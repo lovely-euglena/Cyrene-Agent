@@ -1,8 +1,8 @@
-/* 组件专属胶囊配色；通用界面角色变量来自 ui/themes/pearl-white.css。 */
+/* 组件专属胶囊配色；各主题通过同名语义变量覆盖。 */
 :root {
-  --cy-pill-bg: #fff9fb;
-  --cy-pill-border: #ff9fbd;
-  --cy-pill-status: #7d3557;
+  --cy-pill-bg: var(--rb-surface-elevated);
+  --cy-pill-border: var(--rb-border-focus);
+  --cy-pill-status: var(--rb-text-primary);
 }
 
 html, body {
@@ -10,6 +10,14 @@ html, body {
   margin: 0;
   padding: 0;
   overflow: hidden;
+}
+
+/* @mantine/core/styles.css 会给 body 铺一层不透明底色（--mantine-color-body）。
+   本窗口的实色来自 .cy-page，body 若被铺实，圆角之外就会露出一圈方块底、
+   看起来像"底下还有一层"。这里用 html 前缀提高权重，避免 Mantine 的样式
+   在运行时后注入而盖掉本规则。 */
+html body {
+  background-color: transparent;
 }
 
 #cyrene-react-root {

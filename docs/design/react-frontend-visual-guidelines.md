@@ -21,7 +21,7 @@
 | 要改什么 | 从哪里开始 |
 | --- | --- |
 | 基础字号、间距、圆角等尺度 | [tokens.css](../../src/renderer/ui/tokens.css) |
-| 浅色主题的语义色，如表面、文字、边框和强调色 | [pearl-white.css](../../src/renderer/ui/themes/pearl-white.css) |
+| 主题语义色，如表面、文字、边框和强调色 | [pearl-white.css](../../src/renderer/ui/themes/pearl-white.css)、[charcoal-pink.css](../../src/renderer/ui/themes/charcoal-pink.css) |
 | 旧窗口共用的主题适配 | [theme.css](../../src/renderer/ui/theme.css) |
 | React 工作区骨架和现有 `--cy-*` 变量 | [react-root.css](../../src/renderer/react/styles/react-root.css) |
 | 设置页排版、卡片、导航和 Ant Design 外观适配 | [AppearanceSettingsPage.css](../../src/renderer/react/features/settings/AppearanceSettingsPage.css) |
@@ -30,7 +30,7 @@
 
 颜色优先使用 `--rb-surface-*`、`--rb-text-*`、`--rb-border-*`、`--rb-accent` 这类语义变量。新增主题时让主题文件覆盖语义变量，组件继续使用同一名称。`tokens.css` 保留基础尺度和默认值；每个主题独立维护自己的颜色覆盖。
 
-当前还存在两处需要在后续主题工作中处理的重复定义：`react-root.css` 直接声明了部分 `--cy-*` 工作区颜色；`theme.css` 与 `pearl-white.css` 都覆盖了部分浅色主题变量。修改颜色前先核对 [React 样式加载顺序](../../src/renderer/react/index.html) 和最终生效值。此约定描述目标与现状，并不表示深色主题已经接通。
+应用目前提供「珍珠白」和「经典深色」两套主题，主题选择在外观设置中保存并同步到已打开窗口。新增颜色应进入对应主题文件，并继续由组件读取语义变量；透明桌宠窗口保持透明。修改颜色前先核对 [React 样式加载顺序](../../src/renderer/react/index.html) 和最终生效值。
 
 ## 控件选用
 
