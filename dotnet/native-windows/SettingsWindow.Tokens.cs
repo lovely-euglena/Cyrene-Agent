@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 
 namespace CyreneNative;
@@ -68,6 +69,7 @@ public sealed partial class SettingsWindow
             foreach (var v in values) max = Math.Max(max, v.Input + v.Output);
 
             var bars = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 4) };
+            var barIndex = 0;
             foreach (var (date, dayInput, dayOutput) in values)
             {
                 var total = dayInput + dayOutput;
@@ -85,15 +87,31 @@ public sealed partial class SettingsWindow
                     Foreground = NativeTheme.TextMutedBrush,
                     HorizontalAlignment = HorizontalAlignment.Center,
                 });
-                column.Children.Add(new Border
+                var bar = new Border
                 {
                     Width = 18,
-                    Height = Math.Max(total > 0 ? 4 : 0, 64.0 * total / max),
+                    Height = 0,
                     CornerRadius = new CornerRadius(3),
                     Background = total > 0 ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Bottom,
-                });
+                    ToolTip = MakeTokenTooltip(date, dayInput, dayOutput),
+                };
+                if (total > 0)
+                {
+                    // 入场动画：从 0 长到目标高度（按列错峰 25ms，最多前 10 列错峰）
+                    bar.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(
+                        Math.Max(4, 64.0 * total / max), TimeSpan.FromMilliseconds(320))
+                    {
+                        BeginTime = TimeSpan.FromMilliseconds(Math.Min(barIndex, 10) * 25),
+                        EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                    });
+                    // hover 高亮（柱图交互）
+                    bar.Cursor = System.Windows.Input.Cursors.Hand;
+                    bar.MouseEnter += (_, _) => bar.Opacity = 0.82;
+                    bar.MouseLeave += (_, _) => bar.Opacity = 1;
+                }
+                column.Children.Add(bar);
                 column.Children.Add(new TextBlock
                 {
                     Text = date,
@@ -103,6 +121,7 @@ public sealed partial class SettingsWindow
                     Margin = new Thickness(0, 2, 0, 0),
                 });
                 bars.Children.Add(column);
+                barIndex++;
             }
             panel.Children.Add(new ScrollViewer
             {
@@ -225,30 +244,86 @@ public sealed partial class SettingsWindow
                 Foreground = NativeTheme.TextMutedBrush,
             };
             Canvas.SetLeft(label, 2);
-            Canvas.SetTop(label, y - 6);
+            Canvas.SetTop(label, Math.Max(0, y - 6)); // 顶部刻度贴边不裁切
             canvas.Children.Add(label);
         }
 
+        Ellipse MakeDot(Brush brush) => new()
+        {
+            Width = 8,
+            Height = 8,
+            Fill = brush,
+            Stroke = Brushes.White,
+            StrokeThickness = 1.5,
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+
+        double XAt(int index) => leftPad + index * slotWidth + slotWidth / 2.0;
+        double YAt(int amount) => chartHeight - chartHeight * ((double)amount / max);
+
+        // 折线（淡入入场）
         void AddSeries(bool useInput, Brush brush)
         {
-            var polyline = new Polyline { Stroke = brush, StrokeThickness = 2, StrokeLineJoin = PenLineJoin.Round };
+            var polyline = new Polyline
+            {
+                Stroke = brush,
+                StrokeThickness = 2,
+                StrokeLineJoin = PenLineJoin.Round,
+                Opacity = 0,
+            };
             for (var i = 0; i < values.Count; i++)
             {
-                var value = values[i];
-                var x = leftPad + i * slotWidth + slotWidth / 2.0;
-                var amount = useInput ? value.Input : value.Output;
-                var y = chartHeight - chartHeight * ((double)amount / max);
-                polyline.Points.Add(new Point(x, y));
+                var amount = useInput ? values[i].Input : values[i].Output;
+                polyline.Points.Add(new Point(XAt(i), YAt(amount)));
             }
+            polyline.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(360))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+            });
             canvas.Children.Add(polyline);
         }
         AddSeries(true, NativeTheme.PinkBrush);
         AddSeries(false, NativeTheme.VioletBrush);
 
-        // x 轴日期（密集时隔位显示）
+        // 数据点（hover 才显示）+ 列命中区（tooltip + 双序列点联动）
+        var inputDots = new Ellipse[values.Count];
+        var outputDots = new Ellipse[values.Count];
         for (var i = 0; i < values.Count; i++)
         {
-            if (values.Count > 10 && i % 3 != 0 && i != values.Count - 1) continue;
+            var dotIn = MakeDot(NativeTheme.PinkBrush);
+            var dotOut = MakeDot(NativeTheme.VioletBrush);
+            Canvas.SetLeft(dotIn, XAt(i) - 4);
+            Canvas.SetTop(dotIn, YAt(values[i].Input) - 4);
+            Canvas.SetLeft(dotOut, XAt(i) - 4);
+            Canvas.SetTop(dotOut, YAt(values[i].Output) - 4);
+            inputDots[i] = dotIn;
+            outputDots[i] = dotOut;
+            canvas.Children.Add(dotIn);
+            canvas.Children.Add(dotOut);
+
+            var hit = new Rectangle
+            {
+                Width = slotWidth,
+                Height = chartHeight,
+                Fill = Brushes.Transparent,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = MakeTokenTooltip(values[i].Date, values[i].Input, values[i].Output),
+            };
+            Canvas.SetLeft(hit, XAt(i) - slotWidth / 2);
+            Canvas.SetTop(hit, 0);
+            var shownIn = dotIn;
+            var shownOut = dotOut;
+            hit.MouseEnter += (_, _) => { shownIn.Visibility = Visibility.Visible; shownOut.Visibility = Visibility.Visible; };
+            hit.MouseLeave += (_, _) => { shownIn.Visibility = Visibility.Collapsed; shownOut.Visibility = Visibility.Collapsed; };
+            canvas.Children.Add(hit);
+        }
+
+        // x 轴日期（slot 较窄：>5 个时段隔位显示；非常密的 14/30 天再放宽到每 3 个）
+        for (var i = 0; i < values.Count; i++)
+        {
+            var step = values.Count > 12 ? 3 : values.Count > 5 ? 2 : 1;
+            if (i % step != 0 && i != values.Count - 1) continue;
             var label = new TextBlock { Text = values[i].Date, FontSize = 9, Foreground = NativeTheme.TextMutedBrush };
             Canvas.SetLeft(label, leftPad + i * slotWidth + slotWidth / 2.0 - 12);
             Canvas.SetTop(label, chartHeight + 3);
@@ -280,7 +355,20 @@ public sealed partial class SettingsWindow
     {
         const double size = 132;
         const double thickness = 22;
-        var canvas = new Canvas { Width = size, Height = size };
+        var canvas = new Canvas
+        {
+            Width = size,
+            Height = size,
+            Opacity = 0,
+            RenderTransformOrigin = new Point(0.5, 0.5),
+        };
+        // 入场：缩放 + 淡入
+        var scale = new ScaleTransform(0.92, 0.92);
+        canvas.RenderTransform = scale;
+        var entrance = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+        canvas.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(300)) { EasingFunction = entrance });
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(300)) { EasingFunction = entrance });
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(300)) { EasingFunction = entrance });
         var total = models.Sum((m) => (long)m.Total);
         if (total <= 0) return canvas;
 
@@ -313,17 +401,57 @@ public sealed partial class SettingsWindow
             });
             var geometry = new PathGeometry();
             geometry.Figures.Add(figure);
-            canvas.Children.Add(new Path
+            var sliceName = slices[i].Name;
+            var sliceShare = (double)slices[i].Total * 100 / total;
+            var path = new Path
             {
                 Stroke = DonutBrush(i),
                 StrokeThickness = thickness,
                 Data = geometry,
                 StrokeStartLineCap = PenLineCap.Flat,
                 StrokeEndLineCap = PenLineCap.Flat,
-            });
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = new ToolTip
+                {
+                    Content = $"{sliceName} · {FormatTokensShort(slices[i].Total)} ({sliceShare:0.0}%)",
+                    Style = NativeTheme.ToolTipStyle,
+                },
+            };
+            // hover：描边加粗 + 微降透明度
+            path.MouseEnter += (_, _) => { path.StrokeThickness = thickness + 4; path.Opacity = 0.92; };
+            path.MouseLeave += (_, _) => { path.StrokeThickness = thickness; path.Opacity = 1; };
+            canvas.Children.Add(path);
             angle += sweep;
         }
         return canvas;
+    }
+
+    /// <summary>Token 数据点提示（日期 + 输入/输出/合计，白卡浮层）。</summary>
+    private static ToolTip MakeTokenTooltip(string date, int input, int output)
+    {
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock
+        {
+            Text = date,
+            FontSize = 11.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"输入 {FormatTokensShort(input)} · 输出 {FormatTokensShort(output)}",
+            FontSize = 11,
+            Foreground = NativeTheme.TextMutedBrush,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"合计 {FormatTokensShort(input + output)}",
+            FontSize = 11,
+            Foreground = NativeTheme.PinkDarkBrush,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        return new ToolTip { Content = stack, Style = NativeTheme.ToolTipStyle };
     }
 
     /// <summary>图例：色块 + 文本。</summary>

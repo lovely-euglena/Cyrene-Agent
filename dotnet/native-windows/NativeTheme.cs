@@ -855,6 +855,13 @@ public static class NativeTheme
 </Style>
 """));
 
+    /// <summary>主题化 Tooltip（白卡浮层 + 阴影），文本自动换行。</summary>
+    public static ToolTip MakeTooltip(string text) => new()
+    {
+        Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, MaxWidth = 360 },
+        Style = ToolTipStyle,
+    };
+
     /// <summary>从 assets 目录加载图片（缺失返回 null，UI 退化为无图）。</summary>
     public static ImageSource? TryLoadAssetImage(string relativePath)
     {
