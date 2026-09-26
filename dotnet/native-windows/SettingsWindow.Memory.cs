@@ -34,7 +34,7 @@ public sealed partial class SettingsWindow
             panel.Children.Add(new TextBlock
             {
                 Text = $"⚠ 记忆读取失败：{memoryError}",
-                FontSize = 12,
+                FontSize = 14,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 4, 0, 4),
@@ -132,7 +132,7 @@ public sealed partial class SettingsWindow
         var searchBox = new TextBox
         {
             Width = 260,
-            FontSize = 12,
+            FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             Text = _memoryL2Query,
             VerticalContentAlignment = VerticalAlignment.Center,
@@ -142,7 +142,7 @@ public sealed partial class SettingsWindow
         var truncated = GetBool(memory, "l2Truncated");
         var totalText = new TextBlock
         {
-            FontSize = 11,
+            FontSize = 14,
             Foreground = new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0xAA)),
             Margin = new Thickness(10, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
@@ -299,7 +299,7 @@ public sealed partial class SettingsWindow
         var autoSync = new CheckBox
         {
             Content = "自动同步（记忆写入后增量同步）",
-            FontSize = 12,
+            FontSize = 14,
             IsChecked = GetBool(vault, "autoSync"),
             Margin = new Thickness(0, 4, 0, 4),
             Cursor = System.Windows.Input.Cursors.Hand,
@@ -316,7 +316,7 @@ public sealed partial class SettingsWindow
         var box = new TextBox
         {
             Text = text,
-            FontSize = 12,
+            FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             TextWrapping = TextWrapping.Wrap,
             VerticalContentAlignment = multiline ? VerticalAlignment.Top : VerticalAlignment.Center,
@@ -333,7 +333,7 @@ public sealed partial class SettingsWindow
         row.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 12,
+            FontSize = 14,
             Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x66)),
             Margin = new Thickness(0, 0, 0, 3),
         });

@@ -259,7 +259,8 @@ public sealed class SidebarWindow : NativeWindow
             },
             Child = new Image
             {
-                Source = NativeTheme.TryLoadAssetImage("icons/cyrene-pink.png"),
+                // Electron 侧栏资料头像（/avatars/cyrene-avatar.png）
+                Source = NativeTheme.TryLoadAssetImage("icons/cyrene-avatar.png"),
                 Stretch = Stretch.UniformToFill,
             },
         };
@@ -501,26 +502,9 @@ public sealed class SidebarWindow : NativeWindow
         }
     }
 
-    /// <summary>标题栏线稿头像：白色线稿 PNG 作 OpacityMask 染成深色（叠两层加强线感）。</summary>
-    private static FrameworkElement? MakeTitleAvatar(double size)
-    {
-        var image = NativeTheme.TryLoadAssetImage("icons/cyrene-avatar-line-white.png");
-        if (image is null) return null;
-        var mask = new ImageBrush(image) { Stretch = Stretch.Uniform };
-        var grid = new Grid { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center };
-        for (var i = 0; i < 2; i++)
-        {
-            grid.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                Width = size,
-                Height = size,
-                Fill = NativeTheme.TextStrongBrush,
-                OpacityMask = mask,
-                SnapsToDevicePixels = true,
-            });
-        }
-        return grid;
-    }
+    /// <summary>标题栏线稿头像（Electron 用 cyrene-avatar-line.svg；这里用同源路径数据矢量绘制）。</summary>
+    private static FrameworkElement MakeTitleAvatar(double size) =>
+        NativeTheme.FilledGlyph(Glyphs.AvatarLine, size, NativeTheme.TextStrongBrush, viewBox: 2048);
 
     /// <summary>pearl-white 浅色壳：白底 + 左上淡粉环境渐变（对齐 theme.css 的淡粉渐变层）。</summary>
     private static System.Windows.Media.Brush MakePearlBrush()

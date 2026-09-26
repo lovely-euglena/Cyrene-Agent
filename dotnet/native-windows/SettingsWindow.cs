@@ -69,8 +69,8 @@ public sealed partial class SettingsWindow : NativeWindow
         _window = new Window
         {
             Title = "昔涟 · 设置",
-            Width = 952,
-            Height = 672,
+            Width = 1092,
+            Height = 952,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
@@ -92,7 +92,7 @@ public sealed partial class SettingsWindow : NativeWindow
             Margin = new Thickness(16), // 透明留白：给窗口投影
         };
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(168) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Child = grid;
@@ -158,7 +158,8 @@ public sealed partial class SettingsWindow : NativeWindow
         var nav = new Border
         {
             Background = NativeTheme.SurfaceNavBrush,
-            Child = new StackPanel { Margin = new Thickness(0, 10, 0, 12) },
+            // 对齐 Electron .settings-nav 内边距（18/12/14 的垂直/水平近似）
+            Child = new StackPanel { Margin = new Thickness(12, 14, 12, 14) },
         };
         Grid.SetColumn(nav, 0);
         Grid.SetRow(nav, 0);
@@ -214,11 +215,11 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         var navStyle = BuildNavItemStyle();
         // 导航头部品牌行（logo + 昔涟）——对齐 Electron 设置页 settings-nav__brand
-        var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 2, 8, 10) };
+        var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 2, 8, 14) };
         var brandLogo = new Image
         {
-            Width = 22,
-            Height = 22,
+            Width = 28,
+            Height = 28,
             Stretch = Stretch.Uniform,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -228,7 +229,7 @@ public sealed partial class SettingsWindow : NativeWindow
         brand.Children.Add(new TextBlock
         {
             Text = "昔涟",
-            FontSize = 14,
+            FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
             VerticalAlignment = VerticalAlignment.Center,
@@ -463,7 +464,7 @@ public sealed partial class SettingsWindow : NativeWindow
             content.Children.Add(new TextBlock
             {
                 Text = label,
-                FontSize = 11,
+                FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 4, 0, 0),
@@ -508,7 +509,7 @@ public sealed partial class SettingsWindow : NativeWindow
         var label = new TextBlock
         {
             Text = displayName,
-            FontSize = 12.5,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0),
         };
@@ -549,7 +550,7 @@ public sealed partial class SettingsWindow : NativeWindow
             Width = 120,
             Height = 32,
             Margin = new Thickness(16, 16, 0, 0),
-            FontSize = 12,
+            FontSize = 14,
             Cursor = System.Windows.Input.Cursors.Hand,
             Style = NativeTheme.SecondaryButtonStyle,
         };
@@ -565,7 +566,7 @@ public sealed partial class SettingsWindow : NativeWindow
         var birthdayPicker = new DatePicker
         {
             Width = 260,
-            FontSize = 12,
+            FontSize = 14,
             SelectedDate = TryParseDateOnly(GetString(user, "birthday")),
         };
         birthdayPicker.SelectedDateChanged += (_, _) =>
@@ -623,7 +624,7 @@ public sealed partial class SettingsWindow : NativeWindow
             Width = 220,
             Height = 32,
             Margin = new Thickness(0, 14, 0, 0),
-            FontSize = 12,
+            FontSize = 14,
             Cursor = System.Windows.Input.Cursors.Hand,
             Style = NativeTheme.SecondaryButtonStyle,
         };
@@ -809,7 +810,7 @@ public sealed partial class SettingsWindow : NativeWindow
     private static TextBlock MakeHeader(string text) => new()
     {
         Text = text,
-        FontSize = 19,
+        FontSize = 20,
         FontWeight = FontWeights.SemiBold,
         Foreground = NativeTheme.TextStrongBrush,
         Margin = new Thickness(0, 0, 0, 8),
@@ -818,7 +819,7 @@ public sealed partial class SettingsWindow : NativeWindow
     private static TextBlock MakeHint(string text) => new()
     {
         Text = text,
-        FontSize = 12,
+        FontSize = 14,
         Foreground = NativeTheme.TextMutedBrush,
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 2, 0, 2),
@@ -830,7 +831,7 @@ public sealed partial class SettingsWindow : NativeWindow
         var status = new TextBlock
         {
             Text = "",
-            FontSize = 12,
+            FontSize = 12.5,
             Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(0, 4, 0, 6),
             TextWrapping = TextWrapping.Wrap,
@@ -864,7 +865,7 @@ public sealed partial class SettingsWindow : NativeWindow
     private static TextBlock MakeCardTitle(string text) => new()
     {
         Text = text,
-        FontSize = 13,
+        FontSize = 14,
         FontWeight = FontWeights.SemiBold,
         Foreground = NativeTheme.TextStrongBrush,
         TextWrapping = TextWrapping.Wrap,
@@ -873,7 +874,7 @@ public sealed partial class SettingsWindow : NativeWindow
     private static TextBlock MakeCardMeta(string text) => new()
     {
         Text = text,
-        FontSize = 11,
+        FontSize = 14,
         Foreground = NativeTheme.TextMutedBrush,
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 2, 0, 2),
@@ -939,7 +940,7 @@ public sealed partial class SettingsWindow : NativeWindow
         sp.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 12.5,
+            FontSize = 14,
             Width = 140,
             Foreground = NativeTheme.TextDefaultBrush,
             VerticalAlignment = VerticalAlignment.Center,
@@ -966,14 +967,14 @@ public sealed partial class SettingsWindow : NativeWindow
         copy.Children.Add(new TextBlock
         {
             Text = title,
-            FontSize = 12.5,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
         });
         copy.Children.Add(new TextBlock
         {
             Text = description,
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 0),
@@ -1032,7 +1033,7 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             Text = initial,
             Width = width,
-            FontSize = 12,
+            FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -1056,7 +1057,7 @@ public sealed partial class SettingsWindow : NativeWindow
             var placeholderText = new TextBlock
             {
                 Text = placeholder,
-                FontSize = 12,
+                FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
                 Margin = new Thickness(9, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1090,7 +1091,7 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             Text = $"{(int)Math.Round(slider.Value)}{unit}",
             Width = 56,
-            FontSize = 12,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10, 0, 0, 0),
         };
@@ -1139,7 +1140,7 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             Text = Format(slider.Value),
             Width = 60,
-            FontSize = 12,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10, 0, 0, 0),
         };
@@ -1168,7 +1169,7 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             Text = initial,
             Width = width,
-            FontSize = 12,
+            FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -1193,7 +1194,7 @@ public sealed partial class SettingsWindow : NativeWindow
         var placeholderText = new TextBlock
         {
             Text = placeholder,
-            FontSize = 12,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(9, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
@@ -1223,7 +1224,7 @@ public sealed partial class SettingsWindow : NativeWindow
             && user.TryGetProperty("timezoneOptions", out var opts)
             && opts.ValueKind == JsonValueKind.Array ? opts : default;
 
-        var combo = new ComboBox { Width = 260, FontSize = 12 };
+        var combo = new ComboBox { Width = 260, FontSize = 14 };
         var selectedIndex = 0;
         if (options.ValueKind == JsonValueKind.Array)
         {
@@ -1265,7 +1266,7 @@ public sealed partial class SettingsWindow : NativeWindow
                 GroupName = _genderGroupId,
                 IsChecked = current == value,
                 Margin = new Thickness(0, 0, 16, 0),
-                FontSize = 12,
+                FontSize = 14,
                 Cursor = System.Windows.Input.Cursors.Hand,
             };
             radio.Checked += (_, _) =>

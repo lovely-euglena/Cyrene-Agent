@@ -162,7 +162,7 @@ public sealed class TaskEditorWindow : Window
         _allowListBox.Unchecked += (_, _) => UpdateConditionalRows();
 
         // 底部
-        _status.FontSize = 12;
+        _status.FontSize = 12.5;
         _status.Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A));
         _status.Margin = new Thickness(0, 6, 0, 0);
         _status.TextWrapping = TextWrapping.Wrap;
@@ -234,7 +234,7 @@ public sealed class TaskEditorWindow : Window
                 Content = $"{name} ({id}) · {risk}{(enabled ? "" : " · 已全局禁用")}",
                 IsChecked = selected.Contains(id),
                 Tag = id,
-                FontSize = 12,
+                FontSize = 14,
                 Margin = new Thickness(0, 2, 0, 2),
             };
             _toolsPanel.Children.Add(checkbox);
@@ -426,7 +426,7 @@ public sealed class TaskEditorWindow : Window
     private static TextBlock Hint(string text) => new()
     {
         Text = text,
-        FontSize = 12,
+        FontSize = 14,
         Foreground = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x88)),
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 2, 0, 6),
@@ -435,7 +435,7 @@ public sealed class TaskEditorWindow : Window
     private static TextBlock SectionHeader(string text) => new()
     {
         Text = text,
-        FontSize = 13,
+        FontSize = 14,
         FontWeight = FontWeights.SemiBold,
         Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x44)),
         Margin = new Thickness(0, 12, 0, 4),
@@ -448,7 +448,7 @@ public sealed class TaskEditorWindow : Window
         {
             Text = label,
             Width = 110,
-            FontSize = 12,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
         });
         row.Children.Add(control);
@@ -458,8 +458,8 @@ public sealed class TaskEditorWindow : Window
     private static StackPanel Labeled(string label, TextBox box)
     {
         var row = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };
-        row.Children.Add(new TextBlock { Text = label, FontSize = 12, Margin = new Thickness(0, 0, 0, 3) });
-        box.FontSize = 12;
+        row.Children.Add(new TextBlock { Text = label, FontSize = 14, Margin = new Thickness(0, 0, 0, 3) });
+        box.FontSize = 14;
         box.Padding = new Thickness(6, 4, 6, 4);
         row.Children.Add(box);
         return row;
@@ -474,7 +474,7 @@ public sealed class TaskEditorWindow : Window
             Content = text,
             Height = 30,
             MinWidth = 90,
-            FontSize = 12,
+            FontSize = 14,
             Margin = new Thickness(8, 0, 0, 0),
             Cursor = System.Windows.Input.Cursors.Hand,
             Style = primary ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle,
