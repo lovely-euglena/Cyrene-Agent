@@ -47,7 +47,7 @@ public sealed class DocImporter
         string filePath,
         string ragDataDir,
         EmbeddingEngine engine,
-        RagStore store,
+        IRagStore store,
         Func<bool> isCancelled,
         Action<Progress>? onProgress)
     {
@@ -116,10 +116,10 @@ public sealed class DocImporter
             var batch = chunks.GetRange(start, Math.Min(BatchSize, chunks.Count - start));
             var embeddings = engine.Embed(batch.Select((c) => c.Text).ToArray());
 
-            var items = new List<RagStore.PreparedItem>(batch.Count);
+            var items = new List<PreparedItem>(batch.Count);
             for (var i = 0; i < batch.Count; i++)
             {
-                items.Add(new RagStore.PreparedItem(
+                items.Add(new PreparedItem(
                     batch[i].Text,
                     "imported_doc",
                     embeddings[i].Select((f) => (double)f).ToArray(),
