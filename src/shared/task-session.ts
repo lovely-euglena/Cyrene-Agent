@@ -4,6 +4,11 @@ export type TaskSessionStatus = "running" | "completed" | "failed" | "cancelled"
 
 export type TaskSubagentType = "general" | "document" | "search";
 
+export type TaskAccessMode = "read_only" | "write";
+
+export const DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS = 4;
+export const MAX_PARALLEL_TOOL_CALLS = 12;
+
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 export interface TodoItem {

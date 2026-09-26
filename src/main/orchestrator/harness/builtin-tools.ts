@@ -19,6 +19,7 @@ import { isAbortError } from "../../abort-utils";
 import { resolveUncertainEffect } from "./uncertain-effect-guard";
 import type { TaskExecuteRequest, TaskExecuteResult } from "../task-runtime";
 import { buildGoldenDescendantsPrompt, getGoldenDescendantNames } from "../../tasks/task-character-pool";
+import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, MAX_PARALLEL_TOOL_CALLS } from "../../../shared/task-session";
 import { READ_TOOL_RESULT_TOOL_ID, readToolResultToolSpec } from "./tool-output/read-tool-result";
 import { ENTER_PLAN_MODE_TOOL_ID, WRITE_PLAN_TOOL_ID, SUBMIT_PLAN_TOOL_ID, enterPlanModeToolSpec, writePlanToolSpec, submitPlanToolSpec } from "./plan-tools";
 
@@ -36,13 +37,17 @@ export const taskToolSpec: ToolSpec = {
     "委托一个需要独立上下文、多步执行的前台子任务。",
     "何时用：多个互不依赖的调查方向可以并行；较大目录或多个模块的独立审查；有明确交付物的专项任务。",
     "何时不用：一句话能回答的；只需一次工具调用的。",
+    "访问模式：access_mode=read_only 仅用于完全不修改文件、仓库或外部状态的任务；运行时会移除所有非只读工具。需要任何写入或不确定时必须用 write；只读子任务可并行，write 子任务会排队串行执行。",
+    `子任务工具并发：可选 max_parallel_tool_calls，范围 1–${MAX_PARALLEL_TOOL_CALLS}，默认 ${DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS}；只影响此子任务内部，不影响主 Agent 或其他子任务。仅在有足够多互不依赖的安全操作时提高。`,
     buildGoldenDescendantsPrompt(),
     "父任务会等待结果；description 只用于向用户显示委托标签，prompt 是子任务完整指令。可传 task_id 继续同一子任务。子任务不能询问用户或再次委托。",
-  ].filter(Boolean).join(""),
+  ].filter(Boolean).join("\n"),
   parameters: { type: "object", properties: {
     description: { type: "string", description: "给用户显示的 3-40 字任务标签" },
     prompt: { type: "string", description: "子任务完整执行指令" },
     subagent_type: { type: "string", enum: ["general", "document", "search"] },
+    access_mode: { type: "string", enum: ["read_only", "write"], default: "write", description: "任务权限与并行方式；省略时按 write 串行执行" },
+    max_parallel_tool_calls: { type: "integer", minimum: 1, maximum: MAX_PARALLEL_TOOL_CALLS, default: DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, description: `此子任务内部的工具并发上限，默认 ${DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS}，最高 ${MAX_PARALLEL_TOOL_CALLS}` },
     ...(hasGoldenDescendants ? {
       companion_id: { type: "string", enum: [...goldenDescendantNames], description: "本次委托的黄金裔名字；必须明确选择一位" },
     } : {}),
@@ -61,12 +66,21 @@ export async function executeTask(
   const subagentType = args.subagent_type;
   const companionId = typeof args.companion_id === "string" ? args.companion_id.trim() : "";
   const taskId = typeof args.task_id === "string" ? args.task_id.trim() || undefined : undefined;
+  const accessMode = args.access_mode === undefined ? "write" : args.access_mode;
+  const maxParallelToolCalls = args.max_parallel_tool_calls === undefined
+    ? DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS
+    : args.max_parallel_tool_calls;
   if (description.length < 3 || description.length > 40 || !prompt
     || !companionId
+    || (accessMode !== "read_only" && accessMode !== "write")
+    || typeof maxParallelToolCalls !== "number"
+    || !Number.isInteger(maxParallelToolCalls)
+    || maxParallelToolCalls < 1
+    || maxParallelToolCalls > MAX_PARALLEL_TOOL_CALLS
     || (subagentType !== "general" && subagentType !== "document" && subagentType !== "search")) {
-    return { outcome: "failure", category: "invalid_arguments", tool: TASK_TOOL_ID, message: "task 需要 3-40 字 description、非空 prompt、合法 subagent_type 与明确 companion_id" };
+    return { outcome: "failure", category: "invalid_arguments", tool: TASK_TOOL_ID, message: `task 需要 3-40 字 description、非空 prompt、合法 subagent_type、明确 companion_id、有效访问模式及 1–${MAX_PARALLEL_TOOL_CALLS} 的子任务并发数` };
   }
-  const result = await executor({ description, prompt, subagentType, companionId, taskId });
+  const result = await executor({ description, prompt, subagentType, companionId, taskId, accessMode, maxParallelToolCalls });
   return { outcome: result.status === "completed" ? "success" : "failure", tool: TASK_TOOL_ID,
     message: `子任务"${description}"已${result.status === "completed" ? "完成" : result.status}。`,
     output: JSON.stringify({ taskId: result.taskId, status: result.status, text: result.text }) };
