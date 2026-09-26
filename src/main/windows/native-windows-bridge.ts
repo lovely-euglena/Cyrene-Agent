@@ -65,10 +65,17 @@ export interface NativeBridgeActions {
    * state.plugins 快照（含操作结果 notice）。
    */
   pluginAction?(action: string, id?: string, payload?: Record<string, unknown>): Promise<void> | void;
+  /**
+   * 当前窗口圆角（general settings 的 windowCornerRadius）：
+   * spawn 时随窗口下发（.NET 进程重启后也能恢复），变更时由设置生命周期广播。
+   */
+  getWindowCornerRadius?(): number;
 }
 
 let client: NativeWindowsClient | null = null;
 let initialized = false;
+/** 窗口圆角来源（init 时注入）：spawn 时随窗口下发。 */
+let windowRadiusProvider: (() => number) | null = null;
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -179,6 +186,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
   };
   client = getNativeWindowsClient(host);
   initialized = true;
+  windowRadiusProvider = actions.getWindowCornerRadius ?? null;
   return client;
 }
 
@@ -322,6 +330,12 @@ export function pushLayoutToNative(layout: unknown): void {
   void activeClient()?.pushLayout(layout).catch(() => undefined);
 }
 
+/** 窗口圆角变更广播（general settings 生命周期调用；窗未开时为正常 no-op）。 */
+export function pushWindowRadiusToNative(radius: number): void {
+  if (typeof radius !== "number" || !Number.isFinite(radius)) return;
+  void activeClient()?.pushWindowRadius(radius).catch(() => undefined);
+}
+
 // ── 窗口生命周期（替代 BrowserWindow 创建） ──
 
 export async function spawnNativeWindow(
@@ -333,6 +347,12 @@ export async function spawnNativeWindow(
   try {
     await c.spawnWindow(kind, layout);
     debugLog(`[NativeWindows] spawned ${kind}`);
+    // 窗口圆角随 spawn 下发：.NET 进程重启后静态半径会丢，这里每次补发；
+    // 变更时另走 pushWindowRadiusToNative（设置生命周期广播）
+    const radius = windowRadiusProvider?.();
+    if (typeof radius === "number" && Number.isFinite(radius)) {
+      void c.pushWindowRadius(radius).catch(() => undefined);
+    }
     // 显窗时机（对齐 showWindowWhenStartupReady 语义）：
     // splash 无门控（本来就是启动期首帧）；sidebar/tasks 在
     // startup 阶段先 pending，markStartupPhaseReady 后统一 win.show

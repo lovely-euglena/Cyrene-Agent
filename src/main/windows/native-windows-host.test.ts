@@ -115,4 +115,28 @@ describe("NativeWindowsClient 帧协议（分块容错）", () => {
     await expect(pending).rejects.toThrow(/protocol failure/);
     expect(fake.kill).toHaveBeenCalled();
   });
+
+  it("pushWindowRadius 发送 win.radius 帧（窗口圆角广播）", async () => {
+    const fake = makeFakeChild();
+    mockSpawn.mockReturnValueOnce(fake);
+    const client = new NativeWindowsClient("C:/fake/cyrene-native.exe", {
+      onCommand: vi.fn(),
+    });
+
+    const started = client.ensureStarted();
+    fake.stdout.write(frame({ id: 0, op: "ready" }));
+    await started;
+
+    const chunks: Buffer[] = [];
+    fake.stdin.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+    const pending = client.pushWindowRadius(8);
+    await tick();
+
+    const payload = JSON.parse(Buffer.concat(chunks).subarray(4).toString("utf8"));
+    expect(payload).toMatchObject({ id: 1, op: "win.radius", radius: 8 });
+
+    fake.stdout.write(frame({ id: 1, ok: true }));
+    await expect(pending).resolves.toBeUndefined();
+    expect(fake.kill).not.toHaveBeenCalled();
+  });
 });

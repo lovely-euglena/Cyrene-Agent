@@ -187,18 +187,29 @@ public sealed class TasksWindow : NativeWindow
 
     private record TaskRow(string Title, string Time);
 
+    /// <summary>窗口圆角（宿主 win.radius 广播；区域裁剪需重建）。</summary>
+    private int _cornerRadius = 12;
+
     /// <summary>无边框 WinForms 窗的圆角（区域裁剪；失败不影响功能）。</summary>
     private void ApplyRoundedRegion()
     {
         try
         {
-            const int radius = 12;
+            var radius = _cornerRadius;
             var previous = _form.Region;
             _form.Region = System.Drawing.Region.FromHrgn(
                 NativeMethods.CreateRoundRectRgn(0, 0, _form.Width + 1, _form.Height + 1, radius, radius));
             previous?.Dispose();
         }
         catch { /* 圆角失败不影响功能 */ }
+    }
+
+    public override void ApplyCornerRadius(double radius)
+    {
+        var next = (int)Math.Clamp(Math.Round(radius), 0, 40);
+        if (next == _cornerRadius) return;
+        _cornerRadius = next;
+        ApplyRoundedRegion();
     }
 
     private List<TaskRow> _tasks = new();

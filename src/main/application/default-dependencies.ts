@@ -157,6 +157,7 @@ import {
   relayAuxBroadcast,
   spawnNativeWindow,
   disposeNativeWindowsBridge,
+  pushWindowRadiusToNative,
 } from "../windows/native-windows-bridge";
 import { connectDetachedTray, showTrayBalloon } from "../tray-detached";
 import { openSettingsWindow } from "../windows/settings-router";
@@ -732,6 +733,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           openCallWindow: () => windowManager.createCallWindow(),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),
           onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
+          // 窗口圆角：spawn 时随窗口下发（native 进程重启后可恢复）；
+          // 变更广播走 handleGeneralSettingsChanged 的 onWindowCornerRadiusChanged
+          getWindowCornerRadius: () => loadGeneralSettings().windowCornerRadius,
           // native 设置窗写键：白名单/取值校验统一在 native-settings-protocol；
           // saveGeneralSettings 自动触发 handleGeneralSettingsChanged（桌宠显隐/
           // 置顶、开机自启、主题广播等联动）。
@@ -1319,6 +1323,8 @@ createTray: (input) => {
             screenshotService: services.screenshot,
             proactiveLifecycle: services.proactive,
             broadcastToAuxWindows,
+            // 圆角变更同步 .NET 原生窗（Electron 侧走 UI_WINDOW_CORNER_RADIUS_CHANGED）
+            onWindowCornerRadiusChanged: (radius) => pushWindowRadiusToNative(radius),
           }),
         );
 

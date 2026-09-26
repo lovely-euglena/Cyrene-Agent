@@ -327,6 +327,11 @@ export class NativeWindowsClient {
     await this.request({ op: "win.layout", layout });
   }
 
+  /** 窗口圆角（0–40）：变更时广播给全部原生窗；spawn 时随窗口下发。 */
+  async pushWindowRadius(radius: number): Promise<void> {
+    await this.request({ op: "win.radius", radius });
+  }
+
   async pushRuntimeState(state: unknown): Promise<void> {
     await this.request({ op: "state.runtime", state });
   }
