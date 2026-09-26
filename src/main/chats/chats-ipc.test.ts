@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
   openPath: vi.fn(async () => ""),
   showItemInFolder: vi.fn(),
+  windows: [] as Array<{ isDestroyed: () => boolean; webContents: { send: (channel: string, payload: unknown) => void } }>,
 }));
 
 vi.mock("electron", () => ({
@@ -20,7 +21,7 @@ vi.mock("electron", () => ({
     showItemInFolder: mocks.showItemInFolder,
   },
   BrowserWindow: {
-    getAllWindows: () => [],
+    getAllWindows: () => mocks.windows,
   },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: any[]) => unknown) => {
@@ -38,7 +39,23 @@ describe("chats IPC mode filtering", () => {
     mocks.handlers.clear();
     mocks.openPath.mockClear();
     mocks.showItemInFolder.mockClear();
+    mocks.windows = [];
     mocks.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-chats-ipc-"));
+  });
+
+  it("broadcastCompactionPhase 只向存活窗口推送压缩阶段", async () => {
+    const { broadcastCompactionPhase } = await import("./chats-ipc");
+    const send = vi.fn();
+    const destroyedSend = vi.fn();
+    mocks.windows = [
+      { isDestroyed: () => false, webContents: { send } },
+      { isDestroyed: () => true, webContents: { send: destroyedSend } },
+    ];
+
+    broadcastCompactionPhase("c1", "running");
+
+    expect(send).toHaveBeenCalledWith(IPC.CHATS_COMPACTION_PHASE, { sessionId: "c1", phase: "running" });
+    expect(destroyedSend).not.toHaveBeenCalled();
   });
 
   it("returns only Code sessions for CHATS_LIST({ mode: \"code\" })", async () => {

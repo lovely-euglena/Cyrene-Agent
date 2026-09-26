@@ -63,10 +63,12 @@ export function createModelBackedConversationTranscriptCompactor(input: {
   store: ConversationTranscriptStore;
   runReader?: TranscriptRunReader;
   loadModelSettings: () => TranscriptCompactionModelSettings;
+  onPhase?: ConversationTranscriptCompactorOptions["onPhase"];
 }): ConversationTranscriptCompactor {
   return new ConversationTranscriptCompactor({
     store: input.store,
     runReader: input.runReader,
+    onPhase: input.onPhase,
     summarize: async (history) => {
       const settings = input.loadModelSettings();
       return callSummarizeModel(

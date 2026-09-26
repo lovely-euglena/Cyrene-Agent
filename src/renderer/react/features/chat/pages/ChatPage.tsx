@@ -220,6 +220,18 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     (phase: "idle" | "running" | "done" | "error") => setManualCompacting(phase === "running"),
     [],
   );
+  // 自动压缩进行中（主进程推送）：与手动压缩共用同一条呼吸占位条。
+  // 自动压缩发生在 run 开始前的主进程侧，渲染端收不到 AG-UI 事件，只能靠这条推送。
+  const [autoCompactingSessionId, setAutoCompactingSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    const store = chatStore();
+    if (!store?.onCompactionPhase) return;
+    return store.onCompactionPhase(({ sessionId, phase }) => {
+      setAutoCompactingSessionId((current) =>
+        phase === "running" ? sessionId : current === sessionId ? null : current,
+      );
+    });
+  }, []);
 
   const [todoStateBySession, setTodoStateBySession] = useState<TodoStateBySession>({});
   // 计划模式（Plan Mode 二期）：会话级计划面板内容与阶段（review → executing → completed）。
@@ -1876,7 +1888,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             conversationId={activeSessionId}
             mode={mode}
             preferredAddress={preferredAddress}
-            compacting={manualCompacting}
+            compacting={manualCompacting || autoCompactingSessionId === activeSessionId}
             stickerSize={stickerSize}
             revisionBusy={Boolean(modelBusyByMode[mode]) || lastTurnRevisionStarting}
             onEditLastUserMessage={mode === "chat" ? editLastChatUserMessage : undefined}
