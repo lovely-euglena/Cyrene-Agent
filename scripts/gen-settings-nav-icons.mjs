@@ -67,8 +67,8 @@ const titles = {
   tokens: ["Token 用量", "本地统计的模型请求用量"],
   plugins: ["工具配置", "插件管理与市场"],
   channels: ["连接手机", "渠道配置（Electron 窗口）"],
-  tts: ["TTS 设置", "语音合成（Electron 页面）"],
-  asr: ["ASR 设置", "语音识别（Electron 页面）"],
+  tts: ["TTS 设置", "语音合成、朗读偏好与音色管理"],
+  asr: ["ASR 设置", "语音识别与通话配置"],
   disclaimer: ["免责声明", "免责声明与使用条款"],
   about: ["关于", "版本与运行环境"],
 };
