@@ -1,6 +1,9 @@
 # 多 Agent 运行底层架构（v1 设计 + 骨架落地）
 
-> 状态：**骨架已落地**（`cyrene-native --agent-host`），LLM 回调闭环为下一阶段。
+> 状态：会话宿主骨架已落地（`--agent-host`）；**多 Agent 编排已按 Plan B 落地
+> 机制 v1**（`--agent-orchestrator`：.NET 只做会话/邮箱/pipeline 机制，
+> 单会话循环复用 TS CyreneHarness，不再往 .NET 搬循环）——
+> 详见 `docs/design/2026-09-26-agent-orchestration-plan-b.md`。
 > 关联：MCP 桥（`--mcp-host`）、内置工具宿主（`--tool-host`）——三 host 构成
 > .NET 后端演进路线。
 
@@ -94,7 +97,7 @@ agent-host 的 LLM 回调闭环上线时（避免两次协议大改）。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P0 | 会话宿主骨架（create/destroy/step/llm 回调帧） | ✅ 本次 |
-| P1 | LLM 回调闭环（TS 代理 + 流式）+ 单会话端到端 | 待做 |
-| P2 | mailbox + 多会话编排 demo（规划→执行→审查） | 待做 |
+| P0 | 会话宿主骨架（create/destroy/step/llm 回调帧） | ✅ |
+| P1 | LLM 回调闭环（TS 代理 + 流式）+ 单会话端到端 | 被 Plan B 取代（`--agent-host` 路径保留） |
+| P2 | mailbox + 多会话编排（规划→执行→审查） | 🟡 机制 v1 ✅（`--agent-orchestrator`，pipeline/邮箱/取消/上限 + 冒烟）；生产接线（环境解析器/聊天入口）待做 |
 | P3 | 三 host 合并为 --backend + 会话持久化 | 待做 |
