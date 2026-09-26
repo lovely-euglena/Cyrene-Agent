@@ -196,6 +196,10 @@ export class JsonVectorStore {
       }
     } catch (err) {
       console.warn("[RAG] failed to load vector store:", err);
+      // 重置磁盘快照：解析失败（如外部写入未完成）时强制下次 ensureFresh 重试，
+      // 避免"陈旧空副本记录为最新"后反向覆盖磁盘
+      this.fileWriteTicks = 0;
+      this.fileLength = -1;
       this.entries = [];
     }
   }
@@ -254,14 +258,50 @@ export class JsonVectorStore {
     try {
       const dir = path.dirname(this.filePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.filePath, JSON.stringify(this.entries, null, 2), "utf8");
-      const info = fs.statSync(this.filePath);
-      this.fileWriteTicks = info.mtimeMs;
-      this.fileLength = info.size;
+      // 原子写：先写 tmp 再 rename（.NET 侧并发读时不会读到半截 JSON）。
+      // 快照取 tmp（rename 保留 mtime）：若外部写入发生在我们 rename 之后，
+      // mtime 会变化 → ensureFresh 正确重载；rename 之前的外部写入会被本次
+      // rename 覆盖（last-writer-wins），快照与内存内容仍然一致。
+      const tmp = this.filePath + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(this.entries, null, 2), "utf8");
+      const info = fs.statSync(tmp);
+
+      // Windows：目标文件可能正被 .NET 侧读取（FileShare.Read 不共享删除）
+      // → rename 报 EPERM/EBUSY。短暂重试；仍失败则降级直接覆盖写，
+      // 好过整个保存被静默丢弃。
+      let renamed = false;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try {
+          fs.renameSync(tmp, this.filePath);
+          renamed = true;
+          break;
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw err;
+          if (attempt < 9) JsonVectorStore.sleepSync(5);
+        }
+      }
+
+      if (renamed) {
+        this.fileWriteTicks = info.mtimeMs;
+        this.fileLength = info.size;
+      } else {
+        console.warn("[RAG] atomic rename contended, falling back to direct write");
+        fs.writeFileSync(this.filePath, fs.readFileSync(tmp, "utf8"), "utf8");
+        fs.unlinkSync(tmp);
+        const dest = fs.statSync(this.filePath);
+        this.fileWriteTicks = dest.mtimeMs;
+        this.fileLength = dest.size;
+      }
       this.dirty = false;
     } catch (err) {
       console.warn("[RAG] failed to save vector store:", err);
     }
+  }
+
+  /** 同步短睡眠（Windows 文件共享冲突重试用；避免把整条写入链 async 化）。 */
+  private static sleepSync(ms: number): void {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   }
 
   // ── 索引元数据校验 ──
@@ -391,15 +431,21 @@ export class JsonVectorStore {
     // 去重检查
     const existing = await this.search(text, source, provider, 1, 0.95);
     if (existing.length > 0) {
-      // 更新权重和时间
-      existing[0].entry.weight = Math.min(existing[0].entry.weight + 0.1, 5.0);
-      existing[0].entry.lastRecalledAt = Date.now();
-      this.dirty = true;
-      this.save();
-      return existing[0].entry;
+      // 跨进程安全：search 含 await（embed），完成后基于最新盘面更新权重
+      this.ensureFresh();
+      const fresh = this.entries.find((e) => e.id === existing[0].entry.id);
+      if (fresh) {
+        fresh.weight = Math.min(fresh.weight + 0.1, 5.0);
+        fresh.lastRecalledAt = Date.now();
+        this.dirty = true;
+        this.save();
+      }
+      return fresh ?? existing[0].entry;
     }
 
     const embedding = await provider.embed(text);
+    // embed 期间 .NET 侧可能已写入：基于最新盘面追加，避免整文件覆盖
+    this.ensureFresh();
     // 首次成功写入后记录索引元数据
     this.ensureIndexMeta(provider, embedding.length);
     const entry: MemoryEntry = {
@@ -494,6 +540,7 @@ export class JsonVectorStore {
     minScore = 0.3,
     options: VectorSearchOptions = {},
   ): Promise<SearchResult[]> {
+    this.ensureFresh();
     if (this.entries.length === 0) return [];
 
     const embeddingProvider = provider ?? getEmbeddingProvider();
@@ -567,13 +614,22 @@ export class JsonVectorStore {
     const top = results.slice(0, topK);
 
     // 更新召回时间（仅对 topK 结果）
-    for (const r of top) {
-      r.entry.lastRecalledAt = now;
-      r.entry.weight = Math.min(r.entry.weight + 0.05, 5.0);
-    }
     if (top.length > 0) {
-      this.dirty = true;
-      this.save();
+      // 跨进程安全：embed 期间 .NET 侧可能已写入，先同步盘面再回写召回统计
+      this.ensureFresh();
+      let mutated = false;
+      for (const r of top) {
+        const fresh = this.entries.find((e) => e.id === r.entry.id);
+        if (fresh) {
+          fresh.lastRecalledAt = now;
+          fresh.weight = Math.min(fresh.weight + 0.05, 5.0);
+          mutated = true;
+        }
+      }
+      if (mutated) {
+        this.dirty = true;
+        this.save();
+      }
     }
 
     return top;
