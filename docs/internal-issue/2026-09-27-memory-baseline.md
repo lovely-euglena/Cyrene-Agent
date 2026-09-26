@@ -75,8 +75,28 @@
 - 桌宠/聊天窗口的销毁-重建会带来短时 JS 堆与 WPF 峰值（如 1.2GB WS 的 Live2D 加载峰值），
   看稳态而不是峰值。
 
-## 4. 不变量
+## 4. 跟进实施（2026-09-27 晚，已验证）
+
+| 项 | 改动 | 实测效果 |
+|---|---|---|
+| 桌宠渲染 DPR 钳制 | `src/renderer/live2d/manager.ts` `PET_RENDER_MAX_DPR = 1`；click-through 的 CSS→buffer 换算改为按实际绘制缓冲比例推导（不再直接用 devicePixelRatio） | 桌宠 canvas 后备缓冲 500×629 → **400×503**（端到端实测），预计纹理/GPU 侧 −20% |
+| 聊天窗空闲回收 | 新增 `src/main/windows/chat-idle-reclaim.ts`：最小化满 15 分钟（`CYRENE_CHAT_IDLE_RECLAIM_MS` 可覆盖）销毁窗口；恢复/聚焦取消计时；`create-aux-windows.ts` 挂接 + 聊天窗 `spellcheck:false` | 端到端：最小化后窗口与渲染进程销毁（聊天私有 −165MB / WS −316MB），再激活自动重建并加载（新 PID） |
+| 设置窗关闭归还内存 | `SettingsWindow.Close()`：先断 section 视觉树引用 + GC，再 `SetProcessWorkingSetSize(-1,-1)` trim 工作集 | 宿主关窗后私有工作集 **108.5MB → 8.6MB**、WS 200.6 → 27.1MB（commit 120MB 不变，属 standby 页，可换回） |
+
+实施过程中的两个关键认知（已写进不变量）：
+1. **WPF 这 100MB 不是托管内存**：实测关窗时托管堆仅 ~5MB，`GC.Collect` 基本无效；
+   大头是 WPF 非托管渲染/字体缓存 → 必须 trim 工作集才能让任务管理器数字下降。
+2. **回收计时不能在页面加载中开始**：激活链 `openReactChatWindow` 是
+   `await load() → show()/focus()`；若在 load 完成前最小化，收尾的 `show()` 会把窗口
+   拉回来并取消计时（E2E 曾复现）。真实用户场景（加载完成后才手动最小化）不受影响。
+
+## 5. 不变量
 
 1. 内存基线测量必须注明 GPU 状态（有/无独显结论完全不同）。
 2. 桌宠隐藏=销毁、显示=懒重建（见 `2026-09-27-native-polish-batch-2.md`）不得回退成 hide。
 3. 新增常驻进程 / 常驻窗口前先对照本基线，评估私有工作集增量。
+4. 聊天窗回收计时只认「最小化」且必须能被打断（restore/focus/show 取消）；
+   不要在加载完成前启动计时（激活链收尾 show 会还原窗口）。
+5. WPF 宿主关窗后的内存归还依赖工作集 trim，不要指望 `GC.Collect`
+   （托管堆不是大头）；trim 后 commit 不降是正常的（standby 页按需换回）。
+6. 桌宠渲染的 DPR 钳制与 click-through 坐标换算必须同源（按实际绘制缓冲比例推导）。
