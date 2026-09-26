@@ -782,6 +782,15 @@ const chatStoreApi = {
     ipcRenderer.on(IPC.CHATS_WORKSPACE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.CHATS_WORKSPACE_CHANGED, listener);
   },
+  // main → 所有窗口：上下文压缩阶段（自动压缩在 run 前发生，渲染端没有 AG-UI 事件可听）
+  onCompactionPhase: (callback: (payload: { sessionId: string; phase: "running" | "finished" }) => void) => {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      payload: { sessionId: string; phase: "running" | "finished" },
+    ) => callback(payload);
+    ipcRenderer.on(IPC.CHATS_COMPACTION_PHASE, listener);
+    return () => ipcRenderer.removeListener(IPC.CHATS_COMPACTION_PHASE, listener);
+  },
   // 状态栏专用入口：要求 main 打开/复用 reactChatWindow 并加载指定 sessionId
   openInReactChatWindow: (sessionId: string) =>
     ipcRenderer.invoke(IPC.CHATS_OPEN_IN_REACT_WINDOW, sessionId),
