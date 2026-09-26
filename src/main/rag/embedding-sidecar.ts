@@ -43,6 +43,7 @@ interface SidecarResponse {
 
 export interface SidecarSearchRequest {
   ragDataDir: string;
+  storeMode?: "sqlite" | "json";
   query: string;
   source?: string;
   topK: number;
@@ -215,7 +216,7 @@ export class EmbeddingSidecarClient {
    */
   async docImport(
     modelKey: string,
-    payload: { filePath: string; ragDataDir: string },
+    payload: { filePath: string; ragDataDir: string; storeMode?: "sqlite" | "json" },
     callbacks: {
       onProgress?: (progress: DocImportProgress) => void;
       onStarted?: (requestId: number) => void;

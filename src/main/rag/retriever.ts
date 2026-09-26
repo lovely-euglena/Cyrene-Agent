@@ -1,4 +1,4 @@
-import { JsonVectorStore, SearchResult } from "./vectorstore";
+import { VectorStore, SearchResult } from "./vectorstore";
 import { EmbeddingProvider, getEmbeddingProvider } from "./embedding";
 import { getReranker } from "./reranker";
 import { getEmbeddingSidecarClient, isSidecarEnabled } from "./embedding-sidecar";
@@ -200,10 +200,10 @@ function bm25Score(
 
 // ── 混合检索器 ──
 export class HybridRetriever {
-  private store: JsonVectorStore;
+  private store: VectorStore;
   private provider: EmbeddingProvider | null;
 
-  constructor(store: JsonVectorStore, provider?: EmbeddingProvider | null) {
+  constructor(store: VectorStore, provider?: EmbeddingProvider | null) {
     this.store = store;
     this.provider = provider ?? null;
   }
@@ -228,6 +228,7 @@ export class HybridRetriever {
       try {
         const response = await sidecar.searchHybrid(DEFAULT_MODEL_KEY, {
           ragDataDir: this.store.getDirectory(),
+          storeMode: this.store.mode,
           query,
           source,
           topK,

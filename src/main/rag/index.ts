@@ -1,9 +1,8 @@
 import * as path from "path";
-import * as fs from "fs";
 import { app } from "electron";
 import { getEmbeddingProvider, resetEmbeddingProvider, EmbeddingProvider, switchEmbeddingModel as switchModel, getCurrentModelDims, EmbeddingDimensionMismatchError } from "./embedding";
-import type { EmbeddingIndexMetadata } from "./vectorstore";
-import { JsonVectorStore } from "./vectorstore";
+import type { EmbeddingIndexMetadata, VectorStore } from "./vectorstore";
+import { createVectorStore } from "./vectorstore";
 import type { MemoryEntry } from "./vectorstore";
 import { HybridRetriever } from "./retriever";
 import { WorldbookManager } from "./worldbook";
@@ -16,7 +15,7 @@ import type { DocumentImportControl } from "./file-ingest";
 import { findPromptPath } from "../external-content-paths";
 
 // ── Global RAG instances ──
-let store: JsonVectorStore | null = null;
+let store: VectorStore | null = null;
 let retriever: HybridRetriever | null = null;
 let worldbook: WorldbookManager | null = null;
 let provider: EmbeddingProvider | null = null;
@@ -37,7 +36,7 @@ export async function initRAG(
 ): Promise<void> {
   const dataDir = getDataDir();
   provider = getEmbeddingProvider(ragMode, cloudBaseUrl, cloudApiKey, embeddingModel, cloudDimensions);
-  store = new JsonVectorStore(dataDir);
+  store = createVectorStore(dataDir);
   // 只有 provider 存在时才创建 retriever（向量检索依赖 embedding）
   if (provider) {
     retriever = new HybridRetriever(store, provider);
@@ -107,21 +106,9 @@ export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: bool
       if (entries && entries.length > 0) {
         const oldDims = entries[0].embedding.length;
         if (oldDims !== newDims) {
-          // Dimension mismatch — clear the vector store and metadata
-          const dataDir = getDataDir();
-          const storePath = path.join(dataDir, "memory-store.json");
-          const metaPath = path.join(dataDir, "memory-store-meta.json");
-          if (fs.existsSync(storePath)) {
-            clearedEntries = entries.length;
-            fs.writeFileSync(storePath, "[]", "utf8");
-            console.log("[RAG] dimension mismatch (" + oldDims + " → " + newDims + "), cleared " + clearedEntries + " entries");
-          }
-          // 清除旧的索引元数据，下次写入时会自动创建新的
-          if (fs.existsSync(metaPath)) {
-            fs.unlinkSync(metaPath);
-          }
-          // Reload store from the now-empty file
-          store = new JsonVectorStore(dataDir);
+          // Dimension mismatch — clear entries + index metadata（两种后端各自持久化清理）
+          clearedEntries = store.clearAll();
+          console.log("[RAG] dimension mismatch (" + oldDims + " → " + newDims + "), cleared " + clearedEntries + " entries");
         }
       }
     }
@@ -420,6 +407,11 @@ export async function buildMemoryContext(userInput: string): Promise<string> {
 
 // ── Reset ──
 export function resetRAG(): void {
+  try {
+    store?.dispose();
+  } catch {
+    /* ignore */
+  }
   store = null;
   retriever = null;
   worldbook = null;
@@ -446,6 +438,18 @@ export function getEntriesBySource(source: string): Array<{ id: string; text: st
   return ((store as any).entries as MemoryEntry[])
     .filter((e) => e.source === source)
     .map((e) => ({ id: e.id, text: e.text, embedding: e.embedding, createdAt: e.createdAt, weight: e.weight, metadata: e.metadata }));
+}
+
+/**
+ * 面板用：导入文档分块的精简信息（不含 embedding/文本，避免大对象拷贝）。
+ * SQLite 化后 memory-store.json 不再是数据源，面板不能再直接读文件。
+ */
+export function getImportedDocChunkInfo(): Array<{ createdAt: number; metadata?: Record<string, unknown> }> {
+  if (!store) return [];
+  store.ensureFresh();
+  return ((store as any).entries as MemoryEntry[])
+    .filter((e) => e.source === "imported_doc")
+    .map((e) => ({ createdAt: e.createdAt, metadata: e.metadata }));
 }
 
 export function deleteUserMemoryVectors(ragIds: string[]): number {
