@@ -403,7 +403,17 @@ describe("buildAsrSectionSnapshot", () => {
       vadSilenceMs: 3000,
       vadThreshold: 0.02,
       showTranscript: true,
+      localPlugins: [],
     });
+  });
+
+  it("本地引擎 + 运行中的语音输入插件名透出（快照副本，防外部数组污染）", () => {
+    const plugins = ["本地语音输入"];
+    const snapshot = buildAsrSectionSnapshot({ ...base, asrEngine: "local" }, plugins);
+    expect(snapshot.engine).toBe("local");
+    expect(snapshot.localPlugins).toEqual(["本地语音输入"]);
+    plugins.push("later"); // 传入数组后续变化不影响快照
+    expect(snapshot.localPlugins).toEqual(["本地语音输入"]);
   });
 
   it("非法引擎 / 语言回落；VAD 越界 clamp", () => {

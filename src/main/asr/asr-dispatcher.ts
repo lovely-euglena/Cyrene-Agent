@@ -148,6 +148,10 @@ export function createAsrStream(
   onPartial: (text: string) => void,
   onFinal: (text: string) => void,
 ): AsrStreamSession {
+  if (config.engine === "local") {
+    // 本地识别由插件租约接管（见 plugin-host/speech-input-service）；内置流不适用
+    throw new Error("本地语音识别由插件提供，宿主内置 ASR 流不可用");
+  }
   if (config.engine === "mossland") {
     return withVadGate(new MosslandAsrStream(config.apiKey, onFinal));
   }

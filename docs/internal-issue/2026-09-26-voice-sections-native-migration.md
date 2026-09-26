@@ -19,7 +19,7 @@
 | Mossland：key/模型/音色/试听文本/格式/测试/保存 | 同字段 | 模型/格式随「保存配置」落盘（旧页同款） |
 | Mossland 音色克隆（参考音频/名称/描述/上传） | 同字段 + `clone-mossland` 动作 | 成功后回填 + 提示保存 |
 | Mossland 音色列表（拉取 + 使用） | `list-mossland-voices` 动作 + 原生列表行 | 「使用」回填音色 ID 并标脏 |
-| ASR 引擎选择（关闭/阿里云/Mossland/本地占位） | 档位组 | 本地档位禁用（旧页可选但路由无实现） |
+| ASR 引擎选择（关闭/阿里云/Mossland/本地占位） | 档位组 | 本地 = 语音输入插件提供（选择后等插件租约接管，见 09-27 修复批） |
 | 阿里云配置（AppKey/AK ID/Secret/语言） | 字段 + 档位组 | 文本失焦/回车提交（旧页 800ms 防抖） |
 | Mossland 配置（API Key，与 TTS 共用） | 字段（写 `ttsMosslandKey`） | |
 | 通话设置（VAD 静默/音量阈值/显示转写） | 数值框 + 滑杆 + 开关 | 静默 100~60000ms；阈值 0.001~0.5 |
@@ -53,7 +53,9 @@
 4. WPF 不直接改 general settings：一律 `cmd settings tts/asr`，由宿主校验落盘。
 5. MiniMax 克隆成功自动写 `ttsMinimaxVoiceId`；失败自动换新音色 ID（服务端已建但响应丢失的兜底）。
 6. Mossland「使用此音色」只回填 + 标脏（旧页同款，需再点「保存配置」）；克隆成功例外（自动保存）。
-7. ASR 本地档位禁用：旧页可选但 `createAsrStream` 无 local 分支（会误走阿里云空凭据）。
+7. ASR 本地档位：语义为「识别由语音输入插件提供」（`speech-input` 租约）。原生档位可选，
+   选择后通话进入等待状态（不启动内置云 ASR），插件取得租约即接管；
+   详见 `2026-09-27-settings-polish-batch.md`（2026-09-26 版曾临时禁用该档位，已修订）。
 8. `ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels"]`（语音不再回 Electron 页）；
    契约测试锁定 `AddSection(native:true)` ↔ `IsNativeSection` ↔ 路由三方一致。
 

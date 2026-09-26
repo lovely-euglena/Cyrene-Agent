@@ -123,6 +123,8 @@ function stopCallTimer(): void {
 type CallState = "IDLE" | "LISTENING" | "THINKING" | "SPEAKING" | "ERROR" | "ENDED";
 let currentState: CallState = "IDLE";
 let showTranscript = false; // 从设置读取
+/** 本地 ASR 模式：识别由语音输入插件提供，状态文案改为等待接管 */
+let localAsrMode = false;
 let turnSubmitter: TurnSubmitter | null = null;
 
 function setState(state: CallState): void {
@@ -139,7 +141,7 @@ function updateUI(): void {
   const mic = micWaveEl;
 
   if (currentState === "LISTENING") {
-    status.textContent = "正在聆听...";
+    status.textContent = localAsrMode ? "等待本地语音输入插件…" : "正在聆听...";
     status.className = "call__status";
     ring.classList.remove("is-active");
     wave?.classList.add("is-active");
@@ -565,6 +567,7 @@ async function init(): Promise<void> {
       vadSilenceMs = typeof cfg.asrVadSilenceMs === "number" ? cfg.asrVadSilenceMs : 1000;
       vadThreshold = typeof cfg.asrVadThreshold === "number" ? cfg.asrVadThreshold : 0.01;
       showTranscript = Boolean(cfg.asrShowTranscript);
+      localAsrMode = String(cfg.asrEngine ?? "off") === "local";
     }
     console.log("[Call] VAD config: threshold=", vadThreshold, "silenceMs=", vadSilenceMs);
   } catch { /* ignore */ }
