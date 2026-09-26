@@ -236,9 +236,17 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           // 插件管理窗操作：{"kind":"plugins","action":"install","id":...}
           // set-limits 额外携带 storageQuotaMb / memoryLimitMb（透传整个 frame）
           if (frameKind === "plugins") {
+            // 兼容旧版原生窗：插件 id 曾经经 SendCommand 第 3 参落在 "section"，
+            // 而这里只读 frame.id → 安装/启用/停用/卸载全部静默 no-op。
+            // 现在优先 id，缺失时回退 section（两代窗口都能工作）。
+            const rawId = (frame as Record<string, unknown>).id;
+            const rawSection = (frame as Record<string, unknown>).section;
+            const targetId = typeof rawId === "string" && rawId.length > 0
+              ? rawId
+              : (typeof rawSection === "string" && rawSection.length > 0 ? rawSection : undefined);
             void actions.pluginAction?.(
               action,
-              typeof frame.id === "string" ? frame.id : undefined,
+              targetId,
               action === "set-limits" ? (frame as unknown as Record<string, unknown>) : undefined,
             );
           }

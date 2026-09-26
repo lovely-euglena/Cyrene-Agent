@@ -7,6 +7,7 @@
  */
 
 import { app, BrowserWindow, dialog, screen, shell as electronShell } from "electron";
+import * as fs from "node:fs";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
 
@@ -135,7 +136,7 @@ import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycl
 import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
 import { ensureCustomStylePrompt } from "../style-prompt";
 import { deleteEmbeddingModel } from "../embedding-manager";
-import { getModelInstallStatus } from "../rag/model-status";
+import { getModelInstallStatus, getModelInstallStatusDetail, getProjectModelsDir } from "../rag/model-status";
 import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
 import {
   MAX_PLUGIN_MEMORY_LIMIT_MB,
@@ -271,6 +272,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const setPluginNotice = (kind: "ok" | "error", message: string): void => {
     nativePluginNotice = { kind, message };
   };
+  /** 正在安装的插件 id（随快照下发 → WPF 市场卡片显示「安装中…」） */
+  let nativeInstallingIds: string[] = [];
   const buildPluginSnapshot = async (): Promise<unknown> => {
     const mkt = getPluginMarketService();
     const general = loadGeneralSettings();
@@ -300,6 +303,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       marketSources: market?.sources ?? [],
       marketError: market && !market.ok ? (market.error ?? "") : undefined,
       notice: nativePluginNotice ?? undefined,
+      // 安装进行中：WPF 按钮显示「安装中…」并禁用（宿主不推送中途快照时也有反馈）
+      installing: nativeInstallingIds,
       // 资源限制（「设置」页）：生效值 + 是否来自设置页（false = 环境变量/默认）
       limits: {
         storageQuotaMb,
@@ -333,7 +338,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   let nativeTokenDays = 7;
 
   /** 本地模型安装说明（native 昔涟设置「模型安装说明」与渲染页同一文档）。 */
-  const LOCAL_MODELS_DOC_URL = "https://github.com/Playa-0v0/Cyrene-Agent/blob/master/docs/local-models.md";
+  // 模型安装说明文档（Gitee 主仓；GitHub 在本机网络不可达，勿换回）
+  const LOCAL_MODELS_DOC_URL = "https://gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md";
 
   const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
   const asObj = (value: unknown): Record<string, unknown> =>
@@ -1084,10 +1090,37 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               windowManager.createStickerManagerWindow();
               return;
             }
-            // RAG：模型安装说明（旧版 openExternal 同一文档）
+            // RAG：模型安装说明（浏览器打开 Gitee 文档；native 侧另有应用内说明弹窗）
             if (verb === "open-model-docs") {
               void electronShell.openExternal(LOCAL_MODELS_DOC_URL)
                 .then(() => nativeNotice("cyrene", "ok", "已在浏览器打开模型安装说明"))
+                .catch((err) =>
+                  nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
+              return;
+            }
+            // RAG：打开模型目录（手动安装：把模型文件放进去）
+            if (verb === "open-model-dir") {
+              const modelsDir = getProjectModelsDir();
+              try {
+                fs.mkdirSync(modelsDir, { recursive: true });
+              } catch (err) {
+                nativeNotice("cyrene", "error", `创建模型目录失败：${err instanceof Error ? err.message : String(err)}`);
+                return;
+              }
+              void electronShell.openPath(modelsDir).then((error) => {
+                if (error.length > 0) nativeNotice("cyrene", "error", `打开目录失败：${error}`);
+                else nativeNotice("cyrene", "ok", `已打开模型目录：${modelsDir}`);
+              });
+              return;
+            }
+            // RAG：打开模型下载站（按当前镜像源：hf-mirror / 官方）
+            if (verb === "open-model-site") {
+              const mirror = loadGeneralSettings().ragDownloadMirror;
+              const url = mirror === "hf-mirror"
+                ? "https://hf-mirror.com/Xenova/bge-m3"
+                : "https://huggingface.co/Xenova/bge-m3";
+              void electronShell.openExternal(url)
+                .then(() => nativeNotice("cyrene", "ok", `已打开模型下载站（${mirror === "hf-mirror" ? "hf-mirror" : "官方源"}）`))
                 .catch((err) =>
                   nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
               return;
@@ -1106,7 +1139,19 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             // RAG：重新体检模型状态（更新=手动替换后回到本页看状态）
             if (verb === "check-model-update") {
               pushSettingsSnapshotToNative();
-              nativeNotice("cyrene", "info", "已重新检测模型状态；模型为手动安装，更新请按「模型安装说明」替换");
+              const embedding = getModelInstallStatusDetail("embedding", "bgem3");
+              const reranker = getModelInstallStatusDetail("reranker", "standard");
+              const embeddingText = embedding.installed
+                ? "BGE-M3 已安装"
+                : `BGE-M3 未安装${embedding.missingFiles.length > 0 ? `（缺少 ${embedding.missingFiles.join("、")}）` : ""}`;
+              const rerankerText = reranker.installed
+                ? "bge-reranker-base 已安装"
+                : "bge-reranker-base 未安装（可选）";
+              nativeNotice(
+                "cyrene",
+                embedding.installed ? "ok" : "info",
+                `已重新检测：${embeddingText}；${rerankerText}。`,
+              );
               return;
             }
             if (verb === "add-sticker") {
@@ -1207,11 +1252,20 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
                 if (!market) {
                   setPluginNotice("error", "插件市场服务不可用");
                 } else {
-                  const result = await market.installFromMarket(id);
-                  setPluginNotice(
-                    result.ok ? "ok" : "error",
-                    result.ok ? `已安装：${result.plugin.name} ${result.plugin.version}` : `安装失败：${result.error}`,
-                  );
+                  // 先推「安装中」快照：下载可能持续数十秒，按钮与状态行立即有反馈
+                  //（历史 bug：安装期间无任何快照，失败后按钮悄悄回弹＝「静默失败」）
+                  nativeInstallingIds = [id];
+                  setPluginNotice("ok", `正在安装：${id} …`);
+                  await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
+                  try {
+                    const result = await market.installFromMarket(id);
+                    setPluginNotice(
+                      result.ok ? "ok" : "error",
+                      result.ok ? `已安装：${result.plugin.name} ${result.plugin.version}` : `安装失败：${result.error}`,
+                    );
+                  } finally {
+                    nativeInstallingIds = [];
+                  }
                 }
               } else if (action === "refresh") {
                 // 重扫插件目录 + 重拉市场索引（旧版插件页的「刷新」）
@@ -1511,7 +1565,7 @@ createTray: (input) => {
                 // 插件 / 内置工具配置 + 文件访问档位
                 plugins: buildPluginsSectionSnapshot(loadGeneralSettings(), getCurrentLevel()),
                 // 昔涟设置（阶段 1+2）：状态栏实时更新 + 表情包发送 + RAG 模型
-                cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus()),
+                cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus(), getProjectModelsDir()),
                 // 语音：TTS / ASR 设置（旧页字段，读方向与渲染页 loadTtsConfig/loadAsrConfig 同口径）
                 tts: buildTtsSectionSnapshot(loadGeneralSettings()),
                 asr: buildAsrSectionSnapshot(loadGeneralSettings(), runningSpeechInputPlugins()),

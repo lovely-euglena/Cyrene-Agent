@@ -97,6 +97,19 @@ describe("native-windows-bridge · cmd 动作分发", () => {
     expect(actions.openPluginManager).not.toHaveBeenCalled();
   });
 
+  it("plugins 单插件操作：id 缺失时回退 section（修复安装/启停/卸载静默 no-op）", () => {
+    const actions = initBridge();
+    // 旧版原生窗 SendCommand 把插件 id 放进了 section 字段
+    dispatch({ kind: "plugins", action: "install", section: "market-plugin" });
+    expect(actions.pluginAction).toHaveBeenCalledWith("install", "market-plugin", undefined);
+    // 新旧帧混用：id 为空串时也回退 section
+    dispatch({ kind: "plugins", action: "disable", section: "by-section", id: "" });
+    expect(actions.pluginAction).toHaveBeenLastCalledWith("disable", "by-section", undefined);
+    // 正常 id 优先
+    dispatch({ kind: "plugins", action: "enable", id: "by-id", section: "ignored" });
+    expect(actions.pluginAction).toHaveBeenLastCalledWith("enable", "by-id", undefined);
+  });
+
   it("modelSwitch 按旧版状态栏语义打开 API 设置页（而非无副作用的 provider 广播）", () => {
     const actions = initBridge();
     dispatch({ kind: "sidebar", action: "modelSwitch" });
