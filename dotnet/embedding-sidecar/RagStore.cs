@@ -39,7 +39,7 @@ public sealed class RagStore
     private IvfIndex? _ivf;
 
     private long _fileWriteTicks;
-    private long _fileLength;
+    private long _fileLength = -1;
 
     public IReadOnlyList<MemoryEntry> Entries => _entries;
 
@@ -65,12 +65,18 @@ public sealed class RagStore
             else
             {
                 _entries = new List<MemoryEntry>();
+                _fileWriteTicks = 0;
+                _fileLength = -1;
             }
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[rag] failed to load vector store: {ex.Message}");
+            // 重置磁盘快照：解析失败（如 TS 写入未完成）时强制下次 RefreshIfChanged 重试，
+            // 避免"陈旧空副本记录为最新"后反向覆盖磁盘
             _entries = new List<MemoryEntry>();
+            _fileWriteTicks = 0;
+            _fileLength = -1;
         }
         _ivf = null;
     }
@@ -82,10 +88,15 @@ public sealed class RagStore
             lock (_sync)
             {
                 Directory.CreateDirectory(_dir);
-                File.WriteAllText(_filePath, JsonSerializer.Serialize(_entries, StoreJson));
-                var info = new FileInfo(_filePath);
+                // 原子写：先写 tmp 再 move（TS 侧并发读时不会读到半截 JSON）。
+                // 快照取 tmp（move 保留 mtime）：若外部写入发生在我们 move 之后，
+                // mtime 会变化 → RefreshIfChanged 正确重载。
+                var tmp = _filePath + ".tmp";
+                File.WriteAllText(tmp, JsonSerializer.Serialize(_entries, StoreJson));
+                var info = new FileInfo(tmp);
                 _fileWriteTicks = info.LastWriteTimeUtc.Ticks;
                 _fileLength = info.Length;
+                File.Move(tmp, _filePath, overwrite: true);
             }
         }
         catch (Exception ex)
@@ -94,12 +105,23 @@ public sealed class RagStore
         }
     }
 
-    /// <summary>文件被外部（TS 进程）改写时重载；否则用内存副本。</summary>
+    /// <summary>文件被外部（TS 进程）改写或删除时重载；否则用内存副本。</summary>
     public void RefreshIfChanged()
     {
         lock (_sync)
         {
-            if (!File.Exists(_filePath)) return;
+            if (!File.Exists(_filePath))
+            {
+                // 外部删库：同步清空（否则下次保存会把陈旧条目写回去）
+                if (_fileLength != -1)
+                {
+                    _entries = new List<MemoryEntry>();
+                    _ivf = null;
+                    _fileWriteTicks = 0;
+                    _fileLength = -1;
+                }
+                return;
+            }
             var info = new FileInfo(_filePath);
             if (info.LastWriteTimeUtc.Ticks != _fileWriteTicks || info.Length != _fileLength)
             {
@@ -124,6 +146,9 @@ public sealed class RagStore
         var results = new List<MemoryEntry>(items.Count);
         lock (_sync)
         {
+            // 跨进程安全：导入可能持续数分钟，期间 TS 侧可能已写入（记忆/召回），
+            // 先同步盘面再追加，避免整库保存覆盖外部写入
+            RefreshIfChanged();
             for (var i = 0; i < items.Count; i++)
             {
                 var entry = new MemoryEntry
@@ -156,6 +181,8 @@ public sealed class RagStore
     {
         lock (_sync)
         {
+            // 缓存判定需基于最新盘面（导入可能由另一进程/另一请求完成）
+            RefreshIfChanged();
             return _entries.Any((entry) =>
                 entry.Source == "imported_doc"
                 && entry.Metadata != null
@@ -348,6 +375,8 @@ public sealed class RagStore
     {
         lock (_sync)
         {
+            // 搜索前同步盘面（TS 侧写入可能已落盘）
+            RefreshIfChanged();
             return SearchCore(queryEmbedding, source, topK, minScore, importIds, allowedEntryIds, now, updateRecall);
         }
     }
@@ -429,14 +458,20 @@ public sealed class RagStore
         results.Sort((a, b) => b.Item2.CompareTo(a.Item2));
         var top = results.Take(topK).ToList();
 
-        if (updateRecall)
+        if (updateRecall && top.Count > 0)
         {
+            // 跨进程安全：计算期间 TS 可能已写入，先同步盘面再按 id 重新定位回写
+            RefreshIfChanged();
+            var mutated = false;
             foreach (var (entry, _) in top)
             {
-                entry.LastRecalledAt = now;
-                entry.Weight = Math.Min(entry.Weight + 0.05, 5.0);
+                var fresh = _entries.FirstOrDefault((e) => e.Id == entry.Id);
+                if (fresh is null) continue;
+                fresh.LastRecalledAt = now;
+                fresh.Weight = Math.Min(fresh.Weight + 0.05, 5.0);
+                mutated = true;
             }
-            if (top.Count > 0) Save();
+            if (mutated) Save();
         }
 
         return top;
