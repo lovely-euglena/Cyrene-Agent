@@ -9,17 +9,24 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/** .NET 侧运行开关（native 窗口 / agent-host 等）。 */
+/** .NET 侧运行开关（native 窗口 / agent-host / agent-orchestrator 等）。 */
 export interface DotnetConfig {
   /**
    * .NET agent-host 是否启用。
    * 来源：CYRENE_AGENT_HOST 环境变量 / conf `agentHost`；默认启用。
    */
   agentHost: boolean;
+  /**
+   * .NET agent-orchestrator（Plan B 编排宿主）是否启用。
+   * 来源：CYRENE_AGENT_ORCHESTRATOR 环境变量 / conf `agentOrchestrator`；默认启用。
+   * 关闭或 native exe 缺失时，AgentOrchestratorClient 全部 API 返回未启用。
+   */
+  agentOrchestrator: boolean;
 }
 
 export const DOTNET_CONFIG_DEFAULTS: DotnetConfig = {
   agentHost: true,
+  agentOrchestrator: true,
 };
 
 /**
@@ -77,11 +84,25 @@ export function resetConfigCache(): void {
  */
 export function resolveDotnetConfig(options?: { configPath?: string }): DotnetConfig {
   const file = loadConfigFile(options?.configPath ?? DEFAULT_CONF_PATH);
-  const envRaw = process.env.CYRENE_AGENT_HOST;
-  const raw = envRaw !== undefined && envRaw.trim() !== "" ? envRaw : file.agenthost;
   return {
-    agentHost: raw === undefined
-      ? DOTNET_CONFIG_DEFAULTS.agentHost
-      : toBool(raw, DOTNET_CONFIG_DEFAULTS.agentHost),
+    agentHost: resolveSwitch(file, "CYRENE_AGENT_HOST", "agentHost", DOTNET_CONFIG_DEFAULTS.agentHost),
+    agentOrchestrator: resolveSwitch(
+      file,
+      "CYRENE_AGENT_ORCHESTRATOR",
+      "agentOrchestrator",
+      DOTNET_CONFIG_DEFAULTS.agentOrchestrator,
+    ),
   };
+}
+
+/** 单个开关解析：空环境变量视为未设置（回落配置文件 → 默认）。 */
+function resolveSwitch(
+  file: Record<string, string>,
+  envName: string,
+  fileKey: string,
+  fallback: boolean,
+): boolean {
+  const envRaw = process.env[envName];
+  const raw = envRaw !== undefined && envRaw.trim() !== "" ? envRaw : file[normalizeKey(fileKey)];
+  return raw === undefined ? fallback : toBool(raw, fallback);
 }

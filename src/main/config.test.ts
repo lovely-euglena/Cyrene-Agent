@@ -5,11 +5,14 @@ import * as path from "node:path";
 import { resetConfigCache, resolveDotnetConfig, toBool } from "./config";
 
 const originalAgentHost = process.env.CYRENE_AGENT_HOST;
+const originalAgentOrchestrator = process.env.CYRENE_AGENT_ORCHESTRATOR;
 
 afterEach(() => {
   resetConfigCache();
   if (originalAgentHost === undefined) delete process.env.CYRENE_AGENT_HOST;
   else process.env.CYRENE_AGENT_HOST = originalAgentHost;
+  if (originalAgentOrchestrator === undefined) delete process.env.CYRENE_AGENT_ORCHESTRATOR;
+  else process.env.CYRENE_AGENT_ORCHESTRATOR = originalAgentOrchestrator;
 });
 
 describe("toBool", () => {
@@ -66,6 +69,26 @@ describe("resolveDotnetConfig（env > conf > 默认）", () => {
 
     process.env.CYRENE_AGENT_HOST = "1";
     expect(resolveDotnetConfig({ configPath: confPath }).agentHost).toBe(true);
+  });
+
+  it("agentOrchestrator 开关：env > conf > 默认；空环境变量回落文件", () => {
+    delete process.env.CYRENE_AGENT_ORCHESTRATOR;
+    expect(resolveDotnetConfig({ configPath: "missing.conf" }).agentOrchestrator).toBe(true);
+
+    process.env.CYRENE_AGENT_ORCHESTRATOR = "off";
+    expect(resolveDotnetConfig({ configPath: "missing.conf" }).agentOrchestrator).toBe(false);
+
+    process.env.CYRENE_AGENT_ORCHESTRATOR = "abc";
+    expect(resolveDotnetConfig({ configPath: "missing.conf" }).agentOrchestrator).toBe(true);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-conf-"));
+    const confPath = path.join(dir, "cyrene.conf");
+    fs.writeFileSync(confPath, "agent-orchestrator = off\n", "utf8");
+    delete process.env.CYRENE_AGENT_ORCHESTRATOR;
+    expect(resolveDotnetConfig({ configPath: confPath }).agentOrchestrator).toBe(false);
+
+    process.env.CYRENE_AGENT_ORCHESTRATOR = "1";
+    expect(resolveDotnetConfig({ configPath: confPath }).agentOrchestrator).toBe(true);
   });
 
   it("配置缺省键 → 默认；空环境变量视为未设置（回落到文件）", () => {

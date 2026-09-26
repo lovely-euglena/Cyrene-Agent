@@ -58,6 +58,13 @@ public static class Program
             return Agents.AgentSessionHost.RunProtocolLoop();
         }
 
+        // 多 Agent 编排宿主（Plan B）：会话/邮箱/pipeline 机制；每个 step 回传
+        // Electron，由 HarnessSessionWorker 复用 TS CyreneHarness 跑完整循环。
+        if (args.Length > 0 && args[0] == "--agent-orchestrator")
+        {
+            return Agents.AgentOrchestrator.RunProtocolLoop();
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,
