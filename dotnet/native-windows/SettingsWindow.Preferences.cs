@@ -75,8 +75,8 @@ public sealed partial class SettingsWindow
         // ── 自定义风格 ──
         panel.Children.Add(MakeSubHeader("自定义风格"));
         var styleActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        styleActions.Children.Add(MakeButton("自定义风格采样", OpenCustomStyleDialog, minWidth: 130));
-        styleActions.Children.Add(MakeButton("打开 Prompt 文件",
+        styleActions.Children.Add(MakeActionButton("自定义风格采样", OpenCustomStyleDialog, minWidth: 130));
+        styleActions.Children.Add(MakeActionButton("打开 Prompt 文件",
             () => RequestRouter.SendSettingsAction("preferences", "open-prompt"), minWidth: 130));
         panel.Children.Add(MakeDescribedRow("自定义风格",
             "配置聊天窗口“自定义”风格的采样参数，或打开自定义 Prompt 文件。",
