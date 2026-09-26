@@ -34,6 +34,16 @@ Electron 主进程（前端宿主）                cyrene-native --agent-host
 回传 Electron，应答经 `llm_response` 回注。密钥永不落 .NET 进程，权限
 审批闸门保持在 Electron 侧（用户看到的是同一套审批 UI）。
 
+### 总开关与配置解析（2026-09-26）
+
+agent-host 的启停走统一解析入口 `resolveDotnetConfig()`（`src/main/config.ts`），
+优先级：环境变量 `CYRENE_AGENT_HOST` > `./config/cyrene.conf` 的 `agentHost` >
+默认启用。布尔值容忍 `1/true/on/yes`（启用）与 `0/false/off/no`（关闭），
+非法值回落默认。**禁止在业务模块散读 `process.env.CYRENE_AGENT_HOST`**
+（历史 bug：`!== "0"` 把 `false`/`abc` 都当成启用）。关闭或 native exe
+缺失时全部 API 返回 `{ ok: false, error: "agent-host 未启用" }`，上层照旧走
+TS 循环（`agent-process-manager.ts`）。
+
 ## 2. 会话模型
 
 | 概念 | 说明 |
