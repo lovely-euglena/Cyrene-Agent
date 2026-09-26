@@ -704,8 +704,9 @@ body {
   accent-color: var(--rb-pink-500);
 }
 
-/* Snipaste 路径输入框（偏好设置） */
-#preferences-form .setting-row .path-input {
+/* Snipaste 路径输入框（偏好设置）+ 便携模式数据目录（通用设置） */
+#preferences-form .setting-row .path-input,
+#general-form .setting-row .path-input {
   margin-left: auto;
   width: 360px;
   text-align: left;
@@ -717,17 +718,32 @@ body {
   color: var(--rb-text-default);
   -webkit-app-region: no-drag;
 }
-#preferences-form .setting-row .path-input:focus {
+#preferences-form .setting-row .path-input:focus,
+#general-form .setting-row .path-input:focus {
   outline: none;
   border-color: var(--rb-pink-400);
 }
-#preferences-form .setting-row .path-input::placeholder {
+#preferences-form .setting-row .path-input::placeholder,
+#general-form .setting-row .path-input::placeholder {
   color: var(--rb-text-faint);
   font-weight: 400;
 }
 /* setting-row 默认 display:flex 会盖过 hidden 属性，这里补一条显式规则 */
-#preferences-form .setting-row[hidden] {
+#preferences-form .setting-row[hidden],
+#general-form .setting-row[hidden] {
   display: none;
+}
+
+/* 便携模式（通用设置）：状态提示行 */
+#general-form .portable-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--rb-text-faint);
+  font: var(--rb-text-micro);
+  word-break: break-all;
+}
+#general-form .portable-hint.is-error {
+  color: #ff8a9b;
 }
 
 /* 截图热键输入框 */

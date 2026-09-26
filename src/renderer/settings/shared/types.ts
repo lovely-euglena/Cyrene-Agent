@@ -19,6 +19,7 @@ import type {
 import type { CustomStyleConfig } from "../../../shared/style-sampling";
 import type { CustomEndpointMode } from "../custom-endpoint-state";
 import type { TimeoutSettings } from "../../../shared/timeout-types";
+import type { PortableApplyResult, PortableDataLocationStatus } from "../../../shared/portable-mode";
 
 export interface ProviderProfile {
   baseUrl: string;
@@ -204,6 +205,10 @@ export interface SettingsApi {
   setDefaultModelProfile?: (id: string) => Promise<unknown>;
   getGeneral: () => Promise<GeneralSettings>;
   saveGeneral: (config: Partial<GeneralSettings>) => Promise<GeneralSettings>;
+  // 便携模式（数据目录）
+  getPortableStatus?: () => Promise<PortableDataLocationStatus>;
+  pickPortableDir?: () => Promise<string | null>;
+  applyPortableMode?: (payload: { enabled: boolean; dir: string }) => Promise<PortableApplyResult>;
   openCustomStylePrompt?: () => Promise<{ ok: boolean; filePath?: string; error?: string }>;
   getTimeoutSettings: () => Promise<TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<TimeoutSettings>) => Promise<TimeoutSettings>;

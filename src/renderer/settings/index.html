@@ -646,6 +646,28 @@
               <button type="button" class="ghost-btn" id="clear-chat-history-btn"><span data-i18n="panel.general.chatHistory.clearButton">清空记录</span></button>
             </div>
 
+            <div class="setting-row" id="portable-mode-row">
+              <div>
+                <strong><span data-i18n="panel.general.portable.title">便携模式</span></strong>
+                <span><span data-i18n="panel.general.portable.desc">把聊天记录、配置与插件数据保存到程序目录（或自定义文件夹），随程序一起移动；切换后应用会自动重启。</span></span>
+                <span class="portable-hint" id="portable-hint"></span>
+              </div>
+              <div class="settings-actions-inline">
+                <span class="switch"><input id="portable-mode-enabled" type="checkbox" /><span class="switch__track"><span class="switch__thumb"></span></span></span>
+                <button type="button" class="save-btn save-btn--ghost" id="portable-apply-btn"><span data-i18n="panel.general.portable.apply">应用并重启</span></button>
+              </div>
+            </div>
+            <div class="setting-row" id="portable-dir-row" hidden>
+              <div>
+                <strong><span data-i18n="panel.general.portable.dir.title">数据目录</span></strong>
+                <span><span data-i18n="panel.general.portable.dir.desc">默认保存在程序目录下的 data 文件夹；程序安装在 Program Files 等只读位置时，请另选可写目录。</span></span>
+              </div>
+              <div class="settings-actions-inline">
+                <input type="text" id="portable-dir-input" class="path-input" placeholder="程序目录\data" />
+                <button type="button" class="ghost-btn" id="portable-dir-browse"><span data-i18n="panel.general.portable.browse">浏览…</span></button>
+              </div>
+            </div>
+
 
             <label class="setting-row">
               <div>
