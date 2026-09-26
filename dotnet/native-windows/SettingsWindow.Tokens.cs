@@ -21,8 +21,10 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildTokensSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("Token 用量"));
-        panel.Children.Add(MakeHint("本地统计的模型请求用量；不代表云端账单。"));
+        panel.Children.Add(MakePanelHeading(
+            NativeTheme.VectorGlyph(Glyphs.Bars, 24, NativeTheme.TextDefaultBrush),
+            "Token 用量",
+            "查看 API 调用统计与消耗"));
         panel.Children.Add(MakeSectionStatus("tokens"));
 
         var tokens = GetNode("tokens");
@@ -47,11 +49,11 @@ public sealed partial class SettingsWindow
         var hitRate = hit + miss > 0 ? (double)hit / (hit + miss) : 0;
 
         panel.Children.Add(MakeMetricRow(
-            ("输入 Token", FormatTokensShort(input)),
-            ("输出 Token", FormatTokensShort(output)),
-            ("请求数", requests.ToString())));
+            ("📥 输入 Token", FormatTokensShort(input)),
+            ("📤 输出 Token", FormatTokensShort(output)),
+            ("🔢 请求数", requests.ToString())));
         panel.Children.Add(MakeMetricRow(
-            ("缓存命中", FormatTokensShort(hit)),
+            ("🎯 缓存命中", FormatTokensShort(hit)),
             ("缓存命中率", $"{hitRate * 100:0.0}%"),
             ("合计", FormatTokensShort(input + output))));
 
@@ -59,7 +61,9 @@ public sealed partial class SettingsWindow
         var daily = GetNode(tokens, "daily");
         if (daily.ValueKind == JsonValueKind.Array && daily.GetArrayLength() > 0)
         {
-            panel.Children.Add(MakeSubHeader("每日消耗"));
+            panel.Children.Add(MakeModuleHead(
+                NativeTheme.VectorGlyph(Glyphs.ChartLine, 16, NativeTheme.TextDefaultBrush),
+                "每日消耗柱状图"));
             var values = new List<(string Date, int Input, int Output)>();
             foreach (var day in daily.EnumerateArray())
             {
@@ -173,7 +177,9 @@ public sealed partial class SettingsWindow
             // 使用趋势（输入/输出双折线；配色对齐 Electron Chart.js：输入 #3B82F6 / 输出 #FF8CCC）
             if (values.Count > 1)
             {
-                panel.Children.Add(MakeSubHeader("使用趋势"));
+                panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.Trend, 16, NativeTheme.TextDefaultBrush),
+            "使用趋势"));
                 panel.Children.Add(MakeTrendChart(values));
                 panel.Children.Add(MakeChartLegend(("输入", TrendInputBrush), ("输出", TrendOutputBrush)));
             }

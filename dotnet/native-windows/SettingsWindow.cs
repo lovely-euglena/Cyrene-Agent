@@ -367,8 +367,10 @@ public sealed partial class SettingsWindow : NativeWindow
     private FrameworkElement BuildGeneralSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("通用"));
-        panel.Children.Add(MakeHint("启动行为、窗口显示与系统行为（对齐 Electron 通用设置）。"));
+        panel.Children.Add(MakePanelHeading(
+            NativeTheme.VectorGlyph(Glyphs.Gear, 24, NativeTheme.TextDefaultBrush),
+            "通用设置",
+            "控制状态栏、日程栏、基础音频和系统行为。"));
         panel.Children.Add(MakeSubHeader("启动与提醒"));
         panel.Children.Add(MakeToggleRow("开机自启", GetBool("launchAtLogin"), v => SetSetting("launchAtLogin", v)));
         panel.Children.Add(MakeToggleRow("提醒音效", GetBool("toastSoundEnabled", true),
@@ -401,8 +403,10 @@ public sealed partial class SettingsWindow : NativeWindow
     private FrameworkElement BuildAppearanceSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("外观"));
-        panel.Children.Add(MakeHint("桌宠、窗口与聊天排版（对齐 Electron 外观设置）。"));
+        panel.Children.Add(MakePanelHeading(
+            NativeTheme.VectorGlyph(Glyphs.Palette, 24, NativeTheme.TextDefaultBrush),
+            "外观设置",
+            "调整白调界面的窗口布局与昔涟桌宠显示方式。"));
         panel.Children.Add(MakeSectionStatus("appearance"));
 
         panel.Children.Add(MakeSubHeader("昔涟桌宠"));
@@ -927,12 +931,22 @@ public sealed partial class SettingsWindow : NativeWindow
         return MakeRow(label, toggle);
     }
 
-    /// <summary>偏好多行式设置行：标题 + 说明在左（撑满），控件在右。</summary>
-    private static Border MakeDescribedRow(string title, string description, FrameworkElement control)
+    /// <summary>偏好多行式设置行：标题 + 说明在左（撑满），控件在右。可选图标显示在标题左侧。</summary>
+    private static Border MakeDescribedRow(string title, string description, FrameworkElement control, FrameworkElement? icon = null)
     {
         var grid = new Grid { Margin = new Thickness(0, 10, 0, 10) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (icon is not null)
+        {
+            icon.VerticalAlignment = VerticalAlignment.Top;
+            icon.Margin = new Thickness(0, 3, 12, 0);
+            Grid.SetColumn(icon, 0);
+            grid.Children.Add(icon);
+        }
+        var copyColumn = icon is null ? 0 : 1;
+        var controlColumn = icon is null ? 1 : 2;
         var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
         copy.Children.Add(new TextBlock
         {
@@ -949,11 +963,81 @@ public sealed partial class SettingsWindow : NativeWindow
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 0),
         });
-        Grid.SetColumn(copy, 0);
+        Grid.SetColumn(copy, copyColumn);
         grid.Children.Add(copy);
-        Grid.SetColumn(control, 1);
+        Grid.SetColumn(control, controlColumn);
         grid.Children.Add(control);
         return new Border { Child = grid, Padding = new Thickness(0, 2, 0, 2) };
+    }
+
+    /// <summary>
+    /// 子模块标题（图标 + 标题 + 徽标 + 说明 + 粉色提示）——对齐 Electron .memory-card__head：
+    /// 图标 18/22 顶部对齐、标题 14/600、说明 14 default（上距 3）、提示 11 粉色斜体（上距 4）。
+    /// </summary>
+    private static FrameworkElement MakeModuleHead(FrameworkElement icon, string title, string? badge = null,
+        string? description = null, string? hint = null)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 14, 0, 8) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        icon.VerticalAlignment = VerticalAlignment.Top;
+        icon.Margin = new Thickness(0, 3, 12, 0);
+        Grid.SetColumn(icon, 0);
+        grid.Children.Add(icon);
+
+        var copy = new StackPanel();
+        copy.Children.Add(MakeText(title, 14, NativeTheme.TextStrongBrush, weight: FontWeights.SemiBold, lineHeight: 21));
+        if (!string.IsNullOrEmpty(description))
+        {
+            copy.Children.Add(MakeText(description, 14, NativeTheme.TextDefaultBrush,
+                lineHeight: 21, margin: new Thickness(0, 3, 0, 0)));
+        }
+        if (!string.IsNullOrEmpty(hint))
+        {
+            var hintText = MakeText(hint, 11, NativeTheme.Pink600Brush,
+                lineHeight: 16.5, margin: new Thickness(0, 4, 0, 0));
+            hintText.FontStyle = FontStyles.Italic;
+            copy.Children.Add(hintText);
+        }
+        Grid.SetColumn(copy, 1);
+        grid.Children.Add(copy);
+
+        if (!string.IsNullOrEmpty(badge))
+        {
+            var badgeHost = new Border
+            {
+                CornerRadius = new CornerRadius(9),
+                Background = NativeTheme.Pink50Brush,
+                Padding = new Thickness(10, 2, 10, 2),
+                VerticalAlignment = VerticalAlignment.Top,
+                Child = MakeText(badge, 11, NativeTheme.Pink600Brush, lineHeight: 16.5),
+            };
+            Grid.SetColumn(badgeHost, 2);
+            grid.Children.Add(badgeHost);
+        }
+        return grid;
+    }
+
+    /// <summary>
+    /// 面板标题砖里的头像（32×32）：tint=true 用 OpacityMask 着色（白线稿在浅色砖上不可见，
+    /// 需按渲染页换用深色线稿的等效做法）。
+    /// </summary>
+    private static FrameworkElement MakeHeadingAvatar(string assetRelativePath, bool tint, double size = 32)
+    {
+        var source = NativeTheme.TryLoadAssetImage(assetRelativePath);
+        if (source is null) return new Grid { Width = size, Height = size };
+        if (!tint)
+        {
+            return new Image { Source = source, Width = size, Height = size, Stretch = Stretch.Uniform };
+        }
+        return new System.Windows.Shapes.Rectangle
+        {
+            Width = size,
+            Height = size,
+            Fill = NativeTheme.TextDefaultBrush,
+            OpacityMask = new ImageBrush(source) { Stretch = Stretch.Uniform },
+        };
     }
 
     private static Border MakeDescribedToggleRow(string title, string description, bool initial, Action<bool> onChange)

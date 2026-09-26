@@ -24,8 +24,10 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildPreferencesSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("偏好设置"));
-        panel.Children.Add(MakeHint("设置聊天窗口和输出行为的默认偏好（对齐 Electron 偏好设置）。"));
+        panel.Children.Add(MakePanelHeading(
+            NativeTheme.VectorGlyph(Glyphs.WindowPrefs, 24, NativeTheme.TextDefaultBrush),
+            "偏好设置",
+            "设置聊天窗口打开后的默认行为。这里的选择会保存为全局默认值。"));
         panel.Children.Add(MakeSectionStatus("preferences"));
 
         var prefs = GetNode("preferences");
