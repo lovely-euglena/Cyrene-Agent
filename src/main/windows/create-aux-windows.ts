@@ -5,6 +5,7 @@ import { isDev } from "../env";
 import { computeLayout } from "../window-layout";
 import { stopCall, setCallWindow } from "../call/call-manager";
 import { attachExternalLinkHandler } from "./external-link";
+import { attachChatIdleReclaim } from "./chat-idle-reclaim";
 import { isNativeWindowActive, spawnNativeWindow, closeNativeWindow } from "./native-windows-bridge";
 import {
   callWindow,
@@ -142,9 +143,15 @@ export function createReactChatWindowShell(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 聊天输入不需要拼写检查：关掉可省渲染进程拼写字典/检查器的常驻内存
+      //（聊天渲染进程实测 ~165MB 私有工作集，见内存基线文档）
+      spellcheck: false,
     },
   });
   setReactChatWindow(window);
+
+  // 最小化空闲 15 分钟 → 销毁窗口回收渲染进程；下次打开经惰性 handle 重建。
+  attachChatIdleReclaim(window);
 
   // 聊天窗口内出现外链（如插件收录仓库）时转交系统浏览器打开，不再派生新窗口
   attachExternalLinkHandler(window);
