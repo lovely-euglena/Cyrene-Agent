@@ -15,9 +15,15 @@ vi.mock("pixi-live2d-display/cubism4", () => {
   };
 });
 
+// pixi Application 构造参数捕获（DPR 钳制断言用）
+const pixiState = vi.hoisted(() => ({ lastOptions: null as Record<string, unknown> | null }));
+
 vi.mock("pixi.js", () => {
   return {
     Application: class {
+      constructor(options: Record<string, unknown>) {
+        pixiState.lastOptions = options;
+      }
       renderer = { resize: vi.fn(), gl: { drawingBufferWidth: 200, drawingBufferHeight: 100 } };
       stage = { children: [] as unknown[], addChild: vi.fn((child: unknown) => { this.stage.children.push(child); }) };
       ticker = { started: true, stop: vi.fn(() => { this.ticker.started = false; }), start: vi.fn(() => { this.ticker.started = true; }) };
@@ -96,6 +102,29 @@ describe("Live2DManager.playAction", () => {
       modelLoaded: false,
       disposed: true,
     });
+    vi.unstubAllGlobals();
+  });
+
+  it("caps pet render resolution at PET_RENDER_MAX_DPR（高 DPI 省纹理内存）", async () => {
+    vi.clearAllMocks();
+    // 2× DPR：钳制后 resolution 必须是 1（缓冲不再按 2× / 1.25× 放大）
+    vi.stubGlobal("window", { devicePixelRatio: 2, innerWidth: 100, innerHeight: 100 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
+    const { Live2DModel } = await import("pixi-live2d-display/cubism4");
+    const model = {
+      anchor: { set: vi.fn() }, scale: { set: vi.fn() }, width: 100, height: 100,
+      destroy: vi.fn(), motion: vi.fn(), expression: vi.fn(), internalModel: { motionManager: { definitions: {} } },
+    };
+    vi.mocked(Live2DModel.from).mockResolvedValue(model as never);
+    const { Live2DManager, PET_RENDER_MAX_DPR } = await import("./manager");
+    expect(PET_RENDER_MAX_DPR).toBe(1);
+    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
+
+    await mgr.init();
+
+    expect(pixiState.lastOptions?.resolution).toBe(1);
+    expect(pixiState.lastOptions?.preserveDrawingBuffer).toBe(true);
+    mgr.dispose();
     vi.unstubAllGlobals();
   });
 
