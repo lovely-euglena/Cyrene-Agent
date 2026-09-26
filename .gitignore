@@ -238,3 +238,4 @@ sticker-descriptions/
 
 # Cyrene agent
 .cyrene/
+dist/renderer/cyrene-welcome.png

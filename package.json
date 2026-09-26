@@ -92,6 +92,8 @@
     "@larksuiteoapi/node-sdk": "^1.68.0",
     "@lobehub/icons": "^5.19.3",
     "@lobehub/ui": "^5.48.2",
+    "@mantine/core": "^9.6.2",
+    "@mantine/hooks": "^9.6.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@modelcontextprotocol/server-filesystem": "2026.8.31",
     "@node-rs/jieba": "^2.0.1",
