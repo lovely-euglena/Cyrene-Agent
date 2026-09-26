@@ -327,14 +327,15 @@ public static class RequestRouter
 
     /// <summary>
     /// 发送 section 动作；onResult 非空时携带 requestId，等待宿主
-    /// state.settings-action-result 回执（15s 未响应按失败回调，避免卡窗）。
-    /// 回调在 UI 线程执行（事件帧经 Dispatcher.Invoke 分发）。
+    /// state.settings-action-result 回执（缺省 15s 未响应按失败回调，避免卡窗；
+    /// 试听/克隆等长任务用 timeout 放宽）。回调在 UI 线程执行（事件帧经 Dispatcher.Invoke 分发）。
     /// </summary>
     public static void SendSettingsAction(
         string kind,
         string verb,
         Dictionary<string, object?>? payload,
-        Action<bool, string?, JsonElement?> onResult)
+        Action<bool, string?, JsonElement?> onResult,
+        TimeSpan? timeout = null)
     {
         var body = new Dictionary<string, object?>
         {
@@ -351,7 +352,7 @@ public static class RequestRouter
         PendingActionResults[requestId] = onResult;
         var timer = new System.Windows.Threading.DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(15),
+            Interval = timeout ?? TimeSpan.FromSeconds(15),
         };
         timer.Tick += (_, _) =>
         {

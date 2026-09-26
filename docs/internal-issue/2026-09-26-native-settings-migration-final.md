@@ -54,7 +54,7 @@
 4. 单模型 100% 的环形图必须用整圆几何（ArcSegment 360° 会退化成空路径）。
 5. `general: clear-chat-history / open-gpu-internals` 为 native 动作白名单一部分
    （契约测试扫描 C# 锁定）。
-6. legacy 入口只保留在 Electron-only section（tts/asr/plugins/channels）。
+6. legacy 入口只保留在 Electron-only section（当前仅 channels；tts/asr 与 plugins 已迁原生）。
 
 ## 3. 验证
 
@@ -70,7 +70,9 @@
 
 ## 4. 仍未迁（有意保留）
 
-- TTS / ASR / 插件 / 渠道：用户指定保持 Electron。
+- 渠道（channels）：用户指定保持 Electron 独立窗（后续可另立迁移批次）。
+- 已迁出本清单：插件（`2026-09-26-plugins-section-native-migration.md`）、
+  TTS/ASR（`2026-09-26-voice-sections-native-migration.md`）。
 - 与设置页无关的在途项：应用内模型下载（RAG）、worker 子进程化、会话持久化等。
 
 ## 5. 修订记录
@@ -78,3 +80,6 @@
 - 2026-09-26（Token 空态）：空库时**保留图表框架**（柱图最小柱 + 平坦趋势线），仅在
   上方显示「暂无用量数据 / 和昔涟聊天后这里会显示真实的 Token 消耗统计」两行提示。
   旧版渲染页在空库时隐藏图表区；按用户反馈（空库时图表整体消失像故障）调整为始终可见。
+- 2026-09-26（语音迁入）：TTS / ASR 面板迁至原生设置窗（引擎配置 + 试听 + 克隆 +
+  音色列表 + 通话设置）；`ELECTRON_ONLY_SETTINGS_SECTIONS` 收敛为 `["channels"]`。
+  详见 `2026-09-26-voice-sections-native-migration.md`。

@@ -174,7 +174,7 @@ public sealed partial class SettingsWindow : NativeWindow
         grid.Children.Add(contentGrid);
 
         BuildSections(navPanel);
-        _window.Closed += (_, _) => { StopDebounceTimers(); RaiseClosed(); };
+        _window.Closed += (_, _) => { StopDebounceTimers(); DisposeTtsPreview(); RaiseClosed(); };
     }
 
     private readonly TextBlock _sectionTitle = new();
@@ -280,8 +280,8 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("api-advanced", "高级设置", native: true);
         AddSection("cyrene", "昔涟设置", native: true);
         AddSection("memory", "记忆", native: true);
-        AddSection("tts", "语音合成 TTS", native: false, legacyHash: "tts");
-        AddSection("asr", "语音识别 ASR", native: false, legacyHash: "asr");
+        AddSection("tts", "语音合成 TTS", native: true);
+        AddSection("asr", "语音识别 ASR", native: true);
         AddSection("plugins", "插件", native: true);
         AddSection("user", "用户信息", native: true);
         AddSection("tasks", "定时任务", native: true);
@@ -345,7 +345,7 @@ public sealed partial class SettingsWindow : NativeWindow
     // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "cyrene" or "disclaimer" or "memory" or "tasks" or "tokens" or "plugins" or "about";
+        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "cyrene" or "disclaimer" or "memory" or "tasks" or "tokens" or "plugins" or "tts" or "asr" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
@@ -361,6 +361,8 @@ public sealed partial class SettingsWindow : NativeWindow
         "tasks" => BuildTasksSection(),
         "tokens" => BuildTokensSection(),
         "plugins" => BuildPluginsSection(),
+        "tts" => BuildTtsSection(),
+        "asr" => BuildAsrSection(),
         "about" => BuildAboutSection(),
         _ => new TextBlock { Text = "未知分区" },
     };
@@ -791,6 +793,8 @@ public sealed partial class SettingsWindow : NativeWindow
         "tasks" => NodeRawJson("tasks"),
         "tokens" => NodeRawJson("tokens"),
         "plugins" => NodeRawJson("plugins"),
+        "tts" => NodeRawJson("tts"),
+        "asr" => NodeRawJson("asr"),
         // 关于：静态内容（版本号启动后不变），只需首次构建
         _ => "",
     };
