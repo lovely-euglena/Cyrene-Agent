@@ -56,6 +56,11 @@ describe("createAsrStream", () => {
     await expect(stream.stop()).resolves.toBe("");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("本地引擎：内置流不可用（本地识别由插件租约提供）", () => {
+    expect(() => createAsrStream({ engine: "local" }, () => {}, () => {}))
+      .toThrow("本地语音识别由插件提供");
+  });
 });
 
 describe("createVadGate（静默不上云 + preRoll + fail-open）", () => {

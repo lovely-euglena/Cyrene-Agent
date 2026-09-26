@@ -183,6 +183,8 @@ export class PluginManager {
           // 面板字段仅对已启用插件透出（渲染端不挂载禁用插件的面板）
           settingsPanel: this.isConfiguredEnabled(record) ? record.manifest.settingsPanel : undefined,
           settingsSection: this.isConfiguredEnabled(record) ? record.manifest.settingsSection : undefined,
+          // 依赖清单（如 speech-input）：native 语音设置据此提示本地识别可用性
+          deps: record.manifest.deps,
         };
       })
       .sort((a, b) => {

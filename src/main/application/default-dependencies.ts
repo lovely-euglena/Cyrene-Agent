@@ -310,6 +310,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     };
   };
 
+  /** 运行中且声明 speech-input 依赖的插件名（本地 ASR 可用性提示；未启用运行时为空）。 */
+  const runningSpeechInputPlugins = (): string[] =>
+    pluginManager
+      ? pluginManager.overview().plugins
+          .filter((entry) => entry.enabled && (entry.deps ?? []).includes("speech-input"))
+          .map((entry) => entry.name)
+      : [];
+
   // ── native 设置窗 section（API/记忆/定时任务）：动作与快照数据 ──────
   // 动作层实例在 createScheduler 时建立（core 阶段早于任何 native 动作）
   let nativeSchedulerActions: ReturnType<typeof createSchedulerActions> | null = null;
@@ -1506,7 +1514,7 @@ createTray: (input) => {
                 cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus()),
                 // 语音：TTS / ASR 设置（旧页字段，读方向与渲染页 loadTtsConfig/loadAsrConfig 同口径）
                 tts: buildTtsSectionSnapshot(loadGeneralSettings()),
-                asr: buildAsrSectionSnapshot(loadGeneralSettings()),
+                asr: buildAsrSectionSnapshot(loadGeneralSettings(), runningSpeechInputPlugins()),
               };
             }
           : undefined,

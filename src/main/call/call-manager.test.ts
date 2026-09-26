@@ -98,6 +98,26 @@ describe("call turn submission", () => {
     expect(reportVad).toHaveBeenNthCalledWith(2, false);
   });
 
+  it("本地 ASR：通话可启动（不起内置流），VAD/音频帧忽略，等插件接管", () => {
+    mocks.getAsrConfig.mockReturnValue({ engine: "local" });
+
+    startCall();
+    expect(sentStates.at(-1)).toBe("LISTENING");
+    expect(mocks.createAsrStream).not.toHaveBeenCalled();
+    expect(sentErrors).toEqual([]);
+
+    // 无内置流：VAD / 音频帧安全忽略；TTS 结束也不重启内置 ASR
+    handleVadState(true);
+    handleAudioFrame(Buffer.alloc(8));
+    onTtsDone();
+    expect(mocks.createAsrStream).not.toHaveBeenCalled();
+
+    // 插件租约可正常接管本地输入
+    const claim = claimExternalSpeechInput();
+    expect(claim).not.toBeNull();
+    releaseExternalSpeechInput(claim!.callGeneration);
+  });
+
   it("leaves LISTENING immediately while batch transcription is still stopping", async () => {
     let finishStop!: (text: string) => void;
     const stopResult = new Promise<string>((resolve) => { finishStop = resolve; });

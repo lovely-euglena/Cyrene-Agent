@@ -173,7 +173,13 @@ export function startCall(): void {
   latestPartialText = "";
   callHistory.length = 0;
   console.log(LOG_PREFIX, "startCall 重置: finalText 清空, history 清空");
-  startAsrStream(cfg);
+  // 本地 ASR（asrEngine=local）：不起内置流，通话保持 LISTENING 等待
+  // 语音输入插件（speech-input 租约）接管；插件释放后回到等待状态。
+  if (cfg.engine !== "local") {
+    startAsrStream(cfg);
+  } else {
+    console.log(LOG_PREFIX, "本地 ASR 模式：等待语音输入插件接管");
+  }
   sendState("LISTENING");
 }
 
@@ -323,6 +329,8 @@ export async function endTurn(): Promise<void> {
   if (!active || currentState !== "LISTENING") return;
   // 外部插件持有输入期间，忽略内置 VAD 的静默结束信号
   if (inputOwner === "external") return;
+  // 本地 ASR：没有内置流（等待插件接管），同样忽略内置 VAD 结束信号
+  if (!asrStream) return;
 
   // 立即离开 LISTENING，避免批量转写等待期间被手动按钮或 VAD 重复提交。
   sendState("THINKING");
@@ -407,11 +415,11 @@ export function onTtsDone(): void {
   restartAsr();
 }
 
-/** 重新开始一轮 ASR 识别；外部输入持有期间不启动内置 ASR。 */
+/** 重新开始一轮 ASR 识别；外部输入持有/本地 ASR 模式不启动内置 ASR。 */
 function restartAsr(): void {
   if (inputOwner !== "builtin") return;
   const cfg = getAsrConfig();
-  if (!cfg) return;
+  if (!cfg || cfg.engine === "local") return;
   if (asrStream) void Promise.resolve(asrStream.stop()).catch((err) => {
     console.warn(LOG_PREFIX, "停止上一轮 ASR 失败:", err);
   });

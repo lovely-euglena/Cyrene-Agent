@@ -32,6 +32,8 @@ export interface PluginListEntry {
   settingsPanel?: string;
   /** 面板挂载的设置分区；缺省挂「插件」分区 */
   settingsSection?: "channels" | "plugins";
+  /** 声明的宿主依赖（如 speech-input = 本地语音输入能力） */
+  deps?: string[];
 }
 
 export interface PluginScanIssue {

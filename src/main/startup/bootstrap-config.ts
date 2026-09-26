@@ -122,6 +122,9 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
   // 注入 ASR 配置获取器（通话功能用，实时读 GeneralSettings）
   setAsrConfig(() => {
     const s = loadGeneralSettings();
+    if (s.asrEngine === "local") {
+      return { engine: "local" };
+    }
     if (s.asrEngine === "mossland") {
       return { engine: "mossland", apiKey: s.ttsMosslandKey };
     }

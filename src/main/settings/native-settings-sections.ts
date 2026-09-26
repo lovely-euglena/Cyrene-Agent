@@ -601,6 +601,8 @@ export interface NativeAsrSnapshot {
   vadSilenceMs: number;
   vadThreshold: number;
   showTranscript: boolean;
+  /** 运行中且声明 speech-input 依赖的插件名（本地 ASR 可用性提示） */
+  localPlugins: string[];
 }
 
 /** ASR 快照的输入子集（asr* 字段 + 共用的 mossland key）。 */
@@ -618,7 +620,10 @@ export type AsrSettingsView = Pick<
 >;
 
 /** ASR 快照：旧页 loadAsrConfig 同款默认回填（mossland key 与 TTS 共用）。 */
-export function buildAsrSectionSnapshot(settings: AsrSettingsView): NativeAsrSnapshot {
+export function buildAsrSectionSnapshot(
+  settings: AsrSettingsView,
+  localPlugins: string[] = [],
+): NativeAsrSnapshot {
   return {
     engine: (["off", "aliyun", "mossland", "local"] as const)
       .find((engine) => engine === settings.asrEngine) ?? "off",
@@ -630,6 +635,7 @@ export function buildAsrSectionSnapshot(settings: AsrSettingsView): NativeAsrSna
     vadSilenceMs: clampNumber(settings.asrVadSilenceMs, 100, 60_000) ?? 1000,
     vadThreshold: clampNumber(settings.asrVadThreshold, 0.001, 0.5) ?? 0.01,
     showTranscript: settings.asrShowTranscript === true,
+    localPlugins: [...localPlugins],
   };
 }
 
