@@ -43,13 +43,20 @@ describe("openSettingsWindow · 路由", () => {
     expect(mocks.createSettingsWindow).not.toHaveBeenCalled();
   });
 
-  it("channels / tts / asr → Electron，不触碰 native", async () => {
-    for (const section of ["channels", "tts", "asr"]) {
-      openSettingsWindow(section);
-      expect(mocks.createSettingsWindow).toHaveBeenCalledWith(section);
-    }
+  it("channels → Electron，不触碰 native", async () => {
+    openSettingsWindow("channels");
+    expect(mocks.createSettingsWindow).toHaveBeenCalledWith("channels");
     await flush();
     expect(mocks.spawnNativeWindow).not.toHaveBeenCalled();
+  });
+
+  it("tts / asr 迁入 WPF → native + section 定位", async () => {
+    for (const section of ["tts", "asr"]) {
+      openSettingsWindow(section);
+      expect(mocks.spawnNativeWindow).toHaveBeenCalledWith("settings", { section });
+    }
+    await flush();
+    expect(mocks.createSettingsWindow).not.toHaveBeenCalled();
   });
 
   it("preferences 迁入 WPF → native + section 定位", async () => {

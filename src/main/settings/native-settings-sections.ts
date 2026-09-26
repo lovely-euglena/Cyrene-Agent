@@ -5,6 +5,7 @@
 // 模型/记忆/调度三个子系统，且与 native-settings-protocol 的读方向键名同处一地。
 
 import { MODEL_PRESETS } from "../../shared/model-presets";
+import { DEFAULT_MOSSLAND_TTS_MODEL } from "../../shared/tts-types";
 import type { GeneralSettings } from "./general-settings";
 import type { ModelSettings } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
@@ -484,4 +485,165 @@ export function buildCyreneSectionSnapshot(
     embeddingInstalled: status?.embedding?.bgem3 === true,
     rerankerInstalled: status?.reranker?.standard === true,
   };
+}
+
+// ── 语音（tts / asr section） ──────────────────────────────────────────────
+
+export interface NativeTtsSnapshot {
+  engine: GeneralSettings["ttsEngine"];
+  autoRead: boolean;
+  earlyReadSplitEnabled: boolean;
+  earlyReadSplitMode: "sentence" | "paragraph";
+  speed: number;
+  volume: number;
+  minimaxKey: string;
+  minimaxVoiceId: string;
+  minimaxModel: "speech-2.8-hd" | "speech-2.8-turbo";
+  streaming: boolean;
+  minimaxVocalEnhance: boolean;
+  gptsovitsBaseUrl: string;
+  gptsovitsRefAudioPath: string;
+  gptsovitsPromptText: string;
+  gptsovitsFormat: "wav" | "mp3";
+  gptsovitsTimeoutMs: number;
+  customCloudEndpointUrl: string;
+  customCloudApiKey: string;
+  customCloudVoiceId: string;
+  customCloudFormat: "wav" | "mp3";
+  customCloudTimeoutMs: number;
+  mimoKey: string;
+  mimoVoiceAudioPath: string;
+  mimoStylePrompt: string;
+  mosslandKey: string;
+  mosslandVoiceId: string;
+  mosslandModel: string;
+  mosslandTestText: string;
+  mosslandFormat: "mp3" | "wav";
+}
+
+/** TTS 快照的输入子集（tts* 字段；调用方传完整 GeneralSettings 亦可）。 */
+export type TtsSettingsView = Pick<
+  GeneralSettings,
+  | "ttsEngine"
+  | "ttsAutoRead"
+  | "ttsEarlyReadSplitEnabled"
+  | "ttsEarlyReadSplitMode"
+  | "ttsSpeed"
+  | "ttsVolume"
+  | "ttsMinimaxKey"
+  | "ttsMinimaxVoiceId"
+  | "ttsMinimaxModel"
+  | "ttsStreaming"
+  | "ttsMinimaxVocalEnhance"
+  | "ttsGptsovitsBaseUrl"
+  | "ttsGptsovitsRefAudioPath"
+  | "ttsGptsovitsPromptText"
+  | "ttsGptsovitsFormat"
+  | "ttsGptsovitsTimeoutMs"
+  | "ttsCustomCloudEndpointUrl"
+  | "ttsCustomCloudApiKey"
+  | "ttsCustomCloudVoiceId"
+  | "ttsCustomCloudFormat"
+  | "ttsCustomCloudTimeoutMs"
+  | "ttsMimoKey"
+  | "ttsMimoVoiceAudioPath"
+  | "ttsMimoStylePrompt"
+  | "ttsMosslandKey"
+  | "ttsMosslandVoiceId"
+  | "ttsMosslandModel"
+  | "ttsMosslandTestText"
+  | "ttsMosslandFormat"
+>;
+
+/** TTS 快照：旧页 loadTtsConfig 同款默认回填（缺省/非法值回落旧页默认）。 */
+export function buildTtsSectionSnapshot(settings: TtsSettingsView): NativeTtsSnapshot {
+  return {
+    engine: (["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland"] as const)
+      .find((engine) => engine === settings.ttsEngine) ?? "off",
+    autoRead: settings.ttsAutoRead === true,
+    earlyReadSplitEnabled: settings.ttsEarlyReadSplitEnabled !== false,
+    earlyReadSplitMode: settings.ttsEarlyReadSplitMode === "paragraph" ? "paragraph" : "sentence",
+    speed: clampNumber(settings.ttsSpeed, 0.5, 2) ?? 1,
+    volume: clampNumber(settings.ttsVolume, 0, 1) ?? 1,
+    minimaxKey: str(settings.ttsMinimaxKey),
+    minimaxVoiceId: str(settings.ttsMinimaxVoiceId),
+    minimaxModel: settings.ttsMinimaxModel === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo",
+    streaming: settings.ttsStreaming !== false,
+    minimaxVocalEnhance: settings.ttsMinimaxVocalEnhance !== false,
+    gptsovitsBaseUrl: str(settings.ttsGptsovitsBaseUrl) || "http://localhost:9880",
+    gptsovitsRefAudioPath: str(settings.ttsGptsovitsRefAudioPath),
+    gptsovitsPromptText: str(settings.ttsGptsovitsPromptText),
+    gptsovitsFormat: settings.ttsGptsovitsFormat === "mp3" ? "mp3" : "wav",
+    gptsovitsTimeoutMs: clampNumber(settings.ttsGptsovitsTimeoutMs, 10_000, 3_600_000) ?? 180_000,
+    customCloudEndpointUrl: str(settings.ttsCustomCloudEndpointUrl),
+    customCloudApiKey: str(settings.ttsCustomCloudApiKey),
+    customCloudVoiceId: str(settings.ttsCustomCloudVoiceId),
+    customCloudFormat: settings.ttsCustomCloudFormat === "wav" ? "wav" : "mp3",
+    customCloudTimeoutMs: clampNumber(settings.ttsCustomCloudTimeoutMs, 1_000, 120_000) ?? 30_000,
+    mimoKey: str(settings.ttsMimoKey),
+    mimoVoiceAudioPath: str(settings.ttsMimoVoiceAudioPath),
+    mimoStylePrompt: str(settings.ttsMimoStylePrompt) || "温柔、自然、略带亲近感，像在轻声陪用户聊天。",
+    mosslandKey: str(settings.ttsMosslandKey),
+    mosslandVoiceId: str(settings.ttsMosslandVoiceId),
+    mosslandModel: normalizeMosslandModel(settings.ttsMosslandModel),
+    mosslandTestText: str(settings.ttsMosslandTestText) || TTS_TEST_TEXT,
+    mosslandFormat: settings.ttsMosslandFormat === "wav" ? "wav" : "mp3",
+  };
+}
+
+export interface NativeAsrSnapshot {
+  engine: GeneralSettings["asrEngine"];
+  aliyunAppKey: string;
+  aliyunAccessKeyId: string;
+  aliyunAccessKeySecret: string;
+  mosslandKey: string;
+  language: "zh" | "en" | "auto";
+  vadSilenceMs: number;
+  vadThreshold: number;
+  showTranscript: boolean;
+}
+
+/** ASR 快照的输入子集（asr* 字段 + 共用的 mossland key）。 */
+export type AsrSettingsView = Pick<
+  GeneralSettings,
+  | "asrEngine"
+  | "asrAliyunAppKey"
+  | "asrAliyunAccessKeyId"
+  | "asrAliyunAccessKeySecret"
+  | "ttsMosslandKey"
+  | "asrLanguage"
+  | "asrVadSilenceMs"
+  | "asrVadThreshold"
+  | "asrShowTranscript"
+>;
+
+/** ASR 快照：旧页 loadAsrConfig 同款默认回填（mossland key 与 TTS 共用）。 */
+export function buildAsrSectionSnapshot(settings: AsrSettingsView): NativeAsrSnapshot {
+  return {
+    engine: (["off", "aliyun", "mossland", "local"] as const)
+      .find((engine) => engine === settings.asrEngine) ?? "off",
+    aliyunAppKey: str(settings.asrAliyunAppKey),
+    aliyunAccessKeyId: str(settings.asrAliyunAccessKeyId),
+    aliyunAccessKeySecret: str(settings.asrAliyunAccessKeySecret),
+    mosslandKey: str(settings.ttsMosslandKey),
+    language: settings.asrLanguage === "en" || settings.asrLanguage === "auto" ? settings.asrLanguage : "zh",
+    vadSilenceMs: clampNumber(settings.asrVadSilenceMs, 100, 60_000) ?? 1000,
+    vadThreshold: clampNumber(settings.asrVadThreshold, 0.001, 0.5) ?? 0.01,
+    showTranscript: settings.asrShowTranscript === true,
+  };
+}
+
+/** TTS 试听缺省文本（与 native-voice-actions 的 TTS_TEST_TEXT 同句）。 */
+const TTS_TEST_TEXT = "你好，我是昔涟，很高兴见到你。";
+
+/** 旧页：ttsMosslandModel 缺省/历史值 "moss-tts" 回落默认模型，其余原样保留。 */
+function normalizeMosslandModel(raw: unknown): string {
+  const model = str(raw);
+  return model && model !== "moss-tts" ? model : DEFAULT_MOSSLAND_TTS_MODEL;
+}
+
+function clampNumber(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : null;
 }

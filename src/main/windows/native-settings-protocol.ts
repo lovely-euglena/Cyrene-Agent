@@ -81,9 +81,10 @@ export const NATIVE_USER_PROFILE_FIELDS = [
 /**
  * Electron 专属 section：内容仍在 Electron，入口一律弹 Electron 页——
  *   - channels：渠道配置独立 Electron 窗（用户指定不迁 .NET）
- *   - tts / asr：TTS/ASR 配置保持在 Electron 设置页
+ * 历史：tts / asr 曾在此列表（语音配置保持 Electron），后按用户要求迁移到
+ * .NET 原生设置窗（见 docs/internal-issue/2026-09-26-voice-sections-native-migration.md）。
  */
-export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "tts", "asr"] as const;
+export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels"] as const;
 
 /**
  * WPF 设置窗认识的 section（与 SettingsWindow.cs 的 AddSection 对齐；
@@ -155,6 +156,10 @@ export const NATIVE_SECTION_ACTIONS = {
   ],
   plugins: ["save", "set-permission-level", "add-mcp-server"],
   scheduler: ["add", "update", "toggle", "fire", "delete", "history"],
+  // 「语音合成 TTS」：settings 保存 + 试听合成 + MiniMax/Mossland 克隆 + 音色列表
+  tts: ["save", "test", "clone-minimax", "clone-mossland", "list-mossland-voices"],
+  // 「语音识别 ASR」：settings 保存（试听/克隆归 TTS 段）
+  asr: ["save"],
 } as const;
 
 export type NativeSectionKind = keyof typeof NATIVE_SECTION_ACTIONS;
@@ -409,4 +414,123 @@ export function sanitizeNativeStickerAdd(raw: Record<string, unknown> | null | u
   if (phrases.length === 0) return { ok: false, error: "请至少写一行相近语义" };
 
   return { ok: true, payload: { sourcePath, id, description, phrases } };
+}
+
+// ── 「语音合成 TTS」/「语音识别 ASR」section（tts / asr）：写入 payload 校验 ──
+
+const VOICE_TEXT_MAX = 500;
+const TTS_TEST_TEXT_MAX = 2000;
+const TTS_ENGINES = ["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland"] as const;
+const ASR_ENGINES = ["off", "aliyun", "mossland", "local"] as const;
+
+/**
+ * tts save payload 校验（旧页同款字段）：
+ *   - 引擎/开关/切分模式/下拉为枚举校验
+ *   - 语速 0.5~2、音量 0~1（一位小数）；超时按旧页范围 clamp
+ *   - 文本字段 trim 截断；无有效字段返回 null（宿主静默忽略）
+ */
+export function sanitizeNativeTtsSave(
+  raw: Record<string, unknown> | null | undefined,
+): Partial<GeneralSettings> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const patch: Record<string, unknown> = {};
+
+  if (typeof raw.ttsEngine === "string" && (TTS_ENGINES as readonly string[]).includes(raw.ttsEngine)) {
+    patch.ttsEngine = raw.ttsEngine;
+  }
+  for (const key of ["ttsAutoRead", "ttsEarlyReadSplitEnabled", "ttsStreaming", "ttsMinimaxVocalEnhance"]) {
+    if (typeof raw[key] === "boolean") patch[key] = raw[key];
+  }
+  if (raw.ttsEarlyReadSplitMode === "sentence" || raw.ttsEarlyReadSplitMode === "paragraph") {
+    patch.ttsEarlyReadSplitMode = raw.ttsEarlyReadSplitMode;
+  }
+  for (const key of ["ttsSpeed", "ttsVolume"]) {
+    if (typeof raw[key] === "number" && Number.isFinite(raw[key])) {
+      const rounded = Math.round((raw[key] as number) * 10) / 10;
+      patch[key] = key === "ttsSpeed"
+        ? Math.min(2, Math.max(0.5, rounded))
+        : Math.min(1, Math.max(0, rounded));
+    }
+  }
+  if (raw.ttsMinimaxModel === "speech-2.8-hd" || raw.ttsMinimaxModel === "speech-2.8-turbo") {
+    patch.ttsMinimaxModel = raw.ttsMinimaxModel;
+  }
+  if (raw.ttsGptsovitsFormat === "wav" || raw.ttsGptsovitsFormat === "mp3") {
+    patch.ttsGptsovitsFormat = raw.ttsGptsovitsFormat;
+  }
+  if (raw.ttsCustomCloudFormat === "wav" || raw.ttsCustomCloudFormat === "mp3") {
+    patch.ttsCustomCloudFormat = raw.ttsCustomCloudFormat;
+  }
+  if (raw.ttsMosslandFormat === "mp3" || raw.ttsMosslandFormat === "wav") {
+    patch.ttsMosslandFormat = raw.ttsMosslandFormat;
+  }
+  const takeTimeout = (key: string, min: number, max: number): void => {
+    if (typeof raw[key] === "number" && Number.isFinite(raw[key])) {
+      const value = Math.round(raw[key] as number);
+      if (value >= min) patch[key] = Math.min(max, value);
+    }
+  };
+  takeTimeout("ttsGptsovitsTimeoutMs", 10_000, 3_600_000);
+  takeTimeout("ttsCustomCloudTimeoutMs", 1_000, 120_000);
+
+  const takeText = (key: string, max = VOICE_TEXT_MAX): void => {
+    if (typeof raw[key] === "string") patch[key] = raw[key].trim().slice(0, max);
+  };
+  for (const key of [
+    "ttsMinimaxKey",
+    "ttsMinimaxVoiceId",
+    "ttsGptsovitsBaseUrl",
+    "ttsGptsovitsRefAudioPath",
+    "ttsGptsovitsPromptText",
+    "ttsCustomCloudEndpointUrl",
+    "ttsCustomCloudApiKey",
+    "ttsCustomCloudVoiceId",
+    "ttsMimoKey",
+    "ttsMimoVoiceAudioPath",
+    "ttsMimoStylePrompt",
+    "ttsMosslandKey",
+    "ttsMosslandVoiceId",
+    "ttsMosslandModel",
+  ]) {
+    takeText(key);
+  }
+  takeText("ttsMosslandTestText", TTS_TEST_TEXT_MAX);
+
+  return Object.keys(patch).length > 0 ? (patch as Partial<GeneralSettings>) : null;
+}
+
+/**
+ * asr save payload 校验（旧页同款字段）：
+ *   - 引擎/语言为枚举校验；VAD 静默 100~60000ms 取整、音量阈值 0.001~0.5
+ *   - 文本字段 trim 截断；无有效字段返回 null（宿主静默忽略）
+ */
+export function sanitizeNativeAsrSave(
+  raw: Record<string, unknown> | null | undefined,
+): Partial<GeneralSettings> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const patch: Record<string, unknown> = {};
+
+  if (typeof raw.asrEngine === "string" && (ASR_ENGINES as readonly string[]).includes(raw.asrEngine)) {
+    patch.asrEngine = raw.asrEngine;
+  }
+  if (raw.asrLanguage === "zh" || raw.asrLanguage === "en" || raw.asrLanguage === "auto") {
+    patch.asrLanguage = raw.asrLanguage;
+  }
+  if (typeof raw.asrVadSilenceMs === "number" && Number.isFinite(raw.asrVadSilenceMs)) {
+    patch.asrVadSilenceMs = Math.min(60_000, Math.max(100, Math.round(raw.asrVadSilenceMs)));
+  }
+  if (typeof raw.asrVadThreshold === "number" && Number.isFinite(raw.asrVadThreshold)) {
+    patch.asrVadThreshold = Math.round(Math.min(0.5, Math.max(0.001, raw.asrVadThreshold)) * 1000) / 1000;
+  }
+  if (typeof raw.asrShowTranscript === "boolean") {
+    patch.asrShowTranscript = raw.asrShowTranscript;
+  }
+  const takeText = (key: string): void => {
+    if (typeof raw[key] === "string") patch[key] = raw[key].trim().slice(0, VOICE_TEXT_MAX);
+  };
+  for (const key of ["asrAliyunAppKey", "asrAliyunAccessKeyId", "asrAliyunAccessKeySecret", "ttsMosslandKey"]) {
+    takeText(key);
+  }
+
+  return Object.keys(patch).length > 0 ? (patch as Partial<GeneralSettings>) : null;
 }

@@ -105,10 +105,12 @@ import { createSchedulerSubsystem, type SchedulerSubsystem } from "../scheduler/
 import { createSchedulerActions } from "../scheduler/scheduler-actions";
 import {
   buildApiSectionSnapshot,
+  buildAsrSectionSnapshot,
   buildCyreneSectionSnapshot,
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
   buildTokensSectionSnapshot,
+  buildTtsSectionSnapshot,
   buildPluginsSectionSnapshot,
 } from "../settings/native-settings-sections";
 import { addUserSticker } from "../sticker-storage";
@@ -173,12 +175,20 @@ import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
 import {
+  sanitizeNativeAsrSave,
   sanitizeNativeCyreneSave,
   sanitizeNativeGeneralSetting,
   sanitizeNativePluginsSave,
   sanitizeNativeStickerAdd,
+  sanitizeNativeTtsSave,
   sanitizeNativeUserProfile,
 } from "../windows/native-settings-protocol";
+import {
+  cloneNativeMinimaxVoice,
+  cloneNativeMosslandVoice,
+  listNativeMosslandVoices,
+  synthesizeNativeTest,
+} from "../settings/native-voice-actions";
 import { pickAndSaveUserAvatar } from "../memory/user-avatar";
 
 import { createIpcScope, type IpcScope } from "./ipc-scope";
@@ -764,6 +774,72 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     }
   };
 
+  /** WPF「语音合成 TTS」section 动作：settings 保存 / 试听合成 / 音色克隆 / 音色列表。
+   *  试听与克隆复用渲染页同一批引擎函数（native-voice-actions），不复制协议逻辑。 */
+  const nativeTtsAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    const failed = (err: unknown, label: string): { ok: false; error: string } => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[NativeSettings] tts ${label} failed:`, message);
+      return { ok: false, error: message };
+    };
+    switch (verb) {
+      case "save": {
+        const patch = sanitizeNativeTtsSave(payload);
+        if (!patch) return { ok: false, error: "没有可保存的字段" };
+        try {
+          // TTS 字段无搜索 MCP / Playwright 等联动，直接落盘（与 TTS_SAVE_SETTINGS 同存储）
+          saveGeneralSettings({ ...loadGeneralSettings(), ...patch });
+          return { ok: true };
+        } catch (err) {
+          return failed(err, "save");
+        }
+      }
+      case "test":
+        return synthesizeNativeTest(payload)
+          .then((result) => ({ ok: true, data: { filePath: result.filePath, format: result.format } }))
+          .catch((err: unknown) => failed(err, "test"));
+      case "clone-minimax":
+        return cloneNativeMinimaxVoice(payload)
+          .then((result) => ({
+            ok: true,
+            data: {
+              voiceId: result.voiceId,
+              ...(result.demoFilePath ? { demoFilePath: result.demoFilePath } : {}),
+            },
+          }))
+          .catch((err: unknown) => failed(err, "clone-minimax"));
+      case "clone-mossland":
+        return cloneNativeMosslandVoice(payload)
+          .then((result) => ({ ok: true, data: { voiceId: result.voiceId } }))
+          .catch((err: unknown) => failed(err, "clone-mossland"));
+      case "list-mossland-voices":
+        return listNativeMosslandVoices(payload)
+          .then((result) => ({ ok: true, data: { voices: result.voices, hasMore: result.hasMore } }))
+          .catch((err: unknown) => failed(err, "list-mossland-voices"));
+      default:
+        console.warn("[NativeSettings] unhandled tts action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「语音识别 ASR」section 动作：settings 保存（试听/克隆归 TTS 段）。 */
+  const nativeAsrAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    if (verb !== "save") {
+      console.warn("[NativeSettings] unhandled asr action:", verb);
+      return undefined;
+    }
+    const patch = sanitizeNativeAsrSave(payload);
+    if (!patch) return { ok: false, error: "没有可保存的字段" };
+    try {
+      saveGeneralSettings({ ...loadGeneralSettings(), ...patch });
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[NativeSettings] asr save failed:", message);
+      return { ok: false, error: message };
+    }
+  };
+
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({
     publish: (event, payload) => pluginManager
@@ -919,6 +995,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           memoryAction: nativeMemoryAction,
           pluginsAction: nativePluginsAction,
           schedulerAction: nativeSchedulerAction,
+          // 语音：TTS（保存/试听/克隆/列表）+ ASR（保存）
+          ttsAction: nativeTtsAction,
+          asrAction: nativeAsrAction,
           // 「高级设置」section：超时（秒→ms）+ 工具并发
           runtimeAction: (verb, payload) => {
             if (verb !== "save") return;
@@ -1424,6 +1503,9 @@ createTray: (input) => {
                 plugins: buildPluginsSectionSnapshot(loadGeneralSettings(), getCurrentLevel()),
                 // 昔涟设置（阶段 1+2）：状态栏实时更新 + 表情包发送 + RAG 模型
                 cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus()),
+                // 语音：TTS / ASR 设置（旧页字段，读方向与渲染页 loadTtsConfig/loadAsrConfig 同口径）
+                tts: buildTtsSectionSnapshot(loadGeneralSettings()),
+                asr: buildAsrSectionSnapshot(loadGeneralSettings()),
               };
             }
           : undefined,

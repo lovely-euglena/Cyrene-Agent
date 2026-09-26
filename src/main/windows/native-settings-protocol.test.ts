@@ -19,6 +19,8 @@ import {
   sanitizeNativeGeneralSetting,
   sanitizeNativePluginsSave,
   sanitizeNativeStickerAdd,
+  sanitizeNativeTtsSave,
+  sanitizeNativeAsrSave,
   sanitizeNativeUserProfile,
   shouldOpenSettingsInElectron,
 } from "./native-settings-protocol";
@@ -67,6 +69,18 @@ const settingsSectionCs = [
   ),
   fs.readFileSync(
     fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Cyrene.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Plugins.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Tts.cs", import.meta.url)),
+    "utf8",
+  ),
+  fs.readFileSync(
+    fileURLToPath(new URL("../../../dotnet/native-windows/SettingsWindow.Asr.cs", import.meta.url)),
     "utf8",
   ),
 ].join("\n");
@@ -315,7 +329,78 @@ describe("sanitizeNativeCyreneSave / sanitizeNativeStickerAdd（cyrene section �
   });
 });
 
-describe("sanitizeNativeUserProfile", () => {  it("只保留白名单字段并 trim", () => {
+describe("sanitizeNativeTtsSave / sanitizeNativeAsrSave（语音 section 动作）", () => {
+  it("tts save：枚举 / 布尔 / 数值 clamp / 文本裁剪", () => {
+    expect(sanitizeNativeTtsSave({
+      ttsEngine: "minimax",
+      ttsAutoRead: false,
+      ttsEarlyReadSplitMode: "paragraph",
+      ttsSpeed: 1.26,
+      ttsVolume: 1.7,
+      ttsMinimaxModel: "speech-2.8-hd",
+      ttsGptsovitsFormat: "mp3",
+      ttsCustomCloudFormat: "wav",
+      ttsMosslandFormat: "wav",
+      ttsGptsovitsTimeoutMs: 9_999,
+      ttsCustomCloudTimeoutMs: 300_000,
+      ttsMosslandModel: "  moss-tts-1.5-flash  ",
+      ttsMosslandTestText: "  hi  ",
+      ttsMinimaxKey: "  k  ",
+    })).toEqual({
+      ttsEngine: "minimax",
+      ttsAutoRead: false,
+      ttsEarlyReadSplitMode: "paragraph",
+      ttsSpeed: 1.3,
+      ttsVolume: 1,
+      ttsMinimaxModel: "speech-2.8-hd",
+      ttsGptsovitsFormat: "mp3",
+      ttsCustomCloudFormat: "wav",
+      ttsMosslandFormat: "wav",
+      ttsCustomCloudTimeoutMs: 120_000,
+      ttsMosslandModel: "moss-tts-1.5-flash",
+      ttsMosslandTestText: "hi",
+      ttsMinimaxKey: "k",
+    });
+
+    expect(sanitizeNativeTtsSave({ ttsEngine: "bogus", ttsSpeed: "fast" })).toBeNull();
+    expect(sanitizeNativeTtsSave(null)).toBeNull();
+  });
+
+  it("tts save：越界数值 clamp 到旧页范围（语速 0.5~2 / 音量 0~1 / 超时区间）", () => {
+    const patch = sanitizeNativeTtsSave({ ttsSpeed: 9, ttsVolume: -3, ttsGptsovitsTimeoutMs: 10_000 });
+    expect(patch).toEqual({ ttsSpeed: 2, ttsVolume: 0, ttsGptsovitsTimeoutMs: 10_000 });
+  });
+
+  it("asr save：枚举 / VAD clamp / 凭据裁剪（mossland key 与 TTS 共用）", () => {
+    expect(sanitizeNativeAsrSave({
+      asrEngine: "aliyun",
+      asrLanguage: "en",
+      asrVadSilenceMs: 12.6,
+      asrVadThreshold: 0.7777,
+      asrShowTranscript: true,
+      asrAliyunAppKey: "  app  ",
+      asrAliyunAccessKeyId: "id",
+      asrAliyunAccessKeySecret: "secret",
+      ttsMosslandKey: "  moss  ",
+    })).toEqual({
+      asrEngine: "aliyun",
+      asrLanguage: "en",
+      asrVadSilenceMs: 100,
+      asrVadThreshold: 0.5,
+      asrShowTranscript: true,
+      asrAliyunAppKey: "app",
+      asrAliyunAccessKeyId: "id",
+      asrAliyunAccessKeySecret: "secret",
+      ttsMosslandKey: "moss",
+    });
+
+    expect(sanitizeNativeAsrSave({ asrEngine: "azure", asrLanguage: "ja" })).toBeNull();
+    expect(sanitizeNativeAsrSave(null)).toBeNull();
+  });
+});
+
+describe("sanitizeNativeUserProfile", () => {
+  it("只保留白名单字段并 trim", () => {
     const patch = sanitizeNativeUserProfile({
       nickname: "  小昔  ",
       callPreference: "主人",
@@ -425,14 +510,14 @@ describe("设置窗路由裁决 shouldOpenSettingsInElectron", () => {
     expect(shouldOpenSettingsInElectron(undefined)).toBe(false);
   });
 
-  it("channels / tts / asr → Electron（保持弹页面）", () => {
+  it("channels → Electron（保持弹页面）", () => {
     for (const section of ELECTRON_ONLY_SETTINGS_SECTIONS) {
       expect(shouldOpenSettingsInElectron(section)).toBe(true);
     }
   });
 
-  it("WPF 认识的 section（含新迁 disclaimer/api-advanced/preferences/cyrene）→ WPF", () => {
-    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks", "tokens", "preferences", "cyrene"]) {
+  it("WPF 认识的 section（含新迁 disclaimer/api-advanced/preferences/cyrene/tts/asr）→ WPF", () => {
+    for (const section of ["general", "appearance", "user", "about", "api", "api-advanced", "disclaimer", "memory", "plugins", "tasks", "tokens", "preferences", "cyrene", "tts", "asr"]) {
       expect(shouldOpenSettingsInElectron(section)).toBe(false);
     }
   });
@@ -491,5 +576,7 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
     ]);
     expect([...NATIVE_SECTION_ACTIONS.scheduler]).toEqual(["add", "update", "toggle", "fire", "delete", "history"]);
     expect([...NATIVE_SECTION_ACTIONS.plugins]).toEqual(["save", "set-permission-level", "add-mcp-server"]);
+    expect([...NATIVE_SECTION_ACTIONS.tts]).toEqual(["save", "test", "clone-minimax", "clone-mossland", "list-mossland-voices"]);
+    expect([...NATIVE_SECTION_ACTIONS.asr]).toEqual(["save"]);
   });
 });
