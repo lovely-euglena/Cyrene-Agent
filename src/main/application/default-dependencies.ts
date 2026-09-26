@@ -33,6 +33,7 @@ import {
 } from "../windows/window-state";
 import { loadModelSettings, saveModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
 import { registerSettingsIpc } from "../settings/settings-ipc";
+import { registerPortableIpc } from "../portable/portable-ipc";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -1563,6 +1564,12 @@ createTray: (input) => {
           embeddingIndexService: services.embedding,
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
+        });
+
+        // 便携模式：数据目录迁移/覆盖 + 重启（指针文件在程序目录）
+        registerPortableIpc({
+          ipc,
+          getParentWindow: () => settingsWindow,
         });
 
         registerMemoryUserToolIpc({
