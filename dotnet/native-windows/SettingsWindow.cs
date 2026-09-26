@@ -1530,7 +1530,44 @@ public sealed partial class SettingsWindow : NativeWindow
         _window.Focus();
     }
 
-    public override void Close() => _window.Dispatcher.Invoke(() => _window.Close());
+    public override void Close() => _window.Dispatcher.Invoke(() =>
+    {
+        _window.Close();
+        // 关窗后归还内存：设置窗会把宿主私有工作集从 ~6MB 推到 ~120MB，而其中
+        // 大头是 WPF 的**非托管**渲染/字体缓存（实测托管堆仅 ~5MB，GC 收不回）。
+        // 等 Closed 事件（宿主把窗口移出字典）跑完后，在空闲优先级：
+        //   1) 断开 section 视觉树引用（可回收部分交给 GC）；
+        //   2) SetProcessWorkingSetSize(-1,-1) trim 工作集，把常驻页交还系统
+        //      （下次打开按需换入，观察不到延时）。
+        _window.Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try
+            {
+                foreach (var host in _sectionHosts.Values) host.Children.Clear();
+                _sections.Children.Clear();
+                _window.Content = null;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[SettingsWindow] cleanup before GC failed: " + ex.Message);
+            }
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+            try
+            {
+                using var process = System.Diagnostics.Process.GetCurrentProcess();
+                SetProcessWorkingSetSize(process.Handle, new IntPtr(-1), new IntPtr(-1));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[SettingsWindow] working set trim failed: " + ex.Message);
+            }
+        }), DispatcherPriority.ApplicationIdle);
+    });
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool SetProcessWorkingSetSize(IntPtr process, IntPtr minimumWorkingSetSize, IntPtr maximumWorkingSetSize);
 
     public override void ApplyLayout(JsonElement layout)
     {
