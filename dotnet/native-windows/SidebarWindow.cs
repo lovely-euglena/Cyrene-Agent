@@ -31,6 +31,10 @@ public sealed class SidebarWindow : NativeWindow
     /// <summary>窗口投影的透明边距（窗口比内容壳大 2*margin；位置补偿见 ApplyLayout）。</summary>
     private const int WindowShadowMargin = 16;
 
+    private readonly Border? _shadowLayer;
+    private RectangleGeometry? _clipGeometry;
+    private double _cornerRadius = 24;
+
     public override string Kind => "sidebar";
     public override bool IsClosed => _window == null;
 
@@ -140,9 +144,16 @@ public sealed class SidebarWindow : NativeWindow
 
         // 窗口投影：内容壳四周留 16px 透明边（窗口整体 +32，位置在 ApplyLayout 补偿）
         _root.Margin = new Thickness(WindowShadowMargin);
+        _shadowLayer = NativeTheme.MakeWindowShadowLayer(_cornerRadius);
         var windowShell = new Grid();
-        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(24));
+        windowShell.Children.Add(_shadowLayer);
         windowShell.Children.Add(_root);
+        // 圆角裁剪（壳/标题栏溢出方形角的统一处理；半径可变，几何体复用）
+        _clipGeometry = new RectangleGeometry { RadiusX = _cornerRadius, RadiusY = _cornerRadius };
+        grid.Clip = _clipGeometry;
+        void UpdateClip() => _clipGeometry.Rect = new Rect(0, 0, grid.ActualWidth, grid.ActualHeight);
+        grid.SizeChanged += (_, _) => UpdateClip();
+        UpdateClip();
 
         _window = new Window
         {
@@ -367,6 +378,21 @@ public sealed class SidebarWindow : NativeWindow
                 new GradientStop(Colors.White, 1),
             },
         };
+    }
+
+    /// <summary>窗口圆角（宿主 win.radius / spawn 补发）：壳、投影层、裁剪同步。</summary>
+    public override void ApplyCornerRadius(double radius)
+    {
+        radius = Math.Clamp(radius, 0, 40);
+        if (Math.Abs(radius - _cornerRadius) < 0.5) return;
+        _cornerRadius = radius;
+        _root.CornerRadius = new CornerRadius(radius);
+        if (_shadowLayer is not null) _shadowLayer.CornerRadius = new CornerRadius(radius);
+        if (_clipGeometry is not null)
+        {
+            _clipGeometry.RadiusX = radius;
+            _clipGeometry.RadiusY = radius;
+        }
     }
 
     public override void ShowWindow()

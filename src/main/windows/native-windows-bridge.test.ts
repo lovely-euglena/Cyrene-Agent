@@ -16,6 +16,7 @@ import {
   bindNativeDataProviders,
   pushSchedulerSnapshotToNative,
   markNativeWindowsStartupReady,
+  pushWindowRadiusToNative,
 } from "./native-windows-bridge";
 
 const IPC = {
@@ -89,6 +90,12 @@ describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () 
     pushSchedulerSnapshotToNative();
     await Promise.resolve();
     expect(getTasks).not.toHaveBeenCalled();
+  });
+
+  it("pushWindowRadiusToNative is a safe no-op when disabled (invalid values dropped)", () => {
+    expect(() => pushWindowRadiusToNative(8)).not.toThrow();
+    expect(() => pushWindowRadiusToNative(Number.NaN)).not.toThrow();
+    expect(() => pushWindowRadiusToNative(Number.POSITIVE_INFINITY)).not.toThrow();
   });
 
   it("markNativeWindowsStartupReady is idempotent and safe without client", () => {

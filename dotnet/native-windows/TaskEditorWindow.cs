@@ -42,6 +42,8 @@ public sealed class TaskEditorWindow : Window
     private readonly StackPanel _toolsPanel = new();
     private readonly ScrollViewer _toolsScroll = new();
     private readonly TextBlock _status = new();
+    /// <summary>窗口圆角（构造时取宿主广播值；模态窗不跟随运行期变更）。</summary>
+    private readonly double _cornerRadius = 12;
 
     private static readonly Regex TimePattern = new("^([01]\\d|2[0-3]):[0-5]\\d$", RegexOptions.Compiled);
 
@@ -79,10 +81,12 @@ public sealed class TaskEditorWindow : Window
         shellGrid.Children.Add(titleBar);
         Grid.SetRow(root, 1);
         shellGrid.Children.Add(root);
-        NativeTheme.ClipRounded(shellGrid, 12);
+        // 圆角：取宿主最近广播的 windowCornerRadius（win.radius），没有则默认 12
+        _cornerRadius = Math.Clamp(RequestRouter.WindowRadius ?? 12, 0, 40);
+        NativeTheme.ClipRounded(shellGrid, _cornerRadius);
         var contentBorder = new Border
         {
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(_cornerRadius),
             Background = NativeTheme.SurfaceAppBrush,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
@@ -90,7 +94,7 @@ public sealed class TaskEditorWindow : Window
             Child = shellGrid,
         };
         var windowShell = new Grid();
-        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(12));
+        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(_cornerRadius));
         windowShell.Children.Add(contentBorder);
         Content = windowShell;
         panel.Children.Add(Header(hasTask ? "编辑定时任务" : "新建定时任务"));

@@ -23,6 +23,8 @@ export interface GeneralSettingsLifecycleDependencies {
   } | null;
   get proactiveLifecycle(): { getProactiveChatService: () => { invalidate: () => void } | null };
   broadcastToAuxWindows(channel: string, payload: unknown): void;
+  /** 窗口圆角变更 → native（.NET）窗口同步（未启用 native 时为 no-op）。 */
+  onWindowCornerRadiusChanged?(radius: number): void;
 }
 
 /** MiniMax 搜索 MCP Server 的固定 ID。 */
@@ -147,6 +149,8 @@ export function handleGeneralSettingsChanged(
   }
   if (before.windowCornerRadius !== after.windowCornerRadius) {
     deps.windowManager?.broadcast(IPC.UI_WINDOW_CORNER_RADIUS_CHANGED, after.windowCornerRadius);
+    // native（.NET）窗口同步：Electron 侧走 CSS 变量，原生侧走 win.radius 帧
+    deps.onWindowCornerRadiusChanged?.(after.windowCornerRadius);
   }
   if (JSON.stringify(before.uiFont) !== JSON.stringify(after.uiFont)) {
     deps.windowManager?.broadcast(IPC.UI_FONT_CHANGED, after.uiFont);

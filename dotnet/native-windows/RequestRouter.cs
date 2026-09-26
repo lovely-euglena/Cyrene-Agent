@@ -11,6 +11,12 @@ public static class RequestRouter
 
     private static readonly Dictionary<string, NativeWindow> Windows = new();
 
+    /// <summary>最近一次下发的窗口圆角（win.radius）；新窗口 spawn 时补应用，进程重启后由宿主重发。</summary>
+    private static double? _windowRadius;
+
+    /// <summary>当前窗口圆角（供模态子窗如任务编辑器取初值）。</summary>
+    public static double? WindowRadius => _windowRadius;
+
     public static async Task Handle(System.Windows.Application app, int id, JsonElement element)
     {
         var op = element.TryGetProperty("op", out var opEl) ? opEl.GetString() : null;
@@ -49,6 +55,9 @@ public static class RequestRouter
                             Protocol?.SendEvent(new { op = "event", name = "win.closed", kind = k });
                         };
                         Windows[kind] = window;
+                        // 圆角：宿主 spawn 后会补发 win.radius；若进程内已有缓存值
+                        // （同进程第二个窗口 / 重开后新建）直接应用，避免闪一下默认圆角
+                        if (_windowRadius.HasValue) window.ApplyCornerRadius(_windowRadius.Value);
                     }
                     Protocol?.ReplyOk(id);
                 });
@@ -83,6 +92,25 @@ public static class RequestRouter
                     foreach (var w in Windows.Values) w.ApplyLayout(layout);
                     Protocol?.ReplyOk(id);
                 });
+                break;
+            }
+            case "win.radius":
+            {
+                // 窗口圆角广播（general settings windowCornerRadius）：
+                // 记缓存供后续 spawn 补应用，并应用到当前全部窗口
+                if (element.TryGetProperty("radius", out var radiusEl) && radiusEl.TryGetDouble(out var radius))
+                {
+                    _windowRadius = Math.Clamp(radius, 0, 40);
+                    app.Dispatcher.Invoke(() =>
+                    {
+                        foreach (var w in Windows.Values) w.ApplyCornerRadius(_windowRadius.Value);
+                        Protocol?.ReplyOk(id);
+                    });
+                }
+                else
+                {
+                    Protocol?.ReplyOk(id);
+                }
                 break;
             }
             case "state.runtime":
@@ -302,6 +330,8 @@ public abstract class NativeWindow
     public abstract void ShowWindow();
     public abstract void Activate();
     public abstract void ApplyLayout(JsonElement layout);
+    /// <summary>窗口圆角（win.radius 广播 / spawn 补发）。默认忽略；各窗口按壳结构实现。</summary>
+    public virtual void ApplyCornerRadius(double radius) { }
     public event Action<string>? ClosedEvent;
     protected void RaiseClosed() => ClosedEvent?.Invoke(Kind);
 }

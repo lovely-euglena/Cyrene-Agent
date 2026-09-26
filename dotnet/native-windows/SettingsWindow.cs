@@ -203,6 +203,9 @@ public sealed partial class SettingsWindow : NativeWindow
         }
     }
 
+    /// <summary>宿主 win.radius 广播 / spawn 补发（与快照路径同一实现）。</summary>
+    public override void ApplyCornerRadius(double radius) => ApplyWindowRadius(radius);
+
     /// <summary>标题栏按钮（最小化/关闭）：扁平图标按钮样式。</summary>
     private static Button MakeTitleBarButton(string glyph, Action onClick)
     {

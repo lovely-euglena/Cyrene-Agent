@@ -51,6 +51,11 @@ public sealed class PluginManagerWindow : NativeWindow
     private TextBlock? _limitsHint;
     private TextBlock? _limitsStatus;
 
+    private Border? _contentBorder;
+    private Border? _shadowLayer;
+    private RectangleGeometry? _clipGeometry;
+    private double _cornerRadius = 12;
+
     private record PluginInfo(string Id, string Name, string Version, string Description, bool Enabled, string Origin, bool HasPanel, string Runtime, bool CanOpen, long StorageBytes, long? MemoryBytes);
     private record MarketEntry(string Id, string Name, string Version, string Description, string Author);
     private record MarketSource(string Url, bool Ok, bool Used);
@@ -125,23 +130,44 @@ public sealed class PluginManagerWindow : NativeWindow
         shellGrid.Children.Add(titleBar);
         Grid.SetRow(root, 1);
         shellGrid.Children.Add(root);
-        NativeTheme.ClipRounded(shellGrid, 12);
-        var contentBorder = new Border
+        // 圆角裁剪（半径可变：宿主 win.radius 广播）
+        _clipGeometry = new RectangleGeometry { RadiusX = _cornerRadius, RadiusY = _cornerRadius };
+        shellGrid.Clip = _clipGeometry;
+        void UpdateClip() => _clipGeometry.Rect = new Rect(0, 0, shellGrid.ActualWidth, shellGrid.ActualHeight);
+        shellGrid.SizeChanged += (_, _) => UpdateClip();
+        UpdateClip();
+        _contentBorder = new Border
         {
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(_cornerRadius),
             Background = NativeTheme.SurfaceAppBrush,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(1),
             Margin = new Thickness(16), // 透明留白：给窗口投影
             Child = shellGrid,
         };
+        _shadowLayer = NativeTheme.MakeWindowShadowLayer(_cornerRadius);
         var windowShell = new Grid();
-        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(12));
-        windowShell.Children.Add(contentBorder);
+        windowShell.Children.Add(_shadowLayer);
+        windowShell.Children.Add(_contentBorder);
         _window.Content = windowShell;
 
         NativeTheme.Apply(_window);
         ApplyWindowBoundsFromLayout(layout);
+    }
+
+    /// <summary>窗口圆角（宿主 win.radius / spawn 补发）：内容壳、投影层、裁剪同步。</summary>
+    public override void ApplyCornerRadius(double radius)
+    {
+        radius = Math.Clamp(radius, 0, 40);
+        if (Math.Abs(radius - _cornerRadius) < 0.5) return;
+        _cornerRadius = radius;
+        if (_contentBorder is not null) _contentBorder.CornerRadius = new CornerRadius(radius);
+        if (_shadowLayer is not null) _shadowLayer.CornerRadius = new CornerRadius(radius);
+        if (_clipGeometry is not null)
+        {
+            _clipGeometry.RadiusX = radius;
+            _clipGeometry.RadiusY = radius;
+        }
     }
 
     private static ScrollViewer MakeScroll(UIElement content)
