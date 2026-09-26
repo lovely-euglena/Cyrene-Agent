@@ -107,6 +107,43 @@ describe("listMarket", () => {
     ]);
   });
 
+  it("软截止：首选源挂起时不等待，直接采用已返回的兜底源", async () => {
+    const fetchImpl: MarketplaceFetch = async (input, init) => {
+      if (input === REGISTRY_URL_A) {
+        // 挂起直到硬超时中止（模拟被墙/极慢的源）
+        return await new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      }
+      return jsonResponse(registryJson([registryEntry()]));
+    };
+    const service = createPluginMarketplaceService(
+      makeDeps({ fetchImpl, softDeadlineMs: 40, registryTimeoutMs: 500 }),
+    );
+    const startedAt = Date.now();
+    const result = await service.listMarket();
+    expect(result.ok).toBe(true);
+    expect(result.plugins).toHaveLength(1);
+    expect(result.sources[0]).toEqual({ url: REGISTRY_URL_A, ok: false, used: false });
+    expect(result.sources[1]).toMatchObject({ url: REGISTRY_URL_B, ok: true, used: true });
+    expect(Date.now() - startedAt).toBeLessThan(400);
+  });
+
+  it("软截止回落：全部源都超过软截止时等真实结果（硬超时错误如实上报）", async () => {
+    const fetchImpl: MarketplaceFetch = async (_input, init) => {
+      return await new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("hard timeout")));
+      });
+    };
+    const service = createPluginMarketplaceService(
+      makeDeps({ fetchImpl, softDeadlineMs: 30, registryTimeoutMs: 150 }),
+    );
+    const result = await service.listMarket();
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("hard timeout");
+    expect(result.error).not.toContain("未等待");
+  });
+
   it("全部源失败时 sources 仍带回全死状态", async () => {
     const fetchImpl: MarketplaceFetch = async () => {
       throw new Error("network down");

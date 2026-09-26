@@ -378,8 +378,17 @@ public sealed class PluginManagerWindow : NativeWindow
     {
         if (_marketSources.Count == 0)
         {
-            _marketStatus.Text = _marketError.Length > 0 ? $"⚠ {_marketError}" : "";
-            _marketStatus.Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A));
+            if (_marketError.Length > 0)
+            {
+                _marketStatus.Text = $"⚠ {_marketError}";
+                _marketStatus.Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A));
+            }
+            else
+            {
+                // 启用但尚未收到源健康：宿主正在拉取索引
+                _marketStatus.Text = _runtimeEnabled ? "正在加载插件市场…" : "";
+                _marketStatus.Foreground = NativeTheme.TextMutedBrush;
+            }
             return;
         }
         var parts = _marketSources.Select(s =>
@@ -424,12 +433,18 @@ public sealed class PluginManagerWindow : NativeWindow
 
         var searchHost = new Grid
         {
-            MaxWidth = 300,
+            // 固定宽度：占位提示隐藏后 Grid 不应回缩到文本框最小宽度（搜索框会变小）
+            Width = 320,
             Height = 30,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var searchBox = new TextBox { FontSize = 14, Padding = new Thickness(8, 5, 8, 4) };
+        var searchBox = new TextBox
+        {
+            FontSize = 14,
+            Padding = new Thickness(8, 5, 8, 4),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
         var hint = new TextBlock
         {
             Text = "搜索插件（名称 / id / 描述）",
@@ -484,34 +499,7 @@ public sealed class PluginManagerWindow : NativeWindow
         if (!_runtimeEnabled)
         {
             // 运行时未启用（默认关省内存）：给一键启用提示条
-            var tip = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(0xFF, 0xF4, 0xE5)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x8A)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(12, 8, 12, 8),
-                Margin = new Thickness(0, 0, 0, 8),
-                Child = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal },
-            };
-            var sp = (StackPanel)tip.Child;
-            sp.Children.Add(new TextBlock
-            {
-                Text = "插件运行时未启用——已跳过插件系统以节省内存。",
-                FontSize = 14,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 10, 0),
-                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x5A, 0x00)),
-            });
-            var enableBtn = new Button
-            {
-                Content = "启用插件运行时",
-                Width = 150, Height = 28, FontSize = 14,
-                Style = NativeTheme.PrimaryButtonStyle,
-            };
-            enableBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "enable-runtime");
-            sp.Children.Add(enableBtn);
-            _installedList.Children.Add(tip);
+            _installedList.Children.Add(MakeRuntimeBanner("插件运行时未启用——已跳过插件系统以节省内存。"));
         }
         var matched = _installed.Where(p => MatchesSearch(p.Id, p.Name, p.Description)).ToList();
         if (matched.Count == 0 && _runtimeEnabled)
@@ -644,23 +632,65 @@ public sealed class PluginManagerWindow : NativeWindow
     private void RenderMarket()
     {
         _marketList.Children.Clear();
+        if (!_runtimeEnabled)
+        {
+            // 市场依赖插件系统：未启用时给出说明与一键启用（否则空列表毫无提示）
+            _marketList.Children.Add(MakeRuntimeBanner("插件运行时未启用——市场浏览与安装依赖插件系统，启用后自动加载。"));
+            return;
+        }
         var installedIds = _installed.Select(p => p.Id).ToHashSet();
         var matched = _market.Where(m => MatchesSearch(m.Id, m.Name, m.Description, m.Author)).ToList();
         foreach (var m in matched)
         {
             _marketList.Children.Add(MakeMarketCard(m, installedIds.Contains(m.Id)));
         }
-        if (matched.Count == 0 && _market.Count > 0)
+        if (matched.Count == 0)
         {
             _marketList.Children.Add(new TextBlock
             {
-                Text = $"没有匹配「{_search}」的插件",
+                Text = _search.Length > 0
+                    ? $"没有匹配「{_search}」的插件"
+                    : "市场暂无插件或尚未加载；点右上「刷新」重试。",
                 FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
                 Margin = new Thickness(8, 24, 8, 8),
                 TextAlignment = TextAlignment.Center,
             });
         }
+    }
+
+    /// <summary>运行时未启用提示条（已安装/市场两个 tab 共用；一键启用）。</summary>
+    private Border MakeRuntimeBanner(string message)
+    {
+        var sp = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        sp.Children.Add(new TextBlock
+        {
+            Text = message,
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x5A, 0x00)),
+        });
+        var enableBtn = new Button
+        {
+            Content = "启用插件运行时",
+            Width = 150,
+            Height = 28,
+            FontSize = 14,
+            Style = NativeTheme.PrimaryButtonStyle,
+        };
+        enableBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "enable-runtime");
+        sp.Children.Add(enableBtn);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xFF, 0xF4, 0xE5)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0xC4, 0x8A)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 8, 12, 8),
+            Margin = new Thickness(0, 0, 0, 8),
+            Child = sp,
+        };
     }
 
     private Border MakeMarketCard(MarketEntry m, bool installed)

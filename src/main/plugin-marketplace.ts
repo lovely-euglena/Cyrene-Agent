@@ -33,6 +33,11 @@ export const MARKET_ZIP_URL_PREFIXES: readonly string[] = [
 ];
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
+/**
+ * 软截止：并发探测时若已有源返回，不必等慢源（如被墙的 GitHub）拖满硬超时；
+ * 全部源都超过软截止才回落到等真实结果（硬超时兜底）。
+ */
+export const MARKET_REGISTRY_SOFT_DEADLINE_MS = 4_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;
 export const MARKET_ZIP_MAX_BYTES = 50 * 1024 * 1024;
 
@@ -62,6 +67,7 @@ export interface PluginMarketplaceDeps {
   fetchImpl?: MarketplaceFetch;
   /** 以下参数仅测试注入用 */
   registryTimeoutMs?: number;
+  softDeadlineMs?: number;
   zipTimeoutMs?: number;
   zipMaxBytes?: number;
 }
@@ -177,6 +183,7 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
       return net.fetch(input, init);
     });
   const registryTimeoutMs = deps.registryTimeoutMs ?? MARKET_REGISTRY_TIMEOUT_MS;
+  const softDeadlineMs = Math.min(deps.softDeadlineMs ?? MARKET_REGISTRY_SOFT_DEADLINE_MS, registryTimeoutMs);
   const zipTimeoutMs = deps.zipTimeoutMs ?? MARKET_ZIP_DOWNLOAD_TIMEOUT_MS;
   const zipMaxBytes = deps.zipMaxBytes ?? MARKET_ZIP_MAX_BYTES;
 
@@ -206,24 +213,40 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
 
   async function listMarket(): Promise<MarketListResult> {
     const seq = ++listSeq;
-    // 并发探测所有源：拿到每个源的死活状态供面板展示，数据取优先级最高的可用源
-    const probes = await Promise.all(
-      deps.registryUrls.map(async (url) => {
-        try {
-          return { url, data: await fetchRegistryJson(url) } as const;
-        } catch (error) {
-          return { url, failure: errorMessage(error) } as const;
-        }
-      }),
+    // 并发探测所有源：拿到每个源的死活状态供面板展示，数据取优先级最高的可用源。
+    // 软截止：已有源返回就不再等慢源（GitHub 在部分网络 10s 硬超时，会拖慢整个列表）；
+    // 全部源都超过软截止时才回落到等真实结果（硬超时兜底）。
+    const probes = deps.registryUrls.map(async (url) => {
+      try {
+        return { url, data: await fetchRegistryJson(url) } as const;
+      } catch (error) {
+        return { url, failure: errorMessage(error) } as const;
+      }
+    });
+    const softResults = await Promise.all(
+      probes.map((probe) => Promise.race([
+        probe,
+        new Promise<{ url: string; softTimeout: true }>((resolve) => {
+          setTimeout(() => resolve({ url: "", softTimeout: true }), softDeadlineMs);
+        }),
+      ])),
     );
+    // 软结果里的占位没有 url，用下标对回源地址
+    const merged = softResults.map((result, index) =>
+      "softTimeout" in result ? { url: deps.registryUrls[index], softTimeout: true } as const : result);
+    const anyUsable = merged.some((result) => "data" in result);
+    const allFailed = merged.every((result) => "failure" in result);
+    const results = anyUsable || allFailed ? merged : await Promise.all(probes);
+
     const sources: MarketSourceStatus[] = [];
     const failures: string[] = [];
     let sawUnsupported = false;
     let chosen: { plugins: MarketPluginEntry[]; snapshot: Map<string, MarketSnapshotEntry> } | null = null;
-    for (const probe of probes) {
-      if ("failure" in probe) {
+    for (const probe of results) {
+      if (!("data" in probe)) {
+        const failure = "failure" in probe ? probe.failure : "探测超时（未等待，可点刷新重试）";
         sources.push({ url: probe.url, ok: false, used: false });
-        failures.push(`${probe.url}: ${probe.failure}`);
+        failures.push(`${probe.url}: ${failure}`);
         continue;
       }
       try {
