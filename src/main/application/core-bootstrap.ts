@@ -199,6 +199,9 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
         petVisible: gs.petVisible,
         petAlwaysOnTop: gs.petAlwaysOnTop,
         petZoom: gs.petZoom,
+        // RAG 下载镜像源（general 字段）：设置窗「昔涟设置」的镜像选择读写同一份；
+        // 缺了它 WPF 每次按 official 回落 → 看起来「改了不持久化」
+        ragDownloadMirror: gs.ragDownloadMirror,
         uiIcon: gs.uiIcon,
         uiFont: gs.uiFont,
         windowCornerRadius: gs.windowCornerRadius,
@@ -291,20 +294,21 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // （lazy-chat 模式下 load 已在上方分支处理：急切模式立即加载，
   //  lazy 模式留待首启激活。页面加载失败是致命错误。）
 
-  // 桌宠：窗口始终创建，petVisible 只决定是否显示（隐藏时不闪现）。
-  // 始终创建是为了保证托盘"显示/隐藏桌宠"与设置面板开关随时能把窗口救回来，
-  // 且 alwaysOnTop / zoom / live2d 生命周期在隐藏状态下同样完成接线。
+  // 桌宠：可见才建窗；隐藏时由 windowManager 销毁窗口（连同桌宠渲染进程），
+  // 显示（设置开关/托盘）时按需重建——省一个 0.5GB 级渲染进程。
   const generalSettings = deps.loadGeneralSettings();
-  // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
-  deps.applyGeneralSettings(generalSettings, services);
-  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-  shell.windowManager.createPetWindow(generalSettings.petVisible);
+  // ready/closed 生命周期必须先接好：showPetWindow 会懒建窗口，ready 回调要能接上
   shell.windowManager.onPetWindowReady((win) => {
     shell.live2dWindowLifecycle.attach(win);
   });
   shell.windowManager.onPetWindowClosed(() => {
     shell.live2dWindowLifecycle.clear();
   });
+  // 启动期一次性完整应用通用设置（登录项同步等）；petVisible=true 时经
+  // showPetWindow 懒建窗口，隐藏时不建
+  deps.applyGeneralSettings(generalSettings, services);
+  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
+  if (generalSettings.petVisible) shell.windowManager.createPetWindow(true);
   shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
   shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
   if (generalSettings.sidebarVisible) shell.windowManager.createSidebarWindow();
