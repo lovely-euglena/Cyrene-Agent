@@ -386,7 +386,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         // 偶发超时导致 Git 面板误报"未检测到可用 Git"；探测失败不缓存，下次自动重试
         let resolvedGit: ResolvedGitExecutable | null = null;
         const git = createGitService({
-          getSession: chatsStore.getSession,
+          getSession: chatsStore.getSessionRecord,
           resolveExecutable: async () => {
             resolvedGit ??= await resolveGitExecutable({
               systemCommand: "git",
