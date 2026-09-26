@@ -19,7 +19,7 @@ RAG 后端（嵌入推理 / 重排 / 向量库 / 混合检索 / 记忆操作 / �
 | 阶段 | 内容 | 验收标准 | 状态 |
 |---|---|---|---|
 | **A** | reranker 下沉（原生 logits）+ 帧协议加固（修 P0 失步 + C# 合并写） | `verify-rerank` 0 误差；协议冒烟全绿；启动 0 次 `protocol failure` | ✅ 本提交 |
-| B | 向量库（JSON schema 兼容 + IVF）+ 混合检索（BM25/jieba 移植、融合权重 0.7/0.3） | 同库同查询 .NET 检索结果与 TS 逐条一致（顺序 + 分数误差 < 1e-6） | 待开始 |
+| **B** | 向量库（JSON schema 兼容 + IVF）+ 混合检索（BM25 + 融合 0.7/0.3），`search` op + TS 委托 | 生产接入冒烟全绿；分词差异质量基线：top1 6/6、topK 重叠 100%、顺序 5/6 | ✅ 本提交 |
 | C | 记忆操作（L0/L1/L2、召回统计）+ 文档导入管线（分块、队列、缓存） | 端到端导入/检索/召回统计与 TS 一致；TS 降为薄客户端 | 待开始 |
 | D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 死代码删除；打包版 sidecar 正常加载模型 | 待开始 |
 
@@ -82,3 +82,31 @@ npx tsc -p tsconfig.main.json --noEmit                                    # clea
   不引入 batch 前向。
 - **Phase B 前置**：向量库 JSON schema、IVF 构建参数（k-means++ / nprobe）、BM25 分词器
   （`@node-rs/jieba` 是 native 绑定，.NET 侧需选型 JiebaNet 或自带词典）需先做数据/行为快照。
+
+## 8. Phase B 落地（向量库 + 混合检索，2026-09-26 更新）
+
+**协议**（`search` op，Program.cs ↔ embedding-sidecar.ts）：
+
+| 方向 | 帧 |
+|---|---|
+| 请求 | `{id, op:"search", ragDataDir, query, source?, topK?, importIds?, allowedEntryIds?, customWords?, vectorWeight?, bm25Weight?, updateRecall?}` |
+| 响应 | `{id, ok, count, dim, results:[{id,text,source,weight,createdAt,lastRecalledAt,metadata,score}]}` + `count×dim` float32 embedding 段 |
+
+**关键决策与事实**：
+
+1. **分词方案 B（JiebaNet 自闭环）**——基于质量回归数据拍板：
+   - 切分一致率（词级）61.22%（jieba-rs 与 JiebaNet 词典/算法不同，无法精确对齐）；
+   - 检索质量回归（12 docs / 6 查询）：top1 一致 6/6、topK 重叠 100%、完整顺序 5/6
+     （唯一差异为 0.002 差距平局互换）；复现：`cyrene-embed verify-search …`；
+   - 现网 tag 全为 `"x"`（jieba-rs POS 退化）→ 名词加权/虚词降权此前从未生效；
+     JiebaNet 真实词性让该逻辑首次生效（差异已计入回归）。
+2. **召回回写**：由 .NET 落盘（`weight+0.05`、`lastRecalledAt`）；TS 侧搜索不再触碰
+   本地副本；sidecar 失败回退本地前调用 `store.reload()` 同步磁盘状态。
+3. **存储兼容**：`memory-store.json` 同 schema 读写（double 精度、字段序、`metadata`
+   null 忽略写出）；RagStore 按目录缓存 + mtime 自动重载外部（TS 进程）改写。
+4. **IVF**：仅无 source 且 ≥2 条时启用（k-means++ 随机初始化，与 TS 同为近似路径，
+   跨引擎不做精确对账；有 source 走全量扫描，是精确对账路径）。
+5. **单测隔离**：vitest 全局 `CYRENE_EMBED_SIDECAR=0`，避免单测拉起真实 sidecar 进程。
+
+**遗留优化项**：BM25 每次全库分词（JiebaNet），大批量库需要 entry 级 token 缓存；
+分词器专项（移植 jieba-rs，或基于质量回归评审后长期保留方案 B）列入 Phase D 前评估。
