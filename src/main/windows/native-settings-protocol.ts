@@ -153,6 +153,7 @@ export const NATIVE_SECTION_ACTIONS = {
     "vault-sync",
     "vault-auto-sync",
   ],
+  plugins: ["save", "set-permission-level", "add-mcp-server"],
   scheduler: ["add", "update", "toggle", "fire", "delete", "history"],
 } as const;
 
@@ -239,6 +240,46 @@ export function sanitizeNativeGeneralSetting(
     default:
       return null;
   }
+}
+
+/**
+ * 「插件」section 写入校验：内置工具配置（天气/出行/搜索/邮件/Playwright）。
+ * 保存走宿主 plugins save（触发搜索 MCP / Playwright MCP 同步副作用），
+ * 不走 settings.set，避免绕过副作用。
+ */
+export function sanitizeNativePluginsSave(
+  raw: Record<string, unknown> | null | undefined,
+): Partial<GeneralSettings> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const patch: Record<string, unknown> = {};
+  for (const key of ["weatherEnabled", "travelEnabled", "playwrightMcpEnabled", "emailEnabled", "emailSmtpSecure"]) {
+    if (typeof raw[key] === "boolean") patch[key] = raw[key];
+  }
+  if (raw.weatherSource === "open-meteo" || raw.weatherSource === "amap") {
+    patch.weatherSource = raw.weatherSource;
+  }
+  if (typeof raw.searchEngine === "string"
+    && ["off", "bocha", "tavily", "minimax", "anySearch"].includes(raw.searchEngine)) {
+    patch.searchEngine = raw.searchEngine;
+  }
+  for (const key of [
+    "amapKey",
+    "searchBochaKey",
+    "searchTavilyKey",
+    "searchMinimaxKey",
+    "searchAnySearchKey",
+    "emailSmtpHost",
+    "emailSmtpUser",
+    "emailSmtpPass",
+    "emailFromName",
+  ]) {
+    if (typeof raw[key] === "string") patch[key] = (raw[key] as string).trim().slice(0, 500);
+  }
+  if (typeof raw.emailSmtpPort === "number" && Number.isFinite(raw.emailSmtpPort)) {
+    const port = Math.round(raw.emailSmtpPort);
+    if (port > 0 && port <= 65_535) patch.emailSmtpPort = port;
+  }
+  return Object.keys(patch).length > 0 ? (patch as Partial<GeneralSettings>) : null;
 }
 
 /**

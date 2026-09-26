@@ -17,6 +17,7 @@ import {
   NATIVE_USER_PROFILE_FIELDS,
   sanitizeNativeCyreneSave,
   sanitizeNativeGeneralSetting,
+  sanitizeNativePluginsSave,
   sanitizeNativeStickerAdd,
   sanitizeNativeUserProfile,
   shouldOpenSettingsInElectron,
@@ -260,6 +261,34 @@ describe("sanitizeNativeCyreneSave / sanitizeNativeStickerAdd（cyrene section �
     expect(sanitizeNativeCyreneSave({ rerankerMode: "huge" })).toBeNull();
   });
 
+  it("save：插件字段白名单（布尔/枚举/密钥裁剪/端口范围）", () => {
+    expect(sanitizeNativePluginsSave({
+      weatherEnabled: true,
+      weatherSource: "amap",
+      amapKey: "  key-1  ",
+      searchEngine: "tavily",
+      searchTavilyKey: "tv",
+      emailSmtpPort: 587,
+      emailEnabled: false,
+      playwrightMcpEnabled: true,
+    })).toEqual({
+      weatherEnabled: true,
+      weatherSource: "amap",
+      amapKey: "key-1",
+      searchEngine: "tavily",
+      searchTavilyKey: "tv",
+      emailSmtpPort: 587,
+      emailEnabled: false,
+      playwrightMcpEnabled: true,
+    });
+    expect(sanitizeNativePluginsSave({
+      weatherSource: "bogus",
+      searchEngine: "google",
+      emailSmtpPort: 0,
+    })).toBeNull();
+    expect(sanitizeNativePluginsSave(null)).toBeNull();
+  });
+
   it("add-sticker：必填校验 + id 规则 + 相近语义去空/过滤/截断", () => {
     expect(sanitizeNativeStickerAdd({})).toEqual({ ok: false, error: "请先选择图片文件" });
     expect(sanitizeNativeStickerAdd({ sourcePath: "C:/x.png" })).toEqual({
@@ -461,5 +490,6 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
       "vault-auto-sync",
     ]);
     expect([...NATIVE_SECTION_ACTIONS.scheduler]).toEqual(["add", "update", "toggle", "fire", "delete", "history"]);
+    expect([...NATIVE_SECTION_ACTIONS.plugins]).toEqual(["save", "set-permission-level", "add-mcp-server"]);
   });
 });

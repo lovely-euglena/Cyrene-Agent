@@ -282,7 +282,7 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("memory", "记忆", native: true);
         AddSection("tts", "语音合成 TTS", native: false, legacyHash: "tts");
         AddSection("asr", "语音识别 ASR", native: false, legacyHash: "asr");
-        AddSection("plugins", "插件", native: false, legacyHash: "plugins", pluginManager: true);
+        AddSection("plugins", "插件", native: true);
         AddSection("user", "用户信息", native: true);
         AddSection("tasks", "定时任务", native: true);
         AddSection("tokens", "Token 用量", native: true);
@@ -345,7 +345,7 @@ public sealed partial class SettingsWindow : NativeWindow
     // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
 
     private static bool IsNativeSection(string id)
-        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "cyrene" or "disclaimer" or "memory" or "tasks" or "tokens" or "about";
+        => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "cyrene" or "disclaimer" or "memory" or "tasks" or "tokens" or "plugins" or "about";
 
     private FrameworkElement BuildNativeSection(string id) => id switch
     {
@@ -360,6 +360,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "memory" => BuildMemorySection(),
         "tasks" => BuildTasksSection(),
         "tokens" => BuildTokensSection(),
+        "plugins" => BuildPluginsSection(),
         "about" => BuildAboutSection(),
         _ => new TextBlock { Text = "未知分区" },
     };
@@ -789,6 +790,7 @@ public sealed partial class SettingsWindow : NativeWindow
         "memory" => NodeRawJson("memory"),
         "tasks" => NodeRawJson("tasks"),
         "tokens" => NodeRawJson("tokens"),
+        "plugins" => NodeRawJson("plugins"),
         // 关于：静态内容（版本号启动后不变），只需首次构建
         _ => "",
     };

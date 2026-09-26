@@ -46,6 +46,8 @@ export interface NativeBridgeActions {
   memoryAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「定时任务」section 动作。verb: add/update/toggle/fire/delete/history */
   schedulerAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「插件」section 动作。verb: save / set-permission-level / add-mcp-server */
+  pluginsAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「高级设置」section 动作。verb: save（超时 + 工具并发） */
   runtimeAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「Token 用量」section 动作。verb: set-days / clear */
@@ -181,6 +183,9 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "scheduler":
           completeAction(frame, actions.schedulerAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "plugins":
+          completeAction(frame, actions.pluginsAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "runtime":
           completeAction(frame, actions.runtimeAction?.(asString(frame.verb), asRecord(frame.payload)));
