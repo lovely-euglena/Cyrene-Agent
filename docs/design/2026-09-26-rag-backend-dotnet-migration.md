@@ -20,7 +20,7 @@ RAG 后端（嵌入推理 / 重排 / 向量库 / 混合检索 / 记忆操作 / �
 |---|---|---|---|
 | **A** | reranker 下沉（原生 logits）+ 帧协议加固（修 P0 失步 + C# 合并写） | `verify-rerank` 0 误差；协议冒烟全绿；启动 0 次 `protocol failure` | ✅ 本提交 |
 | **B** | 向量库（JSON schema 兼容 + IVF）+ 混合检索（BM25 + 融合 0.7/0.3），`search` op + TS 委托 | 生产接入冒烟全绿；分词差异质量基线：top1 6/6、topK 重叠 100%、顺序 5/6 | ✅ 本提交 |
-| C | 记忆操作（L0/L1/L2、召回统计）+ 文档导入管线（分块、队列、缓存） | 端到端导入/检索/召回统计与 TS 一致；TS 降为薄客户端 | 待开始 |
+| **C** | 文档导入管线下沉（分块/embedding/落盘/缓存）+ 跨进程读一致性；记忆写入评估为"embedding 已在下沉路径，暂不迁移" | 导入端到端冒烟全绿（进度/缓存互认/零重复）；vitest 330/330 | ✅ 本提交（文档导入部分） |
 | D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 死代码删除；打包版 sidecar 正常加载模型 | 待开始 |
 
 ## 3. Phase A 协议扩展（Program.cs ↔ embedding-sidecar.ts）
@@ -110,3 +110,36 @@ npx tsc -p tsconfig.main.json --noEmit                                    # clea
 
 **遗留优化项**：BM25 每次全库分词（JiebaNet），大批量库需要 entry 级 token 缓存；
 分词器专项（移植 jieba-rs，或基于质量回归评审后长期保留方案 B）列入 Phase D 前评估。
+
+## 9. Phase C 落地（文档导入下沉 + 跨进程读一致性，2026-09-26 更新）
+
+**范围决策**：原计划"记忆操作（L0/L1/L2）+ 文档导入管线"中，记忆写入路径的 embedding
+已由 Phase A/B 承接（`store.add` → `provider.embed` → sidecar embed op），写入逻辑本身
+是薄文件操作，且调用方多为同步 API（memory-compressor / obsidian-importer /
+memory-actions）——迁移收益小、调用面改动大，**本轮暂不迁移**。本轮聚焦：
+文档导入管线下沉 + 跨进程读一致性。
+
+**交付**：
+
+1. **文档导入全部下沉 .NET**（`DocImporter`）：
+   - 读取 / 扩展名与二进制路由 / 3 万字符阈值 / 文本解码（语义与 worker 一致）
+   - `TextChunker`（chunk.ts 同构；`verify-chunks` 6 样本 24/24 块全等）
+   - 批量 embedding（16/批）→ 向量库批量落盘（id 规则 / metadata 与 TS 同构）
+   - `document-cache.json` 同 schema；缓存 identity JSON 与 TS 逐字节一致
+     （字段序 / endpoint 省略），**缓存 key 跨引擎互认**（冒烟实测）
+   - 小文件返回文本由宿主按附件处理
+2. **协议**：`doc-import` / `doc-import-cancel` op；进度 `op=progress` 通知帧
+   （客户端按 `forId` 路由到导入回调）；导入在后台任务执行，期间
+   embed / rerank / search 不被阻塞（引擎串行锁 + 库内部锁 + stdout 帧写锁）
+3. **TS 侧**：`document-import-sidecar.ts` 队列适配（进度/取消/结果映射）；
+   `default-dependencies` 按 `isSidecarEnabled()` 选择 runner（worker 路径保留为回退）
+4. **跨进程读一致性**：`JsonVectorStore.ensureFresh()`（mtime/size 感知，无变化仅一次
+   stat）接入同步读路径（entriesBySource / stats / hasImported）——.NET 写入
+   （召回回写、导入落盘）后 TS 读模型自动跟新，且保持原同步 API 签名
+
+**验证**：导入冒烟（36.7k 字 → 86 块；进度流 `reading→chunking→embedding→done`；
+缓存 key 与 TS 算法逐字节互认；二次导入缓存命中零重复；小文件透传）；
+vitest rag + memory + application 330/330。
+
+**遗留**：worker_thread 导入路径保留（sidecar 禁用时回退）；BM25 全库分词优化项照旧；
+jieba-rs 移植评估照旧（Phase D 前）。
