@@ -868,6 +868,85 @@ public static class NativeTheme
 </Style>
 """)));
 
+    /// <summary>
+    /// 设置页小输入框（对齐 Electron .tts-field input pearl-white）：
+    /// 高 37、圆角 10、字号 13、内边距 8/12。
+    /// </summary>
+    private static readonly System.Lazy<Style> InputSmallLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="TextBox">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="Height" Value="37"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="CaretBrush" Value="#FF5B8A"/>
+  <Setter Property="SelectionBrush" Value="#FFB1CB"/>
+  <Setter Property="Background" Value="White"/>
+  <Setter Property="BorderBrush" Value="#D2D2D7"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="Padding" Value="12,0"/>
+  <Setter Property="VerticalContentAlignment" Value="Center"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="TextBox">
+        <Border x:Name="bd" CornerRadius="10" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+          <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsKeyboardFocused" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FF5B8A"/>
+            <Setter TargetName="bd" Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect Color="#FF5B8A" BlurRadius="8" ShadowDepth="0" Opacity="0.20" RenderingBias="Performance"/>
+              </Setter.Value>
+            </Setter>
+          </Trigger>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
+    /// <summary>
+    /// 幽灵胶囊按钮（对齐 Electron pearl-white .ghost-btn）：
+    /// 高 39、全圆角、白底 + #E5E5EA 描边、14/500；hover 粉字 + 浅灰底 + 描边加深。
+    /// </summary>
+    private static readonly System.Lazy<Style> GhostPillLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="Button">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="14"/>
+  <Setter Property="FontWeight" Value="Medium"/>
+  <Setter Property="Foreground" Value="#2C2C2E"/>
+  <Setter Property="Padding" Value="12,0"/>
+  <Setter Property="Height" Value="39"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="HorizontalAlignment" Value="Left"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="Button">
+        <Border x:Name="bd" CornerRadius="20" Background="White" BorderBrush="#E5E5EA" BorderThickness="1">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter Property="Foreground" Value="#E84A78"/>
+            <Setter TargetName="bd" Property="Background" Value="#F5F5F5"/>
+            <Setter TargetName="bd" Property="BorderBrush" Value="#D2D2D7"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
     private static readonly System.Lazy<Style> TabItemLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="TabItem">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
@@ -1198,6 +1277,8 @@ public static class NativeTheme
     public static Style InputLargeStyle => InputLargeLazy.Value;
     public static Style PasswordLargeStyle => PasswordLargeLazy.Value;
     public static Style PillPrimaryStyle => PillPrimaryLazy.Value;
+    public static Style InputSmallStyle => InputSmallLazy.Value;
+    public static Style GhostPillStyle => GhostPillLazy.Value;
     public static Style SecondaryButtonStyle => SecondaryButtonLazy.Value;
     public static Style PrimaryButtonStyle => PrimaryButtonLazy.Value;
     public static Style DangerButtonStyle => DangerButtonLazy.Value;

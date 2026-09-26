@@ -259,7 +259,7 @@ public sealed partial class SettingsWindow
         };
 
         content.Children.Add(MakePanelHeading(
-            NativeTheme.VectorGlyph(Glyphs.Key, 24, NativeTheme.PinkBrush),
+            NativeTheme.VectorGlyph(Glyphs.Key, 24, NativeTheme.TextDefaultBrush),
             "API 设置",
             ApiHeadingHint));
 
