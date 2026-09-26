@@ -334,6 +334,26 @@
           "desc": "清空全部本地聊天会话。",
           "clearButton": "清空记录"
         },
+        "portable": {
+          "title": "便携模式",
+          "desc": "把聊天记录、配置与插件数据保存到程序目录（或自定义文件夹），随程序一起移动；切换后应用会自动重启。",
+          "apply": "应用并重启",
+          "browse": "浏览…",
+          "dir": {
+            "title": "数据目录",
+            "desc": "默认保存在程序目录下的 data 文件夹；程序安装在 Program Files 等只读位置时，请另选可写目录。"
+          },
+          "current": "当前数据目录：{{dir}}",
+          "applying": "正在处理，请稍候…",
+          "appliedMigrated": "迁移完成，正在重启应用…",
+          "appliedSwitched": "已切换数据位置，正在重启应用…",
+          "cancelled": "已取消，未做任何更改。",
+          "noop": "数据目录没有变化。",
+          "failed": "操作失败：{{error}}",
+          "pickFailed": "打开目录选择器失败",
+          "loadFailed": "读取数据目录状态失败",
+          "unavailable": "当前版本不支持此操作"
+        },
         "language": {
           "title": "语言",
           "desc": "当前仅支持中文，其他语言待开发。",

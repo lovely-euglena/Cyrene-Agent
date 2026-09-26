@@ -120,6 +120,7 @@ import "./plugins/permission";  // 副作用导入：权限档位 UI + 风险确
 import "./tts/panel";  // 副作用导入：TTS 配置加载 + 引擎切换 + 测试发音 + 音色复刻
 import "./rag/panel";  // 副作用导入：RAG 模型切换 + Embedding 下载/删除 + Reranker 模式
 import { applyScreenshotBackendSelection, getScreenshotBackendValue } from "./preferences/panel";  // 副作用导入：截图热键捕获 + 截图方式 + 表情包列表/添加/删除
+import { loadPortableStatus } from "./general/portable";  // 副作用导入：便携模式设置行（事件绑定）
 import "./mcp/panel";  // 副作用导入：MCP Server 添加/删除/启停 + 自定义端点接入说明
 import "./tokens/panel";  // 副作用导入：Token 用量图表 + 时间范围切换
 import { t } from "./i18n";
@@ -1701,6 +1702,7 @@ updateSchedulerConditionalFields();
 
 void loadConfig();
 void loadGeneralSettings();
+void loadPortableStatus();
 // 插件设置面板挂载（已启用且声明了 settingsPanel 的插件按分区挂 iframe）
 void mountPluginPanels();
 window.settings?.onChannelsStatusChanged((status) => {
