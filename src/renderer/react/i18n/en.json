@@ -114,6 +114,7 @@
   },
   "messageList": {
     "commandTerminalTitle": "Terminal output",
+    "toolOutputTerminalTitle": "Tool output",
     "commandRunning": "Running",
     "commandCompleted": "Completed",
     "commandBackground": "Running in background",
@@ -472,7 +473,10 @@
     "statusRunning": "Running",
     "statusCompleted": "Done",
     "statusFailed": "Failed",
-    "statusCancelled": "Canceled"
+    "statusCancelled": "Canceled",
+    "statusInterrupted": "Interrupted",
+    "loading": "Loading subtask…",
+    "loadFailed": "Subtask details are temporarily unavailable"
   },
   "interaction": {
     "askingTitle": "I need to ask you something",

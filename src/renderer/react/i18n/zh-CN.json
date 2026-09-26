@@ -114,6 +114,7 @@
   },
   "messageList": {
     "commandTerminalTitle": "终端输出",
+    "toolOutputTerminalTitle": "工具输出",
     "commandRunning": "运行中",
     "commandCompleted": "已完成",
     "commandBackground": "后台运行",
@@ -472,7 +473,10 @@
     "statusRunning": "正在运行",
     "statusCompleted": "已完成",
     "statusFailed": "执行失败",
-    "statusCancelled": "已取消"
+    "statusCancelled": "已取消",
+    "statusInterrupted": "已中断",
+    "loading": "正在加载子任务…",
+    "loadFailed": "子任务详情暂时无法读取"
   },
   "interaction": {
     "askingTitle": "昔涟正在询问",

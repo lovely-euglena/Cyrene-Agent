@@ -19,17 +19,29 @@ const STATUS_TEXT_KEYS: Record<TaskDelegationDisplayRecord["status"], string> = 
   cancelled: "taskDelegation.statusCancelled",
 };
 
-export function TaskDelegationRow({ delegation }: { delegation: TaskDelegationDisplayRecord }) {
+export function TaskDelegationRow({
+  delegation,
+  onOpen,
+}: {
+  delegation: TaskDelegationDisplayRecord;
+  onOpen?: (delegation: TaskDelegationDisplayRecord) => void;
+}) {
   const { t } = useTranslation();
   const portraitUrl = getCharacterPortraitByAssetFileName(delegation.assetFileName);
   return (
-    <div className={`cy-task-delegation is-${delegation.status}`}>
+    <button
+      type="button"
+      className={`cy-task-delegation is-${delegation.status}${onOpen ? " is-openable" : ""}`}
+      onClick={onOpen ? () => onOpen(delegation) : undefined}
+      disabled={!onOpen}
+      aria-label={onOpen ? `${delegation.nickname}: ${delegation.description}` : undefined}
+    >
       <span className="cy-task-delegation__marker" aria-hidden="true">{STATUS_MARKERS[delegation.status]}</span>
       <span className="cy-task-delegation__lead">{t("taskDelegation.delegatedTo")}</span>
       {portraitUrl && <img className="cy-task-delegation__avatar" src={portraitUrl} alt={delegation.nickname} draggable={false} />}
       <span className="cy-task-delegation__nickname">{delegation.nickname}</span>
       <span className="cy-task-delegation__description">{delegation.description}</span>
       <span className="cy-task-delegation__status">{t(STATUS_TEXT_KEYS[delegation.status])}</span>
-    </div>
+    </button>
   );
 }

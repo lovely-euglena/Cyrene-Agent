@@ -11,6 +11,7 @@ import workingMoodUrl from "../../../assets/status-moods/工作中.png?url";
 import interruptedMoodUrl from "../../../assets/status-moods/已中断.png?url";
 import processedMoodUrl from "../../../assets/status-moods/已处理.png?url";
 import connectingMoodUrl from "../../../assets/status-moods/连接中.png?url";
+import type { CharacterStatusMood } from "../../../character-status-moods";
 import { useUserAvatar } from "../../../hooks/useUserAvatar";
 import {
   assistantRenderStages,
@@ -22,7 +23,7 @@ import { RunStageIndicator } from "./RunStageIndicator";
 import { TaskPlanCard } from "./TaskPlanCard";
 import type { AgentRunStage, TaskPlanPresentation } from "./run-presentation";
 import { CopyButton } from "./CopyButton";
-import { CommandTerminal } from "./CommandTerminal";
+import { CommandTerminal, ToolOutputTerminal } from "./CommandTerminal";
 import { TtsButton } from "./TtsButton";
 import { stopTtsPlayback } from "./tts-playback";
 import { LastTurnActionButton } from "./LastTurnActionButton";
@@ -91,6 +92,11 @@ interface ChatMessageListProps {
   conversationId?: string;
   mode: ConversationMode;
   preferredAddress: string;
+  /** 子代理详情可注入角色状态图；主聊天区不传时继续用默认昔涟素材。 */
+  characterMoodAssets?: Partial<Record<CharacterStatusMood, string>>;
+  assistantAvatar?: { src: string; alt: string; sprite?: boolean };
+  /** 子代理详情可将任务指令显示为昔涟发出的消息。 */
+  userAvatar?: { src: string; alt: string; sprite?: boolean };
   stickerSize?: "small" | "standard" | "large";
   onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void;
   revisionBusy?: boolean;
@@ -100,6 +106,8 @@ interface ChatMessageListProps {
   onRegisterScrollToBottom?: (scroll: () => void) => void;
   /** 点击 Review 文件项时打开右侧检查面板（filePath 用于标签标识与去重） */
   onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void;
+  /** 点击子任务委派条目时在右侧打开子任务会话。 */
+  onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
   /** 工作区根路径：正文里的 file:/// 链接据此判断界内/越界 */
   workspaceRoot?: string;
   /** 点击界内文件链接 → 打开右侧预览标签并定位行号 */
@@ -107,6 +115,25 @@ interface ChatMessageListProps {
 }
 
 const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
+type CharacterMoodRenderContext = {
+  moods: Partial<Record<CharacterStatusMood, string>>;
+  avatar: { src: string; alt: string; sprite?: boolean } | null;
+};
+const CharacterMoodContext = createContext<CharacterMoodRenderContext>({ moods: {}, avatar: null });
+
+function useCharacterMoodUrl(mood: CharacterStatusMood): string {
+  const context = useContext(CharacterMoodContext);
+  const characterUrl = context.moods[mood];
+  if (characterUrl) return characterUrl;
+  switch (mood) {
+    case "连接中": return connectingMoodUrl;
+    case "思考中": return thinkingMoodUrl;
+    case "工作中": return workingMoodUrl;
+    case "提醒": return completedThinkingMoodUrl;
+    case "已处理": return processedMoodUrl;
+    case "已中断": return interruptedMoodUrl;
+  }
+}
 
 // 消息是否正在流式输出。code 渲染器收不到 MarkdownContent 的 props，用 context 传下去，
 // mermaid 块靠它在流式期间显示占位而不是渲染半截语法。
@@ -314,10 +341,11 @@ function DotSpinner() {
 
 function ModelWaitContent() {
   const { t } = useTranslation();
+  const connectingArt = useCharacterMoodUrl("连接中");
   return (
     <section className="cy-model-wait" aria-label={t("messageList.modelWaitAria")}>
       <span className="cy-model-wait__art" aria-hidden="true">
-        <img src={connectingMoodUrl} alt="" draggable={false} />
+        <img src={connectingArt} alt="" draggable={false} />
         <DotSpinner />
       </span>
       <span>{t("messageList.modelWaitText")}</span>
@@ -337,13 +365,14 @@ function ReasoningContent({
   onExpand: (expanded: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const thinkingArt = useCharacterMoodUrl(loading ? "思考中" : "提醒");
   return (
     <Think
       rootClassName="cy-message-reasoning"
       title={loading ? t("messageList.thinkingTitle") : t("messageList.thinkingDoneTitle")}
       icon={
         <span className={`cy-reasoning-status-art${loading ? " is-thinking" : " is-complete"}`} aria-hidden="true">
-          <img src={thinkingMoodUrl} alt="" draggable={false} />
+          <img src={thinkingArt} alt="" draggable={false} />
           {loading && <DotSpinner />}
         </span>
       }
@@ -389,6 +418,7 @@ function AgentRoundGroup({
   taskDelegations,
   tools,
   interrupted,
+  onOpenTaskInspector,
 }: {
   round: AgentRoundRecord;
   reasoningBlocks: ReasoningBlock[];
@@ -396,8 +426,12 @@ function AgentRoundGroup({
   taskDelegations: TaskDelegationDisplayRecord[];
   tools: ToolExecutionRecord[];
   interrupted: boolean;
+  onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
 }) {
   const { t } = useTranslation();
+  const interruptedArt = useCharacterMoodUrl("已中断");
+  const workingArt = useCharacterMoodUrl("工作中");
+  const reminderArt = useCharacterMoodUrl("提醒");
   const running = round.status === "running" && !interrupted;
   const [expanded, setExpanded] = useState(running);
   const wasRunningRef = useRef(running);
@@ -408,10 +442,10 @@ function AgentRoundGroup({
   }, [running]);
 
   const roundArt = interrupted
-    ? interruptedMoodUrl
+    ? interruptedArt
     : running
-      ? workingMoodUrl
-      : completedThinkingMoodUrl;
+      ? workingArt
+      : reminderArt;
 
   return (
     <section className={`cy-agent-round${running ? " is-running" : " is-complete"}`}>
@@ -424,7 +458,7 @@ function AgentRoundGroup({
         </div>
       ))}
       {taskDelegations.map((delegation) => (
-        <TaskDelegationRow delegation={delegation} key={delegation.invocationId} />
+        <TaskDelegationRow delegation={delegation} key={delegation.invocationId} onOpen={onOpenTaskInspector} />
       ))}
       <button
         type="button"
@@ -483,6 +517,7 @@ export function RunActivityDetail({
   taskDelegations = [],
   tools,
   interrupted = false,
+  onOpenTaskInspector,
 }: {
   /** 运行中：所有事件按实际发生顺序平铺，不做轮次折叠归类。 */
   live?: boolean;
@@ -492,6 +527,7 @@ export function RunActivityDetail({
   taskDelegations?: TaskDelegationDisplayRecord[];
   tools: ToolExecutionRecord[];
   interrupted?: boolean;
+  onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
 }) {
   const { t } = useTranslation();
   if (live) {
@@ -509,7 +545,7 @@ export function RunActivityDetail({
         return [<ToolExecutionContent key={entry.key} tools={[entry.tool]} />];
       }
       if (entry.kind === "task" && entry.task) {
-        return [<TaskDelegationRow delegation={entry.task} key={entry.key} />];
+        return [<TaskDelegationRow delegation={entry.task} key={entry.key} onOpen={onOpenTaskInspector} />];
       }
       return [];
     });
@@ -537,6 +573,7 @@ export function RunActivityDetail({
             taskDelegations={taskDelegations.filter((delegation) => delegation.roundId === round.id)}
             reasoningBlocks={reasoningBlocks.filter((block) => block.roundId === round.id)}
             tools={tools.filter((tool) => tool.roundId === round.id)}
+            onOpenTaskInspector={onOpenTaskInspector}
           />
         ))}
       </div>
@@ -544,7 +581,7 @@ export function RunActivityDetail({
   }
   const timeline: ReactNode[] = [];
   taskDelegations.forEach((delegation) => {
-    timeline.push(<TaskDelegationRow delegation={delegation} key={`task-${delegation.invocationId}`} />);
+    timeline.push(<TaskDelegationRow delegation={delegation} key={`task-${delegation.invocationId}`} onOpen={onOpenTaskInspector} />);
   });
   for (let index = 0; index <= tools.length; index += 1) {
     processMessages
@@ -592,6 +629,7 @@ function RunActivityContent({
   taskPlan,
   expanded,
   onExpand,
+  onOpenTaskInspector,
 }: {
   activityId: string;
   activity: RunActivityRecord;
@@ -604,8 +642,11 @@ function RunActivityContent({
   taskPlan?: TaskPlanPresentation;
   expanded: boolean;
   onExpand: (expanded: boolean) => void;
+  onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
 }) {
   const { t } = useTranslation();
+  const workingArt = useCharacterMoodUrl("工作中");
+  const processedArt = useCharacterMoodUrl("已处理");
   const now = useRunActivityNow(activity.completedAt === undefined);
   const snapshot = resolveRunActivitySnapshot(activity, now);
   const wasProcessingRef = useRef(snapshot.processing);
@@ -617,7 +658,7 @@ function RunActivityContent({
   const title = snapshot.processing
     ? t("messageList.activityProcessingTitle", { elapsed: formatElapsed(snapshot.processingMs) })
     : t("messageList.activityProcessedTitle", { elapsed: formatElapsed(snapshot.processingMs) });
-  const image = snapshot.processing ? workingMoodUrl : processedMoodUrl;
+  const image = snapshot.processing ? workingArt : processedArt;
 
   return (
     <section className={`cy-run-activity${snapshot.processing ? " is-processing" : " is-complete"}`}>
@@ -652,6 +693,7 @@ function RunActivityContent({
             taskDelegations={taskDelegations}
             tools={tools}
             interrupted={Boolean(activity.keepExpanded && activity.completedAt !== undefined)}
+            onOpenTaskInspector={onOpenTaskInspector}
           />
           <div className="cy-run-activity__divider" />
         </div>
@@ -664,6 +706,7 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   const { t } = useTranslation();
   return (
     <section className="cy-tool-executions" aria-label={t("messageList.toolExecutionsAria")}>
+      {/* 工具卡一律默认折叠：只露标题和状态，输出细节由用户点开查看 */}
       <ThoughtChain
         rootClassName="cy-tool-executions__chain"
         line="dashed"
@@ -675,7 +718,7 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
             description: (
               <span className="cy-tool-executions__description">
                 <span className="cy-tool-executions__status">{presentation.statusText}</span>
-                {presentation.detail && <code className="cy-tool-executions__detail">{presentation.detail}</code>}
+                {presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
               </span>
             ),
             status: tool.status === "running" ? "loading" : tool.status === "error" ? "error" : "success",
@@ -713,8 +756,8 @@ function AskUserQaContent({ rows }: { rows: string[] }) {
 }
 
 /** 工具结果展示：ask_user 渲染问答配对；优先用事件携带的结构化 changes 渲染 Diff Review 卡片；否则尝试解析完整 result JSON；最后原样展示 */
-function ToolResultContent({ tool, result, changes }: { tool?: ToolExecutionRecord; result?: string; changes?: ToolFileChange[] }) {
-  if (tool?.name === "ask_user") {
+function ToolResultContent({ tool, result, changes }: { tool: ToolExecutionRecord; result?: string; changes?: ToolFileChange[] }) {
+  if (tool.name === "ask_user") {
     const rows = buildAskUserQa(tool);
     if (rows.length > 0) return <AskUserQaContent rows={rows} />;
   }
@@ -722,7 +765,7 @@ function ToolResultContent({ tool, result, changes }: { tool?: ToolExecutionReco
   if (result) {
     const parsed = extractFileChanges(result);
     if (parsed) return <FileChangeCard changes={parsed} />;
-    return <pre className="cy-tool-executions__result">{result}</pre>;
+    return <ToolOutputTerminal tool={tool} result={result} />;
   }
   return null;
 }
@@ -857,19 +900,29 @@ function LastUserMessageEditor({
   );
 }
 
-function CyreneMessageAvatar() {
+function AssistantMessageAvatar() {
   const { t } = useTranslation();
-  return <img className="cy-message-avatar__image" src={cyreneAvatarUrl} alt={t("messageList.cyreneAvatarAlt")} draggable={false} />;
+  const context = useContext(CharacterMoodContext);
+  const avatar = context.avatar;
+  return (
+    <img
+      className={`cy-message-avatar__image${avatar?.sprite ? " cy-message-avatar__image--sprite" : ""}`}
+      src={avatar?.src ?? cyreneAvatarUrl}
+      alt={avatar?.alt ?? t("messageList.cyreneAvatarAlt")}
+      draggable={false}
+    />
+  );
 }
 
-function UserMessageAvatar({ src }: { src: string | null }) {
+function UserMessageAvatar({ src, alt, sprite }: { src: string | null; alt?: string; sprite?: boolean }) {
   const { t } = useTranslation();
-  if (src) return <img className="cy-message-avatar__image" src={src} alt={t("messageList.userAvatarAlt")} draggable={false} />;
+  if (src) return <img className={`cy-message-avatar__image${sprite ? " cy-message-avatar__image--sprite" : ""}`} src={src} alt={alt ?? t("messageList.userAvatarAlt")} draggable={false} />;
   return <span className="cy-message-avatar__user" aria-label={t("messageList.userAvatarAlt")} />;
 }
 
 function createRoles(
   userAvatarUrl: string | null,
+  userAvatar: { src: string; alt: string; sprite?: boolean } | undefined,
   conversationId: string | undefined,
   mode: ConversationMode,
   preferredAddress: string,
@@ -885,13 +938,14 @@ function createRoles(
   onReasoningExpand: (id: string, expanded: boolean) => void,
   onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void,
   onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void,
+  onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void,
 ) {
   return {
   user: {
     placement: "end" as const,
     variant: "filled" as const,
     rootClassName: "cy-message cy-message--user",
-    avatar: <UserMessageAvatar src={userAvatarUrl} />,
+    avatar: <UserMessageAvatar src={userAvatar?.src ?? userAvatarUrl} alt={userAvatar?.alt} sprite={userAvatar?.sprite} />,
     contentRender: (content: string, info: { extraInfo?: { messageId?: string; stickerUrl?: string; attachments?: ChatMessageAttachment[]; channelSource?: ChatMessageChannelSource } }) => (
       info.extraInfo?.messageId === editingMessageId
         ? <LastUserMessageEditor
@@ -924,7 +978,7 @@ function createRoles(
     placement: "start" as const,
     variant: "filled" as const,
     rootClassName: "cy-message cy-message--assistant",
-    avatar: <CyreneMessageAvatar />,
+    avatar: <AssistantMessageAvatar />,
     contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string; channelSource?: ChatMessageChannelSource } }) => (
       <AssistantContent
         content={content}
@@ -998,6 +1052,7 @@ function createRoles(
           taskPlan={info.extraInfo?.taskPlan}
           expanded={resolveRunActivityExpanded(reasoningExpanded, activityId, activity)}
           onExpand={(expanded) => onReasoningExpand(activityId, expanded)}
+          onOpenTaskInspector={onOpenTaskInspector}
         />
       );
     },
@@ -1108,7 +1163,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
         content: "",
         // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
         // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
-        avatar: createElement(CyreneMessageAvatar),
+        avatar: createElement(AssistantMessageAvatar),
         extraInfo: {
           activityId: `${message.id}-activity`,
           activity: message.runActivity,
@@ -1169,7 +1224,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
       role: "review",
       content: "",
       // Review 面板属于运行块：头像占位隐藏（头像钉在活动卡头部），面板与正文/时间线内容左对齐
-      avatar: createElement(CyreneMessageAvatar),
+      avatar: createElement(AssistantMessageAvatar),
       rootClassName: "cy-message cy-message--review cy-message--review-run",
       extraInfo: { runId: message.runId },
     });
@@ -1217,6 +1272,9 @@ export function ChatMessageList({
   conversationId,
   mode,
   preferredAddress,
+  characterMoodAssets,
+  assistantAvatar,
+  userAvatar,
   stickerSize = "standard",
   onTtsCacheKey,
   revisionBusy = false,
@@ -1225,6 +1283,7 @@ export function ChatMessageList({
   onScrollToBottomVisibilityChange,
   onRegisterScrollToBottom,
   onOpenReviewInspector,
+  onOpenTaskInspector,
   workspaceRoot,
   onOpenFileLink,
 }: ChatMessageListProps) {
@@ -1302,6 +1361,7 @@ export function ChatMessageList({
   const roles = useMemo(
     () => createRoles(
       userAvatarUrl,
+      userAvatar,
       conversationId,
       mode,
       preferredAddress,
@@ -1317,8 +1377,9 @@ export function ChatMessageList({
       onReasoningExpand,
       onTtsCacheKey,
       onOpenReviewInspector,
+      onOpenTaskInspector,
     ),
-    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onOpenReviewInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatarUrl],
+    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onOpenReviewInspector, onOpenTaskInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatar, userAvatarUrl],
   );
 
   useEffect(() => {
@@ -1356,25 +1417,31 @@ export function ChatMessageList({
     () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink }),
     [conversationId, workspaceRoot, onOpenFileLink],
   );
+  const characterMoodContext = useMemo(
+    () => ({ moods: characterMoodAssets ?? {}, avatar: assistantAvatar ?? null }),
+    [assistantAvatar, characterMoodAssets],
+  );
 
   return (
-    <FileLinkContext.Provider value={fileLinkEnv}>
-      <LastTurnIdsContext.Provider value={lastTurnIds}>
-        <div
-          ref={containerRef}
-          className={`cy-message-list cy-message-list--stickers-${stickerSize}`}
-          aria-live="polite"
-          onScroll={updateScrollState}
-        >
-          {channelConversationLabel && (
-            <div className="cy-message-list__channel-context" role="note" aria-label={channelConversationLabel}>
-              <span className="cy-message-list__channel-dot" aria-hidden="true" />
-              <span>{channelConversationLabel}</span>
-            </div>
-          )}
-          <Bubble.List items={items} role={roles} autoScroll />
-        </div>
-      </LastTurnIdsContext.Provider>
-    </FileLinkContext.Provider>
+    <CharacterMoodContext.Provider value={characterMoodContext}>
+      <FileLinkContext.Provider value={fileLinkEnv}>
+        <LastTurnIdsContext.Provider value={lastTurnIds}>
+          <div
+            ref={containerRef}
+            className={`cy-message-list cy-message-list--stickers-${stickerSize}`}
+            aria-live="polite"
+            onScroll={updateScrollState}
+          >
+            {channelConversationLabel && (
+              <div className="cy-message-list__channel-context" role="note" aria-label={channelConversationLabel}>
+                <span className="cy-message-list__channel-dot" aria-hidden="true" />
+                <span>{channelConversationLabel}</span>
+              </div>
+            )}
+            <Bubble.List items={items} role={roles} autoScroll />
+          </div>
+        </LastTurnIdsContext.Provider>
+      </FileLinkContext.Provider>
+    </CharacterMoodContext.Provider>
   );
 }

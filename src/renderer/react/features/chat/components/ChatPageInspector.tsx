@@ -6,6 +6,7 @@ import { FileTreePanel, FilePreviewContent } from "./FileTreePanel";
 import { PlanContent, planTabDotClass, planTabLabel, type PlanReviewPhase } from "./PlanReviewPanel";
 import { ReviewDiffContent } from "./ReviewInspector";
 import { RightInspector, type InspectorTab } from "./RightInspector";
+import { TaskSessionInspector } from "./TaskSessionInspector";
 
 /** 从路径取文件名做标签标题（兼容 / 与 \ 分隔） */
 function fileBaseName(filePath: string): string {
@@ -18,6 +19,14 @@ export interface ChatPageInspectorDiffTab {
   runId: string;
   fileIndex: number;
   filePath: string;
+}
+
+export interface ChatPageInspectorTaskTab {
+  id: string;
+  taskId: string;
+  description: string;
+  nickname: string;
+  assetFileName: string;
 }
 
 export interface ChatPageInspectorFileTab {
@@ -38,6 +47,7 @@ export interface ChatPageInspectorProps {
   filesTabPinned: boolean;
   fileTabs: ChatPageInspectorFileTab[];
   diffTabs: ChatPageInspectorDiffTab[];
+  taskTabs?: ChatPageInspectorTaskTab[];
   activePlan: { content: string; phase: PlanReviewPhase } | null;
   planDrawerOpen: boolean;
   /** 计划标签 ID（plan:<会话>），由 ChatPage 统一计算 */
@@ -47,6 +57,7 @@ export interface ChatPageInspectorProps {
   onCloseTab: (id: string) => void;
   /** 文件树里点击文件 → 打开/激活预览标签 */
   onOpenFile: (relPath: string) => void;
+  preferredAddress?: string;
 }
 
 export function ChatPageInspector({
@@ -56,6 +67,7 @@ export function ChatPageInspector({
   filesTabPinned,
   fileTabs,
   diffTabs,
+  taskTabs = [],
   activePlan,
   planDrawerOpen,
   planTabId,
@@ -63,6 +75,7 @@ export function ChatPageInspector({
   onTabChange,
   onCloseTab,
   onOpenFile,
+  preferredAddress,
 }: ChatPageInspectorProps) {
   const { t } = useTranslation();
   const tabs: InspectorTab[] = [];
@@ -96,6 +109,23 @@ export function ChatPageInspector({
       id: tab.id,
       label: tab.filePath ? fileBaseName(tab.filePath) : "Diff",
       content: <ReviewDiffContent runId={tab.runId} fileIndex={tab.fileIndex} />,
+    });
+  }
+  for (const tab of taskTabs) {
+    tabs.push({
+      id: tab.id,
+      label: tab.description,
+      content: sessionId
+        ? <TaskSessionInspector
+            taskId={tab.taskId}
+            parentConversationId={sessionId}
+            description={tab.description}
+            nickname={tab.nickname}
+            assetFileName={tab.assetFileName}
+            preferredAddress={preferredAddress ?? ""}
+            active={activeTabId === tab.id || (activeTabId === null && tabs.length === 0)}
+          />
+        : null,
     });
   }
   if (activePlan && planDrawerOpen) {

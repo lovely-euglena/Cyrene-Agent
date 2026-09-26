@@ -33,9 +33,11 @@ export interface TaskTranscriptMessage {
 export interface TaskTraceRecord {
   id: string;
   at: number;
-  kind: "round" | "progress" | "reasoning" | "tool" | "todo" | "terminal";
-  phase?: "start" | "delta" | "end";
+  roundId?: string;
+  kind: "round" | "candidate" | "progress" | "reasoning" | "tool" | "todo" | "terminal";
+  phase?: "start" | "delta" | "end" | "discard";
   label?: string;
+  displayName?: string;
   content?: string;
   status?: string;
 }

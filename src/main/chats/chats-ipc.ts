@@ -42,6 +42,7 @@ import {
 } from "../orchestrator/conversation-transcript-compactor";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
+import { getTaskSessionStore } from "../tasks/task-session-store";
 import type { LlmClient } from "../services/llm/llm-client";
 import { enqueueLLMTask } from "../llm-queue";
 import { assertValidPresentationPatch, type TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
@@ -149,6 +150,11 @@ export function registerChatsIpc(
   ipc.handle(IPC.CHATS_GET, async (_event, id: string) => {
     if (!id) return null;
     return sessionMigration.loadComposedSession(id);
+  });
+  ipc.handle(IPC.TASK_SESSION_GET, (_event, payload: { taskId?: unknown; parentConversationId?: unknown }) => {
+    if (typeof payload?.taskId !== "string" || typeof payload.parentConversationId !== "string") return null;
+    const task = getTaskSessionStore(app.getPath("userData")).get(payload.taskId);
+    return task?.parentConversationId === payload.parentConversationId ? task : null;
   });
   ipc.handle(IPC.CHATS_GET_PAGE, async (_event, payload: { id: string; before?: number | null; limit?: number }) => {
     if (!payload?.id) return null;

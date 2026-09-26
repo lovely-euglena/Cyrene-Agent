@@ -670,6 +670,8 @@ const chatStoreApi = {
     return () => ipcRenderer.removeListener(IPC.CHATS_SIDEBAR_ORGANIZATION_CHANGED, listener);
   },
   get: (id: string) => ipcRenderer.invoke(IPC.CHATS_GET, id),
+  getTaskSession: (taskId: string, parentConversationId: string) =>
+    ipcRenderer.invoke(IPC.TASK_SESSION_GET, { taskId, parentConversationId }),
   getPage: (id: string, before: number | null, limit: number) =>
     ipcRenderer.invoke(IPC.CHATS_GET_PAGE, { id, before, limit }),
   create: (payload?: { title?: string; identityId?: string | null; mode?: "chat" | "work" | "code" | "learn" }) =>

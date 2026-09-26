@@ -30,6 +30,7 @@ import type {
   ChatSessionMeta,
   ConversationMode,
   PendingChatMessage,
+  TaskDelegationDisplayRecord,
 } from "../../../../../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
@@ -162,6 +163,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const [diffTabs, setDiffTabs] = useState<
     { id: string; runId: string; fileIndex: number; filePath: string }[]
   >([]);
+  /** 右侧已打开的子任务会话标签，任务详情始终通过子任务会话 ID 读取。 */
+  const [taskTabs, setTaskTabs] = useState<{ id: string; taskId: string; description: string; nickname: string; assetFileName: string }[]>([]);
   /** 右侧面板已打开的文件预览标签，ID 规范 file:<相对路径> */
   const [fileTabs, setFileTabs] = useState<{ id: string; relPath: string; line?: number; lineSeq?: number }[]>([]);
   /** 工作区文件树标签是否打开（ID 固定为 files） */
@@ -1511,6 +1514,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 会话隔离：切换会话时清空工作区相关标签，避免把 A 会话的文件带进 B 会话
   useEffect(() => {
     setDiffTabs([]);
+    setTaskTabs([]);
     setFileTabs([]);
     setFilesTabOpen(false);
     setActiveTabId(null);
@@ -1528,6 +1532,20 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     setActiveTabId(id);
   }, [activeSession?.workspaceBinding]);
 
+  const openTaskInspector = useCallback((delegation: TaskDelegationDisplayRecord) => {
+    const id = `task:${delegation.taskId}`;
+    setTaskTabs((tabs) => tabs.some((tab) => tab.id === id)
+      ? tabs
+      : [...tabs, {
+          id,
+          taskId: delegation.taskId,
+          description: delegation.description,
+          nickname: delegation.nickname,
+          assetFileName: delegation.assetFileName,
+        }]);
+    setActiveTabId(id);
+  }, []);
+
   /** 打开/激活文件树标签 */
   const openFilesTab = () => {
     setFilesTabOpen(true);
@@ -1539,6 +1557,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     setFilesTabOpen(false);
     setFileTabs([]);
     setDiffTabs([]);
+    setTaskTabs([]);
     setPlanDrawerOpen(false);
     setActiveTabId(null);
   };
@@ -1575,6 +1594,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     ...(filesTabOpen ? ["files"] : []),
     ...fileTabs.map((tab) => tab.id),
     ...diffTabs.map((tab) => tab.id),
+    ...taskTabs.map((tab) => tab.id),
     ...((activePlan !== null && planDrawerOpen) ? [planTabId] : []),
   ];
 
@@ -1584,7 +1604,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
    * 只剩它一个时恢复可关——关掉即收起整个面板。
    */
   const filesTabPinned = filesTabOpen
-    && (fileTabs.length > 0 || diffTabs.length > 0 || (activePlan !== null && planDrawerOpen));
+    && (fileTabs.length > 0 || diffTabs.length > 0 || taskTabs.length > 0 || (activePlan !== null && planDrawerOpen));
 
   /** 关闭右侧面板标签：活动标签关闭后回退到相邻标签（优先左侧） */
   const closeInspectorTab = (id: string) => {
@@ -1602,6 +1622,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       setFileTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     } else if (id.startsWith("plan:")) {
       setPlanDrawerOpen(false);
+    } else if (id.startsWith("task:")) {
+      setTaskTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     } else {
       setDiffTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     }
@@ -1805,6 +1827,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onScrollToBottomVisibilityChange={setScrollToBottomVisible}
             onRegisterScrollToBottom={registerScrollToBottom}
             onOpenReviewInspector={openDiffTab}
+            onOpenTaskInspector={openTaskInspector}
             workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
             onOpenFileLink={openFileTab}
           />
@@ -1954,6 +1977,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 filesTabPinned={filesTabPinned}
                 fileTabs={fileTabs}
                 diffTabs={diffTabs}
+                taskTabs={taskTabs}
                 activePlan={activePlan}
                 planDrawerOpen={planDrawerOpen}
                 planTabId={planTabId}
@@ -1961,6 +1985,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 onTabChange={setActiveTabId}
                 onCloseTab={closeInspectorTab}
                 onOpenFile={openFileTab}
+                preferredAddress={preferredAddress}
               />
             </Panel>
           </>

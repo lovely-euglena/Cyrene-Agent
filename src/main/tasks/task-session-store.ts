@@ -296,3 +296,16 @@ export class TaskSessionStore {
     fs.renameSync(tempPath, filePath);
   }
 }
+
+const storesByRoot = new Map<string, TaskSessionStore>();
+
+/** Reuse the live store across task execution and read-only IPC queries. */
+export function getTaskSessionStore(root: string): TaskSessionStore {
+  const resolvedRoot = path.resolve(root);
+  let store = storesByRoot.get(resolvedRoot);
+  if (!store) {
+    store = new TaskSessionStore(resolvedRoot);
+    storesByRoot.set(resolvedRoot, store);
+  }
+  return store;
+}
