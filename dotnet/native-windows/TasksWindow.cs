@@ -728,6 +728,15 @@ public sealed class TasksWindow : NativeWindow
                     VerticalAlignment = VerticalAlignment.Bottom,
                     ToolTip = NativeTheme.MakeTooltip($"{slot.Weekday} · {FormatTokenShort(slot.Total)} tokens"),
                     Cursor = Cursors.Hand,
+                    // 对齐 .chart-bar__fill 的粉色柔光
+                    Effect = new DropShadowEffect
+                    {
+                        Color = NativeTheme.Pink,
+                        BlurRadius = 10,
+                        ShadowDepth = 0,
+                        Opacity = 0.22,
+                        RenderingBias = RenderingBias.Performance,
+                    },
                 };
                 bar.MouseEnter += (_, _) => bar.Opacity = 0.85;
                 bar.MouseLeave += (_, _) => bar.Opacity = 1;
