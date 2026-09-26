@@ -28,6 +28,9 @@ switch (command)
     case "verify-search":
         VerifySearch.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/rag-search-verify-data.json");
         return 0;
+    case "verify-chunks":
+        VerifyChunks.Run(args.Length > 1 ? args[1] : "scripts/diagnostics/rag-chunk-verify-data.json");
+        return 0;
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
         return 0;
@@ -135,6 +138,70 @@ internal static class Verify
         }
         return dot / (Math.Sqrt(na) * Math.Sqrt(nb) + 1e-12);
     }
+}
+
+/// <summary>
+/// 分块对账：TextChunker vs TS chunkText（逐块 id/text/index 全等）。
+/// </summary>
+internal static class VerifyChunks
+{
+    public static void Run(string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        int samples = 0, chunksTotal = 0, matched = 0;
+        foreach (var sample in doc.RootElement.EnumerateArray())
+        {
+            samples++;
+            var name = sample.GetProperty("name").GetString()!;
+            var text = sample.GetProperty("text").GetString()!;
+            var expected = sample.GetProperty("chunks").EnumerateArray().ToList();
+            var actual = TextChunker.ChunkText(text, "doc_" + name);
+            chunksTotal += expected.Count;
+
+            var ok = actual.Count == expected.Count;
+            if (ok)
+            {
+                for (var i = 0; i < expected.Count; i++)
+                {
+                    if (actual[i].Id == expected[i].GetProperty("id").GetString()
+                        && actual[i].Index == expected[i].GetProperty("index").GetInt32()
+                        && actual[i].Text == expected[i].GetProperty("text").GetString())
+                    {
+                        matched++;
+                    }
+                    else
+                    {
+                        ok = false;
+                    }
+                }
+            }
+
+            if (!ok)
+            {
+                Console.WriteLine($"[verify-chunks] DIFF {name}: expected={expected.Count} actual={actual.Count}");
+                for (var i = 0; i < Math.Min(expected.Count, actual.Count); i++)
+                {
+                    var e = expected[i].GetProperty("text").GetString()!;
+                    if (e != actual[i].Text)
+                    {
+                        Console.WriteLine($"  #{i} ts : {Abbrev(e)}");
+                        Console.WriteLine($"  #{i} net: {Abbrev(actual[i].Text)}");
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[verify-chunks] == {name}: {actual.Count} chunks");
+            }
+        }
+
+        var pass = matched == chunksTotal;
+        Console.WriteLine($"[verify-chunks] {(pass ? "PASS" : "FAIL")}: {matched}/{chunksTotal} chunks exact ({samples} samples)");
+        if (!pass) Environment.Exit(1);
+    }
+
+    private static string Abbrev(string text) => text.Length <= 60 ? text : text[..60] + "…";
 }
 
 /// <summary>

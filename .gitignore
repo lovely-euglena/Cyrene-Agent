@@ -226,3 +226,4 @@ scripts/diagnostics/embedding-verify-data.json
 scripts/diagnostics/reranker-verify-data.json
 scripts/diagnostics/rag-search-fixture/
 scripts/diagnostics/rag-search-verify-data.json
+scripts/diagnostics/rag-chunk-verify-data.json
