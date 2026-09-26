@@ -55,6 +55,7 @@ public sealed class TaskEditorWindow : Window
         _isPluginTask = hasTask && GetStringStatic(taskValue, "ownerPluginId").Length > 0;
 
         Title = hasTask ? "编辑定时任务" : "新建定时任务";
+        Icon = AppIcons.Image;
         Width = 592;
         Height = 672;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

@@ -412,11 +412,15 @@ public sealed class TrayHost
     {
         var dir = AppContext.BaseDirectory;
         // 打包布局：<root>/resources/native-windows/cyrene-native.exe → <root>/Cyrene.exe
-        var root = Path.GetFullPath(Path.Combine(dir, "..", ".."));
-        var packaged = Path.Combine(root, "Cyrene.exe");
+        var packaged = Path.GetFullPath(Path.Combine(dir, "..", "..", "Cyrene.exe"));
         if (File.Exists(packaged)) return packaged;
-        // 开发布局（repo/release/win-unpacked）：native bin 在 dotnet/ 下 → 上两级
-        var dev = Path.Combine(Path.GetFullPath(Path.Combine(dir, "..", "..")), "Cyrene.exe");
-        return File.Exists(dev) ? dev : packaged;
+        // 开发布局：dotnet bin/publish 层级不定，向上找仓库根的 release/win-unpacked/Cyrene.exe
+        var current = new DirectoryInfo(Path.GetFullPath(dir));
+        for (var i = 0; i < 8 && current is not null; i++, current = current.Parent)
+        {
+            var candidate = Path.Combine(current.FullName, "release", "win-unpacked", "Cyrene.exe");
+            if (File.Exists(candidate)) return candidate;
+        }
+        return packaged;
     }
 }

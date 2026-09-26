@@ -79,7 +79,7 @@ public sealed partial class SettingsWindow : NativeWindow
             Background = Brushes.Transparent,
             ShowInTaskbar = true,
             // 任务栏/Alt-Tab 图标：从打包布局同级的 Cyrene.exe 提取（缺失则留空）
-            Icon = ResolveAppIcon(),
+            Icon = AppIcons.Image,
         };
         NativeTheme.Apply(_window);
 
@@ -209,28 +209,6 @@ public sealed partial class SettingsWindow : NativeWindow
         var btn = new Button { Content = glyph, Style = NativeTheme.FlatIconButtonStyle };
         btn.Click += (_, _) => onClick();
         return btn;
-    }
-
-    /// <summary>应用图标：从同级 Cyrene.exe 提取关联图标（失败返回 null，不影响窗口）。</summary>
-    private static ImageSource? ResolveAppIcon()
-    {
-        try
-        {
-            var exe = TrayHost.ResolveElectronExe();
-            if (!File.Exists(exe)) return null;
-            using var icon = System.Drawing.Icon.ExtractAssociatedIcon(exe);
-            if (icon is null) return null;
-            var source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
-                icon.Handle,
-                new Int32Rect(0, 0, icon.Width, icon.Height),
-                BitmapSizeOptions.FromEmptyOptions());
-            source.Freeze();
-            return source;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     /// <summary>导航项样式：圆角高亮条（选中/悬停）—— 见 NativeTheme。</summary>

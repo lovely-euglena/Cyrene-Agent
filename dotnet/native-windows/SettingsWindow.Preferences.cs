@@ -228,6 +228,7 @@ internal sealed class CustomStyleDialog : Window
     public CustomStyleDialog(JsonElement config)
     {
         Title = "自定义风格采样";
+        Icon = AppIcons.Image;
         Width = 432;
         SizeToContent = SizeToContent.Height;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

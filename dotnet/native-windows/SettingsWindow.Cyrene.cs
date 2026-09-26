@@ -328,6 +328,7 @@ internal sealed class StickerAddDialog : Window
     public StickerAddDialog()
     {
         Title = "添加表情包";
+        Icon = AppIcons.Image;
         Width = 520;
         SizeToContent = SizeToContent.Height;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

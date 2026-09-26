@@ -29,11 +29,11 @@ public static class SettingsNavIcons
         ["disclaimer"] = ("0 0 48 48", false, "M35 10V4H8C7.44772 4 7 4.44772 7 5V38H13 M21 22H33 M21 30H33 M13 10 H41 V44 H13 Z"),
     };
 
-    private static readonly Dictionary<string, string> ImageIcons = new()
+    private static readonly Dictionary<string, (string Path, bool Tint)> ImageIcons = new()
     {
-        ["memory"] = "icons/mimi.png",
-        ["cyrene"] = "icons/cyrene-avatar-line-white.png",
-        ["about"] = "icons/cyrene-pink.png",
+        ["memory"] = ("icons/mimi.png", false),
+        ["cyrene"] = ("icons/cyrene-avatar-line-white.png", true),
+        ["about"] = ("icons/cyrene-pink.png", false),
     };
 
     /// <summary>section → (标题, 说明)：内容区标题栏用（对齐旧版 section-title/hint）。</summary>
@@ -60,10 +60,18 @@ public static class SettingsNavIcons
     /// <summary>创建 18×18 导航图标；未知 section 返回 null。</summary>
     public static FrameworkElement? Create(string section)
     {
-        if (ImageIcons.TryGetValue(section, out var imagePath))
+        if (ImageIcons.TryGetValue(section, out var imageSpec))
         {
+            var source = NativeTheme.TryLoadAssetImage(imageSpec.Path);
+            if (imageSpec.Tint)
+            {
+                // 单色线稿：以导航前景色着色（OpacityMask），与几何图标同色系
+                var tinted = new Rectangle { Width = 18, Height = 18 };
+                tinted.SetBinding(Shape.FillProperty, new Binding("Foreground") { RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(RadioButton), 1) });
+                if (source is not null) tinted.OpacityMask = new ImageBrush(source) { Stretch = Stretch.Uniform };
+                return tinted;
+            }
             var image = new Image { Width = 18, Height = 18, Stretch = Stretch.Uniform };
-            var source = NativeTheme.TryLoadAssetImage(imagePath);
             if (source is not null) image.Source = source;
             return image;
         }

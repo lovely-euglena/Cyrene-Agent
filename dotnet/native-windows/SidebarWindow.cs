@@ -148,6 +148,7 @@ public sealed class SidebarWindow : NativeWindow
         {
             Width = 352,
             Height = 792,
+            Icon = AppIcons.Image,
             MinWidth = 56,
             MinHeight = 540,
             WindowStyle = WindowStyle.None,

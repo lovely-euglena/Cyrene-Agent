@@ -104,6 +104,7 @@ public sealed class PluginManagerWindow : NativeWindow
         _window = new Window
         {
             Title = "昔涟 · 插件",
+            Icon = AppIcons.Image,
             Width = 912,
             Height = 672,
             MinWidth = 752,

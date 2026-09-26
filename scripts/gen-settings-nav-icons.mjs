@@ -13,6 +13,10 @@ const svgIcons = [];
 const imgIcons = [];
 const meta = []; // {section, title, hint}
 
+// 单色线稿（-white.png）：旧页 pearl-white 主题换深色线稿；WPF 用前景色着色渲染，
+// 直接贴白色原图在浅色导航底上不可见。
+const TINT_ICONS = new Set(["icons/cyrene-avatar-line-white.png"]);
+
 while ((m = navRe.exec(html)) !== null) {
   const section = m[1];
   let body = m[2];
@@ -20,7 +24,11 @@ while ((m = navRe.exec(html)) !== null) {
   body = body.replace(/<defs>[\s\S]*?<\/defs>/g, "");
   const img = body.match(/<img[^>]*src="([^"]+)"/);
   // 旧页 src 相对 settings/ 目录（../icons/x.png），assets 下为 icons/x.png：去掉 "../" 前缀
-  if (img) { imgIcons.push([section, img[1].replace("../", "")]); continue; }
+  if (img) {
+    const src = img[1].replace("../", "");
+    imgIcons.push([section, src, TINT_ICONS.has(src)]);
+    continue;
+  }
   const svg = body.match(/<svg[\s\S]*?<\/svg>/);
   if (!svg) continue;
   const svgText = svg[0];
@@ -43,7 +51,7 @@ while ((m = navRe.exec(html)) !== null) {
 }
 
 // 旧页「关于」是通用设置里的行（无导航图标）；WPF 独立 section 用应用图标
-imgIcons.push(["about", "icons/cyrene-pink.png"]);
+imgIcons.push(["about", "icons/cyrene-pink.png", false]);
 
 // 各 section 的标题/说明（旧版 settings-nav / section-title / section-hint 语义）
 const titles = {
@@ -89,9 +97,9 @@ for (const [section, viewBox, filled, data] of svgIcons) {
 }
 lines.push("    };");
 lines.push("");
-lines.push("    private static readonly Dictionary<string, string> ImageIcons = new()");
+lines.push("    private static readonly Dictionary<string, (string Path, bool Tint)> ImageIcons = new()");
 lines.push("    {");
-for (const [section, src] of imgIcons) lines.push(`        ["${section}"] = "${src}",`);
+for (const [section, src, tint] of imgIcons) lines.push(`        ["${section}"] = ("${src}", ${tint ? "true" : "false"}),`);
 lines.push("    };");
 lines.push("");
 lines.push("    /// <summary>section → (标题, 说明)：内容区标题栏用（对齐旧版 section-title/hint）。</summary>");
@@ -103,10 +111,18 @@ lines.push("");
 lines.push("    /// <summary>创建 18×18 导航图标；未知 section 返回 null。</summary>");
 lines.push("    public static FrameworkElement? Create(string section)");
 lines.push("    {");
-lines.push("        if (ImageIcons.TryGetValue(section, out var imagePath))");
+lines.push("        if (ImageIcons.TryGetValue(section, out var imageSpec))");
 lines.push("        {");
+lines.push("            var source = NativeTheme.TryLoadAssetImage(imageSpec.Path);");
+lines.push("            if (imageSpec.Tint)");
+lines.push("            {");
+lines.push("                // 单色线稿：以导航前景色着色（OpacityMask），与几何图标同色系");
+lines.push("                var tinted = new Rectangle { Width = 18, Height = 18 };");
+lines.push("                tinted.SetBinding(Shape.FillProperty, new Binding(\"Foreground\") { RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(RadioButton), 1) });");
+lines.push("                if (source is not null) tinted.OpacityMask = new ImageBrush(source) { Stretch = Stretch.Uniform };");
+lines.push("                return tinted;");
+lines.push("            }");
 lines.push("            var image = new Image { Width = 18, Height = 18, Stretch = Stretch.Uniform };");
-lines.push("            var source = NativeTheme.TryLoadAssetImage(imagePath);");
 lines.push("            if (source is not null) image.Source = source;");
 lines.push("            return image;");
 lines.push("        }");

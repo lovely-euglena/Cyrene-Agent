@@ -28,6 +28,7 @@ public sealed class TasksWindow : NativeWindow
         _form = new Form
         {
             Text = "昔涟 · 今日日程",
+            Icon = AppIcons.FormIcon,
             FormBorderStyle = FormBorderStyle.None,
             StartPosition = FormStartPosition.Manual,
             Size = new Size(360, 760),

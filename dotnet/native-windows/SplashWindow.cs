@@ -125,6 +125,7 @@ public sealed class SplashWindow : NativeWindow
         {
             Width = size,
             Height = size,
+            Icon = AppIcons.Image,
             Left = Math.Round((screen.Width - size) / 2 + screen.Left),
             Top = Math.Round((screen.Height - size) / 2 + screen.Top),
             WindowStyle = WindowStyle.None,
