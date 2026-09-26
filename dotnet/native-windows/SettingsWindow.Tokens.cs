@@ -85,11 +85,11 @@ public sealed partial class SettingsWindow
         var hasData = values.Any((day) => day.Input > 0 || day.Output > 0 || day.Requests > 0 || day.AttemptedRequests > 0);
         if (!hasData)
         {
-            // 旧版空态：隐藏图表区，指标卡片归零，提示两行
+            // 空库也保留图表框架（用户期望始终能看到图表区），上方两行提示说明
             panel.Children.Add(MakeHint("暂无用量数据"));
             panel.Children.Add(MakeHint("和昔涟聊天后这里会显示真实的 Token 消耗统计。"));
         }
-        else
+        if (values.Count > 0)
         {
             panel.Children.Add(MakeModuleHead(
                 NativeTheme.VectorGlyph(Glyphs.ChartLine, 16, NativeTheme.TextDefaultBrush),
@@ -222,9 +222,9 @@ public sealed partial class SettingsWindow
             }
         }
 
-        // ── 模型用量（环形图 + 列表；空态隐藏） ──
+        // ── 模型用量（环形图 + 列表） ──
         var models = GetNode(tokens, "models");
-        if (hasData && models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
+        if (models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
         {
             panel.Children.Add(MakeSubHeader("模型用量"));
             var modelTotals = new List<(string Name, int Total)>();
