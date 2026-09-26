@@ -1,4 +1,4 @@
-import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSessionStatus, type TaskSubagentType, type TaskTraceRecord, type TaskTranscriptMessage } from "../../shared/task-session";
+import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSession, type TaskSessionStatus, type TaskSubagentType, type TaskTraceRecord, type TaskTranscriptMessage } from "../../shared/task-session";
 import { TaskSessionStore } from "../tasks/task-session-store";
 import { projectTaskTraceEvent } from "./task-events";
 import { getTaskAgentProfile, resolveTaskTools } from "./task-profiles";
@@ -8,6 +8,9 @@ import type { ToolDefinition } from "./tools/registry/tool-registry";
 import type { VendorConfig, ChatMessage } from "./vendors/types";
 import type { ToolContext } from "./tools/registry/tool-context";
 import { taskCharacterLeasePool, type TaskCharacterLeasePool } from "../tasks/task-character-pool";
+import { loadPromptFile } from "../prompts/prompt-loader";
+import { loadGeneralSettings } from "../settings/settings-facade";
+import { listSavedModelProfiles, loadModelSettings, resolveModelSettingsProfile } from "../settings/model-settings";
 import type { TaskDelegationPresentation } from "../../shared/task-session";
 import type { RunCapabilities } from "./run-capabilities";
 import type { PromptLayers } from "./prompt-layers";
@@ -47,6 +50,16 @@ export interface TaskExecuteResult {
   taskId: string;
   status: TaskSessionStatus;
   text: string;
+}
+
+export interface TaskCloseRequest {
+  companionId: string;
+}
+
+export interface TaskCloseResult {
+  taskId: string;
+  companionId: string;
+  status: "closed";
 }
 
 export interface TaskRuntimeParentContext {
@@ -97,6 +110,58 @@ export function buildChildPromptLayers(
   };
 }
 
+function stripCharacterPromptFrontmatter(prompt: string): string {
+  return prompt.replace(/^\uFEFF?---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, "").trim();
+}
+
+function buildCharacterTaskPrompt(companionId: string): string {
+  const personaEnabled = loadGeneralSettings().taskCharacterPersonaEnabled;
+  const taskSystem = personaEnabled
+    ? loadPromptFile("task/task_system.md")
+    : loadPromptFile("task/task_system_nonesoul.md");
+  const character = personaEnabled
+    ? stripCharacterPromptFrontmatter(loadPromptFile(`task/${companionId}.md`))
+    : "";
+  const taskSystemPath = personaEnabled ? "task/task_system.md" : "task/task_system_nonesoul.md";
+  if (!taskSystem) console.warn(`[TaskRuntime] Missing task system prompt: prompts/${taskSystemPath}`);
+  if (personaEnabled && !character) console.warn(`[TaskRuntime] Missing character task prompt: prompts/task/${companionId}.md`);
+  return [taskSystem, character].filter(Boolean).join("\n\n");
+}
+
+function resolveTaskModel(parentVendorConfig: VendorConfig): {
+  vendorConfig: VendorConfig;
+  contextWindowTokens?: number;
+} {
+  const settings = loadGeneralSettings();
+  const profileId = settings.taskModelProfileId;
+  const model = settings.taskModel;
+  if (!profileId || !model) return { vendorConfig: parentVendorConfig };
+
+  const modelSettings = loadModelSettings();
+  const profile = listSavedModelProfiles(modelSettings).find((candidate) => candidate.id === profileId);
+  if (!profile) return { vendorConfig: parentVendorConfig };
+  const availableModels = profile.models?.length ? profile.models : [profile.model];
+  if (!availableModels.includes(model)) return { vendorConfig: parentVendorConfig };
+
+  const expanded = resolveModelSettingsProfile(modelSettings, profileId);
+  const modelOption = profile.modelOptions?.[model];
+  return {
+    vendorConfig: {
+      ...parentVendorConfig,
+      provider: expanded.provider,
+      baseUrl: expanded.baseUrl,
+      model,
+      apiKey: expanded.apiKey,
+      explicitTransport: expanded.explicitTransport,
+      reasoning: expanded.reasoning,
+      manualReasoning: modelOption?.manualReasoning,
+    },
+    contextWindowTokens: modelOption?.contextWindowTokens
+      ?? profile.contextWindowTokens
+      ?? modelSettings.contextWindowTokens,
+  };
+}
+
 export function createTaskExecutor(input: {
   parent: TaskRuntimeParentContext;
   store: TaskSessionStore;
@@ -108,22 +173,35 @@ export function createTaskExecutor(input: {
   const characterPool = input.characterPool ?? taskCharacterLeasePool;
   return async (request) => {
     const profile = getTaskAgentProfile(request.subagentType);
-    const session = request.taskId
-      ? input.store.resume(request.taskId, {
-          parentConversationId: input.parent.parentConversationId,
-          parentRunId: input.parent.parentRunId,
-          subagentType: request.subagentType,
-          prompt: request.prompt,
-        })
-      : input.store.create({
-          parentConversationId: input.parent.parentConversationId,
-          parentRunId: input.parent.parentRunId,
-          description: request.description,
-          prompt: request.prompt,
-          subagentType: request.subagentType,
-          mode: input.parent.mode,
-          resolvedWorkspaceRoot: input.parent.resolvedWorkspaceRoot,
-        });
+    const lease = characterPool.acquire(input.parent.parentConversationId, request.companionId);
+    let session: TaskSession;
+    try {
+      const previous = request.taskId
+        ? null
+        : input.store.findOpenByCompanion(input.parent.parentConversationId, request.companionId);
+      const taskId = request.taskId ?? previous?.id;
+      session = taskId
+        ? input.store.resume(taskId, {
+            parentConversationId: input.parent.parentConversationId,
+            parentRunId: input.parent.parentRunId,
+            subagentType: request.subagentType,
+            prompt: request.prompt,
+            companionId: request.companionId,
+          })
+        : input.store.create({
+            parentConversationId: input.parent.parentConversationId,
+            parentRunId: input.parent.parentRunId,
+            description: request.description,
+            prompt: request.prompt,
+            subagentType: request.subagentType,
+            companionId: request.companionId,
+            mode: input.parent.mode,
+            resolvedWorkspaceRoot: input.parent.resolvedWorkspaceRoot,
+          });
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
 
     const toolContext: ToolContext = {
       userQuery: request.prompt,
@@ -136,7 +214,6 @@ export function createTaskExecutor(input: {
       permissionMode: input.parent.permissionMode,
     };
 
-    const lease = characterPool.acquire(input.parent.parentConversationId, request.companionId);
     const presentation = {
       invocationId: session.childRunId,
       taskId: session.id,
@@ -177,17 +254,20 @@ export function createTaskExecutor(input: {
     input.onLifecycle?.({ ...presentation, status: "running" });
 
     try {
-      const promptLayers = buildChildPromptLayers(input.parent, profile.systemPrompt, request.accessMode ?? "write");
+      const combinedTaskPrompt = buildCharacterTaskPrompt(request.companionId);
+      const promptLayers = buildChildPromptLayers(input.parent, combinedTaskPrompt, request.accessMode ?? "write");
+      const taskModel = resolveTaskModel(input.parent.vendorConfig);
       let activeRoundId: string | undefined;
       const result = await runHarness({
         systemPrompt: promptLayers.stablePrefix,
         promptLayers,
         messages: session.messages as ChatMessage[],
         tools: resolveTaskTools(profile, input.parent.tools, request.accessMode ?? "write"),
-        vendorConfig: input.parent.vendorConfig,
+        vendorConfig: taskModel.vendorConfig,
         config: {
           totalTimeoutMs: profile.timeoutMs,
           maxParallelToolCalls: request.maxParallelToolCalls ?? DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS,
+          ...(taskModel.contextWindowTokens ? { contextWindowTokens: taskModel.contextWindowTokens } : {}),
         },
         initialState: {
           todoItems: session.todoItems,
@@ -246,5 +326,15 @@ export function createTaskExecutor(input: {
       if (taskTraceFlushTimer !== undefined) clearTimeout(taskTraceFlushTimer);
       lease.release();
     }
+  };
+}
+
+export function createTaskCloser(input: {
+  store: TaskSessionStore;
+  parentConversationId: string;
+}): (request: TaskCloseRequest) => TaskCloseResult {
+  return ({ companionId }) => {
+    const session = input.store.closeByCompanion(input.parentConversationId, companionId);
+    return { taskId: session.id, companionId, status: "closed" };
   };
 }

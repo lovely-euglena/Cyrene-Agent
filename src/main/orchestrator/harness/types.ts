@@ -316,6 +316,10 @@ export interface HarnessInput {
   transcriptSink?: import("../transcript-sink").TranscriptSink;
   /** 父会话注入的前台子任务执行器；子 Harness 不会继续注入它。 */
   taskExecutor?: (request: import("../task-runtime").TaskExecuteRequest) => Promise<import("../task-runtime").TaskExecuteResult>;
+  /** 父会话注入的子代理关闭器；子 Harness 不会继续注入它。 */
+  closeTaskExecutor?: (request: import("../task-runtime").TaskCloseRequest) => import("../task-runtime").TaskCloseResult | Promise<import("../task-runtime").TaskCloseResult>;
+  /** 当前父会话仍开启上下文的黄金裔子代理；只用于主 Agent 的 task 工具提示。 */
+  openTaskCompanions?: string[];
 }
 
 export interface HarnessResult {

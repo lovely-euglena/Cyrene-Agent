@@ -64,7 +64,7 @@ export async function runHarnessWithAdapter(
   } = prepared;
 
   const toolRuntime = prepareToolRuntime({ options, signal, prepared, sendBaseEvent });
-  const { toolContext, checkPermission, toolOutputStore, taskExecutor } = toolRuntime;
+  const { toolContext, checkPermission, toolOutputStore, taskExecutor, closeTaskExecutor, openTaskCompanions } = toolRuntime;
 
   // ── 构建 HarnessInput ──
   const harnessInput: HarnessInput = {
@@ -116,6 +116,8 @@ export async function runHarnessWithAdapter(
     executionLedger: options.executionLedger,
     checkPermission,
     taskExecutor,
+    closeTaskExecutor,
+    openTaskCompanions,
     ...(options.transcriptSink ? { transcriptSink: options.transcriptSink } : {}),
   };
 

@@ -38,6 +38,7 @@ import {
 const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   plugins: {},
   maxParallelToolCalls: 4,
+  taskCharacterPersonaEnabled: true,
   citaEnabled: false,
   citaSemanticEngine: "remote",
   chatSocialContextEnabled: false,
@@ -185,6 +186,15 @@ export function normalizeGeneralSettings(
       ),
     ),
     maxParallelToolCalls: normalizeMaxParallelToolCalls(input?.maxParallelToolCalls),
+    taskCharacterPersonaEnabled: input?.taskCharacterPersonaEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.taskCharacterPersonaEnabled
+      : Boolean(input.taskCharacterPersonaEnabled),
+    taskModelProfileId: typeof input?.taskModelProfileId === "string" && input.taskModelProfileId
+      ? input.taskModelProfileId
+      : undefined,
+    taskModel: typeof input?.taskModel === "string" && input.taskModel
+      ? input.taskModel
+      : undefined,
     citaEnabled: cita.enabled,
     citaSemanticEngine: cita.semanticEngine,
     chatSocialContextEnabled: normalizeChatSocialContextEnabled(input?.chatSocialContextEnabled),

@@ -132,7 +132,8 @@ scripts/test-cita-minimax.mjs
 
 # Debug previews / scratch files generated during UI work
 cyrene-*-preview.html
-# Cyrene harness 架构图产物（本地生成、可重新生成，不进 git）
+# Cyrene 架构图产物（archify 渲染出的单文件图表，本地可重新生成，不进 git）
+cyrene-architecture.html
 cyrene-harness-architecture.html
 cyrene-harness.architecture.json
 tmp_*.txt

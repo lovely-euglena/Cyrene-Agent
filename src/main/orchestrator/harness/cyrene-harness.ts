@@ -293,6 +293,8 @@ function createRun(input: HarnessInput): HarnessRun {
     ...getHarnessBuiltinToolSpecs({
       includeInteractive: input.includeInteractiveTools,
       includeTask: Boolean(input.taskExecutor),
+      includeCloseTask: Boolean(input.closeTaskExecutor),
+      openTaskCompanions: input.openTaskCompanions,
       planState: input.planState,
     }),
   ];
@@ -327,6 +329,7 @@ function createRun(input: HarnessInput): HarnessRun {
       toolContext: input.toolContext,
       executionLedger: input.executionLedger,
       taskExecutor: input.taskExecutor,
+      closeTaskExecutor: input.closeTaskExecutor,
       deferOutputPersistence: true,
     },
     toolCallStartedAt: new Map(),

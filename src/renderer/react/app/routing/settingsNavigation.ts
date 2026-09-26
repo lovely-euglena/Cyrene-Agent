@@ -20,6 +20,7 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   memory: "memory",
   cyrene: "cyrene",
   skill: "skill",
+  subagents: "subagents",
   asr: "asr",
   tts: "tts",
   mcp: "mcp",

@@ -257,7 +257,14 @@ export function TaskSessionInspector({
     <section className="cy-task-session-inspector">
       <header className="cy-task-session-inspector__header">
         <div className="cy-task-session-inspector__title">{description}</div>
-        <div className={`cy-task-session-inspector__status is-${status}`}>{statusLabel}</div>
+        <div className="cy-task-session-inspector__header-status">
+          <div className={`cy-task-session-inspector__status is-${status}`}>{statusLabel}</div>
+          {session?.companionId && (
+            <div className={`cy-task-session-inspector__context${session.contextOpen === false ? " is-closed" : " is-open"}`}>
+              {t(session.contextOpen === false ? "taskDelegation.contextClosed" : "taskDelegation.contextOpen")}
+            </div>
+          )}
+        </div>
       </header>
       {loadFailed && <div className="cy-task-session-inspector__message">{t("taskDelegation.loadFailed")}</div>}
       {!session && !loadFailed && (

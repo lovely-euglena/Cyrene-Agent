@@ -217,6 +217,12 @@
   max-width: 52%;
 }
 
+.cy-settings-row > .cy-control-select:not(.cy-settings-tools__select) {
+  flex: 0 1 auto;
+  width: min(360px, 48%);
+  min-width: 240px;
+}
+
 .cy-settings-tools__select {
   width: min(280px, 52%);
   min-width: 0;
@@ -993,6 +999,11 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .cy-settings-row > .cy-control-select:not(.cy-settings-tools__select) {
+    width: 100%;
+    min-width: 0;
   }
 
   .cy-settings-row__control.cy-settings-slider {

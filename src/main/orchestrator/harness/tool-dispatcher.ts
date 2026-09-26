@@ -14,7 +14,7 @@ import type { ToolCallResult } from "../types";
 import type { AgentState, HarnessEvent, ToolObservation } from "./types";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
 import { isHarnessBuiltin, isInteractiveHarnessBuiltin, TASK_TOOL_ID } from "./builtin-tools";
-import { executeUpdateTodo, executeAskUser, executeTask } from "./builtin-tools";
+import { executeUpdateTodo, executeAskUser, executeTask, executeCloseTask, CLOSE_TASK_TOOL_ID } from "./builtin-tools";
 import { ENTER_PLAN_MODE_TOOL_ID, WRITE_PLAN_TOOL_ID, SUBMIT_PLAN_TOOL_ID, executeEnterPlanMode, executeWritePlan, executeSubmitPlan } from "./plan-tools";
 import { executeReadToolResult, READ_TOOL_RESULT_TOOL_ID } from "./tool-output/read-tool-result";
 import { resolveSideEffect } from "./side-effect-resolver";
@@ -85,6 +85,7 @@ export interface ToolDispatchContext {
   deferOutputPersistence?: boolean;
   executionLedger?: ExecutionLedger;
   taskExecutor?: import("../task-runtime").TaskExecuteRequest extends infer _T ? (request: import("../task-runtime").TaskExecuteRequest) => Promise<import("../task-runtime").TaskExecuteResult> : never;
+  closeTaskExecutor?: (request: import("../task-runtime").TaskCloseRequest) => import("../task-runtime").TaskCloseResult | Promise<import("../task-runtime").TaskCloseResult>;
 }
 
 export interface ToolDispatchResult extends ToolObservation {
@@ -324,6 +325,8 @@ async function executeHarnessBuiltin(
       return executeSubmitPlan(call, ctx.toolContext, ctx.requestUserClarification, ctx.onEvent);
     case "task":
       return executeTask(call, ctx.taskExecutor);
+    case CLOSE_TASK_TOOL_ID:
+      return executeCloseTask(call, ctx.closeTaskExecutor);
     case READ_TOOL_RESULT_TOOL_ID:
       return executeReadToolResult(call, ctx.toolOutputStore, ctx.toolContext);
 

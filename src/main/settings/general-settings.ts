@@ -23,6 +23,11 @@ export interface GeneralSettings {
   plugins: Record<string, boolean>;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
   maxParallelToolCalls: number;
+  /** 子代理系统提示词是否叠加所选黄金裔的人设。 */
+  taskCharacterPersonaEnabled: boolean;
+  /** 子代理固定使用的模型档案与档案内模型；未设置时跟随主 Agent。 */
+  taskModelProfileId?: string;
+  taskModel?: string;
   citaEnabled: boolean;
   citaSemanticEngine: "remote";
   /** Chat 模式的轻量社交上下文；默认关闭，开启后每轮最多多一次异步抽取调用。 */

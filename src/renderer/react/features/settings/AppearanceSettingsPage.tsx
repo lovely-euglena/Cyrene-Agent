@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Spin } from "antd";
-import { ArrowLeft, AudioLines, BarChart3, Boxes, Brain, FileText, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
+import { ArrowLeft, AudioLines, BarChart3, Bot, Boxes, Brain, FileText, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
 import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
 import { normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
@@ -36,6 +36,7 @@ import { DisclaimerSettingsPanel } from "./DisclaimerSettingsPanel";
 import { SkillSettingsPanel } from "./SkillSettingsPanel";
 import { ToolToggleSettingsPanel } from "./ToolToggleSettingsPanel";
 import { ChannelsSettingsPanel } from "./ChannelsSettingsPanel";
+import { SubagentSettingsPanel } from "./SubagentSettingsPanel";
 import settingsLogoUrl from "../../../settings/100.png";
 import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
@@ -85,7 +86,7 @@ function readAppearance(value: unknown): AppearanceValues {
 }
 
 export type SettingsSection =
-  | "appearance" | "preferences" | "models" | "usage" | "general" | "toolToggle" | "tools" | "plugins" | "memory" | "cyrene" | "skill" | "asr" | "tts" | "mcp" | "channels" | "disclaimer";
+  | "appearance" | "preferences" | "models" | "usage" | "general" | "toolToggle" | "tools" | "plugins" | "memory" | "cyrene" | "skill" | "subagents" | "asr" | "tts" | "mcp" | "channels" | "disclaimer";
 
 export interface AppearanceSettingsPageProps {
   section: SettingsSection;
@@ -276,6 +277,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.agentAbilities")}</div>
         <SettingsNavItem section="toolToggle" currentSection={section} icon={<Power size={18} strokeWidth={1.8} />} label={t("settingsPage.toolToggle.title")} onSelect={onSelectSection} />
         <SettingsNavItem section="tools" currentSection={section} icon={<Wrench size={18} strokeWidth={1.8} />} label={t("settingsPage.tools.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="subagents" currentSection={section} icon={<Bot size={18} strokeWidth={1.8} />} label={t("settingsPage.subagents.title")} onSelect={onSelectSection} />
         <SettingsNavItem section="plugins" currentSection={section} icon={<Puzzle size={18} strokeWidth={1.8} />} label={t("pluginPanel.title")} onSelect={onSelectSection} />
         <SettingsNavItem section="mcp" currentSection={section} icon={<MCP size={18} />} label={t("settingsPage.mcp.menuLabel")} onSelect={onSelectSection} />
         <SettingsNavItem section="memory" currentSection={section} icon={<Brain size={18} strokeWidth={1.8} />} label={t("settingsPage.memory.title")} onSelect={onSelectSection} />
@@ -294,7 +296,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
 
       <main className="cy-workspace is-empty cy-settings-content">
         <div className="cy-settings-content__inner">
-          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
+          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 

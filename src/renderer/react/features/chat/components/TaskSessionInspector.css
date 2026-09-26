@@ -31,6 +31,20 @@
   color: var(--rb-text-secondary, #777078);
 }
 
+.cy-task-session-inspector__header-status {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.cy-task-session-inspector__context {
+  color: var(--rb-text-secondary, #777078);
+}
+
+.cy-task-session-inspector__context.is-open { color: #54a56d; }
+.cy-task-session-inspector__context.is-closed { color: var(--rb-text-tertiary, #a09aa1); }
+
 .cy-task-session-inspector__status.is-running { color: var(--rb-accent, #ff5b8a); }
 .cy-task-session-inspector__status.is-completed { color: #54a56d; }
 .cy-task-session-inspector__status.is-failed,
