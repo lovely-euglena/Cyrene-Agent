@@ -56,6 +56,7 @@ export async function initRAG(
     "initialized. Mode:", ragMode,
     "Provider:", provider?.name ?? "none",
     "Dims:", provider?.dims ?? "N/A",
+    "Store:", store.mode,
     "Memories:", store.stats.total,
     provider ? "" : " [Vector retrieval disabled]"
   );
