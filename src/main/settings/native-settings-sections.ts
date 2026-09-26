@@ -5,6 +5,7 @@
 // 模型/记忆/调度三个子系统，且与 native-settings-protocol 的读方向键名同处一地。
 
 import { MODEL_PRESETS } from "../../shared/model-presets";
+import type { GeneralSettings } from "./general-settings";
 import type { ModelSettings } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
 import type { ObsidianVaultConfig } from "../memory/obsidian-vault-config";
@@ -212,6 +213,82 @@ export function buildTokensSectionSnapshot(
 }
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
+
+// ── 插件 / 内置工具（plugins section） ──
+
+export interface NativePluginsSnapshot {
+  weatherEnabled: boolean;
+  weatherSource: "open-meteo" | "amap";
+  /** 高德 Key（天气与出行共用同一字段） */
+  amapKey: string;
+  travelEnabled: boolean;
+  playwrightMcpEnabled: boolean;
+  searchEngine: GeneralSettings["searchEngine"];
+  searchBochaKey: string;
+  searchTavilyKey: string;
+  searchMinimaxKey: string;
+  searchAnySearchKey: string;
+  emailEnabled: boolean;
+  emailSmtpHost: string;
+  emailSmtpPort: number;
+  emailSmtpSecure: boolean;
+  emailSmtpUser: string;
+  emailSmtpPass: string;
+  emailFromName: string;
+  /** 文件/命令访问档位（project-read-only/read-only/scoped/per-action/full） */
+  permissionLevel: string;
+}
+
+/** 投影「插件」section（内置工具配置 + 权限档位；不依赖 electron）。 */
+export function buildPluginsSectionSnapshot(
+  settings: Pick<
+    GeneralSettings,
+    | "weatherEnabled"
+    | "weatherSource"
+    | "amapKey"
+    | "travelEnabled"
+    | "playwrightMcpEnabled"
+    | "searchEngine"
+    | "searchBochaKey"
+    | "searchTavilyKey"
+    | "searchMinimaxKey"
+    | "searchAnySearchKey"
+    | "emailEnabled"
+    | "emailSmtpHost"
+    | "emailSmtpPort"
+    | "emailSmtpSecure"
+    | "emailSmtpUser"
+    | "emailSmtpPass"
+    | "emailFromName"
+  >,
+  permissionLevel: string,
+): NativePluginsSnapshot {
+  return {
+    weatherEnabled: settings.weatherEnabled === true,
+    weatherSource: settings.weatherSource === "amap" ? "amap" : "open-meteo",
+    amapKey: str(settings.amapKey),
+    travelEnabled: settings.travelEnabled === true,
+    playwrightMcpEnabled: settings.playwrightMcpEnabled === true,
+    searchEngine: settings.searchEngine === "bocha"
+      || settings.searchEngine === "tavily"
+      || settings.searchEngine === "minimax"
+      || settings.searchEngine === "anySearch"
+      ? settings.searchEngine
+      : "off",
+    searchBochaKey: str(settings.searchBochaKey),
+    searchTavilyKey: str(settings.searchTavilyKey),
+    searchMinimaxKey: str(settings.searchMinimaxKey),
+    searchAnySearchKey: str(settings.searchAnySearchKey),
+    emailEnabled: settings.emailEnabled === true,
+    emailSmtpHost: str(settings.emailSmtpHost),
+    emailSmtpPort: Number.isFinite(settings.emailSmtpPort) ? Math.round(settings.emailSmtpPort) : 465,
+    emailSmtpSecure: settings.emailSmtpSecure !== false,
+    emailSmtpUser: str(settings.emailSmtpUser),
+    emailSmtpPass: str(settings.emailSmtpPass),
+    emailFromName: str(settings.emailFromName),
+    permissionLevel: permissionLevel.length > 0 ? permissionLevel : "read-only",
+  };
+}
 
 /** L0/L1 只输出字符串字段（渲染投影不需要类型元数据）。 */
 function projectProfileFields(raw: object): Record<string, string> {

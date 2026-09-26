@@ -16,33 +16,5 @@ export function parsePositiveIntOrThrow(input: string, th: any) {
   return result;
 }
 
-/** 简易命令行解析：支持引号包裹的参数，拆分为 { command, args }。 */
-export function parseCommandLine(input: string): { command: string; args: string[] } {
-  const trimmed = input.trim();
-  if (!trimmed) return { command: "", args: [] };
-  const parts: string[] = [];
-  let current = "";
-  let inQuote = false;
-  let quoteChar = "";
-  for (const ch of trimmed) {
-    if (inQuote) {
-      if (ch === quoteChar) {
-        inQuote = false;
-      } else {
-        current += ch;
-      }
-    } else if (ch === '"' || ch === "'") {
-      inQuote = true;
-      quoteChar = ch;
-    } else if (ch === " ") {
-      if (current) {
-        parts.push(current);
-        current = "";
-      }
-    } else {
-      current += ch;
-    }
-  }
-  if (current) parts.push(current);
-  return { command: parts[0] || "", args: parts.slice(1) };
-}
+// 命令行解析已迁至 shared（主进程 native 动作复用）；保持旧 import 路径兼容。
+export { parseCommandLine } from "../../../shared/parse-command-line";

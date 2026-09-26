@@ -7,6 +7,7 @@ import {
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
   buildTokensSectionSnapshot,
+  buildPluginsSectionSnapshot,
   type NativeMemoryData,
 } from "./native-settings-sections";
 import type { ModelSettings } from "./model-settings";
@@ -134,8 +135,52 @@ describe("buildSchedulerSectionSnapshot", () => {
   });
 });
 
-describe("buildTokensSectionSnapshot", () => {
-  it("投影缓存口径字段（weekday/cacheCreation/attempted/cacheUsage）与汇总", () => {
+describe("buildPluginsSectionSnapshot", () => {
+  const base = {
+    weatherEnabled: true,
+    weatherSource: "open-meteo" as const,
+    amapKey: "amap-key",
+    travelEnabled: false,
+    playwrightMcpEnabled: true,
+    searchEngine: "bocha" as const,
+    searchBochaKey: "bk",
+    searchTavilyKey: "",
+    searchMinimaxKey: "",
+    searchAnySearchKey: "",
+    emailEnabled: true,
+    emailSmtpHost: "smtp.qq.com",
+    emailSmtpPort: 465,
+    emailSmtpSecure: true,
+    emailSmtpUser: "u",
+    emailSmtpPass: "p",
+    emailFromName: "昔涟",
+  };
+
+  it("投影内置工具配置与权限档位；非法枚举回落、空档位回落只读", () => {
+    const snapshot = buildPluginsSectionSnapshot({ ...base }, "full");
+    expect(snapshot).toMatchObject({
+      weatherEnabled: true,
+      weatherSource: "open-meteo",
+      amapKey: "amap-key",
+      travelEnabled: false,
+      playwrightMcpEnabled: true,
+      searchEngine: "bocha",
+      emailEnabled: true,
+      emailSmtpPort: 465,
+      permissionLevel: "full",
+    });
+
+    const fallback = buildPluginsSectionSnapshot(
+      { ...base, weatherSource: "bogus" as never, searchEngine: "google" as never },
+      "",
+    );
+    expect(fallback.weatherSource).toBe("open-meteo");
+    expect(fallback.searchEngine).toBe("off");
+    expect(fallback.permissionLevel).toBe("read-only");
+  });
+});
+
+describe("buildTokensSectionSnapshot", () => {  it("投影缓存口径字段（weekday/cacheCreation/attempted/cacheUsage）与汇总", () => {
     const snapshot = buildTokensSectionSnapshot(
       {
         days: [

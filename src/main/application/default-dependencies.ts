@@ -71,6 +71,9 @@ import {
 } from "../orchestrator/plan-mode";
 import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
 import { syncPlaywrightMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
+import { addMcpServer } from "../orchestrator/mcp-manager";
+import { parseCommandLine } from "../../shared/parse-command-line";
+import { ACCESS_LEVEL_LABEL, applyLevel, getCurrentLevel } from "../permission";
 import { registerAppUpdateIpc } from "../updater/app-update-ipc";
 import { createGitHubAppUpdateService, scheduleStartupUpdateCheck } from "../updater/github-app-updater";
 import { registerWindowSystemIpc, openChromeGpuWindow } from "../windows/window-system-ipc";
@@ -106,6 +109,7 @@ import {
   buildMemorySectionSnapshot,
   buildSchedulerSectionSnapshot,
   buildTokensSectionSnapshot,
+  buildPluginsSectionSnapshot,
 } from "../settings/native-settings-sections";
 import { addUserSticker } from "../sticker-storage";
 import { loadMemoryPanelData } from "../memory/panel";
@@ -171,6 +175,7 @@ import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-qui
 import {
   sanitizeNativeCyreneSave,
   sanitizeNativeGeneralSetting,
+  sanitizeNativePluginsSave,
   sanitizeNativeStickerAdd,
   sanitizeNativeUserProfile,
 } from "../windows/native-settings-protocol";
@@ -687,6 +692,78 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     }
   };
 
+  /** WPF「插件」section 动作：内置工具配置保存 / 权限档位 / 添加 MCP Server。
+   *  保存复用 TTS_SAVE_SETTINGS 的副作用（搜索 MCP、Playwright MCP 自动同步）。 */
+  const nativePluginsAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    switch (verb) {
+      case "save": {
+        const patch = sanitizeNativePluginsSave(payload);
+        if (!patch) return { ok: false, error: "没有可保存的字段" };
+        try {
+          const saved = saveGeneralSettings({ ...loadGeneralSettings(), ...patch });
+          if (Object.prototype.hasOwnProperty.call(patch, "searchEngine")
+            || Object.prototype.hasOwnProperty.call(patch, "searchMinimaxKey")) {
+            void syncVolcanoSearchMcp(saved);
+          }
+          if (Object.prototype.hasOwnProperty.call(patch, "playwrightMcpEnabled")) {
+            void syncPlaywrightMcp(saved);
+          }
+          nativeNotice("plugins", "ok", "工具配置已保存（即时生效）");
+          pushSettingsSnapshotToNative();
+          return { ok: true };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          nativeNotice("plugins", "error", `保存失败：${message}`);
+          return { ok: false, error: message };
+        }
+      }
+      case "set-permission-level": {
+        const result = applyLevel(asStr(payload.level));
+        if (result.ok && result.level) {
+          nativeNotice("plugins", "ok", `权限档位已切换：${ACCESS_LEVEL_LABEL[result.level] ?? result.level}`);
+        } else {
+          nativeNotice("plugins", "error", `切换失败：${result.error ?? "未知错误"}`);
+        }
+        pushSettingsSnapshotToNative();
+        return result;
+      }
+      case "add-mcp-server": {
+        const command = asStr(payload.command).trim();
+        const name = asStr(payload.name).trim() || "未命名 MCP";
+        if (command.length === 0) return { ok: false, error: "请填写启动命令" };
+        const parsed = parseCommandLine(command);
+        if (parsed.command.length === 0) return { ok: false, error: "启动命令无效" };
+        return addMcpServer({
+          id: `mcp-${Date.now()}`,
+          name,
+          transport: "stdio",
+          command: parsed.command,
+          args: parsed.args,
+        })
+          .then((result) => {
+            if (result.ok) {
+              nativeNotice("plugins", "ok", `已添加「${name}」，发现 ${result.toolIds?.length ?? 0} 个工具`);
+            } else {
+              nativeNotice("plugins", "error", `添加失败：${result.error ?? "未知错误"}`);
+            }
+            return {
+              ok: result.ok,
+              ...(result.error ? { error: result.error } : {}),
+              data: { toolCount: result.toolIds?.length ?? 0 },
+            };
+          })
+          .catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            nativeNotice("plugins", "error", `添加失败：${message}`);
+            return { ok: false, error: message };
+          });
+      }
+      default:
+        console.warn("[NativeSettings] unhandled plugins action:", verb);
+        return undefined;
+    }
+  };
+
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({
     publish: (event, payload) => pluginManager
@@ -840,6 +917,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           apiAction: nativeApiAction,
           generalAction: nativeGeneralAction,
           memoryAction: nativeMemoryAction,
+          pluginsAction: nativePluginsAction,
           schedulerAction: nativeSchedulerAction,
           // 「高级设置」section：超时（秒→ms）+ 工具并发
           runtimeAction: (verb, payload) => {
@@ -1342,6 +1420,8 @@ createTray: (input) => {
                   nativeTaskHistory,
                 ),
                 tokens: buildTokensSectionSnapshot(getUsageReport(nativeTokenDays), nativeTokenDays),
+                // 插件 / 内置工具配置 + 文件访问档位
+                plugins: buildPluginsSectionSnapshot(loadGeneralSettings(), getCurrentLevel()),
                 // 昔涟设置（阶段 1+2）：状态栏实时更新 + 表情包发送 + RAG 模型
                 cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus()),
               };
