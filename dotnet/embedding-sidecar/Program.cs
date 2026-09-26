@@ -4,6 +4,7 @@ using CyreneEmbedSidecar;
 // 用法：
 //   verify <modelDir> <dump.json>   数值一致性验证：tokenIds 对账 + 向量余弦
 //   verify-rerank <rerankerDir> <dump.json>  reranker 句对 tokenIds + logits 对账
+//   verify-sqlite [workDir]         SQLite 向量库自检（schema/迁移/rev/检索对账）
 //   bench  <modelDir> [textCount]   性能基准（自生成混合长短文本）
 //   serve  <modelDir>               stdio 帧协议服务（Electron spawn）
 //
@@ -30,6 +31,9 @@ switch (command)
         return 0;
     case "verify-chunks":
         VerifyChunks.Run(args.Length > 1 ? args[1] : "scripts/diagnostics/rag-chunk-verify-data.json");
+        return 0;
+    case "verify-sqlite":
+        VerifySqlite.Run(args.Length > 1 ? args[1] : null);
         return 0;
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
@@ -202,6 +206,130 @@ internal static class VerifyChunks
     }
 
     private static string Abbrev(string text) => text.Length <= 60 ? text : text[..60] + "…";
+}
+
+/// <summary>
+/// SQLite 向量库自检：schema / JSON 迁移 / rev 跨连接新鲜度 / 双库检索对账 /
+/// 召回回写可见性 / 软合并。不依赖模型（合成向量），秒级完成。
+/// </summary>
+internal static class VerifySqlite
+{
+    public static void Run(string? workDir)
+    {
+        var dir = workDir ?? Path.Combine(Path.GetTempPath(), "cyrene-verify-sqlite-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        var pass = true;
+        void Check(string label, bool ok, string detail = "")
+        {
+            pass &= ok;
+            Console.WriteLine($"[verify-sqlite] {(ok ? "ok  " : "FAIL")} {label}{(detail.Length > 0 ? " — " + detail : "")}");
+        }
+
+        try
+        {
+            // 合成 32 条 float32-exact 向量（经 JSON / BLOB 往返都必须无损）
+            var synthetic = new List<MemoryEntry>();
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            for (var i = 0; i < 32; i++)
+            {
+                var v = new double[16];
+                for (var d = 0; d < 16; d++) v[d] = (float)Math.Sin(i * 0.7 + d * 0.3);
+                synthetic.Add(new MemoryEntry
+                {
+                    Id = $"seed_{i}",
+                    Text = i % 2 == 0 ? $"alpha doc {i}" : $"beta doc {i}",
+                    Embedding = v,
+                    Source = i % 4 == 0 ? "imported_doc" : "user_memory",
+                    Weight = 1.0,
+                    CreatedAt = now - i * 1000,
+                    LastRecalledAt = now - i * 1000,
+                    Metadata = i % 4 == 0
+                        ? new Dictionary<string, JsonElement> { ["importId"] = JsonSerializer.SerializeToElement("imp_" + i) }
+                        : null,
+                });
+            }
+            File.WriteAllText(
+                Path.Combine(dir, "memory-store.json"),
+                JsonSerializer.Serialize(synthetic, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+
+            // 1) 迁移
+            using var storeA = new SqliteRagStore(dir);
+            Check("legacy json migration", storeA.Entries.Count == 32, $"entries={storeA.Entries.Count}");
+
+            // 2) 检索对账（same source filter → 全量路径；updateRecall=false 保证可重复）
+            var query = synthetic[5].Embedding;
+            var fromSqlite = storeA.Search(query, "user_memory", 5, 0.0, null, null, now, updateRecall: false);
+            using var jsonStore = new RagStore(dir);
+            var fromJson = jsonStore.Search(query, "user_memory", 5, 0.0, null, null, now, updateRecall: false);
+            var idsEqual = fromSqlite.Select((r) => r.Entry.Id).SequenceEqual(fromJson.Select((r) => r.Entry.Id));
+            var scoresEqual = fromSqlite.Count == fromJson.Count
+                && fromSqlite.Zip(fromJson).All((p) => Math.Abs(p.Item1.Score - p.Item2.Score) < 1e-12);
+            Check("search parity vs json", idsEqual && scoresEqual,
+                $"n={fromSqlite.Count} top={fromSqlite.FirstOrDefault().Entry?.Id ?? "-"}");
+
+            // 3) 双连接 rev 新鲜度：B 写入 → A 刷新可见
+            using var storeB = new SqliteRagStore(dir);
+            storeB.AddPreparedBatch(new[]
+            {
+                new PreparedItem("cross-process entry", "user_memory", synthetic[0].Embedding, null),
+            });
+            var beforeRefresh = storeA.Entries.Count;
+            storeA.RefreshIfChanged();
+            Check("rev freshness (external write)", beforeRefresh == 32 && storeA.Entries.Count == 33,
+                $"before={beforeRefresh} after={storeA.Entries.Count}");
+
+            // 4) 召回回写可见：A 搜索（updateRecall=true）→ B 刷新后 weight 增加
+            var recalled = storeA.Search(query, "user_memory", 1, 0.0, null, null, now, updateRecall: true);
+            var targetId = recalled[0].Entry.Id;
+            storeB.RefreshIfChanged();
+            var weightInB = storeB.Entries.First((e) => e.Id == targetId).Weight;
+            Check("recall write-back visible cross-connection", weightInB > 1.0, $"weight={weightInB:F3}");
+
+            // 5) 软合并：JSON 更新更晚且含新 id → 新连接可见（不覆盖库内 weight）
+            synthetic.Add(new MemoryEntry
+            {
+                Id = "legacy_only",
+                Text = "legacy fallback entry",
+                Embedding = synthetic[0].Embedding,
+                Source = "user_memory",
+                Weight = 1.0,
+                CreatedAt = now,
+                LastRecalledAt = now,
+            });
+            File.WriteAllText(
+                Path.Combine(dir, "memory-store.json"),
+                JsonSerializer.Serialize(synthetic, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+            using var storeC = new SqliteRagStore(dir);
+            Check("legacy soft merge (newer json)", storeC.Entries.Any((e) => e.Id == "legacy_only"),
+                $"entries={storeC.Entries.Count}");
+
+            // 6) BLOB 数值无损（float32 往返）
+            var original = storeC.Entries.First((e) => e.Id == "seed_7").Embedding;
+            var roundTrip = original.SequenceEqual(synthetic[7].Embedding);
+            Check("float32 blob round-trip", roundTrip);
+        }
+        catch (Exception ex)
+        {
+            Check("unexpected error", false, ex.ToString());
+        }
+        finally
+        {
+            if (workDir is null)
+            {
+                try
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+                catch
+                {
+                    /* SQLite 连接已 Dispose；文件占用时留给临时目录清理 */
+                }
+            }
+        }
+
+        Console.WriteLine($"[verify-sqlite] {(pass ? "PASS" : "FAIL")}");
+        if (!pass) Environment.Exit(1);
+    }
 }
 
 /// <summary>
@@ -499,15 +627,20 @@ internal static class Server
         return _reranker;
     }
 
-    /// <summary>RAG 向量库缓存（按目录；mtime 变更时自动重载，见 RagStore.RefreshIfChanged）。</summary>
-    private static readonly Dictionary<string, RagStore> _ragStores = new();
+    /// <summary>RAG 向量库缓存（按目录 + 存储模式；SQLite 默认，JSON 回退）。</summary>
+    private static readonly Dictionary<string, IRagStore> _ragStores = new();
 
-    private static RagStore GetRagStore(string dir)
+    private static IRagStore GetRagStore(string dir, string? storeMode = null)
     {
-        if (!_ragStores.TryGetValue(dir, out var store))
+        var mode = storeMode
+            ?? Environment.GetEnvironmentVariable("CYRENE_RAG_STORE")
+            ?? "sqlite";
+        var useJson = string.Equals(mode, "json", StringComparison.OrdinalIgnoreCase);
+        var key = $"{dir}|{(useJson ? "json" : "sqlite")}";
+        if (!_ragStores.TryGetValue(key, out var store))
         {
-            store = new RagStore(dir);
-            _ragStores[dir] = store;
+            store = useJson ? new RagStore(dir) : new SqliteRagStore(dir);
+            _ragStores[key] = store;
         }
         store.RefreshIfChanged();
         return store;
@@ -662,7 +795,7 @@ internal static class Server
                 {
                     try
                     {
-                        var importStore = GetRagStore(ragDataDir);
+                        var importStore = GetRagStore(ragDataDir, request.StoreMode);
                         var result = DocImporter.Import(
                             filePath,
                             ragDataDir,
@@ -707,7 +840,7 @@ internal static class Server
                     {
                         throw new InvalidOperationException("search requires ragDataDir");
                     }
-                    var store = GetRagStore(request.RagDataDir);
+                    var store = GetRagStore(request.RagDataDir, request.StoreMode);
                     var results = HybridSearch.Retrieve(
                         store,
                         engine,
@@ -887,6 +1020,8 @@ internal static class Server
         // doc-import op：文件路径 / 取消目标请求 id
         public string? FilePath { get; set; }
         public int? TargetId { get; set; }
+        // 存储模式："sqlite"（默认）| "json"（TS 决定并透传；无 node:sqlite 时回退）
+        public string? StoreMode { get; set; }
     }
 
     private sealed class ResponseHeader

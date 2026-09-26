@@ -7,7 +7,7 @@ namespace CyreneEmbedSidecar;
 public static class HybridSearch
 {
     public static List<Bm25Scorer.Scored> Retrieve(
-        RagStore store,
+        IRagStore store,
         EmbeddingEngine embedder,
         string query,
         string? source,

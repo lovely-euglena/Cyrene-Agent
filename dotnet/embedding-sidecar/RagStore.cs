@@ -22,9 +22,10 @@ public sealed class MemoryEntry
 
 /// <summary>
 /// JSON 向量库（memory-store.json）：加载/保存 + 向量检索 + IVF + 召回回写。
-/// 语义与 TS JsonVectorStore 对齐（Phase B 对账基准见 scripts/diagnostics/rag-search-*）。
+/// 语义与 TS JsonVectorStore 对齐；SQLite 化后作为回退实现（CYRENE_RAG_STORE=json），
+/// 默认走 <see cref="SqliteRagStore"/>。两者共用 Ivf 与评分公式。
 /// </summary>
-public sealed class RagStore
+public sealed class RagStore : IRagStore, IDisposable
 {
     private static readonly JsonSerializerOptions StoreJson = new(JsonSerializerDefaults.Web)
     {
@@ -36,7 +37,7 @@ public sealed class RagStore
     private readonly string _filePath;
     private readonly object _sync = new();
     private List<MemoryEntry> _entries = new();
-    private IvfIndex? _ivf;
+    private Ivf.Index? _ivf;
 
     private long _fileWriteTicks;
     private long _fileLength = -1;
@@ -171,12 +172,6 @@ public sealed class RagStore
         return results;
     }
 
-    public sealed record PreparedItem(
-        string Text,
-        string Source,
-        double[] Embedding,
-        Dictionary<string, JsonElement>? Metadata);
-
     public bool HasImportedDocumentChunks(string importId)
     {
         lock (_sync)
@@ -215,13 +210,7 @@ public sealed class RagStore
         }
     }
 
-    // ── IVF 倒排索引（k-means++ / nprobe 探测；与 TS buildIvfIndex 同构） ──
-
-    private sealed class IvfIndex
-    {
-        public double[][] Centroids = Array.Empty<double[]>();
-        public List<int>[] Clusters = Array.Empty<List<int>>();
-    }
+    // ── IVF 倒排索引（共用 Ivf 实现，见 Ivf.cs） ──
 
     private void EnsureIndex()
     {
@@ -230,138 +219,9 @@ public sealed class RagStore
         if (n < 2) return;
         var k = Math.Max(2, Math.Min(512, (int)Math.Round(Math.Sqrt(n) / 2, MidpointRounding.AwayFromZero)));
         var t0 = Environment.TickCount64;
-        _ivf = BuildIvfIndex(_entries, k);
+        _ivf = Ivf.Build(_entries, k);
         Console.Error.WriteLine($"[rag] IVF index rebuilt: K={k}, entries={n}, took {Environment.TickCount64 - t0}ms");
     }
-
-    private static IvfIndex BuildIvfIndex(List<MemoryEntry> entries, int k, int maxIter = 20)
-    {
-        var vectors = entries.Select((e) => e.Embedding).ToArray();
-        var dim = vectors.Length > 0 ? vectors[0].Length : 0;
-        if (dim == 0 || vectors.Length == 0)
-        {
-            return new IvfIndex { Centroids = Array.Empty<double[]>(), Clusters = Array.Empty<List<int>>() };
-        }
-
-        var effectiveK = Math.Min(k, vectors.Length);
-        var clusters = new List<int>[effectiveK];
-        for (var i = 0; i < effectiveK; i++) clusters[i] = new List<int>();
-
-        var rng = new Random();
-        var centroids = KmeansPlusPlusInit(vectors, effectiveK, rng);
-
-        for (var iter = 0; iter < maxIter; iter++)
-        {
-            for (var i = 0; i < effectiveK; i++) clusters[i].Clear();
-
-            for (var i = 0; i < vectors.Length; i++)
-            {
-                var bestIdx = 0;
-                var bestSim = double.NegativeInfinity;
-                for (var c = 0; c < effectiveK; c++)
-                {
-                    var sim = Dot(vectors[i], centroids[c]);
-                    if (sim > bestSim)
-                    {
-                        bestSim = sim;
-                        bestIdx = c;
-                    }
-                }
-                clusters[bestIdx].Add(i);
-            }
-
-            var newCentroids = new double[effectiveK][];
-            for (var c = 0; c < effectiveK; c++)
-            {
-                var members = clusters[c];
-                if (members.Count == 0)
-                {
-                    newCentroids[c] = (double[])centroids[c].Clone();
-                    continue;
-                }
-                var sum = new double[dim];
-                foreach (var idx in members)
-                {
-                    var v = vectors[idx];
-                    for (var d = 0; d < dim; d++) sum[d] += v[d];
-                }
-                var norm = 0.0;
-                for (var d = 0; d < dim; d++) norm += sum[d] * sum[d];
-                norm = Math.Sqrt(norm);
-                if (norm > 0)
-                {
-                    for (var d = 0; d < dim; d++) sum[d] /= norm;
-                }
-                newCentroids[c] = sum;
-            }
-
-            var changed = false;
-            for (var c = 0; c < effectiveK; c++)
-            {
-                if (Dot(newCentroids[c], centroids[c]) < 0.999)
-                {
-                    changed = true;
-                    break;
-                }
-            }
-            centroids = newCentroids;
-            if (!changed) break;
-        }
-
-        return new IvfIndex { Centroids = centroids, Clusters = clusters };
-    }
-
-    private static double[][] KmeansPlusPlusInit(double[][] vectors, int k, Random rng)
-    {
-        var centroids = new List<double[]>(k);
-        var firstIdx = rng.Next(vectors.Length);
-        centroids.Add((double[])vectors[firstIdx].Clone());
-
-        for (var c = 1; c < k; c++)
-        {
-            var dists = new double[vectors.Length];
-            for (var i = 0; i < vectors.Length; i++)
-            {
-                var minDist = double.PositiveInfinity;
-                foreach (var cent in centroids)
-                {
-                    var d = 1 - Dot(vectors[i], cent);
-                    if (d < minDist) minDist = d;
-                }
-                dists[i] = minDist * minDist;
-            }
-            var total = dists.Sum();
-            if (total <= 0)
-            {
-                while (centroids.Count < k)
-                {
-                    centroids.Add((double[])vectors[centroids.Count % vectors.Length].Clone());
-                }
-                break;
-            }
-            var r = rng.NextDouble() * total;
-            for (var i = 0; i < dists.Length; i++)
-            {
-                r -= dists[i];
-                if (r <= 0)
-                {
-                    centroids.Add((double[])vectors[i].Clone());
-                    break;
-                }
-            }
-        }
-        return centroids.ToArray();
-    }
-
-    /// <summary>余弦相似度（向量已归一化，等价于点积；double 精度与 JS 一致）。</summary>
-    private static double Dot(IReadOnlyList<double> a, IReadOnlyList<double> b)
-    {
-        var dot = 0.0;
-        for (var i = 0; i < a.Count; i++) dot += a[i] * b[i];
-        return dot;
-    }
-
-    // ── 向量检索（TS JsonVectorStore.search 同构：IVF 加速度路径 + 全量路径） ──
 
     public List<(MemoryEntry Entry, double Score)> Search(
         IReadOnlyList<double> queryEmbedding,
@@ -417,7 +277,7 @@ public sealed class RagStore
 
         void Consider(MemoryEntry entry)
         {
-            var sim = Dot(queryEmbedding, entry.Embedding);
+            var sim = Ivf.Dot(queryEmbedding, entry.Embedding);
             var hoursSinceRecall = (now - entry.LastRecalledAt) / (1000.0 * 60 * 60);
             var decay = Math.Pow(0.95, hoursSinceRecall / 24);
             var weighted = sim * entry.Weight * decay;
@@ -431,7 +291,7 @@ public sealed class RagStore
             var clusterDists = new (int Idx, double Dist)[k];
             for (var c = 0; c < k; c++)
             {
-                clusterDists[c] = (c, 1 - Dot(queryEmbedding, _ivf.Centroids[c]));
+                clusterDists[c] = (c, 1 - Ivf.Dot(queryEmbedding, _ivf.Centroids[c]));
             }
             Array.Sort(clusterDists, (a, b) => a.Dist.CompareTo(b.Dist));
             var probe = new HashSet<int>(clusterDists.Take(nprobe).Select((c) => c.Idx));
@@ -475,5 +335,10 @@ public sealed class RagStore
         }
 
         return top;
+    }
+
+    /// <summary>JSON 实现无外部资源；提供 Dispose 以与 SqliteRagStore 的 using 语义一致。</summary>
+    public void Dispose()
+    {
     }
 }
