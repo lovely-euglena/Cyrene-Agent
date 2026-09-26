@@ -114,7 +114,7 @@ public sealed partial class SettingsWindow : NativeWindow
         // ── 右侧：标题栏（当前 section 标题 + 说明 + 最小化/关闭）+ 内容区 ──
         // 对齐旧版设置页布局：导航列在最左（含品牌行），内容列顶部是 section 标题栏
         var contentGrid = new Grid();
-        contentGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+        contentGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(64) });
         contentGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         var titleBar = new Border
@@ -130,10 +130,10 @@ public sealed partial class SettingsWindow : NativeWindow
         titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var titleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 0, 12, 0) };
         _sectionTitle.Text = "设置";
-        _sectionTitle.FontSize = 15;
-        _sectionTitle.FontWeight = FontWeights.SemiBold;
+        _sectionTitle.FontSize = 16;
+        _sectionTitle.FontWeight = FontWeights.Medium;
         _sectionTitle.Foreground = NativeTheme.TextStrongBrush;
-        _sectionHint.FontSize = 11.5;
+        _sectionHint.FontSize = 12;
         _sectionHint.Foreground = NativeTheme.TextMutedBrush;
         _sectionHint.Margin = new Thickness(0, 2, 0, 0);
         _sectionHint.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -141,8 +141,9 @@ public sealed partial class SettingsWindow : NativeWindow
         titleStack.Children.Add(_sectionHint);
         Grid.SetColumn(titleStack, 0);
         titleGrid.Children.Add(titleStack);
-        var minBtn = MakeTitleBarButton("—", () => _window.WindowState = WindowState.Minimized);
-        var closeBtn = MakeTitleBarButton("✕", () => _window.Close());
+        var minBtn = NativeTheme.MakeMinimizeButton(() => _window, 30);
+        var closeBtn = NativeTheme.MakeCloseButton(() => _window, 30);
+        closeBtn.Margin = new Thickness(2, 0, 12, 0);
         Grid.SetColumn(minBtn, 1);
         Grid.SetColumn(closeBtn, 2);
         titleGrid.Children.Add(minBtn);
@@ -205,14 +206,6 @@ public sealed partial class SettingsWindow : NativeWindow
 
     /// <summary>宿主 win.radius 广播 / spawn 补发（与快照路径同一实现）。</summary>
     public override void ApplyCornerRadius(double radius) => ApplyWindowRadius(radius);
-
-    /// <summary>标题栏按钮（最小化/关闭）：扁平图标按钮样式。</summary>
-    private static Button MakeTitleBarButton(string glyph, Action onClick)
-    {
-        var btn = new Button { Content = glyph, Style = NativeTheme.FlatIconButtonStyle };
-        btn.Click += (_, _) => onClick();
-        return btn;
-    }
 
     /// <summary>导航项样式：圆角高亮条（选中/悬停）—— 见 NativeTheme。</summary>
     private static Style BuildNavItemStyle() => NativeTheme.NavItemStyle;
@@ -1316,11 +1309,7 @@ public sealed partial class SettingsWindow : NativeWindow
 
     // ── NativeWindow 实现 ──
 
-    public override void ShowWindow()
-    {
-        if (!_window.IsVisible) _window.Show();
-        _window.Activate();
-    }
+    public override void ShowWindow() => Activate();
 
     public override void Activate()
     {

@@ -57,25 +57,13 @@ public sealed class SidebarWindow : NativeWindow
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(68) }); // 底部按钮排
         _root.Child = grid;
 
-        // ── titlebar（拖拽区 + 置顶/最小化/关闭） ──
+        // ── titlebar（拖拽区；对齐 Electron sidebar：左置顶 → 头像/名字/胶囊 → 最小化/关闭） ──
         var titlebar = new Grid { Background = NativeTheme.SurfaceNavBrush };
-        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var title = new TextBlock
-        {
-            Text = "昔涟 · 状态",
-            FontSize = 12,
-            FontWeight = FontWeights.Medium,
-            Foreground = NativeTheme.TextStrongBrush,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(14, 0, 0, 0),
-        };
-        Grid.SetColumn(title, 0);
-        titlebar.Children.Add(title);
+        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                          // 置顶
+        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });    // 标题
+        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                          // 最小化
+        titlebar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                          // 关闭
 
-        var btnStyle = NativeTheme.WindowButtonStyle;
         // 置顶：本地切换 Topmost（对齐 Electron 状态栏 SIDEBAR_TOGGLE_ALWAYS_ON_TOP
         // 的语义），并同步按钮高亮/提示。旧实现发 togglePin 给宿主，宿主只重新
         // 显示窗口；_pinned 从未赋值 → 置顶永远无效。
@@ -84,14 +72,50 @@ public sealed class SidebarWindow : NativeWindow
         {
             _pinned = !_pinned;
             _window.Topmost = _pinned;
-            pinBtn.Foreground = new SolidColorBrush(_pinned ? NativeTheme.Pink : NativeTheme.TextMuted);
+            pinBtn.Foreground = new SolidColorBrush(_pinned ? NativeTheme.Pink : NativeTheme.TextDefault);
             pinBtn.ToolTip = _pinned ? "取消置顶" : "置顶";
         }
-        pinBtn = MakeTitleButton("置顶", "✔", btnStyle, TogglePin);
-        var minBtn = MakeTitleButton("最小化", "—", btnStyle, () => _window.WindowState = WindowState.Minimized);
-        var closeBtn = MakeTitleButton("关闭", "✕", btnStyle, () => _window.Close());
-        Grid.SetColumn(pinBtn, 1); Grid.SetColumn(minBtn, 2); Grid.SetColumn(closeBtn, 3);
+        pinBtn = NativeTheme.MakeCircleButton(NativeTheme.VectorGlyph(Glyphs.Pin, 15), 28, "置顶", TogglePin);
+        pinBtn.Margin = new Thickness(10, 0, 2, 0);
+        Grid.SetColumn(pinBtn, 0);
         titlebar.Children.Add(pinBtn);
+
+        var titleRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 6, 0),
+        };
+        var titleAvatar = MakeTitleAvatar(20);
+        if (titleAvatar is not null) titleRow.Children.Add(titleAvatar);
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = "昔涟",
+            FontSize = 16,
+            FontWeight = FontWeights.Medium,
+            Foreground = NativeTheme.TextStrongBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+        titleRow.Children.Add(new Border
+        {
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(11),
+            Padding = new Thickness(9, 3, 9, 3),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = "状态面板", FontSize = 12, Foreground = NativeTheme.TextMutedBrush },
+        });
+        Grid.SetColumn(titleRow, 1);
+        titlebar.Children.Add(titleRow);
+
+        var minBtn = NativeTheme.MakeMinimizeButton(() => _window, 28);
+        var closeBtn = NativeTheme.MakeCloseButton(() => _window, 28);
+        closeBtn.Margin = new Thickness(2, 0, 10, 0);
+        Grid.SetColumn(minBtn, 2);
+        Grid.SetColumn(closeBtn, 3);
         titlebar.Children.Add(minBtn);
         titlebar.Children.Add(closeBtn);
         // 标题栏底边线（pearl-white titlebar 与内容的分隔）
@@ -284,11 +308,25 @@ public sealed class SidebarWindow : NativeWindow
         Effect = NativeTheme.CardShadow(),
     };
 
-    private static System.Windows.Controls.Button MakeTitleButton(string tip, string glyph, Style style, Action onClick)
+    /// <summary>标题栏线稿头像：白色线稿 PNG 作 OpacityMask 染成深色（叠两层加强线感）。</summary>
+    private static FrameworkElement? MakeTitleAvatar(double size)
     {
-        var btn = new Button { Content = glyph, ToolTip = tip, Style = style };
-        btn.Click += (_, _) => onClick();
-        return btn;
+        var image = NativeTheme.TryLoadAssetImage("icons/cyrene-avatar-line-white.png");
+        if (image is null) return null;
+        var mask = new ImageBrush(image) { Stretch = Stretch.Uniform };
+        var grid = new Grid { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center };
+        for (var i = 0; i < 2; i++)
+        {
+            grid.Children.Add(new System.Windows.Shapes.Rectangle
+            {
+                Width = size,
+                Height = size,
+                Fill = NativeTheme.TextStrongBrush,
+                OpacityMask = mask,
+                SnapsToDevicePixels = true,
+            });
+        }
+        return grid;
     }
 
     private static System.Windows.Controls.Button MakePillButton(string text, bool large = false)
@@ -364,11 +402,7 @@ public sealed class SidebarWindow : NativeWindow
         }
     }
 
-    public override void ShowWindow()
-    {
-        if (!_window.IsVisible) _window.Show();
-        _window.Activate();
-    }
+    public override void ShowWindow() => Activate();
 
     public override void Activate()
     {

@@ -1,18 +1,25 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 namespace CyreneNative;
 
 /// <summary>
 /// 昔涟·今日日程窗（WPF 透明无边框，pearl-white 浅色壳）。
 ///
-/// 旧实现是 WinForms（不透明深色 + Region 圆角无 AA + 字体混排），
-/// 本版与侧栏/设置窗统一：圆角壳 + 窗口投影 + 细滚动条 + 柱状图入场动画。
-/// 数据与语义不变：state.tasks 推送（scheduled tasks + token usage），
-/// 列表口径对齐 tasks 渲染页 task-filter.ts（启用+未来；今日优先；最多 3 条）。
+/// 版式对齐渲染页 tasks（320×760）：
+///   标题栏（📋 今日日程 [展示用 · 只读] + 最小化/关闭）
+///   → 面板（计数 / 日期胶囊 / Token 用量卡 / 7 天柱状图 + 日均线 / 趋势说明）
+///   → 定时任务列表（时间胶囊 + 标题）
+///   → 页脚（「任务设置」主按钮 + 分隔线）
+///
+/// 数据：state.tasks 推送（scheduled tasks + token usage）。
+///   usage 兼容两种形状：日报数组 [...] 或 getUsageReport 报告对象 {"days":[...]}。
 /// 动作：openSettings(section=tasks) 回发宿主。
 /// </summary>
 public sealed class TasksWindow : NativeWindow
@@ -20,26 +27,41 @@ public sealed class TasksWindow : NativeWindow
     /// <summary>窗口投影的透明边距（窗口比内容壳大 2*margin；坐标补偿见 ApplyLayout）。</summary>
     private const int WindowShadowMargin = 16;
 
-    private const double BarPlotHeight = 96;
+    /// <summary>柱区可用高度（对齐 Electron CHART_HEIGHT_PX = 76）。</summary>
+    private const double BarAreaHeight = 76;
+    private const double MiniChartHeight = 112;
+    private const double AvgLineTop = 47;
+    private const double BarsTop = 18;
+    private const double LabelRowHeight = 18;
 
     private readonly Window _window;
     private readonly Border _root;
     private readonly Border? _shadowLayer;
     private readonly TextBlock _countLabel = new();
     private readonly TextBlock _dateLabel = new();
-    private readonly TextBlock _tokenLabel = new();
+    private readonly TextBlock _usageNumber = new();
+    private readonly TextBlock _cacheLabel = new();
+    private readonly TextBlock _avgLabel = new();
+    private readonly TextBlock _noteLabel = new();
     private readonly StackPanel _taskList = new();
-    private readonly Grid _chart = new();
+    private readonly Grid _barsGrid = new();
 
     private RectangleGeometry? _clipGeometry;
     private double _cornerRadius = 24;
 
     private readonly List<TaskRow> _tasks = new();
-    /// <summary>口径内任务总数（旧版 totalCount）：今日优先，否则未来；列表只显示前 3 条。</summary>
+    /// <summary>口径内任务总数（列表只显示前 3 条；计数不截断）。</summary>
     private int _scheduleTotal;
-    private readonly List<(string Weekday, int Total, bool IsToday, bool IsFuture)> _week = new();
+    private readonly List<WeekSlot> _week = new();
+    private int _todayTotal;
+    private string _cacheText = "";
+    private int _weekAvg;
+    private int _weekPeak;
+    private int _weekPeakIndex = -1;
+    private string _weekPeakWeekday = "";
 
     private record TaskRow(string Title, string Time);
+    private record WeekSlot(string Weekday, int Total, bool IsFuture);
 
     public override string Kind => "tasks";
     public override bool IsClosed => _window == null;
@@ -54,32 +76,34 @@ public sealed class TasksWindow : NativeWindow
             BorderThickness = new Thickness(1),
         };
         var grid = new Grid();
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });  // titlebar
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });     // 概览
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 列表
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(176) }); // 图表
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });                          // 标题栏
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });        // 内容（可滚动）
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                              // 页脚
         _root.Child = grid;
 
         var titlebar = BuildTitleBar();
         Grid.SetRow(titlebar, 0);
         grid.Children.Add(titlebar);
 
-        var overview = BuildOverview();
-        Grid.SetRow(overview, 1);
-        grid.Children.Add(overview);
-
-        var listScroll = new ScrollViewer
+        var content = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Padding = new Thickness(14, 4, 14, 4),
-            Content = _taskList,
+            Padding = new Thickness(14, 14, 14, 0),
         };
-        Grid.SetRow(listScroll, 2);
-        grid.Children.Add(listScroll);
+        var panel = new StackPanel();
+        panel.Children.Add(BuildCountRow());
+        panel.Children.Add(BuildDatePill());
+        panel.Children.Add(BuildUsageCard());
+        panel.Children.Add(BuildMiniChart());
+        panel.Children.Add(BuildTrendNote());
+        panel.Children.Add(BuildTaskSection());
+        content.Content = panel;
+        Grid.SetRow(content, 1);
+        grid.Children.Add(content);
 
-        var chartHost = new Border { Margin = new Thickness(14, 6, 14, 12), Child = _chart };
-        Grid.SetRow(chartHost, 3);
-        grid.Children.Add(chartHost);
+        var footer = BuildFooter();
+        Grid.SetRow(footer, 2);
+        grid.Children.Add(footer);
 
         // 圆角裁剪（半径可变：宿主 win.radius 广播）
         _clipGeometry = new RectangleGeometry { RadiusX = _cornerRadius, RadiusY = _cornerRadius };
@@ -116,7 +140,7 @@ public sealed class TasksWindow : NativeWindow
         if (layout.ValueKind == JsonValueKind.Object) ApplyLayout(layout);
     }
 
-    // ── 标题栏 ──
+    // ── 标题栏（📋 今日日程 [展示用 · 只读] + 最小化/关闭） ──
 
     private Border BuildTitleBar()
     {
@@ -124,207 +148,461 @@ public sealed class TasksWindow : NativeWindow
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var title = new TextBlock
+        var titleRow = new StackPanel
         {
-            Text = "昔涟 · 今日日程",
-            FontSize = 12,
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(14, 0, 6, 0),
+        };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = "📋",
+            FontFamily = new FontFamily("Segoe UI Emoji"),
+            FontSize = 15,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = "今日日程",
+            FontSize = 16,
             FontWeight = FontWeights.Medium,
             Foreground = NativeTheme.TextStrongBrush,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(14, 0, 0, 0),
-        };
-        Grid.SetColumn(title, 0);
-        grid.Children.Add(title);
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+        titleRow.Children.Add(new Border
+        {
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(11),
+            Padding = new Thickness(9, 3, 9, 3),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = "展示用 · 只读", FontSize = 12, Foreground = NativeTheme.TextMutedBrush },
+        });
+        Grid.SetColumn(titleRow, 0);
+        grid.Children.Add(titleRow);
 
-        // 设置入口：回发 cmd(kind=tasks, action=openSettings, section=tasks)
-        var settingsBtn = MakeTitleButton("设置", "⚙", () => RequestRouter.SendCommand("tasks", "openSettings", "tasks"));
-        settingsBtn.FontFamily = new FontFamily("Segoe UI Symbol");
-        settingsBtn.FontSize = 12.5;
-        var minBtn = MakeTitleButton("最小化", "—", () => _window.WindowState = WindowState.Minimized);
-        var closeBtn = MakeTitleButton("关闭", "✕", () => _window.Close());
-        Grid.SetColumn(settingsBtn, 1);
-        Grid.SetColumn(minBtn, 2);
-        Grid.SetColumn(closeBtn, 3);
-        grid.Children.Add(settingsBtn);
+        var minBtn = NativeTheme.MakeMinimizeButton(() => _window, 28);
+        var closeBtn = NativeTheme.MakeCloseButton(() => _window, 28);
+        closeBtn.Margin = new Thickness(2, 0, 10, 0);
+        Grid.SetColumn(minBtn, 1);
+        Grid.SetColumn(closeBtn, 2);
         grid.Children.Add(minBtn);
         grid.Children.Add(closeBtn);
 
-        // 标题栏底边线
         var line = new Border
         {
             Height = 1,
             Background = NativeTheme.BorderSoftBrush,
             VerticalAlignment = VerticalAlignment.Bottom,
         };
-        Grid.SetColumnSpan(line, 4);
+        Grid.SetColumnSpan(line, 3);
         grid.Children.Add(line);
 
         var bar = new Border { Background = NativeTheme.SurfaceNavBrush, Child = grid };
         bar.MouseLeftButtonDown += (_, e) =>
         {
-            if (e.ButtonState != System.Windows.Input.MouseButtonState.Pressed) return;
+            if (e.ButtonState != MouseButtonState.Pressed) return;
             try { _window.DragMove(); } catch { /* 未按下/系统取消：忽略 */ }
         };
         return bar;
     }
 
-    private static Button MakeTitleButton(string tip, string glyph, Action onClick)
+    // ── 面板：计数 / 日期 / 用量 / 图表 / 说明 / 任务列表 ──
+
+    private FrameworkElement BuildCountRow()
     {
-        var btn = new Button { Content = glyph, ToolTip = tip, Style = NativeTheme.WindowButtonStyle };
-        btn.Click += (_, _) => onClick();
-        return btn;
-    }
-
-    // ── 概览 ──
-
-    private Border BuildOverview()
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var left = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
         _countLabel.Text = "0";
-        _countLabel.FontSize = 22;
-        _countLabel.FontWeight = FontWeights.Bold;
-        _countLabel.Foreground = NativeTheme.PinkBrush;
-        var unit = new TextBlock
+        _countLabel.FontSize = 40;
+        _countLabel.FontWeight = FontWeights.ExtraBold;
+        _countLabel.Foreground = NativeTheme.TextStrongBrush;
+        _countLabel.Effect = new DropShadowEffect
+        {
+            Color = NativeTheme.Pink,
+            BlurRadius = 6,
+            ShadowDepth = 0,
+            Opacity = 0.35,
+            RenderingBias = RenderingBias.Performance,
+        };
+        row.Children.Add(_countLabel);
+        row.Children.Add(new TextBlock
         {
             Text = "个待办日程",
-            FontSize = 12,
-            Foreground = NativeTheme.TextStrongBrush,
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            Foreground = NativeTheme.PinkDarkBrush,
             VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(6, 0, 0, 3),
-        };
-        left.Children.Add(_countLabel);
-        left.Children.Add(unit);
-        Grid.SetColumn(left, 0);
-        grid.Children.Add(left);
+            Margin = new Thickness(5, 0, 0, 4),
+        });
+        return row;
+    }
 
-        var right = new StackPanel
+    private FrameworkElement BuildDatePill()
+    {
+        _dateLabel.FontSize = 12;
+        _dateLabel.Foreground = NativeTheme.TextDefaultBrush;
+        _dateLabel.VerticalAlignment = VerticalAlignment.Center;
+        _dateLabel.Margin = new Thickness(4, 0, 0, 0);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(NativeTheme.VectorGlyph(Glyphs.Calendar, 14, NativeTheme.TextDefaultBrush));
+        row.Children.Add(_dateLabel);
+        return new Border
         {
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(11),
+            Padding = new Thickness(11, 5, 11, 5),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 14),
+            Child = row,
         };
-        _dateLabel.FontSize = 11.5;
-        _dateLabel.Foreground = NativeTheme.TextMutedBrush;
-        _dateLabel.HorizontalAlignment = HorizontalAlignment.Right;
-        _tokenLabel.FontSize = 11.5;
-        _tokenLabel.Foreground = NativeTheme.TextMutedBrush;
-        _tokenLabel.HorizontalAlignment = HorizontalAlignment.Right;
-        _tokenLabel.Margin = new Thickness(0, 3, 0, 0);
-        right.Children.Add(_dateLabel);
-        right.Children.Add(_tokenLabel);
-        Grid.SetColumn(right, 1);
-        grid.Children.Add(right);
+    }
+
+    private FrameworkElement BuildUsageCard()
+    {
+        var inner = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+
+        var labelRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        labelRow.Children.Add(NativeTheme.VectorGlyph(Glyphs.Card, 15, NativeTheme.TextMutedBrush));
+        labelRow.Children.Add(new TextBlock
+        {
+            Text = "Token 用量",
+            FontSize = 12,
+            Foreground = NativeTheme.TextMutedBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 0, 0),
+        });
+        var labelPill = new Border
+        {
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(11),
+            Padding = new Thickness(9, 3, 9, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = labelRow,
+        };
+
+        _usageNumber.Text = "0";
+        _usageNumber.FontSize = 20;
+        _usageNumber.FontWeight = FontWeights.ExtraBold;
+        _usageNumber.Foreground = NativeTheme.PinkDarkBrush;
+        _usageNumber.VerticalAlignment = VerticalAlignment.Center;
+        _usageNumber.Margin = new Thickness(6, 0, 0, 0);
+        _usageNumber.Effect = new DropShadowEffect
+        {
+            Color = NativeTheme.Pink,
+            BlurRadius = 5,
+            ShadowDepth = 0,
+            Opacity = 0.30,
+            RenderingBias = RenderingBias.Performance,
+        };
+
+        var info = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        info.Children.Add(labelPill);
+        info.Children.Add(_usageNumber);
+        inner.Children.Add(info);
+
+        _cacheLabel.FontSize = 12;
+        _cacheLabel.Foreground = NativeTheme.TextMutedBrush;
+        _cacheLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _cacheLabel.Margin = new Thickness(0, 4, 0, 0);
+        _cacheLabel.Visibility = Visibility.Collapsed;
+        inner.Children.Add(_cacheLabel);
 
         return new Border
         {
-            Background = NativeTheme.SurfaceNavBrush,
-            CornerRadius = new CornerRadius(12),
-            Margin = new Thickness(14, 12, 14, 8),
-            Padding = new Thickness(14, 10, 14, 10),
-            Child = grid,
+            Background = Brushes.White,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(17),
+            Padding = new Thickness(12, 11, 12, 11),
+            Margin = new Thickness(0, 0, 0, 16),
+            Child = inner,
+            Effect = NativeTheme.CardShadow(),
         };
     }
 
-    // ── 数据（口径与旧 WinForms 版一致） ──
+    private FrameworkElement BuildMiniChart()
+    {
+        var chart = new Grid { Height = MiniChartHeight };
+
+        var avgLine = new Border
+        {
+            Height = 2,
+            Background = NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB)),
+            CornerRadius = new CornerRadius(1),
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, AvgLineTop, 0, 0),
+            IsHitTestVisible = false,
+        };
+
+        _avgLabel.Text = "日均 0";
+        _avgLabel.FontSize = 9;
+        _avgLabel.FontWeight = FontWeights.ExtraBold;
+        _avgLabel.Foreground = Brushes.White;
+        var avgPill = new Border
+        {
+            Background = new LinearGradientBrush(
+                Color.FromRgb(0xFF, 0x6E, 0xC7), Color.FromRgb(0xEC, 0x48, 0x99),
+                new Point(0, 0), new Point(1, 1)),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(9, 4, 9, 4),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, AvgLineTop - 26, 0, 0),
+            Child = _avgLabel,
+            IsHitTestVisible = false,
+        };
+
+        _barsGrid.Margin = new Thickness(0, BarsTop, 0, 0);
+        chart.Children.Add(avgLine);
+        chart.Children.Add(_barsGrid);
+        chart.Children.Add(avgPill);
+        return chart;
+    }
+
+    private FrameworkElement BuildTrendNote()
+    {
+        _noteLabel.Text = "本周 Token 消耗趋势";
+        _noteLabel.FontSize = 12;
+        _noteLabel.Foreground = NativeTheme.TextMutedBrush;
+        _noteLabel.VerticalAlignment = VerticalAlignment.Center;
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 6, 0, 14),
+        };
+        row.Children.Add(NativeTheme.VectorGlyph(Glyphs.Bars, 18, NativeTheme.TextMutedBrush));
+        _noteLabel.Margin = new Thickness(4, 0, 0, 0);
+        row.Children.Add(_noteLabel);
+        return row;
+    }
+
+    private FrameworkElement BuildTaskSection()
+    {
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        header.Children.Add(NativeTheme.VectorGlyph(Glyphs.Clock, 18, NativeTheme.TextMutedBrush));
+        header.Children.Add(new TextBlock
+        {
+            Text = "定时任务",
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = NativeTheme.TextStrongBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 0, 0),
+        });
+
+        var stack = new StackPanel();
+        stack.Children.Add(header);
+        stack.Children.Add(_taskList);
+        return new Border
+        {
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(0, 13, 0, 0),
+            Child = stack,
+        };
+    }
+
+    private FrameworkElement BuildFooter()
+    {
+        var gearRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        gearRow.Children.Add(NativeTheme.VectorGlyph(Glyphs.Gear, 18));
+        gearRow.Children.Add(new TextBlock
+        {
+            Text = "任务设置",
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+
+        var settingsBtn = new Button
+        {
+            Style = NativeTheme.PrimaryButtonStyle,
+            Height = 38,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Content = gearRow,
+        };
+        settingsBtn.Click += (_, _) => RequestRouter.SendCommand("tasks", "openSettings", "tasks");
+
+        var divider = new Rectangle
+        {
+            Height = 1,
+            Margin = new Thickness(0, 10, 0, 0),
+            Fill = new LinearGradientBrush(
+                [
+                    new GradientStop(Colors.Transparent, 0),
+                    new GradientStop(NativeTheme.BorderSoft, 0.5),
+                    new GradientStop(Colors.Transparent, 1),
+                ],
+                new Point(0, 0), new Point(1, 0)),
+        };
+
+        var stack = new StackPanel();
+        stack.Children.Add(settingsBtn);
+        stack.Children.Add(divider);
+        stack.Children.Add(new Border { Height = 16 }); // 对位 Electron 空版本行占位
+        return new Border
+        {
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(14, 12, 14, 12),
+            Child = stack,
+        };
+    }
+
+    // ── 数据（口径与渲染页 task-filter.ts 一致） ──
+
+    /// <summary>
+    /// usage 兼容两种形状：日报数组 [...]（旧契约）或 getUsageReport 报告对象
+    /// {"days":[...],"models":[...]}（当前宿主推送）。报告形状此前未兼容，
+    /// 导致日程窗 token 区块恒为空。
+    /// </summary>
+    private static JsonElement NormalizeUsageDays(JsonElement usage)
+    {
+        if (usage.ValueKind == JsonValueKind.Object
+            && usage.TryGetProperty("days", out var days)
+            && days.ValueKind == JsonValueKind.Array)
+        {
+            return days;
+        }
+        return usage;
+    }
 
     public void ApplyState(JsonElement tasks, JsonElement usage)
     {
         _tasks.Clear();
         _scheduleTotal = 0;
-        // 与旧版 tasks 页 task-filter.ts 同口径：
-        //   启用 + nextFireAt 合法 + 未来 → 按触发时间升序；
-        //   有今日任务则只取今日，否则取未来；总数 = 口径内数量，列表只显示 3 条。
-        if (tasks.ValueKind == JsonValueKind.Array)
-        {
-            var now = DateTime.Now;
-            var upcoming = new List<(DateTime FireAt, string Title, string Kind)>();
-            foreach (var t in tasks.EnumerateArray())
-            {
-                if (t.ValueKind != JsonValueKind.Object) continue;
-                // 宿主已按 RendererScheduledTask 投影；enabled = 有效授权状态
-                if (!t.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.True) continue;
-                var next = t.TryGetProperty("nextFireAt", out var nf) ? nf.GetString() : null;
-                if (string.IsNullOrEmpty(next)
-                    || !DateTimeOffset.TryParse(next, System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.RoundtripKind, out var fireAt)) continue;
-                var local = fireAt.LocalDateTime;
-                if (local < now) continue;
-
-                var title = t.TryGetProperty("title", out var ti) ? ti.GetString() : null;
-                // 兼容旧快照的 name 键（宿主投影已统一为 title）
-                if (string.IsNullOrEmpty(title) && t.TryGetProperty("name", out var nm)) title = nm.GetString();
-                var kind = "";
-                if (t.TryGetProperty("schedule", out var sc) && sc.ValueKind == JsonValueKind.Object
-                    && sc.TryGetProperty("kind", out var sk)) kind = sk.GetString() ?? "";
-                upcoming.Add((local, title ?? "", kind));
-            }
-            upcoming.Sort((a, b) => a.FireAt.CompareTo(b.FireAt));
-
-            var today = upcoming.Where(x => x.FireAt.Date == now.Date).ToList();
-            var source = today.Count > 0 ? today : upcoming;
-            var mode = today.Count > 0 ? "today" : (upcoming.Count > 0 ? "upcoming" : "empty");
-            _scheduleTotal = source.Count;
-            foreach (var entry in source.Take(3))
-            {
-                // 旧版格式：今日任务显示 HH:mm；未来任务/一次性任务显示 MM-dd HH:mm
-                var showDate = mode == "upcoming" || entry.Kind == "once";
-                _tasks.Add(new TaskRow(entry.Title, entry.FireAt.ToString(showDate ? "MM-dd HH:mm" : "HH:mm")));
-            }
-            _dateLabel.Text =
-                $"{now.Year}年{now.Month}月{now.Day}日 · {new[] { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }[(int)now.DayOfWeek]}";
-        }
-
-        // 今日 token 汇总
-        var todayText = "";
-        if (usage.ValueKind == JsonValueKind.Array && usage.GetArrayLength() > 0)
-        {
-            var today = usage[0];
-            if (today.TryGetProperty("input", out var inp) && inp.TryGetInt32(out var i)
-                && today.TryGetProperty("output", out var outp) && outp.TryGetInt32(out var o))
-            {
-                todayText = $"今日 {FormatTokenShort(i + o)} tokens";
-            }
-        }
-        _tokenLabel.Text = todayText;
-
-        // 7 天柱状图数据
         _week.Clear();
-        if (usage.ValueKind == JsonValueKind.Array)
-        {
-            var byDate = new Dictionary<string, int>();
-            foreach (var d in usage.EnumerateArray())
-            {
-                if (d.TryGetProperty("date", out var dd) && d.TryGetProperty("input", out var di) && d.TryGetProperty("output", out var dou))
-                {
-                    byDate[dd.GetString() ?? ""] = di.GetInt32() + dou.GetInt32();
-                }
-            }
-            var now = DateTime.Now;
-            var weekSunday = now.AddDays(-((int)now.DayOfWeek));
-            for (var i = 0; i < 7; i++)
-            {
-                var day = weekSunday.AddDays(i);
-                var key = $"{day.Month:D2}-{day.Day:D2}";
-                // 注意：weekSunday 保留了当前时分秒，必须按日期比较，
-                // 否则「今天」会被判成未来（柱变虚线 + 今日用量不计入）
-                var isFuture = day.Date > now.Date;
-                var total = byDate.TryGetValue(key, out var v) && !isFuture ? v : 0;
-                _week.Add((new[] { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }[(int)day.DayOfWeek], total, key == $"{now.Month:D2}-{now.Day:D2}", isFuture));
-            }
-        }
+        _todayTotal = 0;
+        _cacheText = "";
+        _weekAvg = 0;
+        _weekPeak = 0;
+        _weekPeakIndex = -1;
+        _weekPeakWeekday = "";
+
+        var now = DateTime.Now;
+        ParseTasks(tasks, now);
+        ParseUsage(NormalizeUsageDays(usage), now);
+
+        _countLabel.Text = _scheduleTotal.ToString();
+        _usageNumber.Text = FormatThousands(_todayTotal);
+        _cacheLabel.Text = _cacheText;
+        _cacheLabel.Visibility = string.IsNullOrEmpty(_cacheText) ? Visibility.Collapsed : Visibility.Visible;
+        _noteLabel.Text = _weekPeak > 0
+            ? $"本周 Token 消耗趋势 ｜ 峰值 {FormatTokenShort(_weekPeak)}（{_weekPeakWeekday}）"
+            : "本周 Token 消耗趋势";
 
         RebuildTaskList();
         RebuildChart();
     }
+
+    private void ParseTasks(JsonElement tasks, DateTime now)
+    {
+        if (tasks.ValueKind != JsonValueKind.Array) return;
+        // 启用 + nextFireAt 合法 + 未来 → 按触发时间升序；
+        // 有今日任务则只取今日，否则取未来；总数 = 口径内数量，列表只显示 3 条。
+        var upcoming = new List<(DateTime FireAt, string Title, string Kind)>();
+        foreach (var t in tasks.EnumerateArray())
+        {
+            if (t.ValueKind != JsonValueKind.Object) continue;
+            if (!t.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.True) continue;
+            var next = t.TryGetProperty("nextFireAt", out var nf) ? nf.GetString() : null;
+            if (string.IsNullOrEmpty(next)
+                || !DateTimeOffset.TryParse(next, CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out var fireAt)) continue;
+            var local = fireAt.LocalDateTime;
+            if (local < now) continue;
+
+            var title = t.TryGetProperty("title", out var ti) ? ti.GetString() : null;
+            if (string.IsNullOrEmpty(title) && t.TryGetProperty("name", out var nm)) title = nm.GetString();
+            var kind = "";
+            if (t.TryGetProperty("schedule", out var sc) && sc.ValueKind == JsonValueKind.Object
+                && sc.TryGetProperty("kind", out var sk)) kind = sk.GetString() ?? "";
+            upcoming.Add((local, title ?? "", kind));
+        }
+        upcoming.Sort((a, b) => a.FireAt.CompareTo(b.FireAt));
+
+        var today = upcoming.Where(x => x.FireAt.Date == now.Date).ToList();
+        var source = today.Count > 0 ? today : upcoming;
+        var mode = today.Count > 0 ? "today" : (upcoming.Count > 0 ? "upcoming" : "empty");
+        _scheduleTotal = source.Count;
+        foreach (var entry in source.Take(3))
+        {
+            // 今日任务显示 HH:mm；未来任务/一次性任务显示 MM-dd HH:mm
+            var showDate = mode == "upcoming" || entry.Kind == "once";
+            _tasks.Add(new TaskRow(entry.Title, entry.FireAt.ToString(showDate ? "MM-dd HH:mm" : "HH:mm")));
+        }
+        var weekdays = new[] { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
+        _dateLabel.Text = $"{now.Year}年{now.Month}月{now.Day}日 · {weekdays[(int)now.DayOfWeek]}";
+    }
+
+    private void ParseUsage(JsonElement usageDays, DateTime now)
+    {
+        if (usageDays.ValueKind != JsonValueKind.Array) return;
+
+        // 按日期键索引（day 自带 weekday/input/output/hit/miss/cacheUsageRequests）
+        var byDate = new Dictionary<string, JsonElement>();
+        foreach (var d in usageDays.EnumerateArray())
+        {
+            if (d.ValueKind != JsonValueKind.Object) continue;
+            var key = d.TryGetProperty("date", out var dd) ? dd.GetString() : null;
+            if (!string.IsNullOrEmpty(key)) byDate[key] = d;
+        }
+
+        // 今日用量 + 缓存命中（仅厂商返回过缓存明细时展示）
+        var todayKey = $"{now.Month:D2}-{now.Day:D2}";
+        if (byDate.TryGetValue(todayKey, out var today))
+        {
+            _todayTotal = GetInt(today, "input") + GetInt(today, "output");
+            var hit = GetInt(today, "hit");
+            var miss = GetInt(today, "miss");
+            if (hit + miss > 0 && GetInt(today, "cacheUsageRequests") > 0)
+            {
+                var rate = (int)Math.Round(hit * 100.0 / (hit + miss));
+                _cacheText = $"缓存命中 {rate}% · {FormatTokenShort(hit)} tokens";
+            }
+        }
+
+        // 本周 7 天（周日起算；未来留空）
+        var weekSunday = now.Date.AddDays(-(int)now.DayOfWeek);
+        var weekdayNames = new[] { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
+        var pastTotals = new List<int>();
+        for (var i = 0; i < 7; i++)
+        {
+            var day = weekSunday.AddDays(i);
+            var key = $"{day.Month:D2}-{day.Day:D2}";
+            var isFuture = day > now.Date;
+            var total = 0;
+            if (!isFuture && byDate.TryGetValue(key, out var data))
+            {
+                total = GetInt(data, "input") + GetInt(data, "output");
+            }
+            if (!isFuture)
+            {
+                pastTotals.Add(total);
+                if (_weekPeakIndex < 0 || total > _weekPeak)
+                {
+                    _weekPeak = total;
+                    _weekPeakIndex = i;
+                    _weekPeakWeekday = weekdayNames[(int)day.DayOfWeek];
+                }
+            }
+            _week.Add(new WeekSlot(weekdayNames[(int)day.DayOfWeek], total, isFuture));
+        }
+        _weekAvg = pastTotals.Count > 0 ? (int)Math.Round(pastTotals.Sum() / (double)pastTotals.Count) : 0;
+    }
+
+    private static int GetInt(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.TryGetInt32(out var parsed) ? parsed : 0;
 
     private void RebuildTaskList()
     {
@@ -335,152 +613,159 @@ public sealed class TasksWindow : NativeWindow
             {
                 Text = "暂无已启用定时任务",
                 FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
                 Foreground = NativeTheme.TextMutedBrush,
-                Margin = new Thickness(4, 10, 4, 10),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 14, 0, 14),
             });
+            return;
         }
-        else
+        foreach (var t in _tasks)
         {
-            foreach (var t in _tasks)
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(82) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            // 时间胶囊（Electron .task-time：10px/800 pink-600 on pink-50）
+            var timePill = new Border
             {
-                var row = new Grid();
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var name = new TextBlock
-                {
-                    Text = t.Title,
-                    FontSize = 12.5,
-                    Foreground = NativeTheme.TextStrongBrush,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 10, 0),
-                };
-                var time = new TextBlock
+                Background = NativeTheme.Brush(Color.FromRgb(0xFF, 0xF1, 0xF6)),
+                BorderBrush = NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(7, 4, 7, 4),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
                 {
                     Text = t.Time,
-                    FontSize = 12,
+                    FontSize = 10,
+                    FontWeight = FontWeights.ExtraBold,
                     Foreground = NativeTheme.PinkDarkBrush,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                Grid.SetColumn(name, 0);
-                Grid.SetColumn(time, 1);
-                row.Children.Add(name);
-                row.Children.Add(time);
-                _taskList.Children.Add(new Border
-                {
-                    Background = NativeTheme.SurfaceAppBrush,
-                    CornerRadius = new CornerRadius(10),
-                    Padding = new Thickness(12, 9, 12, 9),
-                    Margin = new Thickness(0, 3, 0, 3),
-                    Child = row,
-                });
-            }
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                },
+            };
+            var desc = new TextBlock
+            {
+                Text = t.Title,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = NativeTheme.TextStrongBrush,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                LineHeight = 1.35 * 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(9, 0, 0, 0),
+            };
+            Grid.SetColumn(timePill, 0);
+            Grid.SetColumn(desc, 1);
+            row.Children.Add(timePill);
+            row.Children.Add(desc);
+
+            _taskList.Children.Add(new Border
+            {
+                Background = Brushes.White,
+                BorderBrush = NativeTheme.BorderSoftBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 0, 0, 9),
+                Child = row,
+                Effect = NativeTheme.CardShadow(),
+            });
         }
-        // 计数 = 口径内总数（旧版 totalCount）：列表最多 3 条，计数不随之截断
-        _countLabel.Text = _scheduleTotal.ToString();
     }
 
-    // ── 7 天柱状图（WPF 自绘：渐变柱 + 入场动画 + hover 提示） ──
+    // ── 7 天柱状图（Electron chart.css：渐变柱 + 峰值白点 + 入场动画 + hover 提示） ──
 
     private void RebuildChart()
     {
-        _chart.Children.Clear();
-        _chart.ColumnDefinitions.Clear();
-        if (_week.Count < 7) return;
+        _barsGrid.Children.Clear();
+        _barsGrid.ColumnDefinitions.Clear();
+        if (_week.Count < 7)
+        {
+            _avgLabel.Text = "日均 0";
+            return;
+        }
 
         var maxVal = Math.Max(_week.Where(w => !w.IsFuture).Select(w => w.Total).DefaultIfEmpty(0).Max(), 1);
         for (var i = 0; i < 7; i++)
         {
-            var (weekday, total, isToday, isFuture) = _week[i];
-            _chart.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var slot = _week[i];
+            _barsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var col = new Grid();
-            col.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });  // 数值
-            col.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 柱区
-            col.RowDefinitions.Add(new RowDefinition { Height = new GridLength(22) });  // 星期
+            col.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            col.RowDefinitions.Add(new RowDefinition { Height = new GridLength(LabelRowHeight) });
 
-            var value = new TextBlock
+            if (!slot.IsFuture)
             {
-                Text = !isFuture && total > 0 ? FormatTokenShort(total) : "",
-                FontSize = 10,
-                Foreground = NativeTheme.TextMutedBrush,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Bottom,
-            };
-            Grid.SetRow(value, 0);
-            col.Children.Add(value);
-
-            var barArea = new Grid();
-            if (isFuture)
-            {
-                // 未来留空柱（虚线框）
-                barArea.Children.Add(new Rectangle
+                if (i == _weekPeakIndex && _weekPeak > 0)
                 {
-                    Width = 18,
-                    Height = 48,
-                    Stroke = NativeTheme.BorderStrongBrush,
-                    StrokeThickness = 1,
-                    StrokeDashArray = new DoubleCollection { 2, 2 },
-                    RadiusX = 5,
-                    RadiusY = 5,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Bottom,
-                    ToolTip = NativeTheme.MakeTooltip($"{weekday} · 尚未到来"),
-                });
-            }
-            else if (total > 0)
-            {
-                var target = Math.Max(BarPlotHeight * total / maxVal, 4);
+                    // 峰值白点（.chart-bar--peak::after：top 12px / 8×8 / 白底粉描边）
+                    col.Children.Add(new Ellipse
+                    {
+                        Width = 8,
+                        Height = 8,
+                        Fill = Brushes.White,
+                        Stroke = NativeTheme.Brush(Color.FromRgb(0xFF, 0x8C, 0xCC)),
+                        StrokeThickness = 1.5,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(0, 12, 0, 0),
+                        IsHitTestVisible = false,
+                    });
+                }
+                var target = Math.Max(6, BarAreaHeight * slot.Total / maxVal);
                 var bar = new Border
                 {
-                    Width = 18,
+                    Width = 24,
                     Height = 0,
-                    CornerRadius = new CornerRadius(5),
-                    Background = isToday ? NativeTheme.PinkBrush : NativeTheme.Brush(Color.FromRgb(0xFF, 0xB1, 0xCB)),
+                    CornerRadius = new CornerRadius(12),
+                    Background = new LinearGradientBrush(
+                        Color.FromRgb(0xEC, 0x48, 0x99), Color.FromRgb(0xFF, 0x8C, 0xCC),
+                        new Point(0.5, 0), new Point(0.5, 1)),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Bottom,
-                    ToolTip = NativeTheme.MakeTooltip($"{weekday} · {FormatTokenShort(total)} tokens"),
-                    Cursor = System.Windows.Input.Cursors.Hand,
+                    ToolTip = NativeTheme.MakeTooltip($"{slot.Weekday} · {FormatTokenShort(slot.Total)} tokens"),
+                    Cursor = Cursors.Hand,
                 };
-                bar.MouseEnter += (_, _) => bar.Opacity = 0.82;
+                bar.MouseEnter += (_, _) => bar.Opacity = 0.85;
                 bar.MouseLeave += (_, _) => bar.Opacity = 1;
-                // 入场动画：从 0 长到目标高度（按列错峰 25ms）
+                // 入场动画：0 → 目标高度（按列错峰 25ms）
                 bar.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(target, TimeSpan.FromMilliseconds(320))
                 {
                     BeginTime = TimeSpan.FromMilliseconds(i * 25),
                     EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
                 });
-                barArea.Children.Add(bar);
+                Grid.SetRow(bar, 0);
+                col.Children.Add(bar);
             }
-            Grid.SetRow(barArea, 1);
-            col.Children.Add(barArea);
 
             var label = new TextBlock
             {
-                Text = weekday,
-                FontSize = 10.5,
-                Foreground = isToday ? NativeTheme.PinkDarkBrush : NativeTheme.TextMutedBrush,
+                Text = slot.Weekday,
+                FontSize = 10,
+                FontWeight = FontWeights.Bold,
+                Foreground = NativeTheme.TextMutedBrush,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, 0, 2),
             };
-            Grid.SetRow(label, 2);
+            Grid.SetRow(label, 1);
             col.Children.Add(label);
 
             Grid.SetColumn(col, i);
-            _chart.Children.Add(col);
+            _barsGrid.Children.Add(col);
         }
+        _avgLabel.Text = $"日均 {FormatTokenShort(_weekAvg)}";
     }
 
-    private static string FormatTokenShort(int tokens) => tokens >= 1000 ? $"{tokens / 1000.0:F1}k" : tokens.ToString();
+    private static string FormatTokenShort(int tokens) => tokens >= 1000 ? $"{tokens / 1000.0:F1}K" : tokens.ToString();
+
+    private static string FormatThousands(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
     // ── 生命周期 ──
 
-    public override void ShowWindow()
-    {
-        if (!_window.IsVisible) _window.Show();
-        _window.Activate();
-    }
+    public override void ShowWindow() => Activate();
 
     public override void Activate()
     {

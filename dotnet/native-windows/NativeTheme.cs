@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
@@ -134,36 +135,125 @@ public static class NativeTheme
         return style;
     }
 
-    /// <summary>窗口标题栏按钮（置顶/最小化/关闭）：圆角 hover 底、无边框。</summary>
-    private static readonly System.Lazy<Style> WindowButtonLazy = new(() =>
+    // ── 窗口标题栏圆钮（对齐 Electron pearl-white .win-btn / .sidebar__winbtn） ──
+    // pearl-white 下所有窗口按钮统一为「白底圆钮 + 细边框」：28px（侧栏/日程/对话框）、
+    // 30px（设置/插件）；hover = 粉描边 + 浅灰底 + 边框加深；按下底色再深一档。
+
+    /// <summary>hover 底色（--rb-hover-light rgba(0,0,0,0.04) 合成到白底）。</summary>
+    private static readonly SolidColorBrush ButtonHoverBrush = Brush(Color.FromRgb(0xF5, 0xF5, 0xF5));
+    /// <summary>按下底色（--rb-active-light rgba(0,0,0,0.08) 合成到白底）。</summary>
+    private static readonly SolidColorBrush ButtonPressedBrush = Brush(Color.FromRgb(0xEB, 0xEB, 0xEB));
+
+    private static readonly System.Lazy<Style> WindowButton28Lazy = new(() => BuildWindowButtonStyle(28));
+    private static readonly System.Lazy<Style> WindowButton30Lazy = new(() => BuildWindowButtonStyle(30));
+
+    public static Style WindowButton28Style => WindowButton28Lazy.Value;
+    public static Style WindowButton30Style => WindowButton30Lazy.Value;
+
+    private static Style BuildWindowButtonStyle(double size)
     {
         var style = new Style(typeof(Button));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, TextMutedBrush));
-        style.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
-        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
-        style.Setters.Add(new Setter(Control.FontSizeProperty, 11.0));
-        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(7, 3, 7, 3)));
-        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(2, 0, 2, 0)));
+        style.Setters.Add(new Setter(FrameworkElement.WidthProperty, size));
+        style.Setters.Add(new Setter(FrameworkElement.HeightProperty, size));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, TextDefaultBrush));
+        style.Setters.Add(new Setter(Control.FocusableProperty, false));
         style.Setters.Add(new Setter(Control.CursorProperty, Cursors.Hand));
+        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(2, 0, 2, 0)));
         var template = new ControlTemplate(typeof(Button));
         var bg = new FrameworkElementFactory(typeof(Border), "bg");
-        bg.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        bg.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        bg.SetValue(Border.BackgroundProperty, Brushes.White);
+        bg.SetValue(Border.BorderBrushProperty, BorderSoftBrush);
+        bg.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        bg.SetValue(Border.CornerRadiusProperty, new CornerRadius(size / 2));
         var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
         presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
         presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
         bg.AppendChild(presenter);
         template.VisualTree = bg;
         var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, BorderSoftBrush) { TargetName = "bg" });
-        hover.Setters.Add(new Setter(Control.ForegroundProperty, TextStrongBrush));
+        hover.Setters.Add(new Setter(Control.ForegroundProperty, PinkDarkBrush));
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, ButtonHoverBrush) { TargetName = "bg" });
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, BorderStrongBrush) { TargetName = "bg" });
         template.Triggers.Add(hover);
         var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
-        pressed.Setters.Add(new Setter(Border.BackgroundProperty, BorderStrongBrush) { TargetName = "bg" });
+        pressed.Setters.Add(new Setter(Border.BackgroundProperty, ButtonPressedBrush) { TargetName = "bg" });
         template.Triggers.Add(pressed);
         style.Setters.Add(new Setter(Control.TemplateProperty, template));
         return WithFocusRing(style);
-    });
+    }
+
+    /// <summary>图标描边/填充跟随所在 Button 的 Foreground（hover 变粉自动生效）。</summary>
+    private static void BindToButtonForeground(System.Windows.Shapes.Shape shape, DependencyProperty property) =>
+        BindingOperations.SetBinding(shape, property, new Binding("Foreground")
+        {
+            RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(Button), 1),
+        });
+
+    /// <summary>SVG path 数据 → WPF 轮廓图标（48 视框等比缩放到 size；可选固定颜色）。</summary>
+    public static FrameworkElement VectorGlyph(string svgData, double size = 16, Brush? color = null, double strokeWidth = 4)
+    {
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(svgData),
+            StrokeThickness = strokeWidth,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = Brushes.Transparent,
+            Stroke = color ?? TextMutedBrush,
+        };
+        if (color is null) BindToButtonForeground(path, System.Windows.Shapes.Shape.StrokeProperty);
+        var canvas = new Canvas { Width = 48, Height = 48, IsHitTestVisible = false };
+        canvas.Children.Add(path);
+        return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform, IsHitTestVisible = false };
+    }
+
+    /// <summary>最小化字形：9/10×2 圆角条（Electron 的两套尺寸）。</summary>
+    public static FrameworkElement MinimizeGlyph(double size)
+    {
+        var width = size >= 30 ? 10.0 : 9.0;
+        var rect = new Rectangle { Width = width, Height = 2, RadiusX = 1, RadiusY = 1 };
+        BindToButtonForeground(rect, System.Windows.Shapes.Shape.FillProperty);
+        return rect;
+    }
+
+    /// <summary>关闭字形：两条 1.4 圆帽斜线。</summary>
+    public static FrameworkElement CloseGlyph(double size)
+    {
+        var span = size >= 30 ? 10.0 : 9.0;
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse($"M2,2 L{span - 2},{span - 2} M{span - 2},2 L2,{span - 2}"),
+            StrokeThickness = 1.4,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+            Fill = Brushes.Transparent,
+        };
+        BindToButtonForeground(path, System.Windows.Shapes.Shape.StrokeProperty);
+        return path;
+    }
+
+    /// <summary>圆钮工厂：内容 + 尺寸 + 提示 + 动作。</summary>
+    public static Button MakeCircleButton(FrameworkElement content, double size, string tip, Action onClick)
+    {
+        var btn = new Button
+        {
+            Content = content,
+            ToolTip = tip,
+            Style = size >= 30 ? WindowButton30Style : WindowButton28Style,
+        };
+        btn.Click += (_, _) => onClick();
+        return btn;
+    }
+
+    /// <summary>最小化按钮（窗口圆钮）。用委托取窗口：调用方可在 _window 赋值前构建标题栏。</summary>
+    public static Button MakeMinimizeButton(Func<Window> window, double size = 28) =>
+        MakeCircleButton(MinimizeGlyph(size), size, "最小化", () => window().WindowState = WindowState.Minimized);
+
+    /// <summary>关闭按钮（窗口圆钮）。</summary>
+    public static Button MakeCloseButton(Func<Window> window, double size = 28) =>
+        MakeCircleButton(CloseGlyph(size), size, "关闭", () => window().Close());
 
     /// <summary>白卡浮层 Tooltip（图表/数据点提示；对齐 pearl-white 阴影语言）。</summary>
     private static readonly System.Lazy<Style> ToolTipLazy = new(() => Parse($$"""
@@ -726,8 +816,14 @@ public static class NativeTheme
     /// <summary>
     /// 无边框窗的圆角标题栏：标题 + 可选最小化 + 关闭，可拖动。
     /// 需与该窗的圆角壳（ClipRounded）配合，顶部两角才真正圆。
+    /// buttonSize 28（对话框/小窗）或 30（大窗，对齐 Electron settings）。
     /// </summary>
-    public static Border BuildTitleBar(Window window, string title, bool showMinimize = false)
+    public static Border BuildTitleBar(
+        Window window,
+        string title,
+        bool showMinimize = false,
+        double buttonSize = 28,
+        double titleSize = 13)
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -737,7 +833,7 @@ public static class NativeTheme
         var titleText = new TextBlock
         {
             Text = title,
-            FontSize = 13,
+            FontSize = titleSize,
             FontWeight = FontWeights.SemiBold,
             Foreground = TextStrongBrush,
             VerticalAlignment = VerticalAlignment.Center,
@@ -749,11 +845,12 @@ public static class NativeTheme
         var column = 1;
         if (showMinimize)
         {
-            var minBtn = MakeIconButton("—", () => window.WindowState = WindowState.Minimized);
+            var minBtn = MakeMinimizeButton(() => window, buttonSize);
             Grid.SetColumn(minBtn, column++);
             grid.Children.Add(minBtn);
         }
-        var closeBtn = MakeIconButton("✕", () => window.Close());
+        var closeBtn = MakeCloseButton(() => window, buttonSize);
+        closeBtn.Margin = new Thickness(2, 0, buttonSize >= 30 ? 12 : 10, 0);
         Grid.SetColumn(closeBtn, column);
         grid.Children.Add(closeBtn);
 
@@ -897,7 +994,6 @@ public static class NativeTheme
     public static Style TabItemStyle => TabItemLazy.Value;
     public static Style TabControlStyle => TabControlLazy.Value;
     public static Style ScrollBarStyle => ScrollBarLazy.Value;
-    public static Style WindowButtonStyle => WindowButtonLazy.Value;
     public static Style ToolTipStyle => ToolTipLazy.Value;
 
     /// <summary>把主题套到窗口：字体 + 隐式控件样式（只影响未显式设置 Style 的控件）。</summary>
