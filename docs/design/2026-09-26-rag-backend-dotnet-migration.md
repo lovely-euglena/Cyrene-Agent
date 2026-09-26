@@ -173,3 +173,39 @@ jieba-rs 移植评估照旧（Phase D 前）。
 **已知取舍**：跨进程仍为 last-writer-wins（无跨进程文件锁）；双写窗口已收窄到
 毫秒级（写前 refresh + 原子 rename），对本应用（桌面单用户、写入低频）足够。
 若未来出现多进程高频写同一库，再引入锁文件协议。
+
+## 11. Phase D：向量库 SQLite 落地（2026-09-26 更新）
+
+**结论**：按评估方案（`2026-09-26-vectorstore-sqlite-evaluation.md`）实施，采用
+**方案 B（SQLite 持久层 + 保留内存 IVF/BM25）**，而非方案 A 的 sqlite-vec/FTS5
+（扩展装载/打包风险留作后续可选增强）；架构上采用**双端直连 SQLite（WAL）**
+而非"sidecar 单写者"——TS 侧存在同步 API（`getEntriesBySource` / `delete*` /
+`stats`）与同步写路径（memory-actions），单写者路由改动面过大，WAL + rev 已能
+覆盖并发；实测双进程读写无丢失。
+
+**实现**：
+
+1. **.NET `SqliteRagStore`**（memory.db，默认）：WAL + busy_timeout；
+   `rag_meta.rev` 版本号；行级写（INSERT/UPDATE recall/DELETE/REPLACE）+ 事务；
+   本地写后对比 pre/post rev，外部并发提交时整体重载；`IRagStore` 抽象 +
+   `RagStore`（JSON）保留为 `CYRENE_RAG_STORE=json` 回退；IVF 提取 `Ivf.cs` 共用；
+   `verify-sqlite` 自检 6 项（迁移/检索对账/双连接 rev/召回可见/软合并/blob 往返）
+2. **TS `SqliteVectorStore`**：`vectorstore.ts` 重构为存储后端抽象
+   （`JsonStoreBackend` / `SqliteStoreBackend`）+ `VectorStore` 基类（检索逻辑单点）；
+   `node:sqlite` 经 `process.getBuiltinModule` 装载（Electron 43 / Node 24 内置，
+   无需原生模块编译）；驱动不可用自动回退 JSON，并以 `storeMode` 透传给 sidecar
+   保证全链路同一种存储
+3. **兼容/迁移**：首次打开自动迁移 `memory-store.json`（幂等，保留原文件）；
+   JSON 更新更晚时软合并缺失 id（INSERT OR IGNORE，不回灌覆盖）；`clearAll` 时
+   清理迁移源；索引元数据随迁
+4. **外围适配**：memory panel 改走 RAG 门面（不再直接读 JSON 文件）；
+   对账备份支持 SQLite（`VACUUM INTO` 一致快照）
+
+**验证**：`verify-sqlite` 6/6；TS SQLite 测试 8 例；RAG e2e 15/15（含
+`memory.db` 生效断言与直读 SQLite 的召回回写校验）；vitest rag+memory+application
+48 文件全绿。
+
+**遗留（后续可选）**：sqlite-vec（KNN 扩展）/ FTS5（BM25 原生打分）作为
+性能/质量增强另行评估；`document-cache.json` 未入库；BM25 token 缓存仍是
+待办（SQLite 入库后实现成本更低）；跨存储模式（sqlite ↔ json）混跑仅保证
+单向软合并（JSON 新增条目可被合并，删除不同步）。
