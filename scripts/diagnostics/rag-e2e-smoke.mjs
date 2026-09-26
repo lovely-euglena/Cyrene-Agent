@@ -129,14 +129,24 @@ try {
 
   const recallable = rag.getEntriesBySource("chat_history");
   const boosted = recallable.find((e) => e.id === histId);
-  // getEntriesBySource 不暴露 lastRecalledAt → 时间戳直接读库文件校验
-  const boostFile = JSON.parse(fs.readFileSync(path.join(userData, "rag-data", "memory-store.json"), "utf8"));
-  const boostedRaw = boostFile.find((e) => e.id === histId);
+  // getEntriesBySource 不暴露 lastRecalledAt → 时间戳直接读 SQLite 库校验
+  const ragDataDir = path.join(userData, "rag-data");
+  check(
+    "sqlite store active",
+    fs.existsSync(path.join(ragDataDir, "memory.db")) && !fs.existsSync(path.join(ragDataDir, "memory-store.json")),
+    fs.existsSync(path.join(ragDataDir, "memory.db")) ? "memory.db" : "memory.db missing",
+  );
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(path.join(ragDataDir, "memory.db"));
+  const boostedRaw = db
+    .prepare("SELECT weight, last_recalled_at, created_at FROM entries WHERE id = ?")
+    .get(histId);
+  db.close();
   check(
     "recall write-back + ensureFresh",
-    !!boosted && boosted.weight > 1.0 && !!boostedRaw && boostedRaw.lastRecalledAt > boostedRaw.createdAt,
+    !!boosted && boosted.weight > 1.0 && !!boostedRaw && boostedRaw.last_recalled_at > boostedRaw.created_at,
     boostedRaw
-      ? `weight=${boostedRaw.weight} recall-lag=${boostedRaw.lastRecalledAt - boostedRaw.createdAt}ms`
+      ? `weight=${boostedRaw.weight} recall-lag=${boostedRaw.last_recalled_at - boostedRaw.created_at}ms`
       : "entry missing",
   );
 
