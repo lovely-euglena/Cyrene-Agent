@@ -162,6 +162,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   emailSmtpPass: string;
   /** 发件人显示名（可选） */
   emailFromName: string;
+  // 邮件收信（IMAP）：认证复用 emailSmtpUser/emailSmtpPass（同一邮箱账号 + 授权码）
+  /** IMAP 服务器（收信）；留空 = 未配置收信能力 */
+  emailImapHost: string;
+  /** IMAP 端口，默认 993（SSL） */
+  emailImapPort: number;
+  /** IMAP 使用 SSL/TLS（993 通常 true，143 通常 false） */
+  emailImapSecure: boolean;
   /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | local(本地,占位) */
   asrEngine: "off" | "aliyun" | "mossland" | "local";
   /** 阿里云智能语音交互 AppKey */

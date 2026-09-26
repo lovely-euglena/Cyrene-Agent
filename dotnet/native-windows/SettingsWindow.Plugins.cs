@@ -147,9 +147,9 @@ public sealed partial class SettingsWindow
         }
         panel.Children.Add(searchCard);
 
-        // ── 邮件发送 ──
-        var emailCard = MakeToolCard("✉️", "邮件发送",
-            "通过 SMTP 发送邮件，可带附件。需填写邮箱 SMTP 授权码（非登录密码）。",
+        // ── 邮件发送与收信 ──
+        var emailCard = MakeToolCard("✉️", "邮件发送与收信",
+            "通过 SMTP 发送邮件（可带附件），通过 IMAP 查看与阅读收件箱。收信与发信共用发件邮箱与授权码。",
             Toggle(GetBool(plugins, "emailEnabled"), v => SaveField("emailEnabled", v)),
             out var emailBody);
         if (GetBool(plugins, "emailEnabled"))
@@ -178,16 +178,42 @@ public sealed partial class SettingsWindow
 
             var userBox = MakePluginsTextBox(GetString(plugins, "emailSmtpUser"), 260);
             WireText(userBox, "emailSmtpUser");
-            emailBody.Children.Add(MakeDescribedRow("发件邮箱", "如 your@qq.com", userBox));
+            emailBody.Children.Add(MakeDescribedRow("邮箱账号", "发件与收信共用；如 your@qq.com", userBox));
 
             var passBox = MakePluginsPasswordBox(GetString(plugins, "emailSmtpPass"), 260);
             WirePassword(passBox, "emailSmtpPass");
-            emailBody.Children.Add(MakeDescribedRow("SMTP 授权码",
-                "非邮箱登录密码；QQ邮箱 → 设置 → 账户 → 开启 SMTP 服务 获取授权码。", passBox));
+            emailBody.Children.Add(MakeDescribedRow("授权码",
+                "非邮箱登录密码；发件与收信共用。QQ邮箱 → 设置 → 账户 → 开启 SMTP/IMAP 服务 获取授权码。", passBox));
 
             var nameBox = MakePluginsTextBox(GetString(plugins, "emailFromName"), 220);
             WireText(nameBox, "emailFromName");
             emailBody.Children.Add(MakeDescribedRow("发件人名称（可选）", "显示为「来自 昔涟」。", nameBox));
+
+            // ── 收信（IMAP） ──
+            emailBody.Children.Add(MakeSubHeader("收信（IMAP）"));
+            var imapHostBox = MakePluginsTextBox(GetString(plugins, "emailImapHost"), 220);
+            WireText(imapHostBox, "emailImapHost");
+            emailBody.Children.Add(MakeDescribedRow("IMAP 主机",
+                "如 imap.qq.com；留空 = 只发信不读信。", imapHostBox));
+
+            var imapPortValue = GetInt(plugins, "emailImapPort", 993);
+            var imapPortBox = MakePluginsTextBox(imapPortValue.ToString(), 100);
+            imapPortBox.LostFocus += (_, _) =>
+            {
+                if (int.TryParse(imapPortBox.Text.Trim(), out var port) && port > 0 && port <= 65535)
+                {
+                    SaveField("emailImapPort", port);
+                }
+                else
+                {
+                    imapPortBox.Text = imapPortValue.ToString();
+                }
+            };
+            emailBody.Children.Add(MakeDescribedRow("IMAP 端口", "常用 993（SSL）或 143（STARTTLS）。", imapPortBox));
+
+            emailBody.Children.Add(MakeDescribedRow("IMAP SSL 加密", "993 端口通常开启。",
+                Toggle(GetBool(plugins, "emailImapSecure", true), v => SaveField("emailImapSecure", v))));
+            emailBody.Children.Add(MakeHint("配置后昔涟可以查看收件列表、阅读邮件并标记已读/未读（工具：email_list / email_read / email_mark）。"));
         }
         panel.Children.Add(emailCard);
 

@@ -116,6 +116,9 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   emailSmtpUser: "",
   emailSmtpPass: "",
   emailFromName: "",
+  emailImapHost: "",
+  emailImapPort: 993,
+  emailImapSecure: true,
   asrEngine: "off",
   asrAliyunAppKey: "",
   asrAliyunAccessKeyId: "",
@@ -322,6 +325,11 @@ export function normalizeGeneralSettings(
     emailSmtpUser: typeof input?.emailSmtpUser === "string" ? input.emailSmtpUser : "",
     emailSmtpPass: typeof input?.emailSmtpPass === "string" ? input.emailSmtpPass : "",
     emailFromName: typeof input?.emailFromName === "string" ? input.emailFromName : "",
+    emailImapHost: typeof input?.emailImapHost === "string" ? input.emailImapHost : "",
+    emailImapPort: clampPort(input?.emailImapPort, DEFAULT_GENERAL_SETTINGS.emailImapPort),
+    emailImapSecure: input?.emailImapSecure === undefined
+      ? (clampPort(input?.emailImapPort, DEFAULT_GENERAL_SETTINGS.emailImapPort) === 993)
+      : Boolean(input.emailImapSecure),
     asrEngine: ["off", "aliyun", "mossland", "local"].includes(String(input?.asrEngine))
       ? (input!.asrEngine as "off" | "aliyun" | "mossland" | "local")
       : "off",

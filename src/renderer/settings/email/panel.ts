@@ -5,6 +5,7 @@ import {
   emailEnabledCheckbox, emailConfig,
   emailSmtpHostInput, emailSmtpPortInput, emailSmtpSecureInput,
   emailSmtpUserInput, emailSmtpPassInput, emailFromNameInput,
+  emailImapHostInput, emailImapPortInput, emailImapSecureInput,
 } from "./dom";
 import { pluginsState } from "../plugins/state";
 
@@ -45,6 +46,15 @@ export async function loadEmailConfig(): Promise<void> {
     if (cfg && emailFromNameInput) {
       emailFromNameInput.value = String(cfg.emailFromName ?? "");
     }
+    if (cfg && emailImapHostInput) {
+      emailImapHostInput.value = String(cfg.emailImapHost ?? "");
+    }
+    if (cfg && emailImapPortInput) {
+      emailImapPortInput.value = String(cfg.emailImapPort ?? 993);
+    }
+    if (cfg && emailImapSecureInput) {
+      emailImapSecureInput.checked = Boolean(cfg.emailImapSecure);
+    }
     syncEmailConfigVisibility();
   } catch (err) {
     console.warn("[plugins] 加载邮件配置失败", err);
@@ -63,6 +73,9 @@ emailSmtpSecureInput?.addEventListener("change", () => void saveEmailField("emai
 emailSmtpUserInput?.addEventListener("input", () => { clearTimeout(pluginsState.emailSmtpUserTimer); pluginsState.emailSmtpUserTimer = setTimeout(() => void saveEmailField("emailSmtpUser", emailSmtpUserInput.value.trim()), 800); });
 emailSmtpPassInput?.addEventListener("input", () => { clearTimeout(pluginsState.emailSmtpPassTimer); pluginsState.emailSmtpPassTimer = setTimeout(() => void saveEmailField("emailSmtpPass", emailSmtpPassInput.value.trim()), 800); });
 emailFromNameInput?.addEventListener("input", () => { clearTimeout(pluginsState.emailFromNameTimer); pluginsState.emailFromNameTimer = setTimeout(() => void saveEmailField("emailFromName", emailFromNameInput.value.trim()), 800); });
+emailImapHostInput?.addEventListener("input", () => { clearTimeout(pluginsState.emailImapHostTimer); pluginsState.emailImapHostTimer = setTimeout(() => void saveEmailField("emailImapHost", emailImapHostInput.value.trim()), 800); });
+emailImapPortInput?.addEventListener("input", () => { clearTimeout(pluginsState.emailImapPortTimer); pluginsState.emailImapPortTimer = setTimeout(() => void saveEmailField("emailImapPort", Number(emailImapPortInput.value) || 993), 800); });
+emailImapSecureInput?.addEventListener("change", () => void saveEmailField("emailImapSecure", emailImapSecureInput.checked));
 
 // 模块加载时拉一次配置
 void loadEmailConfig();

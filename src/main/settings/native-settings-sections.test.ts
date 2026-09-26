@@ -158,6 +158,9 @@ describe("buildPluginsSectionSnapshot", () => {
     emailSmtpUser: "u",
     emailSmtpPass: "p",
     emailFromName: "昔涟",
+    emailImapHost: "imap.qq.com",
+    emailImapPort: 993,
+    emailImapSecure: true,
   };
 
   it("投影内置工具配置与权限档位；非法枚举回落、空档位回落只读", () => {
@@ -171,6 +174,9 @@ describe("buildPluginsSectionSnapshot", () => {
       searchEngine: "bocha",
       emailEnabled: true,
       emailSmtpPort: 465,
+      emailImapHost: "imap.qq.com",
+      emailImapPort: 993,
+      emailImapSecure: true,
       permissionLevel: "full",
     });
 
