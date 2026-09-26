@@ -22,6 +22,9 @@ switch (command)
     case "verify-rerank":
         VerifyRerank.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/reranker-verify-data.json");
         return 0;
+    case "verify-tokenize":
+        VerifyTokenize.Run(args.Length > 2 ? args[2] : "scripts/diagnostics/rag-search-verify-data.json");
+        return 0;
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
         return 0;
@@ -129,6 +132,93 @@ internal static class Verify
         }
         return dot / (Math.Sqrt(na) * Math.Sqrt(nb) + 1e-12);
     }
+}
+
+/// <summary>
+/// 分词对账：JiebaTokenizer vs TS tokenize（@node-rs/jieba）。
+/// 输出逐词一致率与首个不匹配样本（BM25 移植的可行性依据）。
+/// </summary>
+internal static class VerifyTokenize
+{
+    public static void Run(string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        var root = doc.RootElement;
+        var customWords = root.TryGetProperty("customWords", out var cw)
+            ? cw.EnumerateArray().Select((x) => x.GetString()!).ToArray()
+            : Array.Empty<string>();
+        var tokensNode = root.GetProperty("tokens");
+
+        int total = 0, matched = 0, lengthMismatch = 0, wordMismatch = 0;
+        int wordTotal = 0, wordMatched = 0, textsTotal = 0, textsWordExact = 0;
+        var samples = new List<string>();
+
+        foreach (var section in new[] { "docs", "queries" })
+        {
+            foreach (var item in tokensNode.GetProperty(section).EnumerateArray())
+            {
+                var text = item.GetProperty("text").GetString()!;
+                var expected = item.GetProperty("tokens").EnumerateArray().ToList();
+                var actual = JiebaTokenizer.Tokenize(text, customWords);
+                total += expected.Count;
+                wordTotal += expected.Count;
+                textsTotal++;
+                var wordsExact = expected.Count == actual.Count;
+                if (wordsExact)
+                {
+                    for (var i = 0; i < expected.Count; i++)
+                    {
+                        if (actual[i].Word == expected[i].GetProperty("w").GetString()) wordMatched++;
+                        else wordsExact = false;
+                    }
+                }
+                if (wordsExact) textsWordExact++;
+
+                if (expected.Count != actual.Count)
+                {
+                    lengthMismatch++;
+                    if (samples.Count < 8)
+                    {
+                        samples.Add($"[len] expect={expected.Count} actual={actual.Count} text=\"{Abbrev(text)}\"");
+                    }
+                    continue;
+                }
+
+                for (var i = 0; i < expected.Count; i++)
+                {
+                    var e = expected[i];
+                    var eWord = e.GetProperty("w").GetString()!;
+                    var eTag = e.GetProperty("tag").GetString()!;
+                    var eStop = e.GetProperty("s").GetInt32() == 1;
+                    var eNoun = e.GetProperty("n").GetInt32() == 1;
+                    var a = actual[i];
+                    if (a.Word == eWord && a.Tag == eTag && a.IsStop == eStop && a.IsNoun == eNoun)
+                    {
+                        matched++;
+                    }
+                    else
+                    {
+                        wordMismatch++;
+                        if (samples.Count < 8)
+                        {
+                            samples.Add(
+                                $"[tok] #{i} expect={eWord}/{eTag}(s={eStop},n={eNoun}) actual={a.Word}/{a.Tag}(s={a.IsStop},n={a.IsNoun}) text=\"{Abbrev(text)}\"");
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach (var s in samples) Console.WriteLine($"[verify-tokenize] {s}");
+        var rate = total > 0 ? matched * 100.0 / total : 100.0;
+        var wordRate = wordTotal > 0 ? wordMatched * 100.0 / wordTotal : 100.0;
+        Console.WriteLine(
+            $"[verify-tokenize] exact match: {matched}/{total} ({rate:F2}%), word-mismatch={wordMismatch}, length-mismatch texts={lengthMismatch}");
+        Console.WriteLine(
+            $"[verify-tokenize] words-only: {wordMatched}/{wordTotal} ({wordRate:F2}%), word-sequence-identical texts={textsWordExact}/{textsTotal}");
+    }
+
+    private static string Abbrev(string text) => text.Length <= 24 ? text : text[..24] + "…";
 }
 
 /// <summary>

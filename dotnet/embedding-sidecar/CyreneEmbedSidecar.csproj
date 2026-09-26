@@ -14,8 +14,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="JiebaNet.Segmenter" Version="1.0.6" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.0" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="1.0.1" />
+    <!-- JiebaNet.Segmenter 1.0.6 传递依赖 11.0.2（NU1903 高危），显式覆盖 -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
 </Project>
