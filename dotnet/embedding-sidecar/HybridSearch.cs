@@ -17,6 +17,7 @@ public static class HybridSearch
         IReadOnlyCollection<string> customWords,
         double vectorWeight = 0.7,
         double bm25Weight = 0.3,
+        bool updateRecall = true,
         long? nowOverride = null)
     {
         if (store.Entries.Count == 0) return new List<Bm25Scorer.Scored>();
@@ -24,7 +25,7 @@ public static class HybridSearch
         var now = nowOverride ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var queryVector = embedder.Embed(new[] { query })[0].Select((f) => (double)f).ToArray();
 
-        var vectorResults = store.Search(queryVector, source, topK * 3, 0.3, importIds, allowedEntryIds, now);
+        var vectorResults = store.Search(queryVector, source, topK * 3, 0.3, importIds, allowedEntryIds, now, updateRecall);
         var bm25Results = Bm25Scorer.Search(store.Entries, query, source, topK * 3, importIds, allowedEntryIds, customWords);
 
         var merged = new Dictionary<string, (MemoryEntry Entry, double VectorScore, double Bm25Score)>();

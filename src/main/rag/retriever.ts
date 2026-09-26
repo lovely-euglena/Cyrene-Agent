@@ -1,6 +1,8 @@
 import { JsonVectorStore, SearchResult } from "./vectorstore";
 import { EmbeddingProvider, getEmbeddingProvider } from "./embedding";
 import { getReranker } from "./reranker";
+import { getEmbeddingSidecarClient, isSidecarEnabled } from "./embedding-sidecar";
+import { DEFAULT_MODEL_KEY } from "./embedding-pipeline";
 
 // ── @node-rs/jieba 分词（Node 24 兼容；nodejieba 已弃用） ──
 import { Jieba } from "@node-rs/jieba";
@@ -217,6 +219,45 @@ export class HybridRetriever {
     const stats = this.store.stats;
     if (stats.total === 0) return [];
 
+    // ── .NET sidecar 优先（Phase B）：向量 + BM25 + 融合 + 召回回写全部下沉 ──
+    // 失败回退本地实现；回退前先同步 .NET 可能已落盘的召回统计
+    const sidecar = isSidecarEnabled() ? getEmbeddingSidecarClient() : null;
+    if (sidecar) {
+      try {
+        const response = await sidecar.searchHybrid(DEFAULT_MODEL_KEY, {
+          ragDataDir: this.store.getDirectory(),
+          query,
+          source,
+          topK,
+          importIds: options.importIds,
+          allowedEntryIds: options.allowedEntryIds,
+          customWords: Array.from(customWords),
+          vectorWeight,
+          bm25Weight,
+          updateRecall: true,
+        });
+        const candidates: SearchResult[] = response.entries.map((entry, i) => ({
+          entry: {
+            id: entry.id,
+            text: entry.text,
+            embedding: Array.from(response.embeddings[i] ?? []),
+            source: entry.source,
+            weight: entry.weight,
+            createdAt: entry.createdAt,
+            lastRecalledAt: entry.lastRecalledAt,
+            metadata: entry.metadata ?? undefined,
+          },
+          score: entry.score,
+        }));
+        return this.rerankCandidates(query, candidates);
+      } catch (error) {
+        console.warn("[HybridRetriever] sidecar search failed, falling back to local:", error);
+        this.store.reload();
+      }
+    }
+
+    // ── 本地实现（回退路径） ──
+
     // 如果没有 provider，向量检索不可用，只用 BM25
     if (!this.provider) {
       const bm25Results = this.bm25Search(query, source, topK, options);
@@ -257,9 +298,11 @@ export class HybridRetriever {
 
     scored.sort((a, b) => b.score - a.score);
     const candidates = scored.slice(0, topK);
+    return this.rerankCandidates(query, candidates);
+  }
 
-    // ── Reranker 精排 ──
-    // 如果 reranker 可用，用 cross-encoder 对候选结果做精排
+  /** Reranker 精排（sidecar / 本地两条路径共用；失败保留 hybrid 分数）。 */
+  private async rerankCandidates(query: string, candidates: SearchResult[]): Promise<SearchResult[]> {
     const reranker = getReranker();
     if (reranker && candidates.length > 1) {
       try {
@@ -267,7 +310,7 @@ export class HybridRetriever {
         const reranked = await reranker.rerank(query, docs);
         const scoreMap = new Map(reranked.map((r) => [r.text, r.score]));
 
-        // 用 reranker 分数重排，但保留原始 hybrid 分数作为参考
+        // 用 reranker 分数重排（覆盖 hybrid 分数）
         for (const c of candidates) {
           const rerankScore = scoreMap.get(c.entry.text);
           if (rerankScore !== undefined) {
@@ -279,7 +322,6 @@ export class HybridRetriever {
         console.warn("[HybridRetriever] reranker failed, using hybrid scores:", err);
       }
     }
-
     return candidates;
   }
 

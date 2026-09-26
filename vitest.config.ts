@@ -22,5 +22,10 @@ export default defineConfig({
     watch: false,
     cache: false,
     fileParallelism: false,
+    // 单测禁用 .NET sidecar：环境上 exe 存在时会真的拉起 776MB 进程，
+    // 且检索结果依赖本机模型/词表，必须走确定性本地实现
+    env: {
+      CYRENE_EMBED_SIDECAR: "0",
+    },
   },
 });

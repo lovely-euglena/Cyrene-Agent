@@ -432,6 +432,20 @@ internal static class Server
         return _reranker;
     }
 
+    /// <summary>RAG 向量库缓存（按目录；mtime 变更时自动重载，见 RagStore.RefreshIfChanged）。</summary>
+    private static readonly Dictionary<string, RagStore> _ragStores = new();
+
+    private static RagStore GetRagStore(string dir)
+    {
+        if (!_ragStores.TryGetValue(dir, out var store))
+        {
+            store = new RagStore(dir);
+            _ragStores[dir] = store;
+        }
+        store.RefreshIfChanged();
+        return store;
+    }
+
     public static void Run(string modelDir)
     {
         Console.Error.WriteLine($"[serve] model dir: {modelDir}");
@@ -543,6 +557,37 @@ internal static class Server
             }
             if (request is null) continue;
 
+            if (request.Op == "search")
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(request.RagDataDir))
+                    {
+                        throw new InvalidOperationException("search requires ragDataDir");
+                    }
+                    var store = GetRagStore(request.RagDataDir);
+                    var results = HybridSearch.Retrieve(
+                        store,
+                        engine,
+                        request.Query ?? "",
+                        request.Source,
+                        request.TopK ?? 5,
+                        request.ImportIds,
+                        request.AllowedEntryIds,
+                        request.CustomWords ?? Array.Empty<string>(),
+                        request.VectorWeight ?? 0.7,
+                        request.Bm25Weight ?? 0.3,
+                        request.UpdateRecall ?? true);
+                    WriteSearchResponse(stdout, request.Id, results, engine.Dimensions);
+                }
+                catch (Exception ex)
+                {
+                    WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = ex.Message });
+                    Console.Error.WriteLine($"[serve] search failed: {ex}");
+                }
+                continue;
+            }
+
             if (request.Op == "rerank")
             {
                 try
@@ -628,6 +673,44 @@ internal static class Server
         stdout.Flush();
     }
 
+    /// <summary>search 响应：结果条目 JSON + 每条 embedding 以 float32 二进制段对齐写出。</summary>
+    private static void WriteSearchResponse(Stream stdout, int id, List<Bm25Scorer.Scored> results, int dim)
+    {
+        var header = new
+        {
+            id,
+            ok = true,
+            count = results.Count,
+            dim,
+            results = results.Select((r) => new
+            {
+                id = r.Entry.Id,
+                text = r.Entry.Text,
+                source = r.Entry.Source,
+                weight = r.Entry.Weight,
+                createdAt = r.Entry.CreatedAt,
+                lastRecalledAt = r.Entry.LastRecalledAt,
+                metadata = r.Entry.Metadata,
+                score = r.Score,
+            }).ToArray(),
+        };
+        var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+        var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
+        var frameHead = new byte[4 + headerBytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
+        headerBytes.CopyTo(frameHead.AsSpan(4));
+        stdout.Write(frameHead, 0, frameHead.Length);
+        foreach (var r in results)
+        {
+            // entry embedding 原始值来自 float32（JSON 解析为 double），转回 float 无损
+            var floats = new float[dim];
+            var n = Math.Min(dim, r.Entry.Embedding.Length);
+            for (var i = 0; i < n; i++) floats[i] = (float)r.Entry.Embedding[i];
+            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(floats.AsSpan()));
+        }
+        stdout.Flush();
+    }
+
     /// <summary>协议 JSON 统一 camelCase（与 JS 侧约定一致）。</summary>
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
 
@@ -640,6 +723,16 @@ internal static class Server
         public string? Query { get; set; }
         public string[]? Documents { get; set; }
         public string? RerankerDir { get; set; }
+        // search op：库目录 + 查询/过滤/权重
+        public string? RagDataDir { get; set; }
+        public int? TopK { get; set; }
+        public string? Source { get; set; }
+        public string[]? ImportIds { get; set; }
+        public string[]? AllowedEntryIds { get; set; }
+        public string[]? CustomWords { get; set; }
+        public double? VectorWeight { get; set; }
+        public double? Bm25Weight { get; set; }
+        public bool? UpdateRecall { get; set; }
     }
 
     private sealed class ResponseHeader

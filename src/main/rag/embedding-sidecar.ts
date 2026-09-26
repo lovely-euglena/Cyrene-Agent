@@ -36,8 +36,42 @@ import { app } from "electron";
 import { trackChildProcess } from "../child-processes";
 import { DecodedFrame, SidecarFrameDecoder } from "./sidecar-frame-decoder";
 
+interface SidecarResponse {
+  header: Record<string, unknown>;
+  vectors: Float32Array[];
+}
+
+export interface SidecarSearchRequest {
+  ragDataDir: string;
+  query: string;
+  source?: string;
+  topK: number;
+  importIds?: string[];
+  allowedEntryIds?: string[];
+  customWords?: string[];
+  vectorWeight?: number;
+  bm25Weight?: number;
+  updateRecall?: boolean;
+}
+
+export interface SidecarSearchEntry {
+  id: string;
+  text: string;
+  source: string;
+  weight: number;
+  createdAt: number;
+  lastRecalledAt: number;
+  metadata?: Record<string, unknown> | null;
+  score: number;
+}
+
+export interface SidecarSearchResponse {
+  entries: SidecarSearchEntry[];
+  embeddings: Float32Array[];
+}
+
 interface PendingRequest {
-  resolve: (vectors: Float32Array[]) => void;
+  resolve: (response: SidecarResponse) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }
@@ -111,7 +145,8 @@ export class EmbeddingSidecarClient {
     if (texts.length === 0) return [];
     const timeoutMs =
       REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(texts.length, 256);
-    return this.request(modelKey, { op: "embed", texts }, timeoutMs, `texts=${texts.length}`);
+    const response = await this.request(modelKey, { op: "embed", texts }, timeoutMs, `texts=${texts.length}`);
+    return response.vectors;
   }
 
   /**
@@ -127,7 +162,7 @@ export class EmbeddingSidecarClient {
     if (documents.length === 0) return [];
     const timeoutMs =
       REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(documents.length, 256);
-    const vectors = await this.request(
+    const { vectors } = await this.request(
       modelKey,
       { op: "rerank", query, documents, rerankerDir },
       timeoutMs,
@@ -137,13 +172,29 @@ export class EmbeddingSidecarClient {
     return vectors.map((v) => v[0] ?? 0);
   }
 
+  /**
+   * 混合检索（.NET）：向量 + BM25 + 融合 + 召回回写全部在 sidecar 执行。
+   * 返回条目与对齐的 embedding；失败由调用方回退本地实现。
+   */
+  async searchHybrid(modelKey: string, payload: SidecarSearchRequest): Promise<SidecarSearchResponse> {
+    // 耗时与候选量相关（全库分词 + 扫描）；后续可做 token 缓存优化
+    const { header, vectors } = await this.request(
+      modelKey,
+      { op: "search", ...payload },
+      REQUEST_TIMEOUT_BASE_MS,
+      `search="${payload.query.slice(0, 24)}"`,
+    );
+    const entries = Array.isArray(header.results) ? (header.results as SidecarSearchEntry[]) : [];
+    return { entries, embeddings: vectors };
+  }
+
   /** 请求公共路径：模型一致性检查 + 懒启动 + 超时 + pending 路由。 */
   private async request(
     modelKey: string,
     header: Record<string, unknown>,
     timeoutMs: number,
     label: string,
-  ): Promise<Float32Array[]> {
+  ): Promise<SidecarResponse> {
     if (this.modelKey && this.modelKey !== modelKey) {
       // 当前 sidecar 加载的模型不同：重启换模型（现阶段只有 bgem3，防御式处理）
       await this.dispose("model-switch");
@@ -151,7 +202,7 @@ export class EmbeddingSidecarClient {
     await this.ensureStarted(modelKey);
 
     const id = this.nextId++;
-    return new Promise<Float32Array[]>((resolve, reject) => {
+    return new Promise<SidecarResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id);
         if (!pending) return;
@@ -324,7 +375,7 @@ export class EmbeddingSidecarClient {
         const copy = binary!.buffer.slice(start, start + dim * 4);
         vectors.push(new Float32Array(copy));
       }
-      pending.resolve(vectors);
+      pending.resolve({ header, vectors });
     } else {
       pending.reject(new Error(header.error ?? "Embedding sidecar embed failed"));
     }

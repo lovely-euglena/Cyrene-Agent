@@ -253,7 +253,8 @@ public sealed class RagStore
         double minScore,
         IReadOnlyCollection<string>? importIds,
         IReadOnlyCollection<string>? allowedEntryIds,
-        long now)
+        long now,
+        bool updateRecall = true)
     {
         var results = new List<(MemoryEntry, double)>();
         if (_entries.Count == 0) return results;
@@ -320,12 +321,15 @@ public sealed class RagStore
         results.Sort((a, b) => b.Item2.CompareTo(a.Item2));
         var top = results.Take(topK).ToList();
 
-        foreach (var (entry, _) in top)
+        if (updateRecall)
         {
-            entry.LastRecalledAt = now;
-            entry.Weight = Math.Min(entry.Weight + 0.05, 5.0);
+            foreach (var (entry, _) in top)
+            {
+                entry.LastRecalledAt = now;
+                entry.Weight = Math.Min(entry.Weight + 0.05, 5.0);
+            }
+            if (top.Count > 0) Save();
         }
-        if (top.Count > 0) Save();
 
         return top;
     }

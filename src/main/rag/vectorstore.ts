@@ -295,6 +295,18 @@ export class JsonVectorStore {
     return this.indexMeta;
   }
 
+  /** 库目录（.NET sidecar search op 需要显式传入）。 */
+  getDirectory(): string {
+    return path.dirname(this.filePath);
+  }
+
+  /** 从磁盘重载（sidecar 回写召回统计后，本地回退前同步内存副本）。 */
+  reload(): void {
+    this.load();
+    this.loadIndexMeta();
+    this.markIndexDirty();
+  }
+
   // ── IVF 索引管理 ──
 
   /** 强制重建 IVF 索引 */
