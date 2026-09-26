@@ -193,6 +193,7 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
     listRecentProjects: async () => [],
     validateWorkspacePath: async () => ({ ok: true }),
     setWorkspace: async () => ({ ok: true }),
+    onCompactionPhase: () => () => {},
     initLearnWorkspace: async () => ({ ok: true }),
     openWorkspace: async () => ({ ok: true }),
     shellFile: async () => ({ ok: true }),
