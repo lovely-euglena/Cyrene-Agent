@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -375,11 +376,13 @@ public sealed partial class SettingsWindow : NativeWindow
             "通用设置",
             "控制状态栏、日程栏、基础音频和系统行为。"));
         panel.Children.Add(MakeSectionStatus("general"));
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("启动与提醒"));
         panel.Children.Add(MakeToggleRow("开机自启", GetBool("launchAtLogin"), v => SetSetting("launchAtLogin", v)));
         panel.Children.Add(MakeToggleRow("提醒音效", GetBool("toastSoundEnabled", true),
             v => SetSetting("toastSoundEnabled", v)));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("窗口"));
         panel.Children.Add(MakeToggleRow("状态栏窗口", GetBool("sidebarVisible", true),
             v => SetSetting("sidebarVisible", v)));
@@ -387,6 +390,7 @@ public sealed partial class SettingsWindow : NativeWindow
             v => SetSetting("tasksVisible", v)));
         panel.Children.Add(MakeHint("关闭状态栏/日程栏后立即隐藏；再次打开从托盘或此处恢复。"));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("性能"));
         panel.Children.Add(MakeToggleRow("禁用 GPU 渲染", GetBool("disableGpuElectron"),
             v => SetSetting("disableGpuElectron", v)));
@@ -412,6 +416,7 @@ public sealed partial class SettingsWindow : NativeWindow
         gpuHint.Children.Add(MakeHint("得知当前是否使用 GPU 渲染。"));
         panel.Children.Add(gpuHint);
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("聊天记录"));
         void ClearChatHistory()
         {
@@ -427,6 +432,7 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeDescribedRow("聊天记录管理", "清空全部本地聊天会话。",
             MakeButton("清空记录", ClearChatHistory, minWidth: 96)));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("数据与存储"));
         void OpenDataLocation()
         {
@@ -439,6 +445,7 @@ public sealed partial class SettingsWindow : NativeWindow
             "把数据保存到程序目录或自定义文件夹，随程序一起移动；调整后可选择迁移数据，应用会自动重启。",
             MakeButton("调整…", OpenDataLocation, minWidth: 96)));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("语言"));
         panel.Children.Add(MakeDescribedRow("语言", "当前仅支持中文，其他语言待开发。",
             MakeChoiceGroup(
@@ -452,12 +459,14 @@ public sealed partial class SettingsWindow : NativeWindow
                 GetString("language", "zh-CN"),
                 _ => { })));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("Git 提交身份"));
         panel.Children.Add(MakeHint("代码 Git 面板提交时使用；邮箱必填。"));
         panel.Children.Add(MakeTextRow("作者名", GetString("gitCommitAuthorName", "Cyrene"),
             v => SetSetting("gitCommitAuthorName", v)));
         panel.Children.Add(MakeTextRow("邮箱", GetString("gitCommitAuthorEmail"),
             v => SetSetting("gitCommitAuthorEmail", v)));
+        CardifySubBlocks(panel);
 
         return panel;
     }
@@ -472,6 +481,7 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeSectionStatus("appearance"));
 
         // ── 布局（旧版 appearance-section：多窗口选中 / 单窗口 SOON 占位） ──
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("布局"));
         panel.Children.Add(MakeHint("选择昔涟与聊天、状态和日程窗口的组织方式。"));
         var layoutRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
@@ -479,6 +489,7 @@ public sealed partial class SettingsWindow : NativeWindow
         layoutRow.Children.Add(MakeLayoutCard("▣", "单窗口", "集中在一个主窗口中", active: false, soon: true));
         panel.Children.Add(layoutRow);
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("昔涟桌宠"));
         panel.Children.Add(MakeToggleRow("桌宠显示", GetBool("petVisible", true), v => SetSetting("petVisible", v)));
         panel.Children.Add(MakeToggleRow("桌宠始终置顶", GetBool("petAlwaysOnTop", true),
@@ -486,15 +497,18 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeDoubleSliderRow("桌宠缩放", GetDouble("petZoom", 1), 0.5, 2, 0.1, "%",
             v => SetSetting("petZoom", Math.Round(v, 1)), v => $"{Math.Round(v * 100)}%"));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("窗口"));
         panel.Children.Add(MakeSliderRow("窗口圆角", GetInt("windowCornerRadius", 24), 0, 40, "px",
             v => SetSetting("windowCornerRadius", v)));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("界面"));
         panel.Children.Add(MakeUiIconRow(GetString("uiIcon", "cyrene-sun")));
         panel.Children.Add(MakeUiFontRow());
         panel.Children.Add(MakeSoonPlaceholderRow("聊天背景"));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("聊天排版"));
         panel.Children.Add(MakeDoubleSliderRow("行间距", GetDouble("chatLineHeight", 1.75), 1.2, 2.0, 0.05, "",
             v => SetSetting("chatLineHeight", Math.Round(v, 2)), v => v.ToString("0.00")));
@@ -502,6 +516,7 @@ public sealed partial class SettingsWindow : NativeWindow
             v => SetSetting("chatParaSpacing", Math.Round(v, 2)), v => v.ToString("0.00") + "em"));
         panel.Children.Add(MakeToggleRow("昔涟回复气泡", GetBool("assistantBubbleEnabled"),
             v => SetSetting("assistantBubbleEnabled", v)));
+        CardifySubBlocks(panel);
 
         return panel;
     }
@@ -685,6 +700,7 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakeHeader("关于"));
+        panel.Children.Add(BlockMark());
         // 应用图标 + 品牌行（对齐 Electron 设置页导航头部的 logo/标语）
         var logo = new Image
         {
@@ -701,6 +717,7 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(MakeHint($"版本：v{GetString("version", "未知")}"));
         panel.Children.Add(MakeHint($"cyrene-native 运行时：.NET {Environment.Version}"));
         panel.Children.Add(MakeHint("协议：stdio 帧（与宿主同链路）"));
+        CardifySubBlocks(panel);
         return panel;
     }
 
@@ -1030,6 +1047,50 @@ public sealed partial class SettingsWindow : NativeWindow
             Child = content,
             Effect = NativeTheme.CardShadow(),
         };
+    }
+
+    /// <summary>
+    /// 子块分界标记（自身不渲染）：配合 CardifySubBlocks 把每个子项目包成卡片。
+    /// 用法：在 section 构造里，每个子块第一行前 panel.Children.Add(BlockMark())，
+    /// 最后调 CardifySubBlocks(panel)。
+    /// </summary>
+    private static Border BlockMark() => new()
+    {
+        Tag = "cyrene-block-mark",
+        Height = 0,
+        Visibility = Visibility.Collapsed,
+    };
+
+    /// <summary>
+    /// 把 section 内容按 BlockMark 分组包进卡片（设置页统一卡片样式）：
+    /// 每组（标记与下一个标记之间，不含标记）成为一个白底圆角卡片；
+    /// 首个标记之前的前导元素（面板标题 / 状态行）保持裸放。
+    /// </summary>
+    private static void CardifySubBlocks(StackPanel panel)
+    {
+        var groups = new List<List<UIElement>>();
+        var preamble = new List<UIElement>();
+        List<UIElement>? current = null;
+        foreach (var child in panel.Children.Cast<UIElement>().ToArray())
+        {
+            if (child is Border { Tag: "cyrene-block-mark" })
+            {
+                current = new List<UIElement>();
+                groups.Add(current);
+                continue;
+            }
+            (current ?? preamble).Add(child);
+        }
+        if (groups.Count == 0) return;
+        panel.Children.Clear();
+        foreach (var element in preamble) panel.Children.Add(element);
+        foreach (var group in groups)
+        {
+            if (group.Count == 0) continue;
+            var card = MakeCard(out var body);
+            foreach (var element in group) body.Children.Add(element);
+            panel.Children.Add(card);
+        }
     }
 
     private static string FormatUnixMs(double ms)

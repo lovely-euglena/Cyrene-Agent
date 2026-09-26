@@ -30,6 +30,7 @@ public sealed partial class SettingsWindow
         var tokens = GetNode("tokens");
         var activeDays = GetInt(tokens, "days", 7);
 
+        panel.Children.Add(BlockMark());
         var rangeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 12) };
         foreach (var days in new[] { 7, 14, 30 })
         {
@@ -83,6 +84,7 @@ public sealed partial class SettingsWindow
             }
         }
         var hasData = values.Any((day) => day.Input > 0 || day.Output > 0 || day.Requests > 0 || day.AttemptedRequests > 0);
+        panel.Children.Add(BlockMark());
         if (!hasData)
         {
             // 空库也保留图表框架（用户期望始终能看到图表区），上方两行提示说明
@@ -224,6 +226,7 @@ public sealed partial class SettingsWindow
 
         // ── 模型用量（环形图 + 列表） ──
         var models = GetNode(tokens, "models");
+        panel.Children.Add(BlockMark());
         if (models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
         {
             panel.Children.Add(MakeSubHeader("模型用量"));
@@ -249,6 +252,7 @@ public sealed partial class SettingsWindow
             panel.Children.Add(chartRow);
         }
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeActionButton("重置统计", () =>
         {
             if (MessageBox.Show("确定重置本地 Token 用量统计？该操作不可撤销。", "重置统计",
@@ -258,6 +262,7 @@ public sealed partial class SettingsWindow
             }
             RequestRouter.SendSettingsAction("tokens", "clear", null);
         }));
+        CardifySubBlocks(panel);
         return panel;
     }
 

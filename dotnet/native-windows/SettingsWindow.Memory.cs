@@ -39,6 +39,7 @@ public sealed partial class SettingsWindow
         BuildMemoryImportedDocsBlock(panel, memory);
         BuildMemoryReflectionsBlock(panel, memory);
         BuildMemoryVaultBlock(panel, memory);
+        CardifySubBlocks(panel);
 
         return panel;
     }
@@ -50,6 +51,7 @@ public sealed partial class SettingsWindow
         var l0 = GetNode(memory, "l0");
         var l1 = GetNode(memory, "l1");
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.MemoryProfile, 18, NativeTheme.TextDefaultBrush),
             "长期画像", "L0", "昔涟一直记得、基本不会变化的信息", "手动修改的内容优先级高于自动推断"));
@@ -83,6 +85,7 @@ public sealed partial class SettingsWindow
                 noteBox.Text = GetString(l0, "permanentNote");
             }));
 
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.MemoryRecent, 18, NativeTheme.TextDefaultBrush),
             "近况", "L1", "最近的目标、偏好和状态，会随时间变化", "手动修改的内容优先级高于自动推断"));
@@ -179,17 +182,21 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryL2Block(StackPanel panel, JsonElement memory)
     {
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.MemoryEvents, 18, NativeTheme.TextDefaultBrush),
             "事件片段", "L2", "从聊天中提炼的重要事件，可搜索和管理"));
-        var searchRow = new StackPanel { Orientation = Orientation.Horizontal };
+        // 搜索框旧版为整行宽（.memory-search input width:100%）；这里用 Grid 撑满
+        var searchRow = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var searchBox = new TextBox
         {
-            Width = 260,
             FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             Text = _memoryL2Query,
             VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             ToolTip = "按内容 / 触发片段 / 状态过滤",
         };
         var total = GetNode(memory, "l2Total");
@@ -207,7 +214,9 @@ public sealed partial class SettingsWindow
                     : $"共 {total.GetInt32()} 条")
                 : "",
         };
+        Grid.SetColumn(searchBox, 0);
         searchRow.Children.Add(searchBox);
+        Grid.SetColumn(totalText, 1);
         searchRow.Children.Add(totalText);
         panel.Children.Add(searchRow);
 
@@ -264,6 +273,7 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryImportedDocsBlock(StackPanel panel, JsonElement memory)
     {
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.BookRag, 22, NativeTheme.TextDefaultBrush),
             "导入知识", description: "用户上传的文档和知识库"));
@@ -306,6 +316,7 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryReflectionsBlock(StackPanel panel, JsonElement memory)
     {
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.Reflection, 18, NativeTheme.TextDefaultBrush),
             "回顾", description: "AI 自动生成的阶段性回顾"));
@@ -335,6 +346,7 @@ public sealed partial class SettingsWindow
 
     private void BuildMemoryVaultBlock(StackPanel panel, JsonElement memory)
     {
+        panel.Children.Add(BlockMark());
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.CircleCheck, 18, NativeTheme.TextDefaultBrush),
             "Obsidian Vault 绑定", description: "绑定一个文件夹，把记忆同步成 .md 文件，用 [[双链]] 互连",

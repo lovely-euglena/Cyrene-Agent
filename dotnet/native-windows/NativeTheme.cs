@@ -1165,6 +1165,37 @@ public static class NativeTheme
         Apply();
     }
 
+    /// <summary>
+    /// 无边框对话框外壳：标题栏 + 内容 + 圆角/阴影一次装好（Content = shell）。
+    /// 历史 bug：对话框只设 Content=root 会整体透明（无背景层），必须走本壳。
+    /// content 建议 Margin 20,14,20,16。
+    /// </summary>
+    public static void ApplyDialogShell(Window window, string title, FrameworkElement content, double cornerRadius = 12)
+    {
+        var shellGrid = new Grid();
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var titleBar = BuildTitleBar(window, title);
+        Grid.SetRow(titleBar, 0);
+        shellGrid.Children.Add(titleBar);
+        Grid.SetRow(content, 1);
+        shellGrid.Children.Add(content);
+        ClipRounded(shellGrid, cornerRadius);
+        var contentBorder = new Border
+        {
+            CornerRadius = new CornerRadius(cornerRadius),
+            Background = SurfaceAppBrush,
+            BorderBrush = BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(16),
+            Child = shellGrid,
+        };
+        var windowShell = new Grid();
+        windowShell.Children.Add(MakeWindowShadowLayer(cornerRadius));
+        windowShell.Children.Add(contentBorder);
+        window.Content = windowShell;
+    }
+
     /// <summary>扁平图标按钮（标题栏用）。</summary>
     public static Button MakeIconButton(string glyph, Action onClick)
     {
