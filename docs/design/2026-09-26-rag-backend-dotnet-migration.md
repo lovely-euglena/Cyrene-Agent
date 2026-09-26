@@ -143,3 +143,33 @@ vitest rag + memory + application 330/330。
 
 **遗留**：worker_thread 导入路径保留（sidecar 禁用时回退）；BM25 全库分词优化项照旧；
 jieba-rs 移植评估照旧（Phase D 前）。
+
+## 10. 第二乱 Bug 审计：双写端原子性与竞态（2026-09-26 更新）
+
+**背景**：端到端自测（`rag-e2e-smoke.mjs`，14 项）与代码审计发现 TS / .NET 双写
+`memory-store.json` 的一致性问题，均已修复并固化回归：
+
+1. **陈旧副本整文件覆盖**（已修，commit cd7204a5）：
+   - `retrieve()` 空库短路用陈旧本地副本 → .NET 导入后 TS 检索返回 `[]`；
+     修复：空库判断前 `ensureFresh()`
+   - TS 本地写（add/addUnique/addBatch/addPreparedBatch/prune/delete*）直接刷盘
+     覆盖 .NET 条目；修复：写前 `ensureFresh()`
+   - .NET `allowedEntryIds=[]` 语义对齐 TS（空集=全排除；`importIds=[]`=不过滤）
+2. **原子性与快照竞态**（已修，commit 04e6e643）：
+   - 双端 save 改「tmp + rename/move」原子写（并发读不再可能读到半截 JSON）
+   - 解析失败（load/Reload catch）重置磁盘快照，强制下次重试，
+     避免"陈旧空副本被记为最新"后反向覆盖
+   - TS save 增加 Windows 共享冲突（.NET 读取占用）有界重试 + 直写兜底
+   - `add()` / `search()` 在 embed 完成后基于最新盘面回写（跨进程读写窗口收窄到
+     rename 级）；.NET `AddPreparedBatch` / `HasImportedDocumentChunks` / `Search`
+     前 `RefreshIfChanged()`，召回回写按 id 重定位
+   - 外部删库：.NET `RefreshIfChanged` 同步清空内存副本
+3. **回归**：`vectorstore-crossproc.test.ts` 4 例（embed 期间外部写入不丢 /
+   召回回写不丢外部写入 / 解析失败快照重置 / 原子写无 tmp 残留）
+
+**验证**：vitest rag+memory 269/269；RAG e2e 14/14；全量测试 4028/4029
+（唯一失败为 Git Bash 环境用例，基线一致）。
+
+**已知取舍**：跨进程仍为 last-writer-wins（无跨进程文件锁）；双写窗口已收窄到
+毫秒级（写前 refresh + 原子 rename），对本应用（桌面单用户、写入低频）足够。
+若未来出现多进程高频写同一库，再引入锁文件协议。
