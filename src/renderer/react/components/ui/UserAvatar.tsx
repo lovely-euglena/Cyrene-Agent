@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Bug, Check, ChevronRight, Languages, Palette, UserRound } from "lucide-react";
+import { Bug, Check, ChevronRight, Languages, Megaphone, Palette, UserRound } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
 import { applyUiTheme } from "../../../ui/theme";
+import { useNewsFeed } from "../../hooks/useNewsFeed";
 import { useUserAvatar } from "../../hooks/useUserAvatar";
 import { useUserNickname } from "../../hooks/useUserNickname";
 import { setUiLocale, useTranslation } from "../../i18n";
 import { IssueReportDialog } from "./IssueReportDialog";
+import { NewsDialog } from "./NewsDialog";
 import { UserProfileDialog } from "./UserProfileDialog";
 import "./UserAvatar.css";
 
@@ -20,9 +22,13 @@ export function UserAvatar({ label }: UserAvatarProps) {
   const nickname = useUserNickname();
   const [profileOpen, setProfileOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [newsOpen, setNewsOpen] = useState(false);
+  // 弹窗里要标出哪几条是新的，而 markRead 会立刻清掉未读，所以打开时先快照一份
+  const [newsUnreadSnapshot, setNewsUnreadSnapshot] = useState<string[]>([]);
   const [theme, setTheme] = useState<UiTheme>(() => normalizeUiTheme(document.documentElement.dataset.uiTheme));
   const displayLabel = (label ?? nickname) || "User";
   const language = locale === "en" ? "en" : "zh-CN";
+  const news = useNewsFeed(language);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -69,6 +75,11 @@ export function UserAvatar({ label }: UserAvatarProps) {
               {avatarUrl
                 ? <img src={avatarUrl} alt={t("ui.userAlt")} draggable={false} />
                 : <span>U</span>}
+              {news.unreadCount > 0 && (
+                <span className="cy-user-avatar-dot" aria-hidden="true">
+                  {news.unreadCount > 1 ? news.unreadCount : ""}
+                </span>
+              )}
             </span>
             <span className="cy-user-avatar-label">{displayLabel}</span>
           </button>
@@ -139,11 +150,35 @@ export function UserAvatar({ label }: UserAvatarProps) {
               <Bug size={16} aria-hidden="true" />
               <span>{t("ui.reportIssue.menuEntry")}</span>
             </DropdownMenu.Item>
+            <DropdownMenu.Item
+              className="cy-user-menu__item"
+              onSelect={() => {
+                setNewsUnreadSnapshot(news.unreadIds);
+                setNewsOpen(true);
+                news.markRead();
+              }}
+            >
+              <Megaphone size={16} aria-hidden="true" />
+              <span>{t("ui.news.menuEntry")}</span>
+              {news.unreadCount > 0 && (
+                <span className="cy-user-menu__dot" aria-hidden="true">
+                  {news.unreadCount}
+                </span>
+              )}
+            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
       <UserProfileDialog open={profileOpen} onOpenChange={setProfileOpen} avatarUrl={avatarUrl} />
       <IssueReportDialog open={reportOpen} onOpenChange={setReportOpen} />
+      <NewsDialog
+        open={newsOpen}
+        onOpenChange={setNewsOpen}
+        items={news.items}
+        unreadIds={newsUnreadSnapshot}
+        loading={news.loading}
+        failed={news.failed}
+      />
     </>
   );
 }

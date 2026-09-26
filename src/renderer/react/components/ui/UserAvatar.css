@@ -22,6 +22,7 @@
 }
 
 .cy-user-avatar-circle {
+  position: relative;
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -31,6 +32,30 @@
   justify-content: center;
   flex-shrink: 0;
   filter: drop-shadow(0 2px 8px rgba(76, 55, 98, 0.22));
+}
+
+/* 有未读公告时头像右上角的粉点；多于一条时直接显示条数 */
+.cy-user-avatar-circle .cy-user-avatar-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  display: flex;
+  min-width: 9px;
+  min-height: 9px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--rb-surface-elevated, #fff);
+  border-radius: 999px;
+  background: var(--rb-accent, #ff5b8a);
+  color: #fff;
+  font: 600 10px/1 var(--rb-font-sans, inherit);
+}
+
+/* 带数字时才撑成小胶囊，只有一条就是一个点 */
+.cy-user-avatar-circle .cy-user-avatar-dot:not(:empty) {
+  min-width: 15px;
+  min-height: 15px;
+  padding: 0 3px;
 }
 
 .cy-user-avatar-circle span {
@@ -144,6 +169,22 @@
 .cy-user-menu__item[data-highlighted],
 .cy-user-menu__item[data-state="open"] {
   background: var(--rb-surface-hover, #f4f1f3);
+}
+
+/* 菜单项右侧的未读粉点，直接显示未读条数 */
+.cy-user-menu__dot {
+  display: flex;
+  min-width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--rb-accent, #ff5b8a);
+  color: #fff;
+  font: 600 10px/1 var(--rb-font-sans, inherit);
 }
 
 .cy-user-menu__value {

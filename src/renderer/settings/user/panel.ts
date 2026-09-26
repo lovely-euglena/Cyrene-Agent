@@ -1,11 +1,11 @@
-// User 面板业务逻辑：用户资料加载 / 保存 / 头像上传 / 性别选择
+// User 面板业务逻辑：用户资料加载 / 保存 / 头像上传
 // 从 settings.ts 抽离。依赖 user DOM 引用（./dom）、timezone-options（白名单 + 校验）。
 // 副作用导入：模块加载时执行事件绑定 + 初始加载。
 
 import {
   avatarEl, uploadAvatarBtn,
   userDefaultCityInput, userNicknameInput, userCallPrefInput,
-  userBirthdayInput, userTimezoneSelect, userGenderGroup,
+  userBirthdayInput, userTimezoneSelect,
 } from "./dom";
 import { TIMEZONE_OPTIONS, normalizeTimezoneOptionValue } from "../timezone-options";
 
@@ -42,13 +42,6 @@ async function loadUserProfile(): Promise<void> {
       if (userDefaultCityInput) userDefaultCityInput.value = String(profile.defaultCity ?? "");
       // 时区：白名单校验，空/非法/不在白名单都回退 FALLBACK_TIMEZONE，不直接用 ?? 兜底
       if (userTimezoneSelect) userTimezoneSelect.value = normalizeTimezoneOptionValue(profile.timezone);
-      // 性别：标记当前选中的按钮
-      const gender = String(profile.gender ?? "secret");
-      if (userGenderGroup) {
-        userGenderGroup.querySelectorAll(".gender-select__btn").forEach((btn) => {
-          btn.classList.toggle("is-active", (btn as HTMLElement).dataset.gender === gender);
-        });
-      }
     }
   } catch {
     console.warn("[settings] load user profile failed");
@@ -105,19 +98,6 @@ if (userTimezoneSelect) {
       return; // 不发保存请求，等用户重新选
     }
     void window.user?.saveProfile({ timezone: safe });
-  });
-}
-
-// 性别：三档按钮，点击切换并原子保存
-if (userGenderGroup) {
-  userGenderGroup.querySelectorAll(".gender-select__btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const value = (btn as HTMLElement).dataset.gender;
-      if (!value) return;
-      userGenderGroup.querySelectorAll(".gender-select__btn").forEach((b) => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
-      void window.user?.saveProfile({ gender: value });
-    });
   });
 }
 

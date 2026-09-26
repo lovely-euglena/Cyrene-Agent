@@ -1,15 +1,12 @@
 .cy-settings-page {
   padding: 50px 10px 10px;
   gap: 10px;
-  --rb-font-sans: var(--rb-font-ui);
-  --rb-text-title: 400 20px/1.4 var(--rb-font-ui);
-  --rb-text-h2: 400 32px/1.25 var(--rb-font-ui);
-  --rb-text-small: 400 14px/1.5 var(--rb-font-ui);
-  --rb-text-small-em: 400 14px/1.5 var(--rb-font-ui);
-  --rb-text-caption: 400 13px/1.7 var(--rb-font-ui);
-  --rb-text-micro: 400 12px/1.5 var(--rb-font-ui);
-  --rb-text-primary: #0d0d0d;
-  --rb-text-secondary: color-mix(in oklab, #404040 60%, transparent);
+  --rb-text-title: 400 20px/1.4 var(--rb-font-sans);
+  --rb-text-h2: 400 32px/1.25 var(--rb-font-sans);
+  --rb-text-small: 400 14px/1.5 var(--rb-font-sans);
+  --rb-text-small-em: 400 14px/1.5 var(--rb-font-sans);
+  --rb-text-caption: 400 13px/1.7 var(--rb-font-sans);
+  --rb-text-micro: 400 12px/1.5 var(--rb-font-sans);
   color: var(--rb-text-primary);
   font: var(--rb-text-small);
   letter-spacing: normal;
@@ -107,8 +104,8 @@
 
 .cy-settings-sidebar__group-title {
   padding: 0 10px 8px;
-  color: color-mix(in oklab, #404040 40%, transparent);
-  font-family: var(--rb-font-ui);
+  color: var(--rb-text-secondary);
+  font-family: var(--rb-font-sans);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.5;

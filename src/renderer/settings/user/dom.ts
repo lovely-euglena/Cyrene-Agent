@@ -8,4 +8,3 @@ export const userNicknameInput = document.getElementById("user-nickname") as HTM
 export const userCallPrefInput = document.getElementById("user-call-pref") as HTMLInputElement | null;
 export const userBirthdayInput = document.getElementById("user-birthday") as HTMLInputElement | null;
 export const userTimezoneSelect = document.getElementById("user-timezone") as HTMLSelectElement | null;
-export const userGenderGroup = document.getElementById("user-gender") as HTMLElement | null;

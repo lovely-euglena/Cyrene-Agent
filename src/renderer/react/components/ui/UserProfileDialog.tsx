@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { format, isValid, parseISO } from "date-fns";
 import { zhCN } from "date-fns/locale";
-import { CalendarDays, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, Mars, Shield, Venus, X } from "lucide-react";
 import { DayPicker } from "react-day-picker";
 import { Dialog, Popover } from "radix-ui";
 import { FALLBACK_TIMEZONE, normalizeTimezoneOptionValue, TIMEZONE_OPTIONS } from "../../../settings/timezone-options";
@@ -175,17 +175,22 @@ export function UserProfileDialog({ open, onOpenChange, avatarUrl }: UserProfile
               <fieldset className="cy-user-profile__field cy-user-profile__gender-field">
                 <legend>{t("ui.profile.gender")}</legend>
                 <div className="cy-user-profile__segmented" role="group" aria-label={t("ui.profile.gender")}>
-                  {(["secret", "male", "female"] as const).map((gender) => (
-                    <button
-                      key={gender}
-                      type="button"
-                      aria-pressed={profile.gender === gender}
-                      className={profile.gender === gender ? "is-selected" : ""}
-                      onClick={() => updateProfile("gender", gender)}
-                    >
-                      {t(`ui.profile.gender${gender === "secret" ? "Secret" : gender === "male" ? "Male" : "Female"}`)}
-                    </button>
-                  ))}
+                  {(["secret", "male", "female"] as const).map((gender) => {
+                    // 男女用符号本身表示，保密用盾牌
+                    const GenderIcon = gender === "male" ? Mars : gender === "female" ? Venus : Shield;
+                    return (
+                      <button
+                        key={gender}
+                        type="button"
+                        aria-pressed={profile.gender === gender}
+                        className={profile.gender === gender ? "is-selected" : ""}
+                        onClick={() => updateProfile("gender", gender)}
+                      >
+                        <GenderIcon size={15} aria-hidden="true" />
+                        {t(`ui.profile.gender${gender === "secret" ? "Secret" : gender === "male" ? "Male" : "Female"}`)}
+                      </button>
+                    );
+                  })}
                 </div>
               </fieldset>
 

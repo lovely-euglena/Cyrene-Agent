@@ -4,6 +4,7 @@ import { ArrowLeft, AudioLines, BarChart3, Boxes, Brain, FileText, Headphones, H
 import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
 import { normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
+import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
 import { normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
 import {
@@ -15,9 +16,10 @@ import {
 import { useTranslation } from "../../i18n";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
 import { applyMessageTypography } from "../../../ui/message-typography";
+import { applyUiTheme } from "../../../ui/theme";
 import { WindowControls } from "../../components/ui/WindowControls";
 import { Card } from "../../components/ui/Card";
-import { SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
+import { SettingsSegmented, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import "../../components/ui/NewTaskButton.css";
 import { PreferencesSettingsPanel } from "./PreferencesSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
@@ -39,6 +41,7 @@ import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
 
 interface AppearanceValues {
+  uiTheme: UiTheme;
   windowCornerRadius: number;
   uiFont: UiFont;
   uiIcon: UiIcon;
@@ -49,6 +52,7 @@ interface AppearanceValues {
 }
 
 const defaults: AppearanceValues = {
+  uiTheme: "pearl-white",
   windowCornerRadius: 24,
   uiFont: { kind: "source-han" },
   uiIcon: "cyrene-sun",
@@ -69,6 +73,7 @@ function finiteNumber(value: unknown, fallback: number): number {
 function readAppearance(value: unknown): AppearanceValues {
   const input = objectValue(value);
   return {
+    uiTheme: normalizeUiTheme(input.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input.windowCornerRadius),
     uiFont: normalizeUiFont(input.uiFont),
     uiIcon: normalizeUiIcon(input.uiIcon),
@@ -168,6 +173,16 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     setValues((current) => ({ ...current, [key]: value }));
     if (key === "windowCornerRadius") applyWindowCornerRadius(value);
     setStatus(t("settingsPage.applyOnRelease"));
+  }
+
+  async function selectTheme(uiTheme: UiTheme) {
+    const previous = values.uiTheme;
+    setValues((current) => ({ ...current, uiTheme }));
+    applyUiTheme(uiTheme);
+    if (!await savePatch({ uiTheme })) {
+      setValues((current) => ({ ...current, uiTheme: previous }));
+      applyUiTheme(previous);
+    }
   }
 
   // 昔涟消息字体：拖动时实时写入 CSS 变量预览，松手由 saveTypography 落盘
@@ -292,6 +307,10 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   <p>{t("settingsPage.interfaceDescription")}</p>
                 </div>
                 <Card>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.theme")}</strong><span>{t("settingsPage.themeDescription")}</span></div>
+                    <SettingsSegmented value={values.uiTheme} onChange={(value) => void selectTheme(value as UiTheme)} options={[{ label: t("settingsPage.themePearlWhite"), value: "pearl-white" }, { label: t("settingsPage.themeCharcoalPink"), value: "charcoal-pink" }]} />
+                  </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.windowRadius")}</strong><span>{t("settingsPage.windowRadiusDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">

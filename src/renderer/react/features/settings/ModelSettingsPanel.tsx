@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import type { ApiTransport } from "../../../../shared/api-endpoint";
+import { MAX_PARALLEL_TOOL_CALLS } from "../../../../shared/task-session";
 import { resolveApiEndpoint } from "../../../../shared/api-endpoint";
 import type { ReasoningEffort, ReasoningPreference } from "../../../../shared/reasoning";
 import { normalizeManualReasoningConfig, type ManualReasoningConfig, type ManualReasoningStyle } from "../../../../shared/manual-reasoning";
@@ -676,7 +677,7 @@ export function ModelSettingsPanel() {
       setStatus({ kind: "error", text: t("settingsPage.modelSettings.userWaitRange") });
       return;
     }
-    if (!Number.isInteger(parallel) || parallel < 1 || parallel > 8) {
+    if (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_PARALLEL_TOOL_CALLS) {
       setStatus({ kind: "error", text: t("settingsPage.modelSettings.parallelRange") });
       return;
     }
@@ -715,7 +716,7 @@ export function ModelSettingsPanel() {
         </label>
         <label className="cy-model-field">
           <span>{t("settingsPage.modelSettings.parallel")}</span>
-          <SettingsInput className="cy-model-runtime__parallel" type="number" min={1} max={8} step={1} value={runtime.maxParallelToolCalls ?? ""} aria-label={t("settingsPage.modelSettings.parallel")} onChange={(event) => setRuntime((current) => ({ ...current, maxParallelToolCalls: event.target.value === "" ? null : Number(event.target.value) }))} />
+          <SettingsInput className="cy-model-runtime__parallel" type="number" min={1} max={MAX_PARALLEL_TOOL_CALLS} step={1} value={runtime.maxParallelToolCalls ?? ""} aria-label={t("settingsPage.modelSettings.parallel")} onChange={(event) => setRuntime((current) => ({ ...current, maxParallelToolCalls: event.target.value === "" ? null : Number(event.target.value) }))} />
           <small>{t("settingsPage.modelSettings.parallelHint")}</small>
         </label>
         <label className="cy-model-field">
