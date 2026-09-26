@@ -1394,6 +1394,234 @@ public static class NativeTheme
     public static Style ScrollBarStyle => ScrollBarLazy.Value;
     public static Style ToolTipStyle => ToolTipLazy.Value;
 
+    // ── 日期 / 时间控件（原生任务编辑器 + 用户信息生日共用） ──
+    // WPF 默认 DatePicker/Calendar 又小又旧（灰蓝系统色、字号 12），与 pearl-white
+    // 风格割裂；这里统一 34 高、圆角 10、白底软描边，日历弹层大字号圆角日格。
+
+    /// <summary>日期选择框模板（右侧日历图标；弹层 Calendar 由 CalendarStyle 接管）。</summary>
+    private static readonly System.Lazy<Style> DatePickerLazy = new(() => WithFocusRing(Parse($$"""
+<Style {{Ns}} TargetType="DatePicker">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="14"/>
+  <Setter Property="Height" Value="34"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="Background" Value="White"/>
+  <Setter Property="BorderBrush" Value="#D2D2D7"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="HorizontalContentAlignment" Value="Left"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="DatePicker">
+        <Border x:Name="bd" CornerRadius="10" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <DatePickerTextBox x:Name="PART_TextBox" Grid.Column="0" Background="Transparent" BorderThickness="0"
+                               Padding="10,0" FontSize="14" VerticalContentAlignment="Center" Focusable="{TemplateBinding Focusable}"/>
+            <Button x:Name="PART_Button" Grid.Column="1" Style="{x:Null}" Width="32" Height="30" Margin="0,0,2,0"
+                    Background="Transparent" BorderThickness="0" Cursor="Hand" Focusable="False" ToolTip="选择日期">
+              <Button.Template>
+                <ControlTemplate TargetType="Button">
+                  <Border x:Name="btnBd" CornerRadius="7" Background="Transparent">
+                    <Path Data="M7 10H41A3 3 0 0 1 44 13V39A3 3 0 0 1 41 42H7A3 3 0 0 1 4 39V13A3 3 0 0 1 7 10Z M4 19H44 M15 5V13 M33 5V13"
+                          Stroke="#8A8A94" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                          Stretch="Uniform" Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="btnBd" Property="Background" Value="#F3F4F6"/>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Button.Template>
+            </Button>
+            <Popup x:Name="PART_Popup" AllowsTransparency="True" Placement="Bottom" StaysOpen="False"
+                   IsOpen="{TemplateBinding IsDropDownOpen}" Focusable="False" PopupAnimation="Fade">
+              <Border Background="White" BorderBrush="#E5E5EA" BorderThickness="1" CornerRadius="12"
+                      Padding="6" Margin="0,4,0,6">
+                <Border.Effect>
+                  <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="2" Opacity="0.14" RenderingBias="Performance"/>
+                </Border.Effect>
+                <Calendar x:Name="PART_Calendar" Style="{TemplateBinding CalendarStyle}"/>
+              </Border>
+            </Popup>
+          </Grid>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsKeyboardFocusWithin" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FF5B8A"/>
+          </Trigger>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter TargetName="bd" Property="Opacity" Value="0.55"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+""")));
+
+    /// <summary>日期框内嵌文本框（无边框透明；空值显示水印）。</summary>
+    private static readonly System.Lazy<Style> DatePickerTextBoxLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="DatePickerTextBox">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="14"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="CaretBrush" Value="#FF5B8A"/>
+  <Setter Property="SelectionBrush" Value="#FFB1CB"/>
+  <Setter Property="Background" Value="Transparent"/>
+  <Setter Property="BorderThickness" Value="0"/>
+  <Setter Property="Padding" Value="10,0"/>
+  <Setter Property="VerticalContentAlignment" Value="Center"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="DatePickerTextBox">
+        <Grid>
+          <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" Focusable="False"/>
+          <ContentControl x:Name="PART_Watermark" Content="{TemplateBinding Watermark}" Foreground="#A0A0AA"
+                          Margin="{TemplateBinding Padding}" VerticalAlignment="Center" HorizontalAlignment="Left"
+                          IsHitTestVisible="False" Visibility="Collapsed"/>
+        </Grid>
+        <ControlTemplate.Triggers>
+          <MultiTrigger>
+            <MultiTrigger.Conditions>
+              <Condition Property="Text" Value=""/>
+              <Condition Property="IsKeyboardFocusWithin" Value="False"/>
+            </MultiTrigger.Conditions>
+            <Setter TargetName="PART_Watermark" Property="Visibility" Value="Visible"/>
+          </MultiTrigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+ 
+    /// <summary>日历弹层（尺寸/配色对齐设置页卡片；日格与年月份格见下）。</summary>
+    private static readonly System.Lazy<Style> CalendarLazy = new(() =>
+    {
+        var style = Parse($$"""
+<Style {{Ns}} TargetType="Calendar">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="13.5"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="Background" Value="White"/>
+  <Setter Property="BorderThickness" Value="0"/>
+  <Setter Property="Padding" Value="4"/>
+</Style>
+""");
+        // Calendar 内部日格/年月格不会自动吃窗口隐式样式：显式挂到 Calendar 的
+        // 三个 Style 属性（DatePicker 弹层通过 CalendarStyle 继承同一份）
+        style.Setters.Add(new Setter(Calendar.CalendarDayButtonStyleProperty, CalendarDayButtonLazy.Value));
+        style.Setters.Add(new Setter(Calendar.CalendarButtonStyleProperty, CalendarButtonLazy.Value));
+        style.Setters.Add(new Setter(Calendar.CalendarItemStyleProperty, CalendarItemLazy.Value));
+        return style;
+    });
+
+    private static readonly System.Lazy<Style> CalendarItemLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="CalendarItem">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="13.5"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="Background" Value="White"/>
+  <Setter Property="BorderThickness" Value="0"/>
+  <Setter Property="Padding" Value="4"/>
+</Style>
+"""));
+
+    /// <summary>日格：32×30、圆角 7；hover 浅灰、选中粉底白字、今天粉描边。</summary>
+    private static readonly System.Lazy<Style> CalendarDayButtonLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="CalendarDayButton">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="MinWidth" Value="32"/>
+  <Setter Property="MinHeight" Value="30"/>
+  <Setter Property="Margin" Value="1"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="HorizontalContentAlignment" Value="Center"/>
+  <Setter Property="VerticalContentAlignment" Value="Center"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="CalendarDayButton">
+        <Border x:Name="bd" CornerRadius="7" Background="Transparent" BorderThickness="1" BorderBrush="Transparent">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsInactive" Value="True">
+            <Setter Property="Opacity" Value="0.38"/>
+          </Trigger>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#F3F4F6"/>
+          </Trigger>
+          <Trigger Property="IsSelected" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#FF5B8A"/>
+            <Setter Property="Foreground" Value="White"/>
+          </Trigger>
+          <Trigger Property="IsToday" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter Property="Opacity" Value="0.35"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    /// <summary>年/月/十年格（与日格同款圆角 hover/选中）。</summary>
+    private static readonly System.Lazy<Style> CalendarButtonLazy = new(() => Parse($$"""
+<Style {{Ns}} TargetType="CalendarButton">
+  <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="MinWidth" Value="46"/>
+  <Setter Property="MinHeight" Value="30"/>
+  <Setter Property="Margin" Value="2"/>
+  <Setter Property="Foreground" Value="#1D1D1F"/>
+  <Setter Property="HorizontalContentAlignment" Value="Center"/>
+  <Setter Property="VerticalContentAlignment" Value="Center"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+    <Setter.Value>
+      <ControlTemplate TargetType="CalendarButton">
+        <Border x:Name="bd" CornerRadius="7" Background="Transparent" BorderThickness="1" BorderBrush="Transparent">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True">
+            <Setter TargetName="bd" Property="Background" Value="#F3F4F6"/>
+          </Trigger>
+          <Trigger Property="HasSelectedDays" Value="True">
+            <Setter TargetName="bd" Property="BorderBrush" Value="#FFB1CB"/>
+          </Trigger>
+          <Trigger Property="IsInactive" Value="True">
+            <Setter Property="Opacity" Value="0.5"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter Property="Opacity" Value="0.35"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>
+"""));
+
+    public static Style DatePickerStyle => DatePickerLazy.Value;
+    public static Style DatePickerTextBoxStyle => DatePickerTextBoxLazy.Value;
+    public static Style CalendarStyle => CalendarLazy.Value;
+    public static Style CalendarItemStyle => CalendarItemLazy.Value;
+    public static Style CalendarDayButtonStyle => CalendarDayButtonLazy.Value;
+    public static Style CalendarButtonStyle => CalendarButtonLazy.Value;
+
     /// <summary>把主题套到窗口：字体 + 隐式控件样式（只影响未显式设置 Style 的控件）。</summary>
     public static void Apply(Window window)
     {
@@ -1411,5 +1639,12 @@ public static class NativeTheme
         // 代码库中的可编辑模型下拉已改为「文本框 + 建议下拉」组合）
         window.Resources[typeof(ComboBox)] = ComboBoxStyle;
         window.Resources[typeof(ComboBoxItem)] = ComboBoxItemStyle;
+        // 日期/时间：DatePicker 与日历弹层统一尺寸与配色（任务编辑器 / 生日取景器共用）
+        window.Resources[typeof(DatePicker)] = DatePickerStyle;
+        window.Resources[typeof(DatePickerTextBox)] = DatePickerTextBoxStyle;
+        window.Resources[typeof(Calendar)] = CalendarStyle;
+        window.Resources[typeof(CalendarItem)] = CalendarItemStyle;
+        window.Resources[typeof(CalendarDayButton)] = CalendarDayButtonStyle;
+        window.Resources[typeof(CalendarButton)] = CalendarButtonStyle;
     }
 }

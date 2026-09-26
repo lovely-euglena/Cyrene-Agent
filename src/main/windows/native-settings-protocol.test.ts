@@ -575,6 +575,8 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
       "open-sticker-manager",
       "add-sticker",
       "open-model-docs",
+      "open-model-dir",
+      "open-model-site",
       "delete-embedding",
       "check-model-update",
     ]);

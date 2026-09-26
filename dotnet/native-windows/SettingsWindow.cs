@@ -48,6 +48,8 @@ public sealed partial class SettingsWindow : NativeWindow
     private readonly string? _initialSection;
     /// <summary>用户已输入但尚未提交的控件刷新（快照重建时停掉）</summary>
     private readonly List<DispatcherTimer> _debounceTimers = new();
+    /// <summary>插件卡配置区折叠状态（key = 工具卡 collapseKey；窗口生命周期内记忆）</summary>
+    private readonly HashSet<string> _collapsedToolCards = new();
     private string _activeSection = "general";
 
     public override string Kind => "settings";

@@ -30,9 +30,9 @@ public sealed class TaskEditorWindow : Window
     private readonly ComboBox _kindCombo = new();
     private readonly StackPanel _onceRow;
     private readonly DatePicker _onceDate = new();
-    private readonly TextBox _onceTimeBox = new();
+    private readonly TimePicker _onceTime = new();
     private readonly StackPanel _timeRow;
-    private readonly TextBox _timeBox = new();
+    private readonly TimePicker _timePicker = new();
     private readonly StackPanel _weeklyRow;
     private readonly ComboBox _dayCombo = new();
     private readonly StackPanel _intervalRow;
@@ -46,8 +46,6 @@ public sealed class TaskEditorWindow : Window
     private bool _saving;
     /// <summary>窗口圆角（构造时取宿主广播值；模态窗不跟随运行期变更）。</summary>
     private readonly double _cornerRadius = 12;
-
-    private static readonly Regex TimePattern = new("^([01]\\d|2[0-3]):[0-5]\\d$", RegexOptions.Compiled);
 
     public TaskEditorWindow(JsonElement? task, JsonElement tools, Action<string?, Dictionary<string, object?>, Action<bool, string?, JsonElement?>> onSave)
     {
@@ -126,7 +124,7 @@ public sealed class TaskEditorWindow : Window
         panel.Children.Add(Row("类型", _kindCombo));
 
         _onceRow = Row("一次性时间", BuildOnceControls());
-        _timeRow = Row("时间（HH:mm）", _timeBox);
+        _timeRow = Row("时间", _timePicker);
         _weeklyRow = Row("星期", BuildDayCombo());
         _intervalRow = Row("间隔", BuildIntervalControls());
         panel.Children.Add(_onceRow);
@@ -182,12 +180,12 @@ public sealed class TaskEditorWindow : Window
     private FrameworkElement BuildOnceControls()
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal };
-        _onceDate.Width = 150;
-        _onceTimeBox.Width = 70;
-        _onceTimeBox.Margin = new Thickness(8, 0, 0, 0);
-        _onceTimeBox.Text = "08:00";
+        _onceDate.Width = 170;
+        // 弹层日历用主题样式（默认 WPF 又小又旧）
+        _onceDate.CalendarStyle = NativeTheme.CalendarStyle;
+        _onceTime.Margin = new Thickness(10, 0, 0, 0);
         row.Children.Add(_onceDate);
-        row.Children.Add(_onceTimeBox);
+        row.Children.Add(_onceTime);
         return row;
     }
 
@@ -262,12 +260,12 @@ public sealed class TaskEditorWindow : Window
             {
                 var local = runAt.ToLocalTime();
                 _onceDate.SelectedDate = local.Date;
-                _onceTimeBox.Text = local.ToString("HH:mm");
+                _onceTime.Value = local.ToString("HH:mm");
             }
         }
         if (kind == "daily" || kind == "weekly")
         {
-            _timeBox.Text = GetStringStatic(schedule, "timeOfDay", "08:00");
+            _timePicker.Value = GetStringStatic(schedule, "timeOfDay", "08:00");
             if (kind == "weekly")
             {
                 var day = GetIntStatic(schedule, "dayOfWeek", 1);
@@ -329,12 +327,7 @@ public sealed class TaskEditorWindow : Window
                 _status.Text = "请选择一次性运行日期";
                 return;
             }
-            if (!TimePattern.IsMatch(_onceTimeBox.Text.Trim()))
-            {
-                _status.Text = "一次性时间格式必须是 HH:mm";
-                return;
-            }
-            var parts = _onceTimeBox.Text.Trim().Split(':');
+            var parts = _onceTime.Value.Split(':');
             var runAt = new DateTimeOffset(new DateTime(date.Year, date.Month, date.Day, int.Parse(parts[0]), int.Parse(parts[1]), 0, DateTimeKind.Local));
             if (runAt <= DateTimeOffset.Now)
             {
@@ -345,19 +338,8 @@ public sealed class TaskEditorWindow : Window
         }
         else if (kind is "daily" or "weekly")
         {
-            var timeOfDay = _timeBox.Text.Trim();
-            // 清空时回退 08:00（对齐 Electron：空值不报错而是用默认时间）
-            if (timeOfDay.Length == 0)
-            {
-                timeOfDay = "08:00";
-                _timeBox.Text = timeOfDay;
-            }
-            if (!TimePattern.IsMatch(timeOfDay))
-            {
-                _status.Text = "时间格式必须是 HH:mm";
-                return;
-            }
-            schedule["timeOfDay"] = timeOfDay;
+            // TimePicker 的 Value 恒为合法 HH:mm（不再有手输格式错误）
+            schedule["timeOfDay"] = _timePicker.Value;
             if (kind == "weekly")
             {
                 schedule["dayOfWeek"] = Math.Max(0, _dayCombo.SelectedIndex);

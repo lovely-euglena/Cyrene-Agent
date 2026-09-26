@@ -195,13 +195,13 @@ public sealed partial class SettingsWindow
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        ragActions.Children.Add(MakeActionButton("📖 模型安装说明",
-            () => RequestRouter.SendSettingsAction("cyrene", "open-model-docs"), minWidth: 130));
+        ragActions.Children.Add(MakeActionButton("📖 安装说明",
+            OpenModelDocsDialog, minWidth: 104));
+        ragActions.Children.Add(MakeActionButton("🔄 刷新状态",
+            () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 104));
         ragActions.Children.Add(MakeActionButton("删除缓存", ConfirmDeleteEmbeddingCache, minWidth: 90));
-        ragActions.Children.Add(MakeActionButton("检查更新",
-            () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 90));
         panel.Children.Add(MakeDescribedRow("模型操作",
-            "模型为手动安装；删除缓存后需重新安装。",
+            "模型为手动安装；按「安装说明」放好文件后点「刷新状态」重新检测。",
             ragActions));
 
         panel.Children.Add(MakeDescribedRow("下载镜像源",
@@ -210,10 +210,22 @@ public sealed partial class SettingsWindow
                 new[] { ("official", "官方源", true), ("hf-mirror", "hf-mirror", true) },
                 GetString("ragDownloadMirror", "official"),
                 v => SetSetting("ragDownloadMirror", v))));
-        panel.Children.Add(MakeHint("模型状态随设置快照刷新；安装步骤见「模型安装说明」。"));
+        panel.Children.Add(MakeHint("模型状态随设置快照刷新；安装步骤见「安装说明」。"));
         CardifySubBlocks(panel);
 
         return panel;
+    }
+
+    /// <summary>模型安装说明弹窗（应用内步骤 + 打开目录/下载站/刷新状态）。</summary>
+    private void OpenModelDocsDialog()
+    {
+        var cyrene = GetNode("cyrene");
+        var modelsDir = GetString(cyrene, "modelsDir");
+        var mirror = GetString("ragDownloadMirror", "official");
+        var dialog = new ModelDocsDialog(
+            modelsDir.Length > 0 ? modelsDir : "(点下方「打开模型目录」自动创建)",
+            mirror) { Owner = _window };
+        dialog.ShowDialog();
     }
 
     /// <summary>RAG 模型卡片：标题 + 说明 + 状态；selected = 高亮，onClick 为空则只读。</summary>
@@ -530,4 +542,123 @@ internal sealed class StickerAddDialog : Window
             ["description"] = _descriptionBox.Text.Trim(),
             ["phrases"] = BuildPhrases(),
         };
+}
+
+/// <summary>
+/// 模型安装说明弹窗（应用内，不依赖外网文档）：
+/// 下载源 → 需要的文件 → 放置目录 → 回本页刷新状态；
+/// 底部一键「打开模型目录 / 打开下载站 / 刷新状态 / 复制路径」。
+/// </summary>
+internal sealed class ModelDocsDialog : Window
+{
+    public ModelDocsDialog(string modelsDir, string mirror)
+    {
+        var mirrorText = mirror == "hf-mirror"
+            ? "hf-mirror（国内镜像；官方源 huggingface.co 在本机网络不可达时用它）"
+            : "官方源（huggingface.co；国内网络建议先切到 hf-mirror）";
+        Title = "模型安装说明";
+        Icon = AppIcons.Image;
+        Width = 600;
+        SizeToContent = SizeToContent.Height;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ResizeMode = ResizeMode.NoResize;
+        ShowInTaskbar = false;
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
+        NativeTheme.Apply(this);
+
+        var root = new StackPanel { Margin = new Thickness(20, 14, 20, 16) };
+        var shellGrid = new Grid();
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var titleBar = NativeTheme.BuildTitleBar(this, Title);
+        Grid.SetRow(titleBar, 0);
+        shellGrid.Children.Add(titleBar);
+        Grid.SetRow(root, 1);
+        shellGrid.Children.Add(root);
+        NativeTheme.ClipRounded(shellGrid, 12);
+        var contentBorder = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(16),
+            Child = shellGrid,
+        };
+        var windowShell = new Grid();
+        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(12));
+        windowShell.Children.Add(contentBorder);
+        Content = windowShell;
+
+        root.Children.Add(Section(
+            "1 · 选择下载源",
+            $"当前设置：{mirrorText}。\n下载站按当前镜像源打开；要换源请回设置页改「下载镜像源」后再点这里。"));
+        root.Children.Add(Section(
+            "2 · 下载模型文件",
+            "BGE-M3（约 570MB）：tokenizer.json、config.json、onnx/model_quantized.onnx。\n" +
+            "三个文件的相对路径必须保持不变（onnx 文件夹里的模型文件尤其别改名）。"));
+        root.Children.Add(Section(
+            "3 · 放置到模型目录",
+            $"把整个 bge-m3 文件夹放到：\n{modelsDir}\\Xenova\\bge-m3\\\n" +
+            "（该目录内应直接看到 tokenizer.json 与 onnx\\model_quantized.onnx）\n\n" +
+            "重排序模型（可选）：bge-reranker-base 放到同级的 bge-reranker-base\\，文件结构相同。"));
+        root.Children.Add(Section(
+            "4 · 回来刷新状态",
+            "点下方「刷新状态」重新体检；模型卡从「未下载」变成「已下载」即安装成功。\n" +
+            "「删除缓存」会删掉已下载模型，需按本说明重新安装。"));
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        actions.Children.Add(DialogAction("📂 打开模型目录", () =>
+            RequestRouter.SendSettingsAction("cyrene", "open-model-dir")));
+        actions.Children.Add(DialogAction("🌐 打开下载站", () =>
+            RequestRouter.SendSettingsAction("cyrene", "open-model-site")));
+        actions.Children.Add(DialogAction("🔄 刷新状态", () =>
+        {
+            RequestRouter.SendSettingsAction("cyrene", "check-model-update");
+            Close();
+        }, primary: true));
+        actions.Children.Add(DialogAction("关闭", Close));
+        root.Children.Add(actions);
+    }
+
+    private static StackPanel Section(string title, string body)
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = body,
+            FontSize = 13,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 3, 0, 0),
+        });
+        return panel;
+    }
+
+    private static Button DialogAction(string text, Action onClick, bool primary = false)
+    {
+        var button = new Button
+        {
+            Content = text,
+            MinWidth = 96,
+            Margin = new Thickness(8, 0, 0, 0),
+            Style = primary ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle,
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
 }
