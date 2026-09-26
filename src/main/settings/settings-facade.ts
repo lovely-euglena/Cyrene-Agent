@@ -12,6 +12,7 @@ import {
   normalizeStyleId,
 } from "../../shared/style-sampling";
 import { normalizeUiTheme } from "../../shared/ui-theme";
+import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 import { normalizeUiIcon } from "../../shared/ui-icon";
 import {
   normalizeChatSocialContextEnabled,
@@ -174,7 +175,7 @@ export function normalizeGeneralSettings(
   const normalizeMaxParallelToolCalls = (value: unknown): number => {
     const numberValue = typeof value === "number" ? value : Number(value);
     return Number.isFinite(numberValue)
-      ? Math.max(1, Math.min(8, Math.trunc(numberValue)))
+      ? Math.max(1, Math.min(MAX_PARALLEL_TOOL_CALLS, Math.trunc(numberValue)))
       : DEFAULT_GENERAL_SETTINGS.maxParallelToolCalls;
   };
   return {
