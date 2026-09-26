@@ -1,4 +1,4 @@
-import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSessionStatus, type TaskSubagentType, type TaskTranscriptMessage } from "../../shared/task-session";
+import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSessionStatus, type TaskSubagentType, type TaskTraceRecord, type TaskTranscriptMessage } from "../../shared/task-session";
 import { TaskSessionStore } from "../tasks/task-session-store";
 import { projectTaskTraceEvent } from "./task-events";
 import { getTaskAgentProfile, resolveTaskTools } from "./task-profiles";
@@ -12,6 +12,26 @@ import type { TaskDelegationPresentation } from "../../shared/task-session";
 import type { RunCapabilities } from "./run-capabilities";
 import type { PromptLayers } from "./prompt-layers";
 import type { ToolOutputStore } from "./harness/tool-output/tool-output-store";
+
+const TASK_TRACE_CHECKPOINT_INTERVAL_MS = 500;
+const TASK_TRACE_LIMIT = 2_000;
+
+function appendTaskTraceRecord(trace: TaskTraceRecord[], next: TaskTraceRecord): void {
+  const previous = trace.at(-1);
+  const canMergeDelta = (next.kind === "candidate" || next.kind === "reasoning")
+    && next.phase === "delta"
+    && previous?.kind === next.kind
+    && previous.phase === "delta"
+    && previous.label === next.label
+    && previous.roundId === next.roundId;
+  if (canMergeDelta && previous) {
+    previous.content = `${previous.content ?? ""}${next.content ?? ""}`;
+    previous.at = next.at;
+  } else {
+    trace.push(next);
+  }
+  if (trace.length > TASK_TRACE_LIMIT) trace.splice(0, trace.length - TASK_TRACE_LIMIT);
+}
 
 export interface TaskExecuteRequest {
   description: string;
@@ -125,6 +145,35 @@ export function createTaskExecutor(input: {
       assetFileName: lease.assetFileName,
     };
     let taskTrace = session.trace;
+    let pendingTaskTrace: TaskTraceRecord[] = [];
+    let taskTraceDirty = false;
+    let taskTraceFlushTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushTaskTrace = () => {
+      if (taskTraceFlushTimer !== undefined) {
+        clearTimeout(taskTraceFlushTimer);
+        taskTraceFlushTimer = undefined;
+      }
+      for (const record of pendingTaskTrace) appendTaskTraceRecord(taskTrace, record);
+      if (pendingTaskTrace.length > 0) {
+        pendingTaskTrace = [];
+        taskTraceDirty = true;
+      }
+      if (!taskTraceDirty) return;
+      input.store.checkpoint(session.id, { trace: taskTrace });
+      taskTraceDirty = false;
+    };
+    const scheduleTaskTraceFlush = () => {
+      if (taskTraceFlushTimer !== undefined) return;
+      taskTraceFlushTimer = setTimeout(() => {
+        taskTraceFlushTimer = undefined;
+        try {
+          flushTaskTrace();
+        } catch (error) {
+          // Retain the dirty in-memory trace; the next batch or terminal flush retries it.
+          console.error("[TaskRuntime] trace checkpoint failed", error);
+        }
+      }, TASK_TRACE_CHECKPOINT_INTERVAL_MS);
+    };
     input.onLifecycle?.({ ...presentation, status: "running" });
 
     try {
@@ -156,8 +205,8 @@ export function createTaskExecutor(input: {
             if (event.type !== "round_start" && event.type !== "round_end" && activeRoundId) {
               trace.roundId = activeRoundId;
             }
-            taskTrace = [...taskTrace, trace].slice(-2_000);
-            input.store.checkpoint(session.id, { trace: taskTrace });
+            pendingTaskTrace.push(trace);
+            scheduleTaskTraceFlush();
           }
           if (event.type === "round_end") activeRoundId = undefined;
         },
@@ -168,6 +217,7 @@ export function createTaskExecutor(input: {
           });
         },
       });
+      flushTaskTrace();
       const mapped = taskStatus(result);
       input.store.checkpoint(session.id, {
         status: mapped.status,
@@ -179,6 +229,11 @@ export function createTaskExecutor(input: {
       input.onLifecycle?.({ ...presentation, status: mapped.status });
       return { taskId: session.id, status: mapped.status, text: result.finalAnswer };
     } catch (error) {
+      try {
+        flushTaskTrace();
+      } catch (traceError) {
+        console.error("[TaskRuntime] final trace checkpoint failed", traceError);
+      }
       const message = error instanceof Error ? error.message : String(error);
       input.store.checkpoint(session.id, {
         status: input.parent.signal?.aborted ? "cancelled" : "failed",
@@ -188,6 +243,7 @@ export function createTaskExecutor(input: {
       input.onLifecycle?.({ ...presentation, status: input.parent.signal?.aborted ? "cancelled" : "failed" });
       throw error;
     } finally {
+      if (taskTraceFlushTimer !== undefined) clearTimeout(taskTraceFlushTimer);
       lease.release();
     }
   };
