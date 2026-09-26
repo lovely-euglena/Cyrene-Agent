@@ -105,6 +105,17 @@ public sealed class EmbeddingEngine : IDisposable
     /// <summary>单条前向：tokenize 后的 ids → 归一化向量（n=1，无 padding）。</summary>
     private void RunSingle(int[] ids, float[] vector)
     {
+        // ORT session 可并发，但 _inputTemplate 复用与批量语义要求串行（导入后台线程 + 检索并发）
+        lock (_runLock)
+        {
+            RunSingleCore(ids, vector);
+        }
+    }
+
+    private readonly object _runLock = new();
+
+    private void RunSingleCore(int[] ids, float[] vector)
+    {
         var seqLen = ids.Length;
         var dims = Dimensions;
 

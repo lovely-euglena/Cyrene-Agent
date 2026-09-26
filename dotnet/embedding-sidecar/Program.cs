@@ -513,6 +513,13 @@ internal static class Server
         return store;
     }
 
+    /// <summary>stdout 帧写锁（doc-import 在后台线程完成，多线程写帧）。</summary>
+    private static readonly object _stdoutLock = new();
+
+    /// <summary>已取消的 doc-import 请求 id（宿主下发 doc-import-cancel）。</summary>
+    private static readonly HashSet<int> _cancelledImports = new();
+    private static readonly object _cancelLock = new();
+
     public static void Run(string modelDir)
     {
         Console.Error.WriteLine($"[serve] model dir: {modelDir}");
@@ -624,6 +631,74 @@ internal static class Server
             }
             if (request is null) continue;
 
+            if (request.Op == "doc-import-cancel")
+            {
+                lock (_cancelLock)
+                {
+                    _cancelledImports.Add(request.TargetId ?? -1);
+                }
+                continue;
+            }
+
+            if (request.Op == "doc-import")
+            {
+                var importRequestId = request.Id;
+                var filePath = request.FilePath;
+                var ragDataDir = request.RagDataDir;
+                if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(ragDataDir))
+                {
+                    WriteFrame(new ResponseHeader
+                    {
+                        Id = importRequestId,
+                        Ok = false,
+                        Error = "doc-import requires filePath and ragDataDir",
+                    });
+                    continue;
+                }
+
+                // 后台执行：导入耗时长（分钟级），期间仍需响应 embed/rerank/search
+                // （引擎与向量库各有内部锁；stdout 帧写入有全局锁）
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        var importStore = GetRagStore(ragDataDir);
+                        var result = DocImporter.Import(
+                            filePath,
+                            ragDataDir,
+                            engine,
+                            importStore,
+                            () =>
+                            {
+                                lock (_cancelLock) return _cancelledImports.Contains(importRequestId);
+                            },
+                            (progress) => WriteProgressFrame(stdout, importRequestId, progress));
+                        WriteFrame(new
+                        {
+                            id = importRequestId,
+                            ok = true,
+                            kind = result.Kind,
+                            name = result.Name,
+                            chunks = result.Chunks,
+                            importId = result.ImportId,
+                            cached = result.Cached,
+                            text = result.Text,
+                            reason = result.Reason,
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteFrame(new { id = importRequestId, ok = false, error = ex.Message });
+                        Console.Error.WriteLine($"[serve] doc-import failed: {ex}");
+                    }
+                    finally
+                    {
+                        lock (_cancelLock) _cancelledImports.Remove(importRequestId);
+                    }
+                });
+                continue;
+            }
+
             if (request.Op == "search")
             {
                 try
@@ -717,13 +792,16 @@ internal static class Server
         var frameHead = new byte[4 + headerBytes.Length];
         BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
         headerBytes.CopyTo(frameHead.AsSpan(4));
-        stdout.Write(frameHead, 0, frameHead.Length);
-        // float[] 的二进制布局即小端 float32，与协议一致，直接按段写出
-        foreach (var v in vectors)
+        lock (_stdoutLock)
         {
-            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
+            stdout.Write(frameHead, 0, frameHead.Length);
+            // float[] 的二进制布局即小端 float32，与协议一致，直接按段写出
+            foreach (var v in vectors)
+            {
+                stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
+            }
+            stdout.Flush();
         }
-        stdout.Flush();
     }
 
     /// <summary>rerank 响应：分数按 float32 段写出（协议上与 count×dim(1) 等价）。</summary>
@@ -735,9 +813,12 @@ internal static class Server
         var frameHead = new byte[4 + headerBytes.Length];
         BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
         headerBytes.CopyTo(frameHead.AsSpan(4));
-        stdout.Write(frameHead, 0, frameHead.Length);
-        stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(scores.AsSpan()));
-        stdout.Flush();
+        lock (_stdoutLock)
+        {
+            stdout.Write(frameHead, 0, frameHead.Length);
+            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(scores.AsSpan()));
+            stdout.Flush();
+        }
     }
 
     /// <summary>search 响应：结果条目 JSON + 每条 embedding 以 float32 二进制段对齐写出。</summary>
@@ -766,16 +847,19 @@ internal static class Server
         var frameHead = new byte[4 + headerBytes.Length];
         BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
         headerBytes.CopyTo(frameHead.AsSpan(4));
-        stdout.Write(frameHead, 0, frameHead.Length);
-        foreach (var r in results)
+        lock (_stdoutLock)
         {
-            // entry embedding 原始值来自 float32（JSON 解析为 double），转回 float 无损
-            var floats = new float[dim];
-            var n = Math.Min(dim, r.Entry.Embedding.Length);
-            for (var i = 0; i < n; i++) floats[i] = (float)r.Entry.Embedding[i];
-            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(floats.AsSpan()));
+            stdout.Write(frameHead, 0, frameHead.Length);
+            foreach (var r in results)
+            {
+                // entry embedding 原始值来自 float32（JSON 解析为 double），转回 float 无损
+                var floats = new float[dim];
+                var n = Math.Min(dim, r.Entry.Embedding.Length);
+                for (var i = 0; i < n; i++) floats[i] = (float)r.Entry.Embedding[i];
+                stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(floats.AsSpan()));
+            }
+            stdout.Flush();
         }
-        stdout.Flush();
     }
 
     /// <summary>协议 JSON 统一 camelCase（与 JS 侧约定一致）。</summary>
@@ -800,6 +884,9 @@ internal static class Server
         public double? VectorWeight { get; set; }
         public double? Bm25Weight { get; set; }
         public bool? UpdateRecall { get; set; }
+        // doc-import op：文件路径 / 取消目标请求 id
+        public string? FilePath { get; set; }
+        public int? TargetId { get; set; }
     }
 
     private sealed class ResponseHeader
@@ -843,10 +930,27 @@ internal static class Server
         var json = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
         var bytes = System.Text.Encoding.UTF8.GetBytes(json);
         var stdout = Console.OpenStandardOutput();
-        var frameHead = new byte[4 + bytes.Length];
-        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), bytes.Length);
-        bytes.CopyTo(frameHead.AsSpan(4));
-        stdout.Write(frameHead, 0, frameHead.Length);
-        stdout.Flush();
+        lock (_stdoutLock)
+        {
+            var frameHead = new byte[4 + bytes.Length];
+            BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), bytes.Length);
+            bytes.CopyTo(frameHead.AsSpan(4));
+            stdout.Write(frameHead, 0, frameHead.Length);
+            stdout.Flush();
+        }
+    }
+
+    /// <summary>doc-import 进度通知帧（id=0，不占请求 id；forId 指向导入请求）。</summary>
+    private static void WriteProgressFrame(Stream stdout, int forId, DocImporter.Progress progress)
+    {
+        WriteFrame(new
+        {
+            id = 0,
+            op = "progress",
+            forId,
+            status = progress.Status,
+            completedChunks = progress.CompletedChunks,
+            totalChunks = progress.TotalChunks,
+        });
     }
 }

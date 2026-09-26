@@ -73,6 +73,16 @@ public sealed class RerankerEngine : IDisposable
 
     private float RunSingle(int[] ids)
     {
+        lock (_runLock)
+        {
+            return RunSingleCore(ids);
+        }
+    }
+
+    private readonly object _runLock = new();
+
+    private float RunSingleCore(int[] ids)
+    {
         var seqLen = ids.Length;
         var inputIds = new long[seqLen];
         var attentionMask = new long[seqLen];

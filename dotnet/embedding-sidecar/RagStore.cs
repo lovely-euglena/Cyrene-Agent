@@ -34,6 +34,7 @@ public sealed class RagStore
 
     private readonly string _dir;
     private readonly string _filePath;
+    private readonly object _sync = new();
     private List<MemoryEntry> _entries = new();
     private IvfIndex? _ivf;
 
@@ -78,8 +79,14 @@ public sealed class RagStore
     {
         try
         {
-            Directory.CreateDirectory(_dir);
-            File.WriteAllText(_filePath, JsonSerializer.Serialize(_entries, StoreJson));
+            lock (_sync)
+            {
+                Directory.CreateDirectory(_dir);
+                File.WriteAllText(_filePath, JsonSerializer.Serialize(_entries, StoreJson));
+                var info = new FileInfo(_filePath);
+                _fileWriteTicks = info.LastWriteTimeUtc.Ticks;
+                _fileLength = info.Length;
+            }
         }
         catch (Exception ex)
         {
@@ -90,11 +97,94 @@ public sealed class RagStore
     /// <summary>文件被外部（TS 进程）改写时重载；否则用内存副本。</summary>
     public void RefreshIfChanged()
     {
-        if (!File.Exists(_filePath)) return;
-        var info = new FileInfo(_filePath);
-        if (info.LastWriteTimeUtc.Ticks != _fileWriteTicks || info.Length != _fileLength)
+        lock (_sync)
         {
-            Reload();
+            if (!File.Exists(_filePath)) return;
+            var info = new FileInfo(_filePath);
+            if (info.LastWriteTimeUtc.Ticks != _fileWriteTicks || info.Length != _fileLength)
+            {
+                Reload();
+            }
+        }
+    }
+
+    /// <summary>条目快照（浅拷贝列表；供 BM25 等并发读路径使用）。</summary>
+    public List<MemoryEntry> Snapshot()
+    {
+        lock (_sync)
+        {
+            return new List<MemoryEntry>(_entries);
+        }
+    }
+
+    /// <summary>批量追加（与 TS addPreparedBatch 同构：id = source_now_i_rand4）。</summary>
+    public List<MemoryEntry> AddPreparedBatch(IReadOnlyList<PreparedItem> items)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var results = new List<MemoryEntry>(items.Count);
+        lock (_sync)
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                var entry = new MemoryEntry
+                {
+                    Id = $"{items[i].Source}_{now}_{i}_{RandomString(4)}",
+                    Text = items[i].Text,
+                    Embedding = items[i].Embedding,
+                    Source = items[i].Source,
+                    Weight = 1.0,
+                    CreatedAt = now,
+                    LastRecalledAt = now,
+                    Metadata = items[i].Metadata,
+                };
+                _entries.Add(entry);
+                results.Add(entry);
+            }
+            _ivf = null;
+            Save();
+        }
+        return results;
+    }
+
+    public sealed record PreparedItem(
+        string Text,
+        string Source,
+        double[] Embedding,
+        Dictionary<string, JsonElement>? Metadata);
+
+    public bool HasImportedDocumentChunks(string importId)
+    {
+        lock (_sync)
+        {
+            return _entries.Any((entry) =>
+                entry.Source == "imported_doc"
+                && entry.Metadata != null
+                && entry.Metadata.TryGetValue("importId", out var v)
+                && v.ValueKind == JsonValueKind.String
+                && v.GetString() == importId);
+        }
+    }
+
+    private static readonly char[] Base36 = "0123456789abcdefghijklmnopqrstuvwxyz".ToCharArray();
+
+    private static string RandomString(int length)
+    {
+        var chars = new char[length];
+        for (var i = 0; i < length; i++) chars[i] = Base36[Random.Shared.Next(Base36.Length)];
+        return new string(chars);
+    }
+
+    /// <summary>统计（含跨进程写入后的新鲜数据）。</summary>
+    public (int Total, Dictionary<string, int> Sources) Stats()
+    {
+        lock (_sync)
+        {
+            var sources = new Dictionary<string, int>();
+            foreach (var e in _entries)
+            {
+                sources[e.Source] = sources.GetValueOrDefault(e.Source) + 1;
+            }
+            return (_entries.Count, sources);
         }
     }
 
@@ -255,6 +345,22 @@ public sealed class RagStore
         IReadOnlyCollection<string>? allowedEntryIds,
         long now,
         bool updateRecall = true)
+    {
+        lock (_sync)
+        {
+            return SearchCore(queryEmbedding, source, topK, minScore, importIds, allowedEntryIds, now, updateRecall);
+        }
+    }
+
+    private List<(MemoryEntry Entry, double Score)> SearchCore(
+        IReadOnlyList<double> queryEmbedding,
+        string? source,
+        int topK,
+        double minScore,
+        IReadOnlyCollection<string>? importIds,
+        IReadOnlyCollection<string>? allowedEntryIds,
+        long now,
+        bool updateRecall)
     {
         var results = new List<(MemoryEntry, double)>();
         if (_entries.Count == 0) return results;

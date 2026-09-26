@@ -41,6 +41,8 @@ import {
 import { registerMemoryUserToolIpc } from "../memory/memory-user-ipc";
 import { configureDocumentIndexQueue } from "../rag/document-index-queue";
 import { runDocumentIndexJob } from "../rag/document-index-worker";
+import { runDocumentImportJobViaSidecar } from "../rag/document-import-sidecar";
+import { isSidecarEnabled } from "../rag/embedding-sidecar";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -671,7 +673,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       // 退出兜底：主进程崩溃/强杀时统一回收登记过的子进程（taskkill /F /T 整树）
       installChildProcessReaper((listener) => app.on("will-quit", listener));
       return prepareBeforeReady({
-      configureDocumentIndex: () => configureDocumentIndexQueue(runDocumentIndexJob),
+      configureDocumentIndex: () =>
+        configureDocumentIndexQueue(
+          isSidecarEnabled() ? runDocumentImportJobViaSidecar : runDocumentIndexJob,
+        ),
       installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
       registerPrivilegedSchemes,
       configureGpuSwitches: () => {

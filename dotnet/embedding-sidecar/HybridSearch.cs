@@ -26,7 +26,7 @@ public static class HybridSearch
         var queryVector = embedder.Embed(new[] { query })[0].Select((f) => (double)f).ToArray();
 
         var vectorResults = store.Search(queryVector, source, topK * 3, 0.3, importIds, allowedEntryIds, now, updateRecall);
-        var bm25Results = Bm25Scorer.Search(store.Entries, query, source, topK * 3, importIds, allowedEntryIds, customWords);
+        var bm25Results = Bm25Scorer.Search(store.Snapshot(), query, source, topK * 3, importIds, allowedEntryIds, customWords);
 
         var merged = new Dictionary<string, (MemoryEntry Entry, double VectorScore, double Bm25Score)>();
         foreach (var (entry, score) in vectorResults)

@@ -70,6 +70,23 @@ export interface SidecarSearchResponse {
   embeddings: Float32Array[];
 }
 
+export interface DocImportProgress {
+  status: string;
+  completedChunks?: number;
+  totalChunks?: number;
+}
+
+export interface DocImportResponse {
+  kind: string;
+  name?: string;
+  chunks?: number;
+  importId?: string | null;
+  cached?: boolean;
+  text?: string | null;
+  reason?: string | null;
+  [key: string]: unknown;
+}
+
 interface PendingRequest {
   resolve: (response: SidecarResponse) => void;
   reject: (error: Error) => void;
@@ -81,6 +98,8 @@ const READY_TIMEOUT_MS = 60_000;
 /** 单请求超时：基数 + 每条文本加时（native ~200ms/条，留 10x 余量）。 */
 const REQUEST_TIMEOUT_BASE_MS = 30_000;
 const REQUEST_TIMEOUT_PER_TEXT_MS = 2_000;
+/** 文档导入超时（分钟级：读取 + 分块 + 全量 embedding + 落盘）。 */
+const DOC_IMPORT_TIMEOUT_MS = 15 * 60_000;
 
 let cachedExePath: string | null | undefined;
 
@@ -130,6 +149,8 @@ export class EmbeddingSidecarClient {
   private startup: Promise<void> | null = null;
   private modelKey: string | null = null;
   private onReadyFrame: ((header: any) => void) | null = null;
+  /** doc-import 进度通知路由（op=progress 帧，按 forId）。 */
+  private progressHandlers = new Map<number, (progress: DocImportProgress) => void>();
 
   constructor(private readonly exePath: string) {}
 
@@ -188,12 +209,53 @@ export class EmbeddingSidecarClient {
     return { entries, embeddings: vectors };
   }
 
+  /**
+   * 文档导入（读取/分块/embedding/落盘/缓存全部在 sidecar，分钟级超时）。
+   * onProgress 通过 op=progress 通知帧转发；onStarted 供取消桥接使用。
+   */
+  async docImport(
+    modelKey: string,
+    payload: { filePath: string; ragDataDir: string },
+    callbacks: {
+      onProgress?: (progress: DocImportProgress) => void;
+      onStarted?: (requestId: number) => void;
+    } = {},
+  ): Promise<DocImportResponse> {
+    let requestId = -1;
+    try {
+      const { header } = await this.request(
+        modelKey,
+        { op: "doc-import", ...payload },
+        DOC_IMPORT_TIMEOUT_MS,
+        `doc="${payload.filePath.slice(-32)}"`,
+        (id) => {
+          requestId = id;
+          if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
+          callbacks.onStarted?.(id);
+        },
+      );
+      return header as DocImportResponse;
+    } finally {
+      if (requestId >= 0) this.progressHandlers.delete(requestId);
+    }
+  }
+
+  /** 取消进行中的 doc-import（best-effort 通知帧；sidecar 按批检查取消位）。 */
+  cancelDocImport(targetId: number): void {
+    try {
+      this.writeFrame({ id: this.nextId++, op: "doc-import-cancel", targetId });
+    } catch {
+      // sidecar 已退出：导入随进程中止
+    }
+  }
+
   /** 请求公共路径：模型一致性检查 + 懒启动 + 超时 + pending 路由。 */
   private async request(
     modelKey: string,
     header: Record<string, unknown>,
     timeoutMs: number,
     label: string,
+    onStarted?: (id: number) => void,
   ): Promise<SidecarResponse> {
     if (this.modelKey && this.modelKey !== modelKey) {
       // 当前 sidecar 加载的模型不同：重启换模型（现阶段只有 bgem3，防御式处理）
@@ -202,6 +264,7 @@ export class EmbeddingSidecarClient {
     await this.ensureStarted(modelKey);
 
     const id = this.nextId++;
+    onStarted?.(id);
     return new Promise<SidecarResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id);
@@ -291,6 +354,11 @@ export class EmbeddingSidecarClient {
         for (const frame of frames) {
           if (this.onReadyFrame) {
             this.onReadyFrame(frame.header);
+            continue;
+          }
+          const header = frame.header as { op?: string; forId?: number };
+          if (header.op === "progress" && typeof header.forId === "number") {
+            this.progressHandlers.get(header.forId)?.(frame.header as unknown as DocImportProgress);
             continue;
           }
           this.completeResponse(frame.header as any, frame.binary);
