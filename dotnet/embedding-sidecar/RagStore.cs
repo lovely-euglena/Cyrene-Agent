@@ -368,7 +368,9 @@ public sealed class RagStore
         EnsureIndex();
 
         var allowedImports = importIds is { Count: > 0 } ? new HashSet<string>(importIds) : null;
-        var allowedEntries = allowedEntryIds is { Count: > 0 } ? new HashSet<string>(allowedEntryIds) : null;
+        // ⚠️ 语义对齐 TS：allowedEntryIds=[] 表示"全部排除"（空集合仍参与过滤），
+        // 而 importIds=[] 表示"不过滤"（TS 用 !size 判断）。null 才是"不过滤"。
+        var allowedEntries = allowedEntryIds is null ? null : new HashSet<string>(allowedEntryIds);
         bool ShouldKeep(MemoryEntry entry)
         {
             if (allowedImports != null)

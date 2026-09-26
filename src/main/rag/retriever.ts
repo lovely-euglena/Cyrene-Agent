@@ -216,6 +216,8 @@ export class HybridRetriever {
     vectorWeight = 0.7,
     bm25Weight = 0.3
   ): Promise<SearchResult[]> {
+    // 先同步 .NET 侧写入（导入/召回回写）再判断空库，避免陈旧副本短路
+    this.store.ensureFresh();
     const stats = this.store.stats;
     if (stats.total === 0) return [];
 

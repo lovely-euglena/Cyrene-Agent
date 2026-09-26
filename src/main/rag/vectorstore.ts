@@ -385,6 +385,7 @@ export class JsonVectorStore {
     provider: EmbeddingProvider,
     metadata?: Record<string, unknown>
   ): Promise<MemoryEntry> {
+    this.ensureFresh();
     this.validateDimensionsForProvider(provider);
 
     // 去重检查
@@ -425,6 +426,7 @@ export class JsonVectorStore {
     provider: EmbeddingProvider,
     metadata?: Record<string, unknown>,
   ): Promise<MemoryEntry> {
+    this.ensureFresh();
     this.validateDimensionsForProvider(provider);
     const embedding = await provider.embed(text);
     this.ensureIndexMeta(provider, embedding.length);
@@ -437,6 +439,7 @@ export class JsonVectorStore {
     provider: EmbeddingProvider,
     options?: { isCancelled?: () => boolean },
   ): Promise<MemoryEntry[]> {
+    this.ensureFresh();
     this.validateDimensionsForProvider(provider);
     const results: MemoryEntry[] = [];
     const batchSize = 16;
@@ -457,6 +460,8 @@ export class JsonVectorStore {
   addPreparedBatch(
     items: Array<{ text: string; source: string; embedding: number[]; metadata?: Record<string, unknown> }>,
   ): MemoryEntry[] {
+    // 跨进程安全：基于最新盘面做读-改-写（避免覆盖 .NET 侧写入的条目）
+    this.ensureFresh();
     const results: MemoryEntry[] = [];
 
     for (let i = 0; i < items.length; i++) {
@@ -576,6 +581,7 @@ export class JsonVectorStore {
 
   // 清理低权重记忆
   prune(minWeight = 0.1): number {
+    this.ensureFresh();
     const before = this.entries.length;
     this.entries = this.entries.filter((e) => e.weight >= minWeight);
     this.dirty = true;
@@ -585,6 +591,7 @@ export class JsonVectorStore {
   }
 
   deleteEntriesByIds(ids: string[], source?: string): number {
+    this.ensureFresh();
     const idSet = new Set(ids);
     if (idSet.size === 0) return 0;
     const before = this.entries.length;
@@ -600,6 +607,7 @@ export class JsonVectorStore {
 
   // 删除导入文档
   deleteImportedDoc(importId: string, fileName?: string): number {
+    this.ensureFresh();
     const before = this.entries.length;
     this.entries = this.entries.filter((e) => {
       if (e.source !== "imported_doc") return true;

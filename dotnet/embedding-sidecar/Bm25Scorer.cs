@@ -25,7 +25,8 @@ public static class Bm25Scorer
         IReadOnlyCollection<string> customWords)
     {
         var allowedImports = importIds is { Count: > 0 } ? new HashSet<string>(importIds) : null;
-        var allowedEntries = allowedEntryIds is { Count: > 0 } ? new HashSet<string>(allowedEntryIds) : null;
+        // 与 RagStore 同口径：allowedEntryIds=[] 参与过滤（全排除）；null 才不过滤
+        var allowedEntries = allowedEntryIds is null ? null : new HashSet<string>(allowedEntryIds);
 
         var docs = new List<MemoryEntry>();
         foreach (var entry in entries)
