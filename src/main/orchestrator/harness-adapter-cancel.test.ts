@@ -117,7 +117,7 @@ describe("runHarnessWithAdapter cancellation context", () => {
     const input = runHarness.mock.calls[0]?.[0] as HarnessInput;
     expect(input.includeInteractiveTools).toBe(false);
     expect(input.toolContext?.permissionMode).toBe("allow_all");
-    await expect(input.checkPermission?.("write_file", { path: "x" })).resolves.toBe(true);
+    await expect(input.checkPermission?.("write_file", { path: "x" })).resolves.toEqual({ allowed: true });
     expect(permissionCheck).not.toHaveBeenCalled();
   });
 });
