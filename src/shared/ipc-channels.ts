@@ -132,6 +132,10 @@ export const IPC = {
   SETTINGS_TEST_VISION: "settings:test-vision",
   SETTINGS_GET_GENERAL: "settings:get-general",
   SETTINGS_SAVE_GENERAL: "settings:save-general",
+  // 便携模式：数据目录查询 / 选择目录 / 应用变更（迁移 + 重启）
+  SETTINGS_PORTABLE_GET: "settings:portable-get",
+  SETTINGS_PORTABLE_PICK_DIR: "settings:portable-pick-dir",
+  SETTINGS_PORTABLE_APPLY: "settings:portable-apply",
   SETTINGS_GET_TIMEOUT_SETTINGS: "settings:get-timeout-settings",
   SETTINGS_SAVE_TIMEOUT_SETTINGS: "settings:save-timeout-settings",
   UI_THEME_GET: "ui-theme:get",
