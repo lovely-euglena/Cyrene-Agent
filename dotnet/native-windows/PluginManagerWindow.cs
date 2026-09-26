@@ -123,9 +123,9 @@ public sealed class PluginManagerWindow : NativeWindow
         };
 
         var shellGrid = new Grid();
-        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
         shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var titleBar = NativeTheme.BuildTitleBar(_window, "昔涟 · 插件");
+        var titleBar = NativeTheme.BuildTitleBar(_window, "昔涟 · 插件", showMinimize: true, buttonSize: 30, titleSize: 15);
         Grid.SetRow(titleBar, 0);
         shellGrid.Children.Add(titleBar);
         Grid.SetRow(root, 1);
@@ -723,8 +723,15 @@ public sealed class PluginManagerWindow : NativeWindow
     public override string Kind => "plugins";
     public override bool IsClosed => _window == null;
 
-    public override void ShowWindow() => _window.Show();
-    public override void Activate() => _window.Activate();
+    public override void ShowWindow() => Activate();
+
+    public override void Activate()
+    {
+        if (!_window.IsVisible) _window.Show();
+        if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
+        _window.Activate();
+        _window.Focus();
+    }
     public override void Close() => _window.Dispatcher.Invoke(() => _window.Close());
 
     public override void ApplyLayout(JsonElement layout)
