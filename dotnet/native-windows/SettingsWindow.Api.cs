@@ -84,7 +84,7 @@ public sealed partial class SettingsWindow
         var modelBox = MakeApiTextBox(form.Model);
         // 模型候选用「非可编辑下拉 + 文本框」组合：可编辑 ComboBox 的模板过于复杂，
         // 且系统默认样式与主题不搭（原实现是 IsEditable=true 的裸 ComboBox）
-        var modelCandidates = new ComboBox { Width = 260, FontSize = 12 };
+        var modelCandidates = new ComboBox { Width = 260, FontSize = 14 };
         modelCandidates.SelectionChanged += (_, _) =>
         {
             if (modelCandidates.SelectedItem is string candidate && candidate.Length > 0)
@@ -94,7 +94,7 @@ public sealed partial class SettingsWindow
         };
         var contextBox = MakeApiTextBox(form.ContextWindow.ToString());
         contextBox.Width = 120;
-        var transportCombo = new ComboBox { Width = 220, FontSize = 12 };
+        var transportCombo = new ComboBox { Width = 220, FontSize = 14 };
         transportCombo.Items.Add("chat/completion（OpenAI 兼容）");
         transportCombo.Items.Add("anthropic");
         transportCombo.Items.Add("Responses");
@@ -102,10 +102,10 @@ public sealed partial class SettingsWindow
         var multimodalBox = new CheckBox
         {
             Content = "多模态（能直发图片）",
-            FontSize = 12,
+            FontSize = 14,
             IsChecked = form.Multimodal,
         };
-        var presetCombo = new ComboBox { Width = 280, FontSize = 12 };
+        var presetCombo = new ComboBox { Width = 280, FontSize = 14 };
         var visiblePresets = new List<JsonElement>();
         if (presets.ValueKind == JsonValueKind.Array)
         {
@@ -235,7 +235,7 @@ public sealed partial class SettingsWindow
         {
             Text = "厂商预设",
             Width = 90,
-            FontSize = 12,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
         });
         presetRow.Children.Add(presetCombo);
@@ -305,7 +305,7 @@ public sealed partial class SettingsWindow
         // ── 自定义端点覆盖 ──
         panel.Children.Add(MakeSubHeader("自定义端点覆盖"));
         panel.Children.Add(MakeHint("仅当前厂商为自定义端点/本地模型时需要；随档案保存为全局覆盖。"));
-        var thinkingCombo = new ComboBox { Width = 220, FontSize = 12 };
+        var thinkingCombo = new ComboBox { Width = 220, FontSize = 14 };
         thinkingCombo.Items.Add("不干预思考");
         thinkingCombo.Items.Add("强制启用思考");
         thinkingCombo.Items.Add("强制禁用思考");
@@ -314,7 +314,7 @@ public sealed partial class SettingsWindow
         var disableMaxTokenBox = new CheckBox
         {
             Content = "删除 max_token 限制（本地模型常用）",
-            FontSize = 12,
+            FontSize = 14,
             IsChecked = form.DisableMaxToken,
             Margin = new Thickness(0, 4, 0, 4),
         };
@@ -400,7 +400,7 @@ public sealed partial class SettingsWindow
         {
             Text = text,
             Width = width,
-            FontSize = 12,
+            FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -413,7 +413,7 @@ public sealed partial class SettingsWindow
         {
             Password = password,
             Width = width,
-            FontSize = 12,
+            FontSize = 14,
             Padding = new Thickness(6, 4, 6, 4),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -426,7 +426,7 @@ public sealed partial class SettingsWindow
         {
             Text = label,
             Width = 140,
-            FontSize = 12,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
         });
         row.Children.Add(control);

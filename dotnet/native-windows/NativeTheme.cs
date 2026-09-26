@@ -220,6 +220,17 @@ public static class NativeTheme
         return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform, IsHitTestVisible = false };
     }
 
+    /// <summary>单色填充图标（如线稿头像）：指定视框等比缩放，NoneZero 填充规则（对齐 SVG 默认）。</summary>
+    public static FrameworkElement FilledGlyph(string data, double size, Brush color, double viewBox = 48)
+    {
+        var geometry = Geometry.Parse(data);
+        if (geometry is PathGeometry pathGeometry) pathGeometry.FillRule = FillRule.Nonzero;
+        var path = new System.Windows.Shapes.Path { Data = geometry, Fill = color, Stroke = null };
+        var canvas = new Canvas { Width = viewBox, Height = viewBox, IsHitTestVisible = false };
+        canvas.Children.Add(path);
+        return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform, IsHitTestVisible = false };
+    }
+
     /// <summary>最小化字形：9/10×2 圆角条（Electron 的两套尺寸）。</summary>
     public static FrameworkElement MinimizeGlyph(double size)
     {
@@ -271,7 +282,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> ToolTipLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="ToolTip">
   <Setter Property="Foreground" Value="#1D1D1F"/>
-  <Setter Property="FontSize" Value="11.5"/>
+  <Setter Property="FontSize" Value="12.5"/>
   <Setter Property="HasDropShadow" Value="False"/>
   <Setter Property="Template">
     <Setter.Value>
@@ -291,7 +302,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> TextBoxLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="TextBox">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#1D1D1F"/>
   <Setter Property="CaretBrush" Value="#FF5B8A"/>
   <Setter Property="SelectionBrush" Value="#FFB1CB"/>
@@ -332,7 +343,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> SecondaryButtonLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="Button">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#2C2C2E"/>
   <Setter Property="Padding" Value="14,0"/>
   <Setter Property="Height" Value="32"/>
@@ -389,7 +400,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> PrimaryButtonLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="Button">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="FontWeight" Value="SemiBold"/>
   <Setter Property="Foreground" Value="White"/>
   <Setter Property="Padding" Value="16,0"/>
@@ -447,7 +458,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> SwitchLazy = new(() => WithFocusRing(Parse($$"""
 <Style {{Ns}} TargetType="CheckBox">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#2C2C2E"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template">
@@ -570,21 +581,26 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> NavItemLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="RadioButton">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="FontSize" Value="14"/>
+  <Setter Property="FontWeight" Value="Medium"/>
   <Setter Property="Foreground" Value="#2C2C2E"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template">
     <Setter.Value>
       <ControlTemplate TargetType="RadioButton">
-        <Border x:Name="bg" CornerRadius="8" Background="Transparent" Margin="8,2,8,2" Padding="12,9">
+        <Border x:Name="bg" CornerRadius="12" Background="Transparent" BorderBrush="Transparent"
+                BorderThickness="1" Margin="0,1,0,1" Padding="10,8">
           <ContentPresenter VerticalAlignment="Center"/>
         </Border>
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True">
-            <Setter TargetName="bg" Property="Background" Value="#FFFFFF"/>
+            <Setter TargetName="bg" Property="Background" Value="#FFF1F6"/>
+            <Setter TargetName="bg" Property="BorderBrush" Value="#FFB1CB"/>
+            <Setter Property="Foreground" Value="#E84A78"/>
           </Trigger>
           <Trigger Property="IsChecked" Value="True">
-            <Setter TargetName="bg" Property="Background" Value="#FFECF2"/>
+            <Setter TargetName="bg" Property="Background" Value="#FFF1F6"/>
+            <Setter TargetName="bg" Property="BorderBrush" Value="#FFB1CB"/>
             <Setter Property="Foreground" Value="#E84A78"/>
           </Trigger>
         </ControlTemplate.Triggers>
@@ -621,7 +637,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> DangerButtonLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="Button">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#D7263D"/>
   <Setter Property="Padding" Value="14,0"/>
   <Setter Property="Height" Value="32"/>
@@ -650,7 +666,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> SuccessButtonLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="Button">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#2E7D32"/>
   <Setter Property="Padding" Value="14,0"/>
   <Setter Property="Height" Value="32"/>
@@ -669,7 +685,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> TabItemLazy = new(() => Parse($$"""
 <Style {{Ns}} TargetType="TabItem">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#6F6876"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template">
@@ -835,7 +851,7 @@ public static class NativeTheme
         string title,
         bool showMinimize = false,
         double buttonSize = 28,
-        double titleSize = 13)
+        double titleSize = 14)
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -881,7 +897,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> ComboBoxLazy = new(() => Parse("""
 <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ComboBox">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#1D1D1F"/>
   <Setter Property="MinHeight" Value="32"/>
   <Setter Property="Template">
@@ -941,7 +957,7 @@ public static class NativeTheme
     private static readonly System.Lazy<Style> ComboBoxItemLazy = new(() => Parse("""
 <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ComboBoxItem">
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
-  <Setter Property="FontSize" Value="12.5"/>
+  <Setter Property="FontSize" Value="14"/>
   <Setter Property="Foreground" Value="#2C2C2E"/>
   <Setter Property="Padding" Value="10,7"/>
   <Setter Property="Template">

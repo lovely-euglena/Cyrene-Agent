@@ -66,13 +66,13 @@ public sealed class PluginManagerWindow : NativeWindow
         _marketList = new StackPanel();
         _status = new TextBlock
         {
-            FontSize = 12,
+            FontSize = 12.5,
             Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(16, 6, 16, 6),
         };
         _marketStatus = new TextBlock
         {
-            FontSize = 11.5,
+            FontSize = 12.5,
             Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(12, 8, 12, 0),
             TextWrapping = TextWrapping.Wrap,
@@ -84,9 +84,9 @@ public sealed class PluginManagerWindow : NativeWindow
             BorderBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0xE5, 0xEA)),
             Padding = new Thickness(0),
         };
-        var tabInstalled = new TabItem { Header = "已安装", FontSize = 13 };
+        var tabInstalled = new TabItem { Header = "已安装", FontSize = 14 };
         tabInstalled.Content = MakeScroll(_installedList);
-        var tabMarket = new TabItem { Header = "插件市场", FontSize = 13 };
+        var tabMarket = new TabItem { Header = "插件市场", FontSize = 14 };
         var marketPanel = new DockPanel();
         DockPanel.SetDock(_marketStatus, System.Windows.Controls.Dock.Top);
         marketPanel.Children.Add(_marketStatus);
@@ -94,7 +94,7 @@ public sealed class PluginManagerWindow : NativeWindow
         tabMarket.Content = marketPanel;
         _tabs.Items.Add(tabInstalled);
         _tabs.Items.Add(tabMarket);
-        var tabLimits = new TabItem { Header = "设置", FontSize = 13 };
+        var tabLimits = new TabItem { Header = "设置", FontSize = 14 };
         tabLimits.Content = MakeLimitsPanel();
         _tabs.Items.Add(tabLimits);
 
@@ -193,7 +193,7 @@ public sealed class PluginManagerWindow : NativeWindow
         {
             Text = "软限制：存储配额只约束走插件存储 API 的写入（保存后对之后启动/重启的插件生效）；"
                  + "内存上限仅作用于 .NET 插件进程（实时生效，超出即终止）。0 = 不限。",
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 14),
@@ -206,7 +206,7 @@ public sealed class PluginManagerWindow : NativeWindow
 
         _limitsHint = new TextBlock
         {
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 6, 0, 10),
@@ -225,7 +225,7 @@ public sealed class PluginManagerWindow : NativeWindow
 
         _limitsStatus = new TextBlock
         {
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 10, 0, 0),
@@ -238,7 +238,7 @@ public sealed class PluginManagerWindow : NativeWindow
     {
         Text = value.ToString(),
         Width = 120,
-        FontSize = 12.5,
+        FontSize = 14,
         Style = NativeTheme.TextBoxStyle,
         HorizontalAlignment = HorizontalAlignment.Left,
     };
@@ -250,7 +250,7 @@ public sealed class PluginManagerWindow : NativeWindow
         {
             Text = label,
             Width = 280,
-            FontSize = 12.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextDefaultBrush,
             VerticalAlignment = VerticalAlignment.Center,
         });
@@ -429,11 +429,11 @@ public sealed class PluginManagerWindow : NativeWindow
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var searchBox = new TextBox { FontSize = 12.5, Padding = new Thickness(8, 5, 8, 4) };
+        var searchBox = new TextBox { FontSize = 14, Padding = new Thickness(8, 5, 8, 4) };
         var hint = new TextBlock
         {
             Text = "搜索插件（名称 / id / 描述）",
-            FontSize = 12,
+            FontSize = 14,
             Margin = new Thickness(10, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = NativeTheme.TextMutedBrush,
@@ -498,7 +498,7 @@ public sealed class PluginManagerWindow : NativeWindow
             sp.Children.Add(new TextBlock
             {
                 Text = "插件运行时未启用——已跳过插件系统以节省内存。",
-                FontSize = 12.5,
+                FontSize = 14,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0),
                 Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x5A, 0x00)),
@@ -506,7 +506,7 @@ public sealed class PluginManagerWindow : NativeWindow
             var enableBtn = new Button
             {
                 Content = "启用插件运行时",
-                Width = 150, Height = 28, FontSize = 12,
+                Width = 150, Height = 28, FontSize = 14,
                 Style = NativeTheme.PrimaryButtonStyle,
             };
             enableBtn.Click += (_, _) => RequestRouter.SendCommand("plugins", "enable-runtime");
@@ -521,7 +521,7 @@ public sealed class PluginManagerWindow : NativeWindow
                 Text = _search.Length > 0
                     ? $"没有匹配「{_search}」的插件"
                     : "暂无插件。到「插件市场」看看，或用上方「导入 ZIP」安装本地插件包。",
-                FontSize = 12.5,
+                FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
                 Margin = new Thickness(8, 24, 8, 8),
                 TextAlignment = TextAlignment.Center,
@@ -536,16 +536,16 @@ public sealed class PluginManagerWindow : NativeWindow
 
     private Border MakeInstalledCard(PluginInfo p)
     {
-        var headerText = new TextBlock { Text = $"{p.Name}  {p.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
+        var headerText = new TextBlock { Text = $"{p.Name}  {p.Version}", FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
         var header = new StackPanel { Orientation = Orientation.Horizontal };
         header.Children.Add(headerText);
         header.Children.Add(MakeRuntimeBadge(p.Runtime));
-        var desc = new TextBlock { Text = p.Description, FontSize = 12, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+        var desc = new TextBlock { Text = p.Description, FontSize = 14, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
         // 实际占用行：存储（两轨）· 内存（仅 .NET 有独立进程可探测）
         var usage = new TextBlock
         {
             Text = FormatUsage(p),
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(0, 3, 0, 0),
         };
@@ -634,7 +634,7 @@ public sealed class PluginManagerWindow : NativeWindow
             Child = new TextBlock
             {
                 Text = isDotnet ? ".NET" : "Node",
-                FontSize = 10.5,
+                FontSize = 12,
                 FontWeight = FontWeights.Medium,
                 Foreground = new SolidColorBrush(isDotnet ? Color.FromRgb(0x7C, 0x3A, 0xED) : Color.FromRgb(0x6B, 0x72, 0x80)),
             },
@@ -655,7 +655,7 @@ public sealed class PluginManagerWindow : NativeWindow
             _marketList.Children.Add(new TextBlock
             {
                 Text = $"没有匹配「{_search}」的插件",
-                FontSize = 12.5,
+                FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
                 Margin = new Thickness(8, 24, 8, 8),
                 TextAlignment = TextAlignment.Center,
@@ -665,9 +665,9 @@ public sealed class PluginManagerWindow : NativeWindow
 
     private Border MakeMarketCard(MarketEntry m, bool installed)
     {
-        var header = new TextBlock { Text = $"{m.Name}  {m.Version}", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
-        var meta = new TextBlock { Text = $"by {m.Author}", FontSize = 11.5, Foreground = NativeTheme.TextMutedBrush, Margin = new Thickness(0, 1, 0, 0) };
-        var desc = new TextBlock { Text = m.Description, FontSize = 12, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+        var header = new TextBlock { Text = $"{m.Name}  {m.Version}", FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
+        var meta = new TextBlock { Text = $"by {m.Author}", FontSize = 14, Foreground = NativeTheme.TextMutedBrush, Margin = new Thickness(0, 1, 0, 0) };
+        var desc = new TextBlock { Text = m.Description, FontSize = 14, Foreground = NativeTheme.TextMutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
 
         var btn = MakeMiniButton(installed ? "已安装" : "安装", primary: !installed);
         btn.IsEnabled = !installed && !_installing.Contains(m.Id);
@@ -710,7 +710,7 @@ public sealed class PluginManagerWindow : NativeWindow
         {
             Content = text,
             Height = 28,
-            FontSize = 12,
+            FontSize = 14,
             Margin = new Thickness(6, 0, 0, 0),
             Style = primary
                 ? NativeTheme.PrimaryButtonStyle

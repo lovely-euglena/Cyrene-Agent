@@ -210,16 +210,16 @@ internal sealed class CustomStyleDialog : Window
     private readonly TextBlock _valueLabel = new()
     {
         Text = "Temperature",
-        FontSize = 12,
+        FontSize = 14,
         VerticalAlignment = VerticalAlignment.Center,
         Margin = new Thickness(0, 0, 8, 0),
     };
-    private readonly TextBox _valueBox = new() { Width = 90, FontSize = 12, Padding = new Thickness(6, 4, 6, 4) };
+    private readonly TextBox _valueBox = new() { Width = 90, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
     private readonly StackPanel _valueRow;
     private readonly Dictionary<string, RadioButton> _repetitionButtons = new();
     private readonly TextBlock _status = new()
     {
-        FontSize = 12,
+        FontSize = 14,
         Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
         Margin = new Thickness(0, 6, 0, 0),
         TextWrapping = TextWrapping.Wrap,
@@ -268,7 +268,7 @@ internal sealed class CustomStyleDialog : Window
         root.Children.Add(new TextBlock
         {
             Text = "多样性控制",
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
             Margin = new Thickness(0, 0, 0, 6),
@@ -287,7 +287,7 @@ internal sealed class CustomStyleDialog : Window
         root.Children.Add(new TextBlock
         {
             Text = "重复控制",
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
             Margin = new Thickness(0, 16, 0, 6),

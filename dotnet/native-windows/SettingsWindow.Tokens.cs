@@ -66,7 +66,16 @@ public sealed partial class SettingsWindow
                 values.Add((GetString(day, "date"), GetInt(day, "input", 0), GetInt(day, "output", 0)));
             }
             var max = 1;
-            foreach (var v in values) max = Math.Max(max, v.Input + v.Output);
+            var peakIndex = -1;
+            for (var i = 0; i < values.Count; i++)
+            {
+                var dayTotal = values[i].Input + values[i].Output;
+                if (dayTotal > max)
+                {
+                    max = dayTotal;
+                    peakIndex = i;
+                }
+            }
 
             var bars = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 4) };
             var barIndex = 0;
@@ -80,19 +89,33 @@ public sealed partial class SettingsWindow
                     Width = 28,
                     Margin = new Thickness(2, 0, 2, 0),
                 };
+                if (barIndex == peakIndex && total > 0)
+                {
+                    // 峰值白点（Electron .token-bar--peak::after）
+                    column.Children.Add(new Ellipse
+                    {
+                        Width = 8,
+                        Height = 8,
+                        Fill = Brushes.White,
+                        Stroke = NativeTheme.Brush(Color.FromRgb(0xFF, 0x8C, 0xCC)),
+                        StrokeThickness = 1.5,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Margin = new Thickness(0, 0, 0, 2),
+                    });
+                }
                 column.Children.Add(new TextBlock
                 {
                     Text = FormatTokensShort(total),
-                    FontSize = 9,
+                    FontSize = 10,
                     Foreground = NativeTheme.TextMutedBrush,
                     HorizontalAlignment = HorizontalAlignment.Center,
                 });
                 var bar = new Border
                 {
-                    Width = 18,
+                    Width = 24,
                     Height = 0,
-                    CornerRadius = new CornerRadius(3),
-                    Background = total > 0 ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush,
+                    CornerRadius = new CornerRadius(12),
+                    Background = total > 0 ? TokenBarBrush() : NativeTheme.BorderSoftBrush,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Bottom,
                     ToolTip = MakeTokenTooltip(date, dayInput, dayOutput),
@@ -115,7 +138,7 @@ public sealed partial class SettingsWindow
                 column.Children.Add(new TextBlock
                 {
                     Text = date,
-                    FontSize = 9,
+                    FontSize = 10,
                     Foreground = NativeTheme.TextMutedBrush,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Margin = new Thickness(0, 2, 0, 0),
@@ -131,12 +154,12 @@ public sealed partial class SettingsWindow
                 Margin = new Thickness(0, 0, 0, 6),
             });
 
-            // 使用趋势（输入/输出双折线）
+            // 使用趋势（输入/输出双折线；配色对齐 Electron Chart.js：输入 #3B82F6 / 输出 #FF8CCC）
             if (values.Count > 1)
             {
                 panel.Children.Add(MakeSubHeader("使用趋势"));
                 panel.Children.Add(MakeTrendChart(values));
-                panel.Children.Add(MakeChartLegend(("输入", NativeTheme.PinkBrush), ("输出", NativeTheme.VioletBrush)));
+                panel.Children.Add(MakeChartLegend(("输入", TrendInputBrush), ("输出", TrendOutputBrush)));
             }
         }
 
@@ -191,13 +214,13 @@ public sealed partial class SettingsWindow
             stack.Children.Add(new TextBlock
             {
                 Text = metrics[column].Label,
-                FontSize = 11.5,
+                FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
             });
             stack.Children.Add(new TextBlock
             {
                 Text = metrics[column].Value,
-                FontSize = 17,
+                FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = NativeTheme.TextStrongBrush,
             });
@@ -283,16 +306,16 @@ public sealed partial class SettingsWindow
             });
             canvas.Children.Add(polyline);
         }
-        AddSeries(true, NativeTheme.PinkBrush);
-        AddSeries(false, NativeTheme.VioletBrush);
+        AddSeries(true, TrendInputBrush);
+        AddSeries(false, TrendOutputBrush);
 
         // 数据点（hover 才显示）+ 列命中区（tooltip + 双序列点联动）
         var inputDots = new Ellipse[values.Count];
         var outputDots = new Ellipse[values.Count];
         for (var i = 0; i < values.Count; i++)
         {
-            var dotIn = MakeDot(NativeTheme.PinkBrush);
-            var dotOut = MakeDot(NativeTheme.VioletBrush);
+            var dotIn = MakeDot(TrendInputBrush);
+            var dotOut = MakeDot(TrendOutputBrush);
             Canvas.SetLeft(dotIn, XAt(i) - 4);
             Canvas.SetTop(dotIn, YAt(values[i].Input) - 4);
             Canvas.SetLeft(dotOut, XAt(i) - 4);
@@ -338,15 +361,27 @@ public sealed partial class SettingsWindow
         };
     }
 
+    /// <summary>模型占比配色（对齐 Electron tokens/panel.ts modelColors）。</summary>
     private static readonly Color[] DonutPalette =
     {
-        Color.FromRgb(0xFF, 0x5B, 0x8A),
-        Color.FromRgb(0x9F, 0x7A, 0xEA),
-        Color.FromRgb(0x22, 0xD3, 0xEE),
-        Color.FromRgb(0xFF, 0xB1, 0x4D),
-        Color.FromRgb(0x7D, 0xD3, 0xFC),
-        Color.FromRgb(0xA3, 0xE6, 0x35),
+        Color.FromRgb(0xFF, 0x7E, 0xB7),
+        Color.FromRgb(0x8B, 0x7C, 0xF6),
+        Color.FromRgb(0x4D, 0xB6, 0xAC),
+        Color.FromRgb(0xF4, 0xA2, 0x61),
+        Color.FromRgb(0x5B, 0x8D, 0xEF),
+        Color.FromRgb(0x94, 0xA3, 0xB8),
     };
+
+    /// <summary>趋势图输入序列（Electron #3B82F6）。</summary>
+    private static readonly Brush TrendInputBrush = NativeTheme.Brush(Color.FromRgb(0x3B, 0x82, 0xF6));
+
+    /// <summary>趋势图输出序列（Electron #FF8CCC）。</summary>
+    private static readonly Brush TrendOutputBrush = NativeTheme.Brush(Color.FromRgb(0xFF, 0x8C, 0xCC));
+
+    /// <summary>每日柱渐变（Electron .token-bar__fill：#FF5B8A → #FF8CCC）。</summary>
+    private static Brush TokenBarBrush() => new LinearGradientBrush(
+        Color.FromRgb(0xFF, 0x5B, 0x8A), Color.FromRgb(0xFF, 0x8C, 0xCC),
+        new Point(0.5, 0), new Point(0.5, 1));
 
     private static Brush DonutBrush(int index) => NativeTheme.Brush(DonutPalette[index % DonutPalette.Length]);
 
@@ -433,21 +468,21 @@ public sealed partial class SettingsWindow
         stack.Children.Add(new TextBlock
         {
             Text = date,
-            FontSize = 11.5,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
         });
         stack.Children.Add(new TextBlock
         {
             Text = $"输入 {FormatTokensShort(input)} · 输出 {FormatTokensShort(output)}",
-            FontSize = 11,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             Margin = new Thickness(0, 2, 0, 0),
         });
         stack.Children.Add(new TextBlock
         {
             Text = $"合计 {FormatTokensShort(input + output)}",
-            FontSize = 11,
+            FontSize = 14,
             Foreground = NativeTheme.PinkDarkBrush,
             Margin = new Thickness(0, 2, 0, 0),
         });
@@ -472,7 +507,7 @@ public sealed partial class SettingsWindow
             row.Children.Add(new TextBlock
             {
                 Text = text,
-                FontSize = 11,
+                FontSize = 14,
                 Foreground = NativeTheme.TextMutedBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 16, 0),

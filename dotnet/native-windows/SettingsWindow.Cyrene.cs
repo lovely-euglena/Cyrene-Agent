@@ -170,7 +170,7 @@ public sealed partial class SettingsWindow
             new TextBlock
             {
                 Text = effectiveMode,
-                FontSize = 12,
+                FontSize = 14,
                 Foreground = NativeTheme.TextDefaultBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextWrapping = TextWrapping.Wrap,
@@ -214,14 +214,14 @@ public sealed partial class SettingsWindow
         content.Children.Add(new TextBlock
         {
             Text = title,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
         });
         content.Children.Add(new TextBlock
         {
             Text = description,
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 0),
@@ -229,7 +229,7 @@ public sealed partial class SettingsWindow
         content.Children.Add(new TextBlock
         {
             Text = status,
-            FontSize = 11,
+            FontSize = 14,
             Foreground = selected ? NativeTheme.PinkBrush : NativeTheme.TextMutedBrush,
             Margin = new Thickness(0, 4, 0, 0),
         });
@@ -300,17 +300,17 @@ internal sealed class StickerAddDialog : Window
     {
         Width = 240,
         IsReadOnly = true,
-        FontSize = 12,
+        FontSize = 14,
         Padding = new Thickness(6, 4, 6, 4),
         VerticalContentAlignment = VerticalAlignment.Center,
     };
-    private readonly TextBox _idBox = new() { Width = 200, FontSize = 12, Padding = new Thickness(6, 4, 6, 4) };
-    private readonly TextBox _descriptionBox = new() { Width = 300, FontSize = 12, Padding = new Thickness(6, 4, 6, 4) };
+    private readonly TextBox _idBox = new() { Width = 200, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
+    private readonly TextBox _descriptionBox = new() { Width = 300, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
     private readonly TextBox _phrasesBox = new()
     {
         Width = 300,
         Height = 84,
-        FontSize = 12,
+        FontSize = 14,
         AcceptsReturn = true,
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -318,7 +318,7 @@ internal sealed class StickerAddDialog : Window
     };
     private readonly TextBlock _status = new()
     {
-        FontSize = 12,
+        FontSize = 14,
         Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
         Margin = new Thickness(0, 6, 0, 0),
         TextWrapping = TextWrapping.Wrap,
@@ -414,14 +414,14 @@ internal sealed class StickerAddDialog : Window
         copy.Children.Add(new TextBlock
         {
             Text = title,
-            FontSize = 12.5,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = NativeTheme.TextStrongBrush,
         });
         copy.Children.Add(new TextBlock
         {
             Text = description,
-            FontSize = 11.5,
+            FontSize = 14,
             Foreground = NativeTheme.TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 0),

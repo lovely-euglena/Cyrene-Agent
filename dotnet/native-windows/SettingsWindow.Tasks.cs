@@ -69,7 +69,7 @@ public sealed partial class SettingsWindow
         var badge = new TextBlock
         {
             Text = enabled ? "已启用" : "已停用",
-            FontSize = 11,
+            FontSize = 14,
             Margin = new Thickness(10, 0, 0, 0),
             Foreground = new SolidColorBrush(enabled ? Color.FromRgb(0x1D, 0x9A, 0x54) : Color.FromRgb(0x99, 0x99, 0xAA)),
             VerticalAlignment = VerticalAlignment.Center,
@@ -159,7 +159,7 @@ public sealed partial class SettingsWindow
             box.Children.Add(new TextBlock
             {
                 Text = $"⚠ {historyError}",
-                FontSize = 11,
+                FontSize = 14,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xD3, 0x3A, 0x3A)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 1, 0, 1),
@@ -184,7 +184,7 @@ public sealed partial class SettingsWindow
             box.Children.Add(new TextBlock
             {
                 Text = line,
-                FontSize = 11,
+                FontSize = 14,
                 Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x66)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 1, 0, 1),
