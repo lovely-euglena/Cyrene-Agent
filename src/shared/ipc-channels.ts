@@ -509,6 +509,7 @@ export const IPC = {
   /** 设置面板桥的统一转发通道：仅面板宿主窗口可用，pluginId 由宿主侧绑定 */
   PLUGINS_PANEL_INVOKE: "plugins:panel:invoke",
   PLUGINS_MARKET_LIST: "plugins:market:list",
+  PLUGINS_MARKET_DETAILS: "plugins:market:details",
   PLUGINS_MARKET_INSTALL: "plugins:market:install",
 
   // 项目公告（远端 Markdown 文本）

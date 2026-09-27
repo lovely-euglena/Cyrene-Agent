@@ -509,6 +509,7 @@ const pluginsApi = {
   importZip: () => ipcRenderer.invoke(IPC.PLUGINS_IMPORT_ZIP),
   uninstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_UNINSTALL, id),
   marketList: (preferred?: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_LIST, preferred),
+  marketDetails: (id: string, preferred?: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_DETAILS, id, preferred),
   marketInstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_INSTALL, id),
 };
 
