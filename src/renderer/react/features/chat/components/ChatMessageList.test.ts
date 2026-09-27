@@ -272,7 +272,7 @@ describe("compaction marker presentation", () => {
       key: "checkpoint-1",
       role: "compaction",
       content: "",
-      extraInfo: { compactionTrigger: "manual" },
+      extraInfo: {},
     }]);
   });
 });
