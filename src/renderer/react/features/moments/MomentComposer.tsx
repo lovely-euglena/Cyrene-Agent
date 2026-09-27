@@ -10,6 +10,7 @@ import {
 } from "../../../../shared/moments-types";
 import { useTranslation } from "../../i18n";
 import { getCharacterAvatar } from "../../character-avatars";
+import { useCyreneAvatar } from "../../hooks/useCyreneAvatar";
 
 interface PendingImage {
   file: File;
@@ -51,6 +52,7 @@ function detectMentionTyping(text: string, caret: number): { at: number; query: 
 /** QQ 群式常驻发布框：标题（可选）+ 正文 + 图片 + @ 点名，点开就能发。 */
 export function MomentComposer({ submitting, onPublish }: MomentComposerProps) {
   const { t } = useTranslation();
+  const cyreneAvatarUrl = useCyreneAvatar();
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
@@ -241,7 +243,7 @@ export function MomentComposer({ submitting, onPublish }: MomentComposerProps) {
               const isCyrene = name === "cyrene";
               const display = isCyrene ? t("moments.mention.cyreneOptionLabel") : name;
               // 头像池覆盖到昔涟，@ 选择框里她也带头像——和别人外观一致
-              const avatar = getCharacterAvatar(isCyrene ? "昔涟" : name);
+              const avatar = isCyrene ? cyreneAvatarUrl : getCharacterAvatar(name);
               return (
                 <button
                   type="button"

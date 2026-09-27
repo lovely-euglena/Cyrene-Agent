@@ -144,6 +144,12 @@ declare global {
     cyrene?: {
       quit: () => void;
     };
+    cyreneAvatar?: {
+      get: () => Promise<string | null>;
+      upload: () => Promise<boolean>;
+      reset: () => Promise<void>;
+      onChanged: (callback: () => void) => () => void;
+    };
     system?: SystemApi;
     news?: import("../shared/news-types").NewsApi;
     review?: ReviewApi;

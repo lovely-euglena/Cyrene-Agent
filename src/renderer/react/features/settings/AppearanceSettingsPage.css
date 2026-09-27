@@ -411,6 +411,24 @@
   white-space: normal;
 }
 
+.cy-settings-avatar-control {
+  display: flex;
+  flex: 0 1 auto;
+  max-width: 52%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cy-settings-avatar-preview {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  border: 1px solid var(--rb-border-default);
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .cy-settings-page .ant-btn-default {
   border-color: var(--rb-border-default);
   color: var(--rb-text-primary);
@@ -1034,6 +1052,12 @@
   }
 
   .cy-settings-row .cy-settings-button-group {
+    flex-wrap: wrap;
+  }
+
+  .cy-settings-avatar-control {
+    width: 100%;
+    max-width: 100%;
     flex-wrap: wrap;
   }
 }

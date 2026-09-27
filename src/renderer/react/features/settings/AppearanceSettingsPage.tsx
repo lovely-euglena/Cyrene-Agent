@@ -13,6 +13,7 @@ import {
   type MessageTypography,
 } from "../../../../shared/message-typography";
 import { useTranslation } from "../../i18n";
+import { useCyreneAvatar } from "../../hooks/useCyreneAvatar";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
 import { applyMessageTypography } from "../../../ui/message-typography";
 import { applyUiTheme } from "../../../ui/theme";
@@ -120,6 +121,8 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState("");
+  const cyreneAvatarUrl = useCyreneAvatar();
+  const [avatarBusy, setAvatarBusy] = useState(false);
   // 昔涟消息字体：ref 记住最新值，松手保存时不依赖可能过期的渲染闭包
   const typographyRef = useRef<MessageTypography>(DEFAULT_MESSAGE_TYPOGRAPHY);
 
@@ -159,6 +162,32 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     } catch {
       setStatus(t("settingsPage.saveFailed"));
       return false;
+    }
+  }
+
+  async function uploadCyreneAvatar() {
+    if (!window.cyreneAvatar || avatarBusy) return;
+    setAvatarBusy(true);
+    try {
+      const uploaded = await window.cyreneAvatar.upload();
+      if (uploaded) setStatus(t("settingsPage.cyreneAvatarUploaded"));
+    } catch {
+      setStatus(t("settingsPage.cyreneAvatarFailed"));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function resetCyreneAvatar() {
+    if (!window.cyreneAvatar || avatarBusy) return;
+    setAvatarBusy(true);
+    try {
+      await window.cyreneAvatar.reset();
+      setStatus(t("settingsPage.cyreneAvatarReset"));
+    } catch {
+      setStatus(t("settingsPage.cyreneAvatarFailed"));
+    } finally {
+      setAvatarBusy(false);
     }
   }
 
@@ -284,6 +313,14 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.uiFont")}</strong><span>{t("settingsPage.defaultFont")}</span></div>
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.cyreneAvatar")}</strong><span>{t("settingsPage.cyreneAvatarDescription")}</span></div>
+                    <div className="cy-settings-row__control cy-settings-avatar-control">
+                      <img className="cy-settings-avatar-preview" src={cyreneAvatarUrl} alt={t("settingsPage.cyreneAvatar")} />
+                      <Button disabled={avatarBusy} onClick={() => void uploadCyreneAvatar()}>{t("settingsPage.cyreneAvatarUpload")}</Button>
+                      <Button disabled={avatarBusy} onClick={() => void resetCyreneAvatar()}>{t("settingsPage.cyreneAvatarResetButton")}</Button>
+                    </div>
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageTypography")}</strong><span>{t("settingsPage.messageTypographyDescription")}</span></div>

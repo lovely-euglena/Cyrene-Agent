@@ -8,11 +8,11 @@ import {
   type MomentFeedItem,
 } from "../../../../shared/moments-types";
 import { resolveAsset } from "../../../../shared/renderer-base";
+import { useCyreneAvatar } from "../../hooks/useCyreneAvatar";
 import { useTranslation } from "../../i18n";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { formatMomentTime } from "./moments-utils";
 
-const CYRENE_AVATAR_URL = resolveAsset("avatars/cyrene-avatar.png");
 
 /**
  * 正文按 @昵称 切片：点名片段高亮显示（QQ 群的蓝色 @ 手感）。
@@ -70,6 +70,7 @@ export function MomentPostCard({
   onComment,
 }: MomentPostCardProps) {
   const { t } = useTranslation();
+  const cyreneAvatarUrl = useCyreneAvatar();
   // 统一反馈入口：删除动态走危险确认
   const feedback = useFeedback();
   const { post, comments, likes } = item;
@@ -123,7 +124,7 @@ export function MomentPostCard({
     <article className="moment-card" id={`moment-post-${post.id}`}>
       <div className="moment-card__avatar">
         {post.author === "cyrene" ? (
-          <img src={CYRENE_AVATAR_URL} alt={t("moments.cyreneName")} draggable={false} />
+          <img src={cyreneAvatarUrl} alt={t("moments.cyreneName")} draggable={false} />
         ) : userAvatarUrl ? (
           <img src={userAvatarUrl} alt={userDisplayName} draggable={false} />
         ) : (

@@ -275,6 +275,10 @@ export const IPC = {
   USER_GET_AVATAR: "user:get-avatar",
   USER_PROFILE_CHANGED: "user:profile-changed",
   USER_AVATAR_CHANGED: "user:avatar-changed",
+  CYRENE_AVATAR_GET: "cyrene-avatar:get",
+  CYRENE_AVATAR_UPLOAD: "cyrene-avatar:upload",
+  CYRENE_AVATAR_RESET: "cyrene-avatar:reset",
+  CYRENE_AVATAR_CHANGED: "cyrene-avatar:changed",
 
   // memory panel
   MEMORY_PANEL_GET_DATA: "memory-panel:get-data",

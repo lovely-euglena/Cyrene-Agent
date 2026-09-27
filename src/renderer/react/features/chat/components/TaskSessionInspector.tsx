@@ -8,6 +8,7 @@ import type { TaskSession, TaskTraceRecord } from "../../../../../shared/task-se
 import type { AgentRoundRecord, ProcessMessageRecord, ReasoningBlock, ToolExecutionRecord } from "../../../../../shared/chat-types";
 import type { TaskPlanPresentation } from "./run-presentation";
 import { resolveAsset } from "../../../../../shared/renderer-base";
+import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import "./TaskSessionInspector.css";
 
 function textContent(value: unknown): string {
@@ -204,6 +205,7 @@ export function TaskSessionInspector({
   active: boolean;
 }) {
   const { t } = useTranslation();
+  const cyreneAvatarUrl = useCyreneAvatar();
   const [session, setSession] = useState<TaskSession | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const messages = useMemo(() => session ? toChatMessages(session) : [], [session]);
@@ -281,7 +283,7 @@ export function TaskSessionInspector({
           preferredAddress={preferredAddress}
           characterMoodAssets={moodAssets}
           assistantAvatar={assistantAvatar}
-          userAvatar={{ src: resolveAsset("avatars/cyrene-avatar.png"), alt: t("messageList.cyreneAvatarAlt") }}
+          userAvatar={{ src: cyreneAvatarUrl, alt: t("messageList.cyreneAvatarAlt") }}
           revisionBusy
           workspaceRoot={session.resolvedWorkspaceRoot}
         />

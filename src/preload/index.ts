@@ -605,6 +605,20 @@ const memoryPanelApi = {
 };
 
 contextBridge.exposeInMainWorld("user", userApi);
+
+const cyreneAvatarApi = {
+  get: () => ipcRenderer.invoke(IPC.CYRENE_AVATAR_GET) as Promise<string | null>,
+  upload: () => ipcRenderer.invoke(IPC.CYRENE_AVATAR_UPLOAD) as Promise<boolean>,
+  reset: () => ipcRenderer.invoke(IPC.CYRENE_AVATAR_RESET) as Promise<void>,
+  onChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.CYRENE_AVATAR_CHANGED, listener);
+    return () => ipcRenderer.off(IPC.CYRENE_AVATAR_CHANGED, listener);
+  },
+};
+
+contextBridge.exposeInMainWorld("cyreneAvatar", cyreneAvatarApi);
+
 contextBridge.exposeInMainWorld("memoryPanel", memoryPanelApi);
 contextBridge.exposeInMainWorld("runtimeState", runtimeStateApi);
 

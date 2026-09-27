@@ -3,6 +3,7 @@ import { Component, createContext, createElement, useCallback, useContext, useEf
 import { t, useTranslation } from "../../../i18n";
 import { normalizeModelMarkdown } from "./markdown-normalize";
 import { resolveAsset } from "../../../../../shared/renderer-base";
+import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
@@ -122,7 +123,6 @@ interface ChatMessageListProps {
   onOpenFileLink?: (relPath: string, line?: number) => void;
 }
 
-const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
 type CharacterMoodRenderContext = {
   moods: Partial<Record<CharacterStatusMood, string>>;
   avatar: { src: string; alt: string; sprite?: boolean } | null;
@@ -924,6 +924,7 @@ function LastUserMessageEditor({
 
 function AssistantMessageAvatar() {
   const { t } = useTranslation();
+  const cyreneAvatarUrl = useCyreneAvatar();
   const context = useContext(CharacterMoodContext);
   const avatar = context.avatar;
   return (
