@@ -154,14 +154,16 @@ export interface GeneralSettings {
   emailSmtpPass: string;
   /** 发件人显示名（可选） */
   emailFromName: string;
-  /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | local(本地,占位) */
-  asrEngine: "off" | "aliyun" | "mossland" | "local";
+  /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | minimax | local(本地,占位) */
+  asrEngine: "off" | "aliyun" | "mossland" | "minimax" | "local";
   /** 阿里云智能语音交互 AppKey */
   asrAliyunAppKey: string;
   /** 阿里云 RAM AccessKey ID */
   asrAliyunAccessKeyId: string;
   /** 阿里云 RAM AccessKey Secret */
   asrAliyunAccessKeySecret: string;
+  /** MiniMax 语音识别 API Key */
+  asrMinimaxKey: string;
   /** ASR 识别语言：zh(中文) | en(英文) | auto(自动) */
   asrLanguage: "zh" | "en" | "auto";
   /** VAD 静默检测阈值（毫秒），500~2000，默认 1000 */

@@ -592,7 +592,7 @@ async function transcribeInboundWechatVoice(
   const cfg = getAsrConfig();
   if (!cfg
       || (cfg.engine === "aliyun" && (!cfg.appKey || !cfg.accessKeyId || !cfg.accessKeySecret))
-      || (cfg.engine === "mossland" && !cfg.apiKey)) {
+      || ((cfg.engine === "mossland" || cfg.engine === "minimax") && !cfg.apiKey)) {
     throw new Error("ASR 未配置");
   }
 
@@ -620,7 +620,7 @@ async function transcribePcmWithConfiguredAsr(pcm: Buffer, cfg: AsrConfig): Prom
     },
   );
 
-  if (cfg.engine === "mossland") {
+  if (cfg.engine === "mossland" || cfg.engine === "minimax") {
     await stream.start();
     stream.sendAudio(pcm);
     const completed = await stream.stop();
@@ -760,10 +760,14 @@ function isWechatAsrConfigured(): boolean {
       asrAliyunAccessKeyId?: unknown;
       asrAliyunAccessKeySecret?: unknown;
       ttsMosslandKey?: unknown;
+      asrMinimaxKey?: unknown;
     };
     if (settings.asrEngine === "local") return true;
     if (settings.asrEngine === "mossland") {
       return Boolean(typeof settings.ttsMosslandKey === "string" && settings.ttsMosslandKey.trim());
+    }
+    if (settings.asrEngine === "minimax") {
+      return Boolean(typeof settings.asrMinimaxKey === "string" && settings.asrMinimaxKey.trim());
     }
     if (settings.asrEngine !== "aliyun") return false;
     return Boolean(

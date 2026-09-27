@@ -228,7 +228,7 @@ After starting the application, **click the system tray icon → Open Settings**
 
 2. **🎙️ TTS Settings** (optional): Select Mossland, MiniMax, MiMo, GPT-SoVITS, or a custom cloud-based speech synthesis service.
 
-3. **🎧 ASR Settings** (optional): To use voice calls, configure Alibaba Cloud real-time ASR credentials or the API key shared with Mossland TTS.
+3. **🎧 ASR Settings** (optional): To use voice calls, configure Alibaba Cloud real-time ASR credentials, the API key shared with Mossland TTS, or a MiniMax ASR API key.
 
 4. **📱 External Channels** (optional): Connect Feishu, WeChat iLink, or QQ through NapCat/OneBot 11.
 
@@ -467,7 +467,7 @@ The session modes below are consumers of the CyreneHarness core engine:
 #### 🔊 Voice Interaction
 
 - **Multiple TTS Engines** — Supports Mossland, MiniMax, MiMo, GPT-SoVITS, and custom cloud-based speech services.
-- **ASR** — Supports Alibaba Cloud real-time speech recognition and Mossland full-turn audio transcription after each utterance.
+- **ASR** — Supports Alibaba Cloud real-time speech recognition and Mossland or MiniMax full-turn audio transcription after each utterance.
 - **Complete Voice Calls** — Continuous voice interaction through the `LISTENING → THINKING → SPEAKING` state flow.
 - **VAD Silence Detection** — Automatically detects when the user has stopped speaking and triggers a response.
 
@@ -596,7 +596,7 @@ models/                # Local AI models placed by the user; see MODEL_LICENSE.m
 src/
 ├── cli/              # Command-line entry (`cyrene` command: banner / about / version / run)
 ├── main/             # Electron main process
-│   ├── asr/          # Speech recognition (Alibaba Cloud real-time / Mossland batch transcription)
+│   ├── asr/          # Speech recognition (Alibaba Cloud real-time / Mossland and MiniMax batch transcription)
 │   ├── call/         # Voice-call core (ASR -> Agent -> TTS turns)
 │   ├── channels/     # External channel adapters (Feishu / WeChat iLink / QQ OneBot 11 / ...)
 │   ├── chat/         # Chat support (image handling / think filtering / sending policy)
