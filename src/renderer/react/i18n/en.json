@@ -979,9 +979,9 @@
         "p2": "This project is not officially authorized and is not official software. There is no partnership of any kind between the two parties."
       },
       "section2": {
-        "title": "2. Scope of Use and Prohibited Conduct",
-        "p1": "This project is for personal, local, private use only. Any commercial use is strictly prohibited, including but not limited to selling the program, profiting from livestreams, running paid communities, commercial promotion or monetization, and falsely claiming this program is an official product.",
-        "p2": "The stickers bundled with the program are personally collected assets, intended for personal local use only. Bulk external distribution is prohibited."
+        "title": "2. Scope of Use and Third-Party Content",
+        "p1": "The original source code of this project is licensed under the MIT License. That license does not apply to third-party content related to \"Cyrene\" and Honkai: Star Rail, including characters, likenesses, settings, images, audio, text, and trademarks.",
+        "p2": "This project grants no commercial-use or sublicensing rights over such third-party content. For acts involving such content — copying, distribution, public display, livestreaming, paid services, or commercial promotion — users must comply with the original rights holders' licensing policies and applicable laws and regulations, and bear the corresponding responsibility themselves."
       },
       "section3": {
         "title": "3. User Responsibility",
@@ -994,7 +994,13 @@
         "p2": "This software is provided \"as is\", without warranty of any kind, express or implied."
       },
       "section5": {
-        "title": "5. Contact Channel for Rights Holders",
+        "title": "5. Cyrene Character Rights and Voice Cloning Tool",
+        "p1Before": "This software does not distribute official voice assets for Cyrene from Honkai: Star Rail. It only provides a TTS voice-cloning tool. ",
+        "p1Emphasis": "Users must clone voices only from audio they are legally authorized to use",
+        "p1After": ". Users bear all copyright and legal responsibility for content generated with this tool; the software author is not responsible. Rights to the Cyrene character belong to miHoYo, while rights in the corresponding voice performances belong to the voice actors in each country."
+      },
+      "section6": {
+        "title": "6. Contact Channel for Rights Holders",
         "p1": "If miHoYo / HoYoverse or other rights holders believe this software infringes their rights, please contact us through the channels below. The author undertakes to respond and cooperate, or take the software down, within 7 business days of receiving notice.",
         "email": "Email: ky2569ly@gmail.com (please put [Copyright Matter] in the subject line)",
         "bilibiliLink": "Bilibili: Playa0's creator space",
@@ -1002,8 +1008,8 @@
         "githubLabel": "GitHub: ",
         "githubLink": "Playa-0v0/Cyrene-Agent"
       },
-      "section6": {
-        "title": "6. User Feedback and Bug Reports",
+      "section7": {
+        "title": "7. User Feedback and Bug Reports",
         "p1": "If you run into problems or bugs, or have feature suggestions, you are welcome to submit them through the channels below.",
         "email": "Email ky2569ly@gmail.com (please include [Feedback] or [Bug] in the subject)",
         "bilibiliLink": "Direct message Playa0 on Bilibili",
@@ -1012,8 +1018,8 @@
         "githubNote": " (report bugs / suggest features)",
         "outro": "I will do my best to read feedback from general users, but prompt replies are not guaranteed; copyright matters receive the highest response priority."
       },
-      "section7": {
-        "title": "7. AI-Generated Content and a Note on Mindset",
+      "section8": {
+        "title": "8. AI-Generated Content and a Note on Mindset",
         "p1": "All dialogue, responses, and behavior of the AI characters in this software are generated in real time by a large language model. The persona and personality of the character are fictional settings, not a real individual. The AI's output has no genuine emotions, self-awareness, or subjective intent.",
         "p2": "Please note:",
         "li1": "All dialogue is AI-generated and does not represent the views or emotions of any real individual.",
@@ -1021,27 +1027,21 @@
         "li3": "Do not develop emotional dependence on the AI character, or treat virtual interaction as a substitute for real interpersonal relationships.",
         "li4": "While enjoying the companion experience, please keep healthy social connections in the real world."
       },
-      "section8": {
-        "title": "8. Special Thanks",
+      "section9": {
+        "title": "9. Special Thanks",
         "p1": "Special thanks to the Bilibili creator ",
         "upLink": "是依七哒",
         "p2": " for creating and sharing the Live2D model resources, which provided important reference and support for this project's desktop pet display. This project remains a personal, non-commercial fan project; the copyright of related assets belongs to the original rights holders, and any infringement or improper use will be addressed cooperatively."
       },
-      "section9": {
-        "title": "9. Thanks to Contributors",
+      "section10": {
+        "title": "10. Thanks to Contributors",
         "p1": "Thanks to all the developers who have contributed to this project through Pull Requests on GitHub. See the full contributor list here:",
         "contributorsLink": "Cyrene-Agent contributors page →",
         "p2": "Thanks also to everyone who has submitted feedback and suggestions in Issues or supported the project with a Star."
       },
-      "section10": {
-        "title": "10. Effect of These Terms",
-        "p1": "Before using this software, users must read and explicitly accept all terms of this disclaimer on the first-run screen."
-      },
       "section11": {
-        "title": "11. Cyrene Character Rights and Voice Cloning Tool",
-        "p1Before": "This software does not distribute official voice assets for Cyrene from Honkai: Star Rail. It only provides a TTS voice-cloning tool. ",
-        "p1Emphasis": "Users must clone voices only from audio they are legally authorized to use",
-        "p1After": ". Users bear all copyright and legal responsibility for content generated with this tool; the software author is not responsible. Rights to the Cyrene character belong to miHoYo, while rights in the corresponding voice performances belong to the voice actors in each country."
+        "title": "11. Effect of These Terms",
+        "p1": "Before using this software, users must read and explicitly accept all terms of this disclaimer on the first-run screen."
       }
     },
     "modelSettings": {
