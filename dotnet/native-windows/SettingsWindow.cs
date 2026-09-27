@@ -436,16 +436,7 @@ public sealed partial class SettingsWindow : NativeWindow
 
         panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("数据与存储"));
-        void OpenDataLocation()
-        {
-            // 迁移/覆盖确认、目录选择与重启都在 Electron 设置页完成
-            // （open-legacy 强制走旧版页，避免再次落到本窗口）。
-            RequestRouter.SendCommand("settings", "open-legacy", "general");
-        }
-        panel.Children.Add(MakeDescribedRow(
-            "便携模式 / 数据目录",
-            "把数据保存到程序目录或自定义文件夹，随程序一起移动；调整后可选择迁移数据，应用会自动重启。",
-            MakeButton("调整…", OpenDataLocation, minWidth: 96)));
+        BuildPortableBlock(panel);
 
         panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("语言"));
@@ -1518,8 +1509,185 @@ public sealed partial class SettingsWindow : NativeWindow
         }
     }
 
-    // ── NativeWindow 实现 ──
+    /// <summary>
+    /// 通用 section「便携模式 / 数据目录」子块：原生启停/目录/应用（不再跳旧版 Electron 页）。
+    /// 数据来自快照 portable 节点（host getPortableStatus），应用走 cmd settings portable apply；
+    /// 迁移/覆盖确认用 WPF 弹窗，结果随请求下发（宿主不再弹 Electron 框）。
+    /// </summary>
+    private void BuildPortableBlock(StackPanel panel)
+    {
+        var portable = GetNode("portable");
+        if (portable.ValueKind != JsonValueKind.Object)
+        {
+            panel.Children.Add(MakeHint("便携模式状态不可用（宿主未提供快照）。"));
+            return;
+        }
 
+        var enabled = GetBool(portable, "enabled");
+        var displayDir = GetString(portable, "displayDir");
+        var effectiveDir = GetString(portable, "effectiveDataDir");
+        var suggestedDir = GetString(portable, "suggestedDir");
+        var installRoot = GetString(portable, "installRoot");
+        var systemDir = GetString(portable, "systemDataDir");
+
+        var dirBox = new TextBox
+        {
+            Text = displayDir.Length > 0 ? displayDir : (enabled ? suggestedDir : ""),
+            Style = NativeTheme.InputSmallStyle,
+            Width = 300,
+            IsEnabled = enabled,
+        };
+        var browseBtn = MakeActionButton("浏览…", () =>
+        {
+            var picker = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "选择数据目录",
+                Multiselect = false,
+            };
+            if (Directory.Exists(effectiveDir)) picker.InitialDirectory = effectiveDir;
+            else if (Directory.Exists(installRoot)) picker.InitialDirectory = installRoot;
+            if (picker.ShowDialog(_window) == true && picker.FolderName.Length > 0)
+            {
+                dirBox.Text = picker.FolderName;
+            }
+        });
+        browseBtn.IsEnabled = enabled;
+        dirBox.Margin = new Thickness(0, 0, 8, 0);
+        var dirRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = enabled ? Visibility.Visible : Visibility.Collapsed,
+        };
+        dirRow.Children.Add(dirBox);
+        dirRow.Children.Add(browseBtn);
+        dirRow.Margin = new Thickness(0, 0, 10, 0);
+
+        var toggle = new CheckBox
+        {
+            IsChecked = enabled,
+            Style = NativeTheme.SwitchStyle,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        toggle.Checked += (_, _) =>
+        {
+            dirRow.Visibility = Visibility.Visible;
+            dirBox.IsEnabled = true;
+            browseBtn.IsEnabled = true;
+            if (dirBox.Text.Trim().Length == 0) dirBox.Text = suggestedDir;
+        };
+        toggle.Unchecked += (_, _) =>
+        {
+            dirRow.Visibility = Visibility.Collapsed;
+            dirBox.IsEnabled = false;
+            browseBtn.IsEnabled = false;
+        };
+
+        panel.Children.Add(MakeDescribedRow("便携模式",
+            "把聊天记录、配置与插件数据保存到程序目录（或自定义文件夹），随程序一起移动；修改后应用会自动重启。",
+            toggle));
+        panel.Children.Add(MakeDescribedRow("数据目录",
+            "支持相对路径（相对程序目录，如 data）；留空 = 程序目录下 data。",
+            dirRow));
+        panel.Children.Add(MakeHint($"当前生效目录：{effectiveDir}"));
+        if (!enabled && systemDir.Length > 0)
+        {
+            panel.Children.Add(MakeHint($"未启用便携模式；系统默认目录：{systemDir}"));
+        }
+        panel.Children.Add(MakeActionButton("应用并重启", () =>
+            ApplyPortableFromNative(toggle, dirBox, installRoot, systemDir, suggestedDir, effectiveDir),
+            primary: true));
+    }
+
+    /// <summary>便携模式应用：本地校验 → WPF 迁移/覆盖确认 → cmd settings portable apply。</summary>
+    private void ApplyPortableFromNative(
+        CheckBox toggle,
+        TextBox dirBox,
+        string installRoot,
+        string systemDir,
+        string suggestedDir,
+        string effectiveDir)
+    {
+        var enabled = toggle.IsChecked == true;
+        string target;
+        if (enabled)
+        {
+            var input = dirBox.Text.Trim();
+            if (installRoot.Length == 0 || suggestedDir.Length == 0)
+            {
+                MessageBox.Show(_window, "无法读取程序目录，暂不能应用便携模式。", "便携模式",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            try
+            {
+                target = input.Length == 0 ? suggestedDir : Path.GetFullPath(Path.Combine(installRoot, input));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(_window, "数据目录路径无效：" + ex.Message, "便携模式",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var rootTrimmed = installRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var targetTrimmed = target.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(targetTrimmed, rootTrimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(_window, "数据目录不能是程序目录本身，请用程序目录下的子目录（如 data）。",
+                    "便携模式", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+        }
+        else
+        {
+            target = systemDir;
+        }
+
+        var choice = PortableConfirmDialog.Show(_window, "更改数据存储位置",
+            "是否把现有数据迁移到新目录？",
+            $"当前数据目录：\n{effectiveDir}\n\n新数据目录：\n{target}\n\n" +
+            "迁移 = 复制聊天记录、设置与插件数据到新目录后重启；不迁移则新目录从现有内容开始（旧目录保留，可手动删除）。",
+            new[] { "迁移数据并重启", "仅切换，不迁移", "取消" },
+            defaultIndex: 0,
+            cancelIndex: 2);
+        if (choice != 0 && choice != 1) return;
+
+        bool? overwrite = null;
+        if (choice == 0)
+        {
+            try
+            {
+                if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
+                {
+                    var confirm = PortableConfirmDialog.Show(_window, "目标目录已有数据",
+                        "迁移会先清空目标目录中的现有内容。",
+                        $"{target}\n\n覆盖后原有内容无法恢复，是否继续？",
+                        new[] { "覆盖并迁移", "取消" },
+                        defaultIndex: 1,
+                        cancelIndex: 1);
+                    if (confirm != 0) return;
+                    overwrite = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(_window, "检查目标目录失败：" + ex.Message, "便携模式",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+        }
+
+        RequestRouter.SendSettingsAction("portable", "apply", new Dictionary<string, object?>
+        {
+            ["enabled"] = enabled,
+            ["dir"] = enabled ? dirBox.Text.Trim() : "",
+            ["migrationChoice"] = choice == 0 ? "migrate" : "switch",
+            ["overwrite"] = overwrite,
+        });
+    }
+
+    // ── NativeWindow 实现 ──
     public override void ShowWindow() => Activate();
 
     public override void Activate()
@@ -1576,5 +1744,119 @@ public sealed partial class SettingsWindow : NativeWindow
         {
             ApplySettings(s);
         }
+    }
+}
+
+/// <summary>
+/// 便携模式确认弹窗（迁移选择 / 覆盖确认共用）：标题栏 + 说明 + 可配置按钮组。
+/// 同步 ShowDialog；返回值 = 按钮下标（关闭窗口按 cancelIndex）。
+/// </summary>
+internal sealed class PortableConfirmDialog : Window
+{
+    public int Result { get; private set; }
+
+    public static int Show(
+        Window owner,
+        string title,
+        string message,
+        string detail,
+        string[] buttons,
+        int defaultIndex,
+        int cancelIndex)
+    {
+        var dialog = new PortableConfirmDialog(title, message, detail, buttons, defaultIndex, cancelIndex)
+        {
+            Owner = owner,
+        };
+        dialog.ShowDialog();
+        return dialog.Result;
+    }
+
+    private PortableConfirmDialog(
+        string title,
+        string message,
+        string detail,
+        string[] buttons,
+        int defaultIndex,
+        int cancelIndex)
+    {
+        Result = cancelIndex;
+        Title = title;
+        Icon = AppIcons.Image;
+        Width = 560;
+        SizeToContent = SizeToContent.Height;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ResizeMode = ResizeMode.NoResize;
+        ShowInTaskbar = false;
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
+        NativeTheme.Apply(this);
+
+        var root = new StackPanel { Margin = new Thickness(20, 14, 20, 16) };
+        var shellGrid = new Grid();
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+        shellGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var titleBar = NativeTheme.BuildTitleBar(this, title);
+        Grid.SetRow(titleBar, 0);
+        shellGrid.Children.Add(titleBar);
+        Grid.SetRow(root, 1);
+        shellGrid.Children.Add(root);
+        NativeTheme.ClipRounded(shellGrid, 12);
+        var contentBorder = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = NativeTheme.SurfaceAppBrush,
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(16),
+            Child = shellGrid,
+        };
+        var windowShell = new Grid();
+        windowShell.Children.Add(NativeTheme.MakeWindowShadowLayer(12));
+        windowShell.Children.Add(contentBorder);
+        Content = windowShell;
+
+        root.Children.Add(new TextBlock
+        {
+            Text = message,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NativeTheme.TextStrongBrush,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        root.Children.Add(new TextBlock
+        {
+            Text = detail,
+            FontSize = 13,
+            Foreground = NativeTheme.TextMutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+        });
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+        for (var i = 0; i < buttons.Length; i++)
+        {
+            var index = i;
+            var button = new Button
+            {
+                Content = buttons[i],
+                MinWidth = 96,
+                Margin = new Thickness(8, 0, 0, 0),
+                Style = i == defaultIndex ? NativeTheme.PrimaryButtonStyle : NativeTheme.SecondaryButtonStyle,
+            };
+            button.Click += (_, _) =>
+            {
+                Result = index;
+                Close();
+            };
+            actions.Children.Add(button);
+        }
+        root.Children.Add(actions);
     }
 }
