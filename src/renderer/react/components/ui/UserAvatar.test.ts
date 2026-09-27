@@ -46,7 +46,14 @@ describe("UserAvatar profile dialog", () => {
     const host = await renderAvatar();
     const trigger = host.querySelector<HTMLButtonElement>(".cy-user-avatar__trigger");
     expect(trigger).not.toBeNull();
-    await act(async () => { trigger!.click(); });
+    await act(async () => {
+      trigger!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    });
+
+    const profileMenuItem = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find((item) => item.textContent?.includes("我的信息"));
+    expect(profileMenuItem).toBeDefined();
+    await act(async () => { profileMenuItem!.click(); });
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();

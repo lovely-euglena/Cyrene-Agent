@@ -123,6 +123,8 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
 
   const fakeStore: ChatStoreApi = {
     list: async () => [perfSessionMeta(session)],
+    // perf 环境没有任务会话，桩返回 null 即可
+    getTaskSession: async () => null,
     getSidebarOrganization: async () => sidebarOrganization,
     applySidebarOrganization: async (_expectedRevision: number, draft: SidebarOrganizationDraft) => {
       sidebarOrganization = { version: 1, revision: sidebarOrganization.revision + 1, ...draft };
