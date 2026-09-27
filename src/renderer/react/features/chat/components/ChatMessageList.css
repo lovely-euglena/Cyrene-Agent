@@ -781,12 +781,16 @@
   color: var(--rb-text-secondary);
 }
 
-/* 压缩分隔条：与 waiting/activity 一样是「无头像整行」形态。
+/* 压缩分隔条：不跟随消息列的阅读宽度，而是横贯整个消息区，
+   左右只保留容器等距留白，配合 content 的居中即为「工作区居中」的观感。
+   padding-inline 必须清零：placement 为 start 时 antd 会给气泡加
+   padding-inline-end: 15%（给右侧气泡让位），不清掉右侧就会空出一块、居中随之偏左。
    必须显式隐藏 avatar 列并让 body 撑满，否则内容会从头像右侧起算、宽度被挤短。 */
 .cy-message--compaction {
-  width: var(--cy-message-reading-width);
-  max-width: var(--cy-message-reading-width);
+  width: 100%;
+  max-width: none;
   margin: 10px 0;
+  padding-inline: 0 !important;
 }
 
 .cy-message--compaction .ant-bubble-avatar {
