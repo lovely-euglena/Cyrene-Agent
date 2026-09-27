@@ -53,7 +53,7 @@ interface AppearanceValues {
 
 const defaults: AppearanceValues = {
   uiTheme: "pearl-white",
-  windowCornerRadius: 24,
+  windowCornerRadius: 6,
   uiIcon: "cyrene-sun",
   messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
   petAlwaysOnTop: false,
