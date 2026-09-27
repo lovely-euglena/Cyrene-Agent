@@ -147,6 +147,66 @@ describe("chats IPC mode filtering", () => {
     expect(afterCompact?.currentContextUsage?.totalTokens).toBeGreaterThan(0);
   });
 
+  it("preserves the latest message usage breakdown after manual compaction", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const { ConversationJournalService } = await import("../orchestrator/conversation-journal-service");
+    const { ConversationTranscriptCompactor } = await import("../orchestrator/conversation-transcript-compactor");
+    const store = getConversationTranscriptStore(mocks.userDataDir);
+    const journal = new ConversationJournalService(store);
+    registerChatsIpc(undefined, {
+      transcriptCompactor: new ConversationTranscriptCompactor({ store, summarize: async () => "简短摘要" }),
+    });
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const compact = mocks.handlers.get(IPC.CHATS_COMPACT);
+    const get = mocks.handlers.get(IPC.CHATS_GET);
+    if (!create || !compact || !get) throw new Error("compaction IPC handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "chat" }) as { id: string };
+    await store.append(session.id, {
+      id: "usage-u1", at: 1, kind: "user", turnId: "u1", revision: 1,
+      payload: { text: "之前的长对话".repeat(30) },
+    });
+    await store.append(session.id, {
+      id: "usage-a1", at: 2, kind: "assistant", turnId: "a1",
+      payload: { role: "assistant", content: "之前的回复" },
+    });
+    await journal.appendPresentationNext(session.id, "usage-a1", "usage:terminal", {
+      contextUsage: {
+        phase: "terminal", contextWindowTokens: 256000, totalTokens: 25100,
+        messageCount: 2, updatedAt: 100,
+        categories: [
+          { key: "systemPrompt", tokens: 5900 },
+          { key: "tools", tokens: 13500 },
+          { key: "skills", tokens: 4000 },
+          { key: "runtimeAndToolLogs", tokens: 1400 },
+          { key: "conversation", tokens: 300 },
+          { key: "other", tokens: 0 },
+        ],
+      },
+    });
+    await store.append(session.id, {
+      id: "usage-u2", at: 3, kind: "user", turnId: "u2", revision: 1,
+      payload: { text: "最新问题" },
+    });
+    const { setSessionContextUsage } = await import("./chats-store");
+    setSessionContextUsage(session.id, {
+      phase: "preRequest", contextWindowTokens: 256000, totalTokens: 1,
+      messageCount: 0, updatedAt: 1,
+      categories: [{ key: "systemPrompt", tokens: 1 }],
+    });
+
+    expect((await journal.readProjection(session.id)).messages.some((message) => message.contextUsage?.phase === "terminal")).toBe(true);
+    await expect(compact(event, { sessionId: session.id, retainTokens: 1 })).resolves.toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+
+    const usage = (await get(event, session.id) as { currentContextUsage?: { categories: Array<{ key: string; tokens: number }> } } | null)?.currentContextUsage;
+    expect(Object.fromEntries(usage?.categories.map(({ key, tokens }) => [key, tokens]) ?? [])).toEqual(
+      expect.objectContaining({ systemPrompt: 5900, tools: 13500, skills: 4000 }),
+    );
+  });
+
   it("normalizes a manual summarizer failure to TRANSCRIPT_COMPACTION_REQUIRED", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc(undefined, {

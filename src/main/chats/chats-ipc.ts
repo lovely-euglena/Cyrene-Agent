@@ -60,11 +60,22 @@ import {
   MAX_RECENT_PROJECTS,
 } from "../settings/settings-facade";
 
+function latestContextUsage(session: ChatSession | null): ContextUsageSnapshot | undefined {
+  return session?.messages.reduce<ContextUsageSnapshot | undefined>((latest, message) => {
+    const usage = message.contextUsage;
+    return usage && (!latest || usage.updatedAt > latest.updatedAt) ? usage : latest;
+  }, session.currentContextUsage);
+}
+
 /** 压缩（手动/演示）后重算会话的 session 级 context usage 快照：
  *  消息侧按压缩后的 compaction 视图重算；persona、工具、技能三类与压缩无关，
  *  继承旧快照口径，避免环形图出现 systemPrompt 归零的跳变。 */
-function recordCompactionUsage(sessionId: string, compactedMessages: VendorChatMessage[]): void {
-  const previous = chatsStore.getSessionView(sessionId)?.currentContextUsage;
+function recordCompactionUsage(
+  sessionId: string,
+  compactedMessages: VendorChatMessage[],
+  previous?: ContextUsageSnapshot,
+): void {
+  previous ??= chatsStore.getSessionView(sessionId)?.currentContextUsage;
   const inheritable = new Map(
     (previous?.categories ?? [])
       .filter((category) => category.key === "systemPrompt" || category.key === "tools" || category.key === "skills")
@@ -286,6 +297,8 @@ export function registerChatsIpc(
       return { ok: false as const, error: "TRANSCRIPT_COMPACTION_REQUIRED" as const };
     }
     try {
+      // 正常 run 的最新快照写在消息上；压缩前从组合会话取出，避免归档后丢失来源。
+      const previousUsage = latestContextUsage(await sessionMigration.loadComposedSession(payload.sessionId));
       const result = await transcriptCompactor.compact({
         conversationId: payload.sessionId,
         trigger: "manual",
@@ -294,7 +307,7 @@ export function registerChatsIpc(
           : {}),
       });
       // 压缩只改变消息侧 token；三类无关项继承旧快照，见 recordCompactionUsage。
-      recordCompactionUsage(payload.sessionId, result.compactedMessages);
+      recordCompactionUsage(payload.sessionId, result.compactedMessages, previousUsage);
       // 压缩是主进程侧的 journal 变更：发起方渲染端没有任何本地乐观更新
       // （且压缩仅在会话空闲时可用，无 transient 思考消息竞态），必须连同发起方
       // 一起广播，聊天页重载投影后压缩分隔条与环形图快照立即生效。
