@@ -4,7 +4,6 @@ import {
   DEFAULT_WINDOW_CORNER_RADIUS,
   normalizeWindowCornerRadius,
 } from "../../shared/window-corner-radius";
-import { DEFAULT_UI_FONT, normalizeUiFont } from "../../shared/ui-font";
 import { DEFAULT_MESSAGE_TYPOGRAPHY, normalizeMessageTypography } from "../../shared/message-typography";
 import {
   DEFAULT_CUSTOM_STYLE,
@@ -58,7 +57,6 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   uiTheme: "pearl-white",
   windowCornerRadius: DEFAULT_WINDOW_CORNER_RADIUS,
   uiThemeRadius: false,
-  uiFont: DEFAULT_UI_FONT,
   uiIcon: "cyrene-sun",
   messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
   defaultChatMode: "chat",
@@ -245,7 +243,6 @@ export function normalizeGeneralSettings(
     uiTheme: normalizeUiTheme(input?.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input?.windowCornerRadius),
     uiThemeRadius: input?.uiThemeRadius ?? true,
-    uiFont: normalizeUiFont(input?.uiFont),
     uiIcon: normalizeUiIcon(input?.uiIcon),
     messageTypography: normalizeMessageTypography(input?.messageTypography),
     defaultChatMode: normalizeDefaultChatMode(input?.defaultChatMode),

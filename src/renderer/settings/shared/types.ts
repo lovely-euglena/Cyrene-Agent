@@ -6,7 +6,6 @@
 import type { ApiTransport } from "../../../shared/api-endpoint";
 import type { ReasoningPreference } from "../../../shared/reasoning";
 import type { UiTheme } from "../../../shared/ui-theme";
-import type { UiFont } from "../../../shared/ui-font";
 import type { UiIcon } from "../../../shared/ui-icon";
 import type {
   DefaultChatMode,
@@ -136,7 +135,6 @@ export interface GeneralSettings {
   uiTheme: UiTheme;
   windowCornerRadius: number;
   uiThemeRadius: boolean;
-  uiFont: UiFont;
   uiIcon: UiIcon;
   defaultChatMode: DefaultChatMode;
   currentStyleId?: string;
@@ -254,9 +252,6 @@ export interface SettingsApi {
   openCustomStylePrompt?: () => Promise<{ ok: boolean; filePath?: string; error?: string }>;
   getTimeoutSettings: () => Promise<TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<TimeoutSettings>) => Promise<TimeoutSettings>;
-  pickUiFont: () => Promise<string | null>;
-  importUiFont: (sourcePath: string) => Promise<UiFont>;
-  resetUiFont: () => Promise<UiFont>;
   openSidebar: () => void;
   closeSidebar: () => void;
   openTasks: () => void;

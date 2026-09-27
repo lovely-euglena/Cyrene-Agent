@@ -3,7 +3,6 @@ import { Alert, Button, Spin } from "antd";
 import { ArrowLeft, AudioLines, BarChart3, Bot, Boxes, Brain, FileText, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
 import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
-import { normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
 import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
 import { normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
@@ -44,7 +43,6 @@ import "./AppearanceSettingsPage.css";
 interface AppearanceValues {
   uiTheme: UiTheme;
   windowCornerRadius: number;
-  uiFont: UiFont;
   uiIcon: UiIcon;
   messageTypography: MessageTypography;
   petAlwaysOnTop: boolean;
@@ -55,7 +53,6 @@ interface AppearanceValues {
 const defaults: AppearanceValues = {
   uiTheme: "pearl-white",
   windowCornerRadius: 24,
-  uiFont: { kind: "source-han" },
   uiIcon: "cyrene-sun",
   messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
   petAlwaysOnTop: false,
@@ -76,7 +73,6 @@ function readAppearance(value: unknown): AppearanceValues {
   return {
     uiTheme: normalizeUiTheme(input.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input.windowCornerRadius),
-    uiFont: normalizeUiFont(input.uiFont),
     uiIcon: normalizeUiIcon(input.uiIcon),
     messageTypography: normalizeMessageTypography(input.messageTypography),
     petAlwaysOnTop: typeof input.petAlwaysOnTop === "boolean" ? input.petAlwaysOnTop : defaults.petAlwaysOnTop,
@@ -124,7 +120,6 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState("");
-  const [fontBusy, setFontBusy] = useState(false);
   // 昔涟消息字体：ref 记住最新值，松手保存时不依赖可能过期的渲染闭包
   const typographyRef = useRef<MessageTypography>(DEFAULT_MESSAGE_TYPOGRAPHY);
 
@@ -206,37 +201,6 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     void savePatch({ messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY }, t("settingsPage.messageTypographyReset"));
   }
 
-  async function changeFont() {
-    setFontBusy(true);
-    try {
-      if (!window.settings) throw new Error("Settings API unavailable");
-      const sourcePath = await window.settings.pickUiFont();
-      if (!sourcePath) return;
-      setStatus(t("settingsPage.importingFont"));
-      const uiFont = await window.settings.importUiFont(sourcePath);
-      setValues((current) => ({ ...current, uiFont }));
-      setStatus(t("settingsPage.fontApplied"));
-    } catch {
-      setStatus(t("settingsPage.fontImportFailed"));
-    } finally {
-      setFontBusy(false);
-    }
-  }
-
-  async function resetFont() {
-    setFontBusy(true);
-    try {
-      if (!window.settings) throw new Error("Settings API unavailable");
-      const uiFont = await window.settings.resetUiFont();
-      setValues((current) => ({ ...current, uiFont }));
-      setStatus(t("settingsPage.fontReset"));
-    } catch {
-      setStatus(t("settingsPage.saveFailed"));
-    } finally {
-      setFontBusy(false);
-    }
-  }
-
   async function selectIcon(uiIcon: UiIcon) {
     if (uiIcon === values.uiIcon) return;
     const saved = await savePatch({ uiIcon }, t("settingsPage.iconApplied"));
@@ -249,8 +213,6 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     else window.settings?.setPetVisible(checked);
     setStatus(t("settingsPage.applied"));
   }
-
-  const fontName = values.uiFont.kind === "custom" ? values.uiFont.displayName : t("settingsPage.defaultFont");
 
   return (
     <div className="cy-page cy-settings-page">
@@ -321,11 +283,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.uiFont")}</strong><span>{fontName}</span></div>
-                    <div className="cy-settings-row__control cy-settings-button-group">
-                      <Button loading={fontBusy} onClick={() => void changeFont()}>{t("settingsPage.importFont")}</Button>
-                      {values.uiFont.kind === "custom" && <Button disabled={fontBusy} onClick={() => void resetFont()}>{t("settingsPage.resetFont")}</Button>}
-                    </div>
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.uiFont")}</strong><span>{t("settingsPage.defaultFont")}</span></div>
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageTypography")}</strong><span>{t("settingsPage.messageTypographyDescription")}</span></div>

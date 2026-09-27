@@ -74,9 +74,6 @@ interface SettingsWindowApi {
   getPermissionLevel: () => Promise<{ level: string }>;
   setPermissionLevel: (level: string) => Promise<{ ok: boolean; level?: string; error?: string }>;
   openChromeGpu: () => void;
-  pickUiFont: () => Promise<string | null>;
-  importUiFont: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;
-  resetUiFont: () => Promise<import("../shared/ui-font").UiFont>;
   openCustomStylePrompt: () => Promise<unknown>;
   channelsGetStatus: () => Promise<unknown>;
   setPetAlwaysOnTop: (value: boolean) => void;

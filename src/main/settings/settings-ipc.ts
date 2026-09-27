@@ -1,10 +1,6 @@
-import { app, BrowserWindow, dialog, shell } from "electron";
-import * as fs from "fs";
-import * as path from "path";
-import { randomUUID } from "crypto";
+import { app, BrowserWindow, shell } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
-import { DEFAULT_UI_FONT, isSupportedFontFileName } from "../../shared/ui-font";
 import type { GeneralSettings } from "./general-settings";
 import type { TimeoutSettings } from "../../shared/timeout-types";
 import { ensureCustomStylePrompt } from "../style-prompt";
@@ -41,16 +37,6 @@ export interface SettingsIpcDependencies {
   syncFilesystemMcp: typeof syncFilesystemMcp;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
-}
-
-function getUiFontsDir(): string {
-  return path.join(app.getPath("userData"), "ui-fonts");
-}
-
-function getCustomFontDisplayName(filePath: string): string {
-  return (
-    path.basename(filePath, path.extname(filePath)).replace(/[-_]+/g, " ").trim().slice(0, 80) || "自定义字体"
-  );
 }
 
 const VISION_TEST_IMAGE_BASE64 =
@@ -134,50 +120,6 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.UI_THEME_RADIUS_GET, () => getGeneralSettings().uiThemeRadius);
 
   ipc.handle(IPC.UI_WINDOW_CORNER_RADIUS_GET, () => getGeneralSettings().windowCornerRadius);
-
-  ipc.handle(IPC.UI_FONT_GET, () => getGeneralSettings().uiFont);
-
-  ipc.handle(IPC.SETTINGS_PICK_UI_FONT, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile"],
-      filters: [{ name: "字体文件", extensions: ["ttf", "otf"] }],
-    });
-    return result.canceled ? null : result.filePaths[0] ?? null;
-  });
-
-  ipc.handle(IPC.SETTINGS_IMPORT_UI_FONT, (_event, sourcePath: unknown) => {
-    if (typeof sourcePath !== "string" || !sourcePath) throw new Error("未选择字体文件");
-    const extension = path.extname(sourcePath).toLowerCase();
-    if (extension !== ".ttf" && extension !== ".otf") throw new Error("仅支持 .ttf 或 .otf 字体文件");
-    const stat = fs.statSync(sourcePath);
-    if (!stat.isFile() || stat.size <= 0 || stat.size > 50 * 1024 * 1024) throw new Error("字体文件无效或超过 50 MB");
-
-    const fileName = `custom-${randomUUID()}${extension}`;
-    if (!isSupportedFontFileName(fileName)) throw new Error("字体文件名无效");
-    const fontsDir = getUiFontsDir();
-    fs.mkdirSync(fontsDir, { recursive: true });
-    const targetPath = path.join(fontsDir, fileName);
-    fs.copyFileSync(sourcePath, targetPath);
-
-    const before = getGeneralSettings().uiFont;
-    const saved = saveGeneralSettings({
-      uiFont: { kind: "custom", fileName, displayName: getCustomFontDisplayName(sourcePath) },
-    });
-    if (before.kind === "custom" && before.fileName !== fileName) {
-      const oldPath = path.join(fontsDir, before.fileName);
-      if (isSupportedFontFileName(before.fileName)) fs.rmSync(oldPath, { force: true });
-    }
-    return saved.uiFont;
-  });
-
-  ipc.handle(IPC.SETTINGS_RESET_UI_FONT, () => {
-    const before = getGeneralSettings().uiFont;
-    const saved = saveGeneralSettings({ uiFont: DEFAULT_UI_FONT });
-    if (before.kind === "custom" && isSupportedFontFileName(before.fileName)) {
-      fs.rmSync(path.join(getUiFontsDir(), before.fileName), { force: true });
-    }
-    return saved.uiFont;
-  });
 
   ipc.handle(IPC.SETTINGS_SAVE_GENERAL, (_event, settings: Partial<GeneralSettings>) => {
     const saved = saveGeneralSettings(settings);

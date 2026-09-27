@@ -160,9 +160,6 @@ export function handleGeneralSettingsChanged(
   if (before.windowCornerRadius !== after.windowCornerRadius) {
     deps.windowManager?.broadcast(IPC.UI_WINDOW_CORNER_RADIUS_CHANGED, after.windowCornerRadius);
   }
-  if (JSON.stringify(before.uiFont) !== JSON.stringify(after.uiFont)) {
-    deps.windowManager?.broadcast(IPC.UI_FONT_CHANGED, after.uiFont);
-  }
   if (before.uiIcon !== after.uiIcon) {
     applyUiIcon(after.uiIcon, deps);
   }

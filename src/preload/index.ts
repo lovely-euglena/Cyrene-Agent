@@ -9,7 +9,6 @@ import type {
   SpeechInputCommitResult,
 } from "../shared/ipc-channels";
 import type { UiTheme } from "../shared/ui-theme";
-import type { UiFont } from "../shared/ui-font";
 import type { PluginPanelApi } from "../shared/plugin-management";
 import type { ReasoningPreference } from "../shared/reasoning";
 import type { DocumentIndexProgress } from "../shared/document-index";
@@ -325,17 +324,6 @@ const cyreneWindowAppearanceApi = {
 
 contextBridge.exposeInMainWorld("cyreneWindowAppearance", cyreneWindowAppearanceApi);
 
-const cyreneFontApi = {
-  get: () => ipcRenderer.invoke(IPC.UI_FONT_GET) as Promise<UiFont>,
-  onChanged: (callback: (font: UiFont) => void) => {
-    const listener = (_e: unknown, font: UiFont) => callback(font);
-    ipcRenderer.on(IPC.UI_FONT_CHANGED, listener);
-    return () => ipcRenderer.off(IPC.UI_FONT_CHANGED, listener);
-  },
-};
-
-contextBridge.exposeInMainWorld("cyreneFont", cyreneFontApi);
-
 const settingsApi = {
   getConfig: () => ipcRenderer.invoke(IPC.SETTINGS_GET_CONFIG),
   saveConfig: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_CONFIG, config),
@@ -358,9 +346,6 @@ const settingsApi = {
   saveGeneral: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_GENERAL, config),
   getTimeoutSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_TIMEOUT_SETTINGS),
   saveTimeoutSettings: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_TIMEOUT_SETTINGS, config),
-  pickUiFont: () => ipcRenderer.invoke(IPC.SETTINGS_PICK_UI_FONT) as Promise<string | null>,
-  importUiFont: (sourcePath: string) => ipcRenderer.invoke(IPC.SETTINGS_IMPORT_UI_FONT, sourcePath) as Promise<UiFont>,
-  resetUiFont: () => ipcRenderer.invoke(IPC.SETTINGS_RESET_UI_FONT) as Promise<UiFont>,
   openChromeGpu: () => ipcRenderer.send(IPC.SETTINGS_OPEN_CHROME_GPU),
   setPetAlwaysOnTop: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_ALWAYS_ON_TOP, value),
   setPetVisible: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_VISIBLE, value),

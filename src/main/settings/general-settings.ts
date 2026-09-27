@@ -1,5 +1,4 @@
 import type { UiTheme } from "../../shared/ui-theme";
-import type { UiFont } from "../../shared/ui-font";
 import type { UiIcon } from "../../shared/ui-icon";
 import type { MessageTypography } from "../../shared/message-typography";
 import type {
@@ -65,7 +64,6 @@ export interface GeneralSettings {
   windowCornerRadius: number;
   /** @deprecated 旧版透明窗口开关，仅保留用于配置兼容。 */
   uiThemeRadius: boolean;
-  uiFont: UiFont;
   uiIcon: UiIcon;
   /** 昔涟回复正文的排版（字号/行距/字距/字重），只作用于 AI 回复气泡。 */
   messageTypography: MessageTypography;
