@@ -194,11 +194,15 @@ public sealed partial class SettingsWindow
         {
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
+            // 右侧留出滚动条余量，避免最后一个按钮被裁切
+            Margin = new Thickness(0, 0, 10, 0),
         };
         ragActions.Children.Add(MakeActionButton("📖 安装说明",
             OpenModelDocsDialog, minWidth: 104));
         ragActions.Children.Add(MakeActionButton("🔄 刷新状态",
             () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 104));
+        ragActions.Children.Add(MakeActionButton("📂 打开模型目录",
+            () => RequestRouter.SendSettingsAction("cyrene", "open-model-dir"), minWidth: 128));
         ragActions.Children.Add(MakeActionButton("删除缓存", ConfirmDeleteEmbeddingCache, minWidth: 90));
         panel.Children.Add(MakeDescribedRow("模型操作",
             "模型为手动安装；按「安装说明」放好文件后点「刷新状态」重新检测。",

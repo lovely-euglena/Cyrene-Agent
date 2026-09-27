@@ -77,7 +77,8 @@ public sealed partial class SettingsWindow
             "查指定城市的实时天气与预报。Open-Meteo 免配置，或用高德 Key。",
             Toggle(GetBool(plugins, "weatherEnabled"), v => SaveField("weatherEnabled", v)),
             out var weatherBody,
-            collapseKey: "weather");
+            // 未启用时不显示折叠按钮（配置区为空，折叠无意义）
+            collapseKey: GetBool(plugins, "weatherEnabled") ? "weather" : null);
         if (GetBool(plugins, "weatherEnabled"))
         {
             weatherBody.Children.Add(MakeDescribedRow("天气源", "Open-Meteo 免配置；高德天气国内更准。",
@@ -104,7 +105,7 @@ public sealed partial class SettingsWindow
             "查驾车/步行/骑行/公交的路线规划和预计时间。需要高德 Key。",
             Toggle(GetBool(plugins, "travelEnabled"), v => SaveField("travelEnabled", v)),
             out var travelBody,
-            collapseKey: "travel");
+            collapseKey: GetBool(plugins, "travelEnabled") ? "travel" : null);
         if (GetBool(plugins, "travelEnabled"))
         {
             var travelKey = MakePluginsPasswordBox(amapKey);
@@ -123,7 +124,7 @@ public sealed partial class SettingsWindow
                 else SaveField("searchEngine", "off");
             }),
             out var searchBody,
-            collapseKey: "search");
+            collapseKey: searchEngine != "off" ? "search" : null);
         if (searchEngine != "off")
         {
             searchBody.Children.Add(MakeDescribedRow("搜索源", "切换后展开对应 Key 输入。",
@@ -155,7 +156,7 @@ public sealed partial class SettingsWindow
             "通过 SMTP 发送邮件（可带附件），通过 IMAP 查看与阅读收件箱。收信与发信共用发件邮箱与授权码。",
             Toggle(GetBool(plugins, "emailEnabled"), v => SaveField("emailEnabled", v)),
             out var emailBody,
-            collapseKey: "email");
+            collapseKey: GetBool(plugins, "emailEnabled") ? "email" : null);
         if (GetBool(plugins, "emailEnabled"))
         {
             var hostBox = MakePluginsTextBox(GetString(plugins, "emailSmtpHost"), 220);
@@ -361,9 +362,9 @@ public sealed partial class SettingsWindow
             var chevron = new Button
             {
                 Content = collapsed ? "▸" : "▾",
-                Width = 28,
-                Height = 28,
-                FontSize = 13,
+                Width = 36,
+                Height = 36,
+                FontSize = 16,
                 Style = NativeTheme.FlatIconButtonStyle,
                 Cursor = System.Windows.Input.Cursors.Hand,
                 ToolTip = "展开 / 收起设置",

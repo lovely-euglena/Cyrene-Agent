@@ -16,8 +16,10 @@ public sealed partial class SettingsWindow
     private FrameworkElement BuildRuntimeSection()
     {
         var panel = new StackPanel();
-        panel.Children.Add(MakeHeader("运行设置"));
-        panel.Children.Add(MakeHint("控制模型请求、询问用户等待时间与 Harness 工具执行方式。"));
+        panel.Children.Add(MakePanelHeading(
+            NativeTheme.VectorGlyph(Glyphs.Gear, 24, NativeTheme.TextDefaultBrush),
+            "高级设置",
+            "控制模型请求、询问用户等待时间与 Harness 工具执行方式。"));
         panel.Children.Add(MakeSectionStatus("runtime"));
 
         var runtime = GetNode("runtime");
@@ -25,6 +27,8 @@ public sealed partial class SettingsWindow
         var choiceMs = GetInt(runtime, "userChoiceTimeout", 60000);
         var parallel = GetInt(runtime, "maxParallelToolCalls", 4);
 
+        panel.Children.Add(BlockMark());
+        panel.Children.Add(MakeSubHeader("请求与等待"));
         var modelTimeoutBox = MakeApiTextBox(modelTimeout.ValueKind == JsonValueKind.Number
             ? modelTimeout.GetInt32().ToString()
             : "");
@@ -39,6 +43,8 @@ public sealed partial class SettingsWindow
             MakeResetInputRow(choiceBox, "60", "重置为默认（60 秒）")));
         panel.Children.Add(MakeHint("模型向你提问后等待回答的时长（默认 60 秒）。"));
 
+        panel.Children.Add(BlockMark());
+        panel.Children.Add(MakeSubHeader("工具执行"));
         var parallelBox = MakeApiTextBox(parallel.ToString());
         parallelBox.Width = 120;
         panel.Children.Add(MakeRow("工具并发数", parallelBox));
@@ -59,6 +65,7 @@ public sealed partial class SettingsWindow
             });
         }, primary: true));
 
+        CardifySubBlocks(panel);
         return panel;
     }
 
