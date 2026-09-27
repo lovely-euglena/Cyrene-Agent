@@ -586,7 +586,9 @@ export class CyreneAgent extends AbstractAgent {
           } catch (closureError) {
             console.error(LOG_PREFIX, "transcript failure closure failed:", closureError);
           }
-          const safeErr = new Error(classification.userMessage);
+          const safeErr = new AgentRuntimeError("E_MODEL_REQUEST_FAILED", classification.userMessage, {
+            ...(classification.modelFailure ? { modelFailure: classification.modelFailure } : {}),
+          });
           finished = true;
           detachExternalAbort();
           subscriber.error(safeErr);
@@ -633,6 +635,7 @@ export interface AbortDiagnostic {
   phase: AbortPhase;
   userMessage: string;
   diagnostics: Record<string, unknown>;
+  modelFailure?: import("../../shared/model-error").ModelFailureInfo;
 }
 
 /** 分类 abort/error 来源，返回用户安全消息和诊断信息 */
@@ -705,6 +708,7 @@ export function classifyRunError(
       phase,
       userMessage,
       diagnostics,
+      ...(err.modelFailure ? { modelFailure: err.modelFailure } : {}),
     };
   }
 

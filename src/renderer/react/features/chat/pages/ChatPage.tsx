@@ -34,6 +34,7 @@ import type {
 } from "../../../../../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import type { ModelFailureInfo } from "../../../../../shared/model-error";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
 import { resolveRevisableLastTurn } from "../components/last-turn-actions";
@@ -508,6 +509,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 会话级最新上下文快照（环形图优先读取点）：run 事件实时写入；
   // 手动压缩后随会话重载从 session.currentContextUsage 初始化（known-issues 问题 3）。
   const [sessionContextUsageBySession, setSessionContextUsageBySession] = useState<Record<string, ContextUsageSnapshot>>({});
+  const [mainModelFailureBySession, setMainModelFailureBySession] = useState<Record<string, ModelFailureInfo>>({});
 
   activeModeRef.current = mode;
   activeSessionIdsRef.current = activeSessionIds;
@@ -939,6 +941,14 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           ...current,
           [sessionId]: snapshot,
         })),
+        setMainModelFailure: (sessionId, failure) => setMainModelFailureBySession((current) => {
+          if (!failure) {
+            const next = { ...current };
+            delete next[sessionId];
+            return next;
+          }
+          return { ...current, [sessionId]: failure };
+        }),
         updatePlanReview: (sessionId, update) => {
           if (update.kind === "submitted") {
             // submit_plan 交卷：载入计划全文并打开计划面板，供用户在审批等待期间审阅
@@ -1957,6 +1967,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             }
             activeSessionModel={activeSession && activeSession.id === activeSessionId ? activeSession.model : undefined}
             contextUsage={latestContextUsage}
+            mainModelFailure={activeSessionId ? mainModelFailureBySession[activeSessionId] : undefined}
             onSelectSessionModel={(model) => {
               // 子下拉只在有会话时由 ModelSelector 渲染，这里防御性兜底
               if (!activeSessionId) return;

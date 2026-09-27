@@ -12,6 +12,7 @@ import type {
 } from "../../../../../../shared/chat-types";
 import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../../shared/context-usage";
 import type { TodoItem } from "../../../../../../shared/todo-types";
+import { isModelFailureInfo, type ModelFailureInfo } from "../../../../../../shared/model-error";
 import type { ChatMessageItem } from "../../components/ChatMessageList";
 import type { ComposerAttachment } from "../../components/ChatComposer";
 import {
@@ -94,6 +95,7 @@ export interface AgentRunHost {
   updateTodos(sessionId: string, updater: (current: TodoStateBySession) => TodoStateBySession): void;
   /** 会话级上下文容量快照更新（环形图优先读取点）。 */
   updateContextUsage(sessionId: string, snapshot: ContextUsageSnapshot): void;
+  setMainModelFailure?(sessionId: string, failure: ModelFailureInfo | null): void;
   /** 会话级计划面板更新：submit_plan 交卷与执行收尾（事件均在 run 内到达）。 */
   updatePlanReview(sessionId: string, update: PlanReviewUpdate): void;
   /** 模式级 busy 标记（ref 与渲染状态由宿主同步维护）。 */
@@ -211,6 +213,7 @@ export class AgentRunController {
 
   /** 启动并完整跑完一轮 run（从派发请求到终态落盘）。 */
   async start(): Promise<void> {
+    this.deps.host.setMainModelFailure?.(this.input.sessionId, null);
     const { api, store } = this.deps;
     if (!api || !store) {
       const visibleError = t("chatPage.errorModelServiceNotReady");
@@ -1166,6 +1169,8 @@ export class AgentRunController {
       this.abortCandidateReveal();
       this.completeRunActivity(true);
       this.terminalStage = { kind: "failed" };
+      const modelFailure = event.metadata?.cyreneModelFailure;
+      if (isModelFailureInfo(modelFailure)) this.deps.host.setMainModelFailure?.(this.input.sessionId, modelFailure);
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: this.terminalStage });
       const activeRunId = this.deps.registries.activeRuns.current[this.input.sessionId]?.runId;
       if (shouldClearComposerInteractionForTerminal(activeRunId, event.runId)) {

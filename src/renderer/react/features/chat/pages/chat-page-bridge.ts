@@ -13,6 +13,7 @@ import type {
 } from "../../../../../shared/ipc-channels";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 import type { TaskSession } from "../../../../../shared/task-session";
+import type { ModelFailureInfo } from "../../../../../shared/model-error";
 
 /** 认领队首的返回形状（与主进程 chats-store 的 ClaimPendingResult 对齐）。 */
 export type PendingClaimResult =
@@ -135,6 +136,7 @@ export interface AguiEvent {
   stepName?: string;
   status?: string;
   changes?: ToolFileChange[];
+  metadata?: { cyreneModelFailure?: ModelFailureInfo };
 }
 
 /** Harness 正文候选事件：只驱动本次运行的临时预览，不代表正式消息提交。 */

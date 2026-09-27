@@ -600,3 +600,48 @@
   color: var(--rb-text-primary);
   font-family: var(--rb-font-sans, ui-sans-serif, system-ui, sans-serif);
 }
+.cy-model-error-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, #eab308 34%, var(--rb-border-soft));
+  border-radius: 10px;
+  background: color-mix(in srgb, #eab308 7%, var(--rb-surface-elevated, transparent));
+  color: var(--rb-text-primary);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.cy-model-error-item__icon { display: inline-flex; color: #d6a300; }
+.cy-model-error-item__summary { min-width: 0; flex: 1; }
+.cy-model-error-item__status { margin-left: 8px; color: var(--rb-text-secondary); font-size: 12px; }
+.cy-model-error-item__action, .cy-model-error-dialog__close {
+  border: 1px solid var(--rb-border-soft);
+  border-radius: 7px;
+  background: var(--rb-surface-elevated, transparent);
+  color: var(--rb-text-primary);
+  padding: 5px 9px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.cy-model-error-item__action:hover, .cy-model-error-dialog__close:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.cy-model-error-dialog__overlay { position: fixed; inset: 0; z-index: 1000; background: rgb(0 0 0 / 52%); }
+.cy-model-error-dialog {
+  position: fixed;
+  z-index: 1001;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - 32px)); max-height: min(80vh, 620px); overflow: auto;
+  border: 1px solid var(--rb-border-soft); border-radius: 14px;
+  background: var(--rb-surface-elevated, #202020); color: var(--rb-text-primary);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 35%); padding: 22px;
+}
+.cy-model-error-dialog__title { margin: 0; font-size: 17px; font-weight: 650; }
+.cy-model-error-dialog__description { margin: 8px 0 18px; color: var(--rb-text-secondary); font-size: 13px; }
+.cy-model-error-dialog__details { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 13px; }
+.cy-model-error-dialog__details dt { color: var(--rb-text-secondary); }
+.cy-model-error-dialog__details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cy-model-error-dialog__hint { margin: 18px 0 0; color: var(--rb-text-secondary); font-size: 13px; line-height: 1.5; }
+.cy-model-error-dialog__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
+.cy-model-error-dialog__footer a { display: inline-flex; align-items: center; gap: 6px; color: var(--rb-text-primary); font-size: 13px; }

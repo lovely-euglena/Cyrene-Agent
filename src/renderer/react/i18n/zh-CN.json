@@ -62,7 +62,24 @@
     "workspaceChoose": "选择工作文件夹",
     "chooseOtherFolder": "选择其他文件夹…",
     "obsidianLibrary": "Obsidian 项目库",
-    "obsidianChoose": "选择 Obsidian 项目库"
+    "obsidianChoose": "选择 Obsidian 项目库",
+    "modelError": {
+      "title": "模型调用失败", "viewDetails": "查看详情", "provider": "厂商", "model": "模型",
+      "status": "HTTP 状态码", "code": "厂商错误码", "type": "错误类型", "requestId": "请求 ID",
+      "hint": "可以稍后重试；如果问题持续，请查看厂商文档或联系厂商支持。",
+      "unknownHint": "未知错误，请检查错误码并查询厂商文档。", "vendorDocs": "查看厂商文档",
+      "categories": {
+        "auth": "认证失败，请检查 API 密钥", "permission": "没有调用权限，请检查账户或模型权限",
+        "billing": "账户余额或付费状态异常", "quota": "账户额度不足或已达到用量上限",
+        "rateLimit": "请求频率达到上限，请稍后重试", "invalidRequest": "请求参数或格式不正确",
+        "notFound": "模型或接口不存在", "contextLimit": "输入内容超过模型上下文长度",
+        "payloadTooLarge": "请求内容过大", "contentPolicy": "请求触发了厂商内容策略限制",
+        "conflict": "请求与当前服务状态冲突", "timeout": "连接或模型响应超时",
+        "network": "网络连接失败", "overloaded": "厂商模型服务负载过高",
+        "serverError": "厂商服务器发生错误", "unavailable": "厂商模型服务暂时不可用",
+        "cancelled": "模型请求已取消", "unknown": "未知错误，请检查错误码并查询厂商文档"
+      }
+    }
   },
   "chatPage": {
     "scrollToBottom": "滚动到底部",

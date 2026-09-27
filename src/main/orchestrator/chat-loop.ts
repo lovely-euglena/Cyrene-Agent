@@ -15,6 +15,7 @@ import type {
   VendorConfig,
 } from "./vendors/types";
 import { streamChatWithSdk } from "./vendors/sdk-stream/runtime";
+import { classifyModelFailure } from "./vendors/model-error-classifier";
 import type { UnifiedStreamDelta } from "./vendors/sdk-stream/types";
 import type { ApprovedStyleSampling } from "./vendors/style-sampling";
 import { getTimeoutSettings } from "../timeout-manager";
@@ -168,21 +169,35 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     const controller = new AbortController();
     const abort = () => controller.abort();
     options.signal?.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(abort, remainingBudget());
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; abort(); }, remainingBudget());
     try {
-      const response = await fetch(http.url, {
-        method: "POST",
-        headers: http.headers,
-        body: http.body,
-        signal: controller.signal,
-      });
+      let response: Response;
+      try {
+        response = await fetch(http.url, {
+          method: "POST",
+          headers: http.headers,
+          body: http.body,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (options.signal?.aborted) throw error;
+        const failure = classifyModelFailure({ provider: options.adapter.id, model: effectiveRequest.model, error });
+        throw new AgentRuntimeError("E_MODEL_REQUEST_FAILED", "模型服务请求失败。", {
+          cause: error,
+          modelFailure: { ...failure, category: timedOut ? "TIMEOUT" : failure.category === "UNKNOWN" ? "NETWORK" : failure.category },
+        });
+      }
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         // [image-send] 链路日志④：服务端拒绝时打印完整错误体（Anthropic 400 会带具体 reason）。
         console.error(`[image-send] ChatLoop 请求被拒 HTTP ${response.status}:`, body.slice(0, 500) || "(无响应体)");
+        let errorPayload: unknown;
+        try { errorPayload = JSON.parse(body); } catch { errorPayload = undefined; }
         throw new AgentRuntimeError(
           "E_MODEL_REQUEST_FAILED",
-          `模型请求失败：HTTP ${response.status}${body ? ` - ${body.slice(0, 200)}` : ""}`,
+          `模型请求失败：HTTP ${response.status}`,
+          { modelFailure: classifyModelFailure({ provider: options.adapter.id, model: effectiveRequest.model, status: response.status, error: errorPayload }) },
         );
       }
       return options.adapter.parseResponse(await response.json());

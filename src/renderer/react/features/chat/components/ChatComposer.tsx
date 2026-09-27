@@ -1,11 +1,13 @@
 import { Sender } from "@ant-design/x";
 import { Popover } from "antd";
-import { BookOpen, ChevronDown, FolderOpen, Plus, ScanLine } from "lucide-react";
+import { AlertTriangle, BookOpen, ChevronDown, ExternalLink, FolderOpen, Plus, ScanLine } from "lucide-react";
+import { Dialog } from "radix-ui";
 import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "../../../i18n";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
 import { resolveAsset } from "../../../../../shared/renderer-base";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import type { ModelFailureInfo } from "../../../../../shared/model-error";
 import { ContextUsageRing } from "./ContextUsageRing";
 import { ReasoningControl } from "./ReasoningControl";
 import { StyleControl } from "./StyleControl";
@@ -61,6 +63,7 @@ interface ChatComposerProps {
   onSelectSessionModel?: (model: string) => void;
   /** 上下文容量快照：运行中实时刷新，空闲时为最近一次终态快照；无快照不渲染圆环。 */
   contextUsage?: ContextUsageSnapshot;
+  mainModelFailure?: ModelFailureInfo;
 }
 
 export interface ComposerAttachment {
@@ -285,6 +288,7 @@ export function ChatComposer({
   activeSessionModel,
   onSelectSessionModel,
   contextUsage,
+  mainModelFailure,
 }: ChatComposerProps) {
   const { t } = useTranslation();
   const preferredAddress = useUserCallPreference();
@@ -398,6 +402,7 @@ export function ChatComposer({
         onAdjust={onAdjustQueuedMessage}
         onRemove={onRemoveQueuedMessage}
       />
+      {mainModelFailure && <ModelFailureNotice failure={mainModelFailure} />}
       <div className="cy-composer-shell">
         <input
           ref={fileInputRef}
@@ -516,5 +521,56 @@ export function ChatComposer({
         </div>
       </div>
     </div>
+  );
+}
+
+const MODEL_ERROR_CATEGORY_KEYS: Record<ModelFailureInfo["category"], string> = {
+  AUTH: "auth", PERMISSION: "permission", BILLING: "billing", QUOTA: "quota",
+  RATE_LIMIT: "rateLimit", INVALID_REQUEST: "invalidRequest", NOT_FOUND: "notFound",
+  CONTEXT_LIMIT: "contextLimit", PAYLOAD_TOO_LARGE: "payloadTooLarge", CONTENT_POLICY: "contentPolicy",
+  CONFLICT: "conflict", TIMEOUT: "timeout", NETWORK: "network", OVERLOADED: "overloaded",
+  SERVER_ERROR: "serverError", UNAVAILABLE: "unavailable", CANCELLED: "cancelled", UNKNOWN: "unknown",
+};
+
+function ModelFailureNotice({ failure }: { failure: ModelFailureInfo }) {
+  const { t } = useTranslation();
+  const categoryKey = MODEL_ERROR_CATEGORY_KEYS[failure.category] ?? "unknown";
+  return (
+    <Dialog.Root>
+      <div className="cy-model-error-item" data-slot="item" role="status">
+        <span className="cy-model-error-item__icon"><AlertTriangle size={16} aria-hidden="true" /></span>
+        <span className="cy-model-error-item__summary" data-slot="item-content">
+          {t(`composer.modelError.categories.${categoryKey}`)}
+          {failure.status ? <span className="cy-model-error-item__status">HTTP {failure.status}</span> : null}
+        </span>
+        <Dialog.Trigger asChild>
+          <button className="cy-model-error-item__action" type="button">{t("composer.modelError.viewDetails")}</button>
+        </Dialog.Trigger>
+      </div>
+      <Dialog.Portal>
+        <Dialog.Overlay className="cy-model-error-dialog__overlay" />
+        <Dialog.Content className="cy-model-error-dialog" aria-describedby="cy-model-error-description">
+          <Dialog.Title className="cy-model-error-dialog__title">{t("composer.modelError.title")}</Dialog.Title>
+          <Dialog.Description id="cy-model-error-description" className="cy-model-error-dialog__description">
+            {t(`composer.modelError.categories.${categoryKey}`)}
+          </Dialog.Description>
+          <dl className="cy-model-error-dialog__details">
+            <dt>{t("composer.modelError.provider")}</dt><dd>{failure.provider}</dd>
+            <dt>{t("composer.modelError.model")}</dt><dd>{failure.model}</dd>
+            {failure.status && <><dt>{t("composer.modelError.status")}</dt><dd>{failure.status}</dd></>}
+            {failure.vendorCode && <><dt>{t("composer.modelError.code")}</dt><dd>{failure.vendorCode}</dd></>}
+            {failure.vendorType && <><dt>{t("composer.modelError.type")}</dt><dd>{failure.vendorType}</dd></>}
+            {failure.requestId && <><dt>{t("composer.modelError.requestId")}</dt><dd>{failure.requestId}</dd></>}
+          </dl>
+          <p className="cy-model-error-dialog__hint">{failure.category === "UNKNOWN"
+            ? t("composer.modelError.unknownHint")
+            : t("composer.modelError.hint")}</p>
+          <div className="cy-model-error-dialog__footer">
+            {failure.docsUrl && <a href={failure.docsUrl} target="_blank" rel="noreferrer">{t("composer.modelError.vendorDocs")} <ExternalLink size={14} /></a>}
+            <Dialog.Close className="cy-model-error-dialog__close">{t("common.close")}</Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

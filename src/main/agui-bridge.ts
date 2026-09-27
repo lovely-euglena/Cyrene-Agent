@@ -872,6 +872,7 @@ export function registerAgUiIpc(
         console.error("[AgUiBridge] run 失败:", message);
         perf.dump();
         const code = err instanceof AgentRuntimeError ? err.code : undefined;
+        const modelFailure = err instanceof AgentRuntimeError ? err.modelFailure : undefined;
         // runtime error 必须经过同一个 settlement gate。
         // 如果 upstream 已经发过 RUN_FINISHED（gate 已结算为 success / cancelled / timeout），
         // 这里直接丢弃 RUN_ERROR，避免渲染端收到第二终态。
@@ -907,7 +908,9 @@ export function registerAgUiIpc(
           durationMs: Date.now() - turnStartedAt,
         });
         // 补发 RUN_ERROR 事件，渲染端据此收尾（invoke 早已 resolve，靠事件驱动）
-        send({ type: "RUN_ERROR", message, code, threadId, runId });
+        send({ type: "RUN_ERROR", message, code, threadId, runId,
+          ...(modelFailure ? { metadata: { cyreneModelFailure: modelFailure } } : {}),
+        });
         cleanupRunState();
         endLifecycle();
       },
