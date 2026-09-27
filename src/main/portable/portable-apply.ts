@@ -46,16 +46,29 @@ export interface PortableApplyDeps {
   logger?: Pick<Console, "warn" | "error">;
 }
 
+/** 相对存储值规范化：去掉尾部斜杠，保留相对形式（如 "data2"、"..\\Shared"）。 */
+function normalizeRelativeValue(value: string): string {
+  const normalized = path.normalize(value);
+  const trimmed = normalized.replace(/[\\/]+$/, "");
+  return trimmed.length > 0 ? trimmed : value;
+}
+
 export async function applyPortableDataLocation(
   request: PortableApplyRequest,
   deps: PortableApplyDeps,
 ): Promise<PortableApplyResult> {
   const status = deps.getStatus();
+  // 相对路径按程序目录解析（指针文件与程序目录同级：程序整体搬移后仍有效）。
+  const rawInput = request.enabled ? request.dir.trim() : "";
   const requestedRaw = request.enabled
-    ? request.dir.trim()
-      ? path.resolve(request.dir.trim())
+    ? rawInput
+      ? path.resolve(status.installRoot, rawInput)
       : status.suggestedDir
     : status.systemDataDir;
+
+  if (request.enabled && isSamePath(requestedRaw, status.installRoot)) {
+    return { status: "error", error: "数据目录不能是程序目录本身，请用程序目录下的子目录（如 data）" };
+  }
 
   const validation = deps.validateTarget(requestedRaw, status.effectiveDataDir);
   if (!validation.ok) {
@@ -70,16 +83,18 @@ export async function applyPortableDataLocation(
     return { status: "error", error: "目标位置已存在同名文件" };
   }
 
-  const choice = await deps.confirmMigrate({
+  // native 设置窗已带选择时不重复弹窗；缺省走宿主确认框（旧 Electron 设置页）。
+  const choice = request.migrationChoice ?? (await deps.confirmMigrate({
     currentDir: status.effectiveDataDir,
     targetDir,
-  });
+  }));
   if (choice === "cancel") return { status: "cancelled" };
   const shouldMigrate = choice === "migrate";
 
   let overwrite = false;
   if (shouldMigrate && deps.hasData(targetDir)) {
-    overwrite = await deps.confirmOverwrite({ targetDir });
+    // native 已确认覆盖时（overwrite=true）直接用；缺省宿主弹确认框。
+    overwrite = request.overwrite ?? (await deps.confirmOverwrite({ targetDir }));
     if (!overwrite) return { status: "cancelled" };
   }
 
@@ -90,11 +105,14 @@ export async function applyPortableDataLocation(
       if (overwrite) deps.clearDirectory(targetDir);
       report = deps.migrate(status.effectiveDataDir, targetDir);
     }
-    // 默认便携目录存相对值（"data"）：程序整体搬移后指针仍然有效。
+    // 存储值：默认便携目录固定 "data"；用户输入相对路径时原样存相对值
+    //（程序整体搬移后仍有效），绝对输入存绝对路径。
     const storedValue = request.enabled
       ? isSamePath(targetDir, status.suggestedDir)
         ? PORTABLE_DEFAULT_DIR_VALUE
-        : targetDir
+        : rawInput && !path.isAbsolute(rawInput)
+          ? normalizeRelativeValue(rawInput)
+          : targetDir
       : null;
     deps.writeConfig(storedValue);
   } catch (error) {

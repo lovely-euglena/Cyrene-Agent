@@ -78,6 +78,8 @@ export function resolveDefaultPortableDataDir(input: DataLocationInput): string 
 export interface PortableConfig {
   /** 解析后的绝对目录；null = 使用系统默认 userData。 */
   dataDir: string | null;
+  /** 指针文件中的原始存储值（trim 后，如相对值 "data"）；null = 无配置/空值。设置页回显用。 */
+  storedValue: string | null;
 }
 
 /**
@@ -89,19 +91,19 @@ export function readPortableConfig(
   fsImpl: PortableFs = nodeFs,
 ): PortableConfig {
   try {
-    if (!fsImpl.existsSync(configPath)) return { dataDir: null };
+    if (!fsImpl.existsSync(configPath)) return { dataDir: null, storedValue: null };
     // 用户可能用记事本编辑过指针文件（UTF-8 BOM）——先剥掉再解析。
     const text = fsImpl.readFileSync(configPath, "utf8").replace(/^\uFEFF/, "");
     const raw = JSON.parse(text) as { dataDir?: unknown };
     const value = typeof raw?.dataDir === "string" ? raw.dataDir.trim() : "";
-    if (!value) return { dataDir: null };
+    if (!value) return { dataDir: null, storedValue: null };
     const resolved = path.isAbsolute(value)
       ? path.resolve(value)
       : path.resolve(path.dirname(configPath), value);
-    if (resolved === path.parse(resolved).root) return { dataDir: null };
-    return { dataDir: resolved };
+    if (resolved === path.parse(resolved).root) return { dataDir: null, storedValue: null };
+    return { dataDir: resolved, storedValue: value };
   } catch {
-    return { dataDir: null };
+    return { dataDir: null, storedValue: null };
   }
 }
 

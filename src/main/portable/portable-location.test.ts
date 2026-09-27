@@ -62,20 +62,23 @@ describe("指针文件读写", () => {
   it("缺失/损坏/空值都按默认处理", () => {
     const dir = makeTempDir();
     const configPath = path.join(dir, "cyrene-portable.json");
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: null });
+    expect(readPortableConfig(configPath)).toEqual({ dataDir: null, storedValue: null });
 
     fs.writeFileSync(configPath, "not json", "utf8");
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: null });
+    expect(readPortableConfig(configPath)).toEqual({ dataDir: null, storedValue: null });
 
     fs.writeFileSync(configPath, JSON.stringify({ dataDir: "  " }), "utf8");
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: null });
+    expect(readPortableConfig(configPath)).toEqual({ dataDir: null, storedValue: null });
 
     fs.writeFileSync(configPath, JSON.stringify({ dataDir: path.parse(dir).root }), "utf8");
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: null });
+    expect(readPortableConfig(configPath)).toEqual({ dataDir: null, storedValue: null });
 
     // 记事本编辑过的文件可能带 UTF-8 BOM
     fs.writeFileSync(configPath, "\uFEFF" + JSON.stringify({ dataDir: "data" }), "utf8");
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: path.resolve(dir, "data") });
+    expect(readPortableConfig(configPath)).toEqual({
+      dataDir: path.resolve(dir, "data"),
+      storedValue: "data",
+    });
   });
 
   it("相对路径相对程序目录解析，绝对路径原样使用", () => {
@@ -83,11 +86,17 @@ describe("指针文件读写", () => {
     const configPath = path.join(dir, "cyrene-portable.json");
 
     writePortableConfig(configPath, "data");
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: path.resolve(dir, "data") });
+    expect(readPortableConfig(configPath)).toEqual({
+      dataDir: path.resolve(dir, "data"),
+      storedValue: "data",
+    });
 
     const custom = path.join(dir, "custom-data");
     writePortableConfig(configPath, custom);
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: path.resolve(custom) });
+    expect(readPortableConfig(configPath)).toEqual({
+      dataDir: path.resolve(custom),
+      storedValue: custom,
+    });
     expect(fs.existsSync(`${configPath}.tmp`)).toBe(false);
   });
 
@@ -99,7 +108,7 @@ describe("指针文件读写", () => {
 
     writePortableConfig(configPath, null);
     expect(fs.existsSync(configPath)).toBe(false);
-    expect(readPortableConfig(configPath)).toEqual({ dataDir: null });
+    expect(readPortableConfig(configPath)).toEqual({ dataDir: null, storedValue: null });
   });
 });
 

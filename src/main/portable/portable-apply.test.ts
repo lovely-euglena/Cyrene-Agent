@@ -6,6 +6,7 @@ import { applyPortableDataLocation, type PortableApplyDeps } from "./portable-ap
 const DEFAULT_STATUS: PortableDataLocationStatus = {
   enabled: false,
   dataDir: null,
+  displayDir: null,
   effectiveDataDir: path.join("C:", "Users", "u", "AppData", "Roaming", "Cyrene"),
   systemDataDir: path.join("C:", "Users", "u", "AppData", "Roaming", "Cyrene"),
   installRoot: path.join("D:", "Apps", "Cyrene"),
@@ -184,5 +185,66 @@ describe("applyPortableDataLocation", () => {
     expect(result).toMatchObject({ status: "error" });
     expect((result as { error: string }).error).toContain("EPERM");
     expect(deps.scheduleRelaunch).not.toHaveBeenCalled();
+  });
+
+  it("相对路径：按程序目录解析并原样存相对值（程序搬移仍有效）", async () => {
+    const deps = createDeps({ confirmMigrate: vi.fn().mockResolvedValue("switch") });
+    const result = await applyPortableDataLocation({ enabled: true, dir: "data2" }, deps);
+    expect(result).toMatchObject({
+      status: "applied",
+      targetDir: path.join(DEFAULT_STATUS.installRoot, "data2"),
+    });
+    expect(deps.writeConfig).toHaveBeenCalledWith("data2");
+  });
+
+  it("相对上级路径（../SharedData）：解析到程序目录外，同时保留相对存储值", async () => {
+    const rel = path.join("..", "SharedData");
+    const deps = createDeps({ confirmMigrate: vi.fn().mockResolvedValue("switch") });
+    const result = await applyPortableDataLocation({ enabled: true, dir: rel }, deps);
+    expect(result).toMatchObject({
+      status: "applied",
+      targetDir: path.resolve(DEFAULT_STATUS.installRoot, rel),
+    });
+    expect(deps.writeConfig).toHaveBeenCalledWith(path.normalize(rel));
+  });
+
+  it("拒绝把数据目录设成程序目录本身（相对 '.'）", async () => {
+    const confirmMigrate = vi.fn();
+    const deps = createDeps({ confirmMigrate });
+    const result = await applyPortableDataLocation({ enabled: true, dir: "." }, deps);
+    expect(result).toMatchObject({ status: "error" });
+    expect((result as { error: string }).error).toContain("程序目录");
+    expect(confirmMigrate).not.toHaveBeenCalled();
+  });
+
+  it("native 预选迁移 + 覆盖：不再弹确认框，直接清空迁移", async () => {
+    const target = path.join("E:", "CyreneData");
+    const confirmMigrate = vi.fn();
+    const confirmOverwrite = vi.fn();
+    const deps = createDeps({ confirmMigrate, confirmOverwrite, hasData: vi.fn(() => true) });
+    const result = await applyPortableDataLocation(
+      { enabled: true, dir: target, migrationChoice: "migrate", overwrite: true },
+      deps,
+    );
+    expect(result).toMatchObject({ status: "applied", migrated: true, overwrite: true });
+    expect(confirmMigrate).not.toHaveBeenCalled();
+    expect(confirmOverwrite).not.toHaveBeenCalled();
+    expect(deps.clearDirectory).toHaveBeenCalledWith(path.resolve(target));
+  });
+
+  it("native 预选仅切换：不迁移、不询问覆盖", async () => {
+    const confirmMigrate = vi.fn();
+    const deps = createDeps({
+      confirmMigrate,
+      confirmOverwrite: vi.fn(),
+      hasData: vi.fn(() => true),
+    });
+    const result = await applyPortableDataLocation(
+      { enabled: true, dir: path.join("E:", "CyreneData"), migrationChoice: "switch" },
+      deps,
+    );
+    expect(result).toMatchObject({ status: "applied", migrated: false });
+    expect(confirmMigrate).not.toHaveBeenCalled();
+    expect(deps.clearDirectory).not.toHaveBeenCalled();
   });
 });

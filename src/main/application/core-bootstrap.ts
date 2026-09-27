@@ -99,6 +99,8 @@ export interface CoreDependencies {
   loadGeneralSettings(): GeneralSettings;
   /** 超时设置（高级设置 section 快照用） */
   getTimeoutSettings?(): { userChoiceTimeout: number; modelRequestTimeoutSec?: number };
+  /** 便携模式 / 数据目录状态（通用 section 快照用；缺省 = 宿主未接线）。 */
+  getPortableStatus?(): import("../../shared/portable-mode").PortableDataLocationStatus;
   /** 应用版本（打包态用 app.getVersion()；缺省回退环境变量，仅测试桩用） */
   getAppVersion?(): string;
   /** 用户资料（native 设置窗「用户信息」section 快照）。 */
@@ -230,6 +232,8 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
             maxParallelToolCalls: gs.maxParallelToolCalls,
           };
         })(),
+        // 便携模式 / 数据目录（通用 section「数据与存储」卡；.NET 设置窗原生编辑）
+        portable: deps.getPortableStatus?.() ?? null,
         user: {
           nickname: profile.nickname,
           callPreference: profile.callPreference,

@@ -569,6 +569,7 @@ describe("section 动作契约（cmd settings <kind> verb）", () => {
   it("各 section 动作集合锁定（宿主 switch 与 C# 同步）", () => {
     expect([...NATIVE_SECTION_ACTIONS.api]).toEqual(["save", "test", "test-vision", "set-default-profile", "delete-profile"]);
     expect([...NATIVE_SECTION_ACTIONS.general]).toEqual(["clear-chat-history", "open-gpu-internals"]);
+    expect([...NATIVE_SECTION_ACTIONS.portable]).toEqual(["apply"]);
     expect([...NATIVE_SECTION_ACTIONS.preferences]).toEqual(["open-prompt"]);
     expect([...NATIVE_SECTION_ACTIONS.cyrene]).toEqual([
       "save",

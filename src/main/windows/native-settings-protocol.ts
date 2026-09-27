@@ -133,6 +133,8 @@ export function shouldOpenSettingsInElectron(section?: string): boolean {
 export const NATIVE_SECTION_ACTIONS = {
   api: ["save", "test", "test-vision", "set-default-profile", "delete-profile"],
   general: ["clear-chat-history", "open-gpu-internals"],
+  /** 便携模式 / 数据目录（通用 section「数据与存储」卡；迁移/覆盖确认在 WPF 侧完成）。 */
+  portable: ["apply"],
   preferences: ["open-prompt"],
   cyrene: [
     "save",

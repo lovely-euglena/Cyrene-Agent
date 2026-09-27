@@ -36,7 +36,8 @@ export async function loadPortableStatus(): Promise<void> {
     if (!status) return;
     currentStatus = status;
     portableModeEnabledInput.checked = status.enabled;
-    portableDirInput.value = status.dataDir ?? status.suggestedDir;
+    // 相对路径原样回显（displayDir，如 "data"）；无配置时给默认便携目录
+    portableDirInput.value = status.displayDir ?? status.dataDir ?? status.suggestedDir;
     renderPortableDirRow();
     renderCurrentHint();
   } catch {
