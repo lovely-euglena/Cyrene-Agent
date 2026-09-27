@@ -352,7 +352,8 @@ describe("function-calling round presentation", () => {
     expect(html).toContain("cy-reasoning-status-art is-thinking");
     const thinkingArt = html.match(/cy-reasoning-status-art is-thinking[^>]*><img src="([^"]+)"/)?.[1];
     const completedArt = html.match(/cy-reasoning-status-art is-complete[^>]*><img src="([^"]+)"/)?.[1];
-    expect(completedArt).toBe(thinkingArt);
+    expect(thinkingArt).toContain(encodeURIComponent("思考中.png"));
+    expect(completedArt).toContain(encodeURIComponent("提醒.png"));
     expect(html).toContain("昔涟已完成 · 浏览 1 个目录");
     expect(html).toContain("昔涟正在读取文件");
     expect(html).toContain("先看项目结构");
