@@ -400,7 +400,7 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | 层级 | 技术 |
 |---|---|
 | 运行环境 | Node.js 24 LTS + Electron 44 |
-| 开发语言 | TypeScript 5 |
+| 开发语言 | TypeScript 6.0 |
 | 构建工具 | Vite 8 |
 | 界面渲染 | HTML / CSS + React 19 + Tailwind CSS 4 + Pixi.js 7 + Ant Design X / Mantine + Chart.js |
 | Live2D | `pixi-live2d-display` 0.5.0-beta + Cubism Core |
