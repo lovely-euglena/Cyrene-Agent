@@ -27,7 +27,7 @@ import {
 } from "../../components/run-presentation";
 import { applyAgentRoundBoundary, createRoundProcessMessage } from "../../components/agent-rounds";
 import { applyTaskDelegationEvent, normalizeTaskDelegationEvent } from "../../components/task-delegations";
-import { t } from "../../../../i18n";
+import { getCharacterName, t } from "../../../../i18n";
 import type { AguiApi, AguiEvent, CandidateTextEventValue, ChatStoreApi } from "../chat-page-bridge";
 import { normalizeWeatherData, parseSessionRunActiveError, stageForStep } from "../chat-page-normalizers";
 import { RunEventGate } from "../run-event-gate";
@@ -1070,7 +1070,7 @@ export class AgentRunController {
         this.taskDelegations = applyTaskDelegationEvent(this.taskDelegations, delegation, this.activeRoundId);
         this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
           taskDelegations: this.taskDelegations,
-          runStage: { kind: "executing", detail: delegation.nickname },
+          runStage: { kind: "executing", detail: getCharacterName(delegation.nickname) },
         });
         void this.checkpointRun("running", true);
       }

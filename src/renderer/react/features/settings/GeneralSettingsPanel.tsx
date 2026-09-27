@@ -4,6 +4,7 @@ import { Info, Monitor, Settings2 } from "lucide-react";
 import packageJson from "../../../../../package.json";
 import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { setUiLocale, useTranslation } from "../../i18n";
+import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
 import { Card } from "../../components/ui/Card";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
 import { resolveAppUpdateView } from "./app-update-view";
@@ -13,7 +14,7 @@ interface GeneralValues {
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   disableGpuElectron: boolean;
-  language: "zh-CN" | "en";
+  language: UiLanguage;
 }
 
 const defaults: GeneralValues = {
@@ -31,7 +32,7 @@ function readGeneral(value: unknown): GeneralValues {
     toastSoundEnabled: typeof input.toastSoundEnabled === "boolean" ? input.toastSoundEnabled : defaults.toastSoundEnabled,
     launchAtLogin: typeof input.launchAtLogin === "boolean" ? input.launchAtLogin : defaults.launchAtLogin,
     disableGpuElectron: typeof input.disableGpuElectron === "boolean" ? input.disableGpuElectron : defaults.disableGpuElectron,
-    language: input.language === "en" ? "en" : "zh-CN",
+    language: normalizeUiLanguage(input.language),
   };
 }
 
@@ -106,7 +107,7 @@ export function GeneralSettingsPanel() {
   }
 
   /** 切换界面语言：先即时生效再落盘，落盘失败时回滚，避免界面与配置不一致。 */
-  async function changeLanguage(next: "zh-CN" | "en") {
+  async function changeLanguage(next: UiLanguage) {
     const previous = values.language;
     if (next === previous) return;
     setValues((current) => ({ ...current, language: next }));
@@ -141,7 +142,7 @@ export function GeneralSettingsPanel() {
           <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.toastSound")}</strong><span>{t("settingsPage.general.toastSoundDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.toastSound")} checked={values.toastSoundEnabled} onChange={(checked) => { setValues((current) => ({ ...current, toastSoundEnabled: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.launchAtLogin")}</strong><span>{t("settingsPage.general.launchAtLoginDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.launchAtLogin")} checked={values.launchAtLogin} onChange={(checked) => { setValues((current) => ({ ...current, launchAtLogin: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value={values.language} onChange={(next) => void changeLanguage(next as "zh-CN" | "en")} options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en" }, { label: t("settingsPage.general.japanese"), value: "ja", disabled: true }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value={values.language} onChange={(next) => void changeLanguage(next as UiLanguage)} options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en" }, { label: t("settingsPage.general.japanese"), value: "ja-JP" }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.disableGpu")}</strong><span>{t("settingsPage.general.disableGpuDescription")}</span><span className="cy-settings-general__notice">{t("settingsPage.general.restartNotice")}</span></div><div className="cy-settings-row__control cy-settings-button-group"><SettingsSwitch ariaLabel={t("settingsPage.general.disableGpu")} checked={values.disableGpuElectron} onChange={(checked) => void saveImmediate("disableGpuElectron", checked)} /><Button onClick={() => window.settings?.openChromeGpu()}>{t("settingsPage.general.gpuInternals")}</Button></div></div>
           </Card>
         </section>

@@ -7,6 +7,7 @@ import type { ApiTransport } from "../../../shared/api-endpoint";
 import type { ReasoningPreference } from "../../../shared/reasoning";
 import type { UiTheme } from "../../../shared/ui-theme";
 import type { UiIcon } from "../../../shared/ui-icon";
+import type { UiLanguage } from "../../../shared/ui-language";
 import type {
   DefaultChatMode,
   MobileMessageSegmentationMode,
@@ -131,7 +132,7 @@ export interface GeneralSettings {
   /** 提醒中心音效总开关：关闭后所有 toast 静音 */
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
-  language: "zh-CN";
+  language: UiLanguage;
   uiTheme: UiTheme;
   windowCornerRadius: number;
   uiThemeRadius: boolean;

@@ -1,5 +1,5 @@
 import React from "react";
-import { useTranslation } from "../../../i18n";
+import { translateCharacterName, useTranslation } from "../../../i18n";
 import type { TaskDelegationDisplayRecord } from "../../../../../shared/chat-types";
 import { getCharacterPortraitByAssetFileName } from "../../../character-portraits";
 import "./RunExperience.css";
@@ -27,6 +27,7 @@ export function TaskDelegationRow({
   onOpen?: (delegation: TaskDelegationDisplayRecord) => void;
 }) {
   const { t } = useTranslation();
+  const nickname = translateCharacterName(delegation.nickname, t);
   const portraitUrl = getCharacterPortraitByAssetFileName(delegation.assetFileName);
   return (
     <button
@@ -34,12 +35,12 @@ export function TaskDelegationRow({
       className={`cy-task-delegation is-${delegation.status}${onOpen ? " is-openable" : ""}`}
       onClick={onOpen ? () => onOpen(delegation) : undefined}
       disabled={!onOpen}
-      aria-label={onOpen ? `${delegation.nickname}: ${delegation.description}` : undefined}
+      aria-label={onOpen ? `${nickname}: ${delegation.description}` : undefined}
     >
       <span className="cy-task-delegation__marker" aria-hidden="true">{STATUS_MARKERS[delegation.status]}</span>
       <span className="cy-task-delegation__lead">{t("taskDelegation.delegatedTo")}</span>
-      {portraitUrl && <img className="cy-task-delegation__avatar" src={portraitUrl} alt={delegation.nickname} draggable={false} />}
-      <span className="cy-task-delegation__nickname">{delegation.nickname}</span>
+      {portraitUrl && <img className="cy-task-delegation__avatar" src={portraitUrl} alt={nickname} draggable={false} />}
+      <span className="cy-task-delegation__nickname">{nickname}</span>
       <span className="cy-task-delegation__description">{delegation.description}</span>
       <span className="cy-task-delegation__status">{t(STATUS_TEXT_KEYS[delegation.status])}</span>
     </button>

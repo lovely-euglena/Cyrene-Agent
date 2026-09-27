@@ -208,17 +208,22 @@ describe("general interface language settings", () => {
     expect(normalizeGeneralSettings({ language: "en" } as never).language).toBe("en");
   });
 
+  it("keeps an explicit Japanese choice", () => {
+    expect(normalizeGeneralSettings({ language: "ja-JP" } as never).language).toBe("ja-JP");
+  });
+
   it("falls back to Chinese for languages that are not translated yet", () => {
     expect(normalizeGeneralSettings({ language: "ja" } as never).language).toBe("zh-CN");
+    expect(normalizeGeneralSettings({ language: "ko" } as never).language).toBe("zh-CN");
     expect(normalizeGeneralSettings({ language: "" } as never).language).toBe("zh-CN");
   });
 
-  it("keeps the English choice across a simulated restart", async () => {
+  it.each(["en", "ja-JP"] as const)("keeps the %s choice across a simulated restart", async (language) => {
     const first = await import("./settings-facade");
-    first.saveGeneralSettings({ language: "en" });
+    first.saveGeneralSettings({ language });
 
     vi.resetModules();
     const reloaded = await import("./settings-facade");
-    expect(reloaded.loadGeneralSettings().language).toBe("en");
+    expect(reloaded.loadGeneralSettings().language).toBe(language);
   });
 });

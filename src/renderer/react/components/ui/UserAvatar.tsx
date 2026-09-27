@@ -9,6 +9,7 @@ import { useNewsFeed } from "../../hooks/useNewsFeed";
 import { useUserAvatar } from "../../hooks/useUserAvatar";
 import { useUserNickname } from "../../hooks/useUserNickname";
 import { setUiLocale, useTranslation } from "../../i18n";
+import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
 import { resolveAppUpdateView } from "../../features/settings/app-update-view";
 import { IssueReportDialog } from "./IssueReportDialog";
 import { NewsDialog } from "./NewsDialog";
@@ -30,8 +31,11 @@ export function UserAvatar({ label }: UserAvatarProps) {
   const [newsUnreadSnapshot, setNewsUnreadSnapshot] = useState<string[]>([]);
   const [theme, setTheme] = useState<UiTheme>(() => normalizeUiTheme(document.documentElement.dataset.uiTheme));
   const displayLabel = (label ?? nickname) || "User";
-  const language = locale === "en" ? "en" : "zh-CN";
-  const news = useNewsFeed(language);
+  const language = normalizeUiLanguage(locale);
+  // 公告仓库只有中/英两份文件，日文界面降级看英文；仓库补上日文公告后删掉这行回退
+  const news = useNewsFeed(language === "ja-JP" ? "en" : language);
+  const languageLabel = (value: UiLanguage) =>
+    value === "zh-CN" ? t("settingsPage.general.chinese") : value === "ja-JP" ? t("settingsPage.general.japanese") : "English";
   // 更新红点与版本行共用同一状态源；有待处理的更新（发现/下载中/已下载）就亮
   const updateState = useAppUpdate();
   const updateView = resolveAppUpdateView(updateState);
@@ -58,7 +62,7 @@ export function UserAvatar({ label }: UserAvatarProps) {
     }
   }
 
-  async function selectLanguage(next: "zh-CN" | "en") {
+  async function selectLanguage(next: UiLanguage) {
     if (next === language) return;
     setUiLocale(next);
     try {
@@ -138,12 +142,12 @@ export function UserAvatar({ label }: UserAvatarProps) {
               <DropdownMenu.SubTrigger className="cy-user-menu__item">
                 <Languages size={16} aria-hidden="true" />
                 <span>{t("settingsPage.general.language")}</span>
-                <span className="cy-user-menu__value">{language === "zh-CN" ? t("settingsPage.general.chinese") : "English"}</span>
+                <span className="cy-user-menu__value">{languageLabel(language)}</span>
                 <ChevronRight className="cy-user-menu__chevron" size={15} aria-hidden="true" />
               </DropdownMenu.SubTrigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.SubContent className="cy-user-menu cy-user-menu__submenu" sideOffset={6} collisionPadding={12}>
-                  <DropdownMenu.RadioGroup value={language} onValueChange={(value) => void selectLanguage(value as "zh-CN" | "en")}>
+                  <DropdownMenu.RadioGroup value={language} onValueChange={(value) => void selectLanguage(value as UiLanguage)}>
                     <DropdownMenu.RadioItem className="cy-user-menu__item" value="zh-CN">
                       <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
                       <span>{t("settingsPage.general.chinese")}</span>
@@ -151,6 +155,10 @@ export function UserAvatar({ label }: UserAvatarProps) {
                     <DropdownMenu.RadioItem className="cy-user-menu__item" value="en">
                       <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
                       <span>English</span>
+                    </DropdownMenu.RadioItem>
+                    <DropdownMenu.RadioItem className="cy-user-menu__item" value="ja-JP">
+                      <DropdownMenu.ItemIndicator className="cy-user-menu__check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
+                      <span>{t("settingsPage.general.japanese")}</span>
                     </DropdownMenu.RadioItem>
                   </DropdownMenu.RadioGroup>
                 </DropdownMenu.SubContent>

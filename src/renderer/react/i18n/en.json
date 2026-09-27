@@ -325,6 +325,21 @@
       "shy": "Shy"
     }
   },
+  "characterNames": {
+    "昔涟": "Cyrene",
+    "阿格莱雅": "Aglaea",
+    "缇宝": "Tribbie",
+    "万敌": "Mydei",
+    "遐蝶": "Castorice",
+    "那刻夏": "Anaxa",
+    "风堇": "Hyacine",
+    "赛飞儿": "Cipher",
+    "白厄": "Phainon",
+    "海瑟音": "Hysilens",
+    "刻律德菈": "Cerydra",
+    "长夜月": "Evernight",
+    "丹恒": "Dan Heng"
+  },
   "rightInspector": {
     "panelAria": "Inspector panel",
     "toggle": "Toggle right panel"

@@ -1,5 +1,6 @@
 import type { UiTheme } from "../../shared/ui-theme";
 import type { UiIcon } from "../../shared/ui-icon";
+import type { UiLanguage } from "../../shared/ui-language";
 import type { MessageTypography } from "../../shared/message-typography";
 import type {
   DefaultChatMode,
@@ -58,8 +59,8 @@ export interface GeneralSettings {
   /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
-  /** 界面语言：目前支持中文与英文，其余语言待翻译补齐后开放。 */
-  language: "zh-CN" | "en";
+  /** 界面语言：已支持中文、英文、日文，其余语言待翻译补齐后开放。 */
+  language: UiLanguage;
   uiTheme: UiTheme;
   windowCornerRadius: number;
   /** @deprecated 旧版透明窗口开关，仅保留用于配置兼容。 */

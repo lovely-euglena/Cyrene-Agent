@@ -13,6 +13,7 @@ import {
 import { normalizeUiTheme } from "../../shared/ui-theme";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 import { normalizeUiIcon } from "../../shared/ui-icon";
+import { normalizeUiLanguage } from "../../shared/ui-language";
 import {
   normalizeChatSocialContextEnabled,
   normalizeDefaultChatMode,
@@ -239,8 +240,8 @@ export function normalizeGeneralSettings(
       ? DEFAULT_GENERAL_SETTINGS.toastSoundEnabled
       : Boolean(input.toastSoundEnabled),
     launchAtLogin: Boolean(input?.launchAtLogin),
-    // 界面语言只认已翻译完成的中/英，非法值（含旧配置的 ja/ko）一律回落中文
-    language: input?.language === "en" ? "en" : "zh-CN",
+    // 界面语言只认已翻译完成的语种，非法值（含旧配置的 ja/ko）一律回落中文
+    language: normalizeUiLanguage(input?.language),
     uiTheme: normalizeUiTheme(input?.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input?.windowCornerRadius),
     uiThemeRadius: input?.uiThemeRadius ?? true,
