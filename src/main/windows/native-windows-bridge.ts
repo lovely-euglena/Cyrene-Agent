@@ -42,6 +42,8 @@ export interface NativeBridgeActions {
   apiAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「通用」section 动作。verb: clear-chat-history / open-gpu-internals */
   generalAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** 便携模式 / 数据目录（通用 section「数据与存储」卡）。 */
+  portableAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「记忆」section 动作。verb: save-l0/save-l1/delete-doc/vault-bind/vault-unbind/vault-export/vault-sync/vault-auto-sync */
   memoryAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** native 设置窗「定时任务」section 动作。verb: add/update/toggle/fire/delete/history */
@@ -185,6 +187,9 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "general":
           completeAction(frame, actions.generalAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "portable":
+          completeAction(frame, actions.portableAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
         case "memory":
           completeAction(frame, actions.memoryAction?.(asString(frame.verb), asRecord(frame.payload)));

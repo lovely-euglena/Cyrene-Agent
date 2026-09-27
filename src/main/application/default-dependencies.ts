@@ -34,7 +34,9 @@ import {
 } from "../windows/window-state";
 import { loadModelSettings, saveModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
 import { registerSettingsIpc } from "../settings/settings-ipc";
-import { registerPortableIpc } from "../portable/portable-ipc";
+import { registerPortableIpc, applyPortableChange } from "../portable/portable-ipc";
+import { getPortableDataLocationStatus } from "../portable/portable-runtime";
+import type { PortableApplyRequest } from "../../shared/portable-mode";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -1013,9 +1015,35 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           // 语音：TTS（保存/试听/克隆/列表）+ ASR（保存）
           ttsAction: nativeTtsAction,
           asrAction: nativeAsrAction,
+          // 「通用」section 便携模式：native 窗已完成迁移/覆盖确认（随 payload 下发），
+          // 这里只执行；结果走通用 section 状态行反馈（成功路径 800ms 后应用重启）。
+          portableAction: (verb, payload) => {
+            if (verb !== "apply") return;
+            const choiceRaw = payload.migrationChoice;
+            const migrationChoice =
+              choiceRaw === "migrate" || choiceRaw === "switch" || choiceRaw === "cancel"
+                ? choiceRaw
+                : undefined;
+            const request: PortableApplyRequest = {
+              enabled: payload.enabled === true,
+              dir: typeof payload.dir === "string" ? payload.dir : "",
+              ...(migrationChoice ? { migrationChoice } : {}),
+              ...(typeof payload.overwrite === "boolean" ? { overwrite: payload.overwrite } : {}),
+            };
+            void applyPortableChange(request).then((result) => {
+              if (result.status === "applied") {
+                nativeNotice("general", "ok", `数据目录已更新，应用即将重启：${result.targetDir}`);
+              } else if (result.status === "cancelled") {
+                nativeNotice("general", "info", "已取消");
+              } else if (result.status === "noop") {
+                nativeNotice("general", "ok", "数据目录未变化");
+              } else {
+                nativeNotice("general", "error", result.error);
+              }
+            });
+          },
           // 「高级设置」section：超时（秒→ms）+ 工具并发
-          runtimeAction: (verb, payload) => {
-            if (verb !== "save") return;
+          runtimeAction: (verb, payload) => {            if (verb !== "save") return;
             const isBlank = payload.modelRequestTimeoutSec === null
               || payload.modelRequestTimeoutSec === undefined
               || payload.modelRequestTimeoutSec === "";
@@ -1336,6 +1364,8 @@ createTray: (input) => {
       markStartupWindowsReady: () => markStartupPhaseReady(),
       getAppVersion: () => app.getVersion(),
       getTimeoutSettings: () => getTimeoutSettings(),
+      // 便携模式 / 数据目录（通用 section 快照）
+      getPortableStatus: () => getPortableDataLocationStatus(),
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行

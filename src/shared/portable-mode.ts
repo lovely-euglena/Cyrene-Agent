@@ -10,6 +10,8 @@ export interface PortableDataLocationStatus {
   enabled: boolean;
   /** 指针文件中的目录（已解析为绝对路径）；null = 系统默认。 */
   dataDir: string | null;
+  /** 指针文件中的原始存储值（相对值原样，如 "data"）；null = 系统默认。设置页回显用。 */
+  displayDir: string | null;
   /** 本次会话实际生效的数据目录（app.getPath("userData")）。 */
   effectiveDataDir: string;
   /** 系统默认数据目录（%APPDATA%/...），关闭便携模式时迁回的目标。 */
@@ -29,8 +31,15 @@ export type PortableMigrationChoice = "migrate" | "switch" | "cancel";
 export interface PortableApplyRequest {
   /** true = 使用便携/自定义目录；false = 回到系统默认目录。 */
   enabled: boolean;
-  /** 便携模式下的目标目录（空 = 默认 <程序目录>/data）。 */
+  /** 便携模式下的目标目录（空 = 默认 <程序目录>/data）；支持相对路径（相对程序目录）。 */
   dir: string;
+  /**
+   * native 设置窗已完成的迁移选择；缺省时宿主自行弹确认框（旧 Electron 设置页路径）。
+   * native 侧把选择随请求下发，宿主不再重复弹窗。
+   */
+  migrationChoice?: PortableMigrationChoice;
+  /** native 设置窗已确认覆盖目标目录时的显式覆盖；缺省时宿主按需弹确认框。 */
+  overwrite?: boolean;
 }
 
 /** 应用变更结果。 */

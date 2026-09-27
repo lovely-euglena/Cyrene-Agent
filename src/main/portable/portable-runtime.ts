@@ -71,6 +71,7 @@ export function getPortableDataLocationStatus(): PortableDataLocationStatus {
   return {
     enabled: config.dataDir !== null,
     dataDir: config.dataDir,
+    displayDir: config.storedValue,
     effectiveDataDir: app.getPath("userData"),
     systemDataDir: info.systemDataDir,
     installRoot: info.installRoot,
