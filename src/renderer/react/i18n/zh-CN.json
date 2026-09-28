@@ -1926,6 +1926,9 @@
       "menuEntry": "版本",
       "firstStable": "正式版"
     },
+    "website": {
+      "menuEntry": "官网"
+    },
     "newButton": "新建任务"
   },
   "scheduler": {

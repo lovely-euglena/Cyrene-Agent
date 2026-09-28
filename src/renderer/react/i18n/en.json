@@ -1926,6 +1926,9 @@
       "menuEntry": "Version",
       "firstStable": "Stable release"
     },
+    "website": {
+      "menuEntry": "Website"
+    },
     "newButton": "New task"
   },
   "scheduler": {

@@ -1959,6 +1959,9 @@
       "menuEntry": "バージョン",
       "firstStable": "正式版"
     },
+    "website": {
+      "menuEntry": "公式サイト"
+    },
     "newButton": "新しいタスク"
   },
   "scheduler": {

@@ -211,6 +211,16 @@
   line-height: 24px;
 }
 
+/* 关于行里的官网链接：复用消息链接的主题色，hover 才亮下划线 */
+.cy-settings-about__link {
+  color: var(--md-link-color);
+}
+
+.cy-settings-about__link:hover {
+  color: var(--md-link-hover);
+  text-decoration: underline;
+}
+
 .cy-settings-row__control {
   flex: 0 1 auto;
   min-width: 0;

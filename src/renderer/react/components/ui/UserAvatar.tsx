@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bug, Check, ChevronRight, Languages, Megaphone, Package, Palette, UserRound } from "lucide-react";
+import { Bug, Check, ChevronRight, Globe, Languages, Megaphone, Package, Palette, UserRound } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import packageJson from "../../../../../package.json";
 import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
@@ -10,7 +10,7 @@ import { useUserAvatar } from "../../hooks/useUserAvatar";
 import { useUserNickname } from "../../hooks/useUserNickname";
 import { setUiLocale, useTranslation } from "../../i18n";
 import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
-import { resolveAppUpdateView, resolveVersionTitleKey } from "../../features/settings/app-update-view";
+import { resolveAppUpdateView, resolveVersionTitleKey, WEBSITE_URL } from "../../features/settings/app-update-view";
 import { IssueReportDialog } from "./IssueReportDialog";
 import { NewsDialog } from "./NewsDialog";
 import { UserProfileDialog } from "./UserProfileDialog";
@@ -183,6 +183,14 @@ export function UserAvatar({ label }: UserAvatarProps) {
                 {versionTitleKey && ` · ${t(versionTitleKey)}`}
               </span>
               {updateView.badge && <span className="cy-user-menu__dot" aria-hidden="true" />}
+            </DropdownMenu.Item>
+            {/* 官网入口：默认浏览器打开 */}
+            <DropdownMenu.Item
+              className="cy-user-menu__item"
+              onSelect={() => void window.system?.openExternal(WEBSITE_URL)}
+            >
+              <Globe size={16} aria-hidden="true" />
+              <span>{t("ui.website.menuEntry")}</span>
             </DropdownMenu.Item>
             <DropdownMenu.Item
               className="cy-user-menu__item"

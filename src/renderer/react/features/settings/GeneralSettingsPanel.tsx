@@ -7,7 +7,7 @@ import { setUiLocale, useTranslation } from "../../i18n";
 import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
 import { Card } from "../../components/ui/Card";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
-import { resolveAppUpdateView, resolveVersionTitleKey } from "./app-update-view";
+import { resolveAppUpdateView, resolveVersionTitleKey, WEBSITE_URL } from "./app-update-view";
 
 interface GeneralValues {
   rememberWindowState: boolean;
@@ -151,7 +151,7 @@ export function GeneralSettingsPanel() {
 
         <section className="cy-settings-section">
           <Card>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong><Info size={16} /> {t("settingsPage.general.about")}</strong><span>{t("settingsPage.general.aboutDescription")} · v{packageJson.version}{versionTitleKey && ` · ${t(versionTitleKey)}`}</span></div></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong><Info size={16} /> {t("settingsPage.general.about")}</strong><span>{t("settingsPage.general.aboutDescription")} · v{packageJson.version}{versionTitleKey && ` · ${t(versionTitleKey)}`} · <a className="cy-settings-about__link" href={WEBSITE_URL} onClick={(event) => { event.preventDefault(); void window.system?.openExternal(WEBSITE_URL); }}>{t("ui.website.menuEntry")}</a></span></div></div>
             <div className="cy-settings-row">
               <div className="cy-settings-row__copy">
                 <strong>{t("settingsPage.general.softwareUpdate")}</strong>

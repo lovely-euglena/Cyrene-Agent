@@ -66,3 +66,6 @@ const VERSION_TITLE_KEYS: Record<string, string> = {
 export function resolveVersionTitleKey(version: string): string | null {
   return VERSION_TITLE_KEYS[version] ?? null;
 }
+
+/** 官网地址：设置页关于行与头像菜单共用，走 system.openExternal 在默认浏览器打开 */
+export const WEBSITE_URL = "https://playaagentcyrene.online/";
