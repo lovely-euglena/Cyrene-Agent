@@ -216,6 +216,7 @@ export async function runHarnessWithAdapter(
     toolResults,
     completionReason,
     terminal,
+    ...(result.modelFailure ? { modelFailure: result.modelFailure } : {}),
     totalUsage: undefined,
   };
 }

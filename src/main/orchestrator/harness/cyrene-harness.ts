@@ -23,6 +23,7 @@
  * - harness-observability.ts — 上下文容量快照与缓存结构诊断（调用点仍在主循环）
  */
 
+import { AgentRuntimeError } from "../agent-runtime-error";
 import type {
   ChatMessage,
   ChatResponse,
@@ -173,7 +174,10 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         `\n  error: ${errCode} ${errorMsg}`,
         err,
       );
-      return finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
+      const failed = finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
+      return err instanceof AgentRuntimeError && err.modelFailure
+        ? { ...failed, modelFailure: err.modelFailure }
+        : failed;
     }
 
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──

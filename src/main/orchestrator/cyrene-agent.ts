@@ -39,6 +39,7 @@ export interface AgentLoopResult {
   toolResults: import("./types").ToolCallResult[];
   completionReason: "no_tool" | "timeout" | "max_rounds" | "tool_error";
   totalUsage?: { input: number; output: number };
+  modelFailure?: import("../../shared/model-error").ModelFailureInfo;
   /**
    * Canonical 终态结算（exactly-once，见 run-settlement.ts）。
    * 由 harness-adapter 根据 HarnessResult.terminateReason 填充；
@@ -211,6 +212,7 @@ export interface CyreneRunResult {
   reply: string;
   toolResults: ToolCallResult[];
   totalUsage?: { input: number; output: number };
+  modelFailure?: import("../../shared/model-error").ModelFailureInfo;
   soulPhaseReason?: "no_tool" | "max_rounds" | "timeout" | "tool_error";
   executionMode?: AgentExecutionMode;
   socialContext?: CyreneRunOptions["socialContext"];
@@ -501,6 +503,7 @@ export class CyreneAgent extends AbstractAgent {
             soulPhaseReason: result.completionReason,
             executionMode,
             socialContext: options.socialContext,
+            ...(result.modelFailure ? { modelFailure: result.modelFailure } : {}),
             // 优先使用 harness-adapter 上报的 terminal；否则按 completionReason 推断
             terminal: result.terminal ?? terminalFromCompletionReason(result.completionReason),
           };
@@ -523,6 +526,7 @@ export class CyreneAgent extends AbstractAgent {
             threadId,
             runId,
             result: this.lastResult.terminal,
+            ...(this.lastResult.modelFailure ? { metadata: { cyreneModelFailure: this.lastResult.modelFailure } } : {}),
           });
           finished = true;
           detachExternalAbort();

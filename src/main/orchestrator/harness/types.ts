@@ -346,6 +346,7 @@ export interface HarnessResult {
    */
   terminal?: CyreneRunTerminalResult;
   /** 总执行轮数 */
+  modelFailure?: import("../../../shared/model-error").ModelFailureInfo;
   rounds: number;
 }
 
