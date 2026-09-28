@@ -3,6 +3,11 @@
 
 import { useTranslation } from "../../../i18n";
 import { FileTreePanel, FilePreviewContent } from "./FileTreePanel";
+import {
+  DEMO_FILE_PREVIEW_CONTENT,
+  DEMO_FILE_PREVIEW_DISPLAY_PATH,
+  DEMO_FILE_PREVIEW_REL_PATH,
+} from "./demoFilePreview";
 import { PlanContent, planTabDotClass, planTabLabel, type PlanReviewPhase } from "./PlanReviewPanel";
 import { ReviewDiffContent } from "./ReviewInspector";
 import { RightInspector, type InspectorTab } from "./RightInspector";
@@ -100,7 +105,14 @@ export function ChatPageInspector({
       id: tab.id,
       label: fileBaseName(tab.relPath),
       content: sessionId
-        ? <FilePreviewContent sessionId={sessionId} relPath={tab.relPath} scrollToLine={tab.line} lineSeq={tab.lineSeq} />
+        ? <FilePreviewContent
+            sessionId={sessionId}
+            relPath={tab.relPath}
+            scrollToLine={tab.line}
+            lineSeq={tab.lineSeq}
+            contentOverride={sessionId === "preview-code" && tab.relPath === DEMO_FILE_PREVIEW_REL_PATH ? DEMO_FILE_PREVIEW_CONTENT : undefined}
+            displayPath={sessionId === "preview-code" && tab.relPath === DEMO_FILE_PREVIEW_REL_PATH ? DEMO_FILE_PREVIEW_DISPLAY_PATH : undefined}
+          />
         : null,
     });
   }

@@ -204,9 +204,15 @@ export function FilePreviewContent({
   relPath,
   scrollToLine,
   lineSeq,
+  contentOverride,
+  displayPath,
 }: {
   sessionId: string;
   relPath: string;
+  /** 仅演示使用的本地静态内容；传入后不请求工作区 API。 */
+  contentOverride?: string;
+  /** 展示用完整路径，不影响语言判断和标签 ID。 */
+  displayPath?: string;
   /** 从消息文件链接跳转过来时定位到该行（居中滚动）；缺省不做定位 */
   scrollToLine?: number;
   /** 定位序号：同标签换行号时靠它变化触发重新滚动 */
@@ -240,6 +246,10 @@ export function FilePreviewContent({
     setTokens(null);
     // 切换文件时回到默认视图；带行号定位的打开方式下回源码视图
     setMdView(scrollToLine === undefined ? "preview" : "source");
+    if (contentOverride !== undefined) {
+      setState({ phase: "ok", content: contentOverride, size: new Blob([contentOverride]).size });
+      return;
+    }
     const api = window.workspaceFiles;
     if (!api) {
       setState({ phase: "error", code: "READ_FAILED" });
@@ -260,7 +270,7 @@ export function FilePreviewContent({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, relPath]);
+  }, [sessionId, relPath, contentOverride]);
 
   useEffect(() => {
     if (state.phase !== "ok") return;
@@ -316,7 +326,7 @@ export function FilePreviewContent({
   return (
     <div className="cy-file-preview" ref={scrollHostRef}>
       <div className="cy-file-preview__header">
-        <span className="cy-file-preview__path" title={relPath}>{relPath}</span>
+        <span className="cy-file-preview__path" title={displayPath ?? relPath}>{displayPath ?? relPath}</span>
         <span className="cy-file-preview__size">{(state.size / 1024).toFixed(1)} KB</span>
         {isMarkdown && (
           <span className="cy-file-preview__md-toggle" role="group" aria-label={t("rightInspector.toggle")}>

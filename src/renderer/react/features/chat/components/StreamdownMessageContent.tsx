@@ -14,7 +14,8 @@ import { chatStore } from "../pages/chat-page-bridge";
 import { copyTextToClipboard } from "./CopyButton";
 import { FileContextMenu, clampMenuPosition, type FileContextMenuItem } from "./FileContextMenu";
 import { FileLinkContext } from "./FileLinkContext";
-import { FileIcon } from "./file-icon";
+import { FileIcon, hasFileIconMapping } from "./file-icon";
+import { DEMO_FILE_PREVIEW_REL_PATH } from "./demoFilePreview";
 import { MermaidBlock } from "./MermaidBlock";
 import { SvgCardBlock } from "./SvgCardBlock";
 import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";
@@ -78,6 +79,119 @@ function StreamdownPre({ children }: { children?: ReactNode }) {
     >
       {info.code}
     </CodeHighlighter>
+  );
+}
+
+/** 演示会话中的文件名代码片段：复用项目后缀映射，仅展示图标，不改变交互。 */
+function StreamdownInlineCode({
+  children,
+  className,
+  ...props
+}: React.ComponentProps<"code">) {
+  const { sessionId, openFile } = useContext(FileLinkContext);
+  const fileName = typeof children === "string" ? children : "";
+  const isDemoFileName =
+    sessionId === "preview-code" &&
+    !className &&
+    /^[\w.-]+\.[a-z\d]{1,10}$/i.test(fileName) &&
+    hasFileIconMapping(fileName);
+
+  if (!isDemoFileName || !openFile) return <code className={className} {...props}>{children}</code>;
+
+  return (
+    <code className="cy-demo-file-code" {...props}>
+      <button
+        type="button"
+        className="cy-demo-file-action"
+        title={`预览 ${fileName}`}
+        aria-label={`预览文件 ${fileName}`}
+        onClick={() => openFile(DEMO_FILE_PREVIEW_REL_PATH)}
+      >
+        <FileIcon fileName={fileName} className="cy-demo-file-code__icon" />
+        {children}
+      </button>
+    </code>
+  );
+}
+
+/** 表格与列表中的普通文本也按文件名匹配；只在演示会话中添加装饰图标。 */
+function renderDemoFileNames(node: ReactNode, openFile?: (relPath: string) => void): ReactNode {
+  if (typeof node === "string") {
+    const parts: ReactNode[] = [];
+    const pattern = /[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,10}/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(node)) !== null) {
+      const fileName = match[0];
+      const start = match.index;
+      const end = start + fileName.length;
+      const hasFilenameBoundary =
+        (start === 0 || !/[A-Za-z0-9_./\\-]/.test(node[start - 1])) &&
+        (end === node.length || !/[A-Za-z0-9_./\\-]/.test(node[end]));
+      if (!hasFilenameBoundary || !hasFileIconMapping(fileName)) continue;
+
+      parts.push(node.slice(cursor, start));
+      parts.push(
+        <button
+          type="button"
+          className="cy-demo-file-name"
+          key={`file-${start}`}
+          title={`预览 ${fileName}`}
+          aria-label={`预览文件 ${fileName}`}
+          onClick={openFile ? () => openFile(DEMO_FILE_PREVIEW_REL_PATH) : undefined}
+          disabled={!openFile}
+        >
+          <FileIcon fileName={fileName} className="cy-demo-file-name__icon" />
+          {fileName}
+        </button>,
+      );
+      cursor = end;
+    }
+
+    if (cursor === 0) return node;
+    parts.push(node.slice(cursor));
+    return <>{parts}</>;
+  }
+
+  if (Array.isArray(node)) return node.map((child) => renderDemoFileNames(child, openFile));
+  if (!isValidElement<{ children?: ReactNode }>(node)) return node;
+  if (
+    node.type === "code" ||
+    node.type === "a" ||
+    node.type === StreamdownInlineCode ||
+    (typeof node.type !== "string" && node.type !== React.Fragment)
+  ) {
+    return node;
+  }
+  if (node.props.children === undefined) return node;
+  return React.cloneElement(node, {}, renderDemoFileNames(node.props.children, openFile));
+}
+
+function DemoFileNameListItem(props: React.ComponentProps<"li">) {
+  const { sessionId, openFile } = useContext(FileLinkContext);
+  return (
+    <li {...props}>
+      {sessionId === "preview-code" ? renderDemoFileNames(props.children, openFile) : props.children}
+    </li>
+  );
+}
+
+function DemoFileNameTableCell(props: React.ComponentProps<"td">) {
+  const { sessionId, openFile } = useContext(FileLinkContext);
+  return (
+    <td {...props}>
+      {sessionId === "preview-code" ? renderDemoFileNames(props.children, openFile) : props.children}
+    </td>
+  );
+}
+
+function DemoFileNameTableHeader(props: React.ComponentProps<"th">) {
+  const { sessionId, openFile } = useContext(FileLinkContext);
+  return (
+    <th {...props}>
+      {sessionId === "preview-code" ? renderDemoFileNames(props.children, openFile) : props.children}
+    </th>
   );
 }
 
@@ -202,7 +316,11 @@ const messagePlugins = { math: mathPlugin };
 const chatControls: ControlsConfig = { table: false };
 const messageComponents: Components = {
   a: (props) => <StreamdownAnchor {...props} />,
+  code: (props) => <StreamdownInlineCode {...props} />,
+  li: (props) => <DemoFileNameListItem {...props} />,
   pre: (props) => <StreamdownPre {...props} />,
+  td: (props) => <DemoFileNameTableCell {...props} />,
+  th: (props) => <DemoFileNameTableHeader {...props} />,
 };
 const rehypePlugins: PluggableList = [
   defaultRehypePlugins.raw,
