@@ -1,6 +1,9 @@
 # 多 Agent 运行底层架构（v1 设计 + 骨架落地）
 
-> 状态：**骨架已落地**（`cyrene-native --agent-host`），LLM 回调闭环为下一阶段。
+> 状态：会话宿主骨架已落地（`--agent-host`）；**多 Agent 编排已按 Plan B 落地
+> 机制 v1**（`--agent-orchestrator`：.NET 只做会话/邮箱/pipeline 机制，
+> 单会话循环复用 TS CyreneHarness，不再往 .NET 搬循环）——
+> 详见 `docs/design/2026-09-26-agent-orchestration-plan-b.md`。
 > 关联：MCP 桥（`--mcp-host`）、内置工具宿主（`--tool-host`）——三 host 构成
 > .NET 后端演进路线。
 
@@ -33,6 +36,16 @@ Electron 主进程（前端宿主）                cyrene-native --agent-host
 **核心设计决策**：LLM 推理不在 agent-host——step 产生 `llm_request` 帧
 回传 Electron，应答经 `llm_response` 回注。密钥永不落 .NET 进程，权限
 审批闸门保持在 Electron 侧（用户看到的是同一套审批 UI）。
+
+### 总开关与配置解析（2026-09-26）
+
+agent-host 的启停走统一解析入口 `resolveDotnetConfig()`（`src/main/config.ts`），
+优先级：环境变量 `CYRENE_AGENT_HOST` > `./config/cyrene.conf` 的 `agentHost` >
+默认启用。布尔值容忍 `1/true/on/yes`（启用）与 `0/false/off/no`（关闭），
+非法值回落默认。**禁止在业务模块散读 `process.env.CYRENE_AGENT_HOST`**
+（历史 bug：`!== "0"` 把 `false`/`abc` 都当成启用）。关闭或 native exe
+缺失时全部 API 返回 `{ ok: false, error: "agent-host 未启用" }`，上层照旧走
+TS 循环（`agent-process-manager.ts`）。
 
 ## 2. 会话模型
 
@@ -84,7 +97,7 @@ agent-host 的 LLM 回调闭环上线时（避免两次协议大改）。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P0 | 会话宿主骨架（create/destroy/step/llm 回调帧） | ✅ 本次 |
-| P1 | LLM 回调闭环（TS 代理 + 流式）+ 单会话端到端 | 待做 |
-| P2 | mailbox + 多会话编排 demo（规划→执行→审查） | 待做 |
+| P0 | 会话宿主骨架（create/destroy/step/llm 回调帧） | ✅ |
+| P1 | LLM 回调闭环（TS 代理 + 流式）+ 单会话端到端 | 被 Plan B 取代（`--agent-host` 路径保留） |
+| P2 | mailbox + 多会话编排（规划→执行→审查） | 🟡 机制 v1 ✅（`--agent-orchestrator`，pipeline/邮箱/取消/上限 + 冒烟）；生产接线（环境解析器/聊天入口）待做 |
 | P3 | 三 host 合并为 --backend + 会话持久化 | 待做 |

@@ -83,6 +83,7 @@ export function createPlayLive2DActionTool(deps: PlayLive2DActionDeps): ToolDefi
     description: buildDescription(),
     enabled: true,
     modes: ["work"],
+    risk: "safe",
     effectKind: "external_side_effect",
     inputSchema: {
       type: "object",

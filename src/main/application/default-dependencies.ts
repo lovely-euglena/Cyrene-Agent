@@ -6,7 +6,8 @@
  * 本文件内的闭包只做构造与委托；任何长期任务都必须由对应启动阶段显式启动。
  */
 
-import { app, BrowserWindow, dialog, screen } from "electron";
+import { app, BrowserWindow, dialog, screen, shell as electronShell } from "electron";
+import * as fs from "node:fs";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
 
@@ -31,13 +32,16 @@ import {
   settingsWindow,
   tasksWindow,
 } from "../windows/window-state";
-import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { createModelBackedConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
+import { registerPortableIpc, applyPortableChange } from "../portable/portable-ipc";
+import { getPortableDataLocationStatus } from "../portable/portable-runtime";
+import type { PortableApplyRequest } from "../../shared/portable-mode";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -46,6 +50,8 @@ import {
 import { registerMemoryUserToolIpc } from "../memory/memory-user-ipc";
 import { configureDocumentIndexQueue } from "../rag/document-index-queue";
 import { runDocumentIndexJob } from "../rag/document-index-worker";
+import { runDocumentImportJobViaSidecar } from "../rag/document-import-sidecar";
+import { isSidecarEnabled } from "../rag/embedding-sidecar";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -59,7 +65,7 @@ import {
   initRAG,
   isUserMemoryVectorStoreReady,
 } from "../rag";
-import { getEmbeddingProvider } from "../rag/embedding";
+import { getEmbeddingProvider, getSceneEmbeddingProvider } from "../rag/embedding";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { PluginManager } from "../../plugins/manager";
@@ -76,9 +82,12 @@ import {
 } from "../orchestrator/plan-mode";
 import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
 import { syncPlaywrightMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
+import { addMcpServer } from "../orchestrator/mcp-manager";
+import { parseCommandLine } from "../../shared/parse-command-line";
+import { ACCESS_LEVEL_LABEL, applyLevel, getCurrentLevel } from "../permission";
 import { registerAppUpdateIpc } from "../updater/app-update-ipc";
 import { createGitHubAppUpdateService, scheduleStartupUpdateCheck } from "../updater/github-app-updater";
-import { registerWindowSystemIpc } from "../windows/window-system-ipc";
+import { registerWindowSystemIpc, openChromeGpuWindow } from "../windows/window-system-ipc";
 import { enqueueLLMTask } from "../llm-queue";
 import {
   registerPrivilegedSchemes,
@@ -88,29 +97,65 @@ import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { registerChatsIpc } from "../chats/chats-ipc";
 import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
+import { registerMomentsIpc } from "../moments/moments-ipc";
+import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
+import { createToastWindowController } from "../toast/toast-window";
+import { createToastService } from "../toast/toast-service";
+import { toastEvents } from "../toast/toast-events";
+import { createToastWindowShell } from "../windows/create-toast-window";
+import * as chatsStore from "../chats/chats-store";
+import { flush as flushTokenUsage, getUsageReport, clearUsage } from "../token-usage-store";
+import { TtsSessionService } from "../tts/tts-session-service";
+import { registerTtsIpc } from "../tts/tts-ipc";
+import { loadUserProfile, saveUserProfile } from "../settings-store";
+import { getAppIconPath } from "../app-icon";
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
-import { createSchedulerSubsystem } from "../scheduler/bootstrap";
+import { createSchedulerSubsystem, type SchedulerSubsystem } from "../scheduler/bootstrap";
+import { createSchedulerActions } from "../scheduler/scheduler-actions";
+import {
+  buildApiSectionSnapshot,
+  buildAsrSectionSnapshot,
+  buildCyreneSectionSnapshot,
+  buildMemorySectionSnapshot,
+  buildSchedulerSectionSnapshot,
+  buildTokensSectionSnapshot,
+  buildTtsSectionSnapshot,
+  buildPluginsSectionSnapshot,
+} from "../settings/native-settings-sections";
+import { addUserSticker } from "../sticker-storage";
+import { loadMemoryPanelData } from "../memory/panel";
+import {
+  bindMemoryVault,
+  exportMemoryVault,
+  getMemoryVaultConfig,
+  removeImportedDocEntry,
+  saveMemoryL0,
+  saveMemoryL1,
+  setMemoryVaultAutoSync,
+  syncMemoryVaultNow,
+  unbindMemoryVault,
+} from "../memory/memory-actions";
+import { testVendorConnection } from "../orchestrator/vendors/test-connection";
+import { testVisionConnection } from "../settings/vision-test";
 import { createChannelsSubsystem } from "../channels/bootstrap";
-import { toastEvents } from "../toast/toast-events";
-import { createToastService } from "../toast/toast-service";
-import { createToastWindowShell } from "../windows/create-toast-window";
-import { createToastWindowController } from "../toast/toast-window";
 import { registerOpenInAppIpc } from "../chats/open-in-app";
 import { registerWorkspaceFilesIpc } from "../chats/workspace-files-ipc";
-import { registerMomentsIpc } from "../moments/moments-ipc";
-import { registerTtsIpc } from "../tts/tts-ipc";
-import { loadUserProfile } from "../settings-store";
-import * as chatsStore from "../chats/chats-store";
-import { TtsSessionService } from "../tts/tts-session-service";
-import { flush as flushTokenUsage } from "../token-usage-store";
-import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
-import { getAppIconPath } from "../app-icon";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
-import { startPluginRuntime, getPluginMarketService } from "../plugin-runtime";
-import { pushPluginsSnapshotToNative } from "../windows/native-windows-bridge";
+import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
+import { ensureCustomStylePrompt } from "../style-prompt";
+import { deleteEmbeddingModel } from "../embedding-manager";
+import { getModelInstallStatus, getModelInstallStatusDetail, getProjectModelsDir } from "../rag/model-status";
+import { pushPluginsSnapshotToNative, pushSettingsNoticeToNative, pushSettingsSnapshotToNative } from "../windows/native-windows-bridge";
+import {
+  MAX_PLUGIN_MEMORY_LIMIT_MB,
+  MAX_PLUGIN_STORAGE_QUOTA_MB,
+  resolvePluginMemoryLimitMb,
+  resolvePluginStorageQuotaMb,
+} from "../../plugins/limits";
+import type { PluginUsage } from "../../plugins/manager";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createTranscriptCompactorGetter } from "./transcript-compaction-wiring";
@@ -123,20 +168,42 @@ import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
+import { setSidebarWindowVisible, setTasksWindowVisible } from "../windows/create-aux-windows";
+import { installChildProcessReaper } from "../child-processes";
+import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import {
   initNativeWindowsBridge,
   bindNativeDataProviders,
   relayAuxBroadcast,
-  markNativeWindowsStartupReady,
   spawnNativeWindow,
+  disposeNativeWindowsBridge,
+  pushWindowRadiusToNative,
 } from "../windows/native-windows-bridge";
-import { connectDetachedTray } from "../tray-detached";
+import { connectDetachedTray, showTrayBalloon } from "../tray-detached";
+import { openSettingsWindow } from "../windows/settings-router";
+import { pickAndImportUiFont, resetUiFont } from "../settings/ui-font";
 import { createSplashWindow } from "../startup/create-splash-window";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
 import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
+import {
+  sanitizeNativeAsrSave,
+  sanitizeNativeCyreneSave,
+  sanitizeNativeGeneralSetting,
+  sanitizeNativePluginsSave,
+  sanitizeNativeStickerAdd,
+  sanitizeNativeTtsSave,
+  sanitizeNativeUserProfile,
+} from "../windows/native-settings-protocol";
+import {
+  cloneNativeMinimaxVoice,
+  cloneNativeMosslandVoice,
+  listNativeMosslandVoices,
+  synthesizeNativeTest,
+} from "../settings/native-voice-actions";
+import { pickAndSaveUserAvatar } from "../memory/user-avatar";
 
 import { createIpcScope, type IpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -160,6 +227,9 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
       win.webContents.send(channel, payload);
     }
   }
+  // native 三件套旁路（未启用时 no-op）：同一数据双路推送。
+  // ⚠️ 此调用曾在合并 ffc6322dd 中丢失（native 窗收不到实时状态），勿删。
+  relayAuxBroadcast(channel, payload);
 }
 
 async function reconcileUserMemoryIndex(): Promise<void> {
@@ -216,13 +286,593 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   };
 
   // 插件快照（.NET 管理窗 state.plugins payload；含运行时开关态）
+  // 最近一次插件操作结果（导入 ZIP / 刷新 / 安装失败等）：随快照下发到
+  // .NET 管理窗状态行显示；下次操作覆盖。
+  let nativePluginNotice: { kind: "ok" | "error"; message: string } | null = null;
+  const setPluginNotice = (kind: "ok" | "error", message: string): void => {
+    nativePluginNotice = { kind, message };
+  };
+  /** 正在安装的插件 id（随快照下发 → WPF 市场卡片显示「安装中…」） */
+  let nativeInstallingIds: string[] = [];
   const buildPluginSnapshot = async (): Promise<unknown> => {
     const mkt = getPluginMarketService();
+    const general = loadGeneralSettings();
+    const storageQuotaMb = resolvePluginStorageQuotaMb(general.pluginStorageQuotaMb);
+    const memoryLimitMb = resolvePluginMemoryLimitMb(general.pluginMemoryLimitMb);
+    // 实际占用与市场列表并行取（占用含 .NET 进程探测，不阻塞市场数据）
+    const [market, usage] = await Promise.all([
+      pluginManager && mkt ? mkt.listMarket() : Promise.resolve(null),
+      pluginManager
+        ? pluginManager.collectUsage()
+        : Promise.resolve<Record<string, PluginUsage>>({}),
+    ]);
     return {
       runtimeEnabled: Boolean(pluginManager),
-      plugins: pluginManager ? pluginManager.overview().plugins : [],
-      market: pluginManager && mkt ? await mkt.listMarket() : [],
+      plugins: pluginManager
+        ? pluginManager.overview().plugins.map((entry) => ({
+            ...entry,
+            // 展示用实际占用（storageBytes 两轨都有；memoryBytes 仅 .NET 运行中）
+            storageBytes: usage[entry.id]?.storageBytes ?? 0,
+            memoryBytes: usage[entry.id]?.memoryBytes ?? null,
+          }))
+        : [],
+      // .NET 管理窗把 market 当数组解析：摊平为条目数组（旧实现直接塞
+      // listMarket() 结果对象 → ParseList 判非数组 → 市场恒为空）。
+      // 源健康/错误另字段下发，供管理器展示多源死活。
+      market: market?.plugins ?? [],
+      marketSources: market?.sources ?? [],
+      marketError: market && !market.ok ? (market.error ?? "") : undefined,
+      notice: nativePluginNotice ?? undefined,
+      // 安装进行中：WPF 按钮显示「安装中…」并禁用（宿主不推送中途快照时也有反馈）
+      installing: nativeInstallingIds,
+      // 资源限制（「设置」页）：生效值 + 是否来自设置页（false = 环境变量/默认）
+      limits: {
+        storageQuotaMb,
+        memoryLimitMb,
+        storageQuotaConfigured: typeof general.pluginStorageQuotaMb === "number",
+        memoryLimitConfigured: typeof general.pluginMemoryLimitMb === "number",
+      },
     };
+  };
+
+  /** 运行中且声明 speech-input 依赖的插件名（本地 ASR 可用性提示；未启用运行时为空）。 */
+  const runningSpeechInputPlugins = (): string[] =>
+    pluginManager
+      ? pluginManager.overview().plugins
+          .filter((entry) => entry.enabled && (entry.deps ?? []).includes("speech-input"))
+          .map((entry) => entry.name)
+      : [];
+
+  // ── native 设置窗 section（API/记忆/定时任务）：动作与快照数据 ──────
+  // 动作层实例在 createScheduler 时建立（core 阶段早于任何 native 动作）
+  let nativeSchedulerActions: ReturnType<typeof createSchedulerActions> | null = null;
+  /** 最近一次「历史」请求结果（随设置快照推给 WPF；下一次请求覆盖）；error 为空串表示成功 */
+  let nativeTaskHistory: { taskId: string; rows: unknown[]; error: string } | null = null;
+
+  /** core 阶段绑定的表情包向量索引（native 昔涟 section 添加表情包后刷新；未绑定=不刷新）。 */
+  let stickerEmbeddingIndexService: {
+    invalidateStickerEmbeddingIndex(): void;
+    refreshStickerEmbeddingIndex(reason: string): void;
+  } | null = null;
+  /** Token 用量 section 当前统计窗口（7/14/30 天） */
+  let nativeTokenDays = 7;
+
+  /** 本地模型安装说明（native 昔涟设置「模型安装说明」与渲染页同一文档）。 */
+  // 模型安装说明文档（Gitee 主仓；GitHub 在本机网络不可达，勿换回）
+  const LOCAL_MODELS_DOC_URL = "https://gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md";
+
+  const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
+  const asObj = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const clampInt = (value: unknown, min: number, max: number): number | null => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return Math.max(min, Math.min(max, Math.round(value)));
+  };
+  const transportOf = (value: unknown): "openai" | "anthropic" | "responses" | undefined =>
+    value === "openai" || value === "anthropic" || value === "responses" ? value : undefined;
+
+  /** 设置窗 section 反馈（就地状态行展示，不触发 section 重建；窗未开时 no-op） */
+  const nativeNotice = (
+    section: string,
+    level: "ok" | "error" | "info",
+    text: string,
+    data?: Record<string, unknown>,
+  ): void => {
+    pushSettingsNoticeToNative({ section, level, text, at: Date.now(), ...(data ? { data } : {}) });
+  };
+
+  /** 插件运行态（WPF 定时任务 section 判断"等待插件启用"） */
+  const currentPluginRunning = (): Record<string, boolean> => {
+    const running: Record<string, boolean> = {};
+    const plugins = (pluginManager?.overview().plugins ?? []) as Array<{ id?: unknown; status?: unknown }>;
+    for (const plugin of plugins) {
+      if (typeof plugin.id === "string") running[plugin.id] = plugin.status === "running";
+    }
+    return running;
+  };
+
+  const broadcastModelChanged = (): void => {
+    broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
+  };
+
+  /** WPF「API 与模型」section 动作（与渲染设置页同口径：档案 saveModelProfile + 全局 saveModelSettings） */
+  const nativeApiAction = (verb: string, payload: Record<string, unknown>): void => {
+    switch (verb) {
+      case "save": {
+        const config = asObj(payload.config);
+        const vision = asObj(config.vision);
+        const profileId = asStr(config.profileId) || undefined;
+        const provider = asStr(config.provider) || loadModelSettings().provider;
+        const baseUrl = asStr(config.baseUrl);
+        const model = asStr(config.model);
+        // 宿主侧统一校验（对齐 Electron 保存前校验，WPF 不再写坏档案）
+        if (!provider || !model) {
+          nativeNotice("api", "error", "保存失败：厂商与模型名不能为空");
+          return;
+        }
+        if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+          nativeNotice("api", "error", "保存失败：Base URL 必须以 http(s):// 开头");
+          return;
+        }
+        try {
+          const existing = profileId
+            ? listSavedModelProfiles(loadModelSettings()).find((profile) => profile.id === profileId)
+            : undefined;
+          const beforeIds = new Set(listSavedModelProfiles(loadModelSettings()).map((profile) => profile.id));
+          // 测试连接超时随保存一起落盘（与 Electron 同口径）
+          const testTimeout = clampInt(config.testTimeout, 1_000, 600_000);
+          if (testTimeout !== null) saveTimeoutSettings({ testTimeout });
+          // 不丢推理偏好：payload 未带 reasoning 时保留原档案值（WPF 无该字段 UI，
+          // 旧实现重建档案时 normalizeReasoningPreference(undefined) 会把它抹掉）
+          const reasoning = config.reasoning !== undefined
+            ? (config.reasoning as Parameters<typeof saveModelProfile>[0]["reasoning"])
+            : existing?.reasoning;
+          const result = saveModelProfile({
+            id: profileId,
+            provider,
+            displayName: asStr(config.displayName),
+            baseUrl,
+            model,
+            apiKey: asStr(config.apiKey),
+            explicitTransport: transportOf(config.transport),
+            contextWindowTokens: clampInt(config.contextWindowTokens, 4096, 10_000_000) ?? undefined,
+            multimodal: config.multimodal === true,
+            reasoning,
+          });
+          const savedProfileId = profileId
+            ?? listSavedModelProfiles(result.settings).find((profile) => !beforeIds.has(profile.id))?.id
+            ?? "";
+          saveModelSettings({
+            vision: { baseUrl: asStr(vision.baseUrl), apiKey: asStr(vision.apiKey), model: asStr(vision.model) },
+            thinkingOverride: config.thinkingOverride === 1 ? 1 : config.thinkingOverride === -1 ? -1 : 0,
+            disableMaxToken: config.disableMaxToken === true,
+          });
+          broadcastModelChanged();
+          nativeNotice(
+            "api",
+            result.added ? "ok" : "error",
+            result.added ? "档案已保存" : "存在相同 Key/模型/BaseURL 的档案，未新增",
+            result.added && savedProfileId ? { savedProfileId } : undefined,
+          );
+        } catch (err) {
+          nativeNotice("api", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      case "test": {
+        const config = asObj(payload.config);
+        void testVendorConnection({
+          provider: asStr(config.provider),
+          baseUrl: asStr(config.baseUrl),
+          model: asStr(config.model),
+          apiKey: asStr(config.apiKey),
+          explicitTransport: transportOf(config.transport),
+        } as Parameters<typeof testVendorConnection>[0]).then((result) => {
+          nativeNotice(
+            "api",
+            result.ok ? "ok" : "error",
+            result.ok
+              ? `连接成功 · ${result.latency}ms${result.sample ? ` · ${result.sample}` : ""}`
+              : `连接失败：${result.error ?? "未知错误"}`,
+          );
+        }).catch((err) => {
+          nativeNotice("api", "error", `连接失败：${err instanceof Error ? err.message : String(err)}`);
+        });
+        return;
+      }
+      case "test-vision": {
+        const config = asObj(payload.config);
+        void testVisionConnection({
+          baseUrl: asStr(config.baseUrl),
+          apiKey: asStr(config.apiKey),
+          model: asStr(config.model),
+        }).then((result) => {
+          nativeNotice(
+            "api",
+            result.ok ? "ok" : "error",
+            result.ok
+              ? `视觉模型连接成功 · ${result.latency}ms${result.sample ? ` · ${result.sample}` : ""}`
+              : `视觉模型连接失败：${result.error ?? "未知错误"}`,
+          );
+        });
+        return;
+      }
+      case "set-default-profile": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        try {
+          setDefaultModelProfile(id);
+          broadcastModelChanged();
+          nativeNotice("api", "ok", "已设为默认模型");
+        } catch (err) {
+          nativeNotice("api", "error", `设置默认失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      case "delete-profile": {
+        const id = asStr(payload.id);
+        if (!id) return;
+        try {
+          const settings = loadModelSettings();
+          const profiles = listSavedModelProfiles(settings).filter((profile) => profile.id !== id);
+          const defaultModelProfileId = settings.defaultModelProfileId === id
+            ? profiles[0]?.id
+            : settings.defaultModelProfileId;
+          saveModelSettings({ modelProfiles: profiles, defaultModelProfileId });
+          broadcastModelChanged();
+          nativeNotice("api", "ok", "档案已删除");
+        } catch (err) {
+          nativeNotice("api", "error", `删除失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+        pushSettingsSnapshotToNative();
+        return;
+      }
+      default:
+        console.warn("[NativeSettings] unhandled api action:", verb);
+    }
+  };
+
+  /** WPF「通用」section 动作（清空聊天记录 / 打开 chrome://gpu）。
+   *  返回值用于动作回执：WPF 据此更新状态行并结束「进行中」态。 */
+  const nativeGeneralAction = (verb: string, __payload: Record<string, unknown>): unknown => {
+    switch (verb) {
+      case "clear-chat-history": {
+        // 旧版渲染页逐条调 chatStore.delete；宿主侧走同一 chats-store（串行删除）
+        try {
+          const sessions = chatsStore.listSessions();
+          let deleted = 0;
+          for (const session of sessions) {
+            if (chatsStore.deleteSession(session.id)) deleted++;
+          }
+          nativeNotice("general", "ok", "所有聊天会话已清空");
+          return { ok: true, data: { deleted } };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          nativeNotice("general", "error", "清空失败，请查看终端日志");
+          return { ok: false, error: message };
+        }
+      }
+      case "open-gpu-internals": {
+        try {
+          openChromeGpuWindow();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+      default:
+        console.warn("[NativeSettings] unhandled general action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「记忆」section 动作（与渲染设置页同口径；实现见 memory/memory-actions.ts）。
+   *  返回值用于动作回执：WPF 据此结束「进行中」态并就地显示错误。 */
+  const nativeMemoryAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    switch (verb) {
+      case "save-l0":
+      case "save-l1":
+        return (async () => {
+          const result = verb === "save-l0"
+            ? await saveMemoryL0(payload.fields)
+            : await saveMemoryL1(payload.fields);
+          nativeNotice(
+            "memory",
+            result.ok ? "ok" : "error",
+            result.ok ? (verb === "save-l0" ? "画像已保存" : "近况已保存") : `保存失败：${result.error ?? "未知错误"}`,
+          );
+          // 失败不推快照：WPF 编辑态保留用户输入，仅成功才刷新
+          if (result.ok) pushSettingsSnapshotToNative();
+          return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+        })();
+      case "delete-doc": {
+        const importId = asStr(payload.importId);
+        const fileName = asStr(payload.fileName);
+        if (!importId && !fileName) return { ok: false, error: "缺少文档标识" };
+        try {
+          const deleted = removeImportedDocEntry(importId, fileName || undefined);
+          nativeNotice(
+            "memory",
+            deleted > 0 ? "ok" : "info",
+            deleted > 0 ? `已删除（${deleted} 个片段）` : "没有找到可删除的片段",
+          );
+          pushSettingsSnapshotToNative();
+          return { ok: true, data: { deleted } };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          nativeNotice("memory", "error", `删除失败：${message}`);
+          return { ok: false, error: message };
+        }
+      }
+      case "vault-bind":
+        return bindMemoryVault().then((result) => {
+          if (!result.canceled) {
+            nativeNotice(
+              "memory",
+              result.ok ? "ok" : "error",
+              result.ok ? `已绑定并同步 ${result.fileCount ?? 0} 个文件` : `绑定失败：${result.error ?? "未知错误"}`,
+            );
+            pushSettingsSnapshotToNative();
+          }
+          return result.canceled
+            ? { ok: true, data: { canceled: true } }
+            : { ok: result.ok, ...(result.error ? { error: result.error } : {}), data: { fileCount: result.fileCount ?? 0 } };
+        });
+      case "vault-unbind":
+        try {
+          unbindMemoryVault();
+          nativeNotice("memory", "ok", "已解绑（vault 文件夹里的 md 不会被删除）");
+          pushSettingsSnapshotToNative();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      case "vault-export":
+        return exportMemoryVault().then((result) => {
+          if (!result.canceled) {
+            nativeNotice(
+              "memory",
+              result.ok ? "ok" : "error",
+              result.ok ? `已导出 ${result.fileCount ?? 0} 个文件` : `导出失败：${result.error ?? "未知错误"}`,
+            );
+          }
+          return result.canceled
+            ? { ok: true, data: { canceled: true } }
+            : { ok: result.ok, ...(result.error ? { error: result.error } : {}), data: { fileCount: result.fileCount ?? 0 } };
+        });
+      case "vault-sync":
+        return syncMemoryVaultNow().then((result) => {
+          nativeNotice(
+            "memory",
+            result.ok ? "ok" : "error",
+            result.ok ? `已同步 ${result.fileCount ?? 0} 个文件` : `同步失败：${result.error ?? "未知错误"}`,
+          );
+          pushSettingsSnapshotToNative();
+          return { ok: result.ok, ...(result.error ? { error: result.error } : {}), data: { fileCount: result.fileCount ?? 0 } };
+        });
+      case "vault-auto-sync":
+        try {
+          setMemoryVaultAutoSync(payload.enabled === true);
+          nativeNotice("memory", "info", payload.enabled === true ? "已开启自动同步" : "已关闭自动同步");
+          pushSettingsSnapshotToNative();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      default:
+        console.warn("[NativeSettings] unhandled memory action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「定时任务」section 动作（动作层与 scheduler IPC 共用；写操作自动广播刷新）。
+   *  返回值用于动作回执：任务编辑器据此决定关窗（成功）或就地报错（失败）。 */
+  const nativeSchedulerAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    const actions = nativeSchedulerActions;
+    if (!actions) {
+      nativeNotice("tasks", "error", "调度器尚未就绪");
+      return { ok: false, error: "调度器尚未就绪" };
+    }
+    switch (verb) {
+      case "add": {
+        const result = actions.add(asObj(payload.input) as unknown as Parameters<typeof actions.add>[0]);
+        nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已创建" : `创建失败：${result.error ?? "未知错误"}`);
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+      }
+      case "update": {
+        const id = asStr(payload.id);
+        if (!id) return { ok: false, error: "缺少任务 id" };
+        const result = actions.update(id, asObj(payload.patch) as unknown as Parameters<typeof actions.update>[1]);
+        nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已保存" : `保存失败：${result.error ?? "未知错误"}`);
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+      }
+      case "toggle": {
+        const id = asStr(payload.id);
+        if (!id) return { ok: false, error: "缺少任务 id" };
+        const result = actions.toggle(id, payload.enabled === true);
+        if (!result.ok) nativeNotice("tasks", "error", `启停失败：${result.error ?? "未知错误"}`);
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+      }
+      case "fire": {
+        const id = asStr(payload.id);
+        if (!id) return { ok: false, error: "缺少任务 id" };
+        return actions.fireNow(id).then((result) => {
+          if (result.ok) return { ok: true };
+          const reason = "reason" in result ? result.reason : undefined;
+          const errorText = "error" in result ? result.error : undefined;
+          const message = reason === "task already running"
+            ? "该任务正在运行中"
+            : reason === "plugin not running"
+              ? "插件已停用，等待插件启用后再运行"
+              : (errorText ?? reason ?? "立即运行失败");
+          nativeNotice("tasks", "error", message);
+          return { ok: false, error: message };
+        });
+      }
+      case "delete": {
+        const id = asStr(payload.id);
+        if (!id) return { ok: false, error: "缺少任务 id" };
+        const result = actions.remove(id);
+        nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已删除" : `删除失败：${result.error ?? "未知错误"}`);
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+      }
+      case "history": {
+        const id = asStr(payload.id);
+        if (!id) return { ok: false, error: "缺少任务 id" };
+        const result = actions.history(id, 10);
+        // 读取失败也写 error：WPF 据此显示错误行（旧实现只存 rows，失败被吞成「暂无运行历史」）
+        nativeTaskHistory = {
+          taskId: id,
+          rows: (result.value ?? []) as unknown[],
+          error: result.ok ? "" : (result.error ?? "读取历史失败"),
+        };
+        pushSettingsSnapshotToNative();
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+      }
+      default:
+        console.warn("[NativeSettings] unhandled scheduler action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「插件」section 动作：内置工具配置保存 / 权限档位 / 添加 MCP Server。
+   *  保存复用 TTS_SAVE_SETTINGS 的副作用（搜索 MCP、Playwright MCP 自动同步）。 */
+  const nativePluginsAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    switch (verb) {
+      case "save": {
+        const patch = sanitizeNativePluginsSave(payload);
+        if (!patch) return { ok: false, error: "没有可保存的字段" };
+        try {
+          const saved = saveGeneralSettings({ ...loadGeneralSettings(), ...patch });
+          if (Object.prototype.hasOwnProperty.call(patch, "searchEngine")
+            || Object.prototype.hasOwnProperty.call(patch, "searchMinimaxKey")) {
+            void syncVolcanoSearchMcp(saved);
+          }
+          if (Object.prototype.hasOwnProperty.call(patch, "playwrightMcpEnabled")) {
+            void syncPlaywrightMcp(saved);
+          }
+          nativeNotice("plugins", "ok", "工具配置已保存（即时生效）");
+          pushSettingsSnapshotToNative();
+          return { ok: true };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          nativeNotice("plugins", "error", `保存失败：${message}`);
+          return { ok: false, error: message };
+        }
+      }
+      case "set-permission-level": {
+        const result = applyLevel(asStr(payload.level));
+        if (result.ok && result.level) {
+          nativeNotice("plugins", "ok", `权限档位已切换：${ACCESS_LEVEL_LABEL[result.level] ?? result.level}`);
+        } else {
+          nativeNotice("plugins", "error", `切换失败：${result.error ?? "未知错误"}`);
+        }
+        pushSettingsSnapshotToNative();
+        return result;
+      }
+      case "add-mcp-server": {
+        const command = asStr(payload.command).trim();
+        const name = asStr(payload.name).trim() || "未命名 MCP";
+        if (command.length === 0) return { ok: false, error: "请填写启动命令" };
+        const parsed = parseCommandLine(command);
+        if (parsed.command.length === 0) return { ok: false, error: "启动命令无效" };
+        return addMcpServer({
+          id: `mcp-${Date.now()}`,
+          name,
+          transport: "stdio",
+          command: parsed.command,
+          args: parsed.args,
+        })
+          .then((result) => {
+            if (result.ok) {
+              nativeNotice("plugins", "ok", `已添加「${name}」，发现 ${result.toolIds?.length ?? 0} 个工具`);
+            } else {
+              nativeNotice("plugins", "error", `添加失败：${result.error ?? "未知错误"}`);
+            }
+            return {
+              ok: result.ok,
+              ...(result.error ? { error: result.error } : {}),
+              data: { toolCount: result.toolIds?.length ?? 0 },
+            };
+          })
+          .catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            nativeNotice("plugins", "error", `添加失败：${message}`);
+            return { ok: false, error: message };
+          });
+      }
+      default:
+        console.warn("[NativeSettings] unhandled plugins action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「语音合成 TTS」section 动作：settings 保存 / 试听合成 / 音色克隆 / 音色列表。
+   *  试听与克隆复用渲染页同一批引擎函数（native-voice-actions），不复制协议逻辑。 */
+  const nativeTtsAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    const failed = (err: unknown, label: string): { ok: false; error: string } => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[NativeSettings] tts ${label} failed:`, message);
+      return { ok: false, error: message };
+    };
+    switch (verb) {
+      case "save": {
+        const patch = sanitizeNativeTtsSave(payload);
+        if (!patch) return { ok: false, error: "没有可保存的字段" };
+        try {
+          // TTS 字段无搜索 MCP / Playwright 等联动，直接落盘（与 TTS_SAVE_SETTINGS 同存储）
+          saveGeneralSettings({ ...loadGeneralSettings(), ...patch });
+          return { ok: true };
+        } catch (err) {
+          return failed(err, "save");
+        }
+      }
+      case "test":
+        return synthesizeNativeTest(payload)
+          .then((result) => ({ ok: true, data: { filePath: result.filePath, format: result.format } }))
+          .catch((err: unknown) => failed(err, "test"));
+      case "clone-minimax":
+        return cloneNativeMinimaxVoice(payload)
+          .then((result) => ({
+            ok: true,
+            data: {
+              voiceId: result.voiceId,
+              ...(result.demoFilePath ? { demoFilePath: result.demoFilePath } : {}),
+            },
+          }))
+          .catch((err: unknown) => failed(err, "clone-minimax"));
+      case "clone-mossland":
+        return cloneNativeMosslandVoice(payload)
+          .then((result) => ({ ok: true, data: { voiceId: result.voiceId } }))
+          .catch((err: unknown) => failed(err, "clone-mossland"));
+      case "list-mossland-voices":
+        return listNativeMosslandVoices(payload)
+          .then((result) => ({ ok: true, data: { voices: result.voices, hasMore: result.hasMore } }))
+          .catch((err: unknown) => failed(err, "list-mossland-voices"));
+      default:
+        console.warn("[NativeSettings] unhandled tts action:", verb);
+        return undefined;
+    }
+  };
+
+  /** WPF「语音识别 ASR」section 动作：settings 保存（试听/克隆归 TTS 段）。 */
+  const nativeAsrAction = (verb: string, payload: Record<string, unknown>): unknown => {
+    if (verb !== "save") {
+      console.warn("[NativeSettings] unhandled asr action:", verb);
+      return undefined;
+    }
+    const patch = sanitizeNativeAsrSave(payload);
+    if (!patch) return { ok: false, error: "没有可保存的字段" };
+    try {
+      saveGeneralSettings({ ...loadGeneralSettings(), ...patch });
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[NativeSettings] asr save failed:", message);
+      return { ok: false, error: message };
+    }
   };
 
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
@@ -245,6 +895,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+  // 原生窗口进程（cyrene-native serve）随宿主退出一并回收：主动结束其 stdin
+  // 并杀进程。缺此清理时它只在 stdin EOF 后「无窗口空转」，成为残留进程
+  // （用户报「托盘退出时有进程残留」；C# 侧 EOF 自退也已补上，双保险）。
+  shutdown.register({
+    id: "native-windows",
+    phase: "stopLocalResources",
+    dispose: () => { disposeNativeWindowsBridge("shutdown"); },
+  });
 
   // 注入应用图标路径 getter（窗口工厂统一读取，避免循环依赖）。
   // 必须在 shell 阶段之前注入：聊天窗口壳与托盘在 shell 阶段创建时就会读取，
@@ -259,8 +917,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     activation,
     shutdown,
 
-    prepare: () => prepareBeforeReady({
-      configureDocumentIndex: () => configureDocumentIndexQueue(runDocumentIndexJob),
+    prepare: () => {
+      // 退出兜底：主进程崩溃/强杀时统一回收登记过的子进程（taskkill /F /T 整树）
+      installChildProcessReaper((listener) => app.on("will-quit", listener));
+      return prepareBeforeReady({
+      configureDocumentIndex: () =>
+        configureDocumentIndexQueue(
+          isSidecarEnabled() ? runDocumentImportJobViaSidecar : runDocumentIndexJob,
+        ),
       installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
       registerPrivilegedSchemes,
       configureGpuSwitches: () => {
@@ -275,7 +939,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         userDataDir: app.getPath("userData"),
       }),
       activation,
-    }),
+      });
+    },
 
     startShell: () => startShell({
       readiness,
@@ -298,42 +963,296 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       registerProtocolHandlers,
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
         // quit 由组合根注入（上游 2026-09-24 语义）：窗口系统 IPC 不直接依赖 electron app
-        registerWindowSystemIpc({ ipc, windowManager, quit: () => app.quit() });
+        registerWindowSystemIpc({ ipc, windowManager, openSettings: openSettingsWindow, quit: () => app.quit() });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
-      // native 三件套窗口（CYRENE_NATIVE_WINDOWS=1 灰度）：动作转发回
+      // 托盘/协议激活的设置入口：默认 WPF（例外见 settings-router）
+      openSettings: openSettingsWindow,
+      // native 三件套窗口（默认启用）：动作转发回
       // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
       initializeNativeWindows: (windowManager) => {
         initNativeWindowsBridge({
-          // native 模式：设置窗走 .NET（spawn native settings）；
-          // 渠道 section 例外（保持 Electron，用户指定）→ 直接弹 Electron 设置窗
-          openSettings: (section?: string) => {
-            if (section === "channels") {
-              windowManager.createSettingsWindow(section);
-              return;
-            }
-            void spawnNativeWindow("settings");
-          },
-          openChatWindow: () => windowManager.createReactChatWindowShell(),
+          // 设置窗路由：默认 WPF（.NET）；channels/TTS/ASR 及 Electron 专属
+          // section 弹 Electron（settings-router 统一裁决 + 失败回退）
+          openSettings: openSettingsWindow,
+          // native 状态栏「打开聊天」：必须走 openReactChatWindow（建壳+载页+显示）；
+          // 只调 createReactChatWindowShell 会创建不可见的空壳，点了没反应。
+          openChatWindow: () => { void windowManager.openReactChatWindow(); },
           openCallWindow: () => windowManager.createCallWindow(),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),
-          cycleModelProvider: () => {
-            // 模型切换：复用 modelConfig 变更广播路径（具体切换逻辑
-            // 在 settings IPC 域，此处仅触发 UI 侧可见的下一 provider）
-            broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig());
-          },
           onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
-          // native 设置窗写键（白名单与 C# 侧一致）：写盘 + 既有联动
+          // 窗口圆角：spawn 时随窗口下发（native 进程重启后可恢复）；
+          // 变更广播走 handleGeneralSettingsChanged 的 onWindowCornerRadiusChanged
+          getWindowCornerRadius: () => loadGeneralSettings().windowCornerRadius,
+          // native 设置窗写键：白名单/取值校验统一在 native-settings-protocol；
+          // saveGeneralSettings 自动触发 handleGeneralSettingsChanged（桌宠显隐/
+          // 置顶、开机自启、主题广播等联动）。
+          // 不回推快照：native 控件状态即用户刚写入的值，回推重建会在滑杆/输入
+          // 交互后打断焦点；快照仅在 spawn、换头像等需要刷新时推送。
           setSetting: (key, value) => {
-            const allowed = new Set(["launchAtLogin", "petVisible", "petAlwaysOnTop", "uiTheme", "language"]);
-            if (!allowed.has(key)) return;
-            // petVisible 关闭走既有 toggle 联动（hide），直接写盘不走窗口管理
-            saveGeneralSettings({ [key]: value } as Partial<import("../settings/general-settings").GeneralSettings>);
+            const patch = sanitizeNativeGeneralSetting(key, value);
+            if (!patch) return;
+            saveGeneralSettings(patch);
+            // 运行期联动：状态栏/日程栏开关立即开/关对应窗口（与 Electron 设置页同语义）
+            if (key === "sidebarVisible") setSidebarWindowVisible(patch.sidebarVisible === true);
+            if (key === "tasksVisible") setTasksWindowVisible(patch.tasksVisible === true);
+          },
+          // native 设置窗写用户资料：字段白名单 + 时区/性别校验；写后广播给
+          // Electron 窗口（聊天/调用链有依赖）；同样不回推快照（避免打断输入）。
+          setUserProfile: (profile) => {
+            const patch = sanitizeNativeUserProfile(profile);
+            if (!patch) return;
+            const saved = saveUserProfile(patch);
+            broadcastToAuxWindows(IPC.USER_PROFILE_CHANGED, saved);
+          },
+          // native 设置窗「更换头像」：宿主弹文件框（native 不传路径），完成后重推快照
+          pickAvatar: () => {
+            void pickAndSaveUserAvatar()
+              .then((picked) => {
+                if (!picked) return;
+                broadcastToAuxWindows(IPC.USER_AVATAR_CHANGED, null);
+                pushSettingsSnapshotToNative();
+              })
+              .catch((err) => console.warn("[NativeSettings] pick avatar failed:", err));
+          },
+          // native 设置窗占位 section「在旧版设置中打开」→ Electron 设置窗（hash 定位）
+          openLegacySettings: (section?: string) => {
+            windowManager.createSettingsWindow(section);
+          },
+          // native 设置窗「插件」section → .NET 插件管理窗；native 不可用/失败回退 Electron 插件区
+          openPluginManager: () => {
+            void spawnNativeWindow("plugins").then((ok) => {
+              if (!ok) windowManager.createSettingsWindow("plugins");
+            });
+          },
+          // WPF 设置窗若干 section 的动作（与渲染设置页同口径，见上方动作函数）
+          apiAction: nativeApiAction,
+          generalAction: nativeGeneralAction,
+          memoryAction: nativeMemoryAction,
+          pluginsAction: nativePluginsAction,
+          schedulerAction: nativeSchedulerAction,
+          // 语音：TTS（保存/试听/克隆/列表）+ ASR（保存）
+          ttsAction: nativeTtsAction,
+          asrAction: nativeAsrAction,
+          // 「通用」section 便携模式：native 窗已完成迁移/覆盖确认（随 payload 下发），
+          // 这里只执行；结果走通用 section 状态行反馈（成功路径 800ms 后应用重启）。
+          portableAction: (verb, payload) => {
+            if (verb !== "apply") return;
+            const choiceRaw = payload.migrationChoice;
+            const migrationChoice =
+              choiceRaw === "migrate" || choiceRaw === "switch" || choiceRaw === "cancel"
+                ? choiceRaw
+                : undefined;
+            const request: PortableApplyRequest = {
+              enabled: payload.enabled === true,
+              dir: typeof payload.dir === "string" ? payload.dir : "",
+              ...(migrationChoice ? { migrationChoice } : {}),
+              ...(typeof payload.overwrite === "boolean" ? { overwrite: payload.overwrite } : {}),
+            };
+            void applyPortableChange(request).then((result) => {
+              if (result.status === "applied") {
+                nativeNotice("general", "ok", `数据目录已更新，应用即将重启：${result.targetDir}`);
+              } else if (result.status === "cancelled") {
+                nativeNotice("general", "info", "已取消");
+              } else if (result.status === "noop") {
+                nativeNotice("general", "ok", "数据目录未变化");
+              } else {
+                nativeNotice("general", "error", result.error);
+              }
+            });
+          },
+          // 「高级设置」section：超时（秒→ms）+ 工具并发
+          runtimeAction: (verb, payload) => {            if (verb !== "save") return;
+            const isBlank = payload.modelRequestTimeoutSec === null
+              || payload.modelRequestTimeoutSec === undefined
+              || payload.modelRequestTimeoutSec === "";
+            const modelRequestTimeoutSec = isBlank
+              ? undefined
+              : (clampInt(payload.modelRequestTimeoutSec, 10, 600) ?? undefined);
+            const choiceSec = clampInt(payload.userChoiceTimeout, 1, 3600);
+            const parallel = clampInt(payload.maxParallelToolCalls, 1, 8);
+            try {
+              saveTimeoutSettings({
+                ...(choiceSec !== null ? { userChoiceTimeout: choiceSec * 1000 } : {}),
+                ...(modelRequestTimeoutSec === undefined
+                  ? { modelRequestTimeoutSec: undefined }
+                  : { modelRequestTimeoutSec }),
+              });
+              if (parallel !== null) saveGeneralSettings({ maxParallelToolCalls: parallel });
+              nativeNotice("runtime", "ok", "运行设置已保存（后续请求/任务生效）");
+            } catch (err) {
+              nativeNotice("runtime", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
+            }
+            pushSettingsSnapshotToNative();
+          },
+          // 「Token 用量」section：切换统计窗口 / 重置统计
+          tokensAction: (verb, payload) => {
+            if (verb === "set-days") {
+              nativeTokenDays = clampInt(payload.days, 1, 90) ?? 7;
+              pushSettingsSnapshotToNative();
+              return;
+            }
+            if (verb === "clear") {
+              clearUsage();
+              nativeNotice("tokens", "ok", "用量统计已重置");
+              pushSettingsSnapshotToNative();
+            }
+          },
+          // 「偏好设置」section：打开自定义 Prompt 文件（旧版 settings.ts 同口径：
+          // 确保文件存在后在资源管理器中定位）
+          preferencesAction: (verb) => {
+            if (verb !== "open-prompt") return;
+            try {
+              const filePath = ensureCustomStylePrompt();
+              electronShell.showItemInFolder(filePath);
+              nativeNotice("preferences", "ok", "已在资源管理器中定位自定义 Prompt 文件");
+            } catch (err) {
+              nativeNotice("preferences", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`);
+            }
+          },
+          // 「昔涟设置」section：状态栏实时更新 + 表情包 + RAG（阶段 2）。
+          // 与渲染页 saveConfig 同源（saveModelSettings + model-config 广播）；
+          // reranker 模式变更后重新 initReranker（与 RERANKER_SET_MODE IPC 同口径）。
+          cyreneAction: (verb, payload) => {
+            if (verb === "save") {
+              const patch = sanitizeNativeCyreneSave(payload);
+              if (!patch) return;
+              try {
+                saveModelSettings(patch);
+                broadcastModelChanged();
+                if (patch.rerankerMode) {
+                  const mode = patch.rerankerMode;
+                  void import("../rag/reranker")
+                    .then(({ initReranker }) => initReranker(mode))
+                    .then(() => nativeNotice("cyrene", "ok", `重排序已${mode === "none" ? "关闭" : "开启（bge-reranker-base）"}`))
+                    .catch((err) =>
+                      nativeNotice("cyrene", "error", `重排序初始化失败：${err instanceof Error ? err.message : String(err)}`));
+                }
+              } catch (err) {
+                nativeNotice("cyrene", "error", `保存失败：${err instanceof Error ? err.message : String(err)}`);
+              }
+              return;
+            }
+            if (verb === "open-sticker-manager") {
+              windowManager.createStickerManagerWindow();
+              return;
+            }
+            // RAG：模型安装说明（浏览器打开 Gitee 文档；native 侧另有应用内说明弹窗）
+            if (verb === "open-model-docs") {
+              void electronShell.openExternal(LOCAL_MODELS_DOC_URL)
+                .then(() => nativeNotice("cyrene", "ok", "已在浏览器打开模型安装说明"))
+                .catch((err) =>
+                  nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
+              return;
+            }
+            // RAG：打开模型目录（手动安装：把模型文件放进去）
+            if (verb === "open-model-dir") {
+              const modelsDir = getProjectModelsDir();
+              try {
+                fs.mkdirSync(modelsDir, { recursive: true });
+              } catch (err) {
+                nativeNotice("cyrene", "error", `创建模型目录失败：${err instanceof Error ? err.message : String(err)}`);
+                return;
+              }
+              void electronShell.openPath(modelsDir).then((error) => {
+                if (error.length > 0) nativeNotice("cyrene", "error", `打开目录失败：${error}`);
+                else nativeNotice("cyrene", "ok", `已打开模型目录：${modelsDir}`);
+              });
+              return;
+            }
+            // RAG：打开模型下载站（按当前镜像源：hf-mirror / 官方）
+            if (verb === "open-model-site") {
+              const mirror = loadGeneralSettings().ragDownloadMirror;
+              const url = mirror === "hf-mirror"
+                ? "https://hf-mirror.com/Xenova/bge-m3"
+                : "https://huggingface.co/Xenova/bge-m3";
+              void electronShell.openExternal(url)
+                .then(() => nativeNotice("cyrene", "ok", `已打开模型下载站（${mirror === "hf-mirror" ? "hf-mirror" : "官方源"}）`))
+                .catch((err) =>
+                  nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
+              return;
+            }
+            // RAG：删除 embedding 缓存（确认框在 native 侧弹；宿主只做删除）
+            if (verb === "delete-embedding") {
+              try {
+                deleteEmbeddingModel("bgem3");
+                nativeNotice("cyrene", "ok", "BGE-M3 模型缓存已删除（下次使用需重新安装）");
+              } catch (err) {
+                nativeNotice("cyrene", "error", `删除失败：${err instanceof Error ? err.message : String(err)}`);
+              }
+              pushSettingsSnapshotToNative();
+              return;
+            }
+            // RAG：重新体检模型状态（更新=手动替换后回到本页看状态）
+            if (verb === "check-model-update") {
+              pushSettingsSnapshotToNative();
+              const embedding = getModelInstallStatusDetail("embedding", "bgem3");
+              const reranker = getModelInstallStatusDetail("reranker", "standard");
+              const embeddingText = embedding.installed
+                ? "BGE-M3 已安装"
+                : `BGE-M3 未安装${embedding.missingFiles.length > 0 ? `（缺少 ${embedding.missingFiles.join("、")}）` : ""}`;
+              const rerankerText = reranker.installed
+                ? "bge-reranker-base 已安装"
+                : "bge-reranker-base 未安装（可选）";
+              nativeNotice(
+                "cyrene",
+                embedding.installed ? "ok" : "info",
+                `已重新检测：${embeddingText}；${rerankerText}。`,
+              );
+              return;
+            }
+            if (verb === "add-sticker") {
+              const parsed = sanitizeNativeStickerAdd(payload);
+              if (!parsed.ok) {
+                nativeNotice("cyrene", "error", `添加失败：${parsed.error}`);
+                return;
+              }
+              void addUserSticker(
+                parsed.payload.sourcePath,
+                parsed.payload.id,
+                parsed.payload.description,
+                parsed.payload.phrases,
+              )
+                .then(() => {
+                  stickerEmbeddingIndexService?.invalidateStickerEmbeddingIndex();
+                  stickerEmbeddingIndexService?.refreshStickerEmbeddingIndex("user-sticker-add");
+                  nativeNotice("cyrene", "ok", `表情包已添加：${parsed.payload.id}`);
+                })
+                .catch((err) => {
+                  nativeNotice("cyrene", "error", `添加失败：${err instanceof Error ? err.message : String(err)}`);
+                });
+            }
           },
           // 渠道配置独立弹窗（Electron，用户指定渠道不迁 .NET）
           openChannelsWindow: () => windowManager.createSettingsWindow("channels"),
+          // 界面字体导入/恢复（Electron 设置页同口径；宿主弹框/清文件）
+          uiFontAction: (verb) => {
+            const fontDeps = {
+              getGeneralSettings: loadGeneralSettings,
+              saveGeneralSettings,
+            };
+            if (verb === "import") {
+              void pickAndImportUiFont(fontDeps).then((result) => {
+                if (result.canceled) return;
+                nativeNotice(
+                  "appearance",
+                  result.ok ? "ok" : "error",
+                  result.ok ? `字体已导入：${result.displayName ?? ""}` : `导入失败：${result.error ?? "未知错误"}`,
+                );
+                pushSettingsSnapshotToNative();
+              });
+              return;
+            }
+            const result = resetUiFont(fontDeps);
+            nativeNotice(
+              "appearance",
+              result.ok ? "ok" : "error",
+              result.ok ? "已恢复默认字体" : `恢复失败：${result.error ?? "未知错误"}`,
+            );
+            pushSettingsSnapshotToNative();
+          },
           // .NET 插件管理窗操作：manager/market 运行期引用（startPlugins 之后可用）
-          pluginAction: async (action, id) => {
+          pluginAction: async (action, id, payload) => {
             const manager = pluginManager;
             const market = getPluginMarketService();
             // 运行时总开关动态起停（.NET 管理窗「未启用」提示条触发）
@@ -349,37 +1268,94 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
               return;
             }
+            // 资源限制（「设置」页）：不依赖插件运行时是否启用，直接持久化设置
+            if (action === "set-limits") {
+              const storage = clampInt(payload?.storageQuotaMb, 0, MAX_PLUGIN_STORAGE_QUOTA_MB);
+              const memory = clampInt(payload?.memoryLimitMb, 0, MAX_PLUGIN_MEMORY_LIMIT_MB);
+              if (storage === null || memory === null) {
+                setPluginNotice(
+                  "error",
+                  `资源限制参数非法：存储 0-${MAX_PLUGIN_STORAGE_QUOTA_MB} / 内存 0-${MAX_PLUGIN_MEMORY_LIMIT_MB}（MiB 整数）`,
+                );
+              } else {
+                saveGeneralSettings({ pluginStorageQuotaMb: storage, pluginMemoryLimitMb: memory });
+                setPluginNotice("ok", "资源限制已保存（存储配额对后续启动/重启的插件生效）");
+              }
+              await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
+              return;
+            }
             if (!manager) return;
             try {
-              if (action === "enable" && id) await manager.setEnabled(id, true);
-              else if (action === "disable" && id) await manager.setEnabled(id, false);
-              else if (action === "uninstall" && id) await manager.uninstall(id);
-              else if (action === "install" && id) await market?.installFromMarket(id);
-              else if (action === "openPanel") {
+              if (action === "enable" && id) {
+                await manager.setEnabled(id, true);
+                setPluginNotice("ok", "已启用");
+              } else if (action === "disable" && id) {
+                await manager.setEnabled(id, false);
+                setPluginNotice("ok", "已停用");
+              } else if (action === "uninstall" && id) {
+                await manager.uninstall(id);
+                setPluginNotice("ok", "已卸载");
+              } else if (action === "install" && id) {
+                if (!market) {
+                  setPluginNotice("error", "插件市场服务不可用");
+                } else {
+                  // 先推「安装中」快照：下载可能持续数十秒，按钮与状态行立即有反馈
+                  //（历史 bug：安装期间无任何快照，失败后按钮悄悄回弹＝「静默失败」）
+                  nativeInstallingIds = [id];
+                  setPluginNotice("ok", `正在安装：${id} …`);
+                  await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
+                  try {
+                    const result = await market.installFromMarket(id);
+                    setPluginNotice(
+                      result.ok ? "ok" : "error",
+                      result.ok ? `已安装：${result.plugin.name} ${result.plugin.version}` : `安装失败：${result.error}`,
+                    );
+                  } finally {
+                    nativeInstallingIds = [];
+                  }
+                }
+              } else if (action === "refresh") {
+                // 重扫插件目录 + 重拉市场索引（旧版插件页的「刷新」）
+                await manager.rescan();
+                setPluginNotice("ok", "已刷新（插件目录 + 市场索引）");
+              } else if (action === "import-zip") {
+                // 旧版插件页的「导入 ZIP」：宿子弹文件框 → 管理器走同一
+                // 校验/身份记录管线；成功后重扫并重推快照
+                const zipPath = await pickPluginZipFile();
+                if (!zipPath) return; // 用户取消
+                const result = await manager.installZip(zipPath);
+                if (result.canceled) return; // 覆盖确认框取消
+                const imported = result.plugin ? `${result.plugin.name} ${result.plugin.version}` : "插件";
+                setPluginNotice(
+                  result.ok ? "ok" : "error",
+                  result.ok ? `已导入：${imported}` : `导入失败：${result.error ?? "未知错误"}`,
+                );
+              } else if (action === "openWindow" && id) {
+                // 插件自有窗口（.NET 轨 = 子进程 WPF；Node 轨 = 宿主 BrowserWindow）
+                const result = await manager.open(id);
+                if (!result.ok) console.warn("[PluginNative] openWindow failed:", id, result.error);
+              } else if (action === "openPanel") {
                 // 插件运行时面板归 Electron（首版宿主=设置窗插件 section）
                 windowManager.createSettingsWindow("plugins");
                 return;
               }
-              // refresh：仅重拉市场索引
             } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              setPluginNotice("error", `操作失败：${message}`);
               console.warn("[PluginNative] action failed:", action, id, err);
             }
-            // 完成后重推快照（installed ± market 索引）
-            await pushPluginsSnapshotToNative(async () => {
-              const mkt = getPluginMarketService();
-              return {
-                plugins: manager.overview().plugins,
-                market: mkt ? await mkt.listMarket() : [],
-              };
-            });
+            // 完成后重推快照（installed ± market 索引；与 spawn 初始推送同一构建器）。
+            // 刷新策略：进入推一次 + 插件操作后重推（此处，保留）+ 窗内「刷新」
+            // 手动重推；不做定时轮询。
+            await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
           },
         });
       },
 
 createTray: (input) => {
-        // 分离托盘（CYRENE_DETACHED_TRAY=1 + .NET 托盘进程在跑）：
-        // 连 pipe 成功 → 外部托盘；失败 → 回退内置 Electron Tray
-        if (process.env.CYRENE_DETACHED_TRAY === "1") {
+        // 分离托盘（默认优先；CYRENE_DETACHED_TRAY=0 关闭）：
+        // 托盘进程在跑（pipe 存在）→ 外部托盘；否则回退内置 Electron Tray
+        if (process.env.CYRENE_DETACHED_TRAY !== "0") {
           const detached = connectDetachedTray({
             requestActivation: input.requestActivation,
             togglePetWindow: input.togglePetWindow,
@@ -405,6 +1381,10 @@ createTray: (input) => {
       shutdown,
       minimumSplashMs: SPLASH_MIN_MS,
       markStartupWindowsReady: () => markStartupPhaseReady(),
+      getAppVersion: () => app.getVersion(),
+      getTimeoutSettings: () => getTimeoutSettings(),
+      // 便携模式 / 数据目录（通用 section 快照）
+      getPortableStatus: () => getPortableDataLocationStatus(),
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行
@@ -450,6 +1430,7 @@ createTray: (input) => {
         // 内置工具配置 getter
         bootstrapConfigGetters({
           loadGeneralSettings,
+          getSceneEmbeddingIndex: () => embeddingIndexService.getSceneEmbeddingIndex(),
         });
 
         // Locale Context（从 GeneralSettings 的语言配置同步）
@@ -478,6 +1459,14 @@ createTray: (input) => {
             });
             return resolvedGit;
           },
+          // 提交身份来自设置（内置 git 禁全局配置，不注入则 commit 会失败）
+          getCommitIdentity: () => {
+            const settings = loadGeneralSettings();
+            return {
+              name: settings.gitCommitAuthorName,
+              email: settings.gitCommitAuthorEmail,
+            };
+          },
         });
 
         // LSP：管理器预创建；具体语言服务进程按需启动
@@ -489,6 +1478,8 @@ createTray: (input) => {
         const initialSettings = loadGeneralSettings();
         const screenshot = initializeScreenshotService({
           initialHotkey: initialSettings.screenshotHotkey ?? "Alt+Shift+S",
+          initialBackend: initialSettings.screenshotBackend ?? "builtin",
+          initialSnipastePath: initialSettings.snipastePath ?? "",
           getReactChatWindow: () => reactChatWindow,
           capturePetWindow: () => shell.windowManager.capturePetWindow(),
           ipc: shell.ipc,
@@ -561,6 +1552,8 @@ createTray: (input) => {
           toolRegistry,
           skillRegistry,
           getStickerEmbeddingIndex: () => services.embedding.getStickerEmbeddingIndex(),
+          getSceneEmbeddingIndex: () => services.embedding.getSceneEmbeddingIndex(),
+          getSceneEmbeddingProvider,
           getEmbeddingProvider,
           broadcastRuntimeStateChanged: () => {
             broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, services.runtimeState.getState());
@@ -597,24 +1590,90 @@ createTray: (input) => {
         return startPluginsImpl(services, scheduler, runtime);
       },
 
-      createScheduler: (runtime) => createSchedulerSubsystem({
-        agentRuntime: runtime,
-        getReactChatWindow: () => reactChatWindow,
-        ipc: shell.ipc,
-        publishLifecycle: lifecyclePublisher,
-        // runReader 接入 harness 运行存储：孤儿工具按运行状态归类，避免误判 not_executed
-        conversationJournal: new ConversationJournalService({
-          store: getConversationTranscriptStore(app.getPath("userData")),
-          runReader: getHarnessRunStore(app.getPath("userData")),
-        }),
-        getActiveConversation: () => activeConversationRegistry.getMostRecent(),
-        // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
-        canRunTask: (task) => !task.ownerPluginId
-          || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
+      // native 三件套数据源绑定（core 阶段调用；未启用时 no-op）。
+      // ⚠️ 该键曾在合并 ffc6322dd 中整体丢失（原生窗拿不到数据），勿删。
+      // 这里同时装饰设置窗快照：core 提供 general+user，本层拼上
+      // api/memory/tasks 三个 section（数据源持有运行期引用，见上方动作函数）。
+      bindNativeData: (providers) => bindNativeDataProviders({
+        ...providers,
+        getSettingsSnapshot: providers.getSettingsSnapshot
+          ? async () => {
+              const base = (await providers.getSettingsSnapshot!()) as Record<string, unknown>;
+              const modelSettings = loadModelSettings();
+              const actions = nativeSchedulerActions;
+              return {
+                ...base,
+                api: buildApiSectionSnapshot(
+                  modelSettings,
+                  listSavedModelProfiles(modelSettings),
+                  getTimeoutSettings().testTimeout,
+                ),
+                // 记忆读取失败不再让整个快照失败：带 error 键下发给 WPF 显示错误行
+                memory: await (async () => {
+                  try {
+                    return buildMemorySectionSnapshot(await loadMemoryPanelData(), getMemoryVaultConfig());
+                  } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.warn("[NativeSettings] memory snapshot failed:", message);
+                    return buildMemorySectionSnapshot(
+                      { l0: {}, l1: {}, l2: [], importedDocs: [], reflections: [] },
+                      getMemoryVaultConfig(),
+                      message,
+                    );
+                  }
+                })(),
+                tasks: buildSchedulerSectionSnapshot(
+                  actions?.list().value ?? [],
+                  actions?.getTools().value ?? [],
+                  currentPluginRunning(),
+                  nativeTaskHistory,
+                ),
+                tokens: buildTokensSectionSnapshot(getUsageReport(nativeTokenDays), nativeTokenDays),
+                // 插件 / 内置工具配置 + 文件访问档位
+                plugins: buildPluginsSectionSnapshot(loadGeneralSettings(), getCurrentLevel()),
+                // 昔涟设置（阶段 1+2）：状态栏实时更新 + 表情包发送 + RAG 模型
+                cyrene: buildCyreneSectionSnapshot(modelSettings, getModelInstallStatus(), getProjectModelsDir()),
+                // 语音：TTS / ASR 设置（旧页字段，读方向与渲染页 loadTtsConfig/loadAsrConfig 同口径）
+                tts: buildTtsSectionSnapshot(loadGeneralSettings()),
+                asr: buildAsrSectionSnapshot(loadGeneralSettings(), runningSpeechInputPlugins()),
+              };
+            }
+          : undefined,
       }),
+      /** 模型公开配置（native sidebar 模型区订阅用）。 */
+      getPublicModelConfig: () => getPublicModelConfig(),
+      /** .NET 插件管理窗快照（已装 + 市场索引）。 */
+      getPluginsSnapshot: () => buildPluginSnapshot(),
+
+      createScheduler: (runtime) => {
+        const subsystem = createSchedulerSubsystem({
+          agentRuntime: runtime,
+          getReactChatWindow: () => reactChatWindow,
+          ipc: shell.ipc,
+          publishLifecycle: lifecyclePublisher,
+          // runReader 接入 harness 运行存储：孤儿工具按运行状态归类，避免误判 not_executed（上游 2026-09-24 语义）
+          conversationJournal: new ConversationJournalService({
+            store: getConversationTranscriptStore(app.getPath("userData")),
+            runReader: getHarnessRunStore(app.getPath("userData")),
+          }),
+          getActiveConversation: () => activeConversationRegistry.getMostRecent(),
+          // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
+          canRunTask: (task) => !task.ownerPluginId
+            || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
+        });
+        // native 设置窗「定时任务」动作与快照共用同一动作层（与 scheduler IPC 行为一致）
+        nativeSchedulerActions = createSchedulerActions({
+          store: subsystem.store,
+          engine: subsystem.engine,
+          getTools: () => toolRegistry.getAllTools(),
+        });
+        return subsystem;
+      },
 
       registerCoreIpc: ({ ipc, runtime, services }) => {
         const transcriptCompactor = getTranscriptCompactor();
+        // native 昔涟 section「添加表情包」需要刷新贴图向量索引（IPC 同源）
+        stickerEmbeddingIndexService = services.embedding;
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动
         onGeneralSettingsChanged((before, after) =>
           handleGeneralSettingsChanged(before, after, {
@@ -623,6 +1682,8 @@ createTray: (input) => {
             screenshotService: services.screenshot,
             proactiveLifecycle: services.proactive,
             broadcastToAuxWindows,
+            // 圆角变更同步 .NET 原生窗（Electron 侧走 UI_WINDOW_CORNER_RADIUS_CHANGED）
+            onWindowCornerRadiusChanged: (radius) => pushWindowRadiusToNative(radius),
           }),
         );
 
@@ -639,6 +1700,12 @@ createTray: (input) => {
           embeddingIndexService: services.embedding,
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
+        });
+
+        // 便携模式：数据目录迁移/覆盖 + 重启（指针文件在程序目录）
+        registerPortableIpc({
+          ipc,
+          getParentWindow: () => settingsWindow,
         });
 
         registerMemoryUserToolIpc({
@@ -721,6 +1788,7 @@ createTray: (input) => {
       },
 
       loadGeneralSettings,
+      loadUserProfile,
       applyGeneralSettings: (settings, services) => applyGeneralSettings(settings, {
         windowManager: shell.windowManager,
         tray: shell.tray,
@@ -730,11 +1798,16 @@ createTray: (input) => {
       }),
       wireToastCenter: ({ ipc, windowManager }) => {
         // 提醒中心组合根：窗口控制器 + 生命周期权威服务 + 事件总线订阅
+        // 窗口按需创建（默认）：首个 toast 才建窗+载页，队列空 30s 后回收
+        // （启动零 toast 渲染进程，常驻 Chromium 渲染进程 -1）；
+        // CYRENE_LAZY_TOAST_WINDOW=0 恢复急切模式（启动预热 + 常驻不销毁）。
+        const eagerToastWindow = process.env.CYRENE_LAZY_TOAST_WINDOW === "0";
         const toastWindowController = createToastWindowController({
           createWindow: createToastWindowShell,
           getChatWindow: () => reactChatWindow,
           getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
           getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+          idleTeardownMs: eagerToastWindow ? null : undefined,
         });
         const toastService = createToastService({
           bus: toastEvents,
@@ -751,10 +1824,22 @@ createTray: (input) => {
             if (!chat || chat.isDestroyed() || !chat.isFocused()) return false;
             return getActiveChatSessionId() === event.sessionId;
           },
+          // 系统级通知：无任何 Cyrene 窗口聚焦时补一条 Windows 托盘气泡，
+          // 用户在其他应用里也不错过「等待批准 / 任务完成」。
+          // 内置 Tray 与分离托盘都实现 displayBalloon；托盘不可用则静默跳过。
+          notifySystem: (item) => {
+            if (BrowserWindow.getFocusedWindow()) return;
+            showTrayBalloon(shell.tray, {
+              title: item.title,
+              content: item.summary ?? "",
+            });
+          },
         });
         toastService.registerIpc(ipc);
-        // 预创建隐藏窗口，提前加载渲染页，首次弹出零延迟
-        toastWindowController.preload();
+        if (eagerToastWindow) {
+          // 预创建隐藏窗口，提前加载渲染页，首次弹出零延迟（急切模式）
+          toastWindowController.preload();
+        }
         shutdown.register({
           id: "toast-center",
           phase: "stopLocalResources",

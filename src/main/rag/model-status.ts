@@ -131,6 +131,21 @@ export function getProjectModelBaseDir(kind: "embedding" | "reranker", modelKey:
 }
 
 /**
+ * Resolve the concrete complete model directory (e.g. `<base>/Xenova/bge-m3`).
+ * Used by loaders that need an explicit path argument (e.g. the .NET sidecar
+ * rerank op, which is spawned with a modelDir rather than a transformers.js key).
+ */
+export function getProjectModelDir(kind: "embedding" | "reranker", modelKey: string): string | null {
+  const modelId = kind === "embedding" ? "embedding-bgem3" : "reranker-standard";
+  for (const baseDir of getProjectModelsDirCandidates()) {
+    const probe = probeCandidates(modelId, baseDir, PROJECT_SUB_PATHS);
+    const hit = probe.candidates.find((c) => c.missingFiles.length === 0);
+    if (hit) return hit.modelDir;
+  }
+  return null;
+}
+
+/**
  * Detailed per-model diagnostic for troubleshooting "model not detected" bugs.
  *
  * Semantics:

@@ -123,6 +123,8 @@ function stopCallTimer(): void {
 type CallState = "IDLE" | "LISTENING" | "THINKING" | "SPEAKING" | "ERROR" | "ENDED";
 let currentState: CallState = "IDLE";
 let showTranscript = false; // 从设置读取
+/** 本地 ASR 模式：识别由语音输入插件提供，状态文案改为等待接管 */
+let localAsrMode = false;
 let turnSubmitter: TurnSubmitter | null = null;
 
 function setState(state: CallState): void {
@@ -139,7 +141,7 @@ function updateUI(): void {
   const mic = micWaveEl;
 
   if (currentState === "LISTENING") {
-    status.textContent = "正在聆听...";
+    status.textContent = localAsrMode ? "等待本地语音输入插件…" : "正在聆听...";
     status.className = "call__status";
     ring.classList.remove("is-active");
     wave?.classList.add("is-active");
@@ -301,6 +303,8 @@ let vadSilenceTimer: ReturnType<typeof setTimeout> | null = null;
 let vadSilenceMs = 1000;
 let vadThreshold = 0.01; // 音量阈值，默认调低照顾安静环境/小声麦克风
 let hasSpoken = false; // 用户是否已开始说话（VAD 只在说过话后检测静默）
+let lastVadSpeaking = false; // 上次上报的 VAD 状态（变化立即上报）
+let lastVadReportAt = 0; // 上次上报时刻（心跳节流，避免 fail-open）
 
 async function startMicrophone(): Promise<void> {
   try {
@@ -360,7 +364,17 @@ function startVAD(): void {
       console.log("[Call VAD] volume=", avg.toFixed(4), "threshold=", vadThreshold, "hasSpoken=", hasSpoken);
     }
 
-    if (avg >= vadThreshold) {
+    const speaking = avg >= vadThreshold;
+    // 上报主进程（ASR 静默门控）：状态变化立即报；其余每 500ms 心跳，
+    // 让主进程知道 VAD 仍然在线（否则门控会按 fail-open 直通）
+    const nowMs = Date.now();
+    if (speaking !== lastVadSpeaking || nowMs - lastVadReportAt >= 500) {
+      lastVadSpeaking = speaking;
+      lastVadReportAt = nowMs;
+      window.call?.sendVadState?.(speaking);
+    }
+
+    if (speaking) {
       // 有声音：标记已开始说话，重置静默计时
       if (!hasSpoken) console.log("[Call VAD] 开始说话 detected, volume=", avg.toFixed(4));
       hasSpoken = true;
@@ -553,6 +567,7 @@ async function init(): Promise<void> {
       vadSilenceMs = typeof cfg.asrVadSilenceMs === "number" ? cfg.asrVadSilenceMs : 1000;
       vadThreshold = typeof cfg.asrVadThreshold === "number" ? cfg.asrVadThreshold : 0.01;
       showTranscript = Boolean(cfg.asrShowTranscript);
+      localAsrMode = String(cfg.asrEngine ?? "off") === "local";
     }
     console.log("[Call] VAD config: threshold=", vadThreshold, "silenceMs=", vadSilenceMs);
   } catch { /* ignore */ }
@@ -582,6 +597,8 @@ declare global {
     call?: {
       start: () => void;
       sendAudioFrame: (frame: ArrayBuffer) => void;
+      /** VAD 上报（ASR 静默门控用）；旧版 preload 缺失时优雅降级 */
+      sendVadState?: (speech: boolean) => void;
       turnEnd: () => void;
       ttsDone: () => void;
       stop: () => void;

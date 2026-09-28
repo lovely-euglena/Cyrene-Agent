@@ -13,7 +13,8 @@ import type { ShutdownCoordinator } from "./shutdown";
 import type { WindowActivationBroker } from "./window-activation";
 import type { ShellResult } from "./shell-bootstrap";
 import type { RevealStartupWindowsOptions } from "../startup/startup-window-reveal";
-import { closeNativeWindow } from "../windows/native-windows-bridge";
+import { closeNativeWindow, markNativeWindowsStartupReady } from "../windows/native-windows-bridge";
+import { projectTaskForRenderer } from "../scheduler/scheduler-actions";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -28,8 +29,12 @@ import type { LlmClient } from "../services/llm/llm-client";
 import type { CitaService } from "../cita";
 import type { SocialContextService } from "../services/social-context/social-context-service";
 import type { ChannelsSubsystem } from "../channels/bootstrap";
+import { channelManager } from "../channels/manager";
 import type { SchedulerSubsystem } from "../scheduler/bootstrap";
 import type { GeneralSettings } from "../settings/general-settings";
+import type { UserProfile } from "../settings-store";
+import { loadAvatarDataUrl } from "../settings-store";
+import { TIMEZONE_OPTIONS } from "../../shared/timezone-options";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
 
@@ -89,9 +94,17 @@ export interface CoreDependencies {
   /** 公开模型配置（getPublicModelConfig；native sidebar 快照用）。 */
   getPublicModelConfig?(): unknown;
   registerCoreIpc(input: RegisterCoreIpcInput): void;
-  /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、预创建隐藏窗口。 */
+  /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、按需创建隐藏窗口。 */
   wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
+  /** 超时设置（高级设置 section 快照用） */
+  getTimeoutSettings?(): { userChoiceTimeout: number; modelRequestTimeoutSec?: number };
+  /** 便携模式 / 数据目录状态（通用 section 快照用；缺省 = 宿主未接线）。 */
+  getPortableStatus?(): import("../../shared/portable-mode").PortableDataLocationStatus;
+  /** 应用版本（打包态用 app.getVersion()；缺省回退环境变量，仅测试桩用） */
+  getAppVersion?(): string;
+  /** 用户资料（native 设置窗「用户信息」section 快照）。 */
+  loadUserProfile(): UserProfile;
   /** 启动期一次性应用通用设置（登录项同步、桌宠偏好等）。 */
   applyGeneralSettings(settings: GeneralSettings, services: CoreServices): void;
   revealStartupWindows(input: RevealStartupWindowsOptions): Promise<void>;
@@ -172,19 +185,95 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   deps.bindNativeData?.({
     getRuntimeState: () => services.runtimeState.getState(),
     getModelConfig: () => deps.getPublicModelConfig?.() ?? null,
-    getTasks: async () => scheduler.store.getTasks() as unknown[],
+    // 与渲染页同一投影口径：插件任务的启停按有效授权状态映射，且剔除
+    // approvalFingerprint/pluginUserEnabled 等宿主内部字段——native 日程窗
+    // 的过滤/排序/展示以这份 RendererScheduledTask 为准。
+    getTasks: async () => scheduler.store.getTasks().map(projectTaskForRenderer) as unknown[],
     // .NET 插件管理窗快照：已装 + 市场索引（manager/market 由运行期闭包提供）
     getPluginsSnapshot: async () => deps.getPluginsSnapshot?.(),
-    // native 设置窗快照：通用/外观/关于子集（键名与 C# 白名单对齐）
+    // native 设置窗快照：通用/外观/关于 + 用户信息（键名与 C# 白名单对齐；
+    // 契约见 windows/native-settings-protocol.ts）
     getSettingsSnapshot: async () => {
       const gs = deps.loadGeneralSettings();
+      const profile = deps.loadUserProfile();
       return {
         launchAtLogin: gs.launchAtLogin,
         petVisible: gs.petVisible,
         petAlwaysOnTop: gs.petAlwaysOnTop,
+        petZoom: gs.petZoom,
+        // RAG 下载镜像源（general 字段）：设置窗「昔涟设置」的镜像选择读写同一份；
+        // 缺了它 WPF 每次按 official 回落 → 看起来「改了不持久化」
+        ragDownloadMirror: gs.ragDownloadMirror,
+        uiIcon: gs.uiIcon,
+        uiFont: gs.uiFont,
+        windowCornerRadius: gs.windowCornerRadius,
+        toastSoundEnabled: gs.toastSoundEnabled,
+        chatLineHeight: gs.chatLineHeight,
+        assistantBubbleEnabled: gs.assistantBubbleEnabled,
+        chatParaSpacing: gs.chatParaSpacing,
+        disableGpuElectron: gs.disableGpuElectron === true,
+        gitCommitAuthorName: gs.gitCommitAuthorName,
+        gitCommitAuthorEmail: gs.gitCommitAuthorEmail,
+        sidebarVisible: gs.sidebarVisible,
+        tasksVisible: gs.tasksVisible,
         uiTheme: gs.uiTheme,
         language: gs.language,
-        version: process.env.npm_package_version ?? "1.1.9",
+        // 打包态用 app.getVersion()（旧实现读 npm_package_version，打包后
+        // 常缺失 → 显示过期的 1.1.9）
+        version: deps.getAppVersion?.() ?? process.env.npm_package_version ?? "0.0.0",
+        // 高级设置（api-advanced）快照：超时 + 工具并发
+        runtime: (() => {
+          const timeout = deps.getTimeoutSettings?.();
+          return {
+            modelRequestTimeoutSec: typeof timeout?.modelRequestTimeoutSec === "number"
+              ? timeout.modelRequestTimeoutSec
+              : null,
+            userChoiceTimeout: timeout?.userChoiceTimeout ?? 60000,
+            maxParallelToolCalls: gs.maxParallelToolCalls,
+          };
+        })(),
+        // 便携模式 / 数据目录（通用 section「数据与存储」卡；.NET 设置窗原生编辑）
+        portable: deps.getPortableStatus?.() ?? null,
+        user: {
+          nickname: profile.nickname,
+          callPreference: profile.callPreference,
+          birthday: profile.birthday,
+          defaultCity: profile.defaultCity,
+          timezone: profile.timezone,
+          gender: profile.gender,
+          // 时区白名单与渲染页共用（src/shared/timezone-options.ts）
+          timezoneOptions: TIMEZONE_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
+          avatarDataUrl: loadAvatarDataUrl(),
+        },
+        // 偏好设置（preferences section）：与渲染页 saveGeneral 同一批字段。
+        // proactiveDelivery 是渠道可用性（渲染页同口径：仅运行中渠道可选，
+        // local 恒可选）；defaultChatMode/segmentedOutputMode/citaSemanticEngine
+        // 当前为只读展示项。
+        preferences: (() => {
+          const statuses = channelManager.getAllStatus();
+          return {
+            screenshotBackend: gs.screenshotBackend,
+            snipastePath: gs.snipastePath,
+            mobileMessageSegmentation: gs.mobileMessageSegmentation,
+            proactiveChatMode: gs.proactiveChatMode,
+            proactiveDeliveryTarget: gs.proactiveDeliveryTarget,
+            proactiveDelivery: {
+              wechat: statuses.wechat?.phase === "running",
+              feishu: statuses.feishu?.phase === "running",
+            },
+            chatSocialContextEnabled: gs.chatSocialContextEnabled,
+            momentsEnabled: gs.momentsEnabled,
+            cyreneMomentsPostingEnabled: gs.cyreneMomentsPostingEnabled,
+            cyreneMomentsReactionsEnabled: gs.cyreneMomentsReactionsEnabled,
+            momentsCharacterReactionsEnabled: gs.momentsCharacterReactionsEnabled,
+            momentsLiveliness: gs.momentsLiveliness,
+            citaEnabled: gs.citaEnabled,
+            citaSemanticEngine: gs.citaSemanticEngine,
+            customStyle: gs.customStyle,
+            defaultChatMode: gs.defaultChatMode,
+            segmentedOutputMode: gs.segmentedOutputMode,
+          };
+        })(),
       };
     },
   });
@@ -209,20 +298,21 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // （lazy-chat 模式下 load 已在上方分支处理：急切模式立即加载，
   //  lazy 模式留待首启激活。页面加载失败是致命错误。）
 
-  // 桌宠：窗口始终创建，petVisible 只决定是否显示（隐藏时不闪现）。
-  // 始终创建是为了保证托盘"显示/隐藏桌宠"与设置面板开关随时能把窗口救回来，
-  // 且 alwaysOnTop / zoom / live2d 生命周期在隐藏状态下同样完成接线。
+  // 桌宠：可见才建窗；隐藏时由 windowManager 销毁窗口（连同桌宠渲染进程），
+  // 显示（设置开关/托盘）时按需重建——省一个 0.5GB 级渲染进程。
   const generalSettings = deps.loadGeneralSettings();
-  // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
-  deps.applyGeneralSettings(generalSettings, services);
-  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-  shell.windowManager.createPetWindow(generalSettings.petVisible);
+  // ready/closed 生命周期必须先接好：showPetWindow 会懒建窗口，ready 回调要能接上
   shell.windowManager.onPetWindowReady((win) => {
     shell.live2dWindowLifecycle.attach(win);
   });
   shell.windowManager.onPetWindowClosed(() => {
     shell.live2dWindowLifecycle.clear();
   });
+  // 启动期一次性完整应用通用设置（登录项同步等）；petVisible=true 时经
+  // showPetWindow 懒建窗口，隐藏时不建
+  deps.applyGeneralSettings(generalSettings, services);
+  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
+  if (generalSettings.petVisible) shell.windowManager.createPetWindow(true);
   shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
   shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
   if (generalSettings.sidebarVisible) shell.windowManager.createSidebarWindow();
@@ -262,7 +352,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const lazyChat = process.env.CYRENE_LAZY_CHAT_WINDOW !== "0";
   await deps.revealStartupWindows({
     splashWindow: shell.splashWindow,
-    // native splash（CYRENE_NATIVE_WINDOWS=1 时 shell.splashWindow 为 null）
+    // native splash（原生窗口启用时 shell.splashWindow 为 null）
     // 在 reveal 同点关闭；bridge 未启用时 no-op（closeNativeWindow 短路）
     closeSplashWindow: () => { void closeNativeWindow("splash"); },
     chatWindow: lazyChat && !shell.chat.isMaterialized?.() ? null : shell.chat.window,
@@ -272,6 +362,11 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
   console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
   deps.markStartupWindowsReady();
+  // native 三件套（sidebar/tasks/settings/plugins）与 BrowserWindow 同点放行：
+  // startup 阶段 spawn 的窗口先进 pendingNativeShows，此处统一发 win.show。
+  // ⚠️ 此调用曾在合并 ffc6322dd 中丢失（窗口「生成了但永不显示」），勿删；
+  // bridge 未启用时 no-op。
+  markNativeWindowsStartupReady();
 
   // 主窗口可激活：消费启动期间排队的激活请求
   await activation.markReady();

@@ -183,6 +183,10 @@ export function useComposerAttachments(input: {
     let tone: "info" | "error" = "error";
     if (reason.startsWith("HELPER_")) {
       text = t("chatPage.screenshotHelperNotReady");
+    } else if (reason === "SNIPASTE_TIMEOUT") {
+      text = t("chatPage.screenshotSnipasteTimeout");
+    } else if (reason.startsWith("SNIPASTE_")) {
+      text = t("chatPage.screenshotSnipasteUnavailable");
     } else if (reason.startsWith("SCREENSHOT_CANCELLED")) {
       text = t("chatPage.screenshotCancelled");
       // 用户主动取消：信息性反馈而非错误

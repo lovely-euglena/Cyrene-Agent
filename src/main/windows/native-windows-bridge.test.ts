@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // initNativeWindowsBridge 内部依赖 native-windows-host 的单例与 electron，
-// 单测环境下（无 exe / 开关关闭）应全部安全 no-op——这正是灰度回退的
-// 核心保证：开关关 = 行为与改造前逐位一致。
+// 单测环境下（无 exe / 显式回退）应全部安全 no-op——这正是回退路径的
+// 核心保证：未启用 = 行为与改造前逐位一致。
 
 import {
   initNativeWindowsBridge,
@@ -16,6 +16,7 @@ import {
   bindNativeDataProviders,
   pushSchedulerSnapshotToNative,
   markNativeWindowsStartupReady,
+  pushWindowRadiusToNative,
 } from "./native-windows-bridge";
 
 const IPC = {
@@ -26,7 +27,7 @@ const IPC = {
 
 describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () => {
   beforeEach(() => {
-    // 不设 CYRENE_NATIVE_WINDOWS → 未启用
+    // 未设开关 = 默认启用；但单测无 exe（resolveNativeWindowsExe=null）→ 客户端为 null
     delete process.env.CYRENE_NATIVE_WINDOWS;
     disposeNativeWindowsBridge("test");
   });
@@ -37,7 +38,6 @@ describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () 
       openChatWindow: vi.fn(),
       openCallWindow: vi.fn(),
       toggleSidebarPin: vi.fn(),
-      cycleModelProvider: vi.fn(),
       onSplashShown: vi.fn(),
     });
     expect(client).toBeNull();
@@ -90,6 +90,12 @@ describe("native-windows-bridge（开关关闭：全 no-op 回退路径）", () 
     pushSchedulerSnapshotToNative();
     await Promise.resolve();
     expect(getTasks).not.toHaveBeenCalled();
+  });
+
+  it("pushWindowRadiusToNative is a safe no-op when disabled (invalid values dropped)", () => {
+    expect(() => pushWindowRadiusToNative(8)).not.toThrow();
+    expect(() => pushWindowRadiusToNative(Number.NaN)).not.toThrow();
+    expect(() => pushWindowRadiusToNative(Number.POSITIVE_INFINITY)).not.toThrow();
   });
 
   it("markNativeWindowsStartupReady is idempotent and safe without client", () => {

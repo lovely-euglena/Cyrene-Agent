@@ -116,19 +116,31 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     });
   }
 
+  function ensurePetWindow(showOnReady: boolean): BrowserWindow {
+    if (petWindow && !petWindow.isDestroyed()) return petWindow;
+    const settings = options.loadPetWindowSettingsSlice();
+    const win = createPetWindow(
+      {
+        getCurrentAppIconPath: options.getCurrentAppIconPath,
+        isDev: options.isDev,
+        loadGeneralSettings: options.loadPetWindowSettingsSlice,
+      },
+      { showOnReady },
+    );
+    setPetWindow(win, showOnReady);
+    // 重建后恢复运行期属性：窗口隐藏时被销毁，期间置顶/缩放可能已变更
+    const alwaysOnTop = settings.petAlwaysOnTop !== false;
+    win.setAlwaysOnTop(alwaysOnTop, alwaysOnTop ? "screen-saver" : "normal");
+    const zoom = typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1;
+    win.once("ready-to-show", () => {
+      if (!win.isDestroyed()) win.webContents.send(IPC.PET_ZOOM, zoom);
+    });
+    return win;
+  }
+
   return {
     createPetWindow(showOnReady = true): BrowserWindow {
-      if (petWindow && !petWindow.isDestroyed()) return petWindow;
-      const win = createPetWindow(
-        {
-          getCurrentAppIconPath: options.getCurrentAppIconPath,
-          isDev: options.isDev,
-          loadGeneralSettings: options.loadPetWindowSettingsSlice,
-        },
-        { showOnReady },
-      );
-      setPetWindow(win, showOnReady);
-      return win;
+      return ensurePetWindow(showOnReady);
     },
 
     createReactChatWindowShell(): ReactChatWindowHandle {
@@ -179,15 +191,29 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     createCallWindow,
 
     showPetWindow(): void {
-      getUsablePetWindow()?.show();
+      const win = getUsablePetWindow();
+      if (win) {
+        win.show();
+        return;
+      }
+      // 隐藏时窗口（含渲染进程）已被销毁：再次显示按需重建，不闪空窗
+      ensurePetWindow(true);
     },
     hidePetWindow(): void {
-      getUsablePetWindow()?.hide();
+      const win = getUsablePetWindow();
+      if (!win) return;
+      // 销毁而非 hide：把桌宠渲染进程一起结束（Live2D 常驻内存大头）；
+      // closed 回调清 petWindow + live2d 生命周期，显示时重建
+      win.destroy();
     },
     togglePetWindow(): void {
       const win = getUsablePetWindow();
-      if (!win) return;
-      win.isVisible() ? win.hide() : win.show();
+      if (!win) {
+        ensurePetWindow(true);
+        return;
+      }
+      if (win.isVisible()) win.destroy();
+      else win.show();
     },
     minimizePetWindow(): void {
       getUsablePetWindow()?.minimize();

@@ -10,6 +10,8 @@ export function applyChatAppearance(input: unknown): void {
     "--cy-chat-line-height",
     String(settings.chatLineHeight),
   );
+  document.documentElement.dataset.assistantBubble =
+    settings.assistantBubbleEnabled ? "on" : "off";
 }
 
 export function useChatAppearance(): void {

@@ -198,8 +198,7 @@ describe("JsonVectorStore — index metadata and dimension validation", () => {
     const store1 = new JsonVectorStore(tmpDir);
     const provider = makeLocalProvider(384);
     await store1.add("first entry", "test", provider);
-    // 落盘是 5 秒防抖，重新打开前先刷盘
-    await store1.flush();
+    // theirs 版（main 线）JsonVectorStore 为即时持久化（persistNow），无需手动刷盘
 
     // Verify metadata was created
     const metaPath = path.join(tmpDir, "memory-store-meta.json");
@@ -228,8 +227,7 @@ describe("JsonVectorStore — index metadata and dimension validation", () => {
     const store1 = new JsonVectorStore(tmpDir);
     const provider1024 = makeLocalProvider(1024);
     await store1.add("old entry", "test", provider1024);
-    // 落盘是 5 秒防抖，重新打开前先刷盘
-    await store1.flush();
+    // theirs 版（main 线）JsonVectorStore 为即时持久化（persistNow），无需手动刷盘
 
     // Delete metadata to simulate old index
     const metaPath = path.join(tmpDir, "memory-store-meta.json");

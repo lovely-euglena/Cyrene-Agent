@@ -64,6 +64,9 @@ extraResources:
   # 语音后端 sidecar（F/G 阶段：TTS/ASR 引擎 + Silero VAD）
   - from: dotnet/voice/CyreneVoice/bin/Release/net10.0/win-x64/publish
     to: CyreneVoice
+  # .NET embedding sidecar（bge-m3 ORT 加速；exe 存在时默认启用，缺失回退 worker）
+  - from: dotnet/embedding-sidecar/bin/Release/net10.0/win-x64/publish
+    to: embed-sidecar
   # 第三方 skills 快照归档：首启解压到 userData/skills（见 src/main/skills/snapshot-install.ts）
   - from: vendor/cyrene-skills
     to: cyrene-skills

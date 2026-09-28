@@ -73,6 +73,8 @@ type EnqueueLLMTask = <T>(
 ) => Promise<T>;
 
 export interface AgentRuntimeDeps {
+  getSceneEmbeddingIndex: () => unknown;
+  getSceneEmbeddingProvider: () => unknown;
   runtimeStateService: RuntimeStateService;
   llmClient: LlmClient;
   enqueueLLMTask: EnqueueLLMTask;
@@ -194,7 +196,11 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       },
       resolveSlashActivation: ((messages, mode, overrides) =>
         resolveSlashActivation(messages as any, mode, overrides)) as BuildOptionsDeps["resolveSlashActivation"],
-      buildToneInjection: (() => buildToneInjection()) as BuildOptionsDeps["buildToneInjection"],
+      sceneEmbeddingIndex: rawDeps.getSceneEmbeddingIndex(),
+      getSceneEmbeddingProvider: (() =>
+        rawDeps.getSceneEmbeddingProvider() as unknown) as BuildOptionsDeps["getSceneEmbeddingProvider"],
+      buildToneInjection: ((userText, messages, provider, index) =>
+        buildToneInjection(userText, messages as any, provider as any, index as any)) as BuildOptionsDeps["buildToneInjection"],
       buildAlwaysOnContext: ((userText, messages) =>
         buildAlwaysOnContext(userText, messages as any)) as BuildOptionsDeps["buildAlwaysOnContext"],
       buildRelationshipContext,

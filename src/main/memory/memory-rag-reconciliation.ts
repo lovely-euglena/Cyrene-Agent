@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { L2Memory } from "./memory-types";
+import { backupSqliteStore } from "../rag/vectorstore";
 
 export interface ReconciliationVector {
   id: string;
@@ -28,22 +29,36 @@ export interface MemoryRagReconciliationReport {
 }
 
 export function backupMemoryRagFiles(userDataDir: string, timestamp = Date.now(), retention = 3): void {
-  const sources = [
-    { path: path.join(userDataDir, "memory.json"), prefix: "memory" },
-    { path: path.join(userDataDir, "rag-data", "memory-store.json"), prefix: "memory-store" },
-  ].filter((source) => fs.existsSync(source.path));
-  if (sources.length === 0) return;
-
   const backupDir = path.join(userDataDir, "memory-reconcile-backups");
+  const fileSources = [
+    { path: path.join(userDataDir, "memory.json"), prefix: "memory", extension: "json" },
+    { path: path.join(userDataDir, "rag-data", "memory-store.json"), prefix: "memory-store", extension: "json" },
+  ].filter((source) => fs.existsSync(source.path));
+  const sqliteSource = path.join(userDataDir, "rag-data", "memory.db");
+  const hasSqlite = fs.existsSync(sqliteSource);
+  if (fileSources.length === 0 && !hasSqlite) return;
+
   fs.mkdirSync(backupDir, { recursive: true });
-  for (const source of sources) {
-    fs.copyFileSync(source.path, path.join(backupDir, `${source.prefix}.${timestamp}.json`));
-    const backups = fs.readdirSync(backupDir)
-      .filter((name) => name.startsWith(`${source.prefix}.`) && name.endsWith(".json"))
-      .sort();
-    for (const stale of backups.slice(0, Math.max(0, backups.length - Math.max(1, retention)))) {
-      fs.rmSync(path.join(backupDir, stale));
+  for (const source of fileSources) {
+    fs.copyFileSync(source.path, path.join(backupDir, `${source.prefix}.${timestamp}.${source.extension}`));
+    pruneBackups(backupDir, source.prefix, source.extension, retention);
+  }
+  if (hasSqlite) {
+    // VACUUM INTO 生成一致快照（含 WAL 中未 checkpoint 的提交）；失败则跳过
+    const target = path.join(backupDir, `memory-db.${timestamp}.db`);
+    if (backupSqliteStore(sqliteSource, target)) {
+      pruneBackups(backupDir, "memory-db", "db", retention);
     }
+  }
+}
+
+function pruneBackups(backupDir: string, prefix: string, extension: string, retention: number): void {
+  const suffix = `.${extension}`;
+  const backups = fs.readdirSync(backupDir)
+    .filter((name) => name.startsWith(`${prefix}.`) && name.endsWith(suffix))
+    .sort();
+  for (const stale of backups.slice(0, Math.max(0, backups.length - Math.max(1, retention)))) {
+    fs.rmSync(path.join(backupDir, stale));
   }
 }
 

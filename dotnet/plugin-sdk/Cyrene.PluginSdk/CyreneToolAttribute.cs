@@ -2,14 +2,16 @@ namespace Cyrene.PluginSdk;
 
 /// <summary>
 /// 声明一个暴露给宿主 Agent 的工具方法。
-/// 方法签名约定：<c>Task&lt;object?&gt; Name(JsonElement args)</c>，
-/// 或同步的 <c>object? Name(JsonElement args)</c>。
-/// 返回值序列化为 JSON 后作为工具结果回传。
+/// 方法签名约定：<c>Task&lt;T&gt; Name(JsonElement args)</c>、<c>Task Name()</c>
+/// 或同步的 <c>object? Name(JsonElement args)</c>；参数只允许「无参」「单个 JsonElement」
+/// 或「JsonElement + CancellationToken」（取消令牌，宿主 cancel/超时触发）；
+/// 签名不合法在 init 时告警并跳过（不注册）。
+/// 返回值序列化为 JSON 后作为工具结果回传；Task&lt;T&gt; 会 await 后取 T。
 /// </summary>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
 public sealed class CyreneToolAttribute : Attribute
 {
-    /// <summary>工具短 id（宿主侧全 id 为 "pluginId__短id"）。</summary>
+    /// <summary>工具短 id（宿主侧全 id 为 "pluginId_短id"，单下划线）。</summary>
     public string Id { get; }
 
     /// <summary>工具显示名（给 Agent 的模型看）。</summary>
@@ -24,11 +26,15 @@ public sealed class CyreneToolAttribute : Attribute
     /// </summary>
     public string Schema { get; set; } = """{"type":"object","properties":{}}""";
 
-    /// <summary>风险等级（宿主权限闸门）：safe/fs-read/fs-write/shell/
-    /// network/input-control/unknown。缺省 unknown——宿主默认拒绝
-    /// （closed world），作者必须显式声明。</summary>
-    public string Risk { get; set; } = "unknown";
+    /// <summary>
+    /// 风险级（可选，透传给宿主权限策略 Permission Policy）。取值：
+    /// <c>safe | fs-read | fs-write | shell | network | input-control</c>。
+    /// 缺省/非法值按宿主默认 safe 处理——需要写文件、执行命令或联网的工具
+    /// 务必显式声明，否则不会触发对应的权限审批。
+    /// </summary>
+    public string? Risk { get; set; }
 
+    /// <summary>声明工具：id 为短 id（宿主自动加插件前缀），name/description 给模型看。</summary>
     public CyreneToolAttribute(string id, string name, string description)
     {
         Id = id;

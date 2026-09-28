@@ -36,24 +36,24 @@ export function prepareToolRuntime(input: {
   const permissionCheck: NonNullable<HarnessInput["checkPermission"]> = async (
     toolId: string,
     args: Record<string, unknown>,
-  ): Promise<boolean> => {
+  ) => {
     // allow_all 是显式总开关，会跳过后续权限检查；普通权限模式下才先执行计划只读拦截。
-    if (options.permissionMode === "allow_all") return true;
+    if (options.permissionMode === "allow_all") return { allowed: true };
     if (
       (options.conversationMode === "code" || options.conversationMode === "chat")
       && isPlanReadOnly(threadId)
     ) {
       const planTool = toolRegistry.getById(toolId) as (ToolDefinition & { risk?: ToolRiskLevel }) | undefined;
-      const planRisk: ToolRiskLevel = planTool?.risk ?? "safe";
+      const planRisk: ToolRiskLevel = planTool?.risk ?? "undeclared";
       if (policyFor("read-only", planRisk) !== "allow") {
         console.log(`[HarnessAdapter] [Plan] read-only enforcement blocked tool=${toolId} risk=${planRisk}`);
-        return false;
+        return { allowed: false, reason: "计划模式（只读）阶段不允许执行此操作" };
       }
     }
     const tool = toolRegistry.getById(toolId);
-    if (!tool) return false;
-    const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "safe";
-    return (await checkPermission({
+    if (!tool) return { allowed: false, reason: `工具 "${toolId}" 未注册` };
+    const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "undeclared";
+    const result = await checkPermission({
       toolId,
       toolName: tool.name,
       toolDescription: tool.description,
@@ -61,7 +61,9 @@ export function prepareToolRuntime(input: {
       risk,
       runId,
       signal,
-    })).allowed;
+    });
+    // reason 透传给 tool-dispatcher → 模型：拒绝时给出可操作提示（如提升档位）
+    return { allowed: result.allowed, ...(result.reason ? { reason: result.reason } : {}) };
   };
 
   const toolContext: ToolContext = {

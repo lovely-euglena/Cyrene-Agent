@@ -76,7 +76,8 @@ export interface ToolDispatchContext {
   onEvent?: (event: HarnessEvent) => void;
   requestUserClarification?: (card: unknown) => Promise<unknown>;
   includeInteractiveTools?: boolean;
-  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** 权限检查函数；reason 会透传给模型（见 HarnessInput.checkPermission） */
+  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<boolean | import("./types").HarnessPermissionDecision>;
   toolContext?: import("../tools/registry/tool-context").ToolContext;
   truncation?: TruncationConfig;
   /** 完整工具输出持久化；生产 Harness 必须注入。 */
@@ -145,13 +146,15 @@ export async function dispatchToolCall(
 
   // 权限检查
   if (ctx.checkPermission) {
-    const allowed = await ctx.checkPermission(tool.id, args);
+    const decision = await ctx.checkPermission(tool.id, args);
+    const allowed = typeof decision === "boolean" ? decision : decision.allowed === true;
     if (!allowed) {
+      const reason = typeof decision === "object" && decision.reason ? `：${decision.reason}` : "";
       return {
         outcome: "failure",
         category: "permission_denied",
         tool: call.name,
-        message: `工具 "${tool.id}" 被权限系统拒绝`,
+        message: `工具 "${tool.id}" 被权限系统拒绝${reason}`,
       };
     }
   }

@@ -37,6 +37,15 @@ export interface ChoiceOption {
   description?: string;
 }
 
+/**
+ * 选择卡请求上下文：工具在 Harness run 内发起时必须带 runId，
+ * 否则渲染端 RunEventGate 会把卡片事件当作串会话事件丢弃（卡片不显示、超时取消）。
+ */
+export interface ChoiceRequestContext {
+  runId?: string;
+  threadId?: string;
+}
+
 /** 发给渲染端的卡片数据。 */
 export interface LegacyChoiceCardData {
   id: string;
@@ -72,18 +81,18 @@ const pendingChoices = new Map<string, PendingChoice>();
 let choiceCounter = 0;
 
 /** 注入的卡片回调：由 index.ts 启动时设置，把 ChoiceCardData 包成 CUSTOM 事件发给渲染端。 */
-let choiceCardSender: ((card: ChoiceCardData) => void) | null = null;
+let choiceCardSender: ((card: ChoiceCardData, context?: ChoiceRequestContext) => void) | null = null;
 
 /** 注入的结算回调：由 index.ts 启动时设置，老版选择卡超时结算时通知渲染端清卡。 */
-let choiceDismissSender: ((settlement: ChoiceSettlement) => void) | null = null;
+let choiceDismissSender: ((settlement: ChoiceSettlement, context?: ChoiceRequestContext) => void) | null = null;
 
 /** index.ts 启动时调用，注入卡片发送回调。 */
-export function setChoiceCardSender(sender: (card: ChoiceCardData) => void): void {
+export function setChoiceCardSender(sender: (card: ChoiceCardData, context?: ChoiceRequestContext) => void): void {
   choiceCardSender = sender;
 }
 
 /** index.ts 启动时调用，注入结算通知回调。 */
-export function setChoiceDismissSender(sender: (settlement: ChoiceSettlement) => void): void {
+export function setChoiceDismissSender(sender: (settlement: ChoiceSettlement, context?: ChoiceRequestContext) => void): void {
   choiceDismissSender = sender;
 }
 
@@ -98,11 +107,13 @@ function extractCardIdentity(card: ChoiceCardData): { cardId: string; intro: str
 /**
  * 发起一次用户选择请求，阻塞等待用户在聊天卡片里选一个选项。
  * 超时（userChoiceTimeout，默认 60s）返回 defaultValue 或空串，并广播 dismiss 让渲染端清卡。
+ * context.runId 必须由 run 内工具透传：渲染端 RunEventGate 按 runId 过滤卡片事件。
  */
 export function requestUserChoice(
   question: string,
   options: ChoiceOption[],
   defaultValue?: string,
+  context?: ChoiceRequestContext,
 ): Promise<string> {
   return new Promise<string>((resolve) => {
     const id = "choice-" + (++choiceCounter) + "-" + Date.now();
@@ -112,7 +123,7 @@ export function requestUserChoice(
       pendingChoices.delete(id);
       console.warn(LOG_PREFIX, "选择超时（" + choiceTimeout + "ms），使用默认值:", defaultValue ?? "(空)");
       // 通知渲染端清卡：超时已用默认值结算，卡片再点也只会得到 ok:false
-      choiceDismissSender?.({ id, revision: 1, reason: "timeout" });
+      choiceDismissSender?.({ id, revision: 1, reason: "timeout" }, context);
       // 注意力提醒：超时结算通知 ToastService 清 toast
       toastEvents.publishChoiceDismiss({ cardId: id, revision: 1, reason: "timeout" });
       resolve(defaultValue ?? "");
@@ -127,14 +138,14 @@ export function requestUserChoice(
       },
       timer,
       status: "open",
-      runId: undefined,
+      runId: context?.runId,
     });
 
     const payload: ChoiceCardData = { id, question, options, default: defaultValue };
-    console.log(LOG_PREFIX, "发送选择请求:", id, question);
+    console.log(LOG_PREFIX, "发送选择请求:", id, question, context?.runId ? `runId=${context.runId}` : "");
 
     if (choiceCardSender) {
-      choiceCardSender(payload);
+      choiceCardSender(payload, context);
       // 注意力提醒：选择卡发布通知 ToastService
       toastEvents.publishChoiceCard({ ...extractCardIdentity(payload), revision: 1 });
     } else {
@@ -149,7 +160,7 @@ export function requestUserChoice(
 
 export function requestUserClarification(
   card: AskClarificationCard,
-  sender?: (card: ChoiceCardData) => void,
+  sender?: (card: ChoiceCardData, context?: ChoiceRequestContext) => void,
   onSettled?: (settlement: ChoiceSettlement) => void,
   identity: { runId: string; revision: number } = { runId: "legacy", revision: 1 },
 ): Promise<AskUserAnswer> {

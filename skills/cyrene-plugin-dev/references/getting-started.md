@@ -157,6 +157,9 @@ ctx.events.on("plugin:weather:updated", (w) => refreshUi(w)); // 听别的插件
 await ctx.events.emit("updated", { value: 1 });               // 广播自己的
 ```
 
+注意：事件是公开总线（别的插件能订阅你的事件），不要把密钥/令牌放进负载；工具 `risk`
+必须显式声明，漏写或拼错会按「未声明」处理（只读档拒绝、每次审批档弹审批）。
+
 **动态上下文**——让昔涟主动"知道"实时状态，不用用户开口问：
 
 ```js

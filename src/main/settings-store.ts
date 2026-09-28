@@ -48,6 +48,30 @@ export function getStickerSettingsPath(): string {
   return path.join(app.getPath("userData"), "sticker-settings.json");
 }
 
+/**
+ * 头像读为 data URL（不存在/读取失败返回 null）。
+ * 设置窗（Electron 渲染页）与 native 设置窗快照共用；native 侧再解 base64 显示。
+ */
+export function loadAvatarDataUrl(): string | null {
+  try {
+    const avatarPath = getAvatarPath();
+    if (!fs.existsSync(avatarPath)) return null;
+    const buf = fs.readFileSync(avatarPath);
+    const ext = path.extname(avatarPath).toLowerCase();
+    const mime =
+      ext === ".png"
+        ? "image/png"
+        : ext === ".jpg" || ext === ".jpeg"
+          ? "image/jpeg"
+          : ext === ".webp"
+            ? "image/webp"
+            : "image/png";
+    return "data:" + mime + ";base64," + buf.toString("base64");
+  } catch {
+    return null;
+  }
+}
+
 export function loadUserProfile(): UserProfile {
   try {
     const filePath = getUserProfilePath();

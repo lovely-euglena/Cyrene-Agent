@@ -80,6 +80,44 @@ function harness(overrides: Partial<PluginManagerOptions> = {}) {
 }
 
 describe("PluginManager", () => {
+  it("存储配额来自设置：超限写入在激活期失败并回滚", async () => {
+    const dir = fixturePlugin("quota-demo");
+    writeFileSync(
+      path.join(dir, "index.cjs"),
+      `module.exports = { register(ctx) {
+        ctx.storage.set("big", "x".repeat(2 * 1024 * 1024));
+      }, unregister() {} };`,
+      "utf8",
+    );
+    const h = harness({ getConfiguredPluginStorageQuotaMb: () => 1 });
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+    const entry = mgr.list().find((e) => e.id === "quota-demo");
+    expect(entry?.status).toBe("failed");
+    expect(entry?.error ?? "").toContain("配额");
+    expect(h.tools).not.toContain("quota-demo_tool");
+  });
+
+  it("collectUsage：统计存储占用；Node 插件内存为 null，无数据为 0", async () => {
+    const dir = fixturePlugin("usage-demo");
+    writeFileSync(
+      path.join(dir, "index.cjs"),
+      `module.exports = { register(ctx) {
+        ctx.storage.set("k", { pad: "x".repeat(2000) });
+      }, unregister() {} };`,
+      "utf8",
+    );
+    const h = harness();
+    const mgr = new PluginManager(h.options);
+    await mgr.start();
+    const usage = await mgr.collectUsage();
+    expect(usage["usage-demo"]?.storageBytes).toBeGreaterThan(2000);
+    // Node 插件与宿主同进程：内存无法归因，恒为 null
+    expect(usage["usage-demo"]?.memoryBytes).toBeNull();
+    // 未写存储的插件为 0（而不是缺项）
+    expect(usage["demo"]?.storageBytes).toBe(0);
+  });
+
   it("启动时启用 defaultEnabled 插件并注册列表/开关 IPC", async () => {
     const h = harness();
     const mgr = new PluginManager(h.options);

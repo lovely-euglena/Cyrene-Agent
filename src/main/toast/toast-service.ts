@@ -31,6 +31,11 @@ export interface ToastServiceDeps {
    * 仅通知档使用；等待操作档不受抑制（长输出流里卡片易被滚没）。
    */
   shouldSuppressNotify?: (event: SchedulerFinishedEvent) => boolean;
+  /**
+   * 系统级通知（Windows 托盘气泡）：宿主注入（托盘可用时才接线）。
+   * 每次 pushToast 调用一次；是否打扰（窗口聚焦抑制）由宿主判断。
+   */
+  notifySystem?: (item: ToastItem) => void;
 }
 
 /** 去重键：类别 + 业务身份 */
@@ -82,6 +87,12 @@ export function createToastService(deps: ToastServiceDeps) {
     const payload: ToastPushPayload = { ...item, sound: decideSound(item.tier) };
     deps.window.send(IPC.TOAST_PUSH, payload);
     deps.window.syncVisibility(true);
+    // 系统级通知（托盘气泡）：仅当宿主接线了托盘；窗口聚焦与否由宿主抑制
+    try {
+      deps.notifySystem?.(item);
+    } catch {
+      // 系统通知失败不影响 toast 主链路
+    }
   }
 
   function removeToast(id: string): void {

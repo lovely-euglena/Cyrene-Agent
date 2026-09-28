@@ -1,7 +1,6 @@
-import * as fs from "fs";
-import { getRagStorePath } from "../settings-store";
 import { memoryStore } from "./memory-store";
 import type { L0Profile, L1Profile, ReflectionLog } from "./memory-types";
+import { getImportedDocChunkInfo } from "../rag";
 
 export interface MemoryPanelItem {
   id: string;
@@ -49,40 +48,31 @@ export async function loadMemoryPanelData(): Promise<{
   ]);
 
   let importedDocs: ImportedDocItem[] = [];
-  const ragStorePath = getRagStorePath();
-
   try {
-    if (fs.existsSync(ragStorePath)) {
-      const raw = fs.readFileSync(ragStorePath, "utf8");
-      const entries = JSON.parse(raw) as Array<{
-        source?: string;
-        createdAt?: number;
-        metadata?: { fileName?: string; importId?: string };
-      }>;
+    // SQLite 化后不能直接读 memory-store.json：走 RAG 门面（两种后端通用）
+    const entries = getImportedDocChunkInfo();
 
-      const docsMap = new Map<string, ImportedDocItem>();
-      for (const entry of entries) {
-        if (entry.source !== "imported_doc") continue;
-        const fileName = entry.metadata?.fileName || "未命名文档";
-        const importId = entry.metadata?.importId as string | undefined;
-        // 新数据按 importId 分组，旧数据按 fileName 分组
-        const key = importId || "legacy:" + fileName;
-        const existing = docsMap.get(key);
-        if (existing) {
-          existing.chunkCount += 1;
-          existing.lastImportedAt = Math.max(existing.lastImportedAt, entry.createdAt || 0);
-        } else {
-          docsMap.set(key, {
-            importId: importId || null,
-            fileName,
-            chunkCount: 1,
-            lastImportedAt: entry.createdAt || 0,
-          });
-        }
+    const docsMap = new Map<string, ImportedDocItem>();
+    for (const entry of entries) {
+      const fileName = typeof entry.metadata?.fileName === "string" ? entry.metadata.fileName : "未命名文档";
+      const importId = entry.metadata?.importId as string | undefined;
+      // 新数据按 importId 分组，旧数据按 fileName 分组
+      const key = importId || "legacy:" + fileName;
+      const existing = docsMap.get(key);
+      if (existing) {
+        existing.chunkCount += 1;
+        existing.lastImportedAt = Math.max(existing.lastImportedAt, entry.createdAt || 0);
+      } else {
+        docsMap.set(key, {
+          importId: importId || null,
+          fileName,
+          chunkCount: 1,
+          lastImportedAt: entry.createdAt || 0,
+        });
       }
-
-      importedDocs = [...docsMap.values()].sort((a, b) => b.lastImportedAt - a.lastImportedAt);
     }
+
+    importedDocs = [...docsMap.values()].sort((a, b) => b.lastImportedAt - a.lastImportedAt);
   } catch (error) {
     console.warn("[settings] load imported docs failed:", error);
   }

@@ -269,6 +269,7 @@ contextBridge.exposeInMainWorld("moments", momentsApi);
 const callApi = {
   start: () => ipcRenderer.send(IPC.CALL_START),
   sendAudioFrame: (frame: ArrayBuffer) => ipcRenderer.send(IPC.CALL_AUDIO_FRAME, frame),
+  sendVadState: (speech: boolean) => ipcRenderer.send(IPC.CALL_VAD_STATE, speech),
   turnEnd: () => ipcRenderer.send(IPC.CALL_TURN_END),
   ttsDone: () => ipcRenderer.send(IPC.CALL_TTS_DONE),
   stop: () => ipcRenderer.send(IPC.CALL_STOP),
@@ -372,6 +373,11 @@ const settingsApi = {
   },
   getGeneral: () => ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL),
   saveGeneral: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_GENERAL, config),
+  // 便携模式：数据目录状态 / 选择目录 / 应用变更（主进程弹迁移确认后重启）
+  getPortableStatus: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_GET),
+  pickPortableDir: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_PICK_DIR) as Promise<string | null>,
+  applyPortableMode: (payload: { enabled: boolean; dir: string }) =>
+    ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_APPLY, payload),
   getTimeoutSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_TIMEOUT_SETTINGS),
   saveTimeoutSettings: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_TIMEOUT_SETTINGS, config),
   pickUiFont: () => ipcRenderer.invoke(IPC.SETTINGS_PICK_UI_FONT) as Promise<string | null>,

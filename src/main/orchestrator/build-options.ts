@@ -93,7 +93,14 @@ export interface BuildOptionsDeps {
     mode?: import("../skills/types").SkillMode,
     overrides?: SkillModeOverrides,
   ) => string;
-  buildToneInjection: () => string;
+  buildToneInjection: (
+    userText: string,
+    messages: ReadonlyArray<{ role: string; content?: string }>,
+    provider: unknown,
+    index: unknown,
+  ) => Promise<string>;
+  sceneEmbeddingIndex: unknown;
+  getSceneEmbeddingProvider: () => unknown;
   buildAlwaysOnContext: (
     userText: string,
     messages: ReadonlyArray<{ role: string; content?: string }>,
@@ -708,12 +715,19 @@ export async function buildAgentRunOptions(
     }
   }
 
-  // 语气注入（通用语气规则；场景匹配已移除）
+  // 语气注入（场景匹配版，移植自 main 线：deps.sceneEmbeddingIndex 就绪才注入）
   let toneInjection = "";
-  try {
-    toneInjection = deps.buildToneInjection();
-  } catch (err) {
-    console.warn("[Cyrene] tone injection failed:", err);
+  if (deps.sceneEmbeddingIndex) {
+    try {
+      toneInjection = await perf.track("build_tone_injection", () => deps.buildToneInjection(
+        latestUserText,
+        slimLlmMessages,
+        deps.getSceneEmbeddingProvider(),
+        deps.sceneEmbeddingIndex,
+      ));
+    } catch (err) {
+      console.warn("[Cyrene] tone injection failed:", err);
+    }
   }
 
   let attachmentContext = "";
@@ -764,7 +778,7 @@ export async function buildAgentRunOptions(
     && isPlanReadOnly(conversationIdForPlan);
   const enabledTools = planReadOnly
     ? (modeEnabledTools as readonly ToolDefinition[]).filter(
-      (t) => policyFor("read-only", (t as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "safe") === "allow",
+      (t) => policyFor("read-only", (t as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "undeclared") === "allow",
     )
     : modeEnabledTools;
 

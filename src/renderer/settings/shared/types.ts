@@ -20,6 +20,7 @@ import type { QqListenAuthRequirement } from "../../../shared/qq-listen";
 import type { CustomStyleConfig } from "../../../shared/style-sampling";
 import type { CustomEndpointMode } from "../custom-endpoint-state";
 import type { TimeoutSettings } from "../../../shared/timeout-types";
+import type { PortableApplyResult, PortableDataLocationStatus } from "../../../shared/portable-mode";
 
 export interface ProviderProfile {
   baseUrl: string;
@@ -73,33 +74,9 @@ export interface ModelSettings {
   contextWindowTokens?: number;
 }
 
-export interface ModelPreset {
-  providerName: string;
-  // 厂商短名（去括号后缀），用于状态栏"正在喂养"显示和昵称默认值。
-  // 如 "MiniMax（稀宇科技）" → shortName "MiniMax"。
-  shortName: string;
-  baseUrl: string;
-  /** 已由厂商官方确认的 Anthropic 兼容 Base URL；没有就不猜。 */
-  anthropicBaseUrl?: string;
-  /** 预设首次使用时选中的明确协议；用户之后可以手动修改。 */
-  transport: ApiTransport;
-  mainModels: string[];
-  iconUrl: string;
-  // 厂商官网链接，显示在预设下拉框旁边，方便用户直接跳转注册/查看文档。
-  websiteUrl?: string;
-  // 视觉模型的 OpenAI 兼容 baseUrl。主模型与视觉模型入口不同时使用。
-  visionBaseUrl?: string;
-  // 标记为 true 时，该项在 <select> 里显示但不可选；
-  // 用于"已列出但 vendor adapter 还没接好"的情况，避免用户选到后调用直接报错。
-  disabled?: boolean;
-  // 独立视觉模型的默认值（applyPreset 在没有保存值时使用）。
-  defaultVisionModel?: string;
-  // 独立视觉模型的候选列表（用于视觉模型输入框的 datalist）。
-  visionModels?: string[];
-  // 自定义端点的云端/本地变体共用一张可见卡片，但分别持久化配置。
-  customEndpointMode?: CustomEndpointMode;
-  hiddenInPresetList?: boolean;
-}
+// ModelPreset 定义与 MODEL_PRESETS 数据已迁至 src/shared/model-presets.ts（主进程共用）。
+// 本文件保留 re-export，历史 import 路径（../shared/types）不变。
+export type { ModelPreset } from "../../../shared/model-presets";
 
 export interface GeneralSettings extends ChatAppearanceSettings {
   maxParallelToolCalls: number;
@@ -136,9 +113,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   mobileMessageSegmentation: MobileMessageSegmentationMode;
   proactiveChatMode: ProactiveChatMode;
   proactiveDeliveryTarget: ProactiveDeliveryTarget;
-  /** 聊天段落间距（em）。目前仅设置窗口 UI 使用，主进程归一化尚未持久化该字段。 */
+  /** 聊天段落间距（em）；主进程已持久化（general settings chatParaSpacing）。 */
   chatParaSpacing?: number;
   screenshotHotkey?: string;
+  screenshotBackend?: "builtin" | "snipaste";
+  snipastePath?: string;
+  /** RAG 模型下载镜像源（通用设置同名字段；官方源 / hf-mirror） */
+  ragDownloadMirror?: "official" | "hf-mirror";
 }
 
 export interface UserApi {
@@ -226,6 +207,10 @@ export interface SettingsApi {
   setDefaultModelProfile?: (id: string) => Promise<unknown>;
   getGeneral: () => Promise<GeneralSettings>;
   saveGeneral: (config: Partial<GeneralSettings>) => Promise<GeneralSettings>;
+  // 便携模式（数据目录）
+  getPortableStatus?: () => Promise<PortableDataLocationStatus>;
+  pickPortableDir?: () => Promise<string | null>;
+  applyPortableMode?: (payload: { enabled: boolean; dir: string }) => Promise<PortableApplyResult>;
   openCustomStylePrompt?: () => Promise<{ ok: boolean; filePath?: string; error?: string }>;
   getTimeoutSettings: () => Promise<TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<TimeoutSettings>) => Promise<TimeoutSettings>;

@@ -1,9 +1,3 @@
-# Cyrene · Code Identity
+# Cyrene · Code Remark
 
-> Code 模式的身份、职责、事实边界与执行规则。
-> 用于用户补充prompt
-
----
-
-## 
-
+> Code 模式的补充规则。把你的补充写在这一行下方。

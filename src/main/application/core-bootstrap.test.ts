@@ -4,6 +4,18 @@ import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
 import { startCore, type CoreDependencies, type CoreServices } from "./core-bootstrap";
 
+// 只替换两个接线函数，其余保持真实导出（避免模块级 import 断链）
+vi.mock("../windows/native-windows-bridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../windows/native-windows-bridge")>();
+  return {
+    ...actual,
+    closeNativeWindow: vi.fn(async () => undefined),
+    markNativeWindowsStartupReady: vi.fn(),
+  };
+});
+
+import { markNativeWindowsStartupReady } from "../windows/native-windows-bridge";
+
 function makeServices(): CoreServices {
   return {
     runtimeState: {} as never,
@@ -166,7 +178,7 @@ describe("startCore", () => {
     expect(markReadySpy).not.toHaveBeenCalled();
   });
 
-  it("creates the pet window only when petVisible is enabled", async () => {
+  it("creates the pet window only when petVisible is enabled（隐藏不建窗，省渲染进程）", async () => {
     const deps = makeCoreDeps([]);
     await startCore(deps);
     expect(deps.petWindowCreated).toBe(true);
@@ -175,10 +187,9 @@ describe("startCore", () => {
       loadGeneralSettings: () => ({ petVisible: false, sidebarVisible: false, tasksVisible: false }) as never,
     });
     await startCore(hidden);
-    // 上游语义（c2a14d75）：窗口始终创建，petVisible 只决定是否显示——
-    // 托盘「显示/隐藏桌宠」与设置开关随时可救回
-    expect(hidden.petWindowCreated).toBe(true);
-    expect(hidden.petShowOnReadyArgs.at(-1)).toBe(false);
+    // 隐藏桌宠时窗口不创建（显示时经 showPetWindow 按需重建）；
+    // 托盘「显示/隐藏桌宠」与设置开关仍然随时可救回（windowManager 懒建）
+    expect(hidden.petWindowCreated).toBe(false);
     expect(hidden.shell.windowManager.createSidebarWindow).not.toHaveBeenCalled();
     expect(hidden.shell.windowManager.createTasksWindow).not.toHaveBeenCalled();
   });
@@ -189,6 +200,89 @@ describe("startCore", () => {
     await startCore(deps);
     expect(calls.indexOf("reveal")).toBeLessThan(calls.indexOf("mark-startup-windows"));
     expect(deps.readiness.getPhase()).toBe("core-ready");
+  });
+
+  it("reveal 后放行 native 窗口（防合并丢失接线）", async () => {
+    const calls: string[] = [];
+    const markNative = vi.mocked(markNativeWindowsStartupReady);
+    markNative.mockClear();
+    markNative.mockImplementation(() => { calls.push("mark-native"); });
+    await startCore(makeCoreDeps(calls));
+    expect(calls).toContain("mark-native");
+    // 与 BrowserWindow 同点：reveal → mark-startup-windows → mark-native
+    expect(calls.indexOf("reveal")).toBeLessThan(calls.indexOf("mark-native"));
+    expect(calls.indexOf("mark-startup-windows")).toBeLessThan(calls.indexOf("mark-native"));
+  });
+
+  it("bindNativeData 注入数据源（runtime/model/tasks/settings 可读；防合并丢失接线）", async () => {
+    const bindNativeData = vi.fn();
+    await startCore(makeCoreDeps([], {
+      bindNativeData,
+      loadGeneralSettings: () => ({
+        petVisible: true,
+        petAlwaysOnTop: true,
+        petZoom: 1,
+        sidebarVisible: false,
+        tasksVisible: false,
+        launchAtLogin: true,
+        toastSoundEnabled: true,
+        chatLineHeight: 1.75,
+        assistantBubbleEnabled: true,
+        windowCornerRadius: 24,
+        defaultChatMode: "chat",
+        segmentedOutputMode: "off",
+        screenshotBackend: "snipaste",
+        snipastePath: "C:/tools/Snipaste.exe",
+        mobileMessageSegmentation: "on",
+        proactiveChatMode: "on",
+        proactiveDeliveryTarget: "local",
+        chatSocialContextEnabled: true,
+        momentsEnabled: true,
+        cyreneMomentsPostingEnabled: false,
+        cyreneMomentsReactionsEnabled: true,
+        momentsCharacterReactionsEnabled: true,
+        momentsLiveliness: "natural",
+        citaEnabled: true,
+        citaSemanticEngine: "remote",
+        customStyle: { diversity: { driver: "temperature", value: 0.82 }, repetition: "light" },
+      }) as never,
+      loadUserProfile: () => ({
+        nickname: "T",
+        callPreference: "",
+        birthday: "",
+        defaultCity: "",
+        timezone: "Asia/Shanghai",
+        gender: "secret",
+      }) as never,
+    }));
+    expect(bindNativeData).toHaveBeenCalledTimes(1);
+    const providers = bindNativeData.mock.calls[0][0] as Record<string, unknown>;
+    expect(typeof providers.getRuntimeState).toBe("function");
+    expect(typeof providers.getModelConfig).toBe("function");
+    expect(typeof providers.getTasks).toBe("function");
+    expect(typeof providers.getPluginsSnapshot).toBe("function");
+    expect(typeof providers.getSettingsSnapshot).toBe("function");
+    // preferences 快照：与渲染页 saveGeneral 同批字段 + 渠道可用性（空渠道 → 手机目标不可选）
+    const snapshot = await (providers.getSettingsSnapshot as () => Promise<Record<string, any>>)();
+    expect(snapshot.preferences).toMatchObject({
+      defaultChatMode: "chat",
+      segmentedOutputMode: "off",
+      screenshotBackend: "snipaste",
+      snipastePath: "C:/tools/Snipaste.exe",
+      mobileMessageSegmentation: "on",
+      proactiveChatMode: "on",
+      proactiveDeliveryTarget: "local",
+      chatSocialContextEnabled: true,
+      momentsEnabled: true,
+      cyreneMomentsPostingEnabled: false,
+      cyreneMomentsReactionsEnabled: true,
+      momentsCharacterReactionsEnabled: true,
+      momentsLiveliness: "natural",
+      citaEnabled: true,
+      citaSemanticEngine: "remote",
+      customStyle: { diversity: { driver: "temperature", value: 0.82 }, repetition: "light" },
+    });
+    expect(snapshot.preferences.proactiveDelivery).toEqual({ wechat: false, feishu: false });
   });
 
   it("stops plugins before built-in channels during controlled shutdown", async () => {

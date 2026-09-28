@@ -4,6 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ToolDefinition, toolRegistry, type ToolEffectKind } from "./tools/registry/tool-registry";
+import type { ToolRiskLevel } from "../permission";
 import { mcpDotnetHost } from "./mcp-dotnet-host";
 
 const LOG_PREFIX = "[MCP Adapter]";
@@ -66,6 +67,30 @@ function resolveMcpEffectKind(
   if (annotations.readOnlyHint === true) return "read";
   // 优先级 4：无匹配 → unknown
   return "unknown";
+}
+
+/**
+ * 从 MCP annotations / effectKind override 推导权限风险级（保守策略）：
+ * 1. 本地显式 override：按效果映射（read → fs-read；unknown → undeclared；其余 → fs-write）
+ * 2. destructiveHint=true → fs-write（只读档拒绝、每次审批档询问）
+ * 3. readOnlyHint=true → fs-read（与 fs-read 工具同档：只读/指定目录档放行）
+ * 4. 无匹配 → undeclared（缺省不得当成 safe；只读/指定目录档拒绝、每次审批档询问）
+ */
+export function resolveMcpRisk(
+  annotations: McpToolAnnotations | undefined,
+  overrides: Record<string, ToolEffectKind> | undefined,
+  toolName: string,
+): ToolRiskLevel {
+  const override = overrides?.[toolName];
+  if (override) {
+    if (override === "read") return "fs-read";
+    if (override === "unknown") return "undeclared";
+    return "fs-write";
+  }
+  if (!annotations) return "undeclared";
+  if (annotations.destructiveHint === true) return "fs-write";
+  if (annotations.readOnlyHint === true) return "fs-read";
+  return "undeclared";
 }
 
 /**
@@ -189,6 +214,7 @@ export async function connectMcpServer(config: McpServerConfig): Promise<string[
       name: "[" + config.name + "] " + mt.name,
       description: mt.description || mt.name,
       enabled: true,
+      risk: resolveMcpRisk(mt.annotations, config.effectKindOverrides, mt.name),
       effectKind: resolvedEffectKind,
       inputSchema: {
         type: "object",
@@ -378,6 +404,11 @@ function registerDotnetTools(serverId: string, config: McpServerConfig, tools: D
       name: "[" + config.name + "] " + mt.name,
       description: mt.description || mt.name,
       enabled: true,
+      risk: resolveMcpRisk(
+        mt.annotations as McpToolAnnotations | undefined,
+        config.effectKindOverrides,
+        mt.name,
+      ),
       effectKind: resolvedEffectKind,
       inputSchema: {
         type: "object",

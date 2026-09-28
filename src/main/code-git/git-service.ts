@@ -87,8 +87,50 @@ export interface GitLogEntry {
 export interface GitServiceDeps {
   getSession: (sessionId: string) => ChatSession | null;
   resolveExecutable: () => Promise<ResolvedGitExecutable | null>;
-  createClient?: (input: { workspaceRoot: string; executable: ResolvedGitExecutable }) => GitClient;
+  createClient?: (input: {
+    workspaceRoot: string;
+    executable: ResolvedGitExecutable;
+    identity?: GitCommitIdentity;
+  }) => GitClient;
   workspaceWatcher?: GitWorkspaceWatcher;
+  /**
+   * Git 提交身份（设置里的 gitCommitAuthorName/Email）。
+   * 内置 git 禁用了全局配置，身份完全由此提供；缺省名 Cyrene、邮箱空。
+   */
+  getCommitIdentity?: () => GitCommitIdentity | null;
+}
+
+/** Git 提交身份（作者/提交者） */
+export interface GitCommitIdentity {
+  name?: string;
+  email?: string;
+}
+
+/**
+ * 构造 simple-git 的 `-c` 配置：
+ * - `safe.directory`：工作区目录属主与当前用户不一致时（如 F 盘/移动硬盘/他人
+ *   创建的仓库），git 会报 `detected dubious ownership` 拒绝操作。内置 git 又
+ *   禁用了全局配置，用户手动 `git config --global` 也不生效——这里对每个工作区
+ *   自动放行（原样路径 + 正斜杠路径各一条，覆盖两种写法）。
+ * - `user.name` / `user.email`：提交身份；只在显式传入时注入。
+ */
+export function buildGitBaseConfig(
+  workspaceRoot: string,
+  identity?: GitCommitIdentity | null,
+): string[] {
+  const config: string[] = [];
+  const push = (entry: string): void => {
+    if (!config.includes(entry)) config.push(entry);
+  };
+  const forward = workspaceRoot.replace(/\\/g, "/");
+  push(`safe.directory=${workspaceRoot}`);
+  push(`safe.directory=${forward}`);
+
+  const name = identity?.name?.replace(/[\r\n]/g, " ").trim();
+  const email = identity?.email?.replace(/[\r\n]/g, "").trim();
+  if (name) push(`user.name=${name}`);
+  if (email) push(`user.email=${email}`);
+  return config;
 }
 
 export interface GitService {
@@ -145,10 +187,13 @@ export function createGitService(deps: GitServiceDeps): GitService {
     return { workspaceRoot, executable };
   }
 
-  async function clientForTrustedContext(ctx: TrustedGitContext): Promise<GitClient> {
+  async function clientForTrustedContext(
+    ctx: TrustedGitContext,
+    identity?: GitCommitIdentity,
+  ): Promise<GitClient> {
     const executable = await deps.resolveExecutable();
     if (!executable) throw new Error("未检测到可用 Git");
-    return createClient({ workspaceRoot: ctx.workspaceRoot, executable });
+    return createClient({ workspaceRoot: ctx.workspaceRoot, executable, ...(identity ? { identity } : {}) });
   }
 
   async function trustedContextForSession(sessionId: string): Promise<TrustedGitContext> {
@@ -199,7 +244,18 @@ export function createGitService(deps: GitServiceDeps): GitService {
       if (paths.length === 0 || paths.some((item) => !isSafeRelativePath(item))) {
         throw new Error("请提供要提交的仓库内文件路径");
       }
-      const client = await clientForTrustedContext(ctx);
+      const identity = deps.getCommitIdentity?.() ?? null;
+      const email = identity?.email?.trim();
+      if (!email) {
+        throw new Error(
+          "尚未配置 Git 提交邮箱：请在 设置 → 通用设置 → 「Git 提交身份」填写邮箱（提交作者名默认 Cyrene）",
+        );
+      }
+      const commitIdentity: GitCommitIdentity = {
+        name: identity?.name?.trim() || "Cyrene",
+        email,
+      };
+      const client = await clientForTrustedContext(ctx, commitIdentity);
       await client.add(paths);
       const result = await client.commit(message.trim());
       emitChanged(ctx.sessionId);
@@ -297,11 +353,16 @@ export function createGitService(deps: GitServiceDeps): GitService {
   };
 }
 
-function createSimpleGitClient(input: { workspaceRoot: string; executable: ResolvedGitExecutable }): GitClient {
+function createSimpleGitClient(input: {
+  workspaceRoot: string;
+  executable: ResolvedGitExecutable;
+  identity?: GitCommitIdentity;
+}): GitClient {
   const git = simpleGit({
     baseDir: input.workspaceRoot,
     binary: input.executable.command,
     maxConcurrentProcesses: 1,
+    config: buildGitBaseConfig(input.workspaceRoot, input.identity),
   });
   if (input.executable.env) git.env(input.executable.env);
 

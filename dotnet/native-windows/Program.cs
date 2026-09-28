@@ -34,6 +34,18 @@ public static class Program
             return Mcp.McpHost.Run();
         }
 
+        // SSH 托管宿主：有状态会话常驻（档案/凭据落 --data-dir），协议见 Ssh.SshHost。
+        if (args.Length > 0 && args[0] == "--ssh-host")
+        {
+            return Ssh.SshHost.Run(args);
+        }
+
+        // Snipaste 命令行截图：一次性捕获，stdout 单行 JSON（见 Screenshot.SnipasteCapture）。
+        if (args.Length > 0 && args[0] == "--snipaste-capture")
+        {
+            return Screenshot.SnipasteCapture.Run(args);
+        }
+
         // 内置工具宿主：计算/系统交互型工具的 .NET 执行（超时/回退由宿主管理）
         if (args.Length > 0 && args[0] == "--tool-host")
         {
@@ -72,9 +84,23 @@ public static class Program
             return LoopHostNs.LoopHost.RunProtocolLoop();
         }
 
+        // 多 Agent 编排宿主（Plan B）：会话/邮箱/pipeline 机制；每个 step 回传
+        // Electron，由 HarnessSessionWorker 复用 TS CyreneHarness 跑完整循环。
+        if (args.Length > 0 && args[0] == "--agent-orchestrator")
+        {
+            return Agents.AgentOrchestrator.RunProtocolLoop();
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,
+        };
+        // UI 线程兜底：单个窗口/绘制异常不应让整个 cyrene-native 进程闪退
+        // （用户报「日程页拖动后闪退」）。记录后吞掉，其余窗口继续存活。
+        app.DispatcherUnhandledException += (_, e) =>
+        {
+            Console.Error.WriteLine($"[cyrene-native] dispatcher unhandled: {e.Exception}");
+            e.Handled = true;
         };
         var protocol = new HostProtocol(
             Console.OpenStandardInput(),
@@ -82,6 +108,12 @@ public static class Program
             (id, element) => RequestRouter.Handle(app, id, element),
             element => RequestRouter.OnEvent(app, element));
         RequestRouter.Protocol = protocol;
+        // 宿主退出（stdin EOF）：安全关闭全部窗口并结束进程，避免孤儿常驻。
+        protocol.InputClosed += () =>
+        {
+            try { app.Dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Normal); }
+            catch { /* 已关闭/调度器不可用：进程即将自然退出 */ }
+        };
         // ready 握手：宿主 launch() 阻塞等待此帧（15s 超时回收）。
         // 必须在读线程就位后尽快发——WPF 就绪与否与协议就绪无关
         protocol.NotifyReady();

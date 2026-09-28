@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const html = fs.readFileSync(fileURLToPath(new URL("./index.html", import.meta.url)), "utf8");
 const source = fs.readFileSync(fileURLToPath(new URL("./settings.ts", import.meta.url)), "utf8");
 const mcpSource = fs.readFileSync(fileURLToPath(new URL("./mcp/panel.ts", import.meta.url)), "utf8");
-const presetsSource = fs.readFileSync(fileURLToPath(new URL("./api/presets.ts", import.meta.url)), "utf8");
+const presetsSource = fs.readFileSync(fileURLToPath(new URL("../../shared/model-presets.ts", import.meta.url)), "utf8");
 const styles = fs.readFileSync(fileURLToPath(new URL("./settings.css", import.meta.url)), "utf8");
 const icon = fs.readFileSync(
   fileURLToPath(new URL("../public/icons/providers/custom-endpoint.svg", import.meta.url)),

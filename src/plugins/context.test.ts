@@ -266,6 +266,49 @@ describe("createContext", () => {
     await expect(ctx.registerChannelAdapter(adapter)).rejects.toThrow(/已被占用/);
   });
 
+  it("拒绝非法渠道 id 形状", async () => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), "cyrene-ctx-test-"));
+    const ctx = createTestContext();
+    const adapter = { id: "Weather Channel!" } as ChannelAdapter;
+    await expect(ctx.registerChannelAdapter(adapter)).rejects.toThrow(/非法插件渠道 id/);
+  });
+
+  it("未声明 risk 的工具按 undeclared 注册；非法 risk 直接拒绝", () => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), "cyrene-ctx-test-"));
+    const captured: Array<Record<string, unknown>> = [];
+    const rt = runtime();
+    rt.toolRegistry.register = ((t: unknown) => {
+      captured.push(t as Record<string, unknown>);
+    }) as never;
+    const ctx = createTestContext(rt);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    ctx.registerTool({
+      id: "demo_untyped",
+      name: "t",
+      description: "d",
+      enabled: true,
+      inputSchema: { type: "object", properties: {}, required: [] },
+      execute: async () => "ok",
+    });
+    expect(captured[0]?.risk).toBe("undeclared");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("未声明 risk"));
+
+    expect(() =>
+      ctx.registerTool({
+        id: "demo_bad_risk",
+        name: "t",
+        description: "d",
+        enabled: true,
+        risk: "fs-writ" as never,
+        inputSchema: { type: "object", properties: {}, required: [] },
+        execute: async () => "ok",
+      }),
+    ).toThrow(/非法工具风险级/);
+    expect(captured).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it("未声明 deps 时不注入 channels；声明后注入", () => {
     tmp = mkdtempSync(path.join(os.tmpdir(), "cyrene-ctx-test-"));
     const without = createTestContext();

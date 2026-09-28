@@ -3,6 +3,7 @@
     "nav": {
       "ariaLabel": "设置导航",
       "brand": "昔涟",
+      "unsaved": "未保存",
       "memory": "记忆",
       "user": "用户信息",
       "tasks": "定时任务",
@@ -224,6 +225,20 @@
             }
           }
         },
+        "screenshot": {
+          "backend": {
+            "title": "截图方式",
+            "desc": "内置截图组件，或调用系统中安装的 Snipaste（需已启动；路径留空自动检测）。",
+            "option": {
+              "builtin": "内置",
+              "snipaste": "Snipaste"
+            }
+          },
+          "path": {
+            "title": "Snipaste 路径",
+            "desc": "留空自动检测；也可填写 Snipaste.exe 的完整路径。"
+          }
+        },
         "saveStatus": "等待保存",
         "saveButton": "保存偏好"
       },
@@ -260,6 +275,10 @@
           "chatLineHeight": {
             "title": "行间距",
             "desc": "调整消息气泡内文字的行高（1.2 ~ 2.0）。"
+          },
+          "assistantBubble": {
+            "title": "昔涟回复气泡",
+            "desc": "关闭后以无背景文本显示昔涟的正式回答；用户消息气泡始终保留。"
           },
           "chatParaSpacing": {
             "title": "段间距",
@@ -302,10 +321,6 @@
           "title": "日程栏窗口",
           "desc": "控制右侧日程/任务展示窗口。"
         },
-        "rememberWindowState": {
-          "title": "记住窗口位置",
-          "desc": "记忆设置与音乐窗口的位置和大小，重启后恢复。"
-        },
         "toastSound": {
           "title": "提醒音效",
           "desc": "昔涟有事等你确认或任务跑完时，右下角弹窗的提示音。"
@@ -313,6 +328,31 @@
         "launchAtLogin": {
           "title": "开机自启",
           "desc": "系统启动时自动打开昔涟。"
+        },
+        "chatHistory": {
+          "title": "聊天记录管理",
+          "desc": "清空全部本地聊天会话。",
+          "clearButton": "清空记录"
+        },
+        "portable": {
+          "title": "便携模式",
+          "desc": "把聊天记录、配置与插件数据保存到程序目录（或自定义文件夹），随程序一起移动；切换后应用会自动重启。",
+          "apply": "应用并重启",
+          "browse": "浏览…",
+          "dir": {
+            "title": "数据目录",
+            "desc": "默认保存在程序目录下的 data 文件夹；程序安装在 Program Files 等只读位置时，请另选可写目录。"
+          },
+          "current": "当前数据目录：{{dir}}",
+          "applying": "正在处理，请稍候…",
+          "appliedMigrated": "迁移完成，正在重启应用…",
+          "appliedSwitched": "已切换数据位置，正在重启应用…",
+          "cancelled": "已取消，未做任何更改。",
+          "noop": "数据目录没有变化。",
+          "failed": "操作失败：{{error}}",
+          "pickFailed": "打开目录选择器失败",
+          "loadFailed": "读取数据目录状态失败",
+          "unavailable": "当前版本不支持此操作"
         },
         "language": {
           "title": "语言",
@@ -336,6 +376,12 @@
         "about": {
           "title": "关于",
           "desc": "· 轻量情感陪伴桌面 Agent"
+        },
+        "gitIdentity": {
+          "title": "Git 提交身份",
+          "desc": "昔涟创建 Git 提交时使用的作者信息。提交作者名默认 Cyrene；邮箱为必填，未填写时提交会被拒绝并提示来这里补填。",
+          "namePlaceholder": "提交作者名（默认 Cyrene）",
+          "emailPlaceholder": "提交邮箱（必填）"
         },
         "saveStatus": "等待保存"
       },
@@ -376,7 +422,7 @@
           "desc": "选择本地检索模型，后续用于文件导入、世界书与长期记忆召回。",
           "modelTitle": "Embedding 模型",
           "bgem3Title": "BGE-M3",
-          "bgem3Desc": "中文效果优秀，支持贴纸语义匹配和长期记忆召回。",
+          "bgem3Desc": "中文效果优秀，支持贴纸语义匹配和场景语气注入。",
           "dimTitle": "Embedding 维度",
           "dimHint": "留空 = 首次请求自动检测；填写 = 严格校验",
           "rerankTitle": "Rerank 重排序",
@@ -384,7 +430,16 @@
           "rerankBaseDesc": "精准重排，适合长文档和专业检索，约 200ms/对。",
           "rerankOff": "关闭",
           "rerankOffDesc": "不进行重排序，检索后直接使用。",
-          "rerankOffHint": "无需模型"
+          "rerankOffHint": "无需模型",
+          "modeTitle": "当前模式",
+          "modeAuto": "自动（优先使用已安装模型）",
+          "downloadButton": "📖 模型安装说明",
+          "deleteButton": "删除缓存",
+          "updateButton": "检查更新",
+          "mirrorTitle": "下载镜像源",
+          "mirrorOfficial": "官方源",
+          "mirrorHf": "hf-mirror",
+          "note": "按钮暂为界面预留；后续会接入安装包可选模型、模型状态检测和文档导入检索。"
         },
         "saveStatus": "等待保存",
         "saveButton": "保存昔涟设置"
@@ -608,16 +663,20 @@
           "hint": "选择搜索源后填入对应 Key。MiniMax 需先安装 uvx（Python）。"
         },
         "email": {
-          "title": "邮件发送",
-          "desc": "通过 SMTP 发送邮件，可带附件。需填写邮箱 SMTP 授权码（非登录密码）。",
+          "title": "邮件发送与收信",
+          "desc": "通过 SMTP 发送邮件（可带附件），通过 IMAP 查看与阅读收件箱。收信与发信共用邮箱账号与授权码。",
           "smtpHost": "SMTP 主机",
           "smtpPort": "端口",
           "smtpSecure": "使用 SSL/TLS",
           "smtpSecureHint": "465 端口通常勾选，587 通常不勾",
-          "smtpUser": "发件邮箱",
-          "smtpPass": "SMTP 授权码",
+          "smtpUser": "邮箱账号",
+          "smtpPass": "授权码",
           "fromName": "发件人名称（可选）",
-          "hint": "QQ邮箱 → 设置 → 账户 → 开启 SMTP → 获取授权码；163/Gmail 同理。"
+          "imapHost": "IMAP 主机（收信）",
+          "imapPort": "IMAP 端口",
+          "imapSecure": "IMAP 使用 SSL/TLS",
+          "imapSecureHint": "993 端口通常勾选，143 通常不勾",
+          "hint": "QQ邮箱 → 设置 → 账户 → 开启 SMTP/IMAP → 获取授权码；收信与发信共用邮箱账号与授权码。"
         },
         "file": {
           "title": "本地文件",
@@ -1060,6 +1119,11 @@
       "deleteTitle": "删除导入知识",
       "deleteMessage": "确定删除导入知识？\n\n文件：\n《{{fileName}}》\n\n删除后不可恢复，如需使用请重新导入。",
       "deleteConfirm": "删除"
+    },
+    "chatHistory": {
+      "clearConfirm": "清空所有聊天会话？\\n此操作会删除全部历史对话，无法恢复。",
+      "clearOk": "所有聊天会话已清空",
+      "clearFailed": "清空失败，请查看终端日志"
     },
     "prompt": {
       "openFailed": "打开 Prompt 文件失败",

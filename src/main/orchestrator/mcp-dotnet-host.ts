@@ -10,6 +10,7 @@
  * （保持 effectKind 解析等业务规则单点维护）。
  */
 import { spawn, type ChildProcess } from "child_process";
+import { trackChildProcess } from "../child-processes";
 import * as fs from "fs";
 import * as readline from "readline";
 import { resolveNativeWindowsExe } from "../windows/native-windows-host";
@@ -78,6 +79,7 @@ class McpDotnetHost {
         windowsHide: true,
       });
       this.proc = child;
+      trackChildProcess(child, "cyrene-native --mcp-host");
       this.exited = false;
       this.started = true;
 

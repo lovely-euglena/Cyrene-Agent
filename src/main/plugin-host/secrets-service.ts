@@ -6,6 +6,8 @@ import { pluginHostError } from "./errors";
 
 /** 与普通插件存储一致的 key 约束，先于文件名哈希校验。 */
 const KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+/** 单个密钥值的上限（明文 UTF-8 字节）：密钥用于凭证，不是数据存储，防无限增长。 */
+const MAX_SECRET_VALUE_BYTES = 256 * 1024;
 
 /** Electron safeStorage 的最小接口；宿主装配时注入真实现，测试注入假件。 */
 export interface SafeStorageLike {
@@ -72,6 +74,12 @@ export function createPluginSecretsService(options: PluginSecretsServiceOptions)
       assertKey(key);
       if (typeof value !== "string") {
         throw pluginHostError("E_INVALID_ARGUMENT", "密钥值必须是字符串");
+      }
+      if (Buffer.byteLength(value, "utf8") > MAX_SECRET_VALUE_BYTES) {
+        throw pluginHostError(
+          "E_INVALID_ARGUMENT",
+          `密钥值超过上限（${MAX_SECRET_VALUE_BYTES / 1024} KiB）`,
+        );
       }
       // 安全存储不可用时直接失败，不落任何弱保护文件。
       if (!storage.isEncryptionAvailable()) {

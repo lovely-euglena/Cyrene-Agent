@@ -19,7 +19,10 @@ import type { RuntimeStateService } from "../orchestrator/runtime-state-service"
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus } from "../rag/reranker";
 import { switchEmbeddingModel } from "../rag";
+import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
+import * as os from "os";
 import { testVendorConnection } from "../orchestrator/vendors/test-connection";
+import { testVisionConnection } from "./vision-test";
 import type { VendorConfig } from "../orchestrator/vendors";
 import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
 import type { ModelSettings } from "./model-settings";
@@ -52,9 +55,6 @@ function getCustomFontDisplayName(filePath: string): string {
     path.basename(filePath, path.extname(filePath)).replace(/[-_]+/g, " ").trim().slice(0, 80) || "自定义字体"
   );
 }
-
-const VISION_TEST_IMAGE_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJ0lEQVR42u3NsQkAAAjAsP7/tF7hIASyp6lTCQQCgUAgEAgEgi/BAjLD/C5w/SM9AAAAAElFTkSuQmCC";
 
 export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   const ipc = deps.ipc ?? createIpcScope();
@@ -259,34 +259,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => testVendorConnection(cfg));
 
-  /**
-   * 测试视觉模型连通性。
-   * 用一张 32x32 纯红 PNG（约 100 字节 base64）做测试图——纯色位图所有视觉模型都能识别，
-   * 比 SVG 兼容性好（SVG 是矢量，部分模型不支持）。
-   * 32x32 是折中：足够小保持 payload 轻，又满足千问等厂商对图片长宽 > 10 像素的限制。
-   * 验连通性（HTTP 2xx + 有内容返回）而非对答案——模型可能只说"一张红色图片"也算成功。
-   */
-  ipc.handle(
-    IPC.SETTINGS_TEST_VISION,
-    async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) => {
-      const start = Date.now();
-      console.log("[Cyrene] test vision: model=" + cfg.model + " url=" + cfg.baseUrl);
-      try {
-        const { captionImage } = await import("../orchestrator/vision-captioner");
-        const result = await captionImage(
-          { base64: VISION_TEST_IMAGE_BASE64, mime: "image/png" },
-          "这张图是什么颜色？用一个词回答。",
-          { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, model: cfg.model },
-        );
-        const latency = Date.now() - start;
-        if (result.startsWith("[错误")) {
-          return { ok: false, latency, error: result };
-        }
-        return { ok: true, latency, sample: result.slice(0, 80) };
-      } catch (e) {
-        return { ok: false, latency: Date.now() - start, error: e instanceof Error ? e.message : String(e) };
-      }
-    },
+  // 视觉模型连通性测试（实现与 native 设置窗共用：settings/vision-test.ts）
+  ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) =>
+    testVisionConnection(cfg),
   );
 
   ipc.handle(IPC.EMBEDDING_SET_MODEL, async (_event, modelKey: string) => {
@@ -342,5 +317,51 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       runtimeSync: value === "llm" ? "llm" : value === "local" ? "local" : "off",
     });
     broadcastModelConfigChanged(preview);
+  });
+
+  ipc.handle(IPC.EMBEDDING_GET_STATUS, async () => {
+    const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
+    const models = {
+      bgem3: { dir: "Xenova\\bge-m3", onnx: "onnx\\model_quantized.onnx", name: "BGE-M3" },
+    };
+    const result: Record<string, { installed: boolean; sizeBytes: number }> = {};
+    for (const [key, m] of Object.entries(models)) {
+      const onnxPath = path.join(cacheDir, m.dir, m.onnx);
+      const installed = fs.existsSync(onnxPath);
+      let sizeBytes = 0;
+      if (installed) {
+        try { sizeBytes = fs.statSync(onnxPath).size; } catch {}
+      }
+      result[key] = { installed, sizeBytes };
+    }
+    return result;
+  });
+
+  ipc.handle(IPC.EMBEDDING_DOWNLOAD, async (_event, payload: unknown) => {
+    const p = payload as { model?: string; mirror?: string };
+    const model = p.model || "bgem3";
+    // 镜像源：调用方显式传参优先；否则用设置页偏好（ragDownloadMirror）
+    const mirror = p.mirror || getGeneralSettings().ragDownloadMirror || "official";
+    try {
+      // 注：EMBEDDING_PROGRESS 死信道已移除（renderer 侧无监听，ipc 契约对账拦截）；
+      // 进度 UI 接线后恢复发送端。
+      await downloadEmbeddingModel(model, mirror, () => {});
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: message };
+    }
+  });
+
+  ipc.handle(IPC.EMBEDDING_DELETE, async (_event, payload: unknown) => {
+    const p = payload as { model?: string };
+    const model = p.model || "bgem3";
+    try {
+      deleteEmbeddingModel(model);
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: message };
+    }
   });
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "../../../i18n";
 import skillIconUrl from "../../../assets/status-moods/陪伴中.png?url";
+import { useFrozenOrder } from "./frozen-order";
 import "./SkillModePanel.css";
 
 type SkillMode = "work" | "code" | "learn";
@@ -19,6 +20,8 @@ interface SkillCatalogItem {
 }
 
 type Overrides = Record<string, Partial<Record<SkillMode, boolean>>>;
+
+const getSkillId = (skill: SkillCatalogItem): string => skill.id;
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "work", label: "Work" },
@@ -135,29 +138,29 @@ export const SkillModePanel: React.FC = () => {
       ?.catch((err) => console.warn("[SkillModePanel] set override failed:", err));
   }, []);
 
+  // 冻结排序：进入面板 / 切 tab / 技能目录变化时按当时开关状态排一次；
+  // 面板内开关只改卡片状态、不重排（防止卡片跳位），下次进入或切 tab 时自然重排。
+  const skillOrderKey = `${tab}|${catalog.map(getSkillId).sort().join(",")}`;
+  const orderedSkills = useFrozenOrder(
+    catalog,
+    skillOrderKey,
+    getSkillId,
+    (skill) => (isVisibleForMode(skill, tab, overrides) ? 0 : 1),
+  );
+
   const visibleSkills = useMemo(() => {
     const kw = filter.trim().toLowerCase();
-    const candidates = catalog.filter((s) => {
-      if (source !== "all" && s.source !== source) return false;
-      return true;
-    });
+    const candidates = orderedSkills.filter((s) => source === "all" || s.source === source);
     // 展示全部启用技能：关掉的置灰保留在列表里，便于重新开启（与工具面板同口径）。
     const shown = candidates.filter((s) => s.enabled);
-    const searched = kw
-      ? shown.filter(
-          (s) =>
-            s.id.toLowerCase().includes(kw) ||
-            s.name.toLowerCase().includes(kw) ||
-            s.description.toLowerCase().includes(kw),
-        )
-      : shown;
-    return [...searched].sort((a, b) => {
-      const aOn = isVisibleForMode(a, tab, overrides);
-      const bOn = isVisibleForMode(b, tab, overrides);
-      if (aOn !== bOn) return aOn ? -1 : 1;
-      return a.id.localeCompare(b.id);
-    });
-  }, [catalog, overrides, filter, source, tab]);
+    if (!kw) return shown;
+    return shown.filter(
+      (s) =>
+        s.id.toLowerCase().includes(kw) ||
+        s.name.toLowerCase().includes(kw) ||
+        s.description.toLowerCase().includes(kw),
+    );
+  }, [orderedSkills, filter, source]);
 
   return (
     <div className="skill-panel">

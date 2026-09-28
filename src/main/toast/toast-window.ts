@@ -1,6 +1,8 @@
 import type { BrowserWindow } from "electron";
 import {
+  TOAST_IDLE_TEARDOWN_MS,
   TOAST_MAX_WORKAREA_RATIO,
+  TOAST_PENDING_SENDS_MAX,
   TOAST_WINDOW_WIDTH,
 } from "./types";
 
@@ -29,22 +31,100 @@ export interface ToastWindowDeps {
   getDisplayMatching(bounds: ToastBounds): { workArea: ToastDisplayWorkArea };
   /** 鼠标所在位置（electron screen.getCursorScreenPoint 的注入形式） */
   getCursorScreenPoint(): { x: number; y: number };
+  /**
+   * 队列清空后的窗口销毁延迟（毫秒）。
+   * - 缺省：TOAST_IDLE_TEARDOWN_MS（按需创建，空闲回收渲染进程）
+   * - null：常驻不销毁（CYRENE_LAZY_TOAST_WINDOW=0 的急切模式/排障）
+   */
+  idleTeardownMs?: number | null;
 }
 
 /**
- * toast 窗口控制器：定位（四级回退链）、高度协议、显示/隐藏。
- * 窗口常驻不销毁；队列空整窗 hide，非空时按内容高度贴显示器右下角 showInactive。
+ * toast 窗口控制器：定位（四级回退链）、高度协议、显示/隐藏、按需创建/回收。
+ *
+ * 生命周期（默认按需）：
+ *   - 首个 toast 到来时才创建 BrowserWindow 并加载渲染页（启动零常驻渲染进程）
+ *   - 页面 did-finish-load 前的事件入队保序（首条 toast 的推送与音效不丢；
+ *     页面就绪后渲染页还会经 TOAST_GET_ALL 拉权威状态兜底）
+ *   - 队列空 → 整窗 hide；超过 idleTeardownMs 无新 toast → destroy 回收
+ *   - 连续 toast 在存活期内复用同一窗口，不反复重建
+ *
+ * 急切模式（idleTeardownMs=null + preload()）：兼容旧行为——启动即建窗预热，
+ * 首次弹出零延迟，窗口常驻不销毁。
  */
 export function createToastWindowController(deps: ToastWindowDeps) {
+  const idleTeardownMs = deps.idleTeardownMs === undefined ? TOAST_IDLE_TEARDOWN_MS : deps.idleTeardownMs;
   let window: BrowserWindow | null = null;
   /** 聊天窗口最近一次的区域：窗口销毁后仍用该区域匹配显示器（toast 继续在那块屏幕弹出） */
   let lastChatBounds: ToastBounds | null = null;
   /** 渲染页最近上报的内容高度（高度协议） */
   let contentHeight = 0;
+  /** 渲染页是否已 did-finish-load（未就绪时 send 一律入队） */
+  let pageReady = false;
+  /** 页面就绪前的待投递事件（保序；上限 TOAST_PENDING_SENDS_MAX） */
+  const pendingSends: Array<{ channel: string; payload: unknown }> = [];
+  /** 队列清空后的销毁定时器 */
+  let idleTeardownTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelIdleTeardown(): void {
+    if (idleTeardownTimer !== null) {
+      clearTimeout(idleTeardownTimer);
+      idleTeardownTimer = null;
+    }
+  }
+
+  function scheduleIdleTeardown(): void {
+    if (idleTeardownMs === null || idleTeardownTimer !== null) return;
+    idleTeardownTimer = setTimeout(() => {
+      idleTeardownTimer = null;
+      destroyWindow();
+    }, idleTeardownMs);
+    if (typeof idleTeardownTimer.unref === "function") idleTeardownTimer.unref();
+  }
+
+  /** 回收窗口与页面级状态（contentHeight 归零：下一个窗口等自己的渲染页上报） */
+  function destroyWindow(): void {
+    const win = window;
+    window = null;
+    pageReady = false;
+    pendingSends.length = 0;
+    contentHeight = 0;
+    if (win && !win.isDestroyed()) {
+      win.destroy();
+    }
+  }
+
+  function sendNow(channel: string, payload: unknown): void {
+    const win = window;
+    if (!win || win.isDestroyed()) return;
+    try {
+      win.webContents.send(channel, payload);
+    } catch {
+      // 页面未就绪/正在销毁：忽略本次投递
+    }
+  }
+
+  /** 页面就绪：按序补投队列（首个 toast 的 push/音效不丢） */
+  function flushPendingSends(): void {
+    pageReady = true;
+    const queued = pendingSends.splice(0, pendingSends.length);
+    for (const item of queued) sendNow(item.channel, item.payload);
+  }
 
   function ensureWindow(): BrowserWindow {
+    cancelIdleTeardown();
     if (!window || window.isDestroyed()) {
       window = deps.createWindow();
+      pageReady = false;
+      const webContents = window.webContents as unknown as {
+        once?: (event: string, listener: () => void) => void;
+      } | undefined;
+      if (webContents && typeof webContents.once === "function") {
+        webContents.once("did-finish-load", flushPendingSends);
+      } else {
+        // 无 webContents 事件（测试替身等）：按就绪处理，直接投递
+        pageReady = true;
+      }
     }
     return window;
   }
@@ -114,23 +194,31 @@ export function createToastWindowController(deps: ToastWindowDeps) {
           // showInactive：绝不抢焦点，避免打断用户正在输入
           win.showInactive();
         }
-      } else if (window && !window.isDestroyed() && window.isVisible()) {
-        window.hide();
+      } else {
+        if (window && !window.isDestroyed() && window.isVisible()) {
+          window.hide();
+        }
+        if (window && !window.isDestroyed()) {
+          scheduleIdleTeardown();
+        }
       }
     },
 
-    /** 向 toast 渲染页发送事件（页面未就绪时静默丢弃，主进程状态仍是权威） */
+    /**
+     * 向 toast 渲染页发送事件。页面未就绪（首次创建/重建加载中）时入队，
+     * did-finish-load 后按序补投——首个 toast 的推送与音效不丢；
+     * 页面未就绪期间被丢弃的极端情况由渲染页 TOAST_GET_ALL 兜底。
+     */
     send(channel: string, payload: unknown): void {
-      const win = window;
-      if (!win || win.isDestroyed()) return;
-      try {
-        win.webContents.send(channel, payload);
-      } catch {
-        // 页面未就绪/正在销毁：忽略本次投递
+      if (!window || window.isDestroyed() || !pageReady) {
+        pendingSends.push({ channel, payload });
+        if (pendingSends.length > TOAST_PENDING_SENDS_MAX) pendingSends.shift();
+        return;
       }
+      sendNow(channel, payload);
     },
 
-    /** 预创建窗口并隐藏加载页面（启动期调用，首次弹出零延迟） */
+    /** 预创建窗口并隐藏加载页面（急切模式调用，首次弹出零延迟） */
     preload(): void {
       ensureWindow();
     },
@@ -140,6 +228,11 @@ export function createToastWindowController(deps: ToastWindowDeps) {
       return !!window && !window.isDestroyed() && window.isVisible();
     },
 
+    /** 窗口是否已物化（按需模式下启动后为 false，供测试与状态查询） */
+    isMaterialized(): boolean {
+      return !!window && !window.isDestroyed();
+    },
+
     /** IPC sender 校验：只有 toast 窗口的 webContents 才被允许上报点击/关闭/高度 */
     owns(webContents: { id: number }): boolean {
       const win = window;
@@ -147,10 +240,8 @@ export function createToastWindowController(deps: ToastWindowDeps) {
     },
 
     dispose(): void {
-      if (window && !window.isDestroyed()) {
-        window.destroy();
-      }
-      window = null;
+      cancelIdleTeardown();
+      destroyWindow();
     },
   };
 }

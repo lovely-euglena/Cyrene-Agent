@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CyreneVoice")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7a187dc8ad8dec3b310d8dce4d31ec58b74414aa")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+642c0ddb07f3cf7420269e5af8209af3e07d0b55")]
 [assembly: System.Reflection.AssemblyProductAttribute("CyreneVoice")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CyreneVoice")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

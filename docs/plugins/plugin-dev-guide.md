@@ -203,7 +203,11 @@ ctx.registerTool({
 - **id 必须以 `<插件id>_` 开头**（如插件 id 是 `my-plugin`，工具就得叫 `my-plugin_xxx`），否则启用直接报错——这是防抢名机制
 - **description 写给 AI 看**，写清楚“什么场景该用这个工具”，直接决定 AI 用不用它
 - `execute` 返回**字符串**（或可序列化对象），这段文字会进入对话上下文
-- 常用风险标注：只读查询 `risk: "safe"` + `effectKind: "read"`；有副作用（写文件、发消息）用 `effectKind: "write"`
+- **必须显式声明 `risk`**：`safe | fs-read | fs-write | shell | network | input-control`。
+  只读查询用 `safe`，写文件用 `fs-write`，执行命令用 `shell`，联网用 `network`。
+  漏写或拼错会被按「未声明」处理：只读/指定目录档位直接拒绝、每次审批档位弹审批；
+  非法值会让注册报错——这是审批不被绕过的底线
+- 常用搭配：只读查询 `risk: "safe"` + `effectKind: "read"`；有副作用（写文件、发消息）用 `effectKind: "mutation"`
 
 ---
 
@@ -334,6 +338,8 @@ const config = ctx.storage.get("config");                        // 读
 
 每个 key 是一个 JSON 文件，存在 `plugin-data/<你的插件id>/` 下，**卸载重装都在**（卸载只删程序目录）。
 
+单插件默认 **64 MiB 软配额**（插件管理窗「设置」可调；超限写入会抛错，先清理旧 key 或调大配额）。管理窗插件列表可查看每个插件的实际占用（存储目录大小；.NET 插件另有进程内存）。
+
 ---
 
 ## 事件订阅与发布
@@ -353,6 +359,10 @@ ctx.events.on("plugin:weather:updated", (payload) => {
   ctx.log("天气已更新", payload);
 });
 ```
+
+> 注意：插件事件是**公开总线**——任何插件都能按完整事件名订阅（用于插件间协作），
+> 因此不要在事件负载里放密钥、令牌或其他插件不应共享的数据。发布方无法伪造
+> `host:*` 或其他插件的事件（前缀由框架生成）。
 
 发布自己的事件时只写短名称，Cyrene 会自动添加当前插件 id，防止伪造宿主或其他插件事件：
 

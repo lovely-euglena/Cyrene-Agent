@@ -47,3 +47,4 @@ hiddenFromUi: true
 | 边界/不知道 | 伙伴问未来、要答案 | `references/boundary.md` |
 | 表达感谢 | 伙伴说谢谢 | `references/gratitude.md` |
 | 表达关心 | 关心伙伴状态 | `references/concern.md` |
+| 日常闲聊 | 随口聊天、没有明确情绪 | 无专属样本，仅注入通用语气规则 |

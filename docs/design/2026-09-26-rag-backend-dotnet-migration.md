@@ -1,0 +1,211 @@
+# RAG 后端迁移 .NET（Phase A：reranker 下沉 + 帧协议加固）
+
+> 日期：2026-09-26 · 状态：**Phase A 已落地**（rerank op + 协议加固 + 数值对账 0 误差）
+> 关联：`docs/design/2026-09-26-agent-orchestration-plan-b.md`（同类"机制下沉、边界保留"模式）
+> 代码：`dotnet/embedding-sidecar/`（RAG Host 雏形）、`src/main/rag/`
+
+## 1. 决策与边界
+
+RAG 后端（嵌入推理 / 重排 / 向量库 / 混合检索 / 记忆操作 / 文档导入）**分阶段**迁移到
+.NET sidecar 进程。与 Plan B 相同的边界原则：
+
+1. **密钥 / 权限审批 / 工具执行 / IPC 永不离开 TS**；
+2. .NET 只做**计算与存储**，进程由 TS spawn，stdio 帧协议通信；
+3. 数据文件格式沿用 `<userData>/rag-data/*.json`，.NET 直接读写同一 schema（零数据迁移，可随时切回 TS 实现对照）；
+4. 每阶段必须"逐位/逐条对账 + 可回退"，不做一次性替换。
+
+## 2. 阶段计划
+
+| 阶段 | 内容 | 验收标准 | 状态 |
+|---|---|---|---|
+| **A** | reranker 下沉（原生 logits）+ 帧协议加固（修 P0 失步 + C# 合并写） | `verify-rerank` 0 误差；协议冒烟全绿；启动 0 次 `protocol failure` | ✅ 本提交 |
+| **B** | 向量库（JSON schema 兼容 + IVF）+ 混合检索（BM25 + 融合 0.7/0.3），`search` op + TS 委托 | 生产接入冒烟全绿；分词差异质量基线：top1 6/6、topK 重叠 100%、顺序 5/6 | ✅ 本提交 |
+| **C** | 文档导入管线下沉（分块/embedding/落盘/缓存）+ 跨进程读一致性；记忆写入评估为"embedding 已在下沉路径，暂不迁移" | 导入端到端冒烟全绿（进度/缓存互认/零重复）；vitest 330/330 | ✅ 本提交（文档导入部分） |
+| D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 死代码删除；打包版 sidecar 正常加载模型 | 待开始 |
+
+## 3. Phase A 协议扩展（Program.cs ↔ embedding-sidecar.ts）
+
+沿用既有帧格式（`[4B LE 头长][JSON][可选 float32 段]`），新增 op：
+
+| 方向 | 帧 | 说明 |
+|---|---|---|
+| 请求 | `{id, op:"rerank", query, documents:[...], rerankerDir}` | rerankerDir 为**完整模型目录**（TS 侧 `getProjectModelDir` 解析），.NET 惰性加载 + 目录变更重载 |
+| 响应 | `{id, ok:true, count:N, dim:1}` + `N×float32` | **原始 logits**（越大越相关），不做 softmax |
+
+加固点：
+
+1. **客户端帧解码器**（`src/main/rag/sidecar-frame-decoder.ts`，纯状态机可单测）：
+   4B 长度前缀在 JSON 头完整到达前**不得消费**。历史 P0：头被分片时前缀丢失 →
+   下一轮把 `{"id` 读成长度（`bad frame length 1684611707` = `0x6469227B`，本次实锤）→ 永久失步。
+2. **C# 响应/通知写合并**：长度前缀 + JSON 头合并为一次 `Write`（二进制段仍逐段零拷贝），
+   消除无缓冲 stdout 上最常见的分片点。
+
+## 4. Phase A 交付物
+
+| 文件 | 变更 |
+|---|---|
+| `dotnet/embedding-sidecar/RerankerEngine.cs` | 新增：bge-reranker-base 句对打分（逐条前向，与 JS batch=1 逐位一致） |
+| `dotnet/embedding-sidecar/HfUnigramTokenizer.cs` | 新增 `EncodePairToIds`（`<s> A </s></s> B </s>`，右截断语义对齐 transformers.js v2） |
+| `dotnet/embedding-sidecar/Program.cs` | rerank op、`verify-rerank` 命令、写合并、RequestHeader 扩展 |
+| `src/main/rag/sidecar-frame-decoder.ts` + `.test.ts` | 新增：可单测帧解码器（11 用例，含分片回归） |
+| `src/main/rag/embedding-sidecar.ts` | 改用解码器；`request()` 公共路径；新增 `rerankScores()` |
+| `src/main/rag/reranker.ts` | 引擎优先级：.NET sidecar → transformers.js；修复历史调用 bug（见 §6） |
+| `src/main/rag/model-status.ts` | 新增 `getProjectModelDir()`（具体模型目录，供 .NET 传参） |
+| `scripts/diagnostics/reranker-dump-verify.mjs` | JS 金样生成（pairs/tokenIds/logits） |
+| `scripts/diagnostics/reranker-sidecar-smoke.mjs` | rerank op 协议冒烟 + 金样对账 |
+
+## 5. 验证（实测）
+
+```bash
+dotnet build dotnet/embedding-sidecar/CyreneEmbedSidecar.csproj -c Debug   # 0 警告 0 错误
+node scripts/diagnostics/reranker-dump-verify.mjs                         # 金样（4 对含 512 截断）
+cyrene-embed.exe verify-rerank models/bge-reranker-base ...               # 608/608 tokens；4/4 |diff|=0
+node scripts/diagnostics/reranker-sidecar-smoke.mjs                       # 9/9 PASS（含负例与同步性）
+npx vitest run src/main/rag                                               # 120/120（含解码器回归 11）
+npx tsc -p tsconfig.main.json --noEmit                                    # clean
+```
+
+## 6. 顺带修复的两个实测 bug
+
+1. **sidecar 协议失步（P0）**：客户端 `take(headerLen)` 在头分片时丢前缀；触发源是
+   C# 分段写 + Windows 管道读时机。修复见 §3，回归用例锁死。
+2. **reranker 静默降级**：原实现把 `[[query, doc], ...]` 直接喂 text-classification
+   pipeline —— transformers.js v2 tokenizer 不支持元组（`text.split is not a function`，
+   被 retriever 捕获后静默回退）；且 `num_labels=1` 时 pipeline 的 softmax 让分数恒为 1。
+   现改走 tokenizer `text_pair` + 原始 logits（.NET 与 JS 兜底同一语义）。
+
+## 7. 风险与注意
+
+- **截断语义**：transformers.js v2 对超长句对做"拼接后右截断"（不做 HF longest_first /
+  特殊 token 保留）；Phase A 按实测行为对齐，升级 transformers.js 需重验 `verify-rerank`。
+- **多文档请求**：rerank 逐条前向（int8 动态量化对 batch 组合敏感），批量吞吐靠调用侧并发/分批，
+  不引入 batch 前向。
+- **Phase B 前置**：向量库 JSON schema、IVF 构建参数（k-means++ / nprobe）、BM25 分词器
+  （`@node-rs/jieba` 是 native 绑定，.NET 侧需选型 JiebaNet 或自带词典）需先做数据/行为快照。
+
+## 8. Phase B 落地（向量库 + 混合检索，2026-09-26 更新）
+
+**协议**（`search` op，Program.cs ↔ embedding-sidecar.ts）：
+
+| 方向 | 帧 |
+|---|---|
+| 请求 | `{id, op:"search", ragDataDir, query, source?, topK?, importIds?, allowedEntryIds?, customWords?, vectorWeight?, bm25Weight?, updateRecall?}` |
+| 响应 | `{id, ok, count, dim, results:[{id,text,source,weight,createdAt,lastRecalledAt,metadata,score}]}` + `count×dim` float32 embedding 段 |
+
+**关键决策与事实**：
+
+1. **分词方案 B（JiebaNet 自闭环）**——基于质量回归数据拍板：
+   - 切分一致率（词级）61.22%（jieba-rs 与 JiebaNet 词典/算法不同，无法精确对齐）；
+   - 检索质量回归（12 docs / 6 查询）：top1 一致 6/6、topK 重叠 100%、完整顺序 5/6
+     （唯一差异为 0.002 差距平局互换）；复现：`cyrene-embed verify-search …`；
+   - 现网 tag 全为 `"x"`（jieba-rs POS 退化）→ 名词加权/虚词降权此前从未生效；
+     JiebaNet 真实词性让该逻辑首次生效（差异已计入回归）。
+2. **召回回写**：由 .NET 落盘（`weight+0.05`、`lastRecalledAt`）；TS 侧搜索不再触碰
+   本地副本；sidecar 失败回退本地前调用 `store.reload()` 同步磁盘状态。
+3. **存储兼容**：`memory-store.json` 同 schema 读写（double 精度、字段序、`metadata`
+   null 忽略写出）；RagStore 按目录缓存 + mtime 自动重载外部（TS 进程）改写。
+4. **IVF**：仅无 source 且 ≥2 条时启用（k-means++ 随机初始化，与 TS 同为近似路径，
+   跨引擎不做精确对账；有 source 走全量扫描，是精确对账路径）。
+5. **单测隔离**：vitest 全局 `CYRENE_EMBED_SIDECAR=0`，避免单测拉起真实 sidecar 进程。
+
+**遗留优化项**：BM25 每次全库分词（JiebaNet），大批量库需要 entry 级 token 缓存；
+分词器专项（移植 jieba-rs，或基于质量回归评审后长期保留方案 B）列入 Phase D 前评估。
+
+## 9. Phase C 落地（文档导入下沉 + 跨进程读一致性，2026-09-26 更新）
+
+**范围决策**：原计划"记忆操作（L0/L1/L2）+ 文档导入管线"中，记忆写入路径的 embedding
+已由 Phase A/B 承接（`store.add` → `provider.embed` → sidecar embed op），写入逻辑本身
+是薄文件操作，且调用方多为同步 API（memory-compressor / obsidian-importer /
+memory-actions）——迁移收益小、调用面改动大，**本轮暂不迁移**。本轮聚焦：
+文档导入管线下沉 + 跨进程读一致性。
+
+**交付**：
+
+1. **文档导入全部下沉 .NET**（`DocImporter`）：
+   - 读取 / 扩展名与二进制路由 / 3 万字符阈值 / 文本解码（语义与 worker 一致）
+   - `TextChunker`（chunk.ts 同构；`verify-chunks` 6 样本 24/24 块全等）
+   - 批量 embedding（16/批）→ 向量库批量落盘（id 规则 / metadata 与 TS 同构）
+   - `document-cache.json` 同 schema；缓存 identity JSON 与 TS 逐字节一致
+     （字段序 / endpoint 省略），**缓存 key 跨引擎互认**（冒烟实测）
+   - 小文件返回文本由宿主按附件处理
+2. **协议**：`doc-import` / `doc-import-cancel` op；进度 `op=progress` 通知帧
+   （客户端按 `forId` 路由到导入回调）；导入在后台任务执行，期间
+   embed / rerank / search 不被阻塞（引擎串行锁 + 库内部锁 + stdout 帧写锁）
+3. **TS 侧**：`document-import-sidecar.ts` 队列适配（进度/取消/结果映射）；
+   `default-dependencies` 按 `isSidecarEnabled()` 选择 runner（worker 路径保留为回退）
+4. **跨进程读一致性**：`JsonVectorStore.ensureFresh()`（mtime/size 感知，无变化仅一次
+   stat）接入同步读路径（entriesBySource / stats / hasImported）——.NET 写入
+   （召回回写、导入落盘）后 TS 读模型自动跟新，且保持原同步 API 签名
+
+**验证**：导入冒烟（36.7k 字 → 86 块；进度流 `reading→chunking→embedding→done`；
+缓存 key 与 TS 算法逐字节互认；二次导入缓存命中零重复；小文件透传）；
+vitest rag + memory + application 330/330。
+
+**遗留**：worker_thread 导入路径保留（sidecar 禁用时回退）；BM25 全库分词优化项照旧；
+jieba-rs 移植评估照旧（Phase D 前）。
+
+## 10. 第二乱 Bug 审计：双写端原子性与竞态（2026-09-26 更新）
+
+**背景**：端到端自测（`rag-e2e-smoke.mjs`，14 项）与代码审计发现 TS / .NET 双写
+`memory-store.json` 的一致性问题，均已修复并固化回归：
+
+1. **陈旧副本整文件覆盖**（已修，commit cd7204a5）：
+   - `retrieve()` 空库短路用陈旧本地副本 → .NET 导入后 TS 检索返回 `[]`；
+     修复：空库判断前 `ensureFresh()`
+   - TS 本地写（add/addUnique/addBatch/addPreparedBatch/prune/delete*）直接刷盘
+     覆盖 .NET 条目；修复：写前 `ensureFresh()`
+   - .NET `allowedEntryIds=[]` 语义对齐 TS（空集=全排除；`importIds=[]`=不过滤）
+2. **原子性与快照竞态**（已修，commit 04e6e643）：
+   - 双端 save 改「tmp + rename/move」原子写（并发读不再可能读到半截 JSON）
+   - 解析失败（load/Reload catch）重置磁盘快照，强制下次重试，
+     避免"陈旧空副本被记为最新"后反向覆盖
+   - TS save 增加 Windows 共享冲突（.NET 读取占用）有界重试 + 直写兜底
+   - `add()` / `search()` 在 embed 完成后基于最新盘面回写（跨进程读写窗口收窄到
+     rename 级）；.NET `AddPreparedBatch` / `HasImportedDocumentChunks` / `Search`
+     前 `RefreshIfChanged()`，召回回写按 id 重定位
+   - 外部删库：.NET `RefreshIfChanged` 同步清空内存副本
+3. **回归**：`vectorstore-crossproc.test.ts` 4 例（embed 期间外部写入不丢 /
+   召回回写不丢外部写入 / 解析失败快照重置 / 原子写无 tmp 残留）
+
+**验证**：vitest rag+memory 269/269；RAG e2e 14/14；全量测试 4028/4029
+（唯一失败为 Git Bash 环境用例，基线一致）。
+
+**已知取舍**：跨进程仍为 last-writer-wins（无跨进程文件锁）；双写窗口已收窄到
+毫秒级（写前 refresh + 原子 rename），对本应用（桌面单用户、写入低频）足够。
+若未来出现多进程高频写同一库，再引入锁文件协议。
+
+## 11. Phase D：向量库 SQLite 落地（2026-09-26 更新）
+
+**结论**：按评估方案（`2026-09-26-vectorstore-sqlite-evaluation.md`）实施，采用
+**方案 B（SQLite 持久层 + 保留内存 IVF/BM25）**，而非方案 A 的 sqlite-vec/FTS5
+（扩展装载/打包风险留作后续可选增强）；架构上采用**双端直连 SQLite（WAL）**
+而非"sidecar 单写者"——TS 侧存在同步 API（`getEntriesBySource` / `delete*` /
+`stats`）与同步写路径（memory-actions），单写者路由改动面过大，WAL + rev 已能
+覆盖并发；实测双进程读写无丢失。
+
+**实现**：
+
+1. **.NET `SqliteRagStore`**（memory.db，默认）：WAL + busy_timeout；
+   `rag_meta.rev` 版本号；行级写（INSERT/UPDATE recall/DELETE/REPLACE）+ 事务；
+   本地写后对比 pre/post rev，外部并发提交时整体重载；`IRagStore` 抽象 +
+   `RagStore`（JSON）保留为 `CYRENE_RAG_STORE=json` 回退；IVF 提取 `Ivf.cs` 共用；
+   `verify-sqlite` 自检 6 项（迁移/检索对账/双连接 rev/召回可见/软合并/blob 往返）
+2. **TS `SqliteVectorStore`**：`vectorstore.ts` 重构为存储后端抽象
+   （`JsonStoreBackend` / `SqliteStoreBackend`）+ `VectorStore` 基类（检索逻辑单点）；
+   `node:sqlite` 经 `process.getBuiltinModule` 装载（Electron 43 / Node 24 内置，
+   无需原生模块编译）；驱动不可用自动回退 JSON，并以 `storeMode` 透传给 sidecar
+   保证全链路同一种存储
+3. **兼容/迁移**：首次打开自动迁移 `memory-store.json`（幂等，保留原文件）；
+   JSON 更新更晚时软合并缺失 id（INSERT OR IGNORE，不回灌覆盖）；`clearAll` 时
+   清理迁移源；索引元数据随迁
+4. **外围适配**：memory panel 改走 RAG 门面（不再直接读 JSON 文件）；
+   对账备份支持 SQLite（`VACUUM INTO` 一致快照）
+
+**验证**：`verify-sqlite` 6/6；TS SQLite 测试 8 例；RAG e2e 15/15（含
+`memory.db` 生效断言与直读 SQLite 的召回回写校验）；vitest rag+memory+application
+48 文件全绿。
+
+**遗留（后续可选）**：sqlite-vec（KNN 扩展）/ FTS5（BM25 原生打分）作为
+性能/质量增强另行评估；`document-cache.json` 未入库；BM25 token 缓存仍是
+待办（SQLite 入库后实现成本更低）；跨存储模式（sqlite ↔ json）混跑仅保证
+单向软合并（JSON 新增条目可被合并，删除不同步）。

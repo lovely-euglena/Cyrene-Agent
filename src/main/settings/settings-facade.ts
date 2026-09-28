@@ -12,7 +12,7 @@ import {
 } from "../../shared/style-sampling";
 import { normalizeUiTheme } from "../../shared/ui-theme";
 import { normalizeUiIcon } from "../../shared/ui-icon";
-import { normalizeChatAppearance } from "../../shared/chat-appearance";
+import { clampFiniteNumber, normalizeChatAppearance } from "../../shared/chat-appearance";
 import {
   normalizeChatSocialContextEnabled,
   normalizeDefaultChatMode,
@@ -25,6 +25,7 @@ import { normalizeWindowVisibilitySettings } from "../window-visibility-settings
 import { normalizeCitaSettings } from "../cita/settings";
 import { getGeneralSettingsPath } from "../settings-store";
 import type { GeneralSettings } from "./general-settings";
+import { MAX_PLUGIN_MEMORY_LIMIT_MB, MAX_PLUGIN_STORAGE_QUOTA_MB } from "../../plugins/limits";
 import { DEFAULT_MOSSLAND_TTS_MODEL } from "../../shared/tts-types";
 import type { ToolModeOverrides } from "../orchestrator/tools/registry/tool-registry";
 import type { ConversationMode } from "../../shared/chat-types";
@@ -36,6 +37,7 @@ import {
 } from "./launch-at-login";
 
 const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
+  assistantBubbleEnabled: false,
   plugins: {},
   pluginRuntimeEnabled: false,
   rememberWindowState: true,
@@ -49,6 +51,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   cyreneMomentsReactionsEnabled: true,
   momentsCharacterReactionsEnabled: true,
   momentsLiveliness: "quiet",
+  chatParaSpacing: 0.5,
   petAlwaysOnTop: true,
   petVisible: true,
   petZoom: 1,
@@ -115,6 +118,9 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   emailSmtpUser: "",
   emailSmtpPass: "",
   emailFromName: "",
+  emailImapHost: "",
+  emailImapPort: 993,
+  emailImapSecure: true,
   asrEngine: "off",
   asrAliyunAppKey: "",
   asrAliyunAccessKeyId: "",
@@ -123,12 +129,17 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   asrVadSilenceMs: 1000,
   asrVadThreshold: 0.01,
   asrShowTranscript: false,
+  ragDownloadMirror: "official",
   screenshotHotkey: "Alt+Shift+S",
+  screenshotBackend: "builtin",
+  snipastePath: "",
   chatLineHeight: 1.75,
   toolModeOverrides: {},
   chatToolsEnabled: false,
   skillModeOverrides: {},
   lspServerOverrides: [],
+  gitCommitAuthorName: "Cyrene",
+  gitCommitAuthorEmail: "",
 };
 
 function normalizeMosslandTtsModel(value: unknown): string {
@@ -179,12 +190,29 @@ export function normalizeGeneralSettings(
       ? Math.max(1, Math.min(8, Math.trunc(numberValue)))
       : DEFAULT_GENERAL_SETTINGS.maxParallelToolCalls;
   };
+  const normalizePluginLimit = (value: unknown, max: number): number | undefined => {
+    if (value === undefined || value === null || value === "") return undefined;
+    const numberValue = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(numberValue)
+      ? Math.max(0, Math.min(max, Math.round(numberValue)))
+      : undefined;
+  };
+  const normalizeGitCommitAuthorName = (value: unknown): string => {
+    const text = typeof value === "string" ? value.replace(/[\r\n]/g, " ").trim() : "";
+    return text || DEFAULT_GENERAL_SETTINGS.gitCommitAuthorName;
+  };
+  const normalizeGitCommitAuthorEmail = (value: unknown): string => {
+    const text = typeof value === "string" ? value.replace(/[\r\n]/g, "").trim() : "";
+    return text.slice(0, 254);
+  };
   return {
     plugins: Object.fromEntries(
       Object.entries(input?.plugins ?? {}).filter(
         (entry): entry is [string, boolean] => typeof entry[1] === "boolean",
       ),
     ),
+    pluginStorageQuotaMb: normalizePluginLimit(input?.pluginStorageQuotaMb, MAX_PLUGIN_STORAGE_QUOTA_MB),
+    pluginMemoryLimitMb: normalizePluginLimit(input?.pluginMemoryLimitMb, MAX_PLUGIN_MEMORY_LIMIT_MB),
     maxParallelToolCalls: normalizeMaxParallelToolCalls(input?.maxParallelToolCalls),
     citaEnabled: cita.enabled,
     citaSemanticEngine: cita.semanticEngine,
@@ -211,6 +239,13 @@ export function normalizeGeneralSettings(
     petAlwaysOnTop: input?.petAlwaysOnTop === undefined
       ? DEFAULT_GENERAL_SETTINGS.petAlwaysOnTop
       : Boolean(input.petAlwaysOnTop),
+    // 聊天气泡段落间距（em）：有限数值 clamp 0.2~1.2，非法回落默认
+    chatParaSpacing: clampFiniteNumber(
+      input?.chatParaSpacing,
+      0.2,
+      1.2,
+      DEFAULT_GENERAL_SETTINGS.chatParaSpacing,
+    ),
     petVisible: input?.petVisible === undefined
       ? DEFAULT_GENERAL_SETTINGS.petVisible
       : Boolean(input.petVisible),
@@ -294,6 +329,11 @@ export function normalizeGeneralSettings(
     emailSmtpUser: typeof input?.emailSmtpUser === "string" ? input.emailSmtpUser : "",
     emailSmtpPass: typeof input?.emailSmtpPass === "string" ? input.emailSmtpPass : "",
     emailFromName: typeof input?.emailFromName === "string" ? input.emailFromName : "",
+    emailImapHost: typeof input?.emailImapHost === "string" ? input.emailImapHost : "",
+    emailImapPort: clampPort(input?.emailImapPort, DEFAULT_GENERAL_SETTINGS.emailImapPort),
+    emailImapSecure: input?.emailImapSecure === undefined
+      ? (clampPort(input?.emailImapPort, DEFAULT_GENERAL_SETTINGS.emailImapPort) === 993)
+      : Boolean(input.emailImapSecure),
     asrEngine: ["off", "aliyun", "mossland", "local"].includes(String(input?.asrEngine))
       ? (input!.asrEngine as "off" | "aliyun" | "mossland" | "local")
       : "off",
@@ -310,9 +350,12 @@ export function normalizeGeneralSettings(
       ? Math.max(0.001, Math.min(0.5, Number(input.asrVadThreshold)))
       : DEFAULT_GENERAL_SETTINGS.asrVadThreshold,
     asrShowTranscript: Boolean(input?.asrShowTranscript),
+    ragDownloadMirror: input?.ragDownloadMirror === "hf-mirror" ? "hf-mirror" : "official",
     screenshotHotkey: typeof input?.screenshotHotkey === "string" && input.screenshotHotkey.trim()
       ? input.screenshotHotkey.trim()
       : DEFAULT_GENERAL_SETTINGS.screenshotHotkey,
+    screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
+    snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
     ttsGptsovitsBaseUrl: typeof input?.ttsGptsovitsBaseUrl === "string"
       ? input.ttsGptsovitsBaseUrl
       : DEFAULT_GENERAL_SETTINGS.ttsGptsovitsBaseUrl,
@@ -342,6 +385,8 @@ export function normalizeGeneralSettings(
     chatToolsEnabled: Boolean(input?.chatToolsEnabled),
     skillModeOverrides: normalizeSkillModeOverrides(input?.skillModeOverrides),
     lspServerOverrides: normalizeLspServerOverrides(input?.lspServerOverrides),
+    gitCommitAuthorName: normalizeGitCommitAuthorName(input?.gitCommitAuthorName),
+    gitCommitAuthorEmail: normalizeGitCommitAuthorEmail(input?.gitCommitAuthorEmail),
   };
 }
 

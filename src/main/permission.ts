@@ -49,6 +49,15 @@ export function setCurrentLevel(level: AgentFileAccessLevel): void {
   persistLevel(level);
 }
 
+/** 校验并应用权限档位（native 设置窗与 IPC 共用；非法档位返回错误不改动）。 */
+export function applyLevel(level: string): { ok: boolean; level?: AgentFileAccessLevel; error?: string } {
+  if (!isValidLevel(level)) {
+    return { ok: false, error: `无效的档位: ${String(level)}` };
+  }
+  setCurrentLevel(level);
+  return { ok: true, level: currentLevel };
+}
+
 // ── 持久化 ────────────────────────────────────────────────
 
 function getStorePath(): string {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "../../../i18n";
 import toolIconUrl from "../../../assets/tools.png?url";
+import { useFrozenOrder } from "./frozen-order";
 import "./ToolModePanel.css";
 
 type ToolMode = "work" | "code" | "learn" | "chat";
@@ -19,6 +20,8 @@ interface ToolCatalogItem {
 }
 
 type Overrides = Record<string, Partial<Record<string, boolean>>>;
+
+const getToolId = (tool: ToolCatalogItem): string => tool.id;
 
 const BASE_TABS: Array<{ key: TabKey; label: string }> = [
   { key: "work", label: "Work" },
@@ -199,27 +202,30 @@ export const ToolModePanel: React.FC = () => {
     return isVisibleForMode(tool, mode, ov);
   }, []);
 
+  const baseTools = useMemo(() => tools.filter((t) => !t.deprecated), [tools]);
+  // 冻结排序：进入面板 / 切 tab / 工具目录变化时按当时开关状态排一次；
+  // 面板内开关只改卡片状态、不重排（防止卡片跳位），下次进入或切 tab 时自然重排。
+  const toolOrderKey = `${tab}|${baseTools.map(getToolId).sort().join(",")}`;
+  const orderedTools = useFrozenOrder(
+    baseTools,
+    toolOrderKey,
+    getToolId,
+    (tool) => (isToolOn(tool, tab, overrides) ? 0 : 1),
+  );
+
   const visibleTools = useMemo(() => {
     const kw = filter.trim().toLowerCase();
-    const usable = tools.filter((t) => !t.deprecated);
     // 所有 tab 统一展示全部启用工具：关掉的工具置灰保留在列表里，便于重新开启。
     // （此前非 chat tab 会把 override=false 的工具直接过滤掉，导致关掉后无法再打开。）
-    const shown = usable.filter((t) => t.enabled);
-    const searched = kw
-      ? shown.filter(
-          (t) =>
-            t.id.toLowerCase().includes(kw) ||
-            t.name.toLowerCase().includes(kw) ||
-            t.description.toLowerCase().includes(kw),
-        )
-      : shown;
-    return [...searched].sort((a, b) => {
-      const aOn = isToolOn(a, tab, overrides);
-      const bOn = isToolOn(b, tab, overrides);
-      if (aOn !== bOn) return aOn ? -1 : 1;
-      return a.id.localeCompare(b.id);
-    });
-  }, [tools, overrides, filter, tab, isToolOn]);
+    const shown = orderedTools.filter((t) => t.enabled);
+    if (!kw) return shown;
+    return shown.filter(
+      (t) =>
+        t.id.toLowerCase().includes(kw) ||
+        t.name.toLowerCase().includes(kw) ||
+        t.description.toLowerCase().includes(kw),
+    );
+  }, [orderedTools, filter]);
 
   return (
     <div className="tool-panel">

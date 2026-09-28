@@ -6,8 +6,10 @@ import { TOAST_WINDOW_WIDTH } from "../toast/types";
 
 /**
  * 创建（或复用）toast 提醒窗口。
- * 与其他辅助窗口不同：常驻不销毁、初始隐藏、永不抢焦点（showInactive）、
- * 不进任务栏；队列空时整窗 hide，有 toast 时由 toast-window 控制器定位后显示。
+ * 与其他辅助窗口不同：初始隐藏、永不抢焦点（showInactive）、不进任务栏；
+ * 队列空时整窗 hide。窗口按需创建（首个 toast 时由 toast-window 控制器
+ * 调 createWindow），空闲超时后控制器 destroy 回收——默认不再启动即建窗；
+ * CYRENE_LAZY_TOAST_WINDOW=0（急切模式）时由控制器 preload() 预热并常驻。
  */
 export function createToastWindowShell(): BrowserWindow {
   if (toastWindow && !toastWindow.isDestroyed()) {

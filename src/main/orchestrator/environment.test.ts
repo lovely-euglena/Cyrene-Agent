@@ -97,6 +97,7 @@ describe("buildEnvironmentContext tool list removal (方案 B)", () => {
   const REPRESENTATIVE_TOOL_IDS = [
     "run_shell",
     "write_file",
+    "write_markdown",
     "str_replace",
     "apply_patch",
     "read_file",

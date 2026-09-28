@@ -2,7 +2,7 @@
 //
 // 架构（见 dotnet/native-windows/TrayHost.cs）：.NET 托盘进程常驻 +
 // named pipe cyrene-tray；Electron 成为「按需工作进程」。本模块：
-//   - 连 pipe（2s 重试窗口；连不上返回 null → 调用方回退内置 Electron Tray）
+//   - pipe 探测（托盘未运行 → 返回 null，调用方回退内置 Electron Tray）
 //   - duck-type Electron Tray（isDestroyed/destroy/setImage/setToolTip），
 //     shell-bootstrap 与设置图标的既有消费点零改动
 //   - 收 tray cmd → 转发激活/桌宠/退出（与内置托盘菜单同语义）
@@ -10,11 +10,37 @@
 //
 // 通信协议：JSON 行（\n 分隔，低频控制通道，无需三件套的长度前缀帧）。
 
+import * as fs from "node:fs";
 import * as nodeNet from "net";
 import type { NativeImage, Tray } from "electron";
 import type { WindowActivationRequest } from "./application/window-activation";
 
-export type TrayLike = Pick<Tray, "isDestroyed" | "destroy" | "setImage" | "setToolTip">;
+export type TrayLike = Pick<Tray, "isDestroyed" | "destroy" | "setImage" | "setToolTip"> & {
+  /** Windows 托盘气泡（内置 Tray 与分离托盘同名，宿主通知统一走这里） */
+  displayBalloon?(options: { title: string; content: string }): void;
+};
+
+/** 系统级托盘气泡参数（Electron DisplayBalloonOptions 的最小投影）。 */
+export interface TrayBalloonOptions {
+  title: string;
+  content: string;
+}
+
+/**
+ * 系统级托盘气泡统一入口：内置 Electron Tray 与分离托盘 duck-type 都支持
+ * `displayBalloon`；环境不支持时返回 false（静默忽略，不影响业务）。
+ */
+export function showTrayBalloon(tray: Tray | TrayLike | null | undefined, options: TrayBalloonOptions): boolean {
+  if (!tray) return false;
+  const fn = (tray as { displayBalloon?: (o: TrayBalloonOptions) => void }).displayBalloon;
+  if (typeof fn !== "function") return false;
+  try {
+    fn.call(tray, options);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface DetachedTrayInput {
   requestActivation(request: WindowActivationRequest): void;
@@ -23,21 +49,40 @@ export interface DetachedTrayInput {
   quit(): void;
 }
 
-const PIPE_PATH = "\\\\.\\pipe\\cyrene-tray";
+const PIPE_NAME = "cyrene-tray";
+const PIPE_PATH = `\\\\.\\pipe\\${PIPE_NAME}`;
 
 interface TrayCommand {
   op: "cmd";
   action: string;
 }
 
+/**
+ * 托盘进程可用性探测：pipe 不存在（托盘未运行）→ 直接回退内置 Tray，
+ * 避免返回一个无图标的「死托盘」。
+ *
+ * 实现注意：不能用 fs.existsSync(PIPE_PATH)——对 .NET
+ * NamedPipeServerStream 创建的实例返回 false（stat/open 报 EBUSY/失败），
+ * 会误判成「托盘未运行」。用管道命名空间枚举（readdir）判断名字存在，
+ * 实测对 .NET 管道可靠；非 Windows 恒 false（分离托盘为 Windows 专属）。
+ */
+export function isDetachedTrayPipeAvailable(): boolean {
+  if (process.platform !== "win32") return false;
+  try {
+    return fs.readdirSync("\\\\.\\pipe\\").includes(PIPE_NAME);
+  } catch {
+    return false;
+  }
+}
+
 export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
+  if (!isDetachedTrayPipeAvailable()) return null;
   let socket: nodeNet.Socket | null = null;
   let destroyed = false;
   let lineBuffer = "";
 
-  // 同步连接探测：托盘在 Electron 启动前应已就位（托盘拉起 Electron 的
-  // 正常流）。Electron 直启 + 托盘未跑 → 回退内置 Tray（双托盘由用户
-  // 后开托盘造成时自行共存，v1 接受）。
+  // 快探测：托盘在 Electron 启动前应已就位（托盘拉起 Electron 的正常流）。
+  // 托盘未跑（pipe 不存在）→ 返回 null，调用方回退内置 Tray。
   try {
     socket = nodeNet.connect(PIPE_PATH);
     socket.on("error", () => { /* pipe 断开：托盘先走，静默 */ });
@@ -97,6 +142,8 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
       }
     },
     setToolTip: (text: string) => send({ op: "tray.tooltip", text }),
+    displayBalloon: (options: { title: string; content: string }) =>
+      send({ op: "tray.notify", title: options.title, content: options.content }),
   };
 }
 
