@@ -92,6 +92,8 @@ export interface ModelPreset {
   baseUrl: string;
   /** 已由厂商官方确认的 Anthropic 兼容 Base URL；没有就不猜。 */
   anthropicBaseUrl?: string;
+  /** 已由厂商官方确认的 Responses API Base URL。 */
+  responsesBaseUrl?: string;
   /** 预设首次使用时选中的明确协议；用户之后可以手动修改。 */
   transport: ApiTransport;
   mainModels: string[];
@@ -134,7 +136,6 @@ export interface GeneralSettings {
   launchAtLogin: boolean;
   language: UiLanguage;
   uiTheme: UiTheme;
-  windowCornerRadius: number;
   uiThemeRadius: boolean;
   uiIcon: UiIcon;
   defaultChatMode: DefaultChatMode;

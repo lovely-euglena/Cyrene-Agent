@@ -50,7 +50,7 @@ import { normalizeManualReasoningConfig, type ManualReasoningConfig, type Manual
 import type { TimeoutSettings } from "../../../../shared/timeout-types";
 import { DEFAULT_TIMEOUT_SETTINGS } from "../../../../shared/timeout-types";
 import { CUSTOM_ENDPOINT_PROVIDERS, getCustomEndpointMode, type CustomEndpointMode } from "../../../settings/custom-endpoint-state";
-import { MODEL_PRESETS } from "../../../settings/api/presets";
+import { MODEL_PRESETS, presetTransportUrl } from "../../../settings/api/presets";
 import type { ModelPreset } from "../../../settings/shared/types";
 import { useTranslation } from "../../i18n";
 import { SettingsInput, SettingsPasswordInput, SettingsSwitch } from "../../components/ui/SettingsControls";
@@ -145,8 +145,7 @@ function profilePreset(provider: string): ModelPreset {
 }
 
 function transportUrl(preset: ModelPreset, transport: ApiTransport): string {
-  if (transport === "anthropic" && preset.anthropicBaseUrl) return preset.anthropicBaseUrl;
-  return preset.baseUrl;
+  return presetTransportUrl(preset, transport);
 }
 
 // 编辑视图不变量：旧档案（无 models）进编辑页 = 以当前模型构成的单元素清单，不能显示空列表
@@ -364,7 +363,7 @@ export function ModelSettingsPanel() {
     setSavedDraftSignature(undefined);
     setProvider(nextProvider);
     setDisplayName(nextPreset.shortName);
-    setBaseUrl(nextPreset.baseUrl);
+    setBaseUrl(transportUrl(nextPreset, nextPreset.transport));
     setModels(presetModelsOf(nextPreset));
     setModelOptions(Object.fromEntries(presetModelsOf(nextPreset).map((item) => [item, defaultModelOption()])));
     setModel(nextPreset.mainModels[0] ?? "");
@@ -380,7 +379,7 @@ export function ModelSettingsPanel() {
     const nextMode = getCustomEndpointMode(nextProvider);
     setProvider(nextProvider);
     setDisplayName(nextPreset.shortName);
-    setBaseUrl(nextPreset.baseUrl);
+    setBaseUrl(transportUrl(nextPreset, nextPreset.transport));
     setModels(presetModelsOf(nextPreset));
     setModelOptions(Object.fromEntries(presetModelsOf(nextPreset).map((item) => [item, defaultModelOption()])));
     setModel(nextPreset.mainModels[0] ?? "");
@@ -392,7 +391,7 @@ export function ModelSettingsPanel() {
   }
 
   function changeTransport(nextTransport: ApiTransport) {
-    const knownUrls = [preset.baseUrl, preset.anthropicBaseUrl].filter((item): item is string => Boolean(item));
+    const knownUrls = [preset.baseUrl, preset.anthropicBaseUrl, preset.responsesBaseUrl].filter((item): item is string => Boolean(item));
     const currentIsPreset = knownUrls.some((item) => item.replace(/\/$/, "") === baseUrl.trim().replace(/\/$/, ""));
     if (currentIsPreset) setBaseUrl(transportUrl(preset, nextTransport));
     setTransport(nextTransport);

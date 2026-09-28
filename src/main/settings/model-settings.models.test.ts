@@ -100,6 +100,54 @@ describe("normalize 六步契约（档案模型清单）", () => {
   });
 });
 
+describe("MiniMax Responses 端点迁移", () => {
+  const oldResponsesBase = "https://api.minimaxi.com/v1";
+  const officialResponsesBase = "https://api.minimax.cn/v1";
+
+  it("迁移 Responses 的旧默认地址，覆盖档案、perProvider 和顶层镜像", () => {
+    const settings = normalizeModelSettings({
+      schemaVersion: 3,
+      provider: "MiniMax",
+      baseUrl: oldResponsesBase,
+      model: "MiniMax-M3",
+      apiKey: "sk-test",
+      explicitTransport: "responses",
+      perProvider: {
+        "MiniMax": {
+          baseUrl: oldResponsesBase, model: "MiniMax-M3", apiKey: "sk-test", explicitTransport: "responses",
+        },
+      },
+      modelProfiles: [{
+        id: "mini-responses", provider: "MiniMax", baseUrl: oldResponsesBase,
+        model: "MiniMax-M3", apiKey: "sk-test", explicitTransport: "responses",
+      }],
+    } as never);
+
+    expect(settings.schemaVersion).toBe(4);
+    expect(settings.baseUrl).toBe(officialResponsesBase);
+    expect(settings.perProvider?.["MiniMax（稀宇科技）"].baseUrl).toBe(officialResponsesBase);
+    expect(settings.modelProfiles?.[0].baseUrl).toBe(officialResponsesBase);
+    expect(settings.modelProfiles?.[0].provider).toBe("MiniMax（稀宇科技）");
+  });
+
+  it("保留非 Responses 配置和用户自定义地址", () => {
+    const settings = normalizeModelSettings({
+      schemaVersion: 3,
+      provider: "MiniMax（稀宇科技）",
+      baseUrl: oldResponsesBase,
+      model: "MiniMax-M3",
+      apiKey: "sk-test",
+      explicitTransport: "openai",
+      modelProfiles: [
+        { id: "custom", provider: "MiniMax（稀宇科技）", baseUrl: "https://proxy.example/v1", model: "MiniMax-M3", explicitTransport: "responses" },
+      ],
+    } as never);
+
+    expect(settings.baseUrl).toBe(oldResponsesBase);
+    expect(settings.modelProfiles?.[0].baseUrl).toBe("https://proxy.example/v1");
+  });
+});
+
 describe("resolveSessionModelSettings（④：绑定 + effective model 组合）", () => {
   function buildSettings(defaultModelProfileId: string, profiles: Array<Record<string, unknown>>) {
     return normalizeModelSettings({
