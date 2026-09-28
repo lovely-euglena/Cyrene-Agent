@@ -124,6 +124,7 @@ import { createGitService } from "../code-git/git-service";
 import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/git-executable";
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
+import { migrateLegacyUserData } from "../user-data-migration";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
 import { createSplashWindow } from "../startup/create-splash-window";
@@ -258,6 +259,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     prepare: () => prepareBeforeReady({
       configureDocumentIndex: () => configureDocumentIndexQueue(runDocumentIndexJob),
       installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
+      migrateLegacyUserData: () => {
+        migrateLegacyUserData({
+          appDataPath: app.getPath("appData"),
+          targetUserDataPath: app.getPath("userData"),
+        });
+      },
       registerPrivilegedSchemes,
       configureGpuSwitches: () => {
         if (loadGeneralSettings().disableGpuElectron) {
