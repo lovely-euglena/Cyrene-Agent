@@ -368,3 +368,32 @@ html, body {
   50% { transform: translateY(-8px); }
 }
 
+
+/* ============================================================
+ * 触屏适配：粗指针（触摸屏/电子白板）
+ * ============================================================ */
+@media (hover: none) and (pointer: coarse) {
+  /* 侧栏宽度分隔条：触摸热区加宽（12 → 28px），拖拽线条加粗提升可见性 */
+  .cy-dock-separator {
+    width: 28px;
+    cursor: ew-resize;
+    touch-action: none; /* 拖拽手势优先于页面滚动 */
+  }
+  .cy-dock-separator::after {
+    width: 6px;
+  }
+  .cy-dock-separator:active::after {
+    background: var(--rb-pink-300, #f0a1b8);
+  }
+
+  /* 消息列表/输出区：允许垂直触摸滚动惯性（-webkit-overflow-scrolling 旧版 Electron 兜底） */
+  .cy-message-list {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain; /* 触摸滚到边界不带动整窗/父层 */
+  }
+
+  /* 滚到底部悬浮按钮：触摸下常显（无 hover 可发现性差）半透明 */
+  .cy-workspace-composer__scroll-to-bottom {
+    opacity: 0.85;
+  }
+}

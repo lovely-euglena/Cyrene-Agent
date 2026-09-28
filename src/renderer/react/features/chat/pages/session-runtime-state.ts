@@ -1,5 +1,5 @@
 import type { ChatMessageItem } from "../components/ChatMessageList";
-import type { ChatMessage, ConversationMode } from "../../../../../shared/chat-types";
+import type { ChatMessage, ChatSession, ConversationMode } from "../../../../../shared/chat-types";
 import type { ComposerInteraction } from "../components/run-presentation";
 import type { ComposerAttachment } from "../components/ChatComposer";
 import type { TodoItem } from "../../../../../shared/todo-types";
@@ -216,4 +216,27 @@ export function removePendingQueueEntry(
   const queue = state[sessionId];
   if (!queue?.some((entry) => entry.id === id)) return state;
   return { ...state, [sessionId]: queue.filter((entry) => entry.id !== id) };
+}
+/** 残留认领恢复判定结果（上游 4078d4ac 认领派发可靠性返修）。 */
+export type ClaimRecoveryStatus =
+  | { kind: "dispatched" }
+  | { kind: "needs-dispatch" }
+  | { kind: "claim-message-missing" };
+
+/**
+ * 判定残留认领的恢复路径：必须关联「本次认领的消息」与「它对应的模型运行」——
+ * 只统计 answersUserMessageId 指向该认领的 model 消息，其余消息（旧 run 的迟到回答、
+ * 其他轮次的回答）一律不算，避免误判已派发而丢消息。
+ */
+export function evaluateClaimRecovery(session: ChatSession, messageId: string): ClaimRecoveryStatus {
+  const index = session.messages.findIndex((message) => message.id === messageId && message.role === "user");
+  if (index < 0) return { kind: "claim-message-missing" };
+  const answered = session.messages.slice(index + 1).some((message) =>
+    message.role === "model"
+    && message.answersUserMessageId === messageId
+    && (message.runSnapshot
+      ? message.runSnapshot.status === "terminal"
+      : Boolean(message.content.trim() || message.sticker)),
+  );
+  return answered ? { kind: "dispatched" } : { kind: "needs-dispatch" };
 }

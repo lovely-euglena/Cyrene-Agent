@@ -240,6 +240,7 @@ export function ChatPage() {
 
   // 定时任务执行事件：任务触发/流式回复/终态展示在当前会话（主进程 scheduler-runner 推送）
   useSchedulerEvents({
+    getActiveSessionId: () => activeSessionIdsRef.current[activeModeRef.current],
     appendMessages,
     patchMessage: updateMessage,
   });

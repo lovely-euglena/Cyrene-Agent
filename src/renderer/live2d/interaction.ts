@@ -34,6 +34,8 @@ export class InteractionController {
   private readonly model: Live2DModel;
   private readonly hitAreaByName: Map<string, HitAreaDef>;
   private readonly clickThreshold: number;
+  /** 触摸指针的额外宽容度：手指自然抖动远大于鼠标，按 pointerType 动态放宽。 */
+  private pointerIsTouch = false;
   private readonly onTrigger?: (area: HitAreaDef) => void;
   private readonly onMiss?: (area: HitAreaDef) => void;
 
@@ -74,7 +76,9 @@ export class InteractionController {
     const dist = Math.hypot(dx, dy);
     const hits = this.downHits;
     this.downHits = [];
-    if (dist > this.clickThreshold) return;
+    // 触屏：手指自然抖动/滑动距离大，阈值放宽 4 倍（5px → 20px 量级）
+    const threshold = this.pointerIsTouch ? this.clickThreshold * 4 : this.clickThreshold;
+    if (dist > threshold) return;
     void this.fire(hits);
   };
 
