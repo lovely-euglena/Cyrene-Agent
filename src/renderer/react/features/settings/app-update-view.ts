@@ -56,3 +56,13 @@ export function resolveAppUpdateView(state: AppUpdateState): AppUpdateView {
     }
   }
 }
+
+/** 版本 → 纪念称号文案 key；想让某个版本带头衔（如 1.3.0 的"正式版"）就加一行 */
+const VERSION_TITLE_KEYS: Record<string, string> = {
+  "1.3.0": "ui.version.firstStable",
+};
+
+/** 查版本称号：有条目返回文案 key（组件层用 t() 翻译），普通版本返回 null 只显示 v 号 */
+export function resolveVersionTitleKey(version: string): string | null {
+  return VERSION_TITLE_KEYS[version] ?? null;
+}

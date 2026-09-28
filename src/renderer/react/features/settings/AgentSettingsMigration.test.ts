@@ -62,7 +62,10 @@ describe("agent settings migration", () => {
     Object.assign(window, { settings: { getGeneral: async () => ({}) } });
     const host = await renderSettings();
 
-    expect(host.querySelector(".cy-settings-sidebar__footer")?.textContent).toBe(`v${packageJson.version}`);
+    // 1.3.0 起 footer 在 v 号后拼纪念称号（如"正式版"），普通版本只有 v 号，
+    // 所以这里只断言 v 号在开头，不锁死整串文本
+    const footer = host.querySelector(".cy-settings-sidebar__footer")?.textContent ?? "";
+    expect(footer.startsWith(`v${packageJson.version}`)).toBe(true);
   });
 
   it("opens memory in the React settings workspace and saves an edited long-term profile", async () => {

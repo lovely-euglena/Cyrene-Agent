@@ -1923,7 +1923,8 @@
       "close": "关闭"
     },
     "version": {
-      "menuEntry": "版本"
+      "menuEntry": "版本",
+      "firstStable": "正式版"
     },
     "newButton": "新建任务"
   },

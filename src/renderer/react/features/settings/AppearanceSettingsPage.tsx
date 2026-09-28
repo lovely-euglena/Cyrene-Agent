@@ -23,6 +23,7 @@ import { SettingsSegmented, SettingsSlider, SettingsSwitch } from "../../compone
 import "../../components/ui/NewTaskButton.css";
 import { PreferencesSettingsPanel } from "./PreferencesSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { resolveVersionTitleKey } from "./app-update-view";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { ToolSettingsPanel } from "./ToolSettingsPanel";
 import { MemorySettingsPanel } from "./MemorySettingsPanel";
@@ -122,6 +123,8 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState("");
   const cyreneAvatarUrl = useCyreneAvatar();
+  // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
+  const versionTitleKey = resolveVersionTitleKey(packageJson.version);
   const [avatarBusy, setAvatarBusy] = useState(false);
   // 昔涟消息字体：ref 记住最新值，松手保存时不依赖可能过期的渲染闭包
   const typographyRef = useRef<MessageTypography>(DEFAULT_MESSAGE_TYPOGRAPHY);
@@ -282,7 +285,10 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.usageNotice")}</div>
         <SettingsNavItem section="disclaimer" currentSection={section} icon={<FileText size={18} strokeWidth={1.8} />} label={t("settingsPage.disclaimer.navLabel")} onSelect={onSelectSection} />
         </nav>
-        <div className="cy-settings-sidebar__footer">v{packageJson.version}</div>
+        <div className="cy-settings-sidebar__footer">
+          v{packageJson.version}
+          {versionTitleKey && ` · ${t(versionTitleKey)}`}
+        </div>
       </aside>
 
       <main className="cy-workspace is-empty cy-settings-content">

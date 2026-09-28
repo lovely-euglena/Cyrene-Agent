@@ -7,7 +7,7 @@ import { setUiLocale, useTranslation } from "../../i18n";
 import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
 import { Card } from "../../components/ui/Card";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
-import { resolveAppUpdateView } from "./app-update-view";
+import { resolveAppUpdateView, resolveVersionTitleKey } from "./app-update-view";
 
 interface GeneralValues {
   rememberWindowState: boolean;
@@ -45,6 +45,8 @@ export function GeneralSettingsPanel() {
   const [status, setStatus] = useState("");
   const updateState = useAppUpdate();
   const updateView = resolveAppUpdateView(updateState);
+  // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
+  const versionTitleKey = resolveVersionTitleKey(packageJson.version);
 
   useEffect(() => {
     let disposed = false;
@@ -149,7 +151,7 @@ export function GeneralSettingsPanel() {
 
         <section className="cy-settings-section">
           <Card>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong><Info size={16} /> {t("settingsPage.general.about")}</strong><span>{t("settingsPage.general.aboutDescription")} · v{packageJson.version}</span></div></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong><Info size={16} /> {t("settingsPage.general.about")}</strong><span>{t("settingsPage.general.aboutDescription")} · v{packageJson.version}{versionTitleKey && ` · ${t(versionTitleKey)}`}</span></div></div>
             <div className="cy-settings-row">
               <div className="cy-settings-row__copy">
                 <strong>{t("settingsPage.general.softwareUpdate")}</strong>

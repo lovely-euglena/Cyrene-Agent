@@ -1923,7 +1923,8 @@
       "close": "Close"
     },
     "version": {
-      "menuEntry": "Version"
+      "menuEntry": "Version",
+      "firstStable": "Stable release"
     },
     "newButton": "New task"
   },

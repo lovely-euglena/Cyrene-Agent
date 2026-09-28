@@ -10,7 +10,7 @@ import { useUserAvatar } from "../../hooks/useUserAvatar";
 import { useUserNickname } from "../../hooks/useUserNickname";
 import { setUiLocale, useTranslation } from "../../i18n";
 import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
-import { resolveAppUpdateView } from "../../features/settings/app-update-view";
+import { resolveAppUpdateView, resolveVersionTitleKey } from "../../features/settings/app-update-view";
 import { IssueReportDialog } from "./IssueReportDialog";
 import { NewsDialog } from "./NewsDialog";
 import { UserProfileDialog } from "./UserProfileDialog";
@@ -40,6 +40,8 @@ export function UserAvatar({ label }: UserAvatarProps) {
   const updateState = useAppUpdate();
   const updateView = resolveAppUpdateView(updateState);
   const version = updateState.currentVersion || packageJson.version;
+  // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
+  const versionTitleKey = resolveVersionTitleKey(version);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -176,7 +178,10 @@ export function UserAvatar({ label }: UserAvatarProps) {
             >
               <Package size={16} aria-hidden="true" />
               <span>{t("ui.version.menuEntry")}</span>
-              <span className="cy-user-menu__value">v{version}</span>
+              <span className="cy-user-menu__value">
+                v{version}
+                {versionTitleKey && ` · ${t(versionTitleKey)}`}
+              </span>
               {updateView.badge && <span className="cy-user-menu__dot" aria-hidden="true" />}
             </DropdownMenu.Item>
             <DropdownMenu.Item

@@ -1956,7 +1956,8 @@
       "close": "閉じる"
     },
     "version": {
-      "menuEntry": "バージョン"
+      "menuEntry": "バージョン",
+      "firstStable": "正式版"
     },
     "newButton": "新しいタスク"
   },
