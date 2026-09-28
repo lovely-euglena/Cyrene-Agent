@@ -72,6 +72,15 @@ public sealed class HfUnigramTokenizer
     {
         var ids = new List<int>(capacity: text.Length / 2 + 8);
         ids.Add(_bosId);
+        ids.AddRange(EncodeBodyToIds(text));
+        ids.Add(_eosId);
+        return ids.ToArray();
+    }
+
+    /// <summary>分词（不含前后特殊 token）。</summary>
+    private List<int> EncodeBodyToIds(string text)
+    {
+        var ids = new List<int>(capacity: text.Length / 2 + 8);
         // 全链路 span/ids 直出：不产生中间 piece 字符串
         var normalized = NmtNormalize(text);
         normalized = normalized.Replace(' ', '▁');
@@ -84,8 +93,32 @@ public sealed class HfUnigramTokenizer
             // segment = "▁" + raw：直接在原 string 上偏移 1 构造 span，避免拼接分配
             AppendSegmentIds(ids, raw, prefixSpace: true);
         }
-        ids.Add(_eosId);
-        return ids.ToArray();
+        return ids;
+    }
+
+    /// <summary>
+    /// 句对编码（XLM-R 模板：&lt;s&gt; A &lt;/s&gt;&lt;/s&gt; B &lt;/s&gt;），
+    /// 与 transformers.js tokenizer(query, { text_pair: doc, truncation: true }) 对账（verify-rerank）。
+    ///
+    /// ⚠️ 截断语义按 transformers.js v2 实测行为对齐：拼接后整条序列**右截断**
+    /// 到 maxLength（不做 HF longest_first/特殊 token 保留，超长时结尾 </s> 会被截掉）。
+    /// 与 JS 兜底路径逐位一致是本阶段的硬约束（同库共存、引擎可切换）。
+    /// </summary>
+    public int[] EncodePairToIds(string query, string document, int maxLength)
+    {
+        var a = EncodeBodyToIds(query);
+        var b = EncodeBodyToIds(document);
+        var merged = new List<int>(a.Count + b.Count + 4) { _bosId };
+        merged.AddRange(a);
+        merged.Add(_eosId);
+        merged.Add(_eosId);
+        merged.AddRange(b);
+        merged.Add(_eosId);
+        if (merged.Count > maxLength)
+        {
+            merged.RemoveRange(maxLength, merged.Count - maxLength);
+        }
+        return merged.ToArray();
     }
 
     /// <summary>

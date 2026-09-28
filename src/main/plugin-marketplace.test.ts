@@ -13,7 +13,6 @@ import {
 const REGISTRY_URL_A = "https://example.test/registry-a.json";
 const REGISTRY_URL_B = "https://example.test/registry-b.json";
 const ZIP_URL = `${MARKET_ZIP_URL_PREFIXES[0]}demo-1.0.0.zip`;
-const GITEE_ZIP_URL = `${MARKET_ZIP_URL_PREFIXES[1]}demo-1.0.0.zip`;
 
 let tmp = "";
 
@@ -108,6 +107,43 @@ describe("listMarket", () => {
     ]);
   });
 
+  it("软截止：首选源挂起时不等待，直接采用已返回的兜底源", async () => {
+    const fetchImpl: MarketplaceFetch = async (input, init) => {
+      if (input === REGISTRY_URL_A) {
+        // 挂起直到硬超时中止（模拟被墙/极慢的源）
+        return await new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      }
+      return jsonResponse(registryJson([registryEntry()]));
+    };
+    const service = createPluginMarketplaceService(
+      makeDeps({ fetchImpl, softDeadlineMs: 40, registryTimeoutMs: 500 }),
+    );
+    const startedAt = Date.now();
+    const result = await service.listMarket();
+    expect(result.ok).toBe(true);
+    expect(result.plugins).toHaveLength(1);
+    expect(result.sources[0]).toEqual({ url: REGISTRY_URL_A, ok: false, used: false });
+    expect(result.sources[1]).toMatchObject({ url: REGISTRY_URL_B, ok: true, used: true });
+    expect(Date.now() - startedAt).toBeLessThan(400);
+  });
+
+  it("软截止回落：全部源都超过软截止时等真实结果（硬超时错误如实上报）", async () => {
+    const fetchImpl: MarketplaceFetch = async (_input, init) => {
+      return await new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("hard timeout")));
+      });
+    };
+    const service = createPluginMarketplaceService(
+      makeDeps({ fetchImpl, softDeadlineMs: 30, registryTimeoutMs: 150 }),
+    );
+    const result = await service.listMarket();
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("hard timeout");
+    expect(result.error).not.toContain("未等待");
+  });
+
   it("全部源失败时 sources 仍带回全死状态", async () => {
     const fetchImpl: MarketplaceFetch = async () => {
       throw new Error("network down");
@@ -173,38 +209,15 @@ describe("listMarket", () => {
     expect(result.plugins.map((p) => p.id)).toEqual(["ok"]);
   });
 
-  it("zip 命中 GitHub 或 Gitee 任一前缀都通过校验", async () => {
-    const fetchImpl: MarketplaceFetch = async (input) => {
-      if (input === REGISTRY_URL_A) {
-        return jsonResponse(registryJson([
-          registryEntry({ id: "pkz-github", name: "Gh" }),
-          registryEntry({ id: "pkz-gitee", name: "Gt", zip: GITEE_ZIP_URL }),
-        ]));
-      }
-      return jsonResponse(registryJson([registryEntry()]));
-    };
+  it("条目全部被丢弃（zip 白名单不匹配）判整源失败，不静默给空市场", async () => {
+    // 典型场景：registry 来自其它仓库（zip 前缀不同源），旧实现会「成功」返回 0 个插件
+    const fetchImpl: MarketplaceFetch = async () =>
+      jsonResponse(registryJson([registryEntry({ id: "alien", zip: "https://gitee.com/other/repo/raw/main/zips/x.zip" })]));
     const service = createPluginMarketplaceService(makeDeps({ fetchImpl }));
     const result = await service.listMarket();
-    expect(result.ok).toBe(true);
-    expect(result.plugins.map((p) => p.id)).toEqual(["pkz-github", "pkz-gitee"]);
-  });
-
-  it("listMarket(preferred) 把偏好源提到探测首位并作为数据源", async () => {
-    const calls: string[] = [];
-    const fetchImpl: MarketplaceFetch = async (input) => {
-      calls.push(input);
-      return jsonResponse(registryJson([registryEntry()]));
-    };
-    const service = createPluginMarketplaceService(makeDeps({ fetchImpl }));
-    const result = await service.listMarket(REGISTRY_URL_B);
-    expect(result.ok).toBe(true);
-    // 偏好源被探测在最前
-    expect(calls[0]).toBe(REGISTRY_URL_B);
-    // 偏好源成为实际数据源，另一个可用源 standby
-    expect(result.sources).toEqual([
-      { url: REGISTRY_URL_B, ok: true, used: true },
-      { url: REGISTRY_URL_A, ok: true, used: false },
-    ]);
+    expect(result.ok).toBe(false);
+    expect(result.sources.every((s) => !s.ok)).toBe(true);
+    expect(result.error).toContain("暂时无法获取插件列表");
   });
 
   it("并发请求时只有最后一次请求的结果会落快照", async () => {

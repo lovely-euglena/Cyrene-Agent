@@ -13,6 +13,8 @@ export interface PluginListEntry {
   author: string;
   entry: string;
   apiVersion: number;
+  /** 双轨运行时：node（进程内加载）/ dotnet（独立子进程 + stdio 协议） */
+  runtime: "node" | "dotnet";
   source: "builtin" | "user";
   /** 用户插件来源：market 表示经插件市场安装（宿主安装记录可查），local 表示本地 ZIP 导入 */
   origin?: "local" | "market";
@@ -30,6 +32,8 @@ export interface PluginListEntry {
   settingsPanel?: string;
   /** 面板挂载的设置分区；缺省挂「插件」分区 */
   settingsSection?: "channels" | "plugins";
+  /** 声明的宿主依赖（如 speech-input = 本地语音输入能力） */
+  deps?: string[];
 }
 
 export interface PluginScanIssue {

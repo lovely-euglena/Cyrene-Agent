@@ -16,10 +16,19 @@ describe("applyChatAppearance", () => {
     });
   });
 
-  it("applies the line height and never toggles an assistant bubble dataset", () => {
-    applyChatAppearance({ chatLineHeight: 1.6 });
+  it("applies the global bubble-off state without changing message data", () => {
+    applyChatAppearance({
+      chatLineHeight: 1.6,
+      assistantBubbleEnabled: false,
+    });
 
     expect(setProperty).toHaveBeenCalledWith("--cy-chat-line-height", "1.6");
-    expect(dataset.assistantBubble).toBeUndefined();
+    expect(dataset.assistantBubble).toBe("off");
+  });
+
+  it("defaults existing settings to bubbles off", () => {
+    applyChatAppearance({ chatLineHeight: 1.75 });
+
+    expect(dataset.assistantBubble).toBe("off");
   });
 });

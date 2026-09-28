@@ -29,6 +29,14 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   pluginRuntimeEnabled?: boolean;
   /** 记住设置与音乐窗口的位置和大小（上游 2026-09-24 新增）。 */
   rememberWindowState: boolean;
+  /**
+   * 插件资源限制（插件管理窗「设置」页可配；undefined = 未配置，
+   * 回退环境变量/内置默认）。0 = 不限。
+   * - pluginStorageQuotaMb：单插件 KV 存储配额（MiB，默认 64）
+   * - pluginMemoryLimitMb：.NET 插件进程内存上限（MiB，默认 2048）
+   */
+  pluginStorageQuotaMb?: number;
+  pluginMemoryLimitMb?: number;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
   maxParallelToolCalls: number;
   citaEnabled: boolean;
@@ -48,6 +56,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 朋友圈热闹程度：控制每条动态的抽签人数分布与角色日调用上限。
    *  quiet=现状（冷场常见），natural=冷场减半，lively=上限 5 人冷场罕见。 */
   momentsLiveliness: "quiet" | "natural" | "lively";
+  /** 聊天气泡段落间距（em，0.2~1.2，默认 0.5）；渲染应用待接入。 */
+  chatParaSpacing: number;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */
@@ -154,6 +164,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   emailSmtpPass: string;
   /** 发件人显示名（可选） */
   emailFromName: string;
+  // 邮件收信（IMAP）：认证复用 emailSmtpUser/emailSmtpPass（同一邮箱账号 + 授权码）
+  /** IMAP 服务器（收信）；留空 = 未配置收信能力 */
+  emailImapHost: string;
+  /** IMAP 端口，默认 993（SSL） */
+  emailImapPort: number;
+  /** IMAP 使用 SSL/TLS（993 通常 true，143 通常 false） */
+  emailImapSecure: boolean;
   /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | local(本地,占位) */
   asrEngine: "off" | "aliyun" | "mossland" | "local";
   /** 阿里云智能语音交互 AppKey */
@@ -170,8 +187,14 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   asrVadThreshold: number;
   /** 通话中显示文字转写 */
   asrShowTranscript: boolean;
+  /** RAG 模型下载镜像源：official=官方源；hf-mirror=国内镜像。模型为手动安装时不影响。 */
+  ragDownloadMirror: "official" | "hf-mirror";
   /** 截图全局热键（Electron Accelerator 格式，如 "Alt+Shift+S"） */
   screenshotHotkey: string;
+  /** 截图后端：builtin=内置原生助手；snipaste=外部 Snipaste 命令行 */
+  screenshotBackend: "builtin" | "snipaste";
+  /** Snipaste.exe 路径；空字符串 = 自动检测（PATH / 常见目录 / 注册表） */
+  snipastePath: string;
   /** 工具-模式覆盖层：用户自定义每个工具在 learn/code/work 模式下的可见性。
    *  key = toolId，value = { mode: enabled }。覆盖优先于工具声明的 modes 字段。
    *  空对象 = 全部按默认（modes 字段或全可见），由设置面板 UI 写入。 */
@@ -185,4 +208,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   skillModeOverrides: SkillModeOverrides;
   /** Code 模式使用的用户自管语言服务命令覆盖。 */
   lspServerOverrides: LspServerOverride[];
+  /**
+   * Git 提交作者名（昔涟创建提交时使用；默认 Cyrene）。
+   * 内置 git 禁用了全局配置，提交身份完全由这里提供。
+   */
+  gitCommitAuthorName: string;
+  /**
+   * Git 提交作者邮箱（必填）：未填写时 git_commit 会拒绝提交并提示来设置里补填。
+   */
+  gitCommitAuthorEmail: string;
 }

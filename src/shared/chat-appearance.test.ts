@@ -2,14 +2,20 @@ import { describe, expect, it } from "vitest";
 import { normalizeChatAppearance } from "./chat-appearance";
 
 describe("normalizeChatAppearance", () => {
-  it("normalizes the line height and ignores removed bubble fields", () => {
-    expect(normalizeChatAppearance({ chatLineHeight: 1.6, assistantBubbleEnabled: true })).toEqual({
+  it("defaults Cyrene reply bubbles to disabled for existing settings", () => {
+    expect(normalizeChatAppearance({ chatLineHeight: 1.6 })).toEqual({
       chatLineHeight: 1.6,
+      assistantBubbleEnabled: false,
     });
   });
 
-  it("falls back to the default line height for invalid input", () => {
-    expect(normalizeChatAppearance(null)).toEqual({ chatLineHeight: 1.75 });
-    expect(normalizeChatAppearance({ chatLineHeight: "wide" })).toEqual({ chatLineHeight: 1.75 });
+  it("preserves an explicit global Cyrene reply bubble choice", () => {
+    expect(normalizeChatAppearance({
+      chatLineHeight: 1.75,
+      assistantBubbleEnabled: false,
+    })).toEqual({
+      chatLineHeight: 1.75,
+      assistantBubbleEnabled: false,
+    });
   });
 });

@@ -1,6 +1,6 @@
 // native 窗口桥接层：把现有 IPC 数据流/窗口动作复用到 cyrene-native 进程。
 //
-// 接入原则（灰度开关 CYRENE_NATIVE_WINDOWS=1）：
+// 接入原则（原生窗口默认启用；CYRENE_NATIVE_WINDOWS=0 强制回退）：
 //   - 数据推送：在 aux 窗广播的同一数据源上加订阅（runtimeState /
 //     modelConfig / scheduler / tokenUsage），双路并存——native 开着就
 //     推 native，BrowserWindow 路径不受影响（回退 = 关开关即回原样）
@@ -13,6 +13,7 @@
 import { NativeWindowsClient, getNativeWindowsClient, type NativeWindowsHost } from "./native-windows-host";
 import { IPC } from "../../shared/ipc-channels";
 import { getUsageReport } from "../token-usage-store";
+import { debugLog } from "../agent-log";
 
 // ── 宿主动作注入点（由 default-dependencies 装配时提供） ──
 export interface NativeBridgeActions {
@@ -20,22 +21,119 @@ export interface NativeBridgeActions {
   openChatWindow(): void;
   openCallWindow(): void;
   toggleSidebarPin(): void;
-  cycleModelProvider(): void;
   onSplashShown(): void;
   /** native 设置窗写入设置键（白名单在宿主侧执行）。 */
   setSetting?(key: string, value: unknown): void;
+  /** native 设置窗写入用户资料字段（字段白名单/取值校验在宿主侧执行）。 */
+  setUserProfile?(profile: unknown): void;
+  /** native 设置窗「更换头像」：宿主弹文件框并保存（native 不传路径）。 */
+  pickAvatar?(): void;
+  /** native 设置窗占位 section「在旧版设置中打开」→ Electron 设置窗（hash 定位）。 */
+  openLegacySettings?(section?: string): void;
+  /** native 设置窗「插件」section → 打开 .NET 插件管理窗（宿主侧失败可回退 Electron）。 */
+  openPluginManager?(): void;
+  /**
+   * native 设置窗「API 与模型」section 动作。verb:
+   * save / test / test-vision / set-default-profile / delete-profile；
+   * payload 为对应参数对象（config / id 等）。
+   * 返回值：`{ok, error?, data?}`；带 requestId 的动作帧会收到
+   * state.settings-action-result 回执（见 completeAction）。
+   */
+  apiAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「通用」section 动作。verb: clear-chat-history / open-gpu-internals */
+  generalAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** 便携模式 / 数据目录（通用 section「数据与存储」卡）。 */
+  portableAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「记忆」section 动作。verb: save-l0/save-l1/delete-doc/vault-bind/vault-unbind/vault-export/vault-sync/vault-auto-sync */
+  memoryAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「定时任务」section 动作。verb: add/update/toggle/fire/delete/history */
+  schedulerAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「插件」section 动作。verb: save / set-permission-level / add-mcp-server */
+  pluginsAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「高级设置」section 动作。verb: save（超时 + 工具并发） */
+  runtimeAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「Token 用量」section 动作。verb: set-days / clear */
+  tokensAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「偏好设置」section 动作。verb: open-prompt（定位自定义 Prompt 文件） */
+  preferencesAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /**
+   * native 设置窗「昔涟设置」section 动作：
+   * save（状态栏实时更新 / 表情包开关·大小·阈值，写 model settings）/
+   * open-sticker-manager（Electron 表情包管理窗）/ add-sticker（用户表情包入库）。
+   */
+  cyreneAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /**
+   * native 设置窗「语音合成 TTS」section 动作。verb:
+   * save / test（试听合成，返回音频临时文件路径）/ clone-minimax /
+   * clone-mossland / list-mossland-voices。
+   */
+  ttsAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
+  /** native 设置窗「语音识别 ASR」section 动作。verb: save */
+  asrAction?(verb: string, payload: Record<string, unknown>): unknown | Promise<unknown>;
   /** 打开 Electron 渠道配置独立弹窗（渠道页保持 Electron，用户指定）。 */
   openChannelsWindow?(): void;
+  /** 界面字体导入/恢复（宿主弹文件框/清理文件；native 不传路径）。 */
+  uiFontAction?(verb: "import" | "reset"): void;
   /**
    * 插件操作（.NET 插件管理窗 → 主进程）：
-   * enable/disable/uninstall/install/openPanel/refresh。install 为异步
-   * （下载+校验+解压），完成后由宿主重推 state.plugins 快照。
+   * enable/disable/uninstall/install/openPanel/refresh/import-zip。
+   * install/import-zip 为异步（下载或弹框+校验+解压），完成后由宿主重推
+   * state.plugins 快照（含操作结果 notice）。
    */
-  pluginAction?(action: string, id?: string): Promise<void> | void;
+  pluginAction?(action: string, id?: string, payload?: Record<string, unknown>): Promise<void> | void;
+  /**
+   * 当前窗口圆角（general settings 的 windowCornerRadius）：
+   * spawn 时随窗口下发（.NET 进程重启后也能恢复），变更时由设置生命周期广播。
+   */
+  getWindowCornerRadius?(): number;
 }
 
 let client: NativeWindowsClient | null = null;
 let initialized = false;
+/** 窗口圆角来源（init 时注入）：spawn 时随窗口下发。 */
+let windowRadiusProvider: (() => number) | null = null;
+
+const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+/**
+ * 动作回执：动作帧带 requestId 时，把处理器结果回推
+ * state.settings-action-result（{requestId, kind, action, ok, error?, data?}）。
+ * 处理器可同步/异步返回 {ok,error?,data?}（返回空按 ok=true）；未带 requestId
+ * 的动作保持旧单向语义（不产生回执帧）。
+ */
+function completeAction(frame: Record<string, unknown>, result: unknown): void {
+  if (typeof frame.requestId !== "number") return;
+  const requestId = frame.requestId;
+  const kind = asString(frame.kind);
+  const action = asString(frame.action);
+  const deliver = (value: unknown): void => {
+    const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    const ok = record.ok === undefined ? true : record.ok === true;
+    const error = typeof record.error === "string" ? record.error : undefined;
+    const data = record.data && typeof record.data === "object"
+      ? (record.data as Record<string, unknown>)
+      : undefined;
+    void activeClient()
+      ?.pushSettingsActionResult({
+        requestId,
+        kind,
+        action,
+        ok,
+        ...(error ? { error } : {}),
+        ...(data ? { data } : {}),
+      })
+      .catch(() => undefined);
+  };
+  if (result && typeof (result as Promise<unknown>).then === "function") {
+    void (result as Promise<unknown>).then(deliver, (error: unknown) => {
+      deliver({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+  } else {
+    deliver(result);
+  }
+}
 
 /**
  * 初始化桥接（应用启动时调用一次）。未启用 native 窗口时 no-op。
@@ -47,12 +145,16 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
       const action = String(frame.action ?? "");
       const section = typeof frame.section === "string" ? frame.section : undefined;
       const frameKind = typeof frame.kind === "string" ? frame.kind : "";
+      debugLog(`[NativeWindows] cmd kind=${frameKind} action=${action}${section ? ` section=${section}` : ""}${typeof frame.id === "string" ? ` id=${frame.id}` : ""}`);
       switch (action) {
         case "openSettings": actions.openSettings(section); break;
         case "openChat": actions.openChatWindow(); break;
         case "openCall": actions.openCallWindow(); break;
         case "togglePin": actions.toggleSidebarPin(); break;
-        case "modelSwitch": actions.cycleModelProvider(); break;
+        case "modelSwitch":
+          // 旧版状态栏「切换模型」= 打开 API 设置页（sidebar.ts: openSettings("api")）
+          actions.openSettings("api");
+          break;
         case "shown":
           actions.onSplashShown();
           notifyNativeSplashShown();
@@ -63,8 +165,67 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
             actions.setSetting?.(frame.key, frame.value);
           }
           break;
+        case "set-user-profile":
+          // native 设置窗写用户资料：{"action":"set-user-profile","profile":{...}}
+          actions.setUserProfile?.(frame.profile);
+          break;
+        case "pick-avatar":
+          actions.pickAvatar?.();
+          break;
+        case "open-legacy":
+          // native 设置窗占位 section → Electron 旧版设置页（带 hash 定位）
+          actions.openLegacySettings?.(section);
+          break;
+        case "open":
+          // 插件管理窗入口：{"kind":"plugins","action":"open"}
+          if (frameKind === "plugins") {
+            actions.openPluginManager?.();
+          }
+          break;
+        case "api":
+          completeAction(frame, actions.apiAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "general":
+          completeAction(frame, actions.generalAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "portable":
+          completeAction(frame, actions.portableAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "memory":
+          completeAction(frame, actions.memoryAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "scheduler":
+          completeAction(frame, actions.schedulerAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "plugins":
+          completeAction(frame, actions.pluginsAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "runtime":
+          completeAction(frame, actions.runtimeAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "tokens":
+          completeAction(frame, actions.tokensAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "preferences":
+          completeAction(frame, actions.preferencesAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "cyrene":
+          completeAction(frame, actions.cyreneAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "tts":
+          completeAction(frame, actions.ttsAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
+        case "asr":
+          completeAction(frame, actions.asrAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
         case "openChannels":
           actions.openChannelsWindow?.();
+          break;
+        case "ui-font-import":
+          actions.uiFontAction?.("import");
+          break;
+        case "ui-font-reset":
+          actions.uiFontAction?.("reset");
           break;
         case "enable-runtime":
         case "disable-runtime":
@@ -72,11 +233,27 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "disable":
         case "uninstall":
         case "install":
+        case "openWindow":
         case "openPanel":
         case "refresh":
+        case "import-zip":
+        case "set-limits":
           // 插件管理窗操作：{"kind":"plugins","action":"install","id":...}
+          // set-limits 额外携带 storageQuotaMb / memoryLimitMb（透传整个 frame）
           if (frameKind === "plugins") {
-            void actions.pluginAction?.(action, typeof frame.id === "string" ? frame.id : undefined);
+            // 兼容旧版原生窗：插件 id 曾经经 SendCommand 第 3 参落在 "section"，
+            // 而这里只读 frame.id → 安装/启用/停用/卸载全部静默 no-op。
+            // 现在优先 id，缺失时回退 section（两代窗口都能工作）。
+            const rawId = (frame as Record<string, unknown>).id;
+            const rawSection = (frame as Record<string, unknown>).section;
+            const targetId = typeof rawId === "string" && rawId.length > 0
+              ? rawId
+              : (typeof rawSection === "string" && rawSection.length > 0 ? rawSection : undefined);
+            void actions.pluginAction?.(
+              action,
+              targetId,
+              action === "set-limits" ? (frame as unknown as Record<string, unknown>) : undefined,
+            );
           }
           break;
         default:
@@ -86,6 +263,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
   };
   client = getNativeWindowsClient(host);
   initialized = true;
+  windowRadiusProvider = actions.getWindowCornerRadius ?? null;
   return client;
 }
 
@@ -132,14 +310,52 @@ export function bindNativeDataProviders(providers: NativeDataProviders): void {
   dataProviders = providers;
 }
 
+/** 设置窗 section 反馈消息（保存/测试/同步结果与错误）。 */
+export interface NativeSettingsNotice {
+  section: string;
+  level: "ok" | "error" | "info";
+  text: string;
+  at: number;
+  /** 可选结构化附加数据（如保存成功后回传 savedProfileId 供 WPF 进入编辑态） */
+  data?: Record<string, unknown>;
+}
+
+/**
+ * 推送 section 反馈到 .NET 设置窗（就地更新状态行，不触发 section 重建；
+ * 窗未开时 no-op）。
+ */
+export function pushSettingsNoticeToNative(notice: NativeSettingsNotice): void {
+  void activeClient()?.pushSettingsNotice(notice).catch(() => undefined);
+}
+
+/**
+ * 重推设置快照到 .NET 设置窗（换头像等需要刷新 UI 的写入后调用；窗未开时 no-op）。
+ * 快照来源与 spawn 初始推送同一数据源（getSettingsSnapshot），保证读方向一致。
+ */
+export function pushSettingsSnapshotToNative(): void {
+  const c = activeClient();
+  if (!c || !dataProviders) return;
+  void dataProviders.getSettingsSnapshot?.()
+    .then((settings) => c.pushSettings(settings))
+    .catch((error) => console.warn("[NativeWindows] settings snapshot push failed:", error));
+}
+
 // ── native 显窗门控（window-state.markStartupPhaseReady 的 native 版） ──
 const pendingNativeShows = new Set<string>();
 let nativeWindowsStartupReady = false;
+/**
+ * splash 是否已被请求关闭。冷启动时 reveal 的关闭请求可能早于 splash 的
+ * win.spawn 落地（native 进程尚在启动）——那次 win.close 会打空，随后
+ * spawn 完成才显示 splash，就再也没人关它（启动屏常驻）。用标志记录，
+ * spawn 落地后补关。
+ */
+let splashDismissed = false;
 
 /**
- * 启动就绪后统一显示 native 辅助窗（default-dependencies 的
- * markStartupWindowsReady 处调用，与 markStartupPhaseReady 同点）。
- * 启动后再 spawn 的窗口不经 pending（spawn 即 show）。
+ * 启动就绪后统一显示 native 辅助窗（core-bootstrap 在 reveal 同点、
+ * markStartupWindowsReady 之后调用——与 BrowserWindow 的
+ * markStartupPhaseReady 同点）。启动后再 spawn 的窗口不经 pending
+ * （spawn 即 show）。
  */
 export function markNativeWindowsStartupReady(): void {
   if (nativeWindowsStartupReady) return;
@@ -191,6 +407,12 @@ export function pushLayoutToNative(layout: unknown): void {
   void activeClient()?.pushLayout(layout).catch(() => undefined);
 }
 
+/** 窗口圆角变更广播（general settings 生命周期调用；窗未开时为正常 no-op）。 */
+export function pushWindowRadiusToNative(radius: number): void {
+  if (typeof radius !== "number" || !Number.isFinite(radius)) return;
+  void activeClient()?.pushWindowRadius(radius).catch(() => undefined);
+}
+
 // ── 窗口生命周期（替代 BrowserWindow 创建） ──
 
 export async function spawnNativeWindow(
@@ -201,11 +423,23 @@ export async function spawnNativeWindow(
   if (!c) return false;
   try {
     await c.spawnWindow(kind, layout);
+    debugLog(`[NativeWindows] spawned ${kind}`);
+    // 窗口圆角随 spawn 下发：.NET 进程重启后静态半径会丢，这里每次补发；
+    // 变更时另走 pushWindowRadiusToNative（设置生命周期广播）
+    const radius = windowRadiusProvider?.();
+    if (typeof radius === "number" && Number.isFinite(radius)) {
+      void c.pushWindowRadius(radius).catch(() => undefined);
+    }
     // 显窗时机（对齐 showWindowWhenStartupReady 语义）：
     // splash 无门控（本来就是启动期首帧）；sidebar/tasks 在
     // startup 阶段先 pending，markStartupPhaseReady 后统一 win.show
     if (kind === "splash") {
       await c.showWindow("splash");
+      // 关闭请求早于本次 spawn 落地（冷启动竞态）→ 补发关闭，避免启动屏常驻
+      if (splashDismissed) {
+        debugLog("[NativeWindows] splash 关闭请求早于 spawn，补发 win.close");
+        await c.closeWindow("splash").catch(() => undefined);
+      }
     } else if (nativeWindowsStartupReady) {
       await c.showWindow(kind);
     } else {
@@ -218,10 +452,12 @@ export async function spawnNativeWindow(
       void c.pushRuntimeState(dataProviders.getRuntimeState()).catch(() => undefined);
       void c.pushModelConfig(dataProviders.getModelConfig()).catch(() => undefined);
     } else if (kind === "settings" && dataProviders) {
-      void dataProviders.getSettingsSnapshot?.()
-        .then((settings) => c.pushSettings(settings))
-        .catch((error) => console.warn("[NativeWindows] settings snapshot push failed:", error));
+      // 初始快照与后续写入重推共用同一路径（读方向键名统一在协议模块）
+      pushSettingsSnapshotToNative();
     } else if (kind === "plugins" && dataProviders) {
+      // 进入即刷新一次（快照含各插件实际占用）。刷新策略：进入一次 +
+      // 插件操作后重推（见 pluginAction 尾部）+ 窗内「刷新」按钮手动重推；
+      // 不做定时轮询。
       void dataProviders.getPluginsSnapshot?.()
         .then((snapshot) => c.pushPlugins(snapshot))
         .catch((error) => console.warn("[NativeWindows] plugins snapshot push failed:", error));
@@ -238,6 +474,9 @@ export async function spawnNativeWindow(
 }
 
 export async function closeNativeWindow(kind: string): Promise<void> {
+  // splash：记录标志——若关闭请求早于 win.spawn 落地，spawn 后补关
+  if (kind === "splash") splashDismissed = true;
+  debugLog(`[NativeWindows] close requested: ${kind}`);
   await activeClient()?.closeWindow(kind).catch(() => undefined);
 }
 
@@ -275,6 +514,7 @@ export function notifyNativeSplashShown(): void {
 }
 
 export function disposeNativeWindowsBridge(reason = "shutdown"): void {
+  splashDismissed = false;
   client?.disposeSync(reason);
 }
 

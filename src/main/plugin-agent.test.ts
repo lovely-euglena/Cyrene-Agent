@@ -62,6 +62,24 @@ describe("plugin-agent", () => {
     expect(runHarness).not.toHaveBeenCalled();
   });
 
+  it("拒绝缺少显式 risk 的目标工具", async () => {
+    const runHarness = vi.fn();
+    const runGoal = createPluginAgentRunner({
+      pluginId: "minecraft-bot",
+      pluginSignal: new AbortController().signal,
+      userDataPath: "E:\\test-user-data",
+      agentRuntime: { buildOptions: vi.fn(async () => builtOptions()) } as never,
+      runHarness: runHarness as never,
+    });
+
+    await expect(runGoal({
+      runId: "minecraft-goal-risk",
+      goal: "收集十个木头",
+      tools: [goalTool({ risk: undefined })],
+    })).rejects.toThrow(/risk/);
+    expect(runHarness).not.toHaveBeenCalled();
+  });
+
   it("以冻结工具集装配无头 Harness，并返回显式终态", async () => {
     const buildOptions = vi.fn(async () => builtOptions());
     const runHarness = vi.fn(async () => ({

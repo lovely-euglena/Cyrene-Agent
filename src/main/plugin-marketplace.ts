@@ -4,6 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { isValidPluginVersion } from "../shared/version";
+import { debugLog } from "./agent-log";
 import type {
   MarketInstallResult,
   MarketListResult,
@@ -12,19 +13,31 @@ import type {
 } from "../shared/plugin-management";
 import type { PluginImportResult } from "../plugins/manager";
 
-/** 官方插件市场索引源：GitHub 为主源、Gitee 兜底；市场面板会实时探测各源死活，并允许用户手动切换指定源 */
+/**
+ * 官方插件市场索引源：Gitee 主源 + GitHub 兜底（面板展示各源死活，
+ * 取优先级最高的可用源）。
+ *
+ * 白名单是 zip 前缀的**并集**：任一官方源的条目 zip 只要落在自己的前缀下
+ * 即可通过；非官方来源仍被拒。自持的 ygwill/cyrene-plugins 因 raw 被
+ * Gitee 拒（403）暂不可用，待恢复后可加入（需与下方白名单同源）。
+ */
 export const MARKET_REGISTRY_URLS = [
-  "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json",
   "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
+  "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json",
 ] as const;
 
-/** 插件包只允许来自官方仓库的直链（GitHub Releases + Gitee raw zips/ 双前缀），防止索引被篡改后下载任意来源的包 */
+/** 插件包只允许来自官方仓库的直链（Gitee raw zips/ 与 GitHub Releases 双前缀），防止索引被篡改后下载任意来源的包 */
 export const MARKET_ZIP_URL_PREFIXES: readonly string[] = [
-  "https://github.com/Playa-0v0/Cyrene-Plugins/releases/download/",
   "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/",
+  "https://github.com/Playa-0v0/Cyrene-Plugins/releases/download/",
 ];
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
+/**
+ * 软截止：并发探测时若已有源返回，不必等慢源（如被墙的 GitHub）拖满硬超时；
+ * 全部源都超过软截止才回落到等真实结果（硬超时兜底）。
+ */
+export const MARKET_REGISTRY_SOFT_DEADLINE_MS = 4_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;
 export const MARKET_ZIP_MAX_BYTES = 50 * 1024 * 1024;
 
@@ -43,6 +56,7 @@ export type MarketplaceFetch = (
 
 export interface PluginMarketplaceDeps {
   registryUrls: readonly string[];
+  /** 允许的 zip 前缀白名单（多源并集） */
   zipUrlPrefixes: readonly string[];
   /** 下载的插件 zip 临时存放目录（如 userData/plugin-market-cache） */
   cacheDir: string;
@@ -53,6 +67,7 @@ export interface PluginMarketplaceDeps {
   fetchImpl?: MarketplaceFetch;
   /** 以下参数仅测试注入用 */
   registryTimeoutMs?: number;
+  softDeadlineMs?: number;
   zipTimeoutMs?: number;
   zipMaxBytes?: number;
 }
@@ -92,7 +107,8 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
   if (typeof version !== "string" || !isValidPluginVersion(version)) return null;
   if (typeof zip !== "string" || !deps.zipUrlPrefixes.some((prefix) => zip.startsWith(prefix))) return null;
   if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) return null;
-  if (typeof downloads !== "number" || !Number.isInteger(downloads) || downloads < 0) return null;
+  // downloads 可选（上游新条目会省略）：给出时必须是非负整数，缺省按 0 计
+  if (downloads !== undefined && (typeof downloads !== "number" || !Number.isInteger(downloads) || downloads < 0)) return null;
   if (homepage !== undefined && !isHttpsUrl(homepage)) return null;
   return {
     id,
@@ -100,7 +116,7 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
     version,
     description,
     author,
-    downloads,
+    downloads: typeof downloads === "number" ? downloads : 0,
     homepage: typeof homepage === "string" ? homepage : undefined,
     zip,
     sha256,
@@ -147,6 +163,14 @@ function validateRegistry(data: unknown, deps: PluginMarketplaceDeps): {
     snapshot.set(entry.id, { id: entry.id, version: entry.version, zip: entry.zip, sha256: entry.sha256 });
   }
   plugins.sort((a, b) => b.downloads - a.downloads || a.name.localeCompare(b.name, "zh-CN"));
+  // 全部条目被丢弃（典型：镜像 registry 的 zip 前缀与白名单不同源）→ 整源判失败，
+  // 避免「空市场」静默顶替可用源（UI 会展示该源的失败原因）
+  if (plugins.length === 0 && record.plugins.length > 0) {
+    throw new RegistryFormatError(
+      "registry 条目全部校验失败（zip 白名单不匹配或字段非法）",
+      "invalid",
+    );
+  }
   return { plugins, snapshot };
 }
 
@@ -159,6 +183,7 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
       return net.fetch(input, init);
     });
   const registryTimeoutMs = deps.registryTimeoutMs ?? MARKET_REGISTRY_TIMEOUT_MS;
+  const softDeadlineMs = Math.min(deps.softDeadlineMs ?? MARKET_REGISTRY_SOFT_DEADLINE_MS, registryTimeoutMs);
   const zipTimeoutMs = deps.zipTimeoutMs ?? MARKET_ZIP_DOWNLOAD_TIMEOUT_MS;
   const zipMaxBytes = deps.zipMaxBytes ?? MARKET_ZIP_MAX_BYTES;
 
@@ -171,39 +196,57 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
   async function fetchRegistryJson(url: string): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), registryTimeoutMs);
+    const startedAt = Date.now();
     try {
       const response = await fetchImpl(url, { signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json() as unknown;
+      const data = await response.json() as unknown;
+      debugLog(`[plugins] market registry ok ${url} (+${Date.now() - startedAt}ms)`);
+      return data;
+    } catch (error) {
+      debugLog(`[plugins] market registry failed ${url} (+${Date.now() - startedAt}ms): ${errorMessage(error)}`);
+      throw error;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  async function listMarket(preferred?: string): Promise<MarketListResult> {
+  async function listMarket(): Promise<MarketListResult> {
     const seq = ++listSeq;
-    // 若调用方指定偏好源且在候选里，就把它提前到探测队首，其余保持原优先级顺序
-    const ordered = preferred && deps.registryUrls.includes(preferred)
-      ? [preferred, ...deps.registryUrls.filter((url) => url !== preferred)]
-      : [...deps.registryUrls];
-    // 并发探测所有源：拿到每个源的死活状态供面板展示，数据取优先级最高的可用源
-    const probes = await Promise.all(
-      ordered.map(async (url) => {
-        try {
-          return { url, data: await fetchRegistryJson(url) } as const;
-        } catch (error) {
-          return { url, failure: errorMessage(error) } as const;
-        }
-      }),
+    // 并发探测所有源：拿到每个源的死活状态供面板展示，数据取优先级最高的可用源。
+    // 软截止：已有源返回就不再等慢源（GitHub 在部分网络 10s 硬超时，会拖慢整个列表）；
+    // 全部源都超过软截止时才回落到等真实结果（硬超时兜底）。
+    const probes = deps.registryUrls.map(async (url) => {
+      try {
+        return { url, data: await fetchRegistryJson(url) } as const;
+      } catch (error) {
+        return { url, failure: errorMessage(error) } as const;
+      }
+    });
+    const softResults = await Promise.all(
+      probes.map((probe) => Promise.race([
+        probe,
+        new Promise<{ url: string; softTimeout: true }>((resolve) => {
+          setTimeout(() => resolve({ url: "", softTimeout: true }), softDeadlineMs);
+        }),
+      ])),
     );
+    // 软结果里的占位没有 url，用下标对回源地址
+    const merged = softResults.map((result, index) =>
+      "softTimeout" in result ? { url: deps.registryUrls[index], softTimeout: true } as const : result);
+    const anyUsable = merged.some((result) => "data" in result);
+    const allFailed = merged.every((result) => "failure" in result);
+    const results = anyUsable || allFailed ? merged : await Promise.all(probes);
+
     const sources: MarketSourceStatus[] = [];
     const failures: string[] = [];
     let sawUnsupported = false;
     let chosen: { plugins: MarketPluginEntry[]; snapshot: Map<string, MarketSnapshotEntry> } | null = null;
-    for (const probe of probes) {
-      if ("failure" in probe) {
+    for (const probe of results) {
+      if (!("data" in probe)) {
+        const failure = "failure" in probe ? probe.failure : "探测超时（未等待，可点刷新重试）";
         sources.push({ url: probe.url, ok: false, used: false });
-        failures.push(`${probe.url}: ${probe.failure}`);
+        failures.push(`${probe.url}: ${failure}`);
         continue;
       }
       try {
@@ -221,6 +264,10 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
       }
     }
     if (chosen) {
+      debugLog(
+        `[plugins] market list: ${chosen.plugins.length} plugins; sources=` +
+        sources.map((s) => `${s.url}=${s.ok ? (s.used ? "used" : "standby") : "fail"}`).join(" | "),
+      );
       if (seq === listSeq) {
         // 只有最新一次请求才能落快照；过期响应的结果直接交还发起方但不改变状态
         snapshot = chosen.snapshot;

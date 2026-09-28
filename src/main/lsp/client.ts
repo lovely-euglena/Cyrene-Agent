@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import { trackChildProcess } from "../child-processes";
 import {
   createMessageConnection,
   type MessageConnection,
@@ -36,7 +37,9 @@ function defaultSpawn(
   args: string[],
   options: { cwd: string; shell: false; windowsHide: true; stdio: ["pipe", "pipe", "pipe"] },
 ): LspChildProcess {
-  return spawn(command, args, options) as unknown as LspChildProcess;
+  const child = spawn(command, args, options);
+  trackChildProcess(child, `lsp ${command}`);
+  return child as unknown as LspChildProcess;
 }
 
 function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string, signal?: AbortSignal): Promise<T> {

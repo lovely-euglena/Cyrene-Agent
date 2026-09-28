@@ -1,7 +1,7 @@
 // .NET embedding sidecar 客户端（spawn cyrene-embed serve）。
 //
 // 激活条件（全部满足才启用，否则调用方回退 embedding-worker）：
-//   1. 环境变量 CYRENE_EMBED_SIDECAR=1（实验开关，后续接 settings UI）
+//   1. 默认启用（CYRENE_EMBED_SIDECAR=0 关闭；exe 缺失自动回退 worker）
 //   2. sidecar exe 存在（见 resolveSidecarPath）
 //
 // 帧协议见 dotnet/embedding-sidecar/Program.cs：
@@ -14,9 +14,10 @@
 // 索引零迁移。同机性能：WASM 749ms/条 → ORT native 173ms/条。
 //
 // ⚠️ 实现要点（都是复查时踩过的坑）：
-//   - 帧解析是跨 chunk 的状态机：二进制段不完整时保存 mid-frame
-//     状态（header + binaryLength），否则下一个 chunk 的头 4 字节
-//     会被误读为长度前缀 → 协议永久失步。
+//   - 帧解析统一走 SidecarFrameDecoder（sidecar-frame-decoder.ts）：
+//     长度前缀在 JSON 头收齐前不得消费；二进制段不完整时保存
+//     mid-frame 状态。历史 P0：头被分片时前缀丢失 → 下一轮把
+//     `{"id` 误读为长度（bad frame length 1684611707）→ 协议永久失步。
 //   - Float32Array 构造要求 byteOffset 4 字节对齐；buffer 内偏移
 //     由 header JSON 长度决定（任意值）→ 必须 ArrayBuffer.slice 拷贝
 //     出对齐副本，不能直接视图。
@@ -32,9 +33,63 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { app } from "electron";
+import { trackChildProcess } from "../child-processes";
+import { DecodedFrame, SidecarFrameDecoder } from "./sidecar-frame-decoder";
+
+interface SidecarResponse {
+  header: Record<string, unknown>;
+  vectors: Float32Array[];
+}
+
+export interface SidecarSearchRequest {
+  ragDataDir: string;
+  storeMode?: "sqlite" | "json";
+  query: string;
+  source?: string;
+  topK: number;
+  importIds?: string[];
+  allowedEntryIds?: string[];
+  customWords?: string[];
+  vectorWeight?: number;
+  bm25Weight?: number;
+  updateRecall?: boolean;
+}
+
+export interface SidecarSearchEntry {
+  id: string;
+  text: string;
+  source: string;
+  weight: number;
+  createdAt: number;
+  lastRecalledAt: number;
+  metadata?: Record<string, unknown> | null;
+  score: number;
+}
+
+export interface SidecarSearchResponse {
+  entries: SidecarSearchEntry[];
+  embeddings: Float32Array[];
+}
+
+export interface DocImportProgress {
+  status: string;
+  completedChunks?: number;
+  totalChunks?: number;
+}
+
+export interface DocImportResponse {
+  kind: string;
+  name?: string;
+  chunks?: number;
+  importId?: string | null;
+  cached?: boolean;
+  text?: string | null;
+  reason?: string | null;
+  [key: string]: unknown;
+}
 
 interface PendingRequest {
-  resolve: (vectors: Float32Array[]) => void;
+  resolve: (response: SidecarResponse) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }
@@ -44,25 +99,25 @@ const READY_TIMEOUT_MS = 60_000;
 /** 单请求超时：基数 + 每条文本加时（native ~200ms/条，留 10x 余量）。 */
 const REQUEST_TIMEOUT_BASE_MS = 30_000;
 const REQUEST_TIMEOUT_PER_TEXT_MS = 2_000;
-/** 响应头 JSON 上限（防御异常头字段）。 */
-const MAX_HEADER_BYTES = 1 << 20;
-/** 二进制段上限（0.5M 条 × 1024 dim × 4B = 2GB 的安全边界）。 */
-const MAX_BINARY_BYTES = 512 << 20;
+/** 文档导入超时（分钟级：读取 + 分块 + 全量 embedding + 落盘）。 */
+const DOC_IMPORT_TIMEOUT_MS = 15 * 60_000;
 
 let cachedExePath: string | null | undefined;
 
 /**
  * sidecar exe 路径（只找一次，结果缓存）。
- * 打包态：resources/embed-sidecar/cyrene-embed（electron-builder extraResources）
- * 开发态：dotnet/embedding-sidecar/bin/Release|Debug/net10.0/（需 dotnet build）
+ * 打包态：resources/embed-sidecar/cyrene-embed(.exe)（electron-builder extraResources）
+ * 开发态：dotnet/embedding-sidecar/bin/Release|Debug/net10.0/（需 dotnet build/publish）
  */
 export function resolveSidecarPath(): string | null {
   if (cachedExePath !== undefined) return cachedExePath;
 
+  // Windows 产物带 .exe 后缀（此前只找无后缀名，Windows 打包态永远探测不到）
+  const exeName = process.platform === "win32" ? "cyrene-embed.exe" : "cyrene-embed";
   const candidates: string[] = [];
   try {
     // 打包态（app.isPackaged 时 process.resourcesPath 指向 resources/）
-    candidates.push(path.join(process.resourcesPath, "embed-sidecar", "cyrene-embed"));
+    candidates.push(path.join(process.resourcesPath, "embed-sidecar", exeName));
   } catch {
     /* 非打包环境无 resourcesPath —— 忽略 */
   }
@@ -70,8 +125,9 @@ export function resolveSidecarPath(): string | null {
   if (!app.isPackaged) {
     const repoRoot = app.getAppPath();
     candidates.push(
-      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", "cyrene-embed"),
-      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Debug", "net10.0", "cyrene-embed"),
+      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", "win-x64", "publish", exeName),
+      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", exeName),
+      path.join(repoRoot, "dotnet", "embedding-sidecar", "bin", "Debug", "net10.0", exeName),
     );
   }
 
@@ -80,7 +136,8 @@ export function resolveSidecarPath(): string | null {
 }
 
 export function isSidecarEnabled(): boolean {
-  if (process.env.CYRENE_EMBED_SIDECAR !== "1") return false;
+  // 默认启用（转正）；CYRENE_EMBED_SIDECAR=0 显式关闭，exe 缺失自动回退 worker
+  if (process.env.CYRENE_EMBED_SIDECAR === "0") return false;
   return resolveSidecarPath() !== null;
 }
 
@@ -88,49 +145,13 @@ export class EmbeddingSidecarClient {
   private child: ChildProcess | null = null;
   private pending = new Map<number, PendingRequest>();
   private nextId = 1;
-  // 接收缓冲：chunk 队列 + 计数。
-  // 不用「单 buffer + Buffer.concat」累积：每 data 事件全量重拷贝是 O(n²)，
-  // 大响应（256KB+ 多 chunk）时 CPU/GC 浪费显著；且消费用 subarray 视图
-  // 会持有整个历史底层 buffer（跨帧滞留内存）。队列模型下每个视图最多
-  // 持有队头单个 chunk（64KB 级），消费即弃。
-  private chunks: Buffer[] = [];
-  private bufferedBytes = 0;
-
-  /**
-   * 从队列头取精确 n 字节。数据不足返回 null（调用方等下个 data）。
-   * 快路径（队头 chunk 足够）零拷贝返回视图；跨 chunk 时仅拼 n 字节。
-   */
-  private take(n: number): Buffer | null {
-    if (n === 0) return Buffer.alloc(0);
-    if (this.bufferedBytes < n) return null;
-    const first = this.chunks[0];
-    if (first.length >= n) {
-      const out = first.subarray(0, n);
-      if (first.length === n) this.chunks.shift();
-      else this.chunks[0] = first.subarray(n);
-      this.bufferedBytes -= n;
-      return out;
-    }
-    const out = Buffer.concat(this.chunks, n);
-    let consumed = 0;
-    while (consumed < n && this.chunks.length > 0) {
-      const chunk = this.chunks[0];
-      if (chunk.length <= n - consumed) {
-        consumed += chunk.length;
-        this.chunks.shift();
-      } else {
-        this.chunks[0] = chunk.subarray(n - consumed);
-        consumed = n;
-      }
-    }
-    this.bufferedBytes -= n;
-    return out;
-  }
-  /** mid-frame 状态：header 已解析、二进制段未收齐（跨 chunk 状态机） */
-  private frameState: { header: any; binaryLength: number } | null = null;
+  // 帧解析状态机（缓冲队列 + 跨 chunk 状态，见 sidecar-frame-decoder.ts）。
+  private decoder = new SidecarFrameDecoder();
   private startup: Promise<void> | null = null;
   private modelKey: string | null = null;
   private onReadyFrame: ((header: any) => void) | null = null;
+  /** doc-import 进度通知路由（op=progress 帧，按 forId）。 */
+  private progressHandlers = new Map<number, (progress: DocImportProgress) => void>();
 
   constructor(private readonly exePath: string) {}
 
@@ -144,6 +165,99 @@ export class EmbeddingSidecarClient {
 
   async embedTexts(modelKey: string, texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
+    const timeoutMs =
+      REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(texts.length, 256);
+    const response = await this.request(modelKey, { op: "embed", texts }, timeoutMs, `texts=${texts.length}`);
+    return response.vectors;
+  }
+
+  /**
+   * rerank（.NET RerankerEngine）：返回与 documents 对齐的原始 logits（越大越相关）。
+   * rerankerDir = 完整模型目录（models/bge-reranker-base，由调用方解析后显式传入）。
+   */
+  async rerankScores(
+    modelKey: string,
+    query: string,
+    documents: string[],
+    rerankerDir: string,
+  ): Promise<number[]> {
+    if (documents.length === 0) return [];
+    const timeoutMs =
+      REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(documents.length, 256);
+    const { vectors } = await this.request(
+      modelKey,
+      { op: "rerank", query, documents, rerankerDir },
+      timeoutMs,
+      `docs=${documents.length}`,
+    );
+    // 协议约定 rerank 响应 = count×dim(1)，即每条文档一个标量分数
+    return vectors.map((v) => v[0] ?? 0);
+  }
+
+  /**
+   * 混合检索（.NET）：向量 + BM25 + 融合 + 召回回写全部在 sidecar 执行。
+   * 返回条目与对齐的 embedding；失败由调用方回退本地实现。
+   */
+  async searchHybrid(modelKey: string, payload: SidecarSearchRequest): Promise<SidecarSearchResponse> {
+    // 耗时与候选量相关（全库分词 + 扫描）；后续可做 token 缓存优化
+    const { header, vectors } = await this.request(
+      modelKey,
+      { op: "search", ...payload },
+      REQUEST_TIMEOUT_BASE_MS,
+      `search="${payload.query.slice(0, 24)}"`,
+    );
+    const entries = Array.isArray(header.results) ? (header.results as SidecarSearchEntry[]) : [];
+    return { entries, embeddings: vectors };
+  }
+
+  /**
+   * 文档导入（读取/分块/embedding/落盘/缓存全部在 sidecar，分钟级超时）。
+   * onProgress 通过 op=progress 通知帧转发；onStarted 供取消桥接使用。
+   */
+  async docImport(
+    modelKey: string,
+    payload: { filePath: string; ragDataDir: string; storeMode?: "sqlite" | "json" },
+    callbacks: {
+      onProgress?: (progress: DocImportProgress) => void;
+      onStarted?: (requestId: number) => void;
+    } = {},
+  ): Promise<DocImportResponse> {
+    let requestId = -1;
+    try {
+      const { header } = await this.request(
+        modelKey,
+        { op: "doc-import", ...payload },
+        DOC_IMPORT_TIMEOUT_MS,
+        `doc="${payload.filePath.slice(-32)}"`,
+        (id) => {
+          requestId = id;
+          if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
+          callbacks.onStarted?.(id);
+        },
+      );
+      return header as DocImportResponse;
+    } finally {
+      if (requestId >= 0) this.progressHandlers.delete(requestId);
+    }
+  }
+
+  /** 取消进行中的 doc-import（best-effort 通知帧；sidecar 按批检查取消位）。 */
+  cancelDocImport(targetId: number): void {
+    try {
+      this.writeFrame({ id: this.nextId++, op: "doc-import-cancel", targetId });
+    } catch {
+      // sidecar 已退出：导入随进程中止
+    }
+  }
+
+  /** 请求公共路径：模型一致性检查 + 懒启动 + 超时 + pending 路由。 */
+  private async request(
+    modelKey: string,
+    header: Record<string, unknown>,
+    timeoutMs: number,
+    label: string,
+    onStarted?: (id: number) => void,
+  ): Promise<SidecarResponse> {
     if (this.modelKey && this.modelKey !== modelKey) {
       // 当前 sidecar 加载的模型不同：重启换模型（现阶段只有 bgem3，防御式处理）
       await this.dispose("model-switch");
@@ -151,20 +265,19 @@ export class EmbeddingSidecarClient {
     await this.ensureStarted(modelKey);
 
     const id = this.nextId++;
-    const timeoutMs =
-      REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(texts.length, 256);
-    return new Promise<Float32Array[]>((resolve, reject) => {
+    onStarted?.(id);
+    return new Promise<SidecarResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id);
         if (!pending) return;
         this.pending.delete(id);
         // sidecar 疑似卡死：回收进程（下次调用自动重启），本次走调用方兜底
         void this.dispose("request-timeout");
-        reject(new Error(`Embedding sidecar request timeout (${timeoutMs}ms, texts=${texts.length})`));
+        reject(new Error(`Embedding sidecar request timeout (${timeoutMs}ms, ${label})`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
-        this.writeFrame({ id, op: "embed", texts });
+        this.writeFrame({ ...header, id });
       } catch (error) {
         this.pending.delete(id);
         clearTimeout(timer);
@@ -192,9 +305,8 @@ export class EmbeddingSidecarClient {
         env: this.buildEnv(),
       });
       this.child = child;
-      this.chunks = [];
-      this.bufferedBytes = 0;
-      this.frameState = null;
+      trackChildProcess(child, "embedding-sidecar");
+      this.decoder.reset();
 
       // 身份校验：本 child 的退出事件晚到时（已被 dispose/替换），
       // 不能误杀新 child 的 pending 和引用
@@ -232,9 +344,26 @@ export class EmbeddingSidecarClient {
       }
       stdout.on("data", (chunk: Buffer) => {
         if (!isCurrent()) return;
-        this.chunks.push(chunk);
-        this.bufferedBytes += chunk.length;
-        this.drainFrames();
+        let frames: DecodedFrame[];
+        try {
+          frames = this.decoder.push(chunk);
+        } catch (error) {
+          // 协议失序不可恢复：回收进程（下次调用自动重启）
+          this.protocolFailure(error instanceof Error ? error.message : String(error));
+          return;
+        }
+        for (const frame of frames) {
+          if (this.onReadyFrame) {
+            this.onReadyFrame(frame.header);
+            continue;
+          }
+          const header = frame.header as { op?: string; forId?: number };
+          if (header.op === "progress" && typeof header.forId === "number") {
+            this.progressHandlers.get(header.forId)?.(frame.header as unknown as DocImportProgress);
+            continue;
+          }
+          this.completeResponse(frame.header as any, frame.binary);
+        }
       });
 
       // 等待 ready 帧（模型加载 2~3s，慢盘更久）
@@ -299,64 +428,6 @@ export class EmbeddingSidecarClient {
     child.stdin.write(json);
   }
 
-  /**
-   * 帧解析状态机。跨 chunk 安全：header 已解析但二进制段未收齐时，
-   * mid-frame 状态保存在 this.frameState，下个 data 事件先补齐再继续。
-   */
-  private drainFrames(): void {
-    while (true) {
-      // 1) 二进制段收集中（mid-frame）
-      if (this.frameState) {
-        const { header, binaryLength } = this.frameState;
-        const binary = this.take(binaryLength);
-        if (!binary) return; // 继续等数据
-        this.frameState = null;
-        this.completeResponse(header, binary);
-        continue;
-      }
-
-      // 2) 新帧：长度前缀
-      const prefix = this.take(4);
-      if (!prefix) return;
-      const headerLen = prefix.readInt32LE(0);
-      if (headerLen < 0 || headerLen > MAX_HEADER_BYTES) {
-        this.protocolFailure(`bad frame length ${headerLen}`);
-        return;
-      }
-      const headerBuf = this.take(headerLen);
-      if (!headerBuf) return; // 帧头不完整
-
-      let header: any;
-      try {
-        header = JSON.parse(headerBuf.toString("utf8"));
-      } catch {
-        this.protocolFailure("frame header is not valid JSON");
-        return;
-      }
-
-      // 启动期等 ready 帧
-      if (this.onReadyFrame) {
-        this.onReadyFrame(header);
-        continue;
-      }
-
-      // 3) 二进制段长度推导 + 校验
-      const binaryLength =
-        header && header.ok && typeof header.count === "number" && typeof header.dim === "number"
-          ? header.count * header.dim * 4
-          : 0;
-      if (!Number.isFinite(binaryLength) || binaryLength < 0 || binaryLength > MAX_BINARY_BYTES) {
-        this.protocolFailure(`bad binary length ${binaryLength}`);
-        return;
-      }
-      if (binaryLength > 0) {
-        this.frameState = { header, binaryLength };
-        continue;
-      }
-      this.completeResponse(header, null);
-    }
-  }
-
   private completeResponse(header: any, binary: Buffer | null): void {
     const pending = this.pending.get(header.id);
     if (!pending) return;
@@ -373,7 +444,7 @@ export class EmbeddingSidecarClient {
         const copy = binary!.buffer.slice(start, start + dim * 4);
         vectors.push(new Float32Array(copy));
       }
-      pending.resolve(vectors);
+      pending.resolve({ header, vectors });
     } else {
       pending.reject(new Error(header.error ?? "Embedding sidecar embed failed"));
     }
@@ -398,9 +469,7 @@ export class EmbeddingSidecarClient {
     this.child = null;
     this.modelKey = null;
     this.onReadyFrame = null;
-    this.frameState = null;
-    this.chunks = [];
-    this.bufferedBytes = 0;
+    this.decoder.reset();
   }
 
   private disposeSync(reason: string): void {

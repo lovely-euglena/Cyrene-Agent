@@ -12,8 +12,10 @@ vi.mock("electron", () => ({
 import {
   cancelPendingChoicesForRun,
   registerChoiceIpc,
+  requestUserChoice,
   requestUserClarification,
   setChoiceCardSender,
+  setChoiceDismissSender,
 } from "./user-choice";
 import type { AskCardPayload, AskCardSubmission } from "../shared/ask-clarification";
 
@@ -245,5 +247,55 @@ describe("requestUserClarification", () => {
     expect(secondSettled).not.toHaveBeenCalled();
 
     cancelPendingChoicesForRun("run-second");
+  });
+});
+
+describe("requestUserChoice（runId 透传）", () => {
+  beforeEach(() => {
+    handle.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("runId 透传给卡片发送与超时 dismiss（渲染端 RunEventGate 按 runId 过滤）", async () => {
+    const sender = vi.fn();
+    const dismiss = vi.fn();
+    setChoiceCardSender(sender);
+    setChoiceDismissSender(dismiss);
+    registerChoiceIpc();
+
+    const pending = requestUserChoice(
+      "确认发送邮件？",
+      [{ label: "发送", value: "send" }, { label: "取消", value: "cancel" }],
+      "cancel",
+      { runId: "run-9" },
+    );
+    expect(sender).toHaveBeenCalledTimes(1);
+    const [card, context] = sender.mock.calls[0] as [{ id: string; question: string }, { runId?: string }];
+    expect(card.question).toBe("确认发送邮件？");
+    expect(context).toEqual({ runId: "run-9" });
+
+    const ipcHandler = handle.mock.calls.at(-1)?.[1] as (
+      event: unknown,
+      payload: { id: string; value: string },
+    ) => unknown;
+    ipcHandler({}, { id: card.id, value: "send" });
+    await expect(pending).resolves.toBe("send");
+
+    // 超时路径：dismiss 同样带 runId（否则清卡事件会被丢弃）
+    vi.useFakeTimers();
+    const timeoutSender = vi.fn();
+    setChoiceCardSender(timeoutSender);
+    const timeoutPending = requestUserChoice(
+      "再确认？",
+      [{ label: "发送", value: "send" }],
+      "cancel",
+      { runId: "run-10" },
+    );
+    await vi.advanceTimersByTimeAsync(120_000);
+    await expect(timeoutPending).resolves.toBe("cancel");
+    expect(dismiss).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }), { runId: "run-10" });
   });
 });

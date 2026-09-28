@@ -31,10 +31,10 @@ describe("buildToolCatalog", () => {
     expect(out).toContain("用途：读取网页");
   });
 
-  it("默认 risk 为 safe", () => {
+  it("默认 risk 为 undeclared（缺省不得静默当成 safe）", () => {
     const tools = [makeTool({ id: "x", description: "X" })];
     const out = buildToolCatalog(tools);
-    expect(out).toContain("风险：safe");
+    expect(out).toContain("风险：undeclared");
   });
 
   it("catalogHint 优先于 description", () => {

@@ -132,6 +132,10 @@ export const IPC = {
   SETTINGS_TEST_VISION: "settings:test-vision",
   SETTINGS_GET_GENERAL: "settings:get-general",
   SETTINGS_SAVE_GENERAL: "settings:save-general",
+  // 便携模式：数据目录查询 / 选择目录 / 应用变更（迁移 + 重启）
+  SETTINGS_PORTABLE_GET: "settings:portable-get",
+  SETTINGS_PORTABLE_PICK_DIR: "settings:portable-pick-dir",
+  SETTINGS_PORTABLE_APPLY: "settings:portable-apply",
   SETTINGS_GET_TIMEOUT_SETTINGS: "settings:get-timeout-settings",
   SETTINGS_SAVE_TIMEOUT_SETTINGS: "settings:save-timeout-settings",
   UI_THEME_GET: "ui-theme:get",
@@ -397,6 +401,7 @@ export const IPC = {
   CALL_OPEN: "call:open",                 // sidebar → main：打开通话窗口
   CALL_START: "call:start",               // renderer → main：开始通话（初始化 ASR）
   CALL_AUDIO_FRAME: "call:audio-frame",    // renderer → main：PCM 音频帧
+  CALL_VAD_STATE: "call:vad-state",        // renderer → main：VAD 语音开始/静默（ASR 静默门控）
   CALL_ASR_RESULT: "call:asr-result",     // main → renderer：ASR 识别结果
   CALL_TURN_END: "call:turn-end",         // renderer → main：VAD 静默，结束本轮
   CALL_TTS_AUDIO: "call:tts-audio",       // main → renderer：TTS 音频
@@ -469,5 +474,9 @@ export const IPC = {
   PLUGINS_PANEL_INVOKE: "plugins:panel:invoke",
   PLUGINS_MARKET_LIST: "plugins:market:list",
   PLUGINS_MARKET_INSTALL: "plugins:market:install",
-
+  // ── main 线通道（合并补齐：便携模式 / VAD / 模型管理等）──
+  EMBEDDING_DELETE: "embedding:delete",
+  EMBEDDING_DOWNLOAD: "embedding:download",
+  EMBEDDING_GET_STATUS: "embedding:get-status",
+  EMBEDDING_PROGRESS: "embedding:progress",
 } as const;

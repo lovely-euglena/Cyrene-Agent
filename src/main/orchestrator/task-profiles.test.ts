@@ -18,6 +18,7 @@ const parentTools = [
   "write_word",
   "write_excel",
   "write_pdf",
+  "write_markdown",
   "write_file",
   "list_dir",
   "web_search",

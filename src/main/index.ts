@@ -8,6 +8,8 @@
  */
 
 import { app } from "electron";
+// ⚠️ 便携模式引导必须是第一条 import：在 app.ready 前切换 userData 目录
+import "./portable/bootstrap";
 import { createApplication } from "./application/application";
 import { createDefaultApplicationDependencies } from "./application/default-dependencies";
 import { registerPluginPanelScheme } from "./plugin-panel-protocol";

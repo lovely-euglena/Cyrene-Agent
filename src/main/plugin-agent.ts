@@ -18,6 +18,15 @@ const DEFAULT_MAX_ROUNDS = 50;
 const DEFAULT_MAX_WALL_MS = 15 * 60_000;
 const MAX_RUN_ID_LENGTH = 128;
 const MAX_PURPOSE_LENGTH = 80;
+/** 无头运行的工具风险级白名单：必须是插件可声明的六档之一（不允许 undeclared）。 */
+const HEADLESS_TOOL_RISKS: ReadonlySet<string> = new Set([
+  "safe",
+  "fs-read",
+  "fs-write",
+  "shell",
+  "network",
+  "input-control",
+]);
 const executionLedgers = new ExecutionLedgerStore();
 
 export interface PluginAgentRunnerDeps {
@@ -78,6 +87,14 @@ function validateAndMapTools(pluginId: string, input: ReadonlyArray<PluginTool>)
     if (!tool.effectKind || tool.effectKind === "unknown") {
       throw new Error(`目标工具必须显式声明非 unknown 的 effectKind: ${tool.id}`);
     }
+    // 风险级同样必须显式声明：无头运行无法弹审批，风险级是无头执行的审计依据
+    // 与未来策略挂钩点；缺省不放行，避免“没写 = safe”的静默执行。
+    const risk = (tool as { risk?: unknown }).risk;
+    if (typeof risk !== "string" || !HEADLESS_TOOL_RISKS.has(risk)) {
+      throw new Error(
+        `目标工具必须显式声明合法 risk: ${tool.id}（safe/fs-read/fs-write/shell/network/input-control）`,
+      );
+    }
     if (typeof tool.execute !== "function") throw new Error(`目标工具 execute 必须是函数: ${tool.id}`);
 
     return {
@@ -88,7 +105,7 @@ function validateAndMapTools(pluginId: string, input: ReadonlyArray<PluginTool>)
       ...(tool.category ? { category: tool.category } : {}),
       ...(tool.capability ? { capability: tool.capability } : {}),
       enabled: true,
-      ...(tool.risk ? { risk: tool.risk } : {}),
+      risk: risk as ToolDefinition["risk"],
       ...(tool.modes ? { modes: [...tool.modes] } : {}),
       inputSchema: {
         type: "object",
@@ -214,6 +231,9 @@ export function createPluginAgentRunner(deps: PluginAgentRunnerDeps): NonNullabl
       includeInteractiveTools: false,
       planState: undefined,
       taskExecutor: undefined,
+      // 无头运行没有可交互的审批窗口：这里放行的是“插件自己在 options.tools 里显式
+      // 冻结并逐一声明 risk 的自有工具”，不是宿主任意工具。风险级已在
+      // validateAndMapTools 强制声明，供审计/未来策略使用。
       checkPermission: async () => true,
       toolContext: {
         userQuery: goal,

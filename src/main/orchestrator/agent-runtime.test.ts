@@ -43,7 +43,9 @@ function createDeps(
     runtimeStateService: {
       getState: () => ({ status: "idle", expression: 0, updatedAt: 0 }),
     },
-    getStickerEmbeddingIndex: () => undefined,
+    getSceneEmbeddingIndex: () => null,
+        getSceneEmbeddingProvider: () => null,
+        getStickerEmbeddingIndex: () => undefined,
     publishPluginHostEvent,
   } as unknown as AgentRuntimeDeps;
 }
@@ -305,7 +307,9 @@ function createFullDeps(overrides?: Partial<AgentRuntimeDeps>): AgentRuntimeDeps
       getEnabledForMode: vi.fn(() => []),
       getBody: vi.fn(() => null),
     },
-    getStickerEmbeddingIndex: () => undefined,
+    getSceneEmbeddingIndex: () => null,
+        getSceneEmbeddingProvider: () => null,
+        getStickerEmbeddingIndex: () => undefined,
     getEmbeddingProvider: () => undefined,
     broadcastRuntimeStateChanged: vi.fn(),
     citaService: { prepareTurn: vi.fn(async () => "cita-turn") },

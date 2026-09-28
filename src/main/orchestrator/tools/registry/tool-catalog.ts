@@ -29,7 +29,7 @@ export function buildToolCatalog(tools: ReadonlyArray<ToolDefinition>): string {
   return tools
     .map((tool) => {
       const hint = extractHint(tool);
-      const risk = tool.risk ?? "safe";
+      const risk = tool.risk ?? "undeclared";
       return `- ${tool.id}\n  用途：${hint}\n  风险：${risk}`;
     })
     .join("\n");

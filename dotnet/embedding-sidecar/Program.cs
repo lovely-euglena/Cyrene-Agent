@@ -3,10 +3,13 @@ using CyreneEmbedSidecar;
 
 // 用法：
 //   verify <modelDir> <dump.json>   数值一致性验证：tokenIds 对账 + 向量余弦
+//   verify-rerank <rerankerDir> <dump.json>  reranker 句对 tokenIds + logits 对账
+//   verify-sqlite [workDir]         SQLite 向量库自检（schema/迁移/rev/检索对账）
 //   bench  <modelDir> [textCount]   性能基准（自生成混合长短文本）
 //   serve  <modelDir>               stdio 帧协议服务（Electron spawn）
 //
 // modelDir 指向 Xenova/bge-m3 布局（tokenizer.json + onnx/model_quantized.onnx）
+// rerankerDir 指向 bge-reranker-base 布局（同构）
 
 var command = args.Length > 0 ? args[0] : "serve";
 var modelDir = args.Length > 1 ? args[1]
@@ -16,6 +19,21 @@ switch (command)
 {
     case "verify":
         Verify.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/embedding-verify-data.json");
+        return 0;
+    case "verify-rerank":
+        VerifyRerank.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/reranker-verify-data.json");
+        return 0;
+    case "verify-tokenize":
+        VerifyTokenize.Run(args.Length > 2 ? args[2] : "scripts/diagnostics/rag-search-verify-data.json");
+        return 0;
+    case "verify-search":
+        VerifySearch.Run(modelDir, args.Length > 2 ? args[2] : "scripts/diagnostics/rag-search-verify-data.json");
+        return 0;
+    case "verify-chunks":
+        VerifyChunks.Run(args.Length > 1 ? args[1] : "scripts/diagnostics/rag-chunk-verify-data.json");
+        return 0;
+    case "verify-sqlite":
+        VerifySqlite.Run(args.Length > 1 ? args[1] : null);
         return 0;
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
@@ -126,6 +144,413 @@ internal static class Verify
     }
 }
 
+/// <summary>
+/// 分块对账：TextChunker vs TS chunkText（逐块 id/text/index 全等）。
+/// </summary>
+internal static class VerifyChunks
+{
+    public static void Run(string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        int samples = 0, chunksTotal = 0, matched = 0;
+        foreach (var sample in doc.RootElement.EnumerateArray())
+        {
+            samples++;
+            var name = sample.GetProperty("name").GetString()!;
+            var text = sample.GetProperty("text").GetString()!;
+            var expected = sample.GetProperty("chunks").EnumerateArray().ToList();
+            var actual = TextChunker.ChunkText(text, "doc_" + name);
+            chunksTotal += expected.Count;
+
+            var ok = actual.Count == expected.Count;
+            if (ok)
+            {
+                for (var i = 0; i < expected.Count; i++)
+                {
+                    if (actual[i].Id == expected[i].GetProperty("id").GetString()
+                        && actual[i].Index == expected[i].GetProperty("index").GetInt32()
+                        && actual[i].Text == expected[i].GetProperty("text").GetString())
+                    {
+                        matched++;
+                    }
+                    else
+                    {
+                        ok = false;
+                    }
+                }
+            }
+
+            if (!ok)
+            {
+                Console.WriteLine($"[verify-chunks] DIFF {name}: expected={expected.Count} actual={actual.Count}");
+                for (var i = 0; i < Math.Min(expected.Count, actual.Count); i++)
+                {
+                    var e = expected[i].GetProperty("text").GetString()!;
+                    if (e != actual[i].Text)
+                    {
+                        Console.WriteLine($"  #{i} ts : {Abbrev(e)}");
+                        Console.WriteLine($"  #{i} net: {Abbrev(actual[i].Text)}");
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[verify-chunks] == {name}: {actual.Count} chunks");
+            }
+        }
+
+        var pass = matched == chunksTotal;
+        Console.WriteLine($"[verify-chunks] {(pass ? "PASS" : "FAIL")}: {matched}/{chunksTotal} chunks exact ({samples} samples)");
+        if (!pass) Environment.Exit(1);
+    }
+
+    private static string Abbrev(string text) => text.Length <= 60 ? text : text[..60] + "…";
+}
+
+/// <summary>
+/// SQLite 向量库自检：schema / JSON 迁移 / rev 跨连接新鲜度 / 双库检索对账 /
+/// 召回回写可见性 / 软合并。不依赖模型（合成向量），秒级完成。
+/// </summary>
+internal static class VerifySqlite
+{
+    public static void Run(string? workDir)
+    {
+        var dir = workDir ?? Path.Combine(Path.GetTempPath(), "cyrene-verify-sqlite-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        var pass = true;
+        void Check(string label, bool ok, string detail = "")
+        {
+            pass &= ok;
+            Console.WriteLine($"[verify-sqlite] {(ok ? "ok  " : "FAIL")} {label}{(detail.Length > 0 ? " — " + detail : "")}");
+        }
+
+        try
+        {
+            // 合成 32 条 float32-exact 向量（经 JSON / BLOB 往返都必须无损）
+            var synthetic = new List<MemoryEntry>();
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            for (var i = 0; i < 32; i++)
+            {
+                var v = new double[16];
+                for (var d = 0; d < 16; d++) v[d] = (float)Math.Sin(i * 0.7 + d * 0.3);
+                synthetic.Add(new MemoryEntry
+                {
+                    Id = $"seed_{i}",
+                    Text = i % 2 == 0 ? $"alpha doc {i}" : $"beta doc {i}",
+                    Embedding = v,
+                    Source = i % 4 == 0 ? "imported_doc" : "user_memory",
+                    Weight = 1.0,
+                    CreatedAt = now - i * 1000,
+                    LastRecalledAt = now - i * 1000,
+                    Metadata = i % 4 == 0
+                        ? new Dictionary<string, JsonElement> { ["importId"] = JsonSerializer.SerializeToElement("imp_" + i) }
+                        : null,
+                });
+            }
+            File.WriteAllText(
+                Path.Combine(dir, "memory-store.json"),
+                JsonSerializer.Serialize(synthetic, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+
+            // 1) 迁移
+            using var storeA = new SqliteRagStore(dir);
+            Check("legacy json migration", storeA.Entries.Count == 32, $"entries={storeA.Entries.Count}");
+
+            // 2) 检索对账（same source filter → 全量路径；updateRecall=false 保证可重复）
+            var query = synthetic[5].Embedding;
+            var fromSqlite = storeA.Search(query, "user_memory", 5, 0.0, null, null, now, updateRecall: false);
+            using var jsonStore = new RagStore(dir);
+            var fromJson = jsonStore.Search(query, "user_memory", 5, 0.0, null, null, now, updateRecall: false);
+            var idsEqual = fromSqlite.Select((r) => r.Entry.Id).SequenceEqual(fromJson.Select((r) => r.Entry.Id));
+            var scoresEqual = fromSqlite.Count == fromJson.Count
+                && fromSqlite.Zip(fromJson).All((p) => Math.Abs(p.Item1.Score - p.Item2.Score) < 1e-12);
+            Check("search parity vs json", idsEqual && scoresEqual,
+                $"n={fromSqlite.Count} top={fromSqlite.FirstOrDefault().Entry?.Id ?? "-"}");
+
+            // 3) 双连接 rev 新鲜度：B 写入 → A 刷新可见
+            using var storeB = new SqliteRagStore(dir);
+            storeB.AddPreparedBatch(new[]
+            {
+                new PreparedItem("cross-process entry", "user_memory", synthetic[0].Embedding, null),
+            });
+            var beforeRefresh = storeA.Entries.Count;
+            storeA.RefreshIfChanged();
+            Check("rev freshness (external write)", beforeRefresh == 32 && storeA.Entries.Count == 33,
+                $"before={beforeRefresh} after={storeA.Entries.Count}");
+
+            // 4) 召回回写可见：A 搜索（updateRecall=true）→ B 刷新后 weight 增加
+            var recalled = storeA.Search(query, "user_memory", 1, 0.0, null, null, now, updateRecall: true);
+            var targetId = recalled[0].Entry.Id;
+            storeB.RefreshIfChanged();
+            var weightInB = storeB.Entries.First((e) => e.Id == targetId).Weight;
+            Check("recall write-back visible cross-connection", weightInB > 1.0, $"weight={weightInB:F3}");
+
+            // 5) 软合并：JSON 更新更晚且含新 id → 新连接可见（不覆盖库内 weight）
+            synthetic.Add(new MemoryEntry
+            {
+                Id = "legacy_only",
+                Text = "legacy fallback entry",
+                Embedding = synthetic[0].Embedding,
+                Source = "user_memory",
+                Weight = 1.0,
+                CreatedAt = now,
+                LastRecalledAt = now,
+            });
+            File.WriteAllText(
+                Path.Combine(dir, "memory-store.json"),
+                JsonSerializer.Serialize(synthetic, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+            using var storeC = new SqliteRagStore(dir);
+            Check("legacy soft merge (newer json)", storeC.Entries.Any((e) => e.Id == "legacy_only"),
+                $"entries={storeC.Entries.Count}");
+
+            // 6) BLOB 数值无损（float32 往返）
+            var original = storeC.Entries.First((e) => e.Id == "seed_7").Embedding;
+            var roundTrip = original.SequenceEqual(synthetic[7].Embedding);
+            Check("float32 blob round-trip", roundTrip);
+        }
+        catch (Exception ex)
+        {
+            Check("unexpected error", false, ex.ToString());
+        }
+        finally
+        {
+            if (workDir is null)
+            {
+                try
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+                catch
+                {
+                    /* SQLite 连接已 Dispose；文件占用时留给临时目录清理 */
+                }
+            }
+        }
+
+        Console.WriteLine($"[verify-sqlite] {(pass ? "PASS" : "FAIL")}");
+        if (!pass) Environment.Exit(1);
+    }
+}
+
+/// <summary>
+/// 混合检索对账/质量回归：.NET（JiebaNet 自闭环）vs TS 金样（jieba-rs）。
+/// 输出逐查询并排结果 + 汇总（顺序一致 / top1 一致 / topK 重叠率）。
+/// 方案 B 采用 JiebaNet 分词，本命令是质量差异报告（非门禁）。
+/// </summary>
+internal static class VerifySearch
+{
+    public static void Run(string m3Dir, string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        var root = doc.RootElement;
+        var customWords = root.TryGetProperty("customWords", out var cw)
+            ? cw.EnumerateArray().Select((x) => x.GetString()!).ToArray()
+            : Array.Empty<string>();
+        var baselineFull = Path.GetFullPath(root.GetProperty("baselineStore").GetString()!);
+
+        var workDir = Path.Combine(Path.GetTempPath(), "cyrene-verify-store");
+        Directory.CreateDirectory(workDir);
+        var workStore = Path.Combine(workDir, "memory-store.json");
+
+        using var engine = EmbeddingEngine.Load(m3Dir);
+
+        int comparable = 0, orderEqual = 0, top1Equal = 0, top1Total = 0;
+        double overlapSum = 0;
+
+        foreach (var q in root.GetProperty("queries").EnumerateArray())
+        {
+            if (q.TryGetProperty("ivfSkip", out var skip) && skip.GetBoolean()) continue;
+            comparable++;
+
+            File.Copy(baselineFull, workStore, overwrite: true);
+            var store = new RagStore(workDir);
+
+            var query = q.GetProperty("query").GetString()!;
+            var source = q.TryGetProperty("source", out var s) && s.ValueKind == JsonValueKind.String
+                ? s.GetString()
+                : null;
+            var topK = q.GetProperty("topK").GetInt32();
+            var importIds = ReadStringArray(q, "options", "importIds");
+            var allowedIds = ReadStringArray(q, "options", "allowedEntryIds");
+
+            var results = HybridSearch.Retrieve(store, engine, query, source, topK, importIds, allowedIds, customWords);
+
+            var expected = q.GetProperty("results").EnumerateArray().ToList();
+            var expectedIds = expected.Select((e) => e.GetProperty("id").GetString()!).ToList();
+            var actualIds = results.Select((r) => r.Entry.Id).ToList();
+
+            var ordered = actualIds.SequenceEqual(expectedIds);
+            if (ordered) orderEqual++;
+            if (expectedIds.Count > 0)
+            {
+                top1Total++;
+                if (actualIds.Count > 0 && actualIds[0] == expectedIds[0]) top1Equal++;
+            }
+            var common = actualIds.Intersect(expectedIds).Count();
+            overlapSum += expectedIds.Count > 0 ? (double)common / expectedIds.Count : 1;
+
+            Console.WriteLine($"[verify-search] {(ordered ? "==  " : "DIFF")} \"{query}\" source={(source ?? "-")}");
+            Console.WriteLine(
+                $"  ts : {string.Join(", ", expected.Select((e) => $"{e.GetProperty("id").GetString()}:{e.GetProperty("score").GetDouble():F4}"))}");
+            Console.WriteLine(
+                $"  net: {string.Join(", ", results.Select((r) => $"{r.Entry.Id}:{r.Score:F4}"))}");
+        }
+
+        Console.WriteLine(
+            $"[verify-search] SUMMARY: order-equal={orderEqual}/{comparable}, top1-equal={top1Equal}/{top1Total}, mean-topK-overlap={overlapSum / Math.Max(1, comparable) * 100:F1}%");
+    }
+
+    private static string[]? ReadStringArray(JsonElement q, string optionName, string field)
+    {
+        if (!q.TryGetProperty(optionName, out var options)) return null;
+        if (!options.TryGetProperty(field, out var arr) || arr.ValueKind != JsonValueKind.Array) return null;
+        return arr.EnumerateArray().Select((x) => x.GetString()!).ToArray();
+    }
+}
+
+/// <summary>
+/// 分词对账：JiebaTokenizer vs TS tokenize（@node-rs/jieba）。
+/// 输出逐词一致率与首个不匹配样本（BM25 移植的可行性依据）。
+/// </summary>
+internal static class VerifyTokenize
+{
+    public static void Run(string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        var root = doc.RootElement;
+        var customWords = root.TryGetProperty("customWords", out var cw)
+            ? cw.EnumerateArray().Select((x) => x.GetString()!).ToArray()
+            : Array.Empty<string>();
+        var tokensNode = root.GetProperty("tokens");
+
+        int total = 0, matched = 0, lengthMismatch = 0, wordMismatch = 0;
+        int wordTotal = 0, wordMatched = 0, textsTotal = 0, textsWordExact = 0;
+        var samples = new List<string>();
+
+        foreach (var section in new[] { "docs", "queries" })
+        {
+            foreach (var item in tokensNode.GetProperty(section).EnumerateArray())
+            {
+                var text = item.GetProperty("text").GetString()!;
+                var expected = item.GetProperty("tokens").EnumerateArray().ToList();
+                var actual = JiebaTokenizer.Tokenize(text, customWords);
+                total += expected.Count;
+                wordTotal += expected.Count;
+                textsTotal++;
+                var wordsExact = expected.Count == actual.Count;
+                if (wordsExact)
+                {
+                    for (var i = 0; i < expected.Count; i++)
+                    {
+                        if (actual[i].Word == expected[i].GetProperty("w").GetString()) wordMatched++;
+                        else wordsExact = false;
+                    }
+                }
+                if (wordsExact) textsWordExact++;
+
+                if (expected.Count != actual.Count)
+                {
+                    lengthMismatch++;
+                    if (samples.Count < 8)
+                    {
+                        samples.Add($"[len] expect={expected.Count} actual={actual.Count} text=\"{Abbrev(text)}\"");
+                    }
+                    continue;
+                }
+
+                for (var i = 0; i < expected.Count; i++)
+                {
+                    var e = expected[i];
+                    var eWord = e.GetProperty("w").GetString()!;
+                    var eTag = e.GetProperty("tag").GetString()!;
+                    var eStop = e.GetProperty("s").GetInt32() == 1;
+                    var eNoun = e.GetProperty("n").GetInt32() == 1;
+                    var a = actual[i];
+                    if (a.Word == eWord && a.Tag == eTag && a.IsStop == eStop && a.IsNoun == eNoun)
+                    {
+                        matched++;
+                    }
+                    else
+                    {
+                        wordMismatch++;
+                        if (samples.Count < 8)
+                        {
+                            samples.Add(
+                                $"[tok] #{i} expect={eWord}/{eTag}(s={eStop},n={eNoun}) actual={a.Word}/{a.Tag}(s={a.IsStop},n={a.IsNoun}) text=\"{Abbrev(text)}\"");
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach (var s in samples) Console.WriteLine($"[verify-tokenize] {s}");
+        var rate = total > 0 ? matched * 100.0 / total : 100.0;
+        var wordRate = wordTotal > 0 ? wordMatched * 100.0 / wordTotal : 100.0;
+        Console.WriteLine(
+            $"[verify-tokenize] exact match: {matched}/{total} ({rate:F2}%), word-mismatch={wordMismatch}, length-mismatch texts={lengthMismatch}");
+        Console.WriteLine(
+            $"[verify-tokenize] words-only: {wordMatched}/{wordTotal} ({wordRate:F2}%), word-sequence-identical texts={textsWordExact}/{textsTotal}");
+    }
+
+    private static string Abbrev(string text) => text.Length <= 24 ? text : text[..24] + "…";
+}
+
+/// <summary>
+/// reranker 数值对账：句对 tokenIds（EncodePairToIds vs transformers.js）
+/// + 原始 logits（RerankerEngine vs JS AutoModelForSequenceClassification）。
+/// </summary>
+internal static class VerifyRerank
+{
+    public static void Run(string rerankerDir, string dumpPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(dumpPath));
+        var root = doc.RootElement;
+        var pairs = root.GetProperty("pairs").EnumerateArray()
+            .Select(p => (Query: p.GetProperty("query").GetString()!, Doc: p.GetProperty("doc").GetString()!))
+            .ToArray();
+        var expectedIds = root.GetProperty("tokenIds").EnumerateArray()
+            .Select(a => a.EnumerateArray().Select(v => v.GetInt32()).ToArray()).ToArray();
+        var expectedScores = root.GetProperty("scores").EnumerateArray()
+            .Select(v => (float)v.GetDouble()).ToArray();
+
+        Console.WriteLine($"[verify-rerank] reranker dir: {rerankerDir}");
+
+        // 1) 句对 tokenIds 对账（含 longest_first 截断）
+        var tokenizer = HfUnigramTokenizer.FromTokenizerJson(Path.Combine(rerankerDir, "tokenizer.json"));
+        int tokenMatches = 0, tokenTotal = 0;
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            tokenTotal += expectedIds[i].Length;
+            var actual = tokenizer.EncodePairToIds(pairs[i].Query, pairs[i].Doc, 512);
+            if (actual.SequenceEqual(expectedIds[i]))
+            {
+                tokenMatches += actual.Length;
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"[verify-rerank] tokenIds mismatch #{i}: actual len={actual.Length}, expected len={expectedIds[i].Length}");
+            }
+        }
+        Console.WriteLine($"[verify-rerank] tokenizer: {tokenMatches}/{tokenTotal} tokens exact match");
+
+        // 2) 分数对账（原始 logits，逐条前向）
+        using var engine = RerankerEngine.Load(rerankerDir);
+        var maxDiff = 0.0;
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            var actual = engine.Score(pairs[i].Query, new[] { pairs[i].Doc })[0];
+            var diff = Math.Abs(actual - expectedScores[i]);
+            maxDiff = Math.Max(maxDiff, diff);
+            Console.WriteLine($"[verify-rerank] #{i}: .net={actual:F6} js={expectedScores[i]:F6} |diff|={diff:E2}");
+        }
+
+        var pass = maxDiff <= 5e-3 && tokenMatches == tokenTotal;
+        Console.WriteLine($"[verify-rerank] {(pass ? "PASS" : "FAIL")} (threshold max|diff| <= 5e-3, tokenIds exact)");
+        if (!pass) Environment.Exit(1);
+    }
+}
+
 internal static class Bench
 {
     public static void Run(string modelDir, int textCount)
@@ -187,6 +612,47 @@ internal static class Server
     ///
     /// stderr 只用于诊断日志（进程崩溃前的输出不受帧协议污染）。
     /// </summary>
+    /// <summary>reranker 惰性加载 + 目录变更重载（单进程内单实例）。</summary>
+    private static RerankerEngine? _reranker;
+    private static string? _rerankerDir;
+
+    private static RerankerEngine GetReranker(string dir)
+    {
+        if (_reranker is null || _rerankerDir != dir)
+        {
+            _reranker?.Dispose();
+            _reranker = RerankerEngine.Load(dir);
+            _rerankerDir = dir;
+        }
+        return _reranker;
+    }
+
+    /// <summary>RAG 向量库缓存（按目录 + 存储模式；SQLite 默认，JSON 回退）。</summary>
+    private static readonly Dictionary<string, IRagStore> _ragStores = new();
+
+    private static IRagStore GetRagStore(string dir, string? storeMode = null)
+    {
+        var mode = storeMode
+            ?? Environment.GetEnvironmentVariable("CYRENE_RAG_STORE")
+            ?? "sqlite";
+        var useJson = string.Equals(mode, "json", StringComparison.OrdinalIgnoreCase);
+        var key = $"{dir}|{(useJson ? "json" : "sqlite")}";
+        if (!_ragStores.TryGetValue(key, out var store))
+        {
+            store = useJson ? new RagStore(dir) : new SqliteRagStore(dir);
+            _ragStores[key] = store;
+        }
+        store.RefreshIfChanged();
+        return store;
+    }
+
+    /// <summary>stdout 帧写锁（doc-import 在后台线程完成，多线程写帧）。</summary>
+    private static readonly object _stdoutLock = new();
+
+    /// <summary>已取消的 doc-import 请求 id（宿主下发 doc-import-cancel）。</summary>
+    private static readonly HashSet<int> _cancelledImports = new();
+    private static readonly object _cancelLock = new();
+
     public static void Run(string modelDir)
     {
         Console.Error.WriteLine($"[serve] model dir: {modelDir}");
@@ -297,6 +763,131 @@ internal static class Server
                 continue;
             }
             if (request is null) continue;
+
+            if (request.Op == "doc-import-cancel")
+            {
+                lock (_cancelLock)
+                {
+                    _cancelledImports.Add(request.TargetId ?? -1);
+                }
+                continue;
+            }
+
+            if (request.Op == "doc-import")
+            {
+                var importRequestId = request.Id;
+                var filePath = request.FilePath;
+                var ragDataDir = request.RagDataDir;
+                if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(ragDataDir))
+                {
+                    WriteFrame(new ResponseHeader
+                    {
+                        Id = importRequestId,
+                        Ok = false,
+                        Error = "doc-import requires filePath and ragDataDir",
+                    });
+                    continue;
+                }
+
+                // 后台执行：导入耗时长（分钟级），期间仍需响应 embed/rerank/search
+                // （引擎与向量库各有内部锁；stdout 帧写入有全局锁）
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        var importStore = GetRagStore(ragDataDir, request.StoreMode);
+                        var result = DocImporter.Import(
+                            filePath,
+                            ragDataDir,
+                            engine,
+                            importStore,
+                            () =>
+                            {
+                                lock (_cancelLock) return _cancelledImports.Contains(importRequestId);
+                            },
+                            (progress) => WriteProgressFrame(stdout, importRequestId, progress));
+                        WriteFrame(new
+                        {
+                            id = importRequestId,
+                            ok = true,
+                            kind = result.Kind,
+                            name = result.Name,
+                            chunks = result.Chunks,
+                            importId = result.ImportId,
+                            cached = result.Cached,
+                            text = result.Text,
+                            reason = result.Reason,
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteFrame(new { id = importRequestId, ok = false, error = ex.Message });
+                        Console.Error.WriteLine($"[serve] doc-import failed: {ex}");
+                    }
+                    finally
+                    {
+                        lock (_cancelLock) _cancelledImports.Remove(importRequestId);
+                    }
+                });
+                continue;
+            }
+
+            if (request.Op == "search")
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(request.RagDataDir))
+                    {
+                        throw new InvalidOperationException("search requires ragDataDir");
+                    }
+                    var store = GetRagStore(request.RagDataDir, request.StoreMode);
+                    var results = HybridSearch.Retrieve(
+                        store,
+                        engine,
+                        request.Query ?? "",
+                        request.Source,
+                        request.TopK ?? 5,
+                        request.ImportIds,
+                        request.AllowedEntryIds,
+                        request.CustomWords ?? Array.Empty<string>(),
+                        request.VectorWeight ?? 0.7,
+                        request.Bm25Weight ?? 0.3,
+                        request.UpdateRecall ?? true);
+                    WriteSearchResponse(stdout, request.Id, results, engine.Dimensions);
+                }
+                catch (Exception ex)
+                {
+                    WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = ex.Message });
+                    Console.Error.WriteLine($"[serve] search failed: {ex}");
+                }
+                continue;
+            }
+
+            if (request.Op == "rerank")
+            {
+                try
+                {
+                    var rerankerDir = request.RerankerDir;
+                    if (string.IsNullOrEmpty(rerankerDir))
+                    {
+                        throw new InvalidOperationException("rerank requires rerankerDir");
+                    }
+                    if (request.Documents is null || request.Documents.Length == 0)
+                    {
+                        throw new InvalidOperationException("rerank requires non-empty documents");
+                    }
+                    var reranker = GetReranker(rerankerDir);
+                    var scores = reranker.Score(request.Query ?? "", request.Documents);
+                    WriteScoreResponse(stdout, request.Id, scores);
+                }
+                catch (Exception ex)
+                {
+                    WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = ex.Message });
+                    Console.Error.WriteLine($"[serve] rerank failed: {ex}");
+                }
+                continue;
+            }
+
             if (request.Op != "embed")
             {
                 WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = $"unsupported op: {request.Op}" });
@@ -328,15 +919,80 @@ internal static class Server
         var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
         var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
 
-        var prefix = BitConverter.GetBytes((int)headerBytes.Length);
-        stdout.Write(prefix);
-        stdout.Write(headerBytes);
-        // float[] 的二进制布局即小端 float32，与协议一致，直接按段写出
-        foreach (var v in vectors)
+        // 长度前缀 + JSON 头合并为一次 Write：无缓冲 stdout 上分开写可能被
+        // 客户端切成两次 read（历史 P0 的诱因之一；客户端解码器已按跨 chunk
+        // 状态机加固，这里再消掉最常见分片点）。二进制段仍逐段写、零拷贝。
+        var frameHead = new byte[4 + headerBytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
+        headerBytes.CopyTo(frameHead.AsSpan(4));
+        lock (_stdoutLock)
         {
-            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
+            stdout.Write(frameHead, 0, frameHead.Length);
+            // float[] 的二进制布局即小端 float32，与协议一致，直接按段写出
+            foreach (var v in vectors)
+            {
+                stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
+            }
+            stdout.Flush();
         }
-        stdout.Flush();
+    }
+
+    /// <summary>rerank 响应：分数按 float32 段写出（协议上与 count×dim(1) 等价）。</summary>
+    private static void WriteScoreResponse(Stream stdout, int id, float[] scores)
+    {
+        var header = new ResponseHeader { Id = id, Ok = true, Count = scores.Length, Dim = 1 };
+        var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+        var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
+        var frameHead = new byte[4 + headerBytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
+        headerBytes.CopyTo(frameHead.AsSpan(4));
+        lock (_stdoutLock)
+        {
+            stdout.Write(frameHead, 0, frameHead.Length);
+            stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(scores.AsSpan()));
+            stdout.Flush();
+        }
+    }
+
+    /// <summary>search 响应：结果条目 JSON + 每条 embedding 以 float32 二进制段对齐写出。</summary>
+    private static void WriteSearchResponse(Stream stdout, int id, List<Bm25Scorer.Scored> results, int dim)
+    {
+        var header = new
+        {
+            id,
+            ok = true,
+            count = results.Count,
+            dim,
+            results = results.Select((r) => new
+            {
+                id = r.Entry.Id,
+                text = r.Entry.Text,
+                source = r.Entry.Source,
+                weight = r.Entry.Weight,
+                createdAt = r.Entry.CreatedAt,
+                lastRecalledAt = r.Entry.LastRecalledAt,
+                metadata = r.Entry.Metadata,
+                score = r.Score,
+            }).ToArray(),
+        };
+        var headerJsonOut = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
+        var headerBytes = System.Text.Encoding.UTF8.GetBytes(headerJsonOut);
+        var frameHead = new byte[4 + headerBytes.Length];
+        BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), headerBytes.Length);
+        headerBytes.CopyTo(frameHead.AsSpan(4));
+        lock (_stdoutLock)
+        {
+            stdout.Write(frameHead, 0, frameHead.Length);
+            foreach (var r in results)
+            {
+                // entry embedding 原始值来自 float32（JSON 解析为 double），转回 float 无损
+                var floats = new float[dim];
+                var n = Math.Min(dim, r.Entry.Embedding.Length);
+                for (var i = 0; i < n; i++) floats[i] = (float)r.Entry.Embedding[i];
+                stdout.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(floats.AsSpan()));
+            }
+            stdout.Flush();
+        }
     }
 
     /// <summary>协议 JSON 统一 camelCase（与 JS 侧约定一致）。</summary>
@@ -347,6 +1003,25 @@ internal static class Server
         public int Id { get; set; }
         public string Op { get; set; } = "embed";
         public string[]? Texts { get; set; }
+        // rerank op：query + documents + 显式模型目录
+        public string? Query { get; set; }
+        public string[]? Documents { get; set; }
+        public string? RerankerDir { get; set; }
+        // search op：库目录 + 查询/过滤/权重
+        public string? RagDataDir { get; set; }
+        public int? TopK { get; set; }
+        public string? Source { get; set; }
+        public string[]? ImportIds { get; set; }
+        public string[]? AllowedEntryIds { get; set; }
+        public string[]? CustomWords { get; set; }
+        public double? VectorWeight { get; set; }
+        public double? Bm25Weight { get; set; }
+        public bool? UpdateRecall { get; set; }
+        // doc-import op：文件路径 / 取消目标请求 id
+        public string? FilePath { get; set; }
+        public int? TargetId { get; set; }
+        // 存储模式："sqlite"（默认）| "json"（TS 决定并透传；无 node:sqlite 时回退）
+        public string? StoreMode { get; set; }
     }
 
     private sealed class ResponseHeader
@@ -390,9 +1065,27 @@ internal static class Server
         var json = System.Text.Json.JsonSerializer.Serialize(header, JsonOptions);
         var bytes = System.Text.Encoding.UTF8.GetBytes(json);
         var stdout = Console.OpenStandardOutput();
-        var prefix = BitConverter.GetBytes((int)bytes.Length);
-        stdout.Write(prefix, 0, 4);
-        stdout.Write(bytes, 0, bytes.Length);
-        stdout.Flush();
+        lock (_stdoutLock)
+        {
+            var frameHead = new byte[4 + bytes.Length];
+            BitConverter.TryWriteBytes(frameHead.AsSpan(0, 4), bytes.Length);
+            bytes.CopyTo(frameHead.AsSpan(4));
+            stdout.Write(frameHead, 0, frameHead.Length);
+            stdout.Flush();
+        }
+    }
+
+    /// <summary>doc-import 进度通知帧（id=0，不占请求 id；forId 指向导入请求）。</summary>
+    private static void WriteProgressFrame(Stream stdout, int forId, DocImporter.Progress progress)
+    {
+        WriteFrame(new
+        {
+            id = 0,
+            op = "progress",
+            forId,
+            status = progress.Status,
+            completedChunks = progress.CompletedChunks,
+            totalChunks = progress.TotalChunks,
+        });
     }
 }

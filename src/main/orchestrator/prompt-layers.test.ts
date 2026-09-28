@@ -48,6 +48,18 @@ describe("prompt layers", () => {
     })).toMatch(/^[a-f0-9]{16}$/);
   });
 
+  it("keeps runtime context out of cache metadata", () => {
+    const { metadata } = composePromptLayers(
+      { stablePrefix: "RULES", sessionPrefix: "WORKSPACE", runtimeContext: "TEMP" },
+      [{ role: "user", content: "hello" }],
+    );
+
+    expect(metadata.stablePrefix).toBe("RULES");
+    expect(metadata.sessionPrefix).toBe("WORKSPACE");
+    expect(metadata.promptVersion).toMatch(/^v\d+$/);
+    expect(JSON.stringify(metadata)).not.toContain("TEMP");
+  });
+
   it("projects only cache-relevant fields from a composed chat request", () => {
     expect(projectCacheRelevantChatRequest({
       model: "model-a",

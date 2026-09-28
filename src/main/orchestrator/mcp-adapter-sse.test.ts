@@ -34,7 +34,7 @@ vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
 	}),
 }));
 
-import { connectMcpServer, disconnectMcpServer } from "./mcp-adapter";
+import { connectMcpServer, disconnectMcpServer, resolveMcpRisk } from "./mcp-adapter";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { toolRegistry } from "./tools/registry/tool-registry";
@@ -136,5 +136,25 @@ describe("mcp-adapter transport split", () => {
 
 		await expect(tool?.execute({ value: "x" })).rejects.toThrow("E_MCP_TOOL_FAILED");
 		expect(callTool).toHaveBeenCalledWith({ name: "explode", arguments: { value: "x" } });
+	});
+});
+
+describe("resolveMcpRisk（MCP 工具权限风险级：缺省不得当成 safe）", () => {
+	it("readOnlyHint=true → fs-read；destructive 优先 → fs-write", () => {
+		expect(resolveMcpRisk({ readOnlyHint: true }, undefined, "search")).toBe("fs-read");
+		expect(resolveMcpRisk({ readOnlyHint: true, destructiveHint: true }, undefined, "both")).toBe("fs-write");
+		expect(resolveMcpRisk({ destructiveHint: true }, undefined, "delete")).toBe("fs-write");
+	});
+
+	it("无 annotations / 无匹配 → undeclared（只读档拒绝、每次审批档询问）", () => {
+		expect(resolveMcpRisk(undefined, undefined, "unknown")).toBe("undeclared");
+		expect(resolveMcpRisk({}, undefined, "plain")).toBe("undeclared");
+	});
+
+	it("显式 effectKind override 按效果映射（read → fs-read；unknown → undeclared；其余 → fs-write）", () => {
+		expect(resolveMcpRisk(undefined, { t: "read" }, "t")).toBe("fs-read");
+		expect(resolveMcpRisk(undefined, { t: "unknown" }, "t")).toBe("undeclared");
+		expect(resolveMcpRisk(undefined, { t: "mutation" }, "t")).toBe("fs-write");
+		expect(resolveMcpRisk(undefined, { t: "external_side_effect" }, "t")).toBe("fs-write");
 	});
 });

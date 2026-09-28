@@ -27,6 +27,7 @@ export const LogTag = {
   Feishu: "Feishu",
   Wechat: "Wechat",
   StickerEmbed: "StickerEmbed",
+  SceneEmbed: "SceneEmbed",
   AgUiBridge: "AgUiBridge",
   Call: "Call",
   ASR: "ASR",

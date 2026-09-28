@@ -115,11 +115,13 @@ export class ClickThroughController {
     if (!gl) return true; // before init, be permissive (don't block)
 
     const rect = this.canvas.getBoundingClientRect();
-    // CSS -> canvas pixels. autoDensity makes the drawing buffer match the
-    // CSS size * devicePixelRatio.
-    const dpr = window.devicePixelRatio || 1;
-    const x = Math.floor((cssX - rect.left) * dpr);
-    const y = Math.floor((cssY - rect.top) * dpr);
+    // CSS -> canvas pixels：按实际绘制缓冲比例推导（autoDensity 下缓冲 =
+    // CSS × pixi resolution，而 resolution 已按 PET_RENDER_MAX_DPR 钳制，
+    // 不能直接用 window.devicePixelRatio，否则高 DPI 下命中坐标偏移）。
+    const scaleX = gl.drawingBufferWidth / Math.max(1, rect.width);
+    const scaleY = gl.drawingBufferHeight / Math.max(1, rect.height);
+    const x = Math.floor((cssX - rect.left) * scaleX);
+    const y = Math.floor((cssY - rect.top) * scaleY);
     if (x < 0 || y < 0 || x >= gl.drawingBufferWidth || y >= gl.drawingBufferHeight) {
       return false;
     }

@@ -96,7 +96,7 @@ public sealed class EmbeddingEngine : IDisposable
 
     private static readonly string[] OutputNames = { "last_hidden_state" };
 
-    private static int ReadThreadsEnv()
+    internal static int ReadThreadsEnv()
     {
         var raw = Environment.GetEnvironmentVariable("CYRENE_EMBED_THREADS");
         return int.TryParse(raw, out var v) && v >= 0 ? v : -1;
@@ -104,6 +104,17 @@ public sealed class EmbeddingEngine : IDisposable
 
     /// <summary>单条前向：tokenize 后的 ids → 归一化向量（n=1，无 padding）。</summary>
     private void RunSingle(int[] ids, float[] vector)
+    {
+        // ORT session 可并发，但 _inputTemplate 复用与批量语义要求串行（导入后台线程 + 检索并发）
+        lock (_runLock)
+        {
+            RunSingleCore(ids, vector);
+        }
+    }
+
+    private readonly object _runLock = new();
+
+    private void RunSingleCore(int[] ids, float[] vector)
     {
         var seqLen = ids.Length;
         var dims = Dimensions;

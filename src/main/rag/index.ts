@@ -1,11 +1,8 @@
 import * as path from "path";
-import * as fs from "fs";
 import { app } from "electron";
 import { getEmbeddingProvider, resetEmbeddingProvider, EmbeddingProvider, switchEmbeddingModel as switchModel, getCurrentModelDims, EmbeddingDimensionMismatchError } from "./embedding";
-import type { EmbeddingIndexMetadata } from "./vectorstore";
-import { JsonVectorStore } from "./vectorstore";
-import { createStore, DotnetRagStore } from "./dotnet-store";
-import { resolveDotnetConfig } from "../dotnet-backend/config";
+import type { EmbeddingIndexMetadata, VectorStore } from "./vectorstore";
+import { createVectorStore } from "./vectorstore";
 import type { MemoryEntry } from "./vectorstore";
 import { HybridRetriever } from "./retriever";
 import { WorldbookManager } from "./worldbook";
@@ -18,7 +15,7 @@ import type { DocumentImportControl } from "./file-ingest";
 import { findPromptPath } from "../external-content-paths";
 
 // ── Global RAG instances ──
-let store: JsonVectorStore | DotnetRagStore | null = null;
+let store: VectorStore | null = null;
 let retriever: HybridRetriever | null = null;
 let worldbook: WorldbookManager | null = null;
 let provider: EmbeddingProvider | null = null;
@@ -39,16 +36,10 @@ export async function initRAG(
 ): Promise<void> {
   const dataDir = getDataDir();
   provider = getEmbeddingProvider(ragMode, cloudBaseUrl, cloudApiKey, embeddingModel, cloudDimensions);
-  // E7 双轨（dotnet-backend）：CYRENE_RAG_HOST=1 → SQLite/WAL 数据层
-  // （DotnetRagStore 包住 JSON fallback，host 打开失败静默回退原路）
-  let storeImpl: JsonVectorStore | DotnetRagStore = new JsonVectorStore(dataDir);
-  if (resolveDotnetConfig().ragHost) {
-    storeImpl = await createStore(dataDir, storeImpl as JsonVectorStore);
-  }
-  store = storeImpl;
+  store = createVectorStore(dataDir);
   // 只有 provider 存在时才创建 retriever（向量检索依赖 embedding）
   if (provider) {
-    retriever = new HybridRetriever(store as JsonVectorStore, provider);
+    retriever = new HybridRetriever(store, provider);
   }
   worldbook = new WorldbookManager(
     findPromptPath("worldbook") ?? path.join(app.getPath("userData"), "empty-worldbook"),
@@ -65,19 +56,10 @@ export async function initRAG(
     "initialized. Mode:", ragMode,
     "Provider:", provider?.name ?? "none",
     "Dims:", provider?.dims ?? "N/A",
+    "Store:", store.mode,
     "Memories:", store.stats.total,
     provider ? "" : " [Vector retrieval disabled]"
   );
-}
-
-/** 受控退出（before-quit 链路）时调用：把防抖中的记忆数据刷盘。 */
-export async function flushRAGStore(): Promise<void> {
-  await store?.flush();
-}
-
-/** 会话紧急结束（Windows session-end）时调用：同步落盘，不等待异步 I/O。 */
-export function flushRAGStoreSync(): void {
-  store?.flushSync();
 }
 
 // ── Switch embedding model (hot-swap) ──
@@ -125,15 +107,9 @@ export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: bool
       if (entries && entries.length > 0) {
         const oldDims = entries[0].embedding.length;
         if (oldDims !== newDims) {
-          clearedEntries = entries.length;
-          // 清空内存与磁盘（含取消防抖中的待写落盘），防止旧维度向量被写回刚清空的文件
-          store.clearForRebuild();
+          // Dimension mismatch — clear entries + index metadata（两种后端各自持久化清理）
+          clearedEntries = store.clearAll();
           console.log("[RAG] dimension mismatch (" + oldDims + " → " + newDims + "), cleared " + clearedEntries + " entries");
-          // 清除旧的索引元数据，下次写入时会自动创建新的
-          const metaPath = path.join(getDataDir(), "memory-store-meta.json");
-          if (fs.existsSync(metaPath)) {
-            fs.unlinkSync(metaPath);
-          }
         }
       }
     }
@@ -338,14 +314,12 @@ export async function appendPreparedDocumentBatch(
   prepared: PreparedDocumentEmbedding[],
 ): Promise<void> {
   if (!store) throw new Error("RAG not initialized");
-  const added = await store.addPreparedBatch(prepared.map((entry) => ({
+  store.addPreparedBatch(prepared.map((entry) => ({
     text: entry.text,
     embedding: entry.embedding,
     source: "imported_doc",
     metadata: { fileName, chunkIndex: entry.chunkIndex, importId },
   })));
-  // 后台预热新条目的 BM25 分词，避免首次检索才付出冷启动成本；不阻塞导入返回
-  void retriever?.warmupBm25Tokens(added);
 }
 
 export async function importPreparedDocumentForTurn(
@@ -358,8 +332,6 @@ export async function importPreparedDocumentForTurn(
     : Math.random().toString(36).slice(2, 8);
   const importId = `import-${Date.now()}-${id}`;
   await appendPreparedDocumentBatch(fileName, importId, prepared);
-  // 导入是高成本操作（全部 chunk 已完成嵌入），立即落盘保证持久性
-  await store.flush();
   return { importId, chunkCount: prepared.length };
 }
 
@@ -377,15 +349,11 @@ export async function importDocumentForTurn(
     : Math.random().toString(36).slice(2, 8);
   const importId = `import-${Date.now()}-${id}`;
   control?.onProgress?.({ status: "embedding", completedChunks: 0, totalChunks: chunks.length });
-  const added = await store.addBatch(
+  await store.addBatch(
     chunks.map((c) => ({ text: c.text, source: "imported_doc", metadata: { fileName, chunkIndex: c.index, importId } })),
     provider,
     { isCancelled: control?.isCancelled },
   );
-  // 导入是高成本操作（全部 chunk 已完成嵌入），立即落盘保证持久性
-  await store.flush();
-  // 后台预热新条目的 BM25 分词，避免首次检索才付出冷启动成本；不阻塞导入返回
-  void retriever?.warmupBm25Tokens(added);
   return { importId, chunkCount: chunks.length };
 }
 
@@ -440,6 +408,11 @@ export async function buildMemoryContext(userInput: string): Promise<string> {
 
 // ── Reset ──
 export function resetRAG(): void {
+  try {
+    store?.dispose();
+  } catch {
+    /* ignore */
+  }
   store = null;
   retriever = null;
   worldbook = null;
@@ -448,6 +421,7 @@ export function resetRAG(): void {
 }
 
 export function getRAGStats() {
+  store?.ensureFresh();
   return store?.stats ?? { total: 0, sources: {} };
 }
 
@@ -461,9 +435,22 @@ export function isUserMemoryVectorStoreReady(): boolean {
  */
 export function getEntriesBySource(source: string): Array<{ id: string; text: string; embedding: number[]; createdAt: number; weight: number; metadata?: Record<string, unknown> }> {
   if (!store) return [];
+  store.ensureFresh();
   return ((store as any).entries as MemoryEntry[])
     .filter((e) => e.source === source)
     .map((e) => ({ id: e.id, text: e.text, embedding: e.embedding, createdAt: e.createdAt, weight: e.weight, metadata: e.metadata }));
+}
+
+/**
+ * 面板用：导入文档分块的精简信息（不含 embedding/文本，避免大对象拷贝）。
+ * SQLite 化后 memory-store.json 不再是数据源，面板不能再直接读文件。
+ */
+export function getImportedDocChunkInfo(): Array<{ createdAt: number; metadata?: Record<string, unknown> }> {
+  if (!store) return [];
+  store.ensureFresh();
+  return ((store as any).entries as MemoryEntry[])
+    .filter((e) => e.source === "imported_doc")
+    .map((e) => ({ createdAt: e.createdAt, metadata: e.metadata }));
 }
 
 export function deleteUserMemoryVectors(ragIds: string[]): number {
@@ -477,5 +464,20 @@ export function deleteImportedDoc(importId: string, fileName?: string): number {
 }
 
 export function hasImportedDocumentChunks(importId: string): boolean {
+  store?.ensureFresh();
   return store?.hasImportedDocumentChunks(importId) ?? false;
+}
+
+/**
+ * 受控退出（before-quit 链路）兼容钩子。
+ * SQLite 轨（Open Code 2026-09-26 重构）：所有写路径经 persistNow 即时落盘，
+ * 不再有防抖队列，此函数保留导出仅维持组合根调用契约。
+ */
+export async function flushRAGStore(): Promise<void> {
+  store?.ensureFresh?.();
+}
+
+/** 会话紧急结束（Windows session-end）兼容钩子，语义同上（即时持久化，无待刷数据）。 */
+export function flushRAGStoreSync(): void {
+  store?.ensureFresh?.();
 }

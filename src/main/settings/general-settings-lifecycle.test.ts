@@ -27,6 +27,7 @@ function createHarness(petVisible = true) {
     hidePetWindow: vi.fn(() => { visible = false; }),
     setPetWindowAlwaysOnTop: vi.fn(),
     applyPetWindowZoom: vi.fn(),
+    broadcast: vi.fn(),
   };
   const deps = {
     windowManager: windowManager as unknown as WindowManager,
@@ -34,6 +35,7 @@ function createHarness(petVisible = true) {
     screenshotService: null,
     proactiveLifecycle: { getProactiveChatService: () => null },
     broadcastToAuxWindows: vi.fn(),
+    onWindowCornerRadiusChanged: vi.fn(),
   };
   return { settings, windowManager, deps, isVisible: () => visible };
 }
@@ -77,6 +79,18 @@ describe("general settings window lifecycle", () => {
     expect(h.windowManager.setPetWindowAlwaysOnTop).toHaveBeenCalledWith(false);
     expect(h.windowManager.applyPetWindowZoom).toHaveBeenCalledWith(1.5);
     expect(syncLaunchAtLogin).toHaveBeenCalledWith(true, {});
+  });
+
+  it("syncs native windows when window corner radius changes (and only then)", () => {
+    const h = createHarness();
+    // 未变化：不通知 native
+    handleGeneralSettingsChanged({ ...h.settings, windowCornerRadius: 24 }, { ...h.settings, windowCornerRadius: 24 }, h.deps);
+    expect(h.deps.onWindowCornerRadiusChanged).not.toHaveBeenCalled();
+
+    // 变化：通知一次且带上新值
+    handleGeneralSettingsChanged({ ...h.settings, windowCornerRadius: 24 }, { ...h.settings, windowCornerRadius: 8 }, h.deps);
+    expect(h.deps.onWindowCornerRadiusChanged).toHaveBeenCalledTimes(1);
+    expect(h.deps.onWindowCornerRadiusChanged).toHaveBeenCalledWith(8);
   });
 
   it.each([true, false])("fully applies startup settings with petVisible=%s", (visible) => {

@@ -4,8 +4,6 @@
  * 不依赖 Electron、磁盘或 IPC，供 VerificationRunner 等执行核心复用，
  * 避免为了判断 allow/ask/deny 就初始化整个权限宿主。
  */
-import type { ToolRiskLevel } from "../shared/permission-approval";
-
 export type AgentFileAccessLevel =
   | "project-read-only"
   | "read-only"
@@ -13,17 +11,37 @@ export type AgentFileAccessLevel =
   | "per-action"
   | "full";
 
-/**
- * 工具风险等级的唯一声明在 shared（审批载荷跨进程共用），此处再导出，
- * 保持既有引用方（permission.ts / tool-registry 等）不变。
- */
-export type { ToolRiskLevel };
+export type ToolRiskLevel =
+  | "safe"
+  | "fs-read"
+  | "fs-write"
+  | "shell"
+  | "network"
+  | "input-control"
+  /**
+   * 工具未声明风险级时的内部兜底（仅宿主写入，插件不能主动声明）。
+   * 语义上按“未知风险”处理：完全访问档放行、每次审批档询问、其余档拒绝，
+   * 避免“缺省 = safe”成为审批旁路。
+   */
+  | "undeclared";
 
 export function policyFor(
   level: AgentFileAccessLevel,
   risk: ToolRiskLevel,
 ): "allow" | "ask" | "deny" {
   if (risk === "safe") return "allow";
+
+  // 未声明风险：不放行、不静默执行；只有用户显式选择完全访问档才放行。
+  if (risk === "undeclared") {
+    switch (level) {
+      case "full":
+        return "allow";
+      case "per-action":
+        return "ask";
+      default:
+        return "deny";
+    }
+  }
 
   // shell 的安全边界由沙箱兜底：所有档位都放行进 executeRunShell 的档位路由，
   // 由 buildFilesystemConfigForLevel + wrapWithSandbox 强制 fs 边界。

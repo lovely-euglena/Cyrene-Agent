@@ -24,3 +24,12 @@ export const citaEnabledInput = document.getElementById("cita-enabled") as HTMLI
 export const citaEngineSelect = document.getElementById("cita-engine-select") as HTMLElement;
 export const customStyleSamplingBtn = document.getElementById("custom-style-sampling-btn") as HTMLButtonElement | null;
 export const customStylePromptBtn = document.getElementById("custom-style-prompt-btn") as HTMLButtonElement | null;
+export const gitCommitAuthorNameInput = document.getElementById("git-commit-author-name") as HTMLInputElement;
+export const gitCommitAuthorEmailInput = document.getElementById("git-commit-author-email") as HTMLInputElement;
+// 便携模式（数据目录）
+export const portableModeEnabledInput = document.getElementById("portable-mode-enabled") as HTMLInputElement;
+export const portableDirRow = document.getElementById("portable-dir-row") as HTMLElement;
+export const portableDirInput = document.getElementById("portable-dir-input") as HTMLInputElement;
+export const portableDirBrowseBtn = document.getElementById("portable-dir-browse") as HTMLButtonElement;
+export const portableApplyBtn = document.getElementById("portable-apply-btn") as HTMLButtonElement;
+export const portableHint = document.getElementById("portable-hint") as HTMLElement;

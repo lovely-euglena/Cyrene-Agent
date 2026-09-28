@@ -14,8 +14,11 @@ export type ToolRiskLevel =
   | "shell"
   | "network"
   | "input-control"
-  /** 未声明风险（.NET 插件缺省）：closed-world——非 full 档全 deny */
-  | "unknown";
+  /**
+   * 工具未声明风险级时的内部兜底（仅宿主写入，插件不能主动声明）。
+   * 语义上按"未知风险"处理：完全访问档放行、每次审批档询问、其余档拒绝。
+   */
+  | "undeclared";
 
 /** 审批请求：主进程推送、渲染端展示并回传决定。 */
 export interface ApprovalRequest {

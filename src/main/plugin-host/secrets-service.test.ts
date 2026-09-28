@@ -103,6 +103,14 @@ describe("插件密钥服务", () => {
     );
   });
 
+  it("值超过上限返回 E_INVALID_ARGUMENT 且不落文件", async () => {
+    const svc = serviceFor("demo");
+    await expect(svc.set("k", "x".repeat(300 * 1024))).rejects.toSatisfy(
+      (err: unknown) => isPluginHostError(err) && err.code === "E_INVALID_ARGUMENT",
+    );
+    expect(existsSync(path.join(tmp, "demo", "secrets"))).toBe(false);
+  });
+
   it("安全存储不可用时 set/get 返回 E_STORAGE_UNAVAILABLE 且不落文件", async () => {
     const svc = serviceFor("demo", fakeStorage(false));
     await expect(svc.set("k", "v")).rejects.toSatisfy(

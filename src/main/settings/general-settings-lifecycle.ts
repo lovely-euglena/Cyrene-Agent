@@ -17,9 +17,14 @@ import { syncLaunchAtLogin } from "./launch-at-login";
 export interface GeneralSettingsLifecycleDependencies {
   get windowManager(): WindowManager | null;
   get tray(): Tray | import("../tray-detached").TrayLike | null;
-  get screenshotService(): { replaceHotkey: (hotkey: string) => { ok: boolean } | null } | null;
+  get screenshotService(): {
+    replaceHotkey: (hotkey: string) => { ok: boolean } | null;
+    applyBackend?: (backend: "builtin" | "snipaste", snipastePath: string) => { ok: boolean; reason?: string };
+  } | null;
   get proactiveLifecycle(): { getProactiveChatService: () => { invalidate: () => void } | null };
   broadcastToAuxWindows(channel: string, payload: unknown): void;
+  /** 窗口圆角变更 → native（.NET）窗口同步（未启用 native 时为 no-op）。 */
+  onWindowCornerRadiusChanged?(radius: number): void;
 }
 
 /** MiniMax 搜索 MCP Server 的固定 ID。 */
@@ -144,6 +149,8 @@ export function handleGeneralSettingsChanged(
   }
   if (before.windowCornerRadius !== after.windowCornerRadius) {
     deps.windowManager?.broadcast(IPC.UI_WINDOW_CORNER_RADIUS_CHANGED, after.windowCornerRadius);
+    // native（.NET）窗口同步：Electron 侧走 CSS 变量，原生侧走 win.radius 帧
+    deps.onWindowCornerRadiusChanged?.(after.windowCornerRadius);
   }
   if (JSON.stringify(before.uiFont) !== JSON.stringify(after.uiFont)) {
     deps.windowManager?.broadcast(IPC.UI_FONT_CHANGED, after.uiFont);
@@ -160,6 +167,15 @@ export function handleGeneralSettingsChanged(
     const result = deps.screenshotService?.replaceHotkey(after.screenshotHotkey);
     if (result && !result.ok) {
       console.warn("[Cyrene] 截图热键注册失败，可能被其他应用占用:", after.screenshotHotkey);
+    }
+  }
+  if (
+    before.screenshotBackend !== after.screenshotBackend
+    || before.snipastePath !== after.snipastePath
+  ) {
+    const result = deps.screenshotService?.applyBackend?.(after.screenshotBackend, after.snipastePath);
+    if (result && !result.ok) {
+      console.warn("[Cyrene] 截图后端切换失败:", after.screenshotBackend, result.reason ?? "");
     }
   }
   if (

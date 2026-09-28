@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, type Hash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import path from "node:path";
@@ -102,6 +102,61 @@ function resolveSettingsPanel(dir: string, panel: unknown): string | undefined {
   return panel;
 }
 
+/**
+ * .NET 插件指纹：apphost（entry .exe）只是壳，真正代码在旁边的 dll 里，
+ * 只哈希 entry 会导致「换 dll 但指纹不变 → 重扫判定未变化 → 不重载」。
+ * 覆盖插件目录内 .dll/.json/.exe/.config；目录过大（自包含发布）时退化为
+ * 路径 + 大小 + mtime，避免每次重扫都要读几十 MB。
+ */
+const DOTNET_FINGERPRINT_EXTENSIONS = new Set([".dll", ".json", ".exe", ".config"]);
+const DOTNET_FINGERPRINT_MAX_BYTES = 64 * 1024 * 1024;
+
+function hashDotnetRuntimeFiles(dir: string, hash: Hash): void {
+  const files: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!DOTNET_FINGERPRINT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+      files.push(full);
+    }
+  };
+  try {
+    walk(dir);
+  } catch {
+    return; // 目录不可读：沿用 entry-only 指纹
+  }
+  files.sort((a, b) => a.localeCompare(b));
+  let total = 0;
+  for (const file of files) {
+    try {
+      total += statSync(file).size;
+    } catch {
+      // 读不到的文件跳过（大小未知）
+    }
+  }
+  const useMetadata = total > DOTNET_FINGERPRINT_MAX_BYTES;
+  for (const file of files) {
+    const relative = path.relative(dir, file).split(path.sep).join("/");
+    hash.update(relative).update("\0");
+    try {
+      if (useMetadata) {
+        const stat = statSync(file);
+        hash.update(`${stat.size}:${Math.round(stat.mtimeMs)}`);
+      } else {
+        hash.update(readFileSync(file));
+      }
+    } catch {
+      hash.update("unreadable");
+    }
+    hash.update("\0");
+  }
+}
+
 export function inspectPluginDir(dir: string): ManifestInspection {
   const manifestPath = path.join(dir, MANIFEST_FILE);
   if (!existsSync(manifestPath)) return { manifest: null, error: "缺少 manifest.json" };
@@ -173,11 +228,14 @@ export function inspectPluginDir(dir: string): ManifestInspection {
       defaultEnabled: input.defaultEnabled !== false,
       deps,
     };
-    const fingerprint = createHash("sha256")
+    const fingerprintHash = createHash("sha256")
       .update(manifestText)
       .update("\0")
-      .update(readFileSync(realEntry))
-      .digest("hex");
+      .update(readFileSync(realEntry));
+    if (runtime === "dotnet") {
+      hashDotnetRuntimeFiles(realDir, fingerprintHash);
+    }
+    const fingerprint = fingerprintHash.digest("hex");
     return { manifest, fingerprint };
   } catch (error) {
     return { manifest: null, error: asErrorMessage(error) };
@@ -243,11 +301,27 @@ export function clearPluginModuleCache(pluginDir: string): void {
 }
 
 /** 动态加载插件入口（.cjs/.js/.mjs 均可），归一化 default/named export */
-export async function loadPlugin(record: PluginRecord): Promise<CyrenePlugin> {
+export interface LoadPluginHooks {
+  /** .NET 轨：进程意外退出（供上层更新插件状态） */
+  onDotnetUnexpectedExit?: (pluginId: string, message: string) => void;
+  /** .NET 轨：意外退出后自动重启成功 */
+  onDotnetRestarted?: (pluginId: string) => void;
+  /** .NET 轨：设置页配置的存储配额（MiB；undefined = 未配置，配置后覆盖子进程环境变量） */
+  getConfiguredPluginStorageQuotaMb?: () => number | undefined;
+  /** .NET 轨：设置页配置的内存上限（MiB；undefined = 未配置，看门狗逐次读取） */
+  getConfiguredPluginMemoryLimitMb?: () => number | undefined;
+}
+
+export async function loadPlugin(record: PluginRecord, hooks: LoadPluginHooks = {}): Promise<CyrenePlugin> {
   // 双轨分流：dotnet 插件不走 require——以独立子进程 + stdio 协议运行
   if (record.manifest.runtime === "dotnet") {
     const { DotnetPluginAdapter } = await import("./dotnet-adapter");
-    return new DotnetPluginAdapter(record);
+    return new DotnetPluginAdapter(record, {
+      onUnexpectedExit: hooks.onDotnetUnexpectedExit,
+      onRestarted: hooks.onDotnetRestarted,
+      getConfiguredPluginStorageQuotaMb: hooks.getConfiguredPluginStorageQuotaMb,
+      getConfiguredPluginMemoryLimitMb: hooks.getConfiguredPluginMemoryLimitMb,
+    });
   }
   const entry = path.join(record.dir, record.manifest.entry);
   const ext = path.extname(entry).toLowerCase();

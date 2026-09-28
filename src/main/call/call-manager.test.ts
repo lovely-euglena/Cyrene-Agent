@@ -36,6 +36,7 @@ import {
   claimExternalSpeechInput,
   endTurn,
   handleAudioFrame,
+  handleVadState,
   onCallEnded,
   onTtsDone,
   releaseExternalSpeechInput,
@@ -78,6 +79,43 @@ describe("call turn submission", () => {
     setCallWindow(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("VAD 上报转发给当前 ASR 流（静默门控：静默段不上云）", () => {
+    const reportVad = vi.fn();
+    mocks.createAsrStream.mockReturnValue({
+      start: vi.fn(async () => undefined),
+      sendAudio: vi.fn(),
+      reportVad,
+      stop: vi.fn(async () => ""),
+    });
+
+    startCall();
+    handleVadState(true);
+    handleVadState(false);
+
+    expect(reportVad).toHaveBeenNthCalledWith(1, true);
+    expect(reportVad).toHaveBeenNthCalledWith(2, false);
+  });
+
+  it("本地 ASR：通话可启动（不起内置流），VAD/音频帧忽略，等插件接管", () => {
+    mocks.getAsrConfig.mockReturnValue({ engine: "local" });
+
+    startCall();
+    expect(sentStates.at(-1)).toBe("LISTENING");
+    expect(mocks.createAsrStream).not.toHaveBeenCalled();
+    expect(sentErrors).toEqual([]);
+
+    // 无内置流：VAD / 音频帧安全忽略；TTS 结束也不重启内置 ASR
+    handleVadState(true);
+    handleAudioFrame(Buffer.alloc(8));
+    onTtsDone();
+    expect(mocks.createAsrStream).not.toHaveBeenCalled();
+
+    // 插件租约可正常接管本地输入
+    const claim = claimExternalSpeechInput();
+    expect(claim).not.toBeNull();
+    releaseExternalSpeechInput(claim!.callGeneration);
   });
 
   it("leaves LISTENING immediately while batch transcription is still stopping", async () => {

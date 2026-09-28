@@ -11,13 +11,16 @@
  *     （含权限审批，复用 executeToolCall 路径）→ tool_result 回注
  *
  * 协议见 dotnet/native-windows/Agents/AgentSessionHost.cs 头注释。
- * 双轨开关 CYRENE_AGENT_HOST=0/1：0 或 native exe 缺失时全部 API
- * 返回 { ok: false, error: "agent-host 未启用" }——上层照旧走 TS 循环。
+ * 总开关走统一配置解析（resolveDotnetConfig().agentHost；环境变量
+ * CYRENE_AGENT_HOST / config/cyrene.conf 的 agentHost，默认启用）：
+ * 关闭或 native exe 缺失时全部 API 返回 { ok: false, error: "agent-host
+ * 未启用" }——上层照旧走 TS 循环。
  */
 import { spawn, type ChildProcess } from "child_process";
 import * as readline from "readline";
+import { resolveDotnetConfig } from "../config";
 import { resolveNativeWindowsExe } from "../windows/native-windows-host";
-import { resolveDotnetConfig } from "../dotnet-backend/config";
+import { trackChildProcess } from "../child-processes";
 import { getAdapterForConfig, type ChatMessage, type VendorConfig } from "./vendors";
 import { streamChatWithSdk } from "./vendors/sdk-stream/runtime";
 
@@ -51,7 +54,7 @@ export class AgentProcessManager {
   messagePreprocessor: ((messages: ChatMessage[]) => ChatMessage[]) | null = null;
 
   enabled(): boolean {
-    // 统一开关入口（环境变量 > ./config/cyrene.conf > 默认）——禁止散读 env
+    // 统一解析入口：env > config/cyrene.conf > 默认（禁止散读 process.env）
     return resolveDotnetConfig().agentHost && resolveNativeWindowsExe() !== null;
   }
 
@@ -68,6 +71,7 @@ export class AgentProcessManager {
       });
       if (!child || !child.stdout || !child.stdin) return false;
       this.proc = child;
+      trackChildProcess(child, "cyrene-native --agent-host");
       this.exited = false;
       this.wireFrameRouter(child);
       await new Promise<void>((resolve) => {

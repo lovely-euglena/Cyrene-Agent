@@ -70,6 +70,33 @@ body {
   gap: 2px;
 }
 
+/* 未保存提醒：任一 .save-status 为脏态时点亮（shared/unsaved-indicator.ts） */
+.settings-nav__unsaved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font: var(--rb-text-small);
+  color: #9a5b12;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  white-space: nowrap;
+}
+
+.settings-nav__unsaved[hidden] {
+  display: none;
+}
+
+.settings-nav__unsaved-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.9);
+}
+
 .settings-nav__logo {
   width: 28px;
   height: 28px;
@@ -677,6 +704,48 @@ body {
   accent-color: var(--rb-pink-500);
 }
 
+/* Snipaste 路径输入框（偏好设置）+ 便携模式数据目录（通用设置） */
+#preferences-form .setting-row .path-input,
+#general-form .setting-row .path-input {
+  margin-left: auto;
+  width: 360px;
+  text-align: left;
+  font: 500 12px/1.2 var(--rb-font-sans);
+  padding: 8px 12px;
+  border: 1px solid var(--rb-border-faint);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rb-text-default);
+  -webkit-app-region: no-drag;
+}
+#preferences-form .setting-row .path-input:focus,
+#general-form .setting-row .path-input:focus {
+  outline: none;
+  border-color: var(--rb-pink-400);
+}
+#preferences-form .setting-row .path-input::placeholder,
+#general-form .setting-row .path-input::placeholder {
+  color: var(--rb-text-faint);
+  font-weight: 400;
+}
+/* setting-row 默认 display:flex 会盖过 hidden 属性，这里补一条显式规则 */
+#preferences-form .setting-row[hidden],
+#general-form .setting-row[hidden] {
+  display: none;
+}
+
+/* 便携模式（通用设置）：状态提示行 */
+#general-form .portable-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--rb-text-faint);
+  font: var(--rb-text-micro);
+  word-break: break-all;
+}
+#general-form .portable-hint.is-error {
+  color: #ff8a9b;
+}
+
 /* 截图热键输入框 */
 .hotkey-input {
   min-width: 0;
@@ -697,6 +766,37 @@ body {
   border-color: var(--rb-pink-400);
 }
 .hotkey-input::placeholder {
+  color: var(--rb-text-faint);
+  font-weight: 400;
+}
+
+/* Git 提交身份：名称 + 邮箱两个输入框（通用设置） */
+.git-identity-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.git-identity-fields input {
+  min-width: 0;
+  width: 150px;
+  font: 500 13px/1 var(--rb-font-sans);
+  padding: 6px 12px;
+  border: 1px solid var(--rb-border-faint);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rb-text-default);
+  transition: border-color 160ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.git-identity-fields input:focus {
+  outline: none;
+  border-color: var(--rb-pink-400);
+}
+
+.git-identity-fields input::placeholder {
   color: var(--rb-text-faint);
   font-weight: 400;
 }

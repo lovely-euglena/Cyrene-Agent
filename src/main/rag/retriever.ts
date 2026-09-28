@@ -1,13 +1,15 @@
-import { JsonVectorStore, SearchResult } from "./vectorstore";
+import { VectorStore, SearchResult } from "./vectorstore";
 import { EmbeddingProvider, getEmbeddingProvider } from "./embedding";
 import { getReranker } from "./reranker";
+import { getEmbeddingSidecarClient, isSidecarEnabled } from "./embedding-sidecar";
+import { DEFAULT_MODEL_KEY } from "./embedding-pipeline";
 
 // ── @node-rs/jieba 分词（Node 24 兼容；nodejieba 已弃用） ──
 import { Jieba } from "@node-rs/jieba";
 
 const jieba = new Jieba();
 
-interface TokenInfo {
+export interface TokenInfo {
   word: string;
   tag: string;       // 词性标注：n/ns/nr/v/a/d/p/c/u 等
   isStop: boolean;   // 是否为停用词/高频词
@@ -51,24 +53,20 @@ export interface RetrieveOptions {
   allowedEntryIds?: string[];
 }
 
-// ── 自定义词表（entity-graph 维护）──
+// ── 自定义词表（entity-graph 维护） ──
 // @node-rs/jieba 没有运行时 insertWord()，改用「后处理重组」方案：
 // jieba 切完后，把被切散的自定义词（如"昔涟"→"昔","涟"）重新合并。
 const customWords = new Set<string>();
-// 自定义词表版本：每次真正新增词时递增，让已缓存的文档分词作废重算
-let customWordsVersion = 0;
 
 /** 注册一个自定义词（让分词时不被切散） */
 export function registerJiebaCustomWord(word: string): void {
-  if (word.length >= 2 && !customWords.has(word)) customWordsVersion++;
-  customWords.add(word);
+  if (word.length >= 2) customWords.add(word);
 }
 
 /** 批量注册自定义词 */
 export function registerJiebaCustomWords(words: Iterable<string>): void {
   for (const w of words) {
-    if (w.length >= 2 && !customWords.has(w)) customWordsVersion++;
-    customWords.add(w);
+    if (w.length >= 2) customWords.add(w);
   }
 }
 
@@ -109,7 +107,11 @@ function mergeCustomWords(tokens: string[]): string[] {
   return result;
 }
 
-function tokenize(text: string): TokenInfo[] {
+/**
+ * 分词（jieba + 自定义词重组 + 纯 ASCII 快捷路径）。
+ * 导出供 scripts/diagnostics 对账工具使用（.NET BM25 移植需逐词对齐）。
+ */
+export function tokenize(text: string): TokenInfo[] {
   // 纯英文/数字文本走原来的空格分词逻辑（jieba 不适合纯英文）
   if (/^[a-zA-Z0-9\s]+$/.test(text)) {
     return text.split(/\s+/).filter(Boolean).map((word) => ({
@@ -158,20 +160,6 @@ function tokenize(text: string): TokenInfo[] {
   }
 }
 
-// ── BM25 文档分词缓存 ──
-// 条目文本写入后不可变，分词结果直接挂在条目对象上：条目删除后随 GC 回收，无需失效逻辑。
-// 全库分词是 BM25 的绝对大头（3000 个 chunk 约 2.5 秒），缓存后只在首次检索付出一次成本。
-// 自定义词表更新会改变分词结果，用版本号比对决定是否重算。
-const docTokenCache = new WeakMap<object, { version: number; tokens: TokenInfo[] }>();
-
-function getDocTokens(entry: object & { text: string }): TokenInfo[] {
-  const cached = docTokenCache.get(entry);
-  if (cached && cached.version === customWordsVersion) return cached.tokens;
-  const tokens = tokenize(entry.text);
-  docTokenCache.set(entry, { version: customWordsVersion, tokens });
-  return tokens;
-}
-
 function bm25Score(
   queryTokens: TokenInfo[],
   docTokens: TokenInfo[],
@@ -212,10 +200,10 @@ function bm25Score(
 
 // ── 混合检索器 ──
 export class HybridRetriever {
-  private store: JsonVectorStore | import("./dotnet-store").DotnetRagStore;
+  private store: VectorStore;
   private provider: EmbeddingProvider | null;
 
-  constructor(store: JsonVectorStore | import("./dotnet-store").DotnetRagStore, provider?: EmbeddingProvider | null) {
+  constructor(store: VectorStore, provider?: EmbeddingProvider | null) {
     this.store = store;
     this.provider = provider ?? null;
   }
@@ -228,8 +216,50 @@ export class HybridRetriever {
     vectorWeight = 0.7,
     bm25Weight = 0.3
   ): Promise<SearchResult[]> {
+    // 先同步 .NET 侧写入（导入/召回回写）再判断空库，避免陈旧副本短路
+    this.store.ensureFresh();
     const stats = this.store.stats;
     if (stats.total === 0) return [];
+
+    // ── .NET sidecar 优先（Phase B）：向量 + BM25 + 融合 + 召回回写全部下沉 ──
+    // 失败回退本地实现；回退前先同步 .NET 可能已落盘的召回统计
+    const sidecar = isSidecarEnabled() ? getEmbeddingSidecarClient() : null;
+    if (sidecar) {
+      try {
+        const response = await sidecar.searchHybrid(DEFAULT_MODEL_KEY, {
+          ragDataDir: this.store.getDirectory(),
+          storeMode: this.store.mode,
+          query,
+          source,
+          topK,
+          importIds: options.importIds,
+          allowedEntryIds: options.allowedEntryIds,
+          customWords: Array.from(customWords),
+          vectorWeight,
+          bm25Weight,
+          updateRecall: true,
+        });
+        const candidates: SearchResult[] = response.entries.map((entry, i) => ({
+          entry: {
+            id: entry.id,
+            text: entry.text,
+            embedding: Array.from(response.embeddings[i] ?? []),
+            source: entry.source,
+            weight: entry.weight,
+            createdAt: entry.createdAt,
+            lastRecalledAt: entry.lastRecalledAt,
+            metadata: entry.metadata ?? undefined,
+          },
+          score: entry.score,
+        }));
+        return this.rerankCandidates(query, candidates);
+      } catch (error) {
+        console.warn("[HybridRetriever] sidecar search failed, falling back to local:", error);
+        this.store.reload();
+      }
+    }
+
+    // ── 本地实现（回退路径） ──
 
     // 如果没有 provider，向量检索不可用，只用 BM25
     if (!this.provider) {
@@ -271,9 +301,11 @@ export class HybridRetriever {
 
     scored.sort((a, b) => b.score - a.score);
     const candidates = scored.slice(0, topK);
+    return this.rerankCandidates(query, candidates);
+  }
 
-    // ── Reranker 精排 ──
-    // 如果 reranker 可用，用 cross-encoder 对候选结果做精排
+  /** Reranker 精排（sidecar / 本地两条路径共用；失败保留 hybrid 分数）。 */
+  private async rerankCandidates(query: string, candidates: SearchResult[]): Promise<SearchResult[]> {
     const reranker = getReranker();
     if (reranker && candidates.length > 1) {
       try {
@@ -281,7 +313,7 @@ export class HybridRetriever {
         const reranked = await reranker.rerank(query, docs);
         const scoreMap = new Map(reranked.map((r) => [r.text, r.score]));
 
-        // 用 reranker 分数重排，但保留原始 hybrid 分数作为参考
+        // 用 reranker 分数重排（覆盖 hybrid 分数）
         for (const c of candidates) {
           const rerankScore = scoreMap.get(c.entry.text);
           if (rerankScore !== undefined) {
@@ -293,52 +325,14 @@ export class HybridRetriever {
         console.warn("[HybridRetriever] reranker failed, using hybrid scores:", err);
       }
     }
-
     return candidates;
   }
 
-  /**
-   * 后台预热 BM25 分词缓存：把"首次检索才付全库分词成本"挪到导入完成的时刻。
-   * 分片执行（每片 50 条、片间用 setImmediate 让出事件循环），单片只占毫秒级，
-   * 不会像冷检索那样一次阻塞主线程两秒。失败静默——预热只是提前填缓存，
-   * 检索路径自身始终能补算，正确性不依赖本方法。
-   * 返回 Promise 供需要等待预热的调用方（如基准测试）使用，生产路径可不等待。
-   */
-  warmupBm25Tokens(entries: Array<{ text: string }>): Promise<void> {
-    return new Promise((resolve) => {
-      const total = entries.length;
-      if (total === 0) {
-        resolve();
-        return;
-      }
-      const BATCH = 50;
-      const warm = (start: number) => {
-        try {
-          const end = Math.min(start + BATCH, total);
-          for (let i = start; i < end; i++) {
-            getDocTokens(entries[i]);
-          }
-        } catch (err) {
-          console.warn("[HybridRetriever] BM25 warmup failed:", err);
-          resolve();
-          return;
-        }
-        if (start + BATCH < total) {
-          setImmediate(() => warm(start + BATCH));
-        } else {
-          resolve();
-        }
-      };
-      setImmediate(() => warm(0));
-    });
-  }
-
   private bm25Search(query: string, source?: string, topK = 15, options: RetrieveOptions = {}): SearchResult[] {
-    const storeAny = this.store as unknown as { entries: Array<{
+    const entries = this.store["entries"] as Array<{
       id: string; text: string; embedding: number[]; source: string;
       weight: number; createdAt: number; lastRecalledAt: number; metadata?: Record<string, unknown>;
-    }> };
-    const entries = storeAny.entries;
+    }>;
 
     const allowedImportIds = new Set(options.importIds ?? []);
     const allowedEntryIds = options.allowedEntryIds ? new Set(options.allowedEntryIds) : null;
@@ -349,7 +343,7 @@ export class HybridRetriever {
     if (docs.length === 0) return [];
 
     const queryTokenInfo = tokenize(query);
-    const docTokensList = docs.map((d) => getDocTokens(d));
+    const docTokensList = docs.map((d) => tokenize(d.text));
     const totalDocs = docs.length;
     const avgDocLen = docTokensList.reduce((sum, t) => sum + t.length, 0) / totalDocs;
 

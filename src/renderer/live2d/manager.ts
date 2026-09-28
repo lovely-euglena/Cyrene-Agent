@@ -22,8 +22,7 @@ export interface Live2DManagerOptions {
   onError?: (err: Error) => void;
 }
 
-export interface Live2DResourceMetrics {
-  appActive: boolean;
+export interface Live2DResourceMetrics {  appActive: boolean;
   modelLoaded: boolean;
   disposed: boolean;
   tickerStarted: boolean | null;
@@ -82,6 +81,15 @@ function buildMotionIndexMap(json: ModelJsonShape): Map<string, Map<string, numb
   return out;
 }
 
+/**
+ * 桌宠渲染最大像素比：Live2D 的后备缓冲/纹理按 DPR² 增长（实测 1.25×DPR 时
+ * 渲染进程稳态 ~452MB WS、GPU 侧纹理 ~280MB WS）。钳到 1.0：模型观感差异
+ * 很小，但省 ~20% 纹理工位（内存基线见 docs/internal-issue/2026-09-27-memory-baseline.md）。
+ * ⚠️ click-through 的 CSS→buffer 坐标换算必须按实际缓冲比例推导，不能直接用
+ * window.devicePixelRatio（见 click-through.ts）。
+ */
+export const PET_RENDER_MAX_DPR = 1;
+
 export class Live2DManager {
   private app: PIXI.Application | null = null;
   private model: Live2DModel | null = null;
@@ -127,9 +135,8 @@ export class Live2DManager {
       // under the cursor to decide transparent vs. opaque). Without this the
       // WebGL framebuffer is cleared after each frame and readPixels is UB.
       preserveDrawingBuffer: true,
-      // Cap DPR to avoid an oversized WebGL drawing buffer on high-DPI
-      // displays; 2x is enough visual fidelity for the pet window.
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
+      // Cap DPR to keep the WebGL drawing buffer small (see PET_RENDER_MAX_DPR).
+      resolution: Math.min(window.devicePixelRatio || 1, PET_RENDER_MAX_DPR),
       autoDensity: true,
     });
     this.startIdleFpsWatch();

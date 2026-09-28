@@ -35,13 +35,18 @@ export interface ShellDependencies {
   createWindowManager(): WindowManager;
   /** 创建未加载页面的聊天窗口壳；load() 留给 core 阶段。 */
   createChatShell(windowManager: WindowManager): ReactChatWindowHandle;
-  /** 初始化 native 三件套窗口桥接（灰度开关关闭时 no-op）。 */
+  /** 初始化 native 三件套窗口桥接（未启用/无 exe 时 no-op）。 */
   initializeNativeWindows(windowManager: WindowManager): void;
+  /**
+   * 打开设置窗（默认 WPF；channels/TTS/ASR 及 Electron 专属 section 弹 Electron）。
+   * 缺省回退：直接创建 Electron 设置窗（测试桩兼容）。
+   */
+  openSettings?(section?: string): void;
   registerProtocolHandlers(): void;
   /** 壳安全 IPC：仅注册依赖在壳阶段已就绪的处理器。 */
   registerShellIpc(input: ShellIpcRegistrationInput): void;
   /** 托盘：窗口类入口走激活请求；桌宠开关立即执行。
-   *  返回类型含分离托盘的 duck-type（CYRENE_DETACHED_TRAY 模式），
+   *  返回类型含分离托盘的 duck-type（托盘进程存在时默认优先），
    *  消费点只依赖 isDestroyed/destroy/setImage/setToolTip。 */
   createTray(input: {
     requestActivation(request: WindowActivationRequest): void;
@@ -112,7 +117,9 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
           windowManager.createSidebarWindow();
           break;
         case "settings":
-          windowManager.createSettingsWindow(request.section);
+          // 默认 WPF 设置窗（channels/TTS/ASR 例外弹 Electron，见 settings-router）
+          if (deps.openSettings) deps.openSettings(request.section);
+          else windowManager.createSettingsWindow(request.section);
           break;
       }
     },

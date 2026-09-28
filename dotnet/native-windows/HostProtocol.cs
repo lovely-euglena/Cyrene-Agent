@@ -60,14 +60,23 @@ public sealed class HostProtocol : IDisposable
 
     public event Action<Exception>? ProtocolError;
 
+    /// <summary>
+    /// stdin 关闭（宿主 Electron 退出）或读取链路断裂时触发。窗口宿主必须
+    /// 据此关闭全部窗口并结束进程——否则宿主退出后 cyrene-native 会变成
+    /// 无窗口的孤儿进程常驻（用户报「托盘退出后有进程残留」）。
+    /// 在读线程上回调。
+    /// </summary>
+    public event Action? InputClosed;
+
     private void ReadLoop()
     {
+        var inputClosed = false;
         try
         {
             while (!_cts.IsCancellationRequested)
             {
                 var frame = ReadFrame(_stdin);
-                if (frame is null) break; // stdin EOF：宿主退出
+                if (frame is null) { inputClosed = true; break; } // stdin EOF：宿主退出
                 var element = JsonSerializer.Deserialize<JsonElement>(frame, Json);
                 if (element.ValueKind == JsonValueKind.Object &&
                     element.TryGetProperty("op", out var op) &&
@@ -87,8 +96,10 @@ public sealed class HostProtocol : IDisposable
         }
         catch (Exception ex)
         {
+            inputClosed = true;
             ProtocolError?.Invoke(ex);
         }
+        if (inputClosed) InputClosed?.Invoke();
     }
 
     private async Task HandleRequest(int id, JsonElement element)

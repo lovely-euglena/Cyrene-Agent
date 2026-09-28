@@ -2,10 +2,12 @@ import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
-import { loadGeneralSettings } from "../settings/settings-facade";
 import { computeLayout } from "../window-layout";
+import { loadGeneralSettings } from "../settings/settings-facade";
 import { stopCall, setCallWindow } from "../call/call-manager";
-import { isNativeWindowActive, spawnNativeWindow } from "./native-windows-bridge";
+import { attachExternalLinkHandler } from "./external-link";
+import { attachChatIdleReclaim } from "./chat-idle-reclaim";
+import { isNativeWindowActive, spawnNativeWindow, closeNativeWindow } from "./native-windows-bridge";
 import {
   callWindow,
   getCurrentAppIconPath,
@@ -14,12 +16,10 @@ import {
   setCallWindowLocal,
   setReactChatWindow,
   setSettingsWindow,
-  setPluginManagerWindow,
   setSidebarWindow,
   setStickerManagerWindow,
   setTasksWindow,
   settingsWindow,
-  pluginManagerWindow,
   showWindowWhenStartupReady,
   sidebarWindow,
   stickerManagerWindow,
@@ -109,18 +109,14 @@ export function createLazyReactChatWindowHandle(
   };
 }
 
-// Electron 44 新增 WindowStatePersistence；本地 43 垫片声明（升级 44 后冗余无害）
-declare namespace Electron {
-  interface WindowStatePersistence {
-    bounds: boolean;
-    displayMode: boolean;
-  }
-}
-
+/**
+ * BrowserWindow 状态持久化选项（上游 2026-09-24）：Electron 43 windowStatePersistence。
+ * rememberWindowState 关闭时返回空对象——窗口不落盘位置/尺寸。
+ */
 export function persistedWindowState(
   name: string,
   enabled: boolean,
-): { name?: string; windowStatePersistence?: Electron.WindowStatePersistence } {
+): { name?: string; windowStatePersistence?: { bounds: boolean; displayMode: boolean } } {
   return enabled
     ? { name, windowStatePersistence: { bounds: true, displayMode: false } }
     : {};
@@ -161,9 +157,18 @@ export function createReactChatWindowShell(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 聊天输入不需要拼写检查：关掉可省渲染进程拼写字典/检查器的常驻内存
+      //（聊天渲染进程实测 ~165MB 私有工作集，见内存基线文档）
+      spellcheck: false,
     },
   });
   setReactChatWindow(window);
+
+  // 最小化空闲 15 分钟 → 销毁窗口回收渲染进程；下次打开经惰性 handle 重建。
+  attachChatIdleReclaim(window);
+
+  // 聊天窗口内出现外链（如插件收录仓库）时转交系统浏览器打开，不再派生新窗口
+  attachExternalLinkHandler(window);
 
   window.webContents.on("did-start-loading", () => {
     reactChatSession.markLoading();
@@ -191,7 +196,7 @@ export function loadReactChatWindowPage(window: BrowserWindow, sessionId?: strin
   //   t0 load 开始 → t1 dom-ready → t2 did-finish-load → t3 渲染层 CHATS_REACT_READY
   // 渲染层脚本初始化耗时（t2→t3）+ 加载耗时（t0→t2）分段定位卡在哪段。
   const t0 = Date.now();
-  const once = (wc: import("electron").WebContents): void => {
+  const once = (wc: Electron.WebContents): void => {
     wc.once("dom-ready", () => {
       console.info(`[ChatPerf] dom-ready +${Date.now() - t0}ms`);
     });
@@ -231,15 +236,22 @@ export function dispatchOrQueueReactSession(sessionId: string): void {
  * 创建/复用侧边状态面板窗口。
  */
 export function createSidebarWindow(): void {
-  // 灰度开关：native 窗口进程路径（CYRENE_NATIVE_WINDOWS=1 且 exe 就位）
+  // native 窗口进程路径（默认启用；exe 未就位或 CYRENE_NATIVE_WINDOWS=0 时走 BrowserWindow）
   if (isNativeWindowActive("sidebar")) {
     const layout = computeLayout();
     void spawnNativeWindow("sidebar", { sidebar: layout.sidebar }).then((ok) => {
-      if (!ok) console.warn("[Sidebar] native spawn failed — fallback unavailable until next call");
+      if (ok) return;
+      // native 进程不可用 / spawn 失败：回退 Electron BrowserWindow，
+      // 保证托盘入口永不「点了没反应」（旧实现此处只 warn 后 return）。
+      console.warn("[Sidebar] native spawn failed — falling back to BrowserWindow");
+      createSidebarBrowserWindow();
     });
     return;
   }
+  createSidebarBrowserWindow();
+}
 
+function createSidebarBrowserWindow(): void {
   if (sidebarWindow && !sidebarWindow.isDestroyed()) {
     sidebarWindow.show();
     sidebarWindow.focus();
@@ -292,15 +304,20 @@ export function createSidebarWindow(): void {
  * 创建/复用今日日程窗口。
  */
 export function createTasksWindow(): void {
-  // 灰度开关：native 窗口进程路径
+  // native 窗口进程路径（默认启用；未启用时走 BrowserWindow）
   if (isNativeWindowActive("tasks")) {
     const layout = computeLayout();
     void spawnNativeWindow("tasks", { tasks: layout.tasks }).then((ok) => {
-      if (!ok) console.warn("[Tasks] native spawn failed — fallback unavailable until next call");
+      if (ok) return;
+      console.warn("[Tasks] native spawn failed — falling back to BrowserWindow");
+      createTasksBrowserWindow();
     });
     return;
   }
+  createTasksBrowserWindow();
+}
 
+function createTasksBrowserWindow(): void {
   if (tasksWindow && !tasksWindow.isDestroyed()) {
     tasksWindow.show();
     tasksWindow.focus();
@@ -351,20 +368,6 @@ export function createTasksWindow(): void {
 /**
  * 创建/复用设置窗口。
  */
-/**
- * 插件管理窗口（插件页重写——.NET 方案）。
- * WPF PluginManagerWindow 走 spawnNativeWindow("plugins")；插件运行时
- * 面板（Panel Bridge）仍归 Electron（生态适配层）。
- */
-export function createPluginManagerWindow(): void {
-  // native 路径优先；未启用/失败时由调用方回退 Electron 设置窗 plugins
-  // section（hash 路由），避免用户失去插件管理入口
-  void import("./native-windows-bridge").then(({ spawnNativeWindow }) =>
-    spawnNativeWindow("plugins").then((ok) => {
-      if (!ok) createSettingsWindow("plugins");
-    }),
-  );
-}
 
 export function createSettingsWindow(section?: string): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -406,7 +409,9 @@ export function createSettingsWindow(section?: string): void {
   });
   setSettingsWindow(window);
 
+  attachExternalLinkHandler(window);
 
+  // 保留不动（设置窗路径）
   const hash = section ? `#${section}` : "";
   if (isDev) {
     window.loadURL("http://localhost:5173/settings/" + hash);
@@ -496,6 +501,34 @@ export async function createStickerManagerWindow(): Promise<{ ok: boolean; error
   });
 
   return { ok: true };
+}
+
+/**
+ * 运行期切换状态栏/日程栏显示（设置窗开关用；native 与 Electron 统一入口）。
+ * native 侧走 win.close；Electron 侧关 BrowserWindow。再次打开复用既有创建函数。
+ */
+export function setSidebarWindowVisible(visible: boolean): void {
+  if (visible) {
+    createSidebarWindow();
+    return;
+  }
+  if (isNativeWindowActive("sidebar")) {
+    void closeNativeWindow("sidebar");
+    return;
+  }
+  if (sidebarWindow && !sidebarWindow.isDestroyed()) sidebarWindow.close();
+}
+
+export function setTasksWindowVisible(visible: boolean): void {
+  if (visible) {
+    createTasksWindow();
+    return;
+  }
+  if (isNativeWindowActive("tasks")) {
+    void closeNativeWindow("tasks");
+    return;
+  }
+  if (tasksWindow && !tasksWindow.isDestroyed()) tasksWindow.close();
 }
 
 /**

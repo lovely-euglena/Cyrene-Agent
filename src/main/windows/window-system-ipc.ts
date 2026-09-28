@@ -11,6 +11,11 @@ import type { WindowManager } from "./window-manager";
 
 export interface WindowSystemIpcDependencies {
   get windowManager(): WindowManager | null;
+  /**
+   * 设置入口路由（默认 WPF；channels/TTS/ASR 等例外弹 Electron）。
+   * 缺省回退：直接创建 Electron 设置窗（兼容旧装配/测试桩）。
+   */
+  openSettings?(section?: string): void;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
   /**
@@ -18,6 +23,16 @@ export interface WindowSystemIpcDependencies {
    * 同时保留 before-quit 受控退出链路。
    */
   quit(): void;
+}
+
+/**
+ * 打开 Electron 的 chrome://gpu 诊断页（旧版设置「禁用 GPU 渲染」行内链接同口径；
+ * 也供 native 设置窗 general 动作复用）。
+ */
+export function openChromeGpuWindow(): void {
+  const win = new BrowserWindow({ width: 1024, height: 768 });
+  void win.loadURL("chrome://gpu");
+  win.show();
 }
 
 /**
@@ -78,7 +93,13 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_SETTINGS, (_event, section?: string) => {
-    deps.windowManager?.createSettingsWindow(section);
+    // 默认 WPF 设置窗（channels/TTS/ASR 等例外弹 Electron，见 settings-router）
+    const target = typeof section === "string" ? section : undefined;
+    if (deps.openSettings) {
+      deps.openSettings(target);
+      return;
+    }
+    deps.windowManager?.createSettingsWindow(target);
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_CALL, () => {
@@ -100,10 +121,8 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
     settingsWindow?.close();
   });
 
-  ipc.on(IPC.SETTINGS_OPEN_CHROME_GPU, async () => {
-    const win = new BrowserWindow({ width: 1024, height: 768 });
-    win.loadURL("chrome://gpu");
-    win.show();
+  ipc.on(IPC.SETTINGS_OPEN_CHROME_GPU, () => {
+    openChromeGpuWindow();
   });
 
   // Token 用量查询 IPC（临时挂靠，后续归到统计模块）

@@ -384,4 +384,19 @@ describe("createToastService · 音效合并与开关", () => {
     const items = pushedItems(windowStub.sent) as Array<ToastItem & { sound: boolean }>;
     expect(items[0].sound).toBe(false);
   });
+
+  it("每次弹窗调用 notifySystem（托盘气泡接线点），抛错不影响 toast 主链路", () => {
+    const notifySystem = vi.fn();
+    notifySystem.mockImplementationOnce(() => { throw new Error("tray down"); });
+    const { bus, service } = setup({ notifySystem });
+    bus.publishApprovalPending({ id: "a-1", toolId: "t", toolName: "工具" });
+    expect(notifySystem).toHaveBeenCalledTimes(1);
+    expect(notifySystem.mock.calls[0][0]).toMatchObject({ kind: "approval", tier: "action-pending" });
+    // 系统通知抛错：toast 仍然照常显示
+    expect(service.getActiveToasts()).toHaveLength(1);
+
+    bus.publishPlanReview({ sessionId: "s1", runId: "run-1" });
+    expect(notifySystem).toHaveBeenCalledTimes(2);
+    expect(notifySystem.mock.calls[1][0]).toMatchObject({ kind: "plan-review", tier: "action-pending" });
+  });
 });

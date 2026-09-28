@@ -63,3 +63,19 @@ describe("policyFor — non-shell risks unchanged", () => {
     }
   });
 });
+
+describe("policyFor — undeclared risk never silently allows", () => {
+  it("only full allows undeclared", () => {
+    expect(policyFor("full", "undeclared")).toBe("allow");
+  });
+
+  it("per-action asks for undeclared (user must confirm)", () => {
+    expect(policyFor("per-action", "undeclared")).toBe("ask");
+  });
+
+  it("restrictive levels deny undeclared", () => {
+    expect(policyFor("project-read-only", "undeclared")).toBe("deny");
+    expect(policyFor("read-only", "undeclared")).toBe("deny");
+    expect(policyFor("scoped", "undeclared")).toBe("deny");
+  });
+});

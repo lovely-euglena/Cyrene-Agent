@@ -1,6 +1,6 @@
 import path from "node:path";
 import { lstat, realpath, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { IPC } from "../shared/ipc-channels";
 import type {
   PluginListEntry,
@@ -9,6 +9,7 @@ import type {
 } from "../shared/plugin-management";
 import { createContext, runPluginCleanup, type PluginRuntime } from "./context";
 import { createPluginEventBus, qualifyHostEvent } from "./events";
+import { resolvePluginStorageQuotaMb } from "./limits";
 import {
   clearPluginModuleCache,
   loadPlugin,
@@ -31,6 +32,37 @@ import type {
 
 export type { PluginListEntry, PluginOverview, PluginRuntimeStatus } from "../shared/plugin-management";
 
+/** 单插件实际占用（管理页展示用；未知/不适用为 null）。 */
+export interface PluginUsage {
+  /** plugin-data/<id> 目录实际占用（字节，含插件直写文件与 .tmp） */
+  storageBytes: number;
+  /** .NET 插件进程工作集（字节）；Node 轨/未运行/探测失败为 null */
+  memoryBytes: number | null;
+}
+
+/** 目录统计条目上限：防病态目录（极多文件）拖慢快照，超出部分按截断计。 */
+const DIR_SIZE_ENTRY_CAP = 5000;
+
+/** 统计目录内文件总大小（不递归；不存在/不可读按 0）。 */
+function dirSizeBytes(dir: string): number {
+  try {
+    let total = 0;
+    let count = 0;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (++count > DIR_SIZE_ENTRY_CAP) break;
+      try {
+        total += statSync(path.join(dir, entry.name)).size;
+      } catch {
+        /* 并发删除/不可读：跳过 */
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 export interface PluginScanRoot {
   path: string;
   source: PluginSource;
@@ -43,6 +75,10 @@ export interface PluginManagerOptions {
   runtime: PluginRuntime;
   loadEnabledMap: () => Record<string, boolean>;
   saveEnabledMap: (map: Record<string, boolean>) => void;
+  /** 设置页配置的 KV 存储配额（MiB；undefined = 未配置，回退环境变量/默认）。 */
+  getConfiguredPluginStorageQuotaMb?: () => number | undefined;
+  /** 设置页配置的 .NET 插件内存上限（MiB；undefined = 未配置）。 */
+  getConfiguredPluginMemoryLimitMb?: () => number | undefined;
   selectPluginZip?: () => Promise<string | undefined>;
   confirmPluginReplace?: (plugin: { id: string; name: string; version: string }) => Promise<boolean>;
   /**
@@ -132,6 +168,7 @@ export class PluginManager {
           author: record.manifest.author,
           entry: record.manifest.entry,
           apiVersion: record.manifest.apiVersion,
+          runtime: record.manifest.runtime,
           source: record.source,
           origin,
           path: record.dir,
@@ -146,6 +183,8 @@ export class PluginManager {
           // 面板字段仅对已启用插件透出（渲染端不挂载禁用插件的面板）
           settingsPanel: this.isConfiguredEnabled(record) ? record.manifest.settingsPanel : undefined,
           settingsSection: this.isConfiguredEnabled(record) ? record.manifest.settingsSection : undefined,
+          // 依赖清单（如 speech-input）：native 语音设置据此提示本地识别可用性
+          deps: record.manifest.deps,
         };
       })
       .sort((a, b) => {
@@ -156,6 +195,30 @@ export class PluginManager {
 
   overview(): PluginOverview {
     return { plugins: this.list(), issues: [...this.scanIssues] };
+  }
+
+  /**
+   * 汇总各插件实际占用（插件管理窗展示用）：
+   * - storageBytes：扫描 plugin-data/<id> 的实际文件大小（Node/.NET 两轨共用同一目录）
+   * - memoryBytes：仅 .NET 轨运行中的插件可探测（独立进程）；Node 插件与宿主同进程，
+   *   无法按插件归因 → null；未运行/探测失败同样为 null
+   * 展示用途：任何单项失败都静默降级，不抛错、不影响插件。
+   */
+  async collectUsage(): Promise<Record<string, PluginUsage>> {
+    const usage: Record<string, PluginUsage> = {};
+    for (const [id] of this.records) {
+      usage[id] = { storageBytes: dirSizeBytes(path.join(this.opts.storageRoot, id)), memoryBytes: null };
+    }
+    // 每个 .NET 插件一次 tasklist 探测；并发跑，单插件失败只降级为 null
+    await Promise.all(Array.from(this.instances.entries()).map(async ([id, plugin]) => {
+      if (!usage[id] || typeof plugin.probeMemoryBytes !== "function") return;
+      try {
+        usage[id].memoryBytes = await plugin.probeMemoryBytes();
+      } catch {
+        /* 探测失败：保持 null */
+      }
+    }));
+    return usage;
   }
 
   /**
@@ -207,6 +270,26 @@ export class PluginManager {
         console.warn(`[plugins] 运行状态监听器执行失败 (${pluginId})`, error);
       }
     }
+  }
+
+  /**
+   * .NET 轨进程意外退出：把状态改为 failed（UI 不再滞留 running），
+   * 错误信息带上退出原因；工具调用侧由适配器自愈重启。
+   */
+  private markProcessExited(pluginId: string, message: string): void {
+    if (!this.instances.has(pluginId)) return;
+    this.statuses.set(pluginId, "failed");
+    this.errors.set(pluginId, message);
+    this.notifyRunningState(pluginId, false);
+  }
+
+  /** .NET 轨进程自动重启成功：恢复 running 并清掉退出错误 */
+  private markProcessRestarted(pluginId: string): void {
+    if (!this.instances.has(pluginId)) return;
+    this.statuses.set(pluginId, "running");
+    this.errors.delete(pluginId);
+    this.notifyRunningState(pluginId, true);
+    console.log(`[plugins] 插件 ${pluginId} 进程已自动重启`);
   }
 
   start(): Promise<void> {
@@ -636,13 +719,21 @@ export class PluginManager {
     this.statuses.set(id, "starting");
     this.errors.delete(id);
     try {
-      const plugin = await loadPlugin(record);
+      const plugin = await loadPlugin(record, {
+        onDotnetUnexpectedExit: (_pluginId, message) => this.markProcessExited(id, message),
+        onDotnetRestarted: () => this.markProcessRestarted(id),
+        getConfiguredPluginStorageQuotaMb: this.opts.getConfiguredPluginStorageQuotaMb,
+        getConfiguredPluginMemoryLimitMb: this.opts.getConfiguredPluginMemoryLimitMb,
+      });
+      // 存储配额在激活时定格（设置变更对之后启动/重启的插件生效）
+      const storageQuotaMb = resolvePluginStorageQuotaMb(this.opts.getConfiguredPluginStorageQuotaMb?.());
       const ctx = createContext(
         id,
         path.join(this.opts.storageRoot, id),
         this.opts.runtime,
         this.eventBus,
         record.manifest.deps,
+        { storageQuotaBytes: storageQuotaMb * 1024 * 1024 },
       );
       try {
         await plugin.register(ctx);

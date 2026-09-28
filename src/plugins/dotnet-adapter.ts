@@ -7,46 +7,147 @@
  *
  * 协议（每行一个 JSON 对象，UTF-8，\n 分帧；双向）：
  *
+ *   v1（工具轨）：
  *   宿主 → 插件：
- *     {"op":"init","apiVersion":1,"manifest":{...},"dataDir":"<插件私有数据目录>"}
- *     {"op":"invoke","callId":"c1","tool":"<pluginId>__<toolId>","args":{...}}
+ *     {"op":"init","apiVersion":1,"protocolVersion":2,"manifest":{...},"dataDir":"<插件私有数据目录>"}
+ *     {"op":"invoke","callId":"c1","tool":"<短id>","args":{...}}
+ *     {"op":"cancel","id":"c1","reason":"abort|timeout"}   // 尽力取消在途调用（SDK 映射到 CancellationToken）
  *     {"op":"shutdown"}                     // 优雅关停；5s 未退出则 SIGKILL
  *
  *   插件 → 宿主：
- *     {"op":"ready","tools":[{id,name,description,inputSchema}...]}   // init 的应答
+ *     {"op":"ready","tools":[{id,name,description,inputSchema,risk?}...]}   // init 的应答
  *     {"op":"result","callId":"c1","ok":true,"data":{...}}            // invoke 的应答
  *     {"op":"result","callId":"c1","ok":false,"error":"..."}
  *     {"op":"log","level":"info|warn|error","message":"..."}
+ *     {"op":"error","code":"...","message":"...","fatal":true}        // 致命错误 → 拒绝握手并停止
+ *
+ *   v2（P1 桥；宿主 init 携带 protocolVersion:2，插件 ready 回 protocolVersion>=2 后启用）：
+ *     通用请求/应答：{"op":"call","id":"h1","method":"ipc.dispatch","params":{...}}
+ *                    {"op":"reply","id":"h1","ok":true,"data":...} / {"op":"reply","id":"h1","ok":false,"error":"..."}
+ *     通知：        {"op":"notify","method":"event.deliver","params":{...}}
+ *     方法：
+ *       宿主→插件  ipc.dispatch / prompt.provide / plugin.open
+ *       插件→宿主  events.emit / events.subscribe / events.unsubscribe
+ *                  ipc.register / ipc.unregister
+ *                  prompt.register / prompt.unregister
+ *                  deps.channels.has
+ *                  deps.llm.generateText
+ *                  deps.secrets.get / set / delete
+ *                  deps.conversations.list / getMessages
+ *                  deps.workspace.getBinding
+ *                  deps.scheduler.createTask / listTasks / updateTask / deleteTask / getHistory
+ *     ready 声明：protocolVersion / tools / ipc / events / promptProviders / capabilities
+ *       {"op":"ready","protocolVersion":2,"tools":[...],"ipc":["settings"],
+ *        "events":["host:turn:finished"],
+ *        "promptProviders":[{"id":"ctx","modes":["code"],"sources":["conversation"]}],
+ *        "capabilities":{"open":true}}
+ *
+ * 兼容性：旧宿主不带 protocolVersion → 插件按 v1 行为工作；旧插件不声明 protocolVersion
+ * → 宿主不下发任何 v2 调用（只按 tools 注册）。
  *
  * 生命周期与容错：
- *   - register()：spawn → 等 ready（30s 超时）→ 按 ready.tools 注册进 ctx
+ *   - register()：spawn → 等 ready（30s 超时）→ 注册工具 + v2 声明（IPC/事件/提示词/open）
  *   - unregister()：shutdown → 等自然退出 → 超时 kill
- *   - 运行中意外退出：工具调用立即失败（有调用在途时）；进程不自动重启
- *     （重启策略交给上层管理器，与 node 插件崩溃语义一致）
- *   - stdout 的非 JSON 行（如 .NET 运行时自身输出）忽略并 warn 一次
+ *   - 运行中意外退出：在途调用立即失败 + 撤销本代 v2 注册 + 上报 hooks.onUnexpectedExit；
+ *     下次工具调用自动重启一次（自愈），重启 ready 后重建 v2 注册
+ *   - stdout 按行分帧：跨 chunk 缓冲 + UTF-8 StringDecoder（大结果/多字节字符不丢帧）
+ *   - invoke 兜底超时（默认 300s，CYRENE_PLUGIN_INVOKE_TIMEOUT_MS 可调）+ 工具上下文
+ *     AbortSignal 取消；两者都让调用方及时拿到错误，而不是永久 pending
+ *   - 协议版本不符：SDK 回 error 帧并退出，宿主拒绝握手（不视为可自愈的意外退出）
  */
 import { ChildProcess, spawn } from "node:child_process";
+import os from "node:os";
+import { StringDecoder } from "node:string_decoder";
 import path from "node:path";
+import { isPluginHostError } from "./api";
+import { PLUGIN_STORAGE_QUOTA_ENV, resolvePluginMemoryLimitMb } from "./limits";
 import type { PluginRecord } from "./types";
-import type { PluginTool } from "./api";
-import type { CyrenePlugin, PluginContext } from "./api";
+import type {
+  CyrenePlugin,
+  PluginContext,
+  PluginConversationListInput,
+  PluginDeps,
+  PluginLlmGenerateOptions,
+  PluginLlmMessage,
+  PluginMessagePageInput,
+  PluginPromptProvider,
+  PluginScheduledTaskInput,
+  PluginScheduledTaskPatch,
+  PluginTool,
+} from "./api";
 
 /** 与 C# Cyrene.PluginSdk 的 PluginBase 握手超时（进程冷启动 + .NET 首次 JIT）。 */
 const READY_TIMEOUT_MS = 30_000;
 /** 优雅关停后允许的自然退出时间。 */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
-/** init 协议主版本（与 CURRENT_PLUGIN_API_VERSION 对齐，C# SDK 校验）。 */
-/** ready.tools 数量上限——防恶意/失控插件撑爆工具注册表。 */
-const MAX_TOOLS_PER_PLUGIN = 64;
-/** risk 白名单（permission-policy 的 ToolRiskLevel 域 + unknown 拒绝）。 */
-const RISK_ALLOWLIST = new Set(["safe", "fs-read", "fs-write", "shell", "network", "input-control"]);
+/** init 协议主版本（manifest 契约，SDK 侧校验，不符回 error 帧并退出）。 */
 const PROTOCOL_API_VERSION = 1;
+/** v2 桥协议版本：init 下发给 SDK；SDK 需 >=2 才启用 IPC/事件/提示词/open。 */
+const PROTOCOL_VERSION = 2;
+/**
+ * 单次 invoke 的宿主兜底超时：插件挂死/不回帧时不再永久 pending。
+ * 正常调用（含本地推理类长任务）不应命中；可用 CYRENE_PLUGIN_INVOKE_TIMEOUT_MS 调整。
+ */
+const INVOKE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.CYRENE_PLUGIN_INVOKE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 300_000;
+})();
+/** host→plugin 调用的兜底超时：面板 IPC / prompt.provide / plugin.open。 */
+const IPC_DISPATCH_TIMEOUT_MS = 30_000;
+/** 提示词注册表一侧 2s 已超时，这里只做兜底清理（避免 pending 泄漏）。 */
+const PROMPT_CALL_TIMEOUT_MS = 5_000;
+const OPEN_TIMEOUT_MS = 15_000;
+/** stdout 单行协议帧上限（字符）：超过视为异常输出丢弃，避免内存无界增长。 */
+const MAX_FRAME_BUFFER_CHARS = 4 * 1024 * 1024;
+/** 日志帧速率上限（每进程代每秒）：防止插件用日志洪水挤占宿主读循环。 */
+const LOG_FRAMES_PER_SECOND = 100;
+/** 内存看门狗轮询间隔；上限走 limits.ts（设置 > 环境变量 > 默认 2048 MiB，0 = 关闭）。 */
+const MEMORY_WATCHDOG_INTERVAL_MS = 15_000;
+/** 达到上限该比例时提前告警一次。 */
+const MEMORY_WARN_RATIO = 0.8;
+/** 自动重启熔断：窗口内连续崩溃达到该次数后暂停自愈，等待用户重新启用。 */
+const CRASH_FUSE_LIMIT = 3;
+const CRASH_FUSE_WINDOW_MS = 60_000;
+/**
+ * 子进程环境白名单（小写键）：插件进程只继承 .NET 运行与系统定位所需变量，
+ * 不把宿主完整环境（可能含内部变量/注入标记）交给插件。
+ */
+const CHILD_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
+  "path", "pathext", "systemroot", "windir", "comspec", "temp", "tmp", "tz",
+  "number_of_processors", "processor_architecture", "processor_identifier", "os",
+  "dotnet_root", "dotnet_root(x86)", "dotnet_host_path", "dotnet_cli_telemetry_optout",
+  "userprofile", "homedrive", "homepath", "home", "localappdata", "appdata", "programdata",
+  "programfiles", "programfiles(x86)", "commonprogramfiles", "commonprogramfiles(x86)",
+  "systemdrive", "lang", "lc_all",
+  // 网络代理（用户环境配置，透传以保证插件自带 HTTP 客户端可用）
+  "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+  // 宿主下发的存储配额（设置页配置时覆盖继承值）
+  "cyrene_plugin_storage_quota_mb",
+]);
 
 interface RemoteTool {
   id: string;
   name: string;
   description: string;
   inputSchema?: unknown;
+  /** SDK 声明的风险级（可选）：透传给宿主权限策略；非法值忽略 */
+  risk?: unknown;
+}
+
+interface RemotePromptProvider {
+  id: string;
+  modes?: string[];
+  sources?: string[];
+}
+
+interface RemoteReady {
+  tools: RemoteTool[];
+  /** 插件声明支持的桥协议版本；<2 或缺失视为 v1（仅工具） */
+  protocolVersion: number;
+  ipc: string[];
+  events: string[];
+  promptProviders: RemotePromptProvider[];
+  capabilities: Record<string, unknown>;
 }
 
 interface PendingCall {
@@ -54,54 +155,478 @@ interface PendingCall {
   reject: (error: Error) => void;
 }
 
+interface PendingHostCall {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+}
+
+/** 宿主权限策略认可的风险级（与 PluginTool.risk 同集合） */
+const REMOTE_RISK_VALUES = ["safe", "fs-read", "fs-write", "shell", "network", "input-control"] as const;
+type RemoteRisk = (typeof REMOTE_RISK_VALUES)[number];
+
+function parseRemoteRisk(value: unknown): RemoteRisk | undefined {
+  return typeof value === "string" && (REMOTE_RISK_VALUES as readonly string[]).includes(value)
+    ? (value as RemoteRisk)
+    : undefined;
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseReady(frame: Record<string, unknown>): RemoteReady {
+  const protocolVersion = typeof frame.protocolVersion === "number" && Number.isFinite(frame.protocolVersion)
+    ? Math.trunc(frame.protocolVersion)
+    : 1;
+  const promptProviders: RemotePromptProvider[] = [];
+  if (Array.isArray(frame.promptProviders)) {
+    for (const item of frame.promptProviders) {
+      if (!isRecord(item) || typeof item.id !== "string" || !item.id) continue;
+      promptProviders.push({
+        id: item.id,
+        ...(Array.isArray(item.modes) ? { modes: toStringArray(item.modes) } : {}),
+        ...(Array.isArray(item.sources) ? { sources: toStringArray(item.sources) } : {}),
+      });
+    }
+  }
+  return {
+    tools: Array.isArray(frame.tools) ? (frame.tools as RemoteTool[]) : [],
+    protocolVersion,
+    ipc: toStringArray(frame.ipc),
+    events: toStringArray(frame.events),
+    promptProviders,
+    capabilities: isRecord(frame.capabilities) ? frame.capabilities : {},
+  };
+}
+
+function parseRemotePrompt(value: unknown): RemotePromptProvider {
+  if (!isRecord(value) || typeof value.id !== "string" || !value.id) {
+    throw new Error("prompt.register 缺少合法的 provider.id");
+  }
+  return {
+    id: value.id,
+    ...(Array.isArray(value.modes) ? { modes: toStringArray(value.modes) } : {}),
+    ...(Array.isArray(value.sources) ? { sources: toStringArray(value.sources) } : {}),
+  };
+}
+
+function requireStringParam(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value) throw new Error(`${label} 必须是非空字符串`);
+  return value;
+}
+
+function requireObjectParam<T>(value: unknown, label: string): T {
+  if (!isRecord(value)) throw new Error(`${label} 需要对象参数`);
+  return value as unknown as T;
+}
+
+/** deps.llm.generateText 的消息校验：role 白名单 + content 必须是字符串 */
+function parseLlmMessages(value: unknown): PluginLlmMessage[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("deps.llm.generateText 需要非空 messages 数组");
+  }
+  return value.map((item) => {
+    if (!isRecord(item) || typeof item.content !== "string") {
+      throw new Error("deps.llm.generateText 消息必须是 {role, content}");
+    }
+    const role = item.role;
+    if (role !== "system" && role !== "user" && role !== "assistant") {
+      throw new Error(`deps.llm.generateText 非法角色: ${String(role)}`);
+    }
+    return { role, content: item.content };
+  });
+}
+
+/**
+ * deps.llm.generateText 选项白名单：JSON 桥只接受可序列化字段，
+ * signal（Node 轨进程内专用）等未知字段一律丢弃——新 SDK 的选项
+ * 在旧宿主上降级为默认值，而不是把非法对象喂给宿主服务。
+ */
+function parseLlmOptions(value: unknown): PluginLlmGenerateOptions | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new Error("deps.llm.generateText 的 options 需要对象");
+  const options: PluginLlmGenerateOptions = {};
+  const maxTokens = value.maxTokens;
+  if (maxTokens !== undefined) {
+    if (typeof maxTokens !== "number" || !Number.isInteger(maxTokens)) {
+      throw new Error("deps.llm.generateText 的 maxTokens 必须是整数");
+    }
+    options.maxTokens = maxTokens;
+  }
+  const timeoutMs = value.timeoutMs;
+  if (timeoutMs !== undefined) {
+    if (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs)) {
+      throw new Error("deps.llm.generateText 的 timeoutMs 必须是整数");
+    }
+    options.timeoutMs = timeoutMs;
+  }
+  const purpose = value.purpose;
+  if (purpose !== undefined) {
+    if (typeof purpose !== "string") throw new Error("deps.llm.generateText 的 purpose 必须是字符串");
+    options.purpose = purpose;
+  }
+  return Object.keys(options).length > 0 ? options : undefined;
+}
+
+/** 子进程环境白名单：只透传 .NET 运行与系统定位所需变量，不继承宿主完整环境。 */
+function buildChildEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && CHILD_ENV_ALLOWLIST.has(key.toLowerCase())) env[key] = value;
+  }
+  return env;
+}
+
+const EMPTY_REMOTE_TOOL_SCHEMA: PluginTool["inputSchema"] = { type: "object", properties: {} };
+
+/** 远程工具 schema 形状校验：只接受 {type:"object", properties:{...}}，异常回退空 schema。 */
+function normalizeRemoteToolSchema(value: unknown, pluginId: string, toolId: string): PluginTool["inputSchema"] {
+  if (isRecord(value) && value.type === "object" && isRecord(value.properties)) {
+    return value as unknown as PluginTool["inputSchema"];
+  }
+  if (value !== undefined && value !== null) {
+    console.warn(
+      `[plugins] dotnet 插件 ${pluginId} 工具 ${toolId} 的 inputSchema 形状非法，已回退为空对象 schema`,
+    );
+  }
+  return EMPTY_REMOTE_TOOL_SCHEMA;
+}
+
+/**
+ * 解析 tasklist CSV 输出的「内存使用」列（KB）→ 字节；解析失败返回 null。
+ * 形如："MyPlugin.exe","4321","Console","1","1,234,567 K"（本地化千分位也要认）。
+ */
+export function parseTasklistWorkingSet(output: string): number | null {
+  for (const line of output.split(/\r?\n/)) {
+    const fields = line.match(/"([^"]*)"/g);
+    if (!fields || fields.length < 5) continue;
+    const raw = fields[4].replace(/^"|"$/g, "").replace(/[,\s]/g, "").replace(/K$/i, "");
+    const kib = Number(raw);
+    if (Number.isFinite(kib) && kib >= 0) return kib * 1024;
+  }
+  return null;
+}
+
+export interface DotnetPluginAdapterHooks {
+  /** 进程意外退出（非 shutdown）：上层据此更新插件状态与错误信息 */
+  onUnexpectedExit?: (pluginId: string, message: string) => void;
+  /** 意外退出后自动重启成功：上层恢复运行状态 */
+  onRestarted?: (pluginId: string) => void;
+  /** 设置页配置的存储配额（MiB；undefined = 未配置，配置后覆盖子进程环境变量并即时生效） */
+  getConfiguredPluginStorageQuotaMb?: () => number | undefined;
+  /** 设置页配置的内存上限（MiB；undefined = 未配置；看门狗逐次读取，支持运行期调整） */
+  getConfiguredPluginMemoryLimitMb?: () => number | undefined;
+}
+
 export class DotnetPluginAdapter implements CyrenePlugin {
   private readonly record: PluginRecord;
+  private readonly hooks: DotnetPluginAdapterHooks;
   private proc: ChildProcess | null = null;
+  private ctx: PluginContext | null = null;
   private pending = new Map<string, PendingCall>();
   private readyResolvers: Array<{
-    resolve: (tools: RemoteTool[]) => void;
+    resolve: (ready: RemoteReady) => void;
     reject: (error: Error) => void;
   }> = [];
   private stderrWarned = 0;
   private exited = false;
+  /** 正常关停进行中：退出不再上报为「意外退出」 */
+  private stopping = false;
+  /** 启动/重启单飞 */
+  private starting: Promise<RemoteReady> | null = null;
+  /** init 帧下发的插件私有数据目录（ctx.storage.rootDir()） */
+  private dataDir = "";
+  /** stdout 分帧缓冲：chunk 边界不保证落在整行上（大结果 / 中文多字节跨 chunk）。 */
+  private stdoutCarry = "";
+  private stdoutDecoder = new StringDecoder("utf8");
+  /** 超长帧告警次数上限：异常插件刷屏时只提示前几次 */
+  private oversizedFrameWarned = 0;
+  /** 日志帧速率窗口（每代重置）：防止日志洪水 */
+  private logWindowStart = 0;
+  private logWindowCount = 0;
+  private logFloodWarned = false;
+  /** 最近意外退出的时间戳（自动重启熔断用） */
+  private crashTimes: number[] = [];
+  /** 内存看门狗定时器（每代重置） */
+  private watchdogTimer: NodeJS.Timeout | null = null;
+  private memoryWarned = false;
 
-  constructor(record: PluginRecord) {
+  // ── v2 桥状态（每个"进程代"一份，进程退出即撤销） ──
+  /** 已登记到 ctx 的插件 IPC channel（短名） */
+  private readonly remoteIpc = new Set<string>();
+  /** 已登记到 ctx 的提示词 Provider id（短名） */
+  private readonly remotePromptProviders = new Set<string>();
+  /** 已订阅的宿主事件 → ctx.events.on 返回的退订函数 */
+  private readonly remoteEventUnsubs = new Map<string, () => void>();
+  /** host→plugin 在途调用（call/reply 配对） */
+  private readonly pendingHostCalls = new Map<string, PendingHostCall>();
+  private hostCallSeq = 0;
+  /** ready 声明的 open 能力（v2）；未声明时保持 undefined（管理窗不显示"打开"） */
+  open?: () => Promise<void>;
+
+  constructor(record: PluginRecord, hooks: DotnetPluginAdapterHooks = {}) {
     this.record = record;
+    this.hooks = hooks;
   }
 
   async register(ctx: PluginContext): Promise<void> {
-    const exe = path.join(this.record.dir, this.record.manifest.entry);
-    const dataDir = path.join(
-      // 与 node 插件同目录约定：storageRoot/<pluginId>（ctx 已保证可写）
-      (ctx as unknown as { storageRoot?: string }).storageRoot ?? path.dirname(exe),
-      this.record.manifest.id,
-    );
+    this.stopping = false;
+    this.ctx = ctx;
+    // 与 node 插件同一目录约定：storage.rootDir() = userData/plugin-data/<pluginId>
+    this.dataDir = ctx.storage.rootDir();
 
-    await new Promise<void>((resolve, reject) => {
-      // .dll 产物经 dotnet 启动（Windows .exe 直接 spawn）；dotnet 用
-      // 宿主同款运行时目录，避免 PATH 污染
-      const isDll = exe.toLowerCase().endsWith(".dll");
-      const argv = isDll ? [exe] : [];
-      const bin = isDll ? (process.env.DOTNET_HOST_PATH ?? "dotnet") : exe;
-      const child = spawn(bin, argv, {
+    const ready = await this.startProcess();
+    this.registerTools(ctx, ready.tools);
+    // v2 声明注册失败 = 激活失败（与 Node 轨 register() 抛错语义一致）
+    this.applyReady(ready, true);
+    console.log(
+      `[plugins] dotnet 插件 ${this.record.manifest.id} 就绪，注册 ${ready.tools.length} 个工具`
+      + (ready.protocolVersion >= 2 ? `（协议 v${ready.protocolVersion}）` : ""),
+    );
+  }
+
+  private registerTools(ctx: PluginContext, tools: RemoteTool[]): void {
+    for (const tool of tools) {
+      // 宿主工具 id 规范：{pluginId}_{短id}（单下划线，同 node 轨）
+      const shortId = tool.id;
+      const risk = parseRemoteRisk(tool.risk);
+      if (tool.risk !== undefined && risk === undefined) {
+        // 拼错的风险级不静默变 safe：ctx.registerTool 会按“未声明”处理
+        console.warn(
+          `[plugins] dotnet 插件 ${this.record.manifest.id} 工具 ${shortId} 声明了非法风险级 ${String(tool.risk)}，按未声明处理`,
+        );
+      }
+      ctx.registerTool({
+        id: `${this.record.manifest.id}_${shortId}`,
+        name: tool.name,
+        description: tool.description,
+        enabled: true,
+        ...(risk ? { risk } : {}),
+        // schema 只接受 {type:"object", properties:{...}}；异常形状回退空 schema
+        inputSchema: normalizeRemoteToolSchema(tool.inputSchema, this.record.manifest.id, shortId),
+        // 取消信号来自工具上下文（宿主取消本轮时中止在途调用）
+        execute: (input, toolCtx) => this.invokeTool(shortId, input, toolCtx?.signal),
+      });
+    }
+  }
+
+  /**
+   * 应用 ready 的 v2 声明：IPC / 事件订阅 / 提示词 Provider / open 能力。
+   * 全部走 ctx 的注册方法——命名空间、冲突检测、资源回收与 Node 轨共用同一套。
+   */
+  private applyReady(ready: RemoteReady, initial: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx || ready.protocolVersion < 2) return;
+    const failures: string[] = [];
+    const run = (label: string, fn: () => void): void => {
+      try {
+        fn();
+      } catch (error) {
+        failures.push(`${label}: ${errorMessage(error)}`);
+      }
+    };
+    for (const channel of ready.ipc) run(`ipc ${channel}`, () => this.registerIpcChannel(channel));
+    for (const event of ready.events) run(`event ${event}`, () => this.subscribeEvent(event));
+    for (const provider of ready.promptProviders) run(`prompt ${provider.id}`, () => this.registerRemotePrompt(provider));
+    if (ready.capabilities.open === true) {
+      this.open = () => this.callPlugin(
+        "plugin.open",
+        {},
+        { timeoutMs: OPEN_TIMEOUT_MS },
+      ).then(() => undefined);
+    }
+    if (failures.length > 0) {
+      const message = `dotnet 插件 ${this.record.manifest.id} v2 声明注册失败: ${failures.join("; ")}`;
+      if (initial) throw new Error(message);
+      console.warn(`[plugins] ${message}`);
+    }
+  }
+
+  /** 撤销本代全部 v2 注册（进程退出/致命错误时调用；幂等） */
+  private teardownGeneration(): void {
+    for (const channel of [...this.remoteIpc]) {
+      try {
+        this.ctx?.unregisterIpc(channel);
+      } catch {
+        // ctx 可能已随插件停用释放；忽略
+      }
+    }
+    this.remoteIpc.clear();
+    for (const [event, off] of [...this.remoteEventUnsubs]) {
+      try {
+        off();
+      } catch {
+        // 同上
+      }
+    }
+    this.remoteEventUnsubs.clear();
+    for (const providerId of [...this.remotePromptProviders]) {
+      try {
+        this.ctx?.unregisterPromptProvider(providerId);
+      } catch {
+        // 同上
+      }
+    }
+    this.remotePromptProviders.clear();
+    delete this.open;
+    const message = `dotnet 插件 ${this.record.manifest.id} 进程退出，v2 注册已撤销`;
+    for (const [, call] of this.pendingHostCalls) call.reject(new Error(message));
+    this.pendingHostCalls.clear();
+  }
+
+  private registerIpcChannel(channel: string): void {
+    const ctx = this.ctx;
+    if (!ctx) throw new Error("插件尚未完成注册");
+    if (this.remoteIpc.has(channel)) return;
+    ctx.registerIpc(channel, (...args: unknown[]) => this.callPlugin(
+      "ipc.dispatch",
+      { channel, args },
+      { timeoutMs: IPC_DISPATCH_TIMEOUT_MS },
+    ));
+    this.remoteIpc.add(channel);
+  }
+
+  private unregisterIpcChannel(channel: string): void {
+    if (!this.remoteIpc.delete(channel)) return;
+    try {
+      this.ctx?.unregisterIpc(channel);
+    } catch {
+      // 已随 ctx 释放
+    }
+  }
+
+  private subscribeEvent(event: string): void {
+    const ctx = this.ctx;
+    if (!ctx) throw new Error("插件尚未完成注册");
+    if (this.remoteEventUnsubs.has(event)) return;
+    const off = ctx.events.on(event, (payload) => {
+      this.sendNotify("event.deliver", { event, payload });
+    });
+    this.remoteEventUnsubs.set(event, off);
+  }
+
+  private unsubscribeEvent(event: string): void {
+    const off = this.remoteEventUnsubs.get(event);
+    if (!off) return;
+    this.remoteEventUnsubs.delete(event);
+    try {
+      off();
+    } catch {
+      // 已随 ctx 释放
+    }
+  }
+
+  private registerRemotePrompt(provider: RemotePromptProvider): void {
+    const ctx = this.ctx;
+    if (!ctx) throw new Error("插件尚未完成注册");
+    if (this.remotePromptProviders.has(provider.id)) {
+      throw new Error(`提示词 Provider 已注册: ${provider.id}`);
+    }
+    ctx.registerPromptProvider({
+      id: provider.id,
+      ...(provider.modes ? { modes: provider.modes as PluginPromptProvider["modes"] } : {}),
+      ...(provider.sources ? { sources: provider.sources as PluginPromptProvider["sources"] } : {}),
+      provide: (input) => {
+        // signal 不可序列化；取消语义由 callPlugin 的 signal 参数承担
+        const { signal, ...data } = input;
+        return this.callPlugin(
+          "prompt.provide",
+          { providerId: provider.id, input: data },
+          { timeoutMs: PROMPT_CALL_TIMEOUT_MS, signal },
+        ).then((value) => (typeof value === "string" ? value : ""));
+      },
+    });
+    this.remotePromptProviders.add(provider.id);
+  }
+
+  private unregisterRemotePrompt(providerId: string): void {
+    if (!this.remotePromptProviders.delete(providerId)) return;
+    try {
+      this.ctx?.unregisterPromptProvider(providerId);
+    } catch {
+      // 已随 ctx 释放
+    }
+  }
+
+  /** 启动进程并完成 ready 握手；意外退出后由 invokeTool 调用实现自愈重启 */
+  private startProcess(): Promise<RemoteReady> {
+    if (this.starting) return this.starting;
+    this.starting = this.spawnAndHandshake().finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+
+  private spawnAndHandshake(): Promise<RemoteReady> {
+    const exe = path.join(this.record.dir, this.record.manifest.entry);
+
+    return new Promise<RemoteReady>((resolve, reject) => {
+      // 新进程：清空上一进程残留的分帧缓冲与解码器/速率窗口
+      this.stdoutCarry = "";
+      this.stdoutDecoder = new StringDecoder("utf8");
+      this.logWindowStart = 0;
+      this.logWindowCount = 0;
+      this.logFloodWarned = false;
+      // 设置页配置了存储配额时覆盖子进程环境变量；未配置则继承白名单内的值
+      const env = buildChildEnv();
+      const configuredQuotaMb = this.hooks.getConfiguredPluginStorageQuotaMb?.();
+      if (typeof configuredQuotaMb === "number") {
+        env[PLUGIN_STORAGE_QUOTA_ENV] = String(configuredQuotaMb);
+      }
+      const child = spawn(exe, [], {
         cwd: this.record.dir,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        env,
       });
       this.proc = child;
       this.exited = false;
+      // 软限制：与主应用抢 CPU 时让路（失败忽略：进程已退出/无权限）
+      try {
+        if (typeof child.pid === "number") {
+          os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+        }
+      } catch {
+        /* 忽略 */
+      }
+      this.startWatchdog();
 
       child.on("error", (error) => {
-        reject(new Error(`dotnet 插件 ${this.record.manifest.id} 启动失败: ${errorMessage(error)}`));
+        // spawn 失败（exe 缺失/无权限）：立即置退出态并收口 ready 等待者，
+        // 避免后续调用把坏进程当成「运行中」等满 300s 兜底超时
+        this.exited = true;
+        this.proc = null;
+        this.stopWatchdog();
+        const failure = new Error(`dotnet 插件 ${this.record.manifest.id} 启动失败: ${errorMessage(error)}`);
+        for (const r of this.readyResolvers) r.reject(failure);
+        this.readyResolvers = [];
+        reject(failure);
       });
       child.on("exit", (code, signal) => {
         this.exited = true;
+        this.proc = null;
+        this.stdoutCarry = "";
+        this.stopWatchdog();
+        // 撤销本代 v2 注册（IPC/事件/提示词/open），防止宿主继续调用死进程
+        this.teardownGeneration();
         // 在途调用全部失败
         const message = `dotnet 插件 ${this.record.manifest.id} 进程退出 (code=${code} signal=${signal})`;
         for (const [, call] of this.pending) call.reject(new Error(message));
         this.pending.clear();
         for (const r of this.readyResolvers) r.reject(new Error(message));
         this.readyResolvers = [];
+        if (!this.stopping) {
+          // 自动重启熔断：记录窗口内的意外退出，供 invokeTool 判定是否继续自愈
+          const now = Date.now();
+          this.crashTimes.push(now);
+          this.crashTimes = this.crashTimes.filter((t) => now - t <= CRASH_FUSE_WINDOW_MS);
+          console.warn(`[plugins] ${message}（下次工具调用将尝试自动重启）`);
+          this.hooks.onUnexpectedExit?.(this.record.manifest.id, message);
+        }
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
@@ -113,60 +638,39 @@ export class DotnetPluginAdapter implements CyrenePlugin {
 
       child.stdout?.on("data", (chunk: Buffer) => this.consume(chunk));
 
-      // init 握手
+      // init 握手（v2：protocolVersion 供新 SDK 判断桥能力；旧 SDK 忽略该字段）
       this.send({
         op: "init",
         apiVersion: PROTOCOL_API_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
         manifest: this.record.manifest,
-        dataDir,
+        dataDir: this.dataDir,
       });
 
-      // ready 应答注册工具
-      this.waitReady()
-        .then((tools) => {
-          for (const tool of tools) {
-            // 宿主工具 id 规范：{pluginId}_{短id}（单下划线，同 node 轨）
-            const shortId = tool.id;
-            // 权限闸门（P2 修复）：risk 必须显式声明且在白名单内——
-            // 未声明/unknown 的工具直接拒注册（closed world：宿主对
-            // .NET 插件的默认姿态是拒绝，而不是 safe 放行）
-            const risk = (tool as { risk?: unknown }).risk as PluginTool["risk"];
-            if (typeof risk !== "string" || !RISK_ALLOWLIST.has(risk)) {
-              throw new Error(
-                `dotnet 插件 ${this.record.manifest.id} 工具 ${shortId} 未声明合法 risk（safe/fs-read/fs-write/shell/network/input-control）——拒注册`,
-              );
-            }
-            ctx.registerTool({
-              id: `${this.record.manifest.id}_${shortId}`,
-              name: tool.name,
-              description: tool.description,
-              enabled: true,
-              risk,
-              // schema 形状与 node 插件一致；缺省给空对象 schema
-              inputSchema: (tool.inputSchema as PluginTool["inputSchema"]) ?? { type: "object", properties: {} },
-              execute: (input) => this.invokeTool(shortId, input),
-            });
-          }
-          if (tools.length > MAX_TOOLS_PER_PLUGIN) {
-            throw new Error(`dotnet 插件 ${this.record.manifest.id} 声明 ${tools.length} 个工具（上限 ${MAX_TOOLS_PER_PLUGIN}）——拒载`);
-          }
-          console.log(`[plugins] dotnet 插件 ${this.record.manifest.id} 就绪，注册 ${tools.length} 个工具`);
-          resolve();
-        })
-        .catch(reject);
-
       // 整体握手超时兜底
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (!this.exited && this.readyResolvers.length > 0) {
           for (const r of this.readyResolvers) r.reject(new Error(`dotnet 插件 ${this.record.manifest.id} ready 超时（${READY_TIMEOUT_MS}ms）`));
           this.readyResolvers = [];
           this.kill();
         }
-      }, READY_TIMEOUT_MS).unref();
+      }, READY_TIMEOUT_MS);
+      timeout.unref();
+
+      this.waitReady()
+        .then((ready) => {
+          clearTimeout(timeout);
+          resolve(ready);
+        })
+        .catch((error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
     });
   }
 
   async unregister(): Promise<void> {
+    this.stopping = true;
     const child = this.proc;
     if (!child || this.exited) return;
     this.send({ op: "shutdown" });
@@ -186,11 +690,38 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   // ── 内部 ──
 
   /** 测试钩子：直接调用 invoke（生产路径经 ctx.registerTool 的 execute 闭包）。 */
-  invokeToolForTest(toolId: string, args: Record<string, unknown>): Promise<string> {
-    return this.invokeTool(toolId, args);
+  invokeToolForTest(toolId: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+    return this.invokeTool(toolId, args, signal);
   }
 
-  private async invokeTool(toolId: string, args: Record<string, unknown>): Promise<string> {
+  private async invokeTool(
+    toolId: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    // 意外退出后自愈：下次调用先重启进程再发 invoke（重启失败才报错）
+    if (!this.proc || this.exited) {
+      if (this.stopping) {
+        throw new Error(`dotnet 插件 ${this.record.manifest.id} 未运行`);
+      }
+      // 熔断：窗口内连续崩溃过多时不再自动重启，等待用户在管理窗重新启用
+      const now = Date.now();
+      this.crashTimes = this.crashTimes.filter((t) => now - t <= CRASH_FUSE_WINDOW_MS);
+      if (this.crashTimes.length >= CRASH_FUSE_LIMIT) {
+        throw new Error(
+          `dotnet 插件 ${this.record.manifest.id} 在 ${CRASH_FUSE_WINDOW_MS / 1000}s 内连续崩溃 `
+          + `${this.crashTimes.length} 次，已暂停自动重启；请在插件管理窗停用后重新启用`,
+        );
+      }
+      try {
+        const ready = await this.startProcess();
+        // 重启后重建 v2 注册（IPC/事件/提示词/open）；工具注册沿用首代
+        this.applyReady(ready, false);
+        this.hooks.onRestarted?.(this.record.manifest.id);
+      } catch (error) {
+        throw new Error(`dotnet 插件 ${this.record.manifest.id} 进程已退出且自动重启失败: ${errorMessage(error)}`);
+      }
+    }
     // 协议层用短 id（SDK 的 CyreneTool 声明键）；宿主前缀只在注册层拼
     return new Promise<string>((resolve, reject) => {
       if (!this.proc || this.exited) {
@@ -198,40 +729,250 @@ export class DotnetPluginAdapter implements CyrenePlugin {
         return;
       }
       const callId = `c${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      this.pending.set(callId, { resolve, reject });
+      let timer: NodeJS.Timeout | undefined;
+      let settled = false;
+      // 统一收口：超时/取消/结果帧三选一，清理定时器与监听后落定
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        this.pending.delete(callId);
+        action();
+      };
+      const onAbort = () => {
+        // 尽力通知插件停止计算（SDK 映射为 CancellationToken）；老 SDK 忽略未知 op
+        this.send({ op: "cancel", id: callId, reason: "abort" });
+        finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
+      };
+
+      if (signal?.aborted) {
+        finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用已取消`)));
+        return;
+      }
+      timer = setTimeout(() => {
+        this.send({ op: "cancel", id: callId, reason: "timeout" });
+        finish(() => reject(new Error(
+          `dotnet 插件 ${this.record.manifest.id} 工具 ${toolId} 调用超时（${INVOKE_TIMEOUT_MS}ms）`,
+        )));
+      }, INVOKE_TIMEOUT_MS);
+      if (typeof timer.unref === "function") timer.unref();
+
+      this.pending.set(callId, {
+        resolve: (value) => finish(() => resolve(value)),
+        reject: (error) => finish(() => reject(error)),
+      });
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
       this.send({ op: "invoke", callId, tool: toolId, args });
     });
   }
 
-  private waitReady(): Promise<RemoteTool[]> {
-    return new Promise<RemoteTool[]>((resolve, reject) => {
+  /**
+   * host→plugin 通用调用（v2）：id 配对 + 超时 + AbortSignal 取消。
+   * 不做自愈重启——调用方（IPC/提示词/open）在进程退出时已被 teardownGeneration 撤下。
+   */
+  private callPlugin(
+    method: string,
+    params: Record<string, unknown>,
+    opts: { timeoutMs: number; signal?: AbortSignal },
+  ): Promise<unknown> {
+    return new Promise<unknown>((resolve, reject) => {
+      if (!this.proc || this.exited) {
+        reject(new Error(`dotnet 插件 ${this.record.manifest.id} 未运行`));
+        return;
+      }
+      const id = `h${++this.hostCallSeq}`;
+      let timer: NodeJS.Timeout | undefined;
+      let settled = false;
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", onAbort);
+        this.pendingHostCalls.delete(id);
+        action();
+      };
+      const onAbort = () => {
+        this.send({ op: "cancel", id });
+        finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 调用 ${method} 已取消`)));
+      };
+
+      if (opts.signal?.aborted) {
+        finish(() => reject(new Error(`dotnet 插件 ${this.record.manifest.id} 调用 ${method} 已取消`)));
+        return;
+      }
+      timer = setTimeout(() => {
+        this.send({ op: "cancel", id });
+        finish(() => reject(new Error(
+          `dotnet 插件 ${this.record.manifest.id} 调用 ${method} 超时（${opts.timeoutMs}ms）`,
+        )));
+      }, opts.timeoutMs);
+      if (typeof timer.unref === "function") timer.unref();
+
+      this.pendingHostCalls.set(id, {
+        resolve: (value) => finish(() => resolve(value)),
+        reject: (error) => finish(() => reject(error)),
+      });
+      if (opts.signal) opts.signal.addEventListener("abort", onAbort, { once: true });
+      this.send({ op: "call", id, method, params });
+    });
+  }
+
+  private waitReady(): Promise<RemoteReady> {
+    return new Promise<RemoteReady>((resolve, reject) => {
       this.readyResolvers.push({ resolve, reject });
     });
   }
 
   private consume(chunk: Buffer): void {
-    const text = String(chunk);
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    // chunk 边界不保证是整行：先入缓冲，只处理完整行（大结果 / 多字节字符跨 chunk）
+    this.stdoutCarry += this.stdoutDecoder.write(chunk);
+    let index: number;
+    while ((index = this.stdoutCarry.indexOf("\n")) >= 0) {
+      const rawLine = this.stdoutCarry.slice(0, index);
+      this.stdoutCarry = this.stdoutCarry.slice(index + 1);
+      const line = rawLine.trim();
+      if (!line) continue;
+      // 完整行也可能超大：解析前先挡掉，避免为垃圾输入分配巨型 JSON
+      if (rawLine.length > MAX_FRAME_BUFFER_CHARS) {
+        this.warnOversizedFrame();
+        continue;
+      }
       let frame: Record<string, unknown>;
       try {
-        frame = JSON.parse(trimmed) as Record<string, unknown>;
+        frame = JSON.parse(line) as Record<string, unknown>;
       } catch {
         // .NET 运行时自身的非协议输出——忽略
         continue;
       }
       this.handleFrame(frame);
     }
+    if (this.stdoutCarry.length > MAX_FRAME_BUFFER_CHARS) {
+      this.warnOversizedFrame();
+      this.stdoutCarry = "";
+    }
+  }
+
+  /** 超长帧告警（最多 3 次）：正常协议帧不应接近上限，出现即插件侧有 bug */
+  private warnOversizedFrame(): void {
+    if (this.oversizedFrameWarned >= 3) return;
+    this.oversizedFrameWarned += 1;
+    console.warn(
+      `[plugins] dotnet 插件 ${this.record.manifest.id} stdout 单行超过 ${MAX_FRAME_BUFFER_CHARS} 字符，已丢弃`,
+    );
+  }
+
+  // ── 软资源限制：内存看门狗 ──
+
+  private resolveMemoryLimitMb(): number {
+    return resolvePluginMemoryLimitMb(this.hooks.getConfiguredPluginMemoryLimitMb?.());
+  }
+
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    if (process.platform !== "win32" || this.resolveMemoryLimitMb() <= 0) return;
+    this.memoryWarned = false;
+    this.watchdogTimer = setInterval(() => {
+      void this.checkPluginMemory();
+    }, MEMORY_WATCHDOG_INTERVAL_MS);
+    this.watchdogTimer.unref?.();
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /** 测试钩子：立即跑一次内存探测（生产路径由看门狗定时器调用）。 */
+  checkPluginMemoryForTest(): Promise<void> {
+    return this.checkPluginMemory();
+  }
+
+  /**
+   * 探测插件进程工作集（字节）：插件管理页展示「内存占用」用。
+   * 非 Windows / 未运行 / 探测失败返回 null（不终止进程、不改状态）。
+   */
+  async probeMemoryBytes(): Promise<number | null> {
+    const child = this.proc;
+    if (process.platform !== "win32" || !child || this.exited || typeof child.pid !== "number") {
+      return null;
+    }
+    const probe = spawn("tasklist", ["/FI", `PID eq ${child.pid}`, "/FO", "CSV", "/NH"], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (!probe) return null;
+    const output = await new Promise<string>((resolve) => {
+      let buffer = "";
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve(buffer);
+      };
+      probe.stdout?.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+      });
+      probe.once?.("close", finish);
+      probe.once?.("error", finish);
+    });
+    return parseTasklistWorkingSet(output);
+  }
+
+  /**
+   * 探测插件进程工作集：超出上限即终止（软限制：滞后一个轮询周期，但能拦住跑飞）。
+   * 只有 Windows 有 tasklist；其他平台直接跳过。
+   */
+  private async checkPluginMemory(): Promise<void> {
+    const limitMb = this.resolveMemoryLimitMb();
+    const child = this.proc;
+    if (process.platform !== "win32" || limitMb <= 0) return;
+    if (!child || this.exited || typeof child.pid !== "number") return;
+
+    const bytes = await this.probeMemoryBytes();
+    if (bytes === null) return;
+    const limitBytes = limitMb * 1024 * 1024;
+    if (bytes >= limitBytes) {
+      console.warn(
+        `[plugins] dotnet 插件 ${this.record.manifest.id} 内存超限`
+        + `（${(bytes / 1024 / 1024).toFixed(0)} MiB >= ${limitMb} MiB），已终止进程`,
+      );
+      this.kill();
+      return;
+    }
+    if (!this.memoryWarned && bytes >= limitBytes * MEMORY_WARN_RATIO) {
+      this.memoryWarned = true;
+      console.warn(
+        `[plugins] dotnet 插件 ${this.record.manifest.id} 内存占用 `
+        + `${(bytes / 1024 / 1024).toFixed(0)} MiB，接近上限 ${limitMb} MiB`,
+      );
+    }
   }
 
   private handleFrame(frame: Record<string, unknown>): void {
     const op = typeof frame.op === "string" ? frame.op : "";
-    if (op === "ready") {
-      const tools = Array.isArray(frame.tools) ? (frame.tools as RemoteTool[]) : [];
+    if (op === "error") {
+      // SDK 侧致命错误（如协议版本不符）：拒绝握手与在途调用；不按「意外退出」自愈重启
+      const message = typeof frame.message === "string" ? frame.message : "插件报告致命错误";
+      const error = new Error(`dotnet 插件 ${this.record.manifest.id}: ${message}`);
+      console.error(`[plugins] ${error.message}`);
       const resolvers = this.readyResolvers;
       this.readyResolvers = [];
-      for (const r of resolvers) r.resolve(tools);
+      for (const r of resolvers) r.reject(error);
+      this.teardownGeneration();
+      this.stopping = true;
+      for (const [, call] of this.pending) call.reject(error);
+      this.pending.clear();
+      this.kill();
+      return;
+    }
+    if (op === "ready") {
+      const ready = parseReady(frame);
+      const resolvers = this.readyResolvers;
+      this.readyResolvers = [];
+      for (const r of resolvers) r.resolve(ready);
       return;
     }
     if (op === "result") {
@@ -243,7 +984,35 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       else call.reject(new Error(typeof frame.error === "string" ? frame.error : "插件工具调用失败"));
       return;
     }
+    if (op === "reply") {
+      const id = typeof frame.id === "string" ? frame.id : "";
+      const call = this.pendingHostCalls.get(id);
+      if (!call) return;
+      this.pendingHostCalls.delete(id);
+      if (frame.ok === true) call.resolve(frame.data ?? null);
+      else call.reject(new Error(typeof frame.error === "string" ? frame.error : "插件桥调用失败"));
+      return;
+    }
+    if (op === "call") {
+      // 插件 → 宿主请求：异步处理，不阻塞读循环
+      void this.handlePluginCall(frame);
+      return;
+    }
     if (op === "log") {
+      // 日志帧限速：正常插件每秒远低于上限；超限丢弃并只告警一次，避免刷屏挤占读循环
+      const now = Date.now();
+      if (now - this.logWindowStart >= 1000) {
+        this.logWindowStart = now;
+        this.logWindowCount = 0;
+      }
+      if (this.logWindowCount >= LOG_FRAMES_PER_SECOND) {
+        if (!this.logFloodWarned) {
+          this.logFloodWarned = true;
+          console.warn(`[plugins] dotnet 插件 ${this.record.manifest.id} 日志帧速率超限，已丢弃超额日志`);
+        }
+        return;
+      }
+      this.logWindowCount += 1;
       const level = typeof frame.level === "string" ? frame.level : "info";
       const message = typeof frame.message === "string" ? frame.message : "";
       const line = `[plugin:${this.record.manifest.id}] ${message}`;
@@ -251,6 +1020,160 @@ export class DotnetPluginAdapter implements CyrenePlugin {
       else if (level === "warn") console.warn(line);
       else console.log(line);
     }
+  }
+
+  /** 插件 → 宿主请求的统一入口：路由到 ctx 对应方法并回 reply */
+  private async handlePluginCall(frame: Record<string, unknown>): Promise<void> {
+    const id = typeof frame.id === "string" ? frame.id : "";
+    if (!id) return;
+    const method = typeof frame.method === "string" ? frame.method : "";
+    const params = isRecord(frame.params) ? frame.params : {};
+    try {
+      const data = await this.dispatchPluginMethod(method, params);
+      this.send({ op: "reply", id, ok: true, data: data ?? null });
+    } catch (error) {
+      const payload: Record<string, unknown> = { op: "reply", id, ok: false, error: errorMessage(error) };
+      // 宿主服务错误带稳定 code（E_*，与 Node 轨一致），插件应依赖 code 分支
+      if (isPluginHostError(error)) payload.code = error.code;
+      this.send(payload);
+    }
+  }
+
+  private async dispatchPluginMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const ctx = this.ctx;
+    if (!ctx) throw new Error("插件尚未完成注册");
+    // 宿主服务（manifest.deps 声明的能力）统一走 deps.* 命名空间
+    if (method.startsWith("deps.")) return this.dispatchDepsMethod(method, params);
+    switch (method) {
+      case "events.emit": {
+        const event = requireStringParam(params.event, "events.emit 的 event");
+        // ctx 负责命名空间限定（插件只能发 plugin:<id>:*），宿主事件不可伪造
+        await ctx.events.emit(event, params.payload);
+        return null;
+      }
+      case "events.subscribe": {
+        this.subscribeEvent(requireStringParam(params.event, "events.subscribe 的 event"));
+        return null;
+      }
+      case "events.unsubscribe": {
+        this.unsubscribeEvent(requireStringParam(params.event, "events.unsubscribe 的 event"));
+        return null;
+      }
+      case "ipc.register": {
+        this.registerIpcChannel(requireStringParam(params.channel, "ipc.register 的 channel"));
+        return null;
+      }
+      case "ipc.unregister": {
+        this.unregisterIpcChannel(requireStringParam(params.channel, "ipc.unregister 的 channel"));
+        return null;
+      }
+      case "prompt.register": {
+        this.registerRemotePrompt(parseRemotePrompt(params.provider));
+        return null;
+      }
+      case "prompt.unregister": {
+        this.unregisterRemotePrompt(requireStringParam(params.providerId, "prompt.unregister 的 providerId"));
+        return null;
+      }
+      default:
+        throw new Error(`未知宿主方法: ${method}`);
+    }
+  }
+
+  /** 取 manifest.deps 声明的宿主服务；未声明/未提供 → E_CAPABILITY_UNAVAILABLE（与 Node 错误码一致） */
+  private requireDep<K extends keyof PluginDeps>(name: K): NonNullable<PluginDeps[K]> {
+    const service = this.ctx?.deps?.[name];
+    if (!service) {
+      const error = new Error(`插件未声明或宿主未提供依赖: ${String(name)}`) as Error & { code: string };
+      error.code = "E_CAPABILITY_UNAVAILABLE";
+      throw error;
+    }
+    return service as NonNullable<PluginDeps[K]>;
+  }
+
+  /**
+   * deps.* 方法 → ctx.deps 直通。
+   * 这里不做超时包装：各宿主服务自带超时/取消语义（LLM 有 timeoutMs），
+   * 处理器在独立任务里执行，不阻塞读循环。
+   */
+  private async dispatchDepsMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    switch (method) {
+      case "deps.channels.has": {
+        return this.requireDep("channels").has(requireStringParam(params.channelId, "deps.channels.has 的 channelId"));
+      }
+      case "deps.llm.generateText": {
+        const llm = this.requireDep("llm");
+        const messages = parseLlmMessages(params.messages);
+        return llm.generateText(messages, parseLlmOptions(params.options));
+      }
+      case "deps.secrets.get": {
+        const value = await this.requireDep("secrets").get(requireStringParam(params.key, "deps.secrets.get 的 key"));
+        return value ?? null;
+      }
+      case "deps.secrets.set": {
+        await this.requireDep("secrets").set(
+          requireStringParam(params.key, "deps.secrets.set 的 key"),
+          requireStringParam(params.value, "deps.secrets.set 的 value"),
+        );
+        return null;
+      }
+      case "deps.secrets.delete": {
+        return this.requireDep("secrets").delete(requireStringParam(params.key, "deps.secrets.delete 的 key"));
+      }
+      case "deps.conversations.list": {
+        const input = isRecord(params.input) ? (params.input as PluginConversationListInput) : undefined;
+        return this.requireDep("conversations").list(input);
+      }
+      case "deps.conversations.getMessages": {
+        return this.requireDep("conversations").getMessages(
+          requireObjectParam<PluginMessagePageInput>(params.input, "deps.conversations.getMessages 的 input"),
+        );
+      }
+      case "deps.workspace.getBinding": {
+        return this.requireDep("workspace").getBinding(
+          requireStringParam(params.conversationId, "deps.workspace.getBinding 的 conversationId"),
+        );
+      }
+      case "deps.scheduler.createTask": {
+        return this.requireDep("scheduler").createTask(
+          requireObjectParam<PluginScheduledTaskInput>(params.input, "deps.scheduler.createTask 的 input"),
+        );
+      }
+      case "deps.scheduler.listTasks": {
+        return this.requireDep("scheduler").listTasks();
+      }
+      case "deps.scheduler.updateTask": {
+        return this.requireDep("scheduler").updateTask(
+          requireStringParam(params.taskId, "deps.scheduler.updateTask 的 taskId"),
+          requireObjectParam<PluginScheduledTaskPatch>(params.patch, "deps.scheduler.updateTask 的 patch"),
+        );
+      }
+      case "deps.scheduler.deleteTask": {
+        return this.requireDep("scheduler").deleteTask(
+          requireStringParam(params.taskId, "deps.scheduler.deleteTask 的 taskId"),
+        );
+      }
+      case "deps.scheduler.getHistory": {
+        // limit 原样透传：非整数由宿主按 Node 语义回 E_INVALID_ARGUMENT，不做本地截断
+        const limit = params.limit === undefined ? undefined : (params.limit as number);
+        return this.requireDep("scheduler").getHistory(
+          requireStringParam(params.taskId, "deps.scheduler.getHistory 的 taskId"),
+          limit,
+        );
+      }
+      default:
+        throw new Error(`未知宿主方法: ${method}`);
+    }
+  }
+
+  private sendNotify(method: string, params: Record<string, unknown>): void {
+    this.send({ op: "notify", method, params });
   }
 
   private send(frame: Record<string, unknown>): void {
@@ -262,6 +1185,19 @@ export class DotnetPluginAdapter implements CyrenePlugin {
   private kill(): void {
     const child = this.proc;
     if (!child || this.exited) return;
+    // Windows：taskkill /T 整树回收——插件自己 spawn 的孙进程不随父进程终止。
+    // spawnSync 可能被测试 mock 剥离，做运行时守卫；任何失败都回退 child.kill。
+    if (process.platform === "win32" && typeof child.pid === "number") {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+        if (typeof spawnSync === "function") {
+          spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
+        }
+      } catch {
+        /* 忽略：child.kill 兜底 */
+      }
+    }
     try {
       child.kill();
     } catch {

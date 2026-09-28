@@ -3,9 +3,9 @@
 // 取代 splash / sidebar / tasks 三个 BrowserWindow（-3 Chromium 渲染进程，
 // 约 -200~400MB 常驻）。窗口本体在 dotnet/native-windows/（WPF×2 + WinForms×1）。
 //
-// 启用条件（默认关闭，灰度开关）：
-//   CYRENE_NATIVE_WINDOWS=1 且 exe 存在。未启用时 createAuxWindows /
-//   createSplashWindow 走原 BrowserWindow 路径——每步可回退。
+// 启用条件（默认启用）：exe 就位即走 .NET 窗口路径；CYRENE_NATIVE_WINDOWS=0
+// 强制回退 Electron BrowserWindow（排障开关）。未启用时 createAuxWindows /
+// createSplashWindow 走原 BrowserWindow 路径——每步可回退。
 //
 // 数据推送复用主进程现成的 IPC 数据源（runtimeState / modelConfig /
 // scheduler / tokenUsage），窗口动作（openSettings 等）转发到既有
@@ -15,6 +15,21 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
+import { debugLog } from "../agent-log";
+import { trackChildProcess, untrackChildProcess } from "../child-processes";
+
+/**
+ * 帧摘要（排障日志用）：op/kind/action 等关键字段 + 载荷字节数，
+ * 不打印完整载荷，避免设置/任务快照把日志刷爆。
+ */
+function frameSummary(frame: { op?: unknown; kind?: unknown; action?: unknown; name?: unknown }): string {
+  const parts: string[] = [];
+  if (typeof frame.op === "string") parts.push(frame.op);
+  if (typeof frame.kind === "string") parts.push(`kind=${frame.kind}`);
+  if (typeof frame.action === "string") parts.push(`action=${frame.action}`);
+  if (typeof frame.name === "string") parts.push(`name=${frame.name}`);
+  return parts.join(" ");
+}
 
 // ── 帧协议（与 cyrene-embed sidecar 同构） ──
 interface Frame {
@@ -77,7 +92,7 @@ export function resolveNativeWindowsExe(): string | null {
 
 /**
  * 窗口动作回调（宿主注入）：openSettings / openChat / openCall /
- * togglePin / modelSwitch / splashShown。返回 false 表示动作未处理
+ * togglePin / splashShown。返回 false 表示动作未处理
  * （native 侧仍保持窗口自身状态）。
  */
 export interface NativeWindowsHost {
@@ -89,6 +104,12 @@ export class NativeWindowsClient {
   private startup: Promise<void> | null = null;
   private chunks: Buffer[] = [];
   private bufferedBytes = 0;
+  /**
+   * 已解析、但帧体尚未到齐的帧长。管道分块到达时前缀会先被消费掉，
+   * 必须保留长度状态等帧体补齐——否则下一块数据会被当作新前缀读出
+   * 错误的长度（bad frame length）。
+   */
+  private pendingFrameLength: number | null = null;
   private nextId = 1;
   private pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
   private onCommand: CommandHandler;
@@ -123,8 +144,12 @@ export class NativeWindowsClient {
       },
     });
     this.child = child;
+    trackChildProcess(child, "cyrene-native serve");
+    const launchedAt = Date.now();
+    debugLog(`[NativeWindows] launch ${this.exePath}`);
     this.chunks = [];
     this.bufferedBytes = 0;
+    this.pendingFrameLength = null;
 
     const isCurrent = () => this.child === child;
 
@@ -138,6 +163,7 @@ export class NativeWindowsClient {
       // native 进程异常退出：窗口全部消失。宿主侧标记未运行，
       // 下次 ensureStarted 重启（窗口状态由调用方按需重 spawn）
       console.warn(`[NativeWindows] exited with code ${code}`);
+      debugLog(`[NativeWindows] exited after ${Date.now() - launchedAt}ms code=${code}`);
       this.failAllPending(new Error(`native windows process exited: ${code}`));
       this.resetForRespawn();
     });
@@ -147,8 +173,10 @@ export class NativeWindowsClient {
       this.resetForRespawn();
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      // native 侧诊断日志直通（stderr 不参与帧协议）
-      process.stderr.write(`[cyrene-native] ${chunk}`);
+      // native 侧诊断日志直通（stderr 不参与帧协议）。走 console.error 以便
+      // CYRENE_DEBUG_LOGS=1 时被 console 镜像落盘——否则打包版看不到
+      // [cyrene-native] 的异常输出。
+      console.error(`[cyrene-native] ${String(chunk).trimEnd()}`);
     });
 
     const stdout = child.stdout;
@@ -173,6 +201,7 @@ export class NativeWindowsClient {
         resolve();
       };
     });
+    debugLog(`[NativeWindows] ready in ${Date.now() - launchedAt}ms`);
   }
 
   private readyCallback: (() => void) | null = null;
@@ -206,17 +235,24 @@ export class NativeWindowsClient {
 
   private drainFrames(): void {
     for (;;) {
-      const prefix = this.take(4);
-      if (!prefix) return;
-      const len = prefix.readInt32LE(0);
-      if (len < 0 || len > 16 * 1024 * 1024) {
-        console.error(`[NativeWindows] bad frame length ${len}; recycling`);
-        this.failAllPending(new Error("native windows protocol failure"));
-        this.disposeSync("protocol-failure");
-        return;
+      // 前缀与帧体可能分块到达（.NET 侧 prefix/body 是两次 Write）：
+      // 长度解析后先存 pendingFrameLength，等帧体到齐再消费，避免
+      // 消费掉前缀却丢弃长度状态导致流错位。
+      if (this.pendingFrameLength === null) {
+        const prefix = this.take(4);
+        if (!prefix) return;
+        const len = prefix.readInt32LE(0);
+        if (len < 0 || len > 16 * 1024 * 1024) {
+          console.error(`[NativeWindows] bad frame length ${len}; recycling`);
+          this.failAllPending(new Error("native windows protocol failure"));
+          this.disposeSync("protocol-failure");
+          return;
+        }
+        this.pendingFrameLength = len;
       }
-      const headerBuf = this.take(len);
+      const headerBuf = this.take(this.pendingFrameLength);
       if (!headerBuf) return;
+      this.pendingFrameLength = null;
       let frame: Frame;
       try {
         frame = JSON.parse(headerBuf.toString("utf8"));
@@ -238,6 +274,7 @@ export class NativeWindowsClient {
     }
     // 事件通知（无 id 语义）
     if (frame.op === "event") {
+      debugLog(`[NativeWindows] ← event ${frameSummary(frame)}`);
       if (frame.name === "cmd") {
         this.onCommand(frame);
       } else if (frame.name === "win.shown") {
@@ -249,6 +286,7 @@ export class NativeWindowsClient {
     const pending = this.pending.get(frame.id);
     if (!pending) return;
     this.pending.delete(frame.id);
+    debugLog(`[NativeWindows] ← #${frame.id} ${frame.ok ? "ok" : `err=${frame.error ?? ""}`}`);
     if (frame.ok) pending.resolve();
     else pending.reject(new Error(frame.error ?? "native windows request failed"));
   }
@@ -259,6 +297,7 @@ export class NativeWindowsClient {
       throw new Error("native windows process is not running");
     }
     const id = this.nextId++;
+    debugLog(`[NativeWindows] → #${id} ${frameSummary(payload)}`);
     return new Promise<void>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       const json = Buffer.from(JSON.stringify({ id, ...payload }), "utf8");
@@ -288,6 +327,11 @@ export class NativeWindowsClient {
     await this.request({ op: "win.layout", layout });
   }
 
+  /** 窗口圆角（0–40）：变更时广播给全部原生窗；spawn 时随窗口下发。 */
+  async pushWindowRadius(radius: number): Promise<void> {
+    await this.request({ op: "win.radius", radius });
+  }
+
   async pushRuntimeState(state: unknown): Promise<void> {
     await this.request({ op: "state.runtime", state });
   }
@@ -306,6 +350,17 @@ export class NativeWindowsClient {
     await this.request({ op: "state.settings", settings: settings ?? {} });
   }
 
+  async pushSettingsNotice(notice: unknown): Promise<void> {
+    await this.ensureStarted();
+    await this.request({ op: "state.settings-notice", notice: notice ?? {} });
+  }
+
+  /** section 动作结果回执（带 requestId 的动作帧 → WPF 等待中的回调）。 */
+  async pushSettingsActionResult(result: unknown): Promise<void> {
+    await this.ensureStarted();
+    await this.request({ op: "state.settings-action-result", result: result ?? {} });
+  }
+
   async pushTasks(tasks: unknown, usage: unknown): Promise<void> {
     await this.request({ op: "state.tasks", tasks, usage });
   }
@@ -319,6 +374,7 @@ export class NativeWindowsClient {
     this.child = null;
     this.chunks = [];
     this.bufferedBytes = 0;
+    this.pendingFrameLength = null;
   }
 
   disposeSync(reason: string): void {
@@ -328,6 +384,7 @@ export class NativeWindowsClient {
       child.stdin?.end();
       child.kill();
     }
+    untrackChildProcess(child?.pid);
     this.resetForRespawn();
   }
 
