@@ -36,3 +36,39 @@ a {
   transition: color 120ms ease;
 }
 a:hover { color: var(--rb-pink-300); }
+
+/* ============================================================
+ * 触屏适配（@media 硬件能力探测，无 JS 依赖）
+ * 命中条件：无 hover 能力 + 粗指针（触摸屏/电子白板）
+ * ============================================================ */
+@media (hover: none) and (pointer: coarse) {
+  /* 触摸滚动条加宽（手指可拖）——只影响显式滚动容器 */
+  ::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 8px;
+  }
+
+  /* 消除触摸点击 300ms 级延迟/双击缩放；输入控件不拦截纵向滚动 */
+  button, a, label, summary, [role="button"], [role="tab"], [role="option"] {
+    touch-action: manipulation;
+  }
+  input, textarea, select {
+    touch-action: manipulation;
+  }
+
+  /* 触摸目标尺寸说明：不做全局 min-height（聊天窗小图标按钮 24px 会被撑破）。
+     大触摸目标由各窗口组件级规则处理（列表行/卡片本就 ≥40px）。 */
+
+  /* 无 hover 时保持可发现性：hover 样式同时在按下时生效 */
+  a:hover, button:hover {
+    /* 规则留空占位——:active 规则在下方各窗口样式里已有；
+       这里确保触屏 tap 不会让 hover 态永久滞留（Chrome 触屏 tap 后
+       :hover 粘滞问题由下方 active 覆盖缓解） */
+  }
+  a:active, button:active {
+    transition: none;
+  }
+}
