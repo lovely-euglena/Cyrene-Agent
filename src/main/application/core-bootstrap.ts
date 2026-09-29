@@ -101,6 +101,8 @@ export interface CoreDependencies {
   getTimeoutSettings?(): { userChoiceTimeout: number; modelRequestTimeoutSec?: number };
   /** 便携模式 / 数据目录状态（通用 section 快照用；缺省 = 宿主未接线）。 */
   getPortableStatus?(): import("../../shared/portable-mode").PortableDataLocationStatus;
+  /** 缓存目录状态（数据/缓存分离，「数据与存储」卡；缺省 = 宿主未接线）。 */
+  getCacheDirStatus?(): { effectiveDir: string; override: string | null; portableActive: boolean };
   /** 应用版本（打包态用 app.getVersion()；缺省回退环境变量，仅测试桩用） */
   getAppVersion?(): string;
   /** 用户资料（native 设置窗「用户信息」section 快照）。 */
@@ -234,6 +236,8 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
         })(),
         // 便携模式 / 数据目录（通用 section「数据与存储」卡；.NET 设置窗原生编辑）
         portable: deps.getPortableStatus?.() ?? null,
+        // 缓存目录（数据/缓存分离：模型/TTS/渠道媒体/插件包等可重建产物）
+        cacheDir: deps.getCacheDirStatus?.() ?? null,
         user: {
           nickname: profile.nickname,
           callPreference: profile.callPreference,

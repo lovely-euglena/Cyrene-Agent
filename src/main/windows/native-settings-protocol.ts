@@ -135,6 +135,8 @@ export const NATIVE_SECTION_ACTIONS = {
   general: ["clear-chat-history", "open-gpu-internals"],
   /** 便携模式 / 数据目录（通用 section「数据与存储」卡；迁移/覆盖确认在 WPF 侧完成）。 */
   portable: ["apply"],
+  // 缓存目录（数据/缓存分离）：设置覆盖路径（重启生效，缓存不迁移）
+  cache: ["set"],
   preferences: ["open-prompt"],
   cyrene: [
     "save",

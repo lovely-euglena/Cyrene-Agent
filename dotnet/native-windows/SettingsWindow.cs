@@ -437,6 +437,7 @@ public sealed partial class SettingsWindow : NativeWindow
         panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("数据与存储"));
         BuildPortableBlock(panel);
+        BuildCacheDirBlock(panel);
 
         panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("语言"));
@@ -1514,6 +1515,69 @@ public sealed partial class SettingsWindow : NativeWindow
     /// 数据来自快照 portable 节点（host getPortableStatus），应用走 cmd settings portable apply；
     /// 迁移/覆盖确认用 WPF 弹窗，结果随请求下发（宿主不再弹 Electron 框）。
     /// </summary>
+    /// <summary>
+    /// 缓存目录（数据/缓存分离）：模型下载 / TTS 音频 / 渠道媒体 / 插件包等
+    /// 可重建产物统一落此目录，与用户数据（聊天记录/设置/记忆）分开存放。
+    /// 数据来自快照 cacheDir 节点（getCacheDirStatus），应用走 cmd settings cache set。
+    /// 外观与便携块一致（输入框 + 浏览 + 应用按钮 + 当前生效提示）。
+    /// </summary>
+    private void BuildCacheDirBlock(StackPanel panel)
+    {
+        var node = GetNode("cacheDir");
+        if (node.ValueKind != JsonValueKind.Object)
+        {
+            return; // 宿主未提供快照（旧宿主）时整块隐藏，不留半成品 UI
+        }
+
+        var effectiveDir = GetString(node, "effectiveDir");
+        var overrideDir = GetString(node, "override");
+        var portableActive = GetBool(node, "portableActive");
+
+        var dirBox = new TextBox
+        {
+            Text = overrideDir,
+            Style = NativeTheme.InputSmallStyle,
+            Width = 300,
+        };
+        var browseBtn = MakeActionButton("浏览…", () =>
+        {
+            var picker = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "选择缓存目录",
+                Multiselect = false,
+            };
+            if (Directory.Exists(effectiveDir)) picker.InitialDirectory = effectiveDir;
+            if (picker.ShowDialog(_window) == true && picker.FolderName.Length > 0)
+            {
+                dirBox.Text = picker.FolderName;
+            }
+        });
+        dirBox.Margin = new Thickness(0, 0, 8, 0);
+        var dirRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        dirRow.Children.Add(dirBox);
+        dirRow.Children.Add(browseBtn);
+        dirRow.Margin = new Thickness(0, 0, 10, 0);
+
+        panel.Children.Add(MakeDescribedRow("缓存目录",
+            "模型下载、语音缓存、渠道媒体与插件包等可重建产物的存放位置；与聊天记录等数据分开。留空 = 默认（" +
+            (portableActive ? "便携模式：程序目录旁 cache" : "系统缓存目录") + "）。修改后重启完全生效。",
+            dirRow));
+        panel.Children.Add(MakeHint($"当前生效：{effectiveDir}"));
+        panel.Children.Add(MakeHint("缓存可随时删除（下次使用时自动重建）；更改目录不迁移旧缓存。"));
+        panel.Children.Add(MakeActionButton("应用缓存目录", () =>
+        {
+            var input = dirBox.Text.Trim();
+            RequestRouter.SendSettingsAction("cache", "set", new Dictionary<string, object?>
+            {
+                ["dir"] = input,
+            });
+        }, primary: true));
+    }
+
     private void BuildPortableBlock(StackPanel panel)
     {
         var portable = GetNode("portable");

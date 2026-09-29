@@ -1,4 +1,5 @@
 import * as path from "path";
+import { hfModelCacheDir } from "./cache-dir";
 import * as fs from "fs";
 import * as os from "os";
 
@@ -16,7 +17,7 @@ const MODELS: ModelInfo[] = [
 ];
 
 function getCacheDir(): string {
-  return path.join(os.homedir(), ".cache", "huggingface");
+  return hfModelCacheDir();
 }
 
 // --- Status check ---

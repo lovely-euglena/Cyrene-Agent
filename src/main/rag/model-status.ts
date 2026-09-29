@@ -2,11 +2,12 @@
 // Provides unified model availability checks for embedding and reranker models.
 
 import * as path from "path";
+import { hfModelCacheDir } from "../cache-dir";
 import * as fs from "fs";
 import * as os from "os";
 import { app } from "electron";
 
-const HF_CACHE_DIR = path.join(os.homedir(), ".cache", "huggingface", "Xenova");
+const HF_CACHE_DIR = path.join(hfModelCacheDir(), "Xenova");
 
 export interface ModelInstallStatus {
   embedding: { bgem3: boolean };
