@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { resolveCacheSubdir } from "../../../cache-dir";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { app } from "electron";
@@ -64,7 +65,7 @@ export class OneBotMediaManager {
 
   constructor(
     private readonly getClient: () => OneBotActionClient | null,
-    private readonly cacheDir = path.join(app.getPath("userData"), "channels", "cache", "qq"),
+    private readonly cacheDir = resolveCacheSubdir("channels-qq-media"),
     private readonly onStreamUnavailable?: (error: Error) => void,
   ) {}
 

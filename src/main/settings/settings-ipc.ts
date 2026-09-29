@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, shell } from "electron";
+import { hfModelCacheDir, resolveCacheDir } from "../cache-dir";
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
@@ -320,7 +321,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   ipc.handle(IPC.EMBEDDING_GET_STATUS, async () => {
-    const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
+    const cacheDir = hfModelCacheDir();
     const models = {
       bgem3: { dir: "Xenova\\bge-m3", onnx: "onnx\\model_quantized.onnx", name: "BGE-M3" },
     };

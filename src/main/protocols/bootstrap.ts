@@ -1,4 +1,5 @@
 import { app, net, protocol } from "electron";
+import { resolveCacheSubdir } from "../cache-dir";
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
@@ -22,7 +23,7 @@ export function registerPrivilegedSchemes(): void {
 }
 
 function getUiFontsDir(): string {
-  return path.join(app.getPath("userData"), "ui-fonts");
+  return resolveCacheSubdir("ui-fonts");
 }
 
 /**

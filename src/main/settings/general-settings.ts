@@ -30,6 +30,12 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 记住设置与音乐窗口的位置和大小（上游 2026-09-24 新增）。 */
   rememberWindowState: boolean;
   /**
+   * 缓存目录覆盖（数据/缓存分离）：绝对路径；undefined = 默认策略
+   * （便携模式 = 程序目录旁 cache/，否则系统缓存目录）。
+   * 模型/TTS/渠道媒体/插件市场包等可重建产物走该目录，重启生效。
+   */
+  cacheDirOverride?: string;
+  /**
    * 插件资源限制（插件管理窗「设置」页可配；undefined = 未配置，
    * 回退环境变量/内置默认）。0 = 不限。
    * - pluginStorageQuotaMb：单插件 KV 存储配额（MiB，默认 64）

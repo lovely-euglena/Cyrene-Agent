@@ -6,6 +6,7 @@
 // importing provider management (avoids circular imports).
 
 import * as path from "path";
+import { hfModelCacheDir } from "../cache-dir";
 import * as os from "os";
 import { getProjectModelBaseDir } from "./model-status";
 
@@ -74,7 +75,7 @@ export async function getLocalPipeline(modelKey?: string): Promise<any> {
     if (!modelBaseDir) throw new Error(`Local embedding model "${key}" is not installed`);
     env.localModelPath = modelBaseDir;
     const pipe = await pipeline("feature-extraction", config.hfName, {
-      cache_dir: path.join(os.homedir(), ".cache", "huggingface"),
+      cache_dir: hfModelCacheDir(),
     });
     localPipelines.set(key, pipe);
     return pipe;

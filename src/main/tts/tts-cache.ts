@@ -1,4 +1,5 @@
 import { app } from "electron";
+import { resolveCacheSubdir } from "../cache-dir";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -50,7 +51,7 @@ export function appendMimoTtsLog(entry: Record<string, unknown>): void {
 }
 
 export function getTtsCacheDir(): string {
-  return path.join(app.getPath("userData"), "cyrene-tts-cache");
+  return resolveCacheSubdir("tts-audio");
 }
 
 export function assertTtsCacheKey(cacheKey: string): string {

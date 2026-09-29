@@ -1,4 +1,5 @@
 import { app, dialog, safeStorage } from "electron";
+import { resolveCacheSubdir } from "./cache-dir";
 import path from "node:path";
 import { channelManager } from "./channels/manager";
 import type { ChannelAdapter } from "./channels/adapters/base";
@@ -170,7 +171,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
   const market = createPluginMarketplaceService({
     registryUrls: MARKET_REGISTRY_URLS,
     zipUrlPrefixes: MARKET_ZIP_URL_PREFIXES,
-    cacheDir: path.join(app.getPath("userData"), "plugin-market-cache"),
+    cacheDir: resolveCacheSubdir("plugin-market"),
     installZip: (zipPath, opts) => manager.installZip(zipPath, opts),
   });
   marketService = market;

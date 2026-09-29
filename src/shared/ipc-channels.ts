@@ -136,6 +136,10 @@ export const IPC = {
   SETTINGS_PORTABLE_GET: "settings:portable-get",
   SETTINGS_PORTABLE_PICK_DIR: "settings:portable-pick-dir",
   SETTINGS_PORTABLE_APPLY: "settings:portable-apply",
+  // 缓存目录（数据/缓存分离）：查询当前策略 / 设置覆盖路径（重启生效）
+  SETTINGS_CACHE_GET: "settings:cache-get",
+  SETTINGS_CACHE_SET: "settings:cache-set",
+  SETTINGS_CACHE_PICK_DIR: "settings:cache-pick-dir",
   SETTINGS_GET_TIMEOUT_SETTINGS: "settings:get-timeout-settings",
   SETTINGS_SAVE_TIMEOUT_SETTINGS: "settings:save-timeout-settings",
   UI_THEME_GET: "ui-theme:get",

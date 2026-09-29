@@ -40,6 +40,8 @@ import { ConversationJournalService } from "../orchestrator/conversation-journal
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
 import { registerPortableIpc, applyPortableChange } from "../portable/portable-ipc";
+import { registerCacheDirIpc } from "../portable/cache-ipc";
+import { resolveCacheDir, setCacheDirOverride } from "../cache-dir";
 import { getPortableDataLocationStatus } from "../portable/portable-runtime";
 import type { PortableApplyRequest } from "../../shared/portable-mode";
 import {
@@ -1036,6 +1038,21 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           asrAction: nativeAsrAction,
           // 「通用」section 便携模式：native 窗已完成迁移/覆盖确认（随 payload 下发），
           // 这里只执行；结果走通用 section 状态行反馈（成功路径 800ms 后应用重启）。
+          cacheAction: (verb, payload) => {
+            if (verb !== "set") return { ok: false, error: "unknown verb" };
+            const dir = typeof payload.dir === "string" && payload.dir.trim() ? payload.dir.trim() : null;
+            const current = loadGeneralSettings().cacheDirOverride ?? null;
+            if ((dir ?? null) === current) {
+              nativeNotice("general", "info", "缓存目录未变化");
+              return { ok: true, changed: false, restartRequired: false };
+            }
+            saveGeneralSettings({ cacheDirOverride: dir ?? undefined });
+            setCacheDirOverride(dir);
+            nativeNotice("general", "ok", dir
+              ? `缓存目录已更新（重启后完全生效）：${dir}`
+              : "缓存目录已恢复默认策略（重启后完全生效）");
+            return { ok: true, changed: true, restartRequired: true };
+          },
           portableAction: (verb, payload) => {
             if (verb !== "apply") return;
             const choiceRaw = payload.migrationChoice;
@@ -1385,6 +1402,20 @@ createTray: (input) => {
       getTimeoutSettings: () => getTimeoutSettings(),
       // 便携模式 / 数据目录（通用 section 快照）
       getPortableStatus: () => getPortableDataLocationStatus(),
+          getCacheDirStatus: () => {
+            try {
+              const { resolveCacheDir } = require("../cache-dir") as typeof import("../cache-dir");
+              const { loadGeneralSettings: lgs } = require("../settings/settings-facade") as typeof import("../settings/settings-facade");
+              const { getPortableDataLocationStatus: gps } = require("../portable/portable-runtime") as typeof import("../portable/portable-runtime");
+              return {
+                effectiveDir: resolveCacheDir(),
+                override: lgs().cacheDirOverride ?? null,
+                portableActive: gps().enabled,
+              };
+            } catch {
+              return { effectiveDir: "", override: null, portableActive: false };
+            }
+          },
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
       // 必须在任何 prompts/skills 读取（initSkills、prompt 加载）之前执行
@@ -1704,6 +1735,12 @@ createTray: (input) => {
 
         // 便携模式：数据目录迁移/覆盖 + 重启（指针文件在程序目录）
         registerPortableIpc({
+          ipc,
+          getParentWindow: () => settingsWindow,
+        });
+
+        // 缓存目录（数据/缓存分离）：查询/选择/覆盖设置
+        registerCacheDirIpc({
           ipc,
           getParentWindow: () => settingsWindow,
         });
