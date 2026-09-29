@@ -68,7 +68,7 @@ export interface UncertainEffect {
   fingerprint: string;
   toolName: string;
   message: string;
-  repeatAuthorization?: { source: "user"; grantedAt: number };
+  repeatAuthorization?: { id: string; source: "user"; grantedAt: number };
 }
 
 // ── Agent State（Agent 运行期可恢复状态）────────────────

@@ -37,6 +37,7 @@ import { createRunAdjustmentPoller } from "./chats/pending-adjustment";
 import { broadcastChatsChanged } from "./chats/chats-ipc";
 import { loadModelSettings, resolveSessionModelSettings } from "./settings/model-settings";
 import type { ChatMessage, ConversationMode, PendingChatAttachment } from "../shared/chat-types";
+import type { TodoItem as LegacyTodoItem } from "../shared/todo-types";
 import { isModelFailureInfo } from "../shared/model-error";
 import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
@@ -149,6 +150,8 @@ export interface AguiRunInput {
   imageAttachments?: { name: string; filePath: string; mime?: string }[];
   /** 同一会话上一次异常中断的只读恢复检查点。 */
   recoveryContext?: string;
+  /** 旧消息快照中的待办结构化回退；新轨迹状态存在时由新轨迹优先。 */
+  recoveryTodoItems?: LegacyTodoItem[];
   /** 显式接管：终止指定 run 并接管该会话（渲染端识别 SESSION_RUN_ACTIVE 后重发时携带）。 */
   takeoverFromRunId?: string;
   /** 只由主进程根据会话持久化字段注入，渲染端传值不可信。 */

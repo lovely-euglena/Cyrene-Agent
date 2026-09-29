@@ -128,17 +128,33 @@ export interface SessionTodoState {
 
 export type TodoStateBySession = Record<string, SessionTodoState>;
 
-export function buildTodoRecoveryContext(
+function findTodoRecoveryMessage(
   messages: readonly ChatMessage[],
   excludedMessageId?: string,
-): string | undefined {
-  const message = [...messages].reverse().find((candidate) => {
+): ChatMessage | undefined {
+  return [...messages].reverse().find((candidate) => {
     if (candidate.id === excludedMessageId) return false;
     const snapshot = candidate.runSnapshot;
     if (!snapshot?.todos?.some((todo) => todo.status === "pending" || todo.status === "in_progress")) return false;
     if (snapshot.status !== "terminal") return true;
     return snapshot.terminalStatus !== undefined && snapshot.terminalStatus !== "success";
   });
+}
+
+/** Structured legacy fallback for sessions that predate transcript task_state entries. */
+export function buildTodoRecoveryItems(
+  messages: readonly ChatMessage[],
+  excludedMessageId?: string,
+): TodoItem[] | undefined {
+  const todos = findTodoRecoveryMessage(messages, excludedMessageId)?.runSnapshot?.todos;
+  return todos?.map(({ id, content, status }) => ({ id, content, status }));
+}
+
+export function buildTodoRecoveryContext(
+  messages: readonly ChatMessage[],
+  excludedMessageId?: string,
+): string | undefined {
+  const message = findTodoRecoveryMessage(messages, excludedMessageId);
   if (!message?.runSnapshot?.todos) return undefined;
 
   const successes = message.toolExecutions?.filter((tool) => tool.status === "success").length ?? 0;

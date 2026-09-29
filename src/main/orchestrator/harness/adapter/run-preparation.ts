@@ -107,8 +107,7 @@ export async function prepareHarnessRun(
 
   const tools = [...(options.capabilities?.tools ?? options.tools ?? toolRegistry.getEnabledTools())];
   const runStore = getHarnessRunStore(app.getPath("userData"));
-  // 消息历史始终来自 Task 6 journal；不再有 resume 旁路——中断轮的执行状态
-  // （todos/未决副作用）由轨迹投影与 recoveryContext 在下一轮自然携带。
+  // 消息历史与待办/未决副作用均来自会话轨迹投影；这里只为旧入口保留兼容文本提示。
   const baseRunMessages = options.messages;
   const recoveryContext = [options.recoveryContext, planContextBlock]
     .filter(Boolean).join("\n\n");
@@ -132,6 +131,7 @@ export async function prepareHarnessRun(
     conversationId: threadId,
     runId,
     messages: runMessages,
+    ...(options.initialHarnessState ? { state: options.initialHarnessState } : {}),
     request: snapshotHarnessRequest(options, harnessPromptLayers, tools),
   });
 

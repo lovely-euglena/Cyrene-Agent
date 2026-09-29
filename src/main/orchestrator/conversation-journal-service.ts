@@ -27,6 +27,7 @@ import type {
 } from "./conversation-transcript-types";
 import { assertValidPresentationPatch } from "./conversation-transcript-types";
 import { createTranscriptSink, type TranscriptSink } from "./transcript-sink";
+import { reconcileCrashedInterruptionsForConversation } from "./conversation-interruption-reconciliation";
 
 export interface JournalUserInput {
   turnId: string;
@@ -340,6 +341,13 @@ export class ConversationJournalService {
   }
 
   async buildModelContext(conversationId: string): Promise<MaterializedTranscript> {
+    if (this.runReader.listInterruptedRuns) {
+      await reconcileCrashedInterruptionsForConversation({
+        runStore: { listInterruptedRuns: (id) => this.runReader.listInterruptedRuns!(id) },
+        transcriptStore: this.store,
+      }, conversationId);
+    }
+    await this.store.waitForIdle(conversationId);
     const snapshot = await this.store.read(conversationId);
     return buildModelContextFromCompactedView(snapshot.entries, this.runReader);
   }

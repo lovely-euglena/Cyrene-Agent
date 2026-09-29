@@ -14,13 +14,19 @@
 
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
 import type { HarnessRunSession } from "./harness/run-store";
-import type { ToolCallOutcome } from "./harness/types";
+import type { SideEffectKind, TodoItem, ToolCallOutcome } from "./harness/types";
 import type { ChatMessage } from "./vendors/types";
 
 /** 轨迹写入失败：failedKind 标记断裂的协议点，cause 保留原始错误。 */
 export class TranscriptWriteError extends Error {
   constructor(
-    public readonly failedKind: "assistant" | "tool_result" | "interruption",
+    public readonly failedKind:
+      | "assistant"
+      | "tool_started"
+      | "task_state"
+      | "effect_resolution"
+      | "tool_result"
+      | "interruption",
     public readonly cause: unknown,
   ) {
     super(`${failedKind} 轨迹写入失败：${cause instanceof Error ? cause.message : String(cause)}`);
@@ -39,6 +45,29 @@ export interface TranscriptSink {
     outcome: ToolCallOutcome;
     fullRef?: string;
     roundId?: string;
+  }): Promise<void>;
+  /** Dispatch boundary, committed after safety checks and before invoking a tool. */
+  appendToolStarted?(input: {
+    assistantEntryId: string;
+    toolCallId: string;
+    toolName: string;
+    sideEffect: SideEffectKind;
+    fingerprint: string;
+    repeatAuthorizationId?: string;
+  }): Promise<void>;
+  /** Latest complete todo state, committed before the successful update_todo result. */
+  appendTaskState?(input: {
+    assistantEntryId: string;
+    toolCallId: string;
+    items: TodoItem[];
+  }): Promise<void>;
+  /** Durable one-shot authorization to repeat an unresolved external effect. */
+  appendEffectResolution?(input: {
+    assistantEntryId: string;
+    effectId: string;
+    authorizationId: string;
+    fingerprint: string;
+    grantedAt: number;
   }): Promise<void>;
   /**
    * 中断终态闭合：为 started / planned 工具补合成结果并写 interruption 边界。
@@ -64,6 +93,7 @@ export function createTranscriptSink(input: {
   const { store, conversationId, runId, assistantTurnId } = input;
   // toolCallId → 声明它的 assistant 条目（合成闭合需要锚点）
   const assistantEntryOfCall = new Map<string, string>();
+  const startedToolCallIds = new Set<string>();
   // 无 roundId 的 assistant 追加序号（ChatLoop 单轮路径）
   let assistantCounter = 0;
   let lastAssistantEntryId: string | undefined;
@@ -105,6 +135,62 @@ export function createTranscriptSink(input: {
       });
     },
 
+    async appendToolStarted({
+      assistantEntryId,
+      toolCallId,
+      toolName,
+      sideEffect,
+      fingerprint,
+      repeatAuthorizationId,
+    }) {
+      if (startedToolCallIds.has(toolCallId)) return;
+      await store.append(conversationId, {
+        kind: "tool_started",
+        id: `${runId}:tool-start:${toolCallId}`,
+        at: Date.now(),
+        runId,
+        ...(assistantTurnId ? { turnId: assistantTurnId } : {}),
+        payload: {
+          assistantEntryId,
+          toolCallId,
+          toolName,
+          sideEffect,
+          fingerprint,
+          ...(repeatAuthorizationId ? { repeatAuthorizationId } : {}),
+        },
+      });
+      startedToolCallIds.add(toolCallId);
+    },
+
+    async appendTaskState({ assistantEntryId, toolCallId, items }) {
+      await store.append(conversationId, {
+        kind: "task_state",
+        id: `${runId}:task-state:${toolCallId}`,
+        at: Date.now(),
+        runId,
+        ...(assistantTurnId ? { turnId: assistantTurnId } : {}),
+        payload: { assistantEntryId, toolCallId, items },
+      });
+    },
+
+    async appendEffectResolution({ assistantEntryId, effectId, authorizationId, fingerprint, grantedAt }) {
+      await store.append(conversationId, {
+        kind: "effect_resolution",
+        id: `${runId}:effect-resolution:${authorizationId}`,
+        at: grantedAt,
+        runId,
+        ...(assistantTurnId ? { turnId: assistantTurnId } : {}),
+        payload: {
+          assistantEntryId,
+          effectId,
+          action: "repeat_authorized",
+          authorizationId,
+          fingerprint,
+          grantedAt,
+        },
+      });
+    },
+
     async closeInterruption({ reason, runSession }) {
       // 幂等闭合：以权威轨迹为准（限本 run），已有结果的调用不重复补写
       const snapshot = await store.read(conversationId);
@@ -117,6 +203,10 @@ export function createTranscriptSink(input: {
           for (const call of entry.payload.toolCalls ?? []) {
             assistantEntryOfCall.set(call.id, entry.id);
           }
+        }
+        if (entry.kind === "tool_started" && entry.runId === runId) {
+          startedToolCallIds.add(entry.payload.toolCallId);
+          assistantEntryOfCall.set(entry.payload.toolCallId, entry.payload.assistantEntryId);
         }
       }
       // 文案按 reason 区分：取消 vs 系统侧失败（下一轮上下文能分辨两种语义）

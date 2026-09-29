@@ -969,6 +969,9 @@ export async function buildAgentRunOptions(
   const transcriptRecoveryContext = transcriptContext?.uncertainEffects.length
     ? formatTranscriptUncertainEffects(transcriptContext.uncertainEffects)
     : undefined;
+  const initialTodoItems = transcriptContext?.todoItemsSource === "transcript"
+    ? transcriptContext.todoItems
+    : input.recoveryTodoItems ?? transcriptContext?.todoItems;
 
   return {
     options: {
@@ -995,6 +998,12 @@ export async function buildAgentRunOptions(
       trustedRefs,
       responseContext,
       runtimeEnvironmentContext: environmentContext,
+      ...(transcriptContext || initialTodoItems ? {
+        initialHarnessState: {
+          todoItems: initialTodoItems ?? [],
+          uncertainEffects: transcriptContext?.uncertainEffects ?? [],
+        },
+      } : {}),
       // 不设整轮任务期限；用户取消才停止整个 Agent Run。
       timeoutMs: 0,
       toolSystemContent,

@@ -154,6 +154,8 @@ export interface CyreneRunOptions {
   runtimeEnvironmentContext?: string;
   /** 上一次异常中断 Run 的只读 Todo/执行检查点；只用于帮助模型恢复方向。 */
   recoveryContext?: string;
+  /** 会话轨迹投影出的待办与未决副作用，作为新 Harness 的执行状态恢复。 */
+  initialHarnessState?: Pick<import("./harness/types").AgentState, "todoItems" | "uncertainEffects">;
   /** 由 AG-UI bridge 注入，确保 Ask 卡片回到实际发起本轮的渲染窗口。 */
   requestUserClarification?: (
     card: import("../../shared/ask-clarification").AskClarificationCard,

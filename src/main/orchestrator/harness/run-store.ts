@@ -241,10 +241,11 @@ export class HarnessRunStore {
    * interrupted 只由 initialize() 在启动时把滞留的 running 翻转而来
    * （正常终态都走 markTerminal），因此该集合即「进程崩溃遗留」的穷尽集合。
    */
-  listInterruptedRuns(): HarnessRunSession[] {
+  listInterruptedRuns(conversationId?: string): HarnessRunSession[] {
     const sessions: HarnessRunSession[] = [];
     for (const [runId, row] of this.index) {
       if (row.status !== "interrupted") continue;
+      if (conversationId && row.conversationId !== conversationId) continue;
       const session = this.read(runId);
       if (session) sessions.push(session);
     }
@@ -256,6 +257,29 @@ export class HarnessRunStore {
     fs.mkdirSync(this.sessionsDir, { recursive: true });
     this.readIndex();
     let changed = false;
+
+    // The index is a lookup cache, not the only recovery source. Rebuild rows
+    // from valid session metadata so a missing or truncated index cannot hide
+    // runs that need crash reconciliation.
+    for (const name of fs.readdirSync(this.sessionsDir)) {
+      if (path.extname(name) !== ".json") continue;
+      const runId = path.basename(name, ".json");
+      if (!validRunId(runId)) continue;
+      const session = this.read(runId);
+      if (!session || session.runId !== runId) continue;
+      const current = this.index.get(runId);
+      if (!current || current.conversationId !== session.conversationId
+        || current.status !== session.status || current.updatedAt !== session.updatedAt) {
+        this.index.set(runId, {
+          conversationId: session.conversationId,
+          runId: session.runId,
+          status: session.status,
+          updatedAt: session.updatedAt,
+        });
+        changed = true;
+      }
+    }
+
     for (const row of [...this.index.values()]) {
       // 孤儿行：session 文件已不存在（崩溃/手动清理遗留），直接清行
       if (!fs.existsSync(this.sessionPath(row.runId))) {

@@ -39,6 +39,7 @@ import {
 } from "../message-reveal";
 import {
   buildTodoRecoveryContext,
+  buildTodoRecoveryItems,
   mergeHarnessTodosForSession,
   startSessionTodos,
   type TodoStateBySession,
@@ -263,6 +264,10 @@ export class AgentRunController {
         this.input.assistantId,
         splitMode,
       );
+      const legacyRecovery = this.input.transcriptRewind ? undefined : {
+        context: buildTodoRecoveryContext(this.input.session.messages, this.input.assistantId),
+        todos: buildTodoRecoveryItems(this.input.session.messages, this.input.assistantId),
+      };
       const ack = await api.run({
         // 模型历史由主进程 journal 构建；renderer 只发送当前 user 事实。
         currentUser: {
@@ -294,7 +299,10 @@ export class AgentRunController {
         assistantTurnId: this.input.assistantId,
         styleId: general?.currentStyleId,
         sessionId: this.input.sessionId,
-        recoveryContext: buildTodoRecoveryContext(this.input.session.messages, this.input.assistantId),
+        ...(legacyRecovery ? {
+          ...(legacyRecovery.context ? { recoveryContext: legacyRecovery.context } : {}),
+          ...(legacyRecovery.todos ? { recoveryTodoItems: legacyRecovery.todos } : {}),
+        } : {}),
         ...(this.input.takeoverFromRunId ? { takeoverFromRunId: this.input.takeoverFromRunId } : {}),
         ...(this.input.transcriptRewind ? { transcriptRewind: this.input.transcriptRewind } : {}),
         imageAttachments: this.input.attachments

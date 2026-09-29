@@ -14,7 +14,7 @@ import type {
   ChatMessageChannel,
   PendingChatAttachment,
 } from "../../shared/chat-types";
-import type { ToolCallOutcome } from "./harness/types";
+import type { SideEffectKind, TodoItem, ToolCallOutcome } from "./harness/types";
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
 import { isContextUsageSnapshot } from "../../shared/context-usage";
 import { normalizeMusicCardData } from "../../shared/music-card";
@@ -204,6 +204,30 @@ export type TranscriptCompactionCheckpointPayload = {
   trigger: "automatic" | "manual";
 };
 
+export type TranscriptToolStartedPayload = {
+  assistantEntryId: string;
+  toolCallId: string;
+  toolName: string;
+  sideEffect: SideEffectKind;
+  fingerprint: string;
+  repeatAuthorizationId?: string;
+};
+
+export type TranscriptTaskStatePayload = {
+  assistantEntryId: string;
+  toolCallId: string;
+  items: TodoItem[];
+};
+
+export type TranscriptEffectResolutionPayload = {
+  assistantEntryId: string;
+  effectId: string;
+  action: "repeat_authorized";
+  authorizationId: string;
+  fingerprint: string;
+  grantedAt: number;
+};
+
 export type TranscriptArchiveRef = {
   fromSeq: number;
   throughSeq: number;
@@ -224,6 +248,9 @@ export type TranscriptEntry =
         fullRef?: string;
       };
     })
+  | (TranscriptEnvelopeBase & { kind: "tool_started"; payload: TranscriptToolStartedPayload })
+  | (TranscriptEnvelopeBase & { kind: "task_state"; payload: TranscriptTaskStatePayload })
+  | (TranscriptEnvelopeBase & { kind: "effect_resolution"; payload: TranscriptEffectResolutionPayload })
   | (TranscriptEnvelopeBase & {
       kind: "interruption";
       payload: { reason: "user_cancel" | "runtime_error" | "crashed" };

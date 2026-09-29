@@ -74,6 +74,7 @@ export async function runHarnessWithAdapter(
     messages: runMessages,
     runId,
     tools,
+    ...(options.initialHarnessState ? { initialState: options.initialHarnessState } : {}),
     vendorConfig,
     config: {
       maxParallelToolCalls: options.maxParallelToolCalls,

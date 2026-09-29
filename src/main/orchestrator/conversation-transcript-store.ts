@@ -701,6 +701,7 @@ function validateLoadedTranscriptEntry(entry: unknown): asserts entry is Transcr
   const candidate = entry as Partial<TranscriptEntry>;
   const kinds = new Set([
     "user", "assistant", "tool_result", "interruption", "turn_rewind",
+    "tool_started", "task_state", "effect_resolution",
     "backfill_boundary", "compaction_checkpoint", "presentation_patch",
     "turn_tombstone", "delivery_receipt",
   ]);
@@ -727,6 +728,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function isValidTranscriptTodoItem(value: unknown): boolean {
+  return isRecord(value) && typeof value.id === "string" && typeof value.content === "string" &&
+    ["pending", "in_progress", "completed", "cancelled"].includes(value.status as string) &&
+    (value.activeForm === undefined || typeof value.activeForm === "string");
+}
+
 function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
   if (!isRecord(entry.payload)) return false;
   switch (entry.kind) {
@@ -743,6 +750,25 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
         ["success", "failure", "unknown", "not_executed"].includes(entry.payload.outcome as string) &&
         isValidCanonicalChatMessage(entry.payload.message, "tool") &&
         (entry.payload.fullRef === undefined || typeof entry.payload.fullRef === "string");
+    case "tool_started":
+      return typeof entry.payload.assistantEntryId === "string" && entry.payload.assistantEntryId.length > 0 &&
+        typeof entry.payload.toolCallId === "string" && entry.payload.toolCallId.length > 0 &&
+        typeof entry.payload.toolName === "string" && entry.payload.toolName.length > 0 &&
+        ["read_only", "idempotent_mutation", "non_idempotent_side_effect"].includes(entry.payload.sideEffect as string) &&
+        typeof entry.payload.fingerprint === "string" && entry.payload.fingerprint.length > 0 &&
+        (entry.payload.repeatAuthorizationId === undefined ||
+          (typeof entry.payload.repeatAuthorizationId === "string" && entry.payload.repeatAuthorizationId.length > 0));
+    case "task_state":
+      return typeof entry.payload.assistantEntryId === "string" && entry.payload.assistantEntryId.length > 0 &&
+        typeof entry.payload.toolCallId === "string" && entry.payload.toolCallId.length > 0 &&
+        Array.isArray(entry.payload.items) && entry.payload.items.every(isValidTranscriptTodoItem);
+    case "effect_resolution":
+      return typeof entry.payload.assistantEntryId === "string" && entry.payload.assistantEntryId.length > 0 &&
+        typeof entry.payload.effectId === "string" && entry.payload.effectId.length > 0 &&
+        entry.payload.action === "repeat_authorized" &&
+        typeof entry.payload.authorizationId === "string" && entry.payload.authorizationId.length > 0 &&
+        typeof entry.payload.fingerprint === "string" && entry.payload.fingerprint.length > 0 &&
+        validOptionalNumber(entry.payload.grantedAt) && entry.payload.grantedAt !== undefined;
     case "interruption":
       return ["user_cancel", "runtime_error", "crashed"].includes(entry.payload.reason);
     case "turn_rewind":
