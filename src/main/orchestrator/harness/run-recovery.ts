@@ -1,6 +1,6 @@
 import type { ToolCall } from "../vendors/types";
 import { toolCallFingerprint, type AgentState, type HarnessCacheState, type UncertainEffect } from "./types";
-import type { HarnessRunSession } from "./run-store";
+import type { HarnessRunSession, LegacyHarnessRunSession } from "./run-store";
 
 export interface HarnessRecoveryEnvironment {
   conversationId?: string;
@@ -23,7 +23,7 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function findPersistedToolCall(session: HarnessRunSession, toolCallId: string): ToolCall | undefined {
+function findPersistedToolCall(session: LegacyHarnessRunSession, toolCallId: string): ToolCall | undefined {
   let found: ToolCall | undefined;
   for (const message of session.messages) {
     const call = message.toolCalls?.find((candidate) => candidate.id === toolCallId);
@@ -32,7 +32,7 @@ function findPersistedToolCall(session: HarnessRunSession, toolCallId: string): 
   return found;
 }
 
-function fingerprintPersistedCall(session: HarnessRunSession, toolCallId: string, toolName: string): string {
+function fingerprintPersistedCall(session: LegacyHarnessRunSession, toolCallId: string, toolName: string): string {
   const call = findPersistedToolCall(session, toolCallId);
   // 不确定参数时使用按工具名的 fail-safe 标记；uncertain-effect-guard 会阻止该工具的任何重试。
   if (!call || call.name !== toolName) return `${toolName}(*)`;
@@ -46,16 +46,15 @@ function fingerprintPersistedCall(session: HarnessRunSession, toolCallId: string
 }
 
 /**
- * 崩溃对账：从意外中断（running→interrupted）的运行中提取不确定的外部副作用。
- * 只消费 runStore 的状态、缓存和工具执行分类，不重放或修补旧 run 的消息；
- * 会话消息始终由 journal 提供。本函数不对模型注入任何「继续任务」上下文，
- * 仅产出崩溃对账所需的墨迹与不确定副作用，供转录投影补齐。
+ * 旧版 v1 运行文件的崩溃恢复兼容辅助函数。
+ * 新版恢复由会话轨迹投影提供；新运行文件没有可供本函数恢复的轮次、缓存或工具状态。
  */
 export function prepareHarnessRecoveryState(
   session: HarnessRunSession,
   environment: HarnessRecoveryEnvironment,
 ): PreparedHarnessRecoveryState {
   if (session.status !== "interrupted") throw new Error("HARNESS_RECOVERY_NOT_INTERRUPTED");
+  if (session.schemaVersion !== 1) throw new Error("HARNESS_RECOVERY_LEGACY_DATA_UNAVAILABLE");
   if (environment.conversationId && environment.conversationId !== session.conversationId) {
     throw new Error("HARNESS_RECOVERY_CONVERSATION_MISMATCH");
   }

@@ -47,7 +47,7 @@ export async function runHarnessWithAdapter(
   signal: AbortSignal,
   sendBaseEvent: (event: BaseEvent) => void,
 ): Promise<AgentLoopResult> {
-  // 准备阶段创建唯一的 runStore 实例；checkpoint、工具生命周期和终态都写入它。
+  // 准备阶段创建唯一的 runStore 实例；它只保存运行元数据和终态。
   const prepared = await prepareHarnessRun(options, signal);
   const {
     messageId,
@@ -88,23 +88,6 @@ export async function runHarnessWithAdapter(
         sendHarnessEventAsAgui(event, messageId, threadId, runId, sendBaseEvent);
       }
     },
-    onCheckpoint: (checkpoint) => {
-      runStore.checkpoint(runId, {
-        messages: checkpoint.messages,
-        state: checkpoint.state,
-        toolOutputs: checkpoint.toolOutputs,
-        rounds: checkpoint.rounds,
-      });
-    },
-    onToolLifecycle: (event) => {
-      runStore.recordTool(runId, {
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        sideEffect: event.toolSideEffect,
-        status: event.status,
-      });
-    },
-    onCompactionLifecycle: (event) => runStore.recordCompaction(runId, event),
     ...(options.onToolFinished ? { onToolFinished: options.onToolFinished } : {}),
     ...(options.pollRunAdjustments ? { pollRunAdjustments: options.pollRunAdjustments } : {}),
     requestUserClarification: options.requestUserClarification
@@ -144,7 +127,7 @@ export async function runHarnessWithAdapter(
     : terminal.status === "cancelled" ? "cancelled" : "failed";
 
   // ── 中断轨迹闭合（先于 runStore 终态结算）──
-  // cancelled：为 started / planned 工具补确定性闭合条目并写 interruption 边界；
+  // 从权威轨迹闭合已声明但没有结果的工具，并写 interruption 边界；
   // 闭合失败不得声称轨迹协议完整 → 转 runtime_error 终态（fail-closed）。
   if (terminal.status === "cancelled" || result.terminateReason === "cancelled") {
     try {

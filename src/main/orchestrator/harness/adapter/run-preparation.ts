@@ -1,8 +1,7 @@
-import { createHash } from "node:crypto";
 import type { ChatMessage, VendorConfig } from "../../vendors/types";
 import type { ToolDefinition } from "../../tools/registry/tool-registry";
 import { toolRegistry } from "../../tools/registry/tool-registry";
-import { getHarnessRunStore, type HarnessRequestSnapshot } from "../run-store";
+import { getHarnessRunStore } from "../run-store";
 import type { CyreneRunOptions } from "../../cyrene-agent";
 import type { PromptLayers } from "../../prompt-layers";
 import type { ConversationMode } from "../../../../shared/chat-types";
@@ -33,32 +32,6 @@ export function filterToolsForConversationMode(
   // 这是代码模式工具过滤的唯一事实来源；只返回新数组，不修改 registry 或传入数组。
   if (mode === "code") return tools;
   return tools.filter((tool) => !CODE_ONLY_GIT_TOOL_IDS.has(tool.id));
-}
-
-function fingerprint(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function snapshotHarnessRequest(
-  options: CyreneRunOptions,
-  promptLayers: PromptLayers,
-  tools: ToolDefinition[],
-): HarnessRequestSnapshot {
-  return {
-    provider: options.settings.provider,
-    model: options.settings.model,
-    contextWindowTokens: options.settings.contextWindowTokens,
-    ...(options.settings.reasoning ? { reasoning: JSON.stringify(options.settings.reasoning) } : {}),
-    ...(options.conversationMode ? { mode: options.conversationMode } : {}),
-    promptFingerprint: fingerprint(promptLayers.stablePrefix),
-    toolSchemaFingerprint: fingerprint(tools.map((tool) => ({
-      id: tool.id,
-      description: tool.description,
-      schema: tool.inputSchema,
-    })).sort((left, right) => left.id.localeCompare(right.id))),
-    enabledToolIds: tools.map((tool) => tool.id).sort(),
-    ...(options.resolvedWorkspaceRoot ? { workspaceRoot: options.resolvedWorkspaceRoot } : {}),
-  };
 }
 
 export interface PreparedHarnessRun {
@@ -120,7 +93,7 @@ export async function prepareHarnessRun(
     runtimeContext: promptLayers.runtimeContext,
     kind: "run_start",
   });
-  // create 必须发生在 Harness 启动前，并使用最终消息/提示词/工具指纹，供 checkpoint 和恢复校验复用。
+  // create 必须发生在 Harness 启动前；运行文件只承担启动对账、终态和 Review 时间戳。
   const harnessPromptLayers: PromptLayers = {
     stablePrefix: promptLayers.stablePrefix,
     ...(promptLayers.sessionPrefix ? { sessionPrefix: promptLayers.sessionPrefix } : {}),
@@ -130,9 +103,6 @@ export async function prepareHarnessRun(
   runStore.create({
     conversationId: threadId,
     runId,
-    messages: runMessages,
-    ...(options.initialHarnessState ? { state: options.initialHarnessState } : {}),
-    request: snapshotHarnessRequest(options, harnessPromptLayers, tools),
   });
 
   return {

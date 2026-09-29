@@ -9,7 +9,8 @@
  * interruption 边界，则补一条 reason="crashed" 的 interruption 条目。
  *
  * 不重放、不修补旧 run 的消息——工具 unknown/not_executed 与 uncertainEffects
- * 已由投影依据 run-store 持久化的工具状态合成，无需在此重复。
+ * 由投影依据 assistant 声明、tool_started、tool_result 等轨迹事实合成；
+ * run-store 只负责发现中断的运行及其会话归属。
  */
 
 import type { HarnessRunSession } from "./harness/run-store";

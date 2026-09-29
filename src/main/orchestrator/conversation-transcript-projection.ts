@@ -236,7 +236,11 @@ function materializeNodes(
     if (!payload.toolCalls?.length) continue;
 
     const runSession = node.entry.runId ? runReader.get(node.entry.runId) : null;
-    const statusById = new Map(runSession?.toolCalls.map((call) => [call.toolCallId, call]));
+    const statusById = new Map(
+      runSession?.schemaVersion === 1
+        ? runSession.toolCalls.map((call) => [call.toolCallId, call] as const)
+        : [],
+    );
     for (const call of payload.toolCalls) {
       const start = node.toolStarts.get(call.id)?.payload;
       const record = statusById.get(call.id);
@@ -309,7 +313,8 @@ function materializeRecoveryState(
     );
     for (const node of [...assistantNodes].reverse()) {
       if (!node.entry.runId) continue;
-      const legacyState = runReader.get(node.entry.runId)?.state;
+      const legacyRun = runReader.get(node.entry.runId);
+      const legacyState = legacyRun?.schemaVersion === 1 ? legacyRun.state : undefined;
       if (legacyState && Array.isArray(legacyState.todoItems)) {
         todoItems = legacyState.todoItems;
         todoItemsSource = "legacy_run_store";
@@ -325,7 +330,8 @@ function materializeRecoveryState(
   );
   for (const node of assistantNodes) {
     if (!node.entry.runId) continue;
-    const legacyEffects = runReader.get(node.entry.runId)?.state.uncertainEffects ?? [];
+    const legacyRun = runReader.get(node.entry.runId);
+    const legacyEffects = legacyRun?.schemaVersion === 1 ? legacyRun.state.uncertainEffects : [];
     for (const effect of legacyEffects) {
       if (seenEffectIds.has(effect.id)) continue;
       seenEffectIds.add(effect.id);

@@ -4,7 +4,7 @@
  * 把 Harness / ChatLoop 的 canonical 消息按协议写入 ConversationTranscriptStore：
  * - appendAssistant：assistant 声明先于任何工具 dispatch 落盘（fail-closed 由调用方保证）；
  * - appendToolResult：canonical 工具结果在生命周期 committed 之前落盘；
- * - closeInterruption：取消时为 started / planned 工具补确定性闭合条目并写 interruption 边界；
+ * - closeInterruption：从轨迹声明和派发事实补工具闭合条目并写 interruption 边界；
  * - checkpoint：终态后刷新快照（失败上抛，由调用方降级为日志，不改 JSONL）。
  *
  * 幂等：所有 entryId 均由 (runId, 协议点) 确定性生成，
@@ -70,7 +70,7 @@ export interface TranscriptSink {
     grantedAt: number;
   }): Promise<void>;
   /**
-   * 中断终态闭合：为 started / planned 工具补合成结果并写 interruption 边界。
+   * 中断终态闭合：从 assistant 声明、tool_started 和已提交结果推导合成结果。
    * reason 区分「用户主动取消」与「系统侧失败/超时」——下一轮模型上下文据此
    * 选择不同姿态（不自行延续 vs 结合新消息决定是否继续）。
    */
@@ -195,6 +195,8 @@ export function createTranscriptSink(input: {
       // 幂等闭合：以权威轨迹为准（限本 run），已有结果的调用不重复补写
       const snapshot = await store.read(conversationId);
       const closedToolCallIds = new Set<string>();
+      const declaredCalls = new Map<string, { assistantEntryId: string; toolName: string }>();
+      const startedCalls = new Map<string, { assistantEntryId: string; toolName: string }>();
       for (const entry of snapshot.entries) {
         if (entry.kind === "tool_result" && entry.runId === runId) {
           closedToolCallIds.add(entry.payload.toolCallId);
@@ -202,34 +204,54 @@ export function createTranscriptSink(input: {
         } else if (entry.kind === "assistant" && entry.runId === runId) {
           for (const call of entry.payload.toolCalls ?? []) {
             assistantEntryOfCall.set(call.id, entry.id);
+            declaredCalls.set(call.id, { assistantEntryId: entry.id, toolName: call.name });
           }
         }
         if (entry.kind === "tool_started" && entry.runId === runId) {
           startedToolCallIds.add(entry.payload.toolCallId);
           assistantEntryOfCall.set(entry.payload.toolCallId, entry.payload.assistantEntryId);
+          startedCalls.set(entry.payload.toolCallId, {
+            assistantEntryId: entry.payload.assistantEntryId,
+            toolName: entry.payload.toolName,
+          });
         }
       }
       // 文案按 reason 区分：取消 vs 系统侧失败（下一轮上下文能分辨两种语义）
       const userCancelled = reason === "user_cancel";
-      for (const call of runSession?.toolCalls ?? []) {
-        if (closedToolCallIds.has(call.toolCallId)) continue;
-        // started → 派发过但无结果（unknown）；planned → 从未派发（not_executed）；
-        // 其余状态（committed / unknown / not_executed）按提交顺序先于生命周期发布，
-        // 轨迹里已有结果，跳过。
-        const outcome: ToolCallOutcome | undefined = call.status === "started"
+      const legacyCalls = new Map((runSession?.schemaVersion === 1 ? runSession.toolCalls : [])
+        .map((call) => [call.toolCallId, call] as const));
+      const toolCallIds = new Set([
+        ...declaredCalls.keys(),
+        ...startedCalls.keys(),
+        ...legacyCalls.keys(),
+      ]);
+      for (const toolCallId of toolCallIds) {
+        if (closedToolCallIds.has(toolCallId)) continue;
+        const started = startedCalls.get(toolCallId);
+        const declared = declaredCalls.get(toolCallId);
+        const legacy = legacyCalls.get(toolCallId);
+        // 新运行只依赖权威轨迹：tool_started 表示可能已经派发；assistant 声明
+        // 没有 tool_started 则表示尚未派发。旧运行再用 v1 的状态文件兜底。
+        const wasStarted = Boolean(started) || legacy?.status === "started" || legacy?.status === "unknown";
+        const wasDeclared = Boolean(declared) || legacy?.status === "planned";
+        const outcome: ToolCallOutcome | undefined = wasStarted
           ? "unknown"
-          : call.status === "planned"
+          : wasDeclared
             ? "not_executed"
             : undefined;
         if (!outcome) continue;
-        const assistantEntryId = assistantEntryOfCall.get(call.toolCallId) ?? "unknown-assistant";
+        const toolName = started?.toolName ?? declared?.toolName ?? legacy?.toolName ?? "unknown_tool";
+        const assistantEntryId = started?.assistantEntryId
+          ?? declared?.assistantEntryId
+          ?? assistantEntryOfCall.get(toolCallId)
+          ?? "unknown-assistant";
         const message: ChatMessage = {
           role: "tool",
-          toolCallId: call.toolCallId,
-          name: call.toolName,
+          toolCallId,
+          name: toolName,
           content: JSON.stringify({
             outcome,
-            tool: call.toolName,
+            tool: toolName,
             message: outcome === "unknown"
               ? (userCancelled ? "工具执行中被取消，结果未知" : "上一轮系统错误，工具已启动但结果未知")
               : (userCancelled ? "取消时未开始执行" : "上一轮系统错误时未开始执行"),
@@ -237,10 +259,10 @@ export function createTranscriptSink(input: {
         };
         await store.append(conversationId, {
           kind: "tool_result",
-          id: `${runId}:tool-close:${assistantEntryId}:${call.toolCallId}`,
+          id: `${runId}:tool-close:${assistantEntryId}:${toolCallId}`,
           at: Date.now(),
           runId,
-          payload: { assistantEntryId, toolCallId: call.toolCallId, outcome, message },
+          payload: { assistantEntryId, toolCallId, outcome, message },
         });
       }
       await store.append(conversationId, {
