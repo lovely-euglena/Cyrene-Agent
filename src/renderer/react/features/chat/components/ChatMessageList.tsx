@@ -41,6 +41,7 @@ import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
 import { Archive } from "lucide-react";
 import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
+import { VirtualChatMessageList } from "./VirtualChatMessageList";
 
 export interface ChatMessageItem {
   id: string;
@@ -375,6 +376,25 @@ function ModelWaitContent() {
   );
 }
 
+function latestReasoningLine(content: string): string {
+  const trimmed = content.trimEnd();
+  const start = Math.max(trimmed.lastIndexOf("\n"), trimmed.lastIndexOf("\r")) + 1;
+  return trimmed.slice(start).trim();
+}
+
+const REASONING_PREVIEW_MAX_CHARS = 80;
+
+function truncateReasoningPreview(line: string): string {
+  let end = 0;
+  let count = 0;
+  for (const character of line) {
+    if (count === REASONING_PREVIEW_MAX_CHARS) return `${line.slice(0, end)}…`;
+    end += character.length;
+    count += 1;
+  }
+  return line;
+}
+
 function ReasoningContent({
   content,
   loading,
@@ -388,22 +408,32 @@ function ReasoningContent({
 }) {
   const { t } = useTranslation();
   const thinkingArt = useCharacterMoodUrl(loading ? "思考中" : "提醒");
+  const title = loading ? t("messageList.thinkingTitle") : t("messageList.thinkingDoneTitle");
+  const previewLine = loading && !expanded
+    ? truncateReasoningPreview(latestReasoningLine(content))
+    : "";
   return (
     <Think
-      rootClassName="cy-message-reasoning"
-      title={loading ? t("messageList.thinkingTitle") : t("messageList.thinkingDoneTitle")}
+      rootClassName={`cy-message-reasoning${previewLine ? " cy-message-reasoning--with-preview" : ""}`}
+      title={previewLine ? (
+        <span className="cy-message-reasoning__title">
+          <span className="cy-message-reasoning__title-label">{title}</span>
+          <span className="cy-message-reasoning__preview-separator" aria-hidden="true">·</span>
+          <span className="cy-message-reasoning__preview">{previewLine}</span>
+        </span>
+      ) : title}
       icon={
         <span className={`cy-reasoning-status-art${loading ? " is-thinking" : " is-complete"}`} aria-hidden="true">
           <img src={thinkingArt} alt="" draggable={false} />
           {loading && <DotSpinner />}
         </span>
       }
-      blink={loading}
+      blink={loading && !previewLine}
       expanded={expanded}
       onExpand={onExpand}
       destroyOnHidden
     >
-      {content && <MarkdownContent content={content} streaming={loading} />}
+      {content && <div className="cy-message-reasoning__plain-text">{content}</div>}
     </Think>
   );
 }
@@ -1322,6 +1352,8 @@ export function assembleMessageItems(
   return { items, cache: state };
 }
 
+const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
+
 export function ChatMessageList({
   messages,
   conversationId,
@@ -1472,6 +1504,7 @@ export function ChatMessageList({
       : assembled.items;
   }, [messages, enabledStickers, compacting]);
   const channelConversationLabel = resolveChannelConversationLabel(messages);
+  const shouldVirtualizeMessages = items.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const fileLinkEnv = useMemo<FileLinkEnv>(
     () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink }),
     [conversationId, workspaceRoot, onOpenFileLink],
@@ -1497,7 +1530,18 @@ export function ChatMessageList({
                 <span>{channelConversationLabel}</span>
               </div>
             )}
-            <Bubble.List items={items} role={roles} autoScroll />
+            {shouldVirtualizeMessages ? (
+              <VirtualChatMessageList
+                key={conversationId ?? "default"}
+                items={items}
+                roles={roles}
+                scrollRef={containerRef}
+                nearBottomRef={isNearBottomRef}
+                layoutKey={channelConversationLabel}
+              />
+            ) : (
+              <Bubble.List items={items} role={roles} autoScroll />
+            )}
           </div>
         </LastTurnIdsContext.Provider>
       </FileLinkContext.Provider>
