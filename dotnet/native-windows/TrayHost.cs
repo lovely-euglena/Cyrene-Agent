@@ -36,6 +36,68 @@ public sealed class TrayHost
     /// <summary>Electron 未连接时暂存的托盘动作，连接建立后补投一次。</summary>
     private string? _pendingAction;
 
+
+    /// <summary>
+    /// WinForms 托盘菜单现代化：默认经典灰 → 项目浅色扁平风（对齐 native 设置窗
+    /// NativeTheme 色板：Surface 白底、Pink 强调悬停、TextDefault 文字、1px 软边框）。
+    /// WinForms 菜单不支持 WPF 圆角，用无边框 + 悬停色块贴近整体观感。
+    /// </summary>
+    private static void ApplyModernMenuStyle(WF.ContextMenuStrip menu)
+    {
+        menu.RenderMode = WF.ToolStripRenderMode.ManagerRenderMode;
+        var cm = WF.ToolStripManager.RenderMode;
+        menu.BackColor = System.Drawing.Color.FromArgb(0xFA, 0xFA, 0xFC);
+        menu.ForeColor = System.Drawing.Color.FromArgb(0x2C, 0x2C, 0x2E);
+        menu.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5f, System.Drawing.FontStyle.Regular);
+        menu.ShowImageMargin = false;
+        menu.Renderer = new TrayMenuRenderer();
+    }
+
+    /// <summary>托盘菜单自绘：悬停 PinkSoft 色块 + 分隔线 BorderSoft + 选中勾 Pink。</summary>
+    private sealed class TrayMenuRenderer : WF.ToolStripProfessionalRenderer
+    {
+        public TrayMenuRenderer() : base(new TrayMenuColorTable()) { }
+
+        protected override void OnRenderMenuItemBackground(WF.ToolStripItemRenderEventArgs e)
+        {
+            var item = e.Item as WF.ToolStripMenuItem;
+            if (item is not null && (item.Selected || item.Pressed))
+            {
+                using var brush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2));
+                var bounds = new System.Drawing.Rectangle(System.Drawing.Point.Empty, e.Item.Size);
+                e.Graphics.FillRectangle(brush, bounds);
+            }
+            // 非悬停：透明底（菜单 BackColor 已浅色）
+        }
+
+        protected override void OnRenderItemCheck(WF.ToolStripItemImageRenderEventArgs e)
+        {
+            // 勾选标记用主题 Pink，避免默认黑勾
+            using var pen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(0xFF, 0x5B, 0x8A), 2f);
+            var r = e.ImageRectangle;
+            e.Graphics.DrawLine(pen, r.Left + r.Width / 4, r.Top + r.Height / 2, r.Left + r.Width / 2, r.Top + 3 * r.Height / 4);
+            e.Graphics.DrawLine(pen, r.Left + r.Width / 2, r.Top + 3 * r.Height / 4, r.Left + 3 * r.Width / 4, r.Top + r.Height / 4);
+        }
+    }
+
+    private sealed class TrayMenuColorTable : WF.ProfessionalColorTable
+    {
+        // 全部回菜单底色：消灭默认蓝/灰高亮与 3D 边框（扁平化）
+        public override System.Drawing.Color MenuItemSelected => System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2);
+        public override System.Drawing.Color MenuItemSelectedGradientBegin => System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2);
+        public override System.Drawing.Color MenuItemSelectedGradientEnd => System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2);
+        public override System.Drawing.Color MenuItemPressedGradientBegin => System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2);
+        public override System.Drawing.Color MenuItemPressedGradientEnd => System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2);
+        public override System.Drawing.Color MenuItemBorder => System.Drawing.Color.FromArgb(0xFF, 0xEC, 0xF2);
+        public override System.Drawing.Color ToolStripDropDownBackground => System.Drawing.Color.FromArgb(0xFA, 0xFA, 0xFC);
+        public override System.Drawing.Color ImageMarginGradientBegin => System.Drawing.Color.FromArgb(0xFA, 0xFA, 0xFC);
+        public override System.Drawing.Color ImageMarginGradientMiddle => System.Drawing.Color.FromArgb(0xFA, 0xFA, 0xFC);
+        public override System.Drawing.Color ImageMarginGradientEnd => System.Drawing.Color.FromArgb(0xFA, 0xFA, 0xFC);
+        public override System.Drawing.Color MenuBorder => System.Drawing.Color.FromArgb(0xE5, 0xE5, 0xEA);
+        public override System.Drawing.Color SeparatorDark => System.Drawing.Color.FromArgb(0xE5, 0xE5, 0xEA);
+        public override System.Drawing.Color SeparatorLight => System.Drawing.Color.FromArgb(0xE5, 0xE5, 0xEA);
+    }
+
     /// <summary>托盘模式入口：WPF Dispatcher 消息循环 + NotifyIcon。</summary>
     public static void Run(string electronExe)
     {
@@ -52,11 +114,22 @@ public sealed class TrayHost
     {
         _dispatcher = app.Dispatcher;
         var menu = new WF.ContextMenuStrip();
+        ApplyModernMenuStyle(menu);
         menu.Items.Add("打开聊天窗口", null, (_, _) => SendCmd("chat"));
         menu.Items.Add("打开状态面板", null, (_, _) => SendCmd("sidebar"));
         menu.Items.Add("设置", null, (_, _) => SendCmd("settings"));
         menu.Items.Add(new WF.ToolStripSeparator());
         menu.Items.Add("显示/隐藏桌宠", null, (_, _) => SendCmd("toggle-pet"));
+        // 桌宠拖动模式（对齐 Electron 内置托盘菜单项；宿主 setPetDragMode 翻转）
+        var dragItem = new WF.ToolStripMenuItem("桌宠拖动模式") { CheckOnClick = false };
+        dragItem.Click += (_, _) =>
+        {
+            // 拖动模式状态由宿主维护（Electron 侧 setPetDragMode 返回切换后状态）；
+            // 托盘侧保守翻转勾选，宿主指令失败时不回滚（下一轮菜单会重新对齐）。
+            dragItem.Checked = !dragItem.Checked;
+            SendCmd("drag-mode");
+        };
+        menu.Items.Add(dragItem);
         menu.Items.Add(new WF.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) =>
         {
