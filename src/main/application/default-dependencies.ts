@@ -92,6 +92,7 @@ import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-r
 import { broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
 import { registerWorkspaceFilesIpc } from "../chats/workspace-files-ipc";
 import { registerOpenInAppIpc } from "../chats/open-in-app";
+import { registerBrowserPanelIpc } from "../browser/browser-panel-ipc";
 import { registerMomentsIpc } from "../moments/moments-ipc";
 import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
 import { createToastWindowController } from "../toast/toast-window";
@@ -618,6 +619,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerWorkspaceFilesIpc(ipc);
         // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
         registerOpenInAppIpc(ipc);
+        registerBrowserPanelIpc({ ipc, getWindow: () => reactChatWindow });
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传
         registerAgUiIpc(

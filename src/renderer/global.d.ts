@@ -140,6 +140,18 @@ interface SettingsWindowApi {
   saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
 }
 
+interface BrowserPanelApi {
+  getState: () => Promise<import("../shared/browser-panel-types").BrowserPanelState | null>;
+  setBounds: (bounds: import("../shared/browser-panel-types").BrowserPanelBounds | null) => Promise<boolean>;
+  navigate: (url: string) => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  goBack: () => Promise<boolean>;
+  goForward: () => Promise<boolean>;
+  reload: () => Promise<boolean>;
+  stop: () => Promise<boolean>;
+  clearCookies: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  onStateChanged: (callback: (state: import("../shared/browser-panel-types").BrowserPanelState) => void) => () => void;
+}
+
 declare global {
   interface Window {
     cyrene?: {
@@ -163,6 +175,7 @@ declare global {
     toast?: ToastRendererApi;
     chat?: ChatWindowApi;
     settings?: SettingsWindowApi;
+    browserPanel?: BrowserPanelApi;
     memoryPanel?: import("./settings/shared/types").MemoryPanelApi;
     tts?: {
       loadSettings: () => Promise<Record<string, unknown>>;

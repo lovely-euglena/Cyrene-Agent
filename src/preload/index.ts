@@ -23,6 +23,7 @@ import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
+import type { BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
 
 // 渲染目标标识：preload 每次加载（即每次页面初始化/重新加载）生成一次，
 // 随活动会话一并上报主进程；同一页面内切换会话不改变该标识。
@@ -123,6 +124,23 @@ const chatApi = {
 contextBridge.exposeInMainWorld("cyrene", cyreneApi);
 contextBridge.exposeInMainWorld("appUpdate", appUpdateApi);
 contextBridge.exposeInMainWorld("chat", chatApi);
+
+const browserPanelApi = {
+  getState: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_GET_STATE) as Promise<BrowserPanelState | null>,
+  setBounds: (bounds: BrowserPanelBounds | null) => ipcRenderer.invoke(IPC.BROWSER_PANEL_SET_BOUNDS, bounds) as Promise<boolean>,
+  navigate: (url: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_NAVIGATE, url) as Promise<BrowserPanelResult>,
+  goBack: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_BACK) as Promise<boolean>,
+  goForward: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_FORWARD) as Promise<boolean>,
+  reload: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_RELOAD) as Promise<boolean>,
+  stop: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_STOP) as Promise<boolean>,
+  clearCookies: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLEAR_COOKIES) as Promise<BrowserPanelResult>,
+  onStateChanged: (callback: (state: BrowserPanelState) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: BrowserPanelState) => callback(state);
+    ipcRenderer.on(IPC.BROWSER_PANEL_STATE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.BROWSER_PANEL_STATE_CHANGED, listener);
+  },
+};
+contextBridge.exposeInMainWorld("browserPanel", browserPanelApi);
 
 // AG-UI 事件流：发起一次 agent run，通过 onEvent 回调收 AG-UI 标准事件，
 // 返回 AguiRunAck 表示 invoke 已被接收（终态仍由事件流承载）。

@@ -12,6 +12,7 @@ import { PlanContent, planTabDotClass, planTabLabel, type PlanReviewPhase } from
 import { ReviewDiffContent } from "./ReviewInspector";
 import { RightInspector, type InspectorTab } from "./RightInspector";
 import { TaskSessionInspector } from "./TaskSessionInspector";
+import { BrowserPanel } from "./BrowserPanel";
 
 /** 从路径取文件名做标签标题（兼容 / 与 \ 分隔） */
 function fileBaseName(filePath: string): string {
@@ -48,6 +49,7 @@ export interface ChatPageInspectorProps {
   /** 工作区根路径（未绑定时为空，文件树显示引导态） */
   workspaceRoot?: string;
   filesTabOpen: boolean;
+  browserTabOpen: boolean;
   /** 文件树标签被钉住（面板里还有其它标签时不可关） */
   filesTabPinned: boolean;
   fileTabs: ChatPageInspectorFileTab[];
@@ -69,6 +71,7 @@ export function ChatPageInspector({
   sessionId,
   workspaceRoot,
   filesTabOpen,
+  browserTabOpen,
   filesTabPinned,
   fileTabs,
   diffTabs,
@@ -84,6 +87,14 @@ export function ChatPageInspector({
 }: ChatPageInspectorProps) {
   const { t } = useTranslation();
   const tabs: InspectorTab[] = [];
+
+  if (browserTabOpen) {
+    tabs.push({
+      id: "browser",
+      label: t("browserPanel.title"),
+      content: <BrowserPanel active={activeTabId === "browser" || (activeTabId === null && tabs.length === 0)} />,
+    });
+  }
 
   if (filesTabOpen && sessionId) {
     tabs.push({

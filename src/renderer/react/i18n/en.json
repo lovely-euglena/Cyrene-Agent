@@ -346,6 +346,27 @@
     "panelAria": "Inspector panel",
     "toggle": "Toggle right panel"
   },
+  "browserPanel": {
+    "title": "Browser",
+    "open": "Open browser",
+    "address": "Address",
+    "addressPlaceholder": "Enter an HTTP or HTTPS URL",
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "stop": "Stop loading",
+    "go": "Go",
+    "loading": "Loading",
+    "emptyTitle": "No page open",
+    "emptyHint": "Enter a complete HTTP or HTTPS URL to start browsing",
+    "errors": {
+      "invalidUrl": "Invalid URL. Enter a complete HTTP or HTTPS address.",
+      "unsupportedProtocol": "This protocol is not supported. Only HTTP and HTTPS pages can be opened.",
+      "unavailable": "The browser is unavailable. Please try again.",
+      "loadFailed": "The page failed to load. Check the URL or network and try again.",
+      "rendererCrashed": "The page process exited. You can reload the page."
+    }
+  },
   "openWorkspace": {
     "tooltip": "Open workspace with {{app}}",
     "menuToggle": "Choose open target",
@@ -849,6 +870,19 @@
     "defaultFont": "System default",
     "backToWorkspace": "Back to workspace",
     "basicSettings": "Basics",
+    "browserControl": {
+      "navLabel": "Browser control",
+      "title": "Browser control",
+      "description": "Manage session data for Cyrene's embedded browser.",
+      "sectionTitle": "Browser data",
+      "sectionDescription": "This data belongs only to Cyrene's embedded browser and does not affect system Edge.",
+      "clearCookies": "Clear cookies",
+      "clearCookiesDescription": "Remove sign-in cookies saved by the embedded browser. The current page reloads afterward.",
+      "confirmTitle": "Clear browser cookies?",
+      "confirmDescription": "Websites may sign you out. Cache, history, and system Edge cookies are not cleared.",
+      "cookiesCleared": "Browser cookies cleared.",
+      "clearCookiesFailed": "Could not clear cookies. Please try again."
+    },
     "agentAbilities": "Agent capabilities",
     "subagents": {
       "title": "Subagents",

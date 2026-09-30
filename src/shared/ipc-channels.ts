@@ -64,6 +64,16 @@ export const IPC = {
   // 推理下拉（chat 窗口：原子读 + providerKey 写）
   CHAT_GET_REASONING_STATE: "chat:get-reasoning-state",
   CHAT_SET_REASONING: "chat:set-reasoning",
+  // 右侧内嵌浏览器：页面由主进程隔离的持久化 Session 加载。
+  BROWSER_PANEL_GET_STATE: "browser-panel:get-state",
+  BROWSER_PANEL_SET_BOUNDS: "browser-panel:set-bounds",
+  BROWSER_PANEL_NAVIGATE: "browser-panel:navigate",
+  BROWSER_PANEL_BACK: "browser-panel:back",
+  BROWSER_PANEL_FORWARD: "browser-panel:forward",
+  BROWSER_PANEL_RELOAD: "browser-panel:reload",
+  BROWSER_PANEL_STOP: "browser-panel:stop",
+  BROWSER_PANEL_CLEAR_COOKIES: "browser-panel:clear-cookies",
+  BROWSER_PANEL_STATE_CHANGED: "browser-panel:state-changed",
 
   // AG-UI 事件流
   AGUI_RUN: "agui:run",

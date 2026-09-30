@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquareText } from "lucide-react";
+import { Globe, MessageSquareText } from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
@@ -181,8 +181,12 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const [fileTabs, setFileTabs] = useState<{ id: string; relPath: string; line?: number; lineSeq?: number }[]>([]);
   /** 工作区文件树标签是否打开（ID 固定为 files） */
   const [filesTabOpen, setFilesTabOpen] = useState(false);
+  const [browserTabOpen, setBrowserTabOpen] = useState(() => localStorage.getItem("cyrene.browser-panel.open") === "1");
   /** 右侧面板当前激活的标签 ID（files / file:... / diff:... / plan:...），null 时面板取第一个标签 */
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  useEffect(() => {
+    localStorage.setItem("cyrene.browser-panel.open", browserTabOpen ? "1" : "0");
+  }, [browserTabOpen]);
   // 右栏拖宽布局：聊天区 + 右侧面板套 Group/Panel，宽度持久化到 localStorage。
   // onlySaveAfterUserInteractions 保证只记用户拖动结果，不在挂载/程序化布局时写盘。
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -1630,9 +1634,15 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     setActiveTabId("files");
   };
 
+  const openBrowserTab = () => {
+    setBrowserTabOpen(true);
+    setActiveTabId("browser");
+  };
+
   /** 收起右侧面板：关闭全部标签（再次点击开关可重新展开文件树） */
   const collapseInspector = () => {
     setFilesTabOpen(false);
+    setBrowserTabOpen(false);
     setFileTabs([]);
     setDiffTabs([]);
     setTaskTabs([]);
@@ -1669,6 +1679,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
 
   /** 右侧面板标签的固定顺序：文件树 → 文件预览 → Diff → 计划 */
   const inspectorTabIds = [
+    ...(browserTabOpen ? ["browser"] : []),
     ...(filesTabOpen ? ["files"] : []),
     ...fileTabs.map((tab) => tab.id),
     ...diffTabs.map((tab) => tab.id),
@@ -1696,6 +1707,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const remaining = inspectorTabIds.filter((tabId) => tabId !== id);
     if (id === "files") {
       setFilesTabOpen(false);
+    } else if (id === "browser") {
+      setBrowserTabOpen(false);
     } else if (id.startsWith("file:")) {
       setFileTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     } else if (id.startsWith("plan:")) {
@@ -1833,9 +1846,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             </>
           )}
         </header>
-        {/* 白色工作区右上角：打开菜单 + 分割线 + 右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画）。
-            仅在会话对话视图显示：产生过消息、且当前不在工具/技能/动态等面板页时才挂载 */}
-        {(hasMessages && !activePanel && (activeSession?.workspaceBinding || inspectorTabIds.length > 0)) && (
+        {/* 白色工作区右上角：浏览器入口与右侧面板开关；工具/技能等面板页不显示。 */}
+        {!activePanel && (
           <span className="cy-inspector-toggle-float">
             {activeSession?.workspaceBinding && activeSessionId && (
               <>
@@ -1843,9 +1855,20 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 <span className="cy-inspector-toggle-divider" aria-hidden="true" />
               </>
             )}
+            <button
+              type="button"
+              className="cy-inspector-browser-toggle"
+              title={t("browserPanel.open")}
+              aria-label={t("browserPanel.open")}
+              onClick={openBrowserTab}
+            >
+              <Globe size={17} strokeWidth={1.8} />
+            </button>
             <InspectorToggle
               open={inspectorTabIds.length > 0}
-              onToggle={() => (inspectorTabIds.length > 0 ? collapseInspector() : openFilesTab())}
+              onToggle={() => (inspectorTabIds.length > 0
+                ? collapseInspector()
+                : activeSession?.workspaceBinding ? openFilesTab() : openBrowserTab())}
             />
           </span>
         )}
@@ -2055,6 +2078,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 sessionId={activeSessionId}
                 workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
                 filesTabOpen={filesTabOpen}
+                browserTabOpen={browserTabOpen}
                 filesTabPinned={filesTabPinned}
                 fileTabs={fileTabs}
                 diffTabs={diffTabs}

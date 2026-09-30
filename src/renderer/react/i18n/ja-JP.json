@@ -362,6 +362,27 @@
     "panelAria": "右側インスペクターパネル",
     "toggle": "右側パネルを展開／折りたたむ"
   },
+  "browserPanel": {
+    "title": "ブラウザー",
+    "open": "ブラウザーを開く",
+    "address": "アドレス",
+    "addressPlaceholder": "HTTP または HTTPS の URL を入力",
+    "back": "戻る",
+    "forward": "進む",
+    "reload": "再読み込み",
+    "stop": "読み込みを停止",
+    "go": "移動",
+    "loading": "読み込み中",
+    "emptyTitle": "ページが開かれていません",
+    "emptyHint": "完全な HTTP または HTTPS URL を入力して閲覧を開始",
+    "errors": {
+      "invalidUrl": "URL が無効です。完全な HTTP または HTTPS アドレスを入力してください。",
+      "unsupportedProtocol": "このプロトコルには対応していません。HTTP と HTTPS のみ開けます。",
+      "unavailable": "ブラウザーを利用できません。もう一度お試しください。",
+      "loadFailed": "ページを読み込めませんでした。URL またはネットワークを確認してください。",
+      "rendererCrashed": "ページプロセスが終了しました。再読み込みできます。"
+    }
+  },
   "openWorkspace": {
     "tooltip": "{{app}} でワークスペースを開く",
     "menuToggle": "開く方法を選択",
@@ -865,6 +886,19 @@
     "defaultFont": "システム既定のフォント",
     "backToWorkspace": "ワークスペースに戻る",
     "basicSettings": "基本設定",
+    "browserControl": {
+      "navLabel": "ブラウザー管理",
+      "title": "ブラウザー管理",
+      "description": "Cyrene 内蔵ブラウザーのセッションデータを管理します。",
+      "sectionTitle": "ブラウザーデータ",
+      "sectionDescription": "このデータは Cyrene 内蔵ブラウザー専用で、システム Edge には影響しません。",
+      "clearCookies": "Cookie を削除",
+      "clearCookiesDescription": "内蔵ブラウザーに保存されたログイン Cookie を削除します。削除後、現在のページを再読み込みします。",
+      "confirmTitle": "ブラウザーの Cookie を削除しますか？",
+      "confirmDescription": "Web サイトからログアウトされる場合があります。キャッシュ、履歴、システム Edge の Cookie は削除されません。",
+      "cookiesCleared": "ブラウザーの Cookie を削除しました。",
+      "clearCookiesFailed": "Cookie を削除できませんでした。もう一度お試しください。"
+    },
     "agentAbilities": "Agent 機能",
     "subagents": {
       "title": "サブエージェント",

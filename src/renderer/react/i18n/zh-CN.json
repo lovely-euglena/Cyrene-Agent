@@ -346,6 +346,27 @@
     "panelAria": "右侧检查面板",
     "toggle": "展开/收起右侧面板"
   },
+  "browserPanel": {
+    "title": "浏览器",
+    "open": "打开浏览器",
+    "address": "网址",
+    "addressPlaceholder": "输入 HTTP 或 HTTPS 网址",
+    "back": "后退",
+    "forward": "前进",
+    "reload": "刷新",
+    "stop": "停止加载",
+    "go": "前往",
+    "loading": "正在加载",
+    "emptyTitle": "浏览器尚未打开网页",
+    "emptyHint": "输入完整的 HTTP 或 HTTPS 网址开始浏览",
+    "errors": {
+      "invalidUrl": "网址无效，请输入完整的 HTTP 或 HTTPS 地址。",
+      "unsupportedProtocol": "暂不支持该协议，只能打开 HTTP 或 HTTPS 网页。",
+      "unavailable": "浏览器暂不可用，请重试。",
+      "loadFailed": "页面加载失败，请检查网址或网络后重试。",
+      "rendererCrashed": "页面进程已退出，可以重新加载。"
+    }
+  },
   "openWorkspace": {
     "tooltip": "用 {{app}} 打开工作区",
     "menuToggle": "选择打开方式",
@@ -849,6 +870,19 @@
     "defaultFont": "系统默认字体",
     "backToWorkspace": "返回工作区",
     "basicSettings": "基础设置",
+    "browserControl": {
+      "navLabel": "浏览器控制",
+      "title": "浏览器控制",
+      "description": "管理 Cyrene 内嵌浏览器的会话数据。",
+      "sectionTitle": "浏览器数据",
+      "sectionDescription": "这些数据仅属于 Cyrene 内嵌浏览器，不会影响系统 Edge。",
+      "clearCookies": "清除 Cookie",
+      "clearCookiesDescription": "清除内嵌浏览器保存的登录 Cookie；清理后当前网页会重新加载。",
+      "confirmTitle": "清除浏览器 Cookie？",
+      "confirmDescription": "网站可能会退出登录。此操作不会清除缓存、历史记录或系统 Edge Cookie。",
+      "cookiesCleared": "浏览器 Cookie 已清除。",
+      "clearCookiesFailed": "清除失败，请重试。"
+    },
     "agentAbilities": "Agent 能力",
     "subagents": {
       "title": "子代理",
