@@ -89,7 +89,8 @@ public sealed partial class SettingsWindow : NativeWindow
             BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x88, 0x88, 0x99)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12),
-            Background = NativeTheme.SurfaceAppBrush,
+            // 窗口壳体白底（Electron [pearl-white] .settings-shell → --rb-card-bg #FFFFFF）
+            Background = Brushes.White,
             Margin = new Thickness(16), // 透明留白：给窗口投影
         };
         var grid = new Grid();
@@ -120,7 +121,8 @@ public sealed partial class SettingsWindow : NativeWindow
 
         var titleBar = new Border
         {
-            Background = Brushes.White,
+            // pearl-white .settings-titlebar → --rb-bg-1 #F5F5F7 + --rb-border-soft 下边线
+            Background = NativeTheme.SurfaceNavBrush,
             BorderBrush = NativeTheme.BorderSoftBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             CornerRadius = new CornerRadius(12, 12, 0, 0),
@@ -135,7 +137,8 @@ public sealed partial class SettingsWindow : NativeWindow
         _sectionTitle.FontWeight = FontWeights.Medium;
         _sectionTitle.Foreground = NativeTheme.TextStrongBrush;
         _sectionHint.FontSize = 12;
-        _sectionHint.Foreground = NativeTheme.TextMutedBrush;
+        // pearl-white 覆盖组把 titlebar hint 一并设为 --rb-text-strong（theme.css:159）
+        _sectionHint.Foreground = NativeTheme.TextStrongBrush;
         _sectionHint.Margin = new Thickness(0, 2, 0, 0);
         _sectionHint.TextTrimming = TextTrimming.CharacterEllipsis;
         titleStack.Children.Add(_sectionTitle);
