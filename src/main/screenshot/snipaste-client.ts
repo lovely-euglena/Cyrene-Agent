@@ -57,6 +57,8 @@ export interface SnipasteClientOptions {
   residentReadyPollMs?: number;
   /** 单次截图交互硬上限（毫秒），默认 10 分钟。 */
   maxInteractionMs?: number;
+  clipboardPollMs?: number;
+  clipboardPollWindowMs?: number;
 }
 
 /** 解析 PNG 尺寸（IHDR：签名 8 字节 + 长度/类型 8 字节后是宽高）。 */
@@ -145,6 +147,10 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
     });
   }
 
+  /** 在途截图互斥（P1 修复）：chat-button 与 hotkey 并发触发时防止
+   * before/after 剪贴板判定交叉污染（A 的基准被 B 的截图判成取消）。 */
+  private inFlight = false;
+
   async start(
     mode: ScreenshotMode,
     _source: PendingRequest["source"],
@@ -155,6 +161,12 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
 
     await this.ensureResidentRunning(executable);
 
+    if (this.inFlight) {
+      // 重入保护：上一次截图的剪贴板判定/写盘未完成前拒绝新请求，
+      // 避免两个 start() 的 before/after 基准交叉（结果互相误判取消）。
+      throw new Error("SCREENSHOT_IN_FLIGHT");
+    }
+    this.inFlight = true;
     const requestId = (this.options.createRequestId ?? randomUUID)();
     const before = this.options.readClipboardPng();
     this.currentCaptureState = "selecting";
@@ -166,7 +178,12 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
       await this.waitChild(child);
 
       this.currentCaptureState = "committing";
-      const after = this.options.readClipboardPng();
+      // 剪贴板就绪轮询（P1 修复）：`snip --block` 的 CLI 进程若走「转发给
+      // 常驻进程后立即退出」模式（版本行为差异），waitChild 瞬间返回时剪贴板
+      // 还没写入，立刻读会误判取消。轮询窗口给常驻进程留出写入时间：
+      //   - 出现新图（≠before）→ 提前结束
+      //   - 持续无变化满窗口 → 判定用户取消（取消判定延迟 = 窗口时长，可接受）
+      const after = await this.waitForClipboardChange(before);
       if (!after || (before !== null && before.equals(after))) {
         throw new Error("SCREENSHOT_CANCELLED:user");
       }
@@ -190,7 +207,28 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
       };
     } finally {
       this.currentCaptureState = "idle";
+      this.inFlight = false;
     }
+  }
+
+  /**
+   * 等待剪贴板出现新图（相对 before），或超窗口返回当前值。
+   * 200ms 间隔轮询（常驻进程写入通常 <1s；--block 阻塞模式天然等用户完成，
+   * 本窗口只兜转发模式下的瞬时返回场景）。
+   */
+  private async waitForClipboardChange(before: Buffer | null): Promise<Buffer | null> {
+    const pollMs = this.options.clipboardPollMs ?? 200;
+    const windowMs = this.options.clipboardPollWindowMs ?? 3000;
+    const now = this.options.now ?? Date.now;
+    const sleep = this.options.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const deadline = now() + windowMs;
+    let current = this.options.readClipboardPng();
+    while (now() < deadline) {
+      if (current && (before === null || !before.equals(current))) return current;
+      await sleep(pollMs);
+      current = this.options.readClipboardPng();
+    }
+    return current;
   }
 
   /** Snipaste 截图界面归常驻进程所有，外部无法关闭；调用取消为无操作。 */

@@ -32,13 +32,21 @@ internal static class SshHost
     private static SshSessionManager _manager = null!;
     private static readonly SemaphoreSlim IoLock = new(1, 1);
     private static Stream _stdout = null!;
+    /// <summary>退出幂等门：shutdown op 与 stdin EOF 双路径只跑一次 CloseAll+Exit。</summary>
+    private static int _exiting;
 
     public static int Run(string[] args)
     {
         _stdout = Console.OpenStandardOutput();
-        var dataDir = ParseDataDir(args) ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "live2d-cyrene");
+        // data-dir 硬校验（P1 修复）：旧 fallback 落 live2d-cyrene（上游旧目录名），
+        // 宿主忘传参时档案静默写错位置。宿主（native-ssh-host.ts）协议必传——
+        // 缺失即协议违约，明确报错退出而不是落错目录。
+        var dataDir = ParseDataDir(args);
+        if (string.IsNullOrEmpty(dataDir))
+        {
+            Console.Error.WriteLine("[ssh-host] missing --data-dir (protocol violation)");
+            return 2;
+        }
         _store = new SshProfileStore(dataDir);
         _manager = new SshSessionManager(_store);
 
@@ -72,7 +80,11 @@ internal static class SshHost
             });
         }
 
-        _manager.CloseAll();
+        // stdin EOF / Ctrl+C：与 shutdown op 抢同一幂等门（防双 CloseAll 竞态）
+        if (Interlocked.Exchange(ref _exiting, 1) == 0)
+        {
+            _manager.CloseAll();
+        }
         return 0;
     }
 
@@ -90,8 +102,19 @@ internal static class SshHost
         var op = root.TryGetProperty("op", out var opEl) ? opEl.GetString() : null;
         if (op == "shutdown")
         {
-            _manager.CloseAll();
-            Environment.Exit(0);
+            // 幂等退出（P0 修复）：与 EOF 路径抢门；CloseAll 限时 3s/会话防卡；
+            // Exit 前等 IoLock 空闲，保证最后一帧完整写完（防宿主读到半截 JSON）。
+            if (Interlocked.Exchange(ref _exiting, 1) == 0)
+            {
+                _ = Task.Run(() =>
+                {
+                    try { _manager.CloseAll(); } catch { /* 退出路径尽力 */ }
+                    IoLock.Wait(500);
+                    IoLock.Release();
+                    Environment.Exit(0);
+                });
+            }
+            return;
         }
 
         var callId = root.TryGetProperty("callId", out var idEl) ? idEl.GetString() ?? "" : "";

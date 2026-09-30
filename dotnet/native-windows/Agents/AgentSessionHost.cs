@@ -51,6 +51,10 @@ internal sealed class AgentSessionHost
         public List<object> History { get; } = [];
         public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
         public int TurnCount { get; set; }
+        /// <summary>destroy 标记：continuation 闭包持引用，晚到 llm_response 必须先校验（防僵尸会话复活）。</summary>
+        public bool Destroyed { get; set; }
+        /// <summary>连续「全部工具被白名单拒绝」轮数（防死磕循环）。</summary>
+        public int DeniedStreak { get; set; }
     }
 
     private readonly ConcurrentDictionary<string, Session> _sessions = new();
@@ -66,7 +70,12 @@ internal sealed class AgentSessionHost
         return s;
     }
 
-    public bool Destroy(string sessionId) => _sessions.TryRemove(sessionId, out _);
+    public bool Destroy(string sessionId)
+    {
+        if (!_sessions.TryRemove(sessionId, out var s)) return false;
+        s.Destroyed = true; // 拦截在途 continuation（pending 字典里的闭包仍持引用）
+        return true;
+    }
 
     public Session? Get(string sessionId) => _sessions.TryGetValue(sessionId, out var s) ? s : null;
 
@@ -82,10 +91,11 @@ internal sealed class AgentSessionHost
     /// 审批后经 tool_result 帧回注）；纯文本则落史返回 idle。
     /// 终止判定：turn 上限 / content.done=true / 纯文本。
     /// </summary>
-    public (object llmRequest, Func<JsonElement, string> onAssistant) BeginStep(string sessionId, string message)
+    public (object llmRequest, Func<JsonElement, (string Outcome, string SessionId)> onAssistant) BeginStep(string sessionId, string message)
     {
         var s = Get(sessionId) ?? throw new InvalidOperationException($"会话不存在: {sessionId}");
-        if (s.State == SessionState.Thinking) throw new InvalidOperationException($"会话 {sessionId} 正在推进中");
+        if (s.State is SessionState.Thinking or SessionState.WaitingLlm or SessionState.WaitingTool)
+            throw new InvalidOperationException($"会话 {sessionId} 正在推进中（{s.State}），拒绝重入 step");
         s.TurnCount++;
         if (s.TurnCount > MaxTurns) throw new InvalidOperationException($"会话 {sessionId} 超过最大轮数 {MaxTurns}");
         s.State = SessionState.WaitingLlm;
@@ -94,7 +104,7 @@ internal sealed class AgentSessionHost
     }
 
     /// <summary>回注 tool_result（工具已执行）后继续下一轮 llm_request。</summary>
-    public (object llmRequest, Func<JsonElement, string> onAssistant) ContinueWithToolResult(string sessionId, JsonElement toolResult)
+    public (object llmRequest, Func<JsonElement, (string Outcome, string SessionId)> onAssistant) ContinueWithToolResult(string sessionId, JsonElement toolResult)
     {
         var s = Get(sessionId) ?? throw new InvalidOperationException($"会话不存在: {sessionId}");
         if (s.State != SessionState.WaitingTool) throw new InvalidOperationException($"会话 {sessionId} 不在等工具结果状态");
@@ -132,8 +142,10 @@ internal sealed class AgentSessionHost
     };
 
     /// <summary>构造 llm_response 的续跑闭包：tool_calls→工具环；纯文本→idle。</summary>
-    private Func<JsonElement, string> MakeContinuation(Session s) => (content) =>
+    private Func<JsonElement, (string Outcome, string SessionId)> MakeContinuation(Session s) => (content) =>
     {
+        // 僵尸会话拦截：destroy 后晚到的 llm_response 短路（不再写 History/State）
+        if (s.Destroyed) return ("session_destroyed", s.Id);
         // content 形状（Electron 回注）：
         //   纯文本：{"text": "..."}
         //   带工具：{"text": "...", "toolCalls": [{"id","name","arguments"}]}
@@ -161,16 +173,27 @@ internal sealed class AgentSessionHost
                 s.History.Add(new { role = "system", content = "工具被白名单拒绝: " + string.Join(", ", denied) });
             if (allowedCalls.Count == 0)
             {
-                s.State = SessionState.Done;
-                return "done";
+                // 拒绝全部：不再静默 Done（模型永远收不到拒绝原因，会话从模型
+                // 视角死亡）。改为回 Idle + result 带 denied 清单——拒绝 system
+                // 消息已在 History，上层可再发 step 让 LLM 看到原因换策略。
+                // 连续 3 轮全拒才硬终止（防死磕循环）。
+                s.DeniedStreak++;
+                if (s.DeniedStreak >= 3)
+                {
+                    s.State = SessionState.Failed;
+                    return ("done_denied", s.Id);
+                }
+                s.State = SessionState.Idle;
+                return ("idle_denied", s.Id);
             }
+            s.DeniedStreak = 0;
             s.History.Add(new { role = "assistant", content = new { text, toolCalls = allowedCalls } });
             s.State = SessionState.WaitingTool;
-            return "waiting_tool";   // Electron 执行工具后 tool_result 回注继续
+            return ("waiting_tool", s.Id);   // Electron 执行工具后 tool_result 回注继续
         }
         s.History.Add(new { role = "assistant", content = text ?? "" });
         s.State = SessionState.Done;
-        return "done";
+        return ("done", s.Id);
     };
 
     // ── 进程入口（协议循环）──
@@ -180,7 +203,7 @@ internal sealed class AgentSessionHost
         var stdout = Console.OpenStandardOutput();
         var ioLock = new SemaphoreSlim(1, 1);
         var host = new AgentSessionHost();
-        var pending = new ConcurrentDictionary<string, Func<JsonElement, string>>();
+        var pending = new ConcurrentDictionary<string, Func<JsonElement, (string Outcome, string SessionId)>>();
 
         void Send(object frame) => ToolHost.WriteFrame(stdout, ioLock, frame);
         Send(new { op = "ready" });
@@ -241,20 +264,28 @@ internal sealed class AgentSessionHost
                         var callId = root.GetProperty("callId").GetString()!;
                         if (pending.TryRemove(callId, out var onComplete))
                         {
-                            // 契约修复：ok 缺省 = true（content 在即成功；显式
-                            // false/0 才走失败——协议头帧例与本修复对齐）
+                            // ok 判定严格化：缺省 true；bool 必须为 true；number 必须 ≠0；
+                            // 字符串一律 false（旧实现对 "false" 字符串误判为 ok）。
                             var ok = !root.TryGetProperty("ok", out var okEl)
-                                || (okEl.ValueKind != JsonValueKind.False && okEl.ValueKind != JsonValueKind.Number)
+                                || okEl.ValueKind == JsonValueKind.True
                                 || (okEl.ValueKind == JsonValueKind.Number && okEl.GetDouble() != 0);
                             if (ok && root.TryGetProperty("content", out var content))
                             {
-                                var outcome = onComplete(content);
-                                if (outcome == "waiting_tool")
+                                var (outcome, sessionFromClosure) = onComplete(content);
+                                // sessionId 以闭包带出为准（会话本体事实来源），
+                                // 回注帧字段仅作兜底对账
+                                var sid = sessionFromClosure
+                                    ?? (root.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null);
+                                if (outcome == "session_destroyed")
+                                {
+                                    // 晚到回注命中已销毁会话：安全短路，不产生 tool_request
+                                    Send(new { op = "result", callId, ok = false, error = "session destroyed" });
+                                }
+                                else if (outcome == "waiting_tool")
                                 {
                                     // 会话进入 WaitingTool：result 换成 tool_request，
                                     // Electron 执行（含审批）后 tool_result 帧回注继续
-                                    var sid = root.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null;
-                                    var sess = sid is null ? null : host.Get(sid);
+                                    var sess = host.Get(sid ?? "");
                                     var lastEntry = sess?.History.Count > 0 ? sess.History[^1] : null;
                                     Send(new
                                     {
@@ -263,6 +294,11 @@ internal sealed class AgentSessionHost
                                         sessionId = sid,
                                         assistantMessage = lastEntry,
                                     });
+                                }
+                                else if (outcome == "idle_denied" || outcome == "done_denied")
+                                {
+                                    // 白名单全拒：回 Idle（上层可续步）或连续 3 轮硬终止
+                                    Send(new { op = "result", callId, ok = true, data = new { state = outcome, denied = true } });
                                 }
                                 else
                                 {
