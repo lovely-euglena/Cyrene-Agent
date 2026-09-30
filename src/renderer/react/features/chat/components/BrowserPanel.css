@@ -9,6 +9,62 @@
   background: var(--rb-bg-1, #fffbfc);
 }
 
+.cy-browser-panel__tabs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 35px;
+  padding: 4px 7px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--rb-border-default, #eee8eb);
+  background: var(--rb-bg-2, #faf8fa);
+  scrollbar-width: thin;
+}
+.cy-browser-panel__tab {
+  display: flex;
+  flex: 0 1 160px;
+  align-items: center;
+  min-width: 78px;
+  max-width: 190px;
+  height: 29px;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--rb-text-secondary, #777);
+}
+.cy-browser-panel__tab.is-active {
+  background: var(--rb-bg-1, #fffbfc);
+  color: var(--rb-text-primary, #29252a);
+  box-shadow: 0 -1px 0 var(--rb-border-default, #eee8eb), 1px 0 0 var(--rb-border-default, #eee8eb), -1px 0 0 var(--rb-border-default, #eee8eb);
+}
+.cy-browser-panel__tab-select,
+.cy-browser-panel__tab-close,
+.cy-browser-panel__new-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 27px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.cy-browser-panel__tab-select {
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px 0 9px;
+  overflow: hidden;
+  text-align: left;
+}
+.cy-browser-panel__tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.cy-browser-panel__tab-close { width: 25px; border-radius: 5px; }
+.cy-browser-panel__tab-close:hover,
+.cy-browser-panel__new-tab:hover { background: var(--rb-surface-hover, #fff0f5); color: var(--rb-text-primary, #29252a); }
+.cy-browser-panel__new-tab { width: 27px; flex: none; border-radius: 6px; color: var(--rb-text-secondary, #777); }
+
 .cy-browser-panel__toolbar {
   display: flex;
   flex: none;

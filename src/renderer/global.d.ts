@@ -149,6 +149,9 @@ interface BrowserPanelApi {
   reload: () => Promise<boolean>;
   stop: () => Promise<boolean>;
   clearCookies: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  newTab: () => Promise<boolean>;
+  activateTab: (tabId: string) => Promise<boolean>;
+  closeTab: (tabId: string) => Promise<boolean>;
   onStateChanged: (callback: (state: import("../shared/browser-panel-types").BrowserPanelState) => void) => () => void;
 }
 

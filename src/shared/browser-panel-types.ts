@@ -5,7 +5,8 @@ export interface BrowserPanelBounds {
   height: number;
 }
 
-export interface BrowserPanelState {
+export interface BrowserPanelTabState {
+  id: string;
   url: string;
   title: string;
   loading: boolean;
@@ -15,15 +16,13 @@ export interface BrowserPanelState {
   crashed: boolean;
 }
 
+export interface BrowserPanelState {
+  activeTabId: string;
+  tabs: BrowserPanelTabState[];
+}
+
 export type BrowserPanelResult =
   | { ok: true }
   | { ok: false; error: "invalid_url" | "unsupported_protocol" | "unavailable" };
 
-export const EMPTY_BROWSER_PANEL_STATE: BrowserPanelState = {
-  url: "",
-  title: "",
-  loading: false,
-  canGoBack: false,
-  canGoForward: false,
-  crashed: false,
-};
+export const EMPTY_BROWSER_PANEL_STATE: BrowserPanelState = { activeTabId: "", tabs: [] };

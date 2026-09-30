@@ -349,6 +349,8 @@
   "browserPanel": {
     "title": "浏览器",
     "open": "打开浏览器",
+    "newTab": "新标签页",
+    "closeTab": "关闭 {{title}}",
     "address": "网址",
     "addressPlaceholder": "输入 HTTP 或 HTTPS 网址",
     "back": "后退",

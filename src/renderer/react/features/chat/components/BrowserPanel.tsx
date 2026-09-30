@@ -1,10 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, LoaderCircle, RotateCw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, LoaderCircle, Plus, RotateCw, Square, X } from "lucide-react";
 import { useTranslation } from "../../../i18n";
-import type { BrowserPanelState } from "../../../../../shared/browser-panel-types";
+import type { BrowserPanelState, BrowserPanelTabState } from "../../../../../shared/browser-panel-types";
 import "./BrowserPanel.css";
 
 const EMPTY_STATE: BrowserPanelState = {
+  activeTabId: "",
+  tabs: [],
+};
+
+const EMPTY_TAB: BrowserPanelTabState = {
+  id: "",
   url: "",
   title: "",
   loading: false,
@@ -16,7 +22,7 @@ const EMPTY_STATE: BrowserPanelState = {
 export function BrowserPanel({ active }: { active: boolean }) {
   const { t } = useTranslation();
   const hostRef = useRef<HTMLDivElement>(null);
-  const lastStateUrlRef = useRef("");
+  const lastAddressKeyRef = useRef("");
   const [state, setState] = useState(EMPTY_STATE);
   const [address, setAddress] = useState("");
   const [commandError, setCommandError] = useState("");
@@ -28,17 +34,21 @@ export function BrowserPanel({ active }: { active: boolean }) {
     const unsubscribe = api.onStateChanged((next) => {
       if (!mounted) return;
       setState(next);
-      if (next.url !== lastStateUrlRef.current) {
-        lastStateUrlRef.current = next.url;
-        setAddress(next.url);
+      const activeTab = next.tabs.find((tab) => tab.id === next.activeTabId);
+      const addressKey = `${next.activeTabId}\n${activeTab?.url ?? ""}`;
+      if (addressKey !== lastAddressKeyRef.current) {
+        lastAddressKeyRef.current = addressKey;
+        setAddress(activeTab?.url ?? "");
       }
     });
     void api.getState().then((next) => {
       if (mounted && next) {
         setState(next);
-        if (next.url !== lastStateUrlRef.current) {
-          lastStateUrlRef.current = next.url;
-          setAddress(next.url);
+        const activeTab = next.tabs.find((tab) => tab.id === next.activeTabId);
+        const addressKey = `${next.activeTabId}\n${activeTab?.url ?? ""}`;
+        if (addressKey !== lastAddressKeyRef.current) {
+          lastAddressKeyRef.current = addressKey;
+          setAddress(activeTab?.url ?? "");
         }
       }
     });
@@ -95,21 +105,59 @@ export function BrowserPanel({ active }: { active: boolean }) {
     }
   }
 
-  const pageError = state.error === "load_failed"
+  const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? EMPTY_TAB;
+  const pageError = activeTab.error === "load_failed"
     ? t("browserPanel.errors.loadFailed")
-    : state.error === "renderer_crashed"
+    : activeTab.error === "renderer_crashed"
       ? t("browserPanel.errors.rendererCrashed")
-      : state.error === "unavailable"
+      : activeTab.error === "unavailable"
         ? t("browserPanel.errors.unavailable")
-        : state.error;
+        : activeTab.error;
 
   return (
     <section className="cy-browser-panel" aria-label={t("browserPanel.title")}>
+      <div className="cy-browser-panel__tabs" role="tablist" aria-label={t("browserPanel.title")}>
+        {state.tabs.map((tab) => {
+          let label = tab.title || t("browserPanel.newTab");
+          if (!tab.title && tab.url) {
+            try { label = new URL(tab.url).hostname; } catch { label = tab.url; }
+          }
+          return (
+            <div className={`cy-browser-panel__tab${tab.id === state.activeTabId ? " is-active" : ""}`} key={tab.id}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab.id === state.activeTabId}
+                className="cy-browser-panel__tab-select"
+                title={tab.title || tab.url || t("browserPanel.newTab")}
+                onClick={() => void window.browserPanel?.activateTab(tab.id)}
+              >
+                <span className="cy-browser-panel__tab-label">{label}</span>
+                {tab.loading && <LoaderCircle size={12} className="cy-browser-panel__spinner" aria-label={t("browserPanel.loading")} />}
+              </button>
+              <button
+                type="button"
+                className="cy-browser-panel__tab-close"
+                aria-label={t("browserPanel.closeTab", { title: label })}
+                title={t("browserPanel.closeTab", { title: label })}
+                onClick={() => void window.browserPanel?.closeTab(tab.id)}
+              ><X size={12} /></button>
+            </div>
+          );
+        })}
+        <button
+          type="button"
+          className="cy-browser-panel__new-tab"
+          aria-label={t("browserPanel.newTab")}
+          title={t("browserPanel.newTab")}
+          onClick={() => void window.browserPanel?.newTab()}
+        ><Plus size={15} /></button>
+      </div>
       <form className="cy-browser-panel__toolbar" onSubmit={(event) => void submitAddress(event)}>
-        <button type="button" className="cy-browser-panel__icon" disabled={!state.canGoBack} aria-label={t("browserPanel.back")} onClick={() => void window.browserPanel?.goBack()}><ArrowLeft size={15} /></button>
-        <button type="button" className="cy-browser-panel__icon" disabled={!state.canGoForward} aria-label={t("browserPanel.forward")} onClick={() => void window.browserPanel?.goForward()}><ArrowRight size={15} /></button>
-        <button type="button" className="cy-browser-panel__icon" aria-label={state.loading ? t("browserPanel.stop") : t("browserPanel.reload")} onClick={() => void (state.loading ? window.browserPanel?.stop() : window.browserPanel?.reload())}>
-          {state.loading ? <Square size={13} /> : <RotateCw size={14} />}
+        <button type="button" className="cy-browser-panel__icon" disabled={!activeTab.canGoBack} aria-label={t("browserPanel.back")} onClick={() => void window.browserPanel?.goBack()}><ArrowLeft size={15} /></button>
+        <button type="button" className="cy-browser-panel__icon" disabled={!activeTab.canGoForward} aria-label={t("browserPanel.forward")} onClick={() => void window.browserPanel?.goForward()}><ArrowRight size={15} /></button>
+        <button type="button" className="cy-browser-panel__icon" aria-label={activeTab.loading ? t("browserPanel.stop") : t("browserPanel.reload")} onClick={() => void (activeTab.loading ? window.browserPanel?.stop() : window.browserPanel?.reload())}>
+          {activeTab.loading ? <Square size={13} /> : <RotateCw size={14} />}
         </button>
         <input
           className="cy-browser-panel__address"
@@ -123,13 +171,13 @@ export function BrowserPanel({ active }: { active: boolean }) {
         <button className="cy-browser-panel__go" type="submit">{t("browserPanel.go")}</button>
       </form>
       <div className="cy-browser-panel__page-meta">
-        <span className="cy-browser-panel__page-title" title={state.title || state.url}>{state.title || state.url || t("browserPanel.emptyTitle")}</span>
-        {state.loading && <LoaderCircle size={13} className="cy-browser-panel__spinner" aria-label={t("browserPanel.loading")} />}
+        <span className="cy-browser-panel__page-title" title={activeTab.title || activeTab.url}>{activeTab.title || activeTab.url || t("browserPanel.emptyTitle")}</span>
+        {activeTab.loading && <LoaderCircle size={13} className="cy-browser-panel__spinner" aria-label={t("browserPanel.loading")} />}
       </div>
-      {pageError && <div className="cy-browser-panel__error" role="status"><span>{pageError}</span>{state.crashed && <button type="button" onClick={() => void window.browserPanel?.reload()}>{t("browserPanel.reload")}</button>}</div>}
+      {pageError && <div className="cy-browser-panel__error" role="status"><span>{pageError}</span>{activeTab.crashed && <button type="button" onClick={() => void window.browserPanel?.reload()}>{t("browserPanel.reload")}</button>}</div>}
       {commandError && <div className="cy-browser-panel__error" role="alert">{commandError}<button type="button" aria-label={t("common.close")} onClick={() => setCommandError("")}><X size={13} /></button></div>}
       <div className="cy-browser-panel__webview" ref={hostRef}>
-        {!state.url && <div className="cy-browser-panel__empty">{t("browserPanel.emptyHint")}</div>}
+        {!activeTab.url && <div className="cy-browser-panel__empty">{t("browserPanel.emptyHint")}</div>}
       </div>
     </section>
   );

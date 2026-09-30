@@ -134,6 +134,9 @@ const browserPanelApi = {
   reload: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_RELOAD) as Promise<boolean>,
   stop: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_STOP) as Promise<boolean>,
   clearCookies: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLEAR_COOKIES) as Promise<BrowserPanelResult>,
+  newTab: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_NEW_TAB) as Promise<boolean>,
+  activateTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_ACTIVATE_TAB, tabId) as Promise<boolean>,
+  closeTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLOSE_TAB, tabId) as Promise<boolean>,
   onStateChanged: (callback: (state: BrowserPanelState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: BrowserPanelState) => callback(state);
     ipcRenderer.on(IPC.BROWSER_PANEL_STATE_CHANGED, listener);

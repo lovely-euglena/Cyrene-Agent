@@ -365,6 +365,8 @@
   "browserPanel": {
     "title": "ブラウザー",
     "open": "ブラウザーを開く",
+    "newTab": "新しいタブ",
+    "closeTab": "{{title}}を閉じる",
     "address": "アドレス",
     "addressPlaceholder": "HTTP または HTTPS の URL を入力",
     "back": "戻る",

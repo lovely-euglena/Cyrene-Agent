@@ -349,6 +349,8 @@
   "browserPanel": {
     "title": "Browser",
     "open": "Open browser",
+    "newTab": "New tab",
+    "closeTab": "Close {{title}}",
     "address": "Address",
     "addressPlaceholder": "Enter an HTTP or HTTPS URL",
     "back": "Back",

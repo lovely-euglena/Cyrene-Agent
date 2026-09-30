@@ -67,6 +67,18 @@ export function registerBrowserPanelIpc(input: {
     controller.stop();
     return true;
   });
+  input.ipc.handle(IPC.BROWSER_PANEL_NEW_TAB, (event) => {
+    if (!authorized(event)) return false;
+    return controller.newTab();
+  });
+  input.ipc.handle(IPC.BROWSER_PANEL_ACTIVATE_TAB, (event, tabId: unknown) => {
+    if (!authorized(event) || typeof tabId !== "string") return false;
+    return controller.activateTab(tabId);
+  });
+  input.ipc.handle(IPC.BROWSER_PANEL_CLOSE_TAB, (event, tabId: unknown) => {
+    if (!authorized(event) || typeof tabId !== "string") return false;
+    return controller.closeTab(tabId);
+  });
   input.ipc.handle(IPC.BROWSER_PANEL_CLEAR_COOKIES, async (event) => {
     if (!authorized(event)) return { ok: false, error: "unavailable" };
     try {
