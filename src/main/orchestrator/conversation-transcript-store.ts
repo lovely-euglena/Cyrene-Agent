@@ -221,6 +221,7 @@ export class ConversationTranscriptStore {
       return Promise.reject(new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH"));
     }
     assertValidPresentationPatch(patch);
+    const syncTerminalPatch = patch.runSnapshot?.status === "terminal";
     return this.enqueue<Extract<TranscriptEntry, { kind: "presentation_patch" }>>(conversationId, async () => {
       const state = await this.loadState(conversationId);
       const existing = state.entries.find((entry): entry is Extract<TranscriptEntry, { kind: "presentation_patch" }> => (
@@ -230,6 +231,7 @@ export class ConversationTranscriptStore {
         if (existing.payload.messageId !== messageId || !deepEqual(existing.payload.patch, patch)) {
           throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
         }
+        if (syncTerminalPatch) await this.syncFile(state.activeFile);
         return existing;
       }
       const keyDigest = createHash("sha256").update(mutationKey, "utf8").digest("hex");
@@ -255,7 +257,9 @@ export class ConversationTranscriptStore {
         throw error;
       }
       await fs.promises.mkdir(state.dir, { recursive: true });
-      await fs.promises.appendFile(state.activeFile, `${JSON.stringify(entry)}\n`, "utf8");
+      const line = `${JSON.stringify(entry)}\n`;
+      if (syncTerminalPatch) await appendDurableLine(state.activeFile, line, this.syncFile);
+      else await fs.promises.appendFile(state.activeFile, line, "utf8");
       return entry;
     });
   }

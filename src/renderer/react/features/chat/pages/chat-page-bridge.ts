@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  ChatPresentationCheckpointPatch,
   ChatSession,
   ChatSessionMeta,
   ConversationMode,
@@ -13,7 +14,6 @@ import type {
 } from "../../../../../shared/ipc-channels";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 import type { TaskSession } from "../../../../../shared/task-session";
-import type { TodoItem } from "../../../../../shared/todo-types";
 import type { ModelFailureInfo } from "../../../../../shared/model-error";
 
 /** 认领队首的返回形状（与主进程 chats-store 的 ClaimPendingResult 对齐）。 */
@@ -52,7 +52,7 @@ export interface ChatStoreApi {
     sessionId: string,
     messageId: string,
     mutationKey: string,
-    patch: Partial<ChatMessage>,
+    patch: ChatPresentationCheckpointPatch,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   rename: (id: string, title: string) => Promise<ChatSession | null>;
   delete: (id: string) => Promise<boolean>;
@@ -159,8 +159,6 @@ export interface AguiApi {
     styleId?: string;
     sessionId: string;
     imageAttachments?: Array<{ name: string; filePath: string; mime?: string }>;
-    recoveryContext?: string;
-    recoveryTodoItems?: TodoItem[];
     takeoverFromRunId?: string;
     /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传元数据）。 */
     transcriptRewind?: {

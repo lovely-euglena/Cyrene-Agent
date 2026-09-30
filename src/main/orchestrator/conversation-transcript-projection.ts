@@ -29,7 +29,7 @@ export interface MaterializedTranscript {
   messages: ChatMessage[];
   uncertainEffects: UncertainEffect[];
   todoItems?: TodoItem[];
-  todoItemsSource?: "transcript" | "legacy_run_store";
+  todoItemsSource?: "transcript" | "legacy_run_store" | "legacy_presentation";
   throughSeq: number;
 }
 
@@ -284,7 +284,7 @@ function memoizeRunReader(runReader: TranscriptRunReader): TranscriptRunReader {
 
 interface MaterializedRecoveryState {
   todoItems?: TodoItem[];
-  todoItemsSource?: "transcript" | "legacy_run_store";
+  todoItemsSource?: "transcript" | "legacy_run_store" | "legacy_presentation";
   uncertainEffects: UncertainEffect[];
 }
 
@@ -298,6 +298,9 @@ function materializeRecoveryState(
   const activeAssistantIds = new Set(activeNodes
     .filter((node): node is Extract<ActiveNode, { kind: "assistant" }> => node.kind === "assistant")
     .map((node) => node.entry.id));
+  const activeAssistantMessageIds = new Set(activeNodes
+    .filter((node): node is Extract<ActiveNode, { kind: "assistant" }> => node.kind === "assistant")
+    .flatMap((node) => [node.entry.id, ...(node.entry.turnId ? [node.entry.turnId] : [])]));
   const taskState = entries
     .filter((entry): entry is Extract<TranscriptEntry, { kind: "task_state" }> =>
       entry.kind === "task_state" && activeAssistantIds.has(entry.payload.assistantEntryId),
@@ -318,6 +321,21 @@ function materializeRecoveryState(
       if (legacyState && Array.isArray(legacyState.todoItems)) {
         todoItems = legacyState.todoItems;
         todoItemsSource = "legacy_run_store";
+        break;
+      }
+    }
+    if (!todoItems) {
+      const presentationSnapshots = entries
+        .filter((entry): entry is Extract<TranscriptEntry, { kind: "presentation_patch" }> =>
+          entry.kind === "presentation_patch" && activeAssistantMessageIds.has(entry.payload.messageId),
+        )
+        .sort((left, right) => right.seq - left.seq);
+      for (const entry of presentationSnapshots) {
+        const snapshot = entry.payload.patch.runSnapshot;
+        if (!snapshot?.todos?.some((todo) => todo.status === "pending" || todo.status === "in_progress")) continue;
+        if (snapshot.status === "terminal" && snapshot.terminalStatus === "success") continue;
+        todoItems = snapshot.todos.map(({ id, content, status, priority }) => ({ id, content, status, ...(priority ? { priority } : {}) }));
+        todoItemsSource = "legacy_presentation";
         break;
       }
     }
@@ -595,7 +613,104 @@ function applyPatch(
   target: CanonicalUiMessage,
   patch: TranscriptPresentationPatch,
 ): void {
-  Object.assign(target.message, patch);
+  const { delta, ...fields } = patch;
+  Object.assign(target.message, fields);
+  if (!delta) return;
+  if (delta.reasoningBlockUpserts?.length) {
+    target.message.reasoningBlocks = mergeItemsById(
+      target.message.reasoningBlocks ?? [], delta.reasoningBlockUpserts, (item) => item.id,
+    );
+    if (patch.reasoning === undefined) {
+      target.message.reasoning = target.message.reasoningBlocks.map((block) => block.content).filter(Boolean).join("\n\n");
+    }
+  }
+  if (delta.processMessageUpserts?.length) {
+    target.message.processMessages = mergeItemsById(
+      target.message.processMessages ?? [], delta.processMessageUpserts, (item) => item.id,
+    );
+  }
+  if (delta.agentRoundUpserts?.length) {
+    target.message.agentRounds = mergeItemsById(
+      target.message.agentRounds ?? [], delta.agentRoundUpserts, (item) => item.id,
+    );
+  }
+  if (delta.taskDelegationUpserts?.length) {
+    target.message.taskDelegations = mergeItemsById(
+      target.message.taskDelegations ?? [], delta.taskDelegationUpserts, (item) => item.invocationId,
+    );
+  }
+  if (delta.toolExecutionUpserts?.length) {
+    target.message.toolExecutions = mergeItemsById(
+      target.message.toolExecutions ?? [], delta.toolExecutionUpserts, (item) => item.id,
+    );
+  }
+}
+
+/** Fold compact item updates into a replay-safe projection patch. */
+function mergePresentationPatch(
+  previous: TranscriptPresentationPatch | undefined,
+  incoming: TranscriptPresentationPatch,
+): TranscriptPresentationPatch {
+  const merged = { ...(previous ?? {}), ...incoming } as TranscriptPresentationPatch & Record<string, unknown>;
+  const delta = { ...(previous?.delta ?? {}) } as Record<string, unknown>;
+  const nextDelta = (incoming.delta ?? {}) as Record<string, unknown>;
+  const collections = [
+    { field: "reasoningBlocks", upserts: "reasoningBlockUpserts", appends: "reasoningBlockAppends", id: "id" },
+    { field: "processMessages", upserts: "processMessageUpserts", appends: "processMessageAppends", id: "id" },
+    { field: "agentRounds", upserts: "agentRoundUpserts", appends: undefined, id: "id" },
+    { field: "taskDelegations", upserts: "taskDelegationUpserts", appends: undefined, id: "invocationId" },
+    { field: "toolExecutions", upserts: "toolExecutionUpserts", appends: undefined, id: "id" },
+  ] as const;
+
+  for (const collection of collections) {
+    const { field, upserts, id } = collection;
+    if (Object.prototype.hasOwnProperty.call(incoming, field)) {
+      delete delta[upserts];
+      if (collection.appends) delete delta[collection.appends];
+    }
+    const getId = (item: Record<string, unknown>) => String(item[id] ?? "");
+    let folded = (delta[upserts] as Array<Record<string, unknown>> | undefined) ?? [];
+    const upsertItems = nextDelta[upserts] as Array<Record<string, unknown>> | undefined;
+    if (upsertItems?.length) folded = mergeItemsById(folded, upsertItems, getId);
+
+    if (collection.appends) {
+      const appends = nextDelta[collection.appends] as Array<{ id: string; content: string }> | undefined;
+      if (appends?.length) {
+        const baseItems = (merged[field] ?? []) as unknown as Array<Record<string, unknown>>;
+        for (const append of appends) {
+          const existing = [...folded, ...baseItems].find((item) => getId(item) === append.id);
+          const updated = {
+            ...(existing ?? { [id]: append.id, content: "" }),
+            content: `${String(existing?.content ?? "")}${append.content}`,
+          };
+          folded = mergeItemsById(folded, [updated], getId);
+        }
+      }
+      delete delta[collection.appends];
+    }
+    if (folded.length) delta[upserts] = folded;
+    else delete delta[upserts];
+  }
+
+  if (Object.keys(delta).length) merged.delta = delta as TranscriptPresentationPatch["delta"];
+  else delete merged.delta;
+  return merged;
+}
+
+function mergeItemsById<T>(current: T[], updates: T[], getId: (item: T) => string): T[] {
+  const merged = [...current];
+  const indexes = new Map(merged.map((item, index) => [getId(item), index]));
+  for (const update of updates) {
+    const id = getId(update);
+    const index = indexes.get(id);
+    if (index === undefined) {
+      indexes.set(id, merged.length);
+      merged.push(update);
+    } else {
+      merged[index] = update;
+    }
+  }
+  return merged;
 }
 
 function nodeStateFromActive(node: ActiveNode): ConversationProjectionNodeState {
@@ -680,7 +795,7 @@ function projectSeedDelta(
       patches.set(entry.payload.messageId, {
         revision: entry.payload.patchRevision,
         seq: entry.seq,
-        patch: { ...(current?.patch ?? {}), ...entry.payload.patch },
+        patch: mergePresentationPatch(current?.patch, entry.payload.patch),
       });
     }
   }
@@ -834,7 +949,7 @@ function projectionFromActive(
       allPatches.set(entry.payload.messageId, {
         revision: entry.payload.patchRevision,
         seq: entry.seq,
-        patch: { ...(current?.patch ?? {}), ...entry.payload.patch },
+        patch: mergePresentationPatch(current?.patch, entry.payload.patch),
       });
     }
   }

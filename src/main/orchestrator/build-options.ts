@@ -969,9 +969,7 @@ export async function buildAgentRunOptions(
   const transcriptRecoveryContext = transcriptContext?.uncertainEffects.length
     ? formatTranscriptUncertainEffects(transcriptContext.uncertainEffects)
     : undefined;
-  const initialTodoItems = transcriptContext?.todoItemsSource === "transcript"
-    ? transcriptContext.todoItems
-    : input.recoveryTodoItems ?? transcriptContext?.todoItems;
+  const initialTodoItems = transcriptContext?.todoItems;
 
   return {
     options: {

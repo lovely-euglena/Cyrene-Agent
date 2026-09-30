@@ -188,12 +188,8 @@ export async function runHarnessWithAdapter(
     `${LOG_PREFIX} harness run complete, rounds=${result.rounds} terminated=${result.terminated} terminal=${terminal.status}`,
   );
 
-  // ── 终态后轨迹快照：失败不改已确定终态，下次读取从 JSONL 重放增量 ──
-  try {
-    await options.transcriptSink?.checkpoint();
-  } catch (error) {
-    console.error("[ConversationTranscriptStore] snapshot checkpoint failed:", error);
-  }
+  // ── 终态后安排空闲投影快照，不阻塞本次 Run 的完成返回 ──
+  options.transcriptSink?.scheduleCheckpoint?.();
 
   return {
     reply: result.finalAnswer,
