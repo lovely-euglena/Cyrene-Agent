@@ -24,6 +24,9 @@ export function registerBrowserPanelIpc(input: {
   const controller = new BrowserPanelController(input.getWindow, (state) => {
     const win = input.getWindow();
     if (win && !win.isDestroyed()) win.webContents.send(IPC.BROWSER_PANEL_STATE_CHANGED, state);
+  }, (element) => {
+    const win = input.getWindow();
+    if (win && !win.isDestroyed()) win.webContents.send(IPC.BROWSER_PANEL_ELEMENT_SELECTED, element);
   });
   registerBrowserPageTools(controller);
   const authorized = (event: { sender: WebContents }) => {
@@ -86,6 +89,14 @@ export function registerBrowserPanelIpc(input: {
   input.ipc.handle(IPC.BROWSER_PANEL_CLOSE_TAB, (event, tabId: unknown) => {
     if (!authorized(event) || typeof tabId !== "string") return false;
     return controller.closeTab(tabId);
+  });
+  input.ipc.handle(IPC.BROWSER_PANEL_START_ELEMENT_PICKER, (event) => {
+    if (!authorized(event)) return false;
+    return controller.startElementPicker();
+  });
+  input.ipc.handle(IPC.BROWSER_PANEL_CANCEL_ELEMENT_PICKER, (event) => {
+    if (!authorized(event)) return false;
+    return controller.cancelElementPicker();
   });
   input.ipc.handle(IPC.BROWSER_PANEL_CLEAR_COOKIES, async (event) => {
     if (!authorized(event)) return { ok: false, error: "unavailable" };

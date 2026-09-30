@@ -40,7 +40,8 @@ import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
-import { Archive } from "lucide-react";
+import { Archive, ScanLine } from "lucide-react";
+import type { BrowserElementSelection } from "../../../../../shared/browser-panel-types";
 import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
 import { VirtualChatMessageList } from "./VirtualChatMessageList";
 
@@ -96,6 +97,7 @@ export interface ChatMessageAttachment {
   status?: string;
   reason?: string;
   imageSendMode?: "direct" | "caption";
+  element?: BrowserElementSelection;
 }
 
 interface ChatMessageListProps {
@@ -860,6 +862,17 @@ function UserAttachments({ attachments }: { attachments: ChatMessageAttachment[]
     <div className="cy-message__attachments">
       {attachments.map((attachment, index) => {
         const status = attachmentStatus(attachment);
+        if (attachment.kind === "web-element" && attachment.element) {
+          return (
+            <div className="cy-message__web-element" key={`web-element-${attachment.element.tabId}-${attachment.element.ref ?? index}-${index}`} title={attachment.element.snapshotLine}>
+              <ScanLine size={16} />
+              <span className="cy-message__web-element-copy">
+                <strong>{attachment.element.name}</strong>
+                <small>{attachment.element.pageTitle || attachment.element.pageUrl}</small>
+              </span>
+            </div>
+          );
+        }
         if (attachment.kind === "image" && (attachment.previewUrl || attachment.filePath)) {
           return (
             <figure className="cy-message__image-attachment" key={`${attachment.filePath ?? attachment.name}-${index}`}>

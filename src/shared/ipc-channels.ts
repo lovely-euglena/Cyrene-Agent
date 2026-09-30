@@ -78,6 +78,9 @@ export const IPC = {
   BROWSER_PANEL_ACTIVATE_TAB: "browser-panel:activate-tab",
   BROWSER_PANEL_CLOSE_TAB: "browser-panel:close-tab",
   BROWSER_PANEL_STATE_CHANGED: "browser-panel:state-changed",
+  BROWSER_PANEL_START_ELEMENT_PICKER: "browser-panel:start-element-picker",
+  BROWSER_PANEL_CANCEL_ELEMENT_PICKER: "browser-panel:cancel-element-picker",
+  BROWSER_PANEL_ELEMENT_SELECTED: "browser-panel:element-selected",
 
   // AG-UI 事件流
   AGUI_RUN: "agui:run",

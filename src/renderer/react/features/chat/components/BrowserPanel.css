@@ -94,6 +94,7 @@
 .cy-browser-panel__go { padding: 0 10px; color: var(--rb-accent, #e75d87); font: inherit; font-size: 12px; }
 .cy-browser-panel__icon:hover:not(:disabled),
 .cy-browser-panel__go:hover { background: var(--rb-surface-hover, #fff0f5); color: var(--rb-text-primary, #29252a); }
+.cy-browser-panel__icon.is-active { background: var(--rb-accent, #e75d87); color: #fff; }
 .cy-browser-panel__icon:disabled { opacity: .38; cursor: default; }
 
 .cy-browser-panel__address {

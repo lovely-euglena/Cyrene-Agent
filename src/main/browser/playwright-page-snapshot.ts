@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { WebContents } from "electron";
@@ -22,6 +23,7 @@ export interface RuntimePageElement {
 }
 
 export interface RuntimeSnapshot {
+  observationId: string;
   ariaSnapshot: string;
   elements: RuntimePageElement[];
   totalReferences: number;
@@ -189,8 +191,11 @@ const SNAPSHOT_SCRIPT = `(() => {
   }
 
   elements.sort((left, right) => Number(Boolean(right.inViewport)) - Number(Boolean(left.inViewport)));
+  globalThis.__cyreneBrowserObservationId = "__CYRENE_OBSERVATION_ID__";
   globalThis.__cyreneBrowserRefs = refs;
+  globalThis.__cyreneBrowserSnapshotText = String(snapshot || "");
   return {
+    observationId: globalThis.__cyreneBrowserObservationId,
     ariaSnapshot: String(snapshot || ""),
     elements,
     totalReferences: elements.length,
@@ -205,6 +210,144 @@ const SNAPSHOT_SCRIPT = `(() => {
       },
     };
   }
+})()`;
+
+const START_ELEMENT_PICKER_SCRIPT = `(() => {
+  const previous = globalThis.__cyreneBrowserElementPicker;
+  if (previous?.cleanup) previous.cleanup();
+  const injected = globalThis.${PLAYWRIGHT_GLOBAL};
+  if (!injected || !document.documentElement) return { ok: false };
+  let hovered = null;
+  let selected = null;
+  const savedStyles = new WeakMap();
+  const restoreOutline = (element) => {
+    const saved = element && savedStyles.get(element);
+    if (!saved) return;
+    for (const [name, value, priority] of saved) {
+      if (value) element.style.setProperty(name, value, priority);
+      else element.style.removeProperty(name);
+    }
+    savedStyles.delete(element);
+  };
+  const highlight = (element) => {
+    if (!element || element === document.documentElement || element === document.body) return;
+    if (hovered !== element) {
+      restoreOutline(hovered);
+      hovered = element;
+      savedStyles.set(element, ["outline", "outline-offset", "box-shadow"].map((name) => [
+        name, element.style.getPropertyValue(name), element.style.getPropertyPriority(name),
+      ]));
+      element.style.setProperty("outline", "2px solid #ff4f91", "important");
+      element.style.setProperty("outline-offset", "2px", "important");
+      element.style.setProperty("box-shadow", "0 0 0 4px rgba(255,79,145,.25)", "important");
+    }
+  };
+  const onMove = (event) => {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    const element = path.find((item) => item instanceof Element) || (event.target instanceof Element ? event.target : null);
+    highlight(element);
+  };
+  const onClick = (event) => {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    let element = path.find((item) => item instanceof Element) || (event.target instanceof Element ? event.target : null);
+    if (!element || element === document.documentElement || element === document.body) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const refs = globalThis.__cyreneBrowserRefs;
+    let ref = "";
+    if (refs instanceof Map) {
+      let candidateNode = element;
+      while (candidateNode && candidateNode !== document.body) {
+        for (const [candidate, node] of refs) {
+          if (node === candidateNode) {
+            ref = String(candidate);
+            element = candidateNode;
+            break;
+          }
+        }
+        if (ref) break;
+        candidateNode = candidateNode.parentElement;
+      }
+    }
+    const rawSnapshot = String(globalThis.__cyreneBrowserSnapshotText || "");
+    const snapshotLines = rawSnapshot.split("\\n");
+    const selectedLineIndex = ref
+      ? snapshotLines.findIndex((candidate) => candidate.includes("[ref=" + ref + "]"))
+      : -1;
+    const line = selectedLineIndex >= 0 ? snapshotLines[selectedLineIndex] : "";
+    const snapshotContext = [];
+    if (selectedLineIndex >= 0) {
+      const indentation = (value) => value.length - value.trimStart().length;
+      const selectedIndentation = indentation(line);
+      for (let index = selectedLineIndex - 1; index >= 0; index -= 1) {
+        const candidate = snapshotLines[index];
+        if (!candidate.trim()) continue;
+        if (indentation(candidate) < selectedIndentation) snapshotContext.unshift(candidate);
+      }
+      snapshotContext.push(line);
+    }
+    const semantic = line || String(injected.ariaSnapshot(element, { mode: "ai" }) || "").split("\\n")[0] || element.localName;
+    const rect = element.getBoundingClientRect();
+    const attributes = {};
+    for (const name of ["aria-label", "aria-labelledby", "title", "alt", "placeholder", "type", "name", "href", "data-testid", "role"]) {
+      const value = element.getAttribute(name);
+      if (value) attributes[name] = String(value);
+    }
+    const style = getComputedStyle(element);
+    const computedStyle = {};
+    for (const name of ["display", "position", "color", "backgroundColor", "fontFamily", "fontSize", "fontWeight", "lineHeight", "margin", "padding", "width", "height", "borderRadius"]) {
+      computedStyle[name] = String(style[name] || "");
+    }
+    const text = String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+    const name = String(element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("alt") || text || element.localName).slice(0, 240);
+    selected = {
+      observationId: globalThis.__cyreneBrowserObservationId,
+      ref: ref || undefined,
+      name,
+      snapshotLine: line || semantic.trim(),
+      ...(snapshotContext.length > 0 ? { snapshotContext } : {}),
+      tag: String(element.localName || ""),
+      id: element.id ? String(element.id) : undefined,
+      classes: Array.from(element.classList || []).map((item) => String(item)),
+      attributes,
+      bounds: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
+      computedStyle,
+    };
+    cleanup(false);
+  };
+  const onKey = (event) => {
+    if (event.key === "Escape") cleanup(true);
+  };
+  function cleanup(cancelled) {
+    document.removeEventListener("pointermove", onMove, true);
+    document.removeEventListener("click", onClick, true);
+    document.removeEventListener("keydown", onKey, true);
+    restoreOutline(hovered);
+    hovered = null;
+    if (globalThis.__cyreneBrowserElementPicker) {
+      globalThis.__cyreneBrowserElementPicker.active = false;
+      globalThis.__cyreneBrowserElementPicker.cancelled = Boolean(cancelled);
+      globalThis.__cyreneBrowserElementPicker.selected = selected;
+      globalThis.__cyreneBrowserElementPicker.cleanup = null;
+    }
+  }
+  globalThis.__cyreneBrowserElementPicker = { active: true, cancelled: false, selected: null, cleanup };
+  document.addEventListener("pointermove", onMove, true);
+  document.addEventListener("click", onClick, true);
+  document.addEventListener("keydown", onKey, true);
+  return { ok: true };
+})()`;
+
+const READ_ELEMENT_PICKER_SCRIPT = `(() => {
+  const picker = globalThis.__cyreneBrowserElementPicker;
+  if (!picker) return { active: false, cancelled: true };
+  return { active: Boolean(picker.active), cancelled: Boolean(picker.cancelled), selected: picker.selected || null };
+})()`;
+
+const CANCEL_ELEMENT_PICKER_SCRIPT = `(() => {
+  const picker = globalThis.__cyreneBrowserElementPicker;
+  if (picker?.cleanup) picker.cleanup(true);
+  return true;
 })()`;
 
 function wrapRuntimeScript(script: string): string {
@@ -247,8 +390,9 @@ export async function capturePlaywrightPageSnapshot(contents: WebContents): Prom
     throwIfRuntimeError("初始化", initialization);
     initializedContents.add(contents);
   }
+  const observationId = randomUUID();
   const snapshot = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [
-    { code: wrapRuntimeScript(SNAPSHOT_SCRIPT) },
+    { code: wrapRuntimeScript(SNAPSHOT_SCRIPT.replace("__CYRENE_OBSERVATION_ID__", observationId)) },
   ]);
   throwIfRuntimeError("页面快照", snapshot);
   const result = snapshot as Partial<RuntimeSnapshot> | null;
@@ -256,5 +400,37 @@ export async function capturePlaywrightPageSnapshot(contents: WebContents): Prom
     || typeof result.totalReferences !== "number") {
     throw new Error("Playwright 页面快照脚本没有返回有效快照");
   }
-  return result as RuntimeSnapshot;
+  return { ...result, observationId } as RuntimeSnapshot;
+}
+
+export async function startPlaywrightElementPicker(contents: WebContents): Promise<RuntimeSnapshot> {
+  const snapshot = await capturePlaywrightPageSnapshot(contents);
+  const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [
+    { code: wrapRuntimeScript(START_ELEMENT_PICKER_SCRIPT) },
+  ]);
+  throwIfRuntimeError("启动元素选择", result);
+  if (!result || typeof result !== "object" || (result as { ok?: boolean }).ok !== true) {
+    throw new Error("无法在当前页面启动元素选择");
+  }
+  return snapshot;
+}
+
+export async function readPlaywrightElementPicker(contents: WebContents): Promise<{
+  active: boolean;
+  cancelled: boolean;
+  selected?: Omit<import("../../shared/browser-panel-types").BrowserElementSelection, "tabId" | "pageUrl" | "pageTitle"> | null;
+}> {
+  const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [
+    { code: wrapRuntimeScript(READ_ELEMENT_PICKER_SCRIPT) },
+  ]);
+  throwIfRuntimeError("读取元素选择", result);
+  return result as { active: boolean; cancelled: boolean; selected?: Omit<import("../../shared/browser-panel-types").BrowserElementSelection, "tabId" | "pageUrl" | "pageTitle"> | null };
+}
+
+export async function cancelPlaywrightElementPicker(contents: WebContents): Promise<void> {
+  if (contents.isDestroyed()) return;
+  const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [
+    { code: wrapRuntimeScript(CANCEL_ELEMENT_PICKER_SCRIPT) },
+  ]);
+  throwIfRuntimeError("取消元素选择", result);
 }

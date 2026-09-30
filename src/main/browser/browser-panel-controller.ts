@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Menu, session, WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
 import {
   type BrowserPanelBounds,
+  type BrowserElementSelection,
   type BrowserPanelResult,
   type BrowserPanelState,
   type BrowserPanelTabState,
@@ -12,7 +13,10 @@ import { BrowserSessionPersistence } from "./browser-session-persistence";
 import { appendBrowserObservationLog } from "./browser-observation-log";
 import {
   capturePlaywrightPageSnapshot,
+  cancelPlaywrightElementPicker,
+  readPlaywrightElementPicker,
   resetPlaywrightPageSnapshot,
+  startPlaywrightElementPicker,
   type RuntimeSnapshot,
 } from "./playwright-page-snapshot";
 
@@ -30,6 +34,12 @@ interface BrowserTab {
   id: string;
   view: WebContentsView | null;
   state: BrowserPanelTabState;
+}
+
+interface BrowserObservationRecord {
+  tabId: string;
+  url: string;
+  snapshot: RuntimeSnapshot;
 }
 
 function parseHttpUrl(input: string): URL | null {
@@ -52,17 +62,27 @@ export class BrowserPanelController {
   private readyPromise: Promise<void>;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private persistQueue: Promise<void> = Promise.resolve();
+  private elementPickerTabId = "";
+  private elementPickerTimer: ReturnType<typeof setTimeout> | null = null;
+  private elementPickerBusy = false;
+  private readonly observations = new Map<string, BrowserObservationRecord>();
   private readonly sessionPersistence = new BrowserSessionPersistence();
   private readonly observedWindows = new WeakSet<BrowserWindow>();
   private readonly onPlaywrightSnapshotNavigation = (contents: WebContents): void => {
     resetPlaywrightPageSnapshot(contents);
   };
   private readonly onStateChanged: (state: BrowserPanelState) => void;
+  private readonly onElementSelected: (element: BrowserElementSelection) => void;
   private readonly getWindow: () => BrowserWindow | null;
 
-  constructor(getWindow: () => BrowserWindow | null, onStateChanged: (state: BrowserPanelState) => void) {
+  constructor(
+    getWindow: () => BrowserWindow | null,
+    onStateChanged: (state: BrowserPanelState) => void,
+    onElementSelected: (element: BrowserElementSelection) => void,
+  ) {
     this.getWindow = getWindow;
     this.onStateChanged = onStateChanged;
+    this.onElementSelected = onElementSelected;
     this.createTab(true);
     this.readyPromise = this.restoreSession();
   }
@@ -78,8 +98,101 @@ export class BrowserPanelController {
   getState(): BrowserPanelState {
     return {
       activeTabId: this.activeTabId,
+      elementPickerActive: this.elementPickerTabId === this.activeTabId,
       tabs: this.tabs.map((tab) => ({ ...tab.state })),
     };
+  }
+
+  async startElementPicker(): Promise<boolean> {
+    await this.readyPromise;
+    const tab = this.getActiveTab();
+    const contents = tab?.view?.webContents;
+    if (!tab || !contents || contents.isDestroyed() || contents.isLoading() || !tab.state.url
+      || !this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) return false;
+    this.cancelElementPicker();
+    try {
+      const snapshot = await startPlaywrightElementPicker(contents);
+      if (this.getActiveTab()?.id !== tab.id || tab.state.loading || contents.isDestroyed()) {
+        if (!contents.isDestroyed()) await cancelPlaywrightElementPicker(contents).catch(() => undefined);
+        return false;
+      }
+      this.elementPickerTabId = tab.id;
+      this.publish();
+      this.rememberObservation(tab, snapshot);
+      await appendBrowserObservationLog({ tabId: tab.id, url: tab.state.url, snapshot }).catch((error) => {
+        console.warn("[BrowserPanel] 记录元素选择快照失败", error);
+      });
+      if (this.elementPickerTabId !== tab.id) return false;
+      this.scheduleElementPickerPoll();
+      return true;
+    } catch (error) {
+      console.warn("[BrowserPanel] 启动网页元素选择失败", error);
+      this.elementPickerTabId = "";
+      this.publish();
+      return false;
+    }
+  }
+
+  cancelElementPicker(): boolean {
+    const tabId = this.elementPickerTabId;
+    if (!tabId) return false;
+    this.elementPickerTabId = "";
+    if (this.elementPickerTimer) clearTimeout(this.elementPickerTimer);
+    this.elementPickerTimer = null;
+    const contents = this.tabs.find((tab) => tab.id === tabId)?.view?.webContents;
+    if (contents && !contents.isDestroyed()) void cancelPlaywrightElementPicker(contents).catch(() => undefined);
+    this.publish();
+    return true;
+  }
+
+  private scheduleElementPickerPoll(): void {
+    if (!this.elementPickerTabId || this.disposed) return;
+    this.elementPickerTimer = setTimeout(() => void this.pollElementPicker(), 100);
+  }
+
+  private async pollElementPicker(): Promise<void> {
+    if (this.elementPickerBusy || !this.elementPickerTabId || this.disposed) return;
+    this.elementPickerBusy = true;
+    const tabId = this.elementPickerTabId;
+    const tab = this.tabs.find((candidate) => candidate.id === tabId);
+    const contents = tab?.view?.webContents;
+    try {
+      if (!tab || !contents || contents.isDestroyed()) {
+        this.finishElementPicker(tabId);
+        return;
+      }
+      const state = await readPlaywrightElementPicker(contents);
+      if (this.elementPickerTabId !== tabId) return;
+      if (state.selected) {
+        this.finishElementPicker(tabId);
+        this.onElementSelected({
+          ...state.selected,
+          tabId,
+          pageUrl: tab.state.url,
+          pageTitle: tab.state.title,
+        });
+        return;
+      }
+      if (state.cancelled || !state.active) {
+        this.finishElementPicker(tabId);
+        return;
+      }
+    } catch (error) {
+      console.warn("[BrowserPanel] 网页元素选择轮询失败", error);
+      this.finishElementPicker(tabId);
+      return;
+    } finally {
+      this.elementPickerBusy = false;
+    }
+    this.scheduleElementPickerPoll();
+  }
+
+  private finishElementPicker(tabId: string): void {
+    if (this.elementPickerTabId !== tabId) return;
+    this.elementPickerTabId = "";
+    if (this.elementPickerTimer) clearTimeout(this.elementPickerTimer);
+    this.elementPickerTimer = null;
+    this.publish();
   }
 
   async getActivePageSnapshot(): Promise<
@@ -126,6 +239,7 @@ export class BrowserPanelController {
     }
     try {
       const snapshot = await capturePlaywrightPageSnapshot(contents);
+      this.rememberObservation(tab, snapshot);
       await appendBrowserObservationLog({ tabId: tab.id, url: tab.state.url, snapshot });
       return { ok: true, snapshot };
     } catch (error) {
@@ -137,6 +251,215 @@ export class BrowserPanelController {
       const reason = error instanceof Error ? error.message : String(error);
       return { ok: false, reason: `Playwright 页面识别失败：${reason}` };
     }
+  }
+
+  async getElementCss(input: { ref: string; observationId: string; tabId?: string }): Promise<string> {
+    await this.readyPromise;
+    const observation = this.observations.get(input.observationId);
+    if (!observation || (input.tabId && input.tabId !== observation.tabId)) {
+      return "找不到这个页面快照。请重新读取当前页面元素，再用新返回的 observationId 和 ref 查询样式。";
+    }
+    if (observation.tabId !== this.activeTabId) {
+      return "这个快照来自另一个标签页。请先切换到对应标签页，再重新读取页面元素并查询 CSS。";
+    }
+    const tab = this.tabs.find((candidate) => candidate.id === observation.tabId);
+    const contents = tab?.view?.webContents;
+    if (!tab || !contents || contents.isDestroyed() || contents.isLoading() || tab.state.url !== observation.url) {
+      return "这个元素快照已经过期（页面已切换、正在加载或标签页已关闭）。请重新读取页面元素后再查询。";
+    }
+    const target = observation.snapshot.elements.find((element) => element.ref === input.ref);
+    if (!target) return `快照 ${input.observationId} 中没有 ref=${input.ref}。请确认 ref 与 observationId 来自同一次页面读取。`;
+    if (!target.inViewport || target.bounds[2] <= 0 || target.bounds[3] <= 0) {
+      return `ref=${input.ref} 当前不在可见区域，无法安全映射到 CSS 节点。先滚动到该元素可见位置，再重新读取页面。`;
+    }
+
+    const debuggerApi = contents.debugger;
+    const attachedByThisCall = !debuggerApi.isAttached();
+    try {
+      if (attachedByThisCall) debuggerApi.attach();
+      await debuggerApi.sendCommand("DOM.enable");
+      // CDP requires the document tree to be requested before node hit-testing
+      // and CSS inspection commands can operate on nodes.
+      await debuggerApi.sendCommand("DOM.getDocument", { depth: 0, pierce: true });
+      await debuggerApi.sendCommand("CSS.enable");
+      const [x, y, width, height] = target.bounds;
+      const insetX = Math.max(1, Math.min(4, Math.floor(width / 4)));
+      const insetY = Math.max(1, Math.min(4, Math.floor(height / 4)));
+      const points = [
+        [x + Math.floor(width / 2), y + Math.floor(height / 2)],
+        [x + insetX, y + insetY],
+        [x + width - insetX, y + insetY],
+        [x + insetX, y + height - insetY],
+        [x + width - insetX, y + height - insetY],
+      ];
+      let matchedNode: Record<string, unknown> | undefined;
+      let matchedNodeId: number | undefined;
+      for (const [pointX, pointY] of points) {
+        const location = await debuggerApi.sendCommand("DOM.getNodeForLocation", {
+          x: pointX,
+          y: pointY,
+          includeUserAgentShadowDOM: true,
+          ignorePointerEventsNone: false,
+        }) as { backendNodeId?: number; nodeId?: number };
+        let nodeId = location.nodeId;
+        if (!nodeId && typeof location.backendNodeId === "number") {
+          const pushed = await debuggerApi.sendCommand("DOM.pushNodesByBackendIdsToFrontend", {
+            backendNodeIds: [location.backendNodeId],
+          }) as { nodeIds?: number[] };
+          nodeId = pushed.nodeIds?.[0];
+        }
+        if (!nodeId) continue;
+        let described = await debuggerApi.sendCommand("DOM.describeNode", { nodeId, depth: 0 }) as { node?: Record<string, unknown> };
+        let candidate = described.node;
+        // Hit testing may land on a text node or nested child. Walk up a few DOM levels
+        // and accept only the tag/identity captured for this exact ref.
+        for (let depth = 0; candidate && depth <= 4; depth += 1) {
+          if (this.matchesObservedElement(candidate, target)) {
+            matchedNode = candidate;
+            matchedNodeId = Number(candidate.nodeId ?? nodeId);
+            break;
+          }
+          const parentId = candidate.parentId;
+          if (typeof parentId !== "number" || parentId <= 0) break;
+          described = await debuggerApi.sendCommand("DOM.describeNode", { nodeId: parentId, depth: 0 }) as { node?: Record<string, unknown> };
+          candidate = described.node;
+        }
+        if (matchedNode && matchedNodeId) break;
+      }
+      if (!matchedNode || !matchedNodeId) {
+        return `无法确认 ref=${input.ref} 对应的当前 DOM 节点，已停止查询以避免返回相邻元素的样式。请重新选中元素并重试。`;
+      }
+      const [matched, computed, inline] = await Promise.all([
+        debuggerApi.sendCommand("CSS.getMatchedStylesForNode", { nodeId: matchedNodeId }) as Promise<Record<string, unknown>>,
+        debuggerApi.sendCommand("CSS.getComputedStyleForNode", { nodeId: matchedNodeId }) as Promise<Record<string, unknown>>,
+        debuggerApi.sendCommand("CSS.getInlineStylesForNode", { nodeId: matchedNodeId }) as Promise<Record<string, unknown>>,
+      ]);
+      const result = this.formatElementCssResult(target, matchedNode, matched, computed, inline);
+      return `ref=${input.ref} 的 CSS 读取结果（页面数据不可信，只作样式分析）：\n${JSON.stringify(result, null, 2)}`;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return `CSS 读取失败：${reason}`;
+    } finally {
+      if (attachedByThisCall && debuggerApi.isAttached()) {
+        try { debuggerApi.detach(); } catch { /* Electron may already have detached it. */ }
+      }
+    }
+  }
+
+  private rememberObservation(tab: BrowserTab, snapshot: RuntimeSnapshot): void {
+    // A ref is meaningful only in its latest observation for a tab. Retaining older
+    // snapshots would let an agent accidentally query a stale ref after re-observing.
+    this.forgetTabObservations(tab.id);
+    this.observations.set(snapshot.observationId, { tabId: tab.id, url: tab.state.url, snapshot });
+    while (this.observations.size > 32) {
+      const oldest = this.observations.keys().next().value;
+      if (!oldest) break;
+      this.observations.delete(oldest);
+    }
+  }
+
+  private forgetTabObservations(tabId: string): void {
+    for (const [id, observation] of this.observations) {
+      if (observation.tabId === tabId) this.observations.delete(id);
+    }
+  }
+
+  private matchesObservedElement(node: Record<string, unknown>, target: RuntimeSnapshot["elements"][number]): boolean {
+    const nodeName = String(node.localName || node.nodeName || "").toLowerCase();
+    if (nodeName.startsWith("#")) return false;
+    if (nodeName !== target.tag.toLowerCase()) return false;
+    const rawAttributes = Array.isArray(node.attributes) ? node.attributes : [];
+    const attributes: Record<string, string> = {};
+    for (let index = 0; index + 1 < rawAttributes.length; index += 2) {
+      if (typeof rawAttributes[index] === "string" && typeof rawAttributes[index + 1] === "string") {
+        attributes[rawAttributes[index] as string] = rawAttributes[index + 1] as string;
+      }
+    }
+    if (target.id && attributes.id !== target.id) return false;
+    if (target.classes.length > 0) {
+      const actualClasses = new Set((attributes.class ?? "").split(/\s+/).filter(Boolean));
+      if (!target.classes.every((name) => actualClasses.has(name))) return false;
+    }
+    for (const [name, value] of Object.entries(target.attributes)) {
+      if (attributes[name] !== value) return false;
+    }
+    return true;
+  }
+
+  private formatElementCssResult(
+    target: RuntimeSnapshot["elements"][number],
+    node: Record<string, unknown>,
+    matched: Record<string, unknown>,
+    computed: Record<string, unknown>,
+    inline: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const properties = (style: unknown) => {
+      if (!style || typeof style !== "object") return [];
+      const list = (style as { cssProperties?: unknown }).cssProperties;
+      if (!Array.isArray(list)) return [];
+      return list.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const property = item as Record<string, unknown>;
+        if (property.disabled === true || property.parsedOk === false) return [];
+        return [{
+          name: String(property.name ?? ""),
+          value: String(property.value ?? ""),
+          ...(property.important === true ? { important: true } : {}),
+        }];
+      }).slice(0, 40);
+    };
+    const rules = Array.isArray(matched.matchedCSSRules) ? matched.matchedCSSRules : [];
+    const matchedRules = rules.slice(0, 20).flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const rule = (item as Record<string, unknown>).rule;
+      if (!rule || typeof rule !== "object") return [];
+      const value = rule as Record<string, unknown>;
+      const selectorList = value.selectorList as { text?: string; selectors?: Array<{ text?: string }> } | undefined;
+      const sourceRange = value.range as { startLine?: number; endLine?: number } | undefined;
+      return [{
+        selector: selectorList?.text ?? selectorList?.selectors?.map((selector) => selector.text).filter(Boolean).join(", ") ?? "(selector unavailable)",
+        origin: String(value.origin ?? "unknown"),
+        ...(sourceRange && typeof sourceRange.startLine === "number" ? { startLine: sourceRange.startLine + 1 } : {}),
+        declarations: properties(value.style),
+      }];
+    });
+    const computedStyle = Array.isArray(computed.computedStyle)
+      ? computed.computedStyle.slice(0, 80).flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const property = item as Record<string, unknown>;
+          return [{ name: String(property.name ?? ""), value: String(property.value ?? "") }];
+        })
+      : [];
+    const inherited = Array.isArray(matched.inherited) ? matched.inherited.slice(0, 8).flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const record = entry as Record<string, unknown>;
+      const inheritedRules = Array.isArray(record.matchedCSSRules) ? record.matchedCSSRules : [];
+      return [{
+        ancestor: (record.inlineStyle as { cssProperties?: unknown } | undefined)?.cssProperties ? "ancestor inline styles" : "ancestor matched rules",
+        rules: inheritedRules.slice(0, 8).flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const rule = (item as Record<string, unknown>).rule as Record<string, unknown> | undefined;
+          if (!rule) return [];
+          const selectors = rule.selectorList as { text?: string } | undefined;
+          return [{ selector: selectors?.text ?? "(selector unavailable)", declarations: properties(rule.style) }];
+        }),
+      }];
+    }) : [];
+    const attributes = Array.isArray(node.attributes) ? node.attributes : [];
+    const identity: Record<string, string> = {};
+    for (let index = 0; index + 1 < attributes.length; index += 2) {
+      if (typeof attributes[index] === "string" && typeof attributes[index + 1] === "string") {
+        identity[attributes[index] as string] = attributes[index + 1] as string;
+      }
+    }
+    return {
+      element: { ref: target.ref, tag: String(node.localName ?? target.tag), description: target.description, attributes: identity },
+      matchedRules,
+      inlineStyles: properties(inline.inlineStyle),
+      computedStyle,
+      inherited,
+      truncated: rules.length > matchedRules.length,
+    };
   }
 
   setBounds(bounds: BrowserPanelBounds | null): void {
@@ -196,6 +519,7 @@ export class BrowserPanelController {
     if (!this.initialized) return false;
     const tab = this.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return false;
+    if (this.elementPickerTabId && this.elementPickerTabId !== tabId) this.cancelElementPicker();
     this.activeTabId = tab.id;
     if (this.bounds && tab.state.url && !tab.view) {
       try {
@@ -213,7 +537,9 @@ export class BrowserPanelController {
     if (!this.initialized) return false;
     const index = this.tabs.findIndex((candidate) => candidate.id === tabId);
     if (index < 0) return false;
+    if (this.elementPickerTabId === tabId) this.cancelElementPicker();
     const tab = this.tabs[index];
+    this.forgetTabObservations(tabId);
     if (this.tabs.length === 1) {
       this.destroyTabView(tab);
       tab.state = { id: tab.id, ...EMPTY_TAB_STATE };
@@ -272,6 +598,9 @@ export class BrowserPanelController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.elementPickerTimer) clearTimeout(this.elementPickerTimer);
+    this.elementPickerTimer = null;
+    this.elementPickerTabId = "";
     if (this.persistTimer) clearTimeout(this.persistTimer);
     this.persistTimer = null;
     this.destroyViews();
@@ -458,6 +787,8 @@ export class BrowserPanelController {
     };
     contents.on("did-start-loading", () => {
       if (!isLive()) return;
+      if (this.elementPickerTabId === tab.id) this.cancelElementPicker();
+      this.forgetTabObservations(tab.id);
       this.onPlaywrightSnapshotNavigation(contents);
       tab.state = { ...tab.state, loading: true, error: undefined, crashed: false };
       this.publish();
@@ -468,7 +799,11 @@ export class BrowserPanelController {
       update();
     });
     contents.on("did-navigate", update);
-    contents.on("did-navigate-in-page", update);
+    contents.on("did-navigate-in-page", () => {
+      if (!isLive()) return;
+      this.forgetTabObservations(tab.id);
+      update();
+    });
     contents.on("page-title-updated", (_event, title) => {
       if (!isLive()) return;
       tab.state = { ...tab.state, title };

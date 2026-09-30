@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, LoaderCircle, Plus, RotateCw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, LoaderCircle, Plus, RotateCw, ScanLine, Square, X } from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import type { BrowserPanelState, BrowserPanelTabState } from "../../../../../shared/browser-panel-types";
 import "./BrowserPanel.css";
@@ -159,6 +159,17 @@ export function BrowserPanel({ active }: { active: boolean }) {
         <button type="button" className="cy-browser-panel__icon" aria-label={activeTab.loading ? t("browserPanel.stop") : t("browserPanel.reload")} onClick={() => void (activeTab.loading ? window.browserPanel?.stop() : window.browserPanel?.reload())}>
           {activeTab.loading ? <Square size={13} /> : <RotateCw size={14} />}
         </button>
+        <button
+          type="button"
+          className={`cy-browser-panel__icon${state.elementPickerActive ? " is-active" : ""}`}
+          aria-label={state.elementPickerActive ? t("browserPanel.cancelElementPicker") : t("browserPanel.pickElement")}
+          aria-pressed={state.elementPickerActive === true}
+          title={state.elementPickerActive ? t("browserPanel.cancelElementPicker") : t("browserPanel.pickElement")}
+          disabled={!activeTab.url || activeTab.loading}
+          onClick={() => void (state.elementPickerActive
+            ? window.browserPanel?.cancelElementPicker()
+            : window.browserPanel?.startElementPicker())}
+        ><ScanLine size={15} /></button>
         <input
           className="cy-browser-panel__address"
           aria-label={t("browserPanel.address")}
