@@ -8,6 +8,7 @@ import {
 } from "../../shared/browser-panel-types";
 import { getLocaleContext } from "../locale-context";
 import { allowInternalNavigation } from "../windows/external-link";
+import { BrowserSessionPersistence } from "./browser-session-persistence";
 
 const BROWSER_PARTITION = "persist:cyrene-right-browser";
 const EMPTY_TAB_STATE = {
@@ -41,6 +42,11 @@ export class BrowserPanelController {
   private parentWindow: BrowserWindow | null = null;
   private bounds: BrowserPanelBounds | null = null;
   private disposed = false;
+  private initialized = false;
+  private readyPromise: Promise<void>;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistQueue: Promise<void> = Promise.resolve();
+  private readonly sessionPersistence = new BrowserSessionPersistence();
   private readonly observedWindows = new WeakSet<BrowserWindow>();
   private readonly onStateChanged: (state: BrowserPanelState) => void;
   private readonly getWindow: () => BrowserWindow | null;
@@ -49,6 +55,15 @@ export class BrowserPanelController {
     this.getWindow = getWindow;
     this.onStateChanged = onStateChanged;
     this.createTab(true);
+    this.readyPromise = this.restoreSession();
+  }
+
+  ready(): Promise<void> {
+    return this.readyPromise;
+  }
+
+  persistSessionForShutdown(): Promise<void> {
+    return this.persistSession();
   }
 
   getState(): BrowserPanelState {
@@ -60,6 +75,7 @@ export class BrowserPanelController {
 
   setBounds(bounds: BrowserPanelBounds | null): void {
     this.bounds = bounds;
+    if (!this.initialized) return;
     const win = this.getWindow();
     if (this.parentWindow && this.parentWindow !== win) {
       this.destroyViews();
@@ -82,13 +98,14 @@ export class BrowserPanelController {
   }
 
   async navigate(input: string): Promise<BrowserPanelResult> {
+    await this.readyPromise;
     const activeTab = this.getActiveTab();
     if (!activeTab) return { ok: false, error: "unavailable" };
     return this.navigateTab(activeTab, input);
   }
 
   newTab(): boolean {
-    if (this.disposed) return false;
+    if (this.disposed || !this.initialized) return false;
     this.createTab(true);
     this.applyBounds();
     this.publish();
@@ -96,6 +113,7 @@ export class BrowserPanelController {
   }
 
   async openInNewTab(input: string): Promise<BrowserPanelResult> {
+    await this.readyPromise;
     if (this.disposed) return { ok: false, error: "unavailable" };
     const url = parseHttpUrl(input);
     if (!url) {
@@ -109,6 +127,7 @@ export class BrowserPanelController {
   }
 
   activateTab(tabId: string): boolean {
+    if (!this.initialized) return false;
     const tab = this.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return false;
     this.activeTabId = tab.id;
@@ -125,6 +144,7 @@ export class BrowserPanelController {
   }
 
   closeTab(tabId: string): boolean {
+    if (!this.initialized) return false;
     const index = this.tabs.findIndex((candidate) => candidate.id === tabId);
     if (index < 0) return false;
     const tab = this.tabs[index];
@@ -172,9 +192,11 @@ export class BrowserPanelController {
   }
 
   async clearCookies(): Promise<void> {
+    await this.readyPromise;
     const browserSession = this.getSession();
     await browserSession.clearStorageData({ storages: ["cookies"] });
     await browserSession.cookies.flushStore();
+    await this.persistSession();
     for (const tab of this.tabs) {
       const contents = tab.view?.webContents;
       if (contents && !contents.isDestroyed() && tab.state.url) contents.reload();
@@ -184,6 +206,8 @@ export class BrowserPanelController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = null;
     this.destroyViews();
     this.tabs = [];
     this.browserSession = null;
@@ -242,6 +266,72 @@ export class BrowserPanelController {
       this.browserSession = browserSession;
     }
     return this.browserSession;
+  }
+
+  private async restoreSession(): Promise<void> {
+    const browserSession = this.getSession();
+    try {
+      const snapshot = await this.sessionPersistence.restore(browserSession);
+      if (snapshot?.tabs.length) {
+        this.tabs = snapshot.tabs.map(({ id, url }) => ({
+          id,
+          view: null,
+          state: {
+            id,
+            url,
+            title: "",
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            crashed: false,
+          },
+        }));
+        this.activeTabId = snapshot.activeTabId || this.tabs[0].id;
+      }
+    } catch {
+      // 恢复失败时保留默认空标签页，不影响应用启动。
+    }
+    if (this.disposed) return;
+    this.initialized = true;
+    browserSession.cookies.on("changed", this.onCookieChanged);
+    const activeTab = this.getActiveTab();
+    if (this.bounds && activeTab?.state.url) {
+      try {
+        this.ensureView(activeTab);
+      } catch {
+        activeTab.state = { ...activeTab.state, loading: false, error: "unavailable" };
+      }
+    }
+    this.applyBounds();
+    this.publish();
+  }
+
+  private readonly onCookieChanged = (): void => {
+    this.schedulePersistence();
+  };
+
+  private schedulePersistence(): void {
+    if (!this.initialized || this.disposed) return;
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.persistSession().catch((error) => {
+        console.warn("[BrowserPanel] 浏览器会话保存失败", error);
+      });
+    }, 800);
+  }
+
+  private persistSession(): Promise<void> {
+    const operation = this.persistQueue.catch(() => undefined).then(async () => {
+      await this.readyPromise;
+      if (this.disposed) return;
+      await this.sessionPersistence.save(this.getSession(), {
+        activeTabId: this.activeTabId,
+        tabs: this.tabs.map((tab) => ({ id: tab.id, url: tab.state.url })),
+      });
+    });
+    this.persistQueue = operation;
+    return operation;
   }
 
   private ensureView(tab: BrowserTab, restore = true): WebContentsView | null {
@@ -398,5 +488,6 @@ export class BrowserPanelController {
 
   private publish(): void {
     this.onStateChanged(this.getState());
+    this.schedulePersistence();
   }
 }

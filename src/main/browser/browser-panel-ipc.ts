@@ -29,9 +29,11 @@ export function registerBrowserPanelIpc(input: {
     return !!win && !win.isDestroyed() && event.sender === win.webContents;
   };
 
-  input.ipc.handle(IPC.BROWSER_PANEL_GET_STATE, (event) =>
-    authorized(event) ? controller.getState() : null,
-  );
+  input.ipc.handle(IPC.BROWSER_PANEL_GET_STATE, async (event) => {
+    if (!authorized(event)) return null;
+    await controller.ready();
+    return controller.getState();
+  });
   input.ipc.handle(IPC.BROWSER_PANEL_SET_BOUNDS, (event, payload: unknown) => {
     if (!authorized(event)) return false;
     if (payload === null) {

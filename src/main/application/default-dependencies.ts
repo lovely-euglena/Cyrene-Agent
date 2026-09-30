@@ -619,7 +619,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerWorkspaceFilesIpc(ipc);
         // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
         registerOpenInAppIpc(ipc);
-        registerBrowserPanelIpc({ ipc, getWindow: () => reactChatWindow });
+        const browserPanel = registerBrowserPanelIpc({ ipc, getWindow: () => reactChatWindow });
+        shutdown.register({
+          id: "browser-panel-session",
+          phase: "flushPersistence",
+          dispose: async () => { await browserPanel.persistSessionForShutdown(); },
+        });
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传
         registerAgUiIpc(
