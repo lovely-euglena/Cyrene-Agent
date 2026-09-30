@@ -564,6 +564,13 @@ internal sealed class AgentOrchestrator
         active.CancelRequested = true;
         if (active.CurrentStepId is { } stepId)
         {
+            // 取消响应性（P1 修复）：同步 cancel 超时定时器——RunTurnAsync 的
+            // Task.WhenAny 立即醒来收口（此前 Electron 收 StepCancel 后若不回
+            // step_result，取消要挂满 StepTimeoutMs 默认 10 分钟才回 turn.result）
+            if (_pendingSteps.TryGetValue(stepId, out var inFlight))
+            {
+                try { inFlight.TimeoutCts.Cancel(); } catch { /* 已释放 */ }
+            }
             Send(new { op = OrchestratorOps.StepCancel, callId, stepId, sessionId = active.CurrentSessionId });
         }
         return new { callId, cancelled = "requested" };

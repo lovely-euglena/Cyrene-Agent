@@ -84,7 +84,15 @@ internal sealed class SshSessionManager
             _sessions.TryGetValue(profileId, out session);
         }
         if (session is null) return;
-        session.Gate.Wait();
+        // 退出链限时（P1 修复）：在途命令不让 Close/CloseAll 阻塞到命令超时
+        // （最长 5min×N）；3s 拿不到 Gate 就绕过信号量强制断连——SSH.NET 的
+        // Disconnect 跨线程调用安全，在途 ExecAsync 会因连接断开而失败返回。
+        if (!session.Gate.Wait(CloseTimeoutMs))
+        {
+            try { session.Client?.Disconnect(); } catch { /* 已断开 */ }
+            session.State = "closed";
+            return; // Gate 由在途 ExecAsync 的 finally 释放
+        }
         try
         {
             try { session.Client?.Disconnect(); } catch { /* 已断开 */ }
@@ -97,6 +105,9 @@ internal sealed class SshSessionManager
             session.Gate.Release();
         }
     }
+
+    /// <summary>Close 等待在途命令释放 Gate 的上限（ms）。</summary>
+    private const int CloseTimeoutMs = 3_000;
 
     public void CloseAll()
     {
@@ -132,6 +143,12 @@ internal sealed class SshSessionManager
             {
                 result.TimedOut = true;
                 try { cmd.CancelAsync(); } catch { /* 尽力取消 */ }
+                // 超时复位（P1 修复）：超时的通道作废——连接断开 + 会话降级，
+                // 下次 EnsureConnected 懒重连。此前坏通道继续复用，远端还跑着
+                // 上一条命令时下一条 exec 在同一连接叠 channel，行为不可预期。
+                try { client.Disconnect(); } catch { /* 已断开 */ }
+                session.Client = null;
+                session.State = "disconnected";
             }
             else
             {
