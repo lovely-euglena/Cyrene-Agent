@@ -32,28 +32,28 @@ public static class SettingsNavIcons
     private static readonly Dictionary<string, (string Path, bool Tint)> ImageIcons = new()
     {
         ["memory"] = ("icons/mimi.png", false),
-        ["cyrene"] = ("icons/cyrene-avatar-line-white.png", true),
+        ["cyrene"] = ("icons/cyrene-avatar-line.png", false),
         ["about"] = ("icons/cyrene-pink.png", false),
     };
 
     /// <summary>section → (标题, 说明)：内容区标题栏用（对齐旧版 section-title/hint）。</summary>
     public static readonly Dictionary<string, (string Title, string Hint)> SectionMeta = new()
     {
-        ["general"] = ("通用设置", "控制状态栏、日程栏、基础音频和系统行为"),
+        ["general"] = ("通用设置", "管理窗口、音频和系统行为"),
         ["preferences"] = ("偏好设置", "设置聊天窗口和输出行为的默认偏好"),
-        ["appearance"] = ("外观设置", "桌宠显示、窗口样式与聊天排版"),
-        ["api"] = ("API 设置", "填写模型服务配置，保存在本地"),
-        ["api-advanced"] = ("高级设置", "超时与并发等运行期参数"),
+        ["appearance"] = ("外观设置", "调整窗口布局、界面主题与昔涟桌宠"),
+        ["api"] = ("API 设置", "选择预设后只需要填写 API Key。"),
+        ["api-advanced"] = ("高级设置", "配置 API 超时时间、调用模式．"),
         ["cyrene"] = ("昔涟设置", "管理 Agent 行为、记忆、RAG 与权限"),
-        ["memory"] = ("记忆", "长期画像、近况与事件片段"),
-        ["user"] = ("我的信息", "你的个人标识与本地资料"),
-        ["tasks"] = ("定时任务", "让昔涟按时执行任务"),
-        ["tokens"] = ("Token 用量", "本地统计的模型请求用量"),
-        ["plugins"] = ("工具配置", "插件管理与市场"),
+        ["memory"] = ("记忆", "管理长期记忆与画像"),
+        ["user"] = ("用户信息", "编辑你的个人资料"),
+        ["tasks"] = ("定时任务", "管理定时提醒与日程"),
+        ["tokens"] = ("Token 用量", "查看 API 调用统计与消耗"),
+        ["plugins"] = ("工具配置", "管理昔涟可调用的工具能力"),
         ["channels"] = ("连接手机", "渠道配置（Electron 窗口）"),
-        ["tts"] = ("TTS 设置", "语音合成、朗读偏好与音色管理"),
+        ["tts"] = ("TTS 设置", "语音合成与朗读偏好"),
         ["asr"] = ("ASR 设置", "语音识别与通话配置"),
-        ["disclaimer"] = ("免责声明", "免责声明与使用条款"),
+        ["disclaimer"] = ("免责声明", "使用条款与隐私说明"),
         ["about"] = ("关于", "版本与运行环境"),
     };
 

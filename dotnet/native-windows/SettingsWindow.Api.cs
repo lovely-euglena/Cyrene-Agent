@@ -915,22 +915,26 @@ public sealed partial class SettingsWindow
     };
 
     /// <summary>面板标题（48×48 图标砖 + 标题 20 + 副标题 14；.panel-heading）。</summary>
-    private static FrameworkElement MakePanelHeading(FrameworkElement icon, string title, string subtitle)
+    private static FrameworkElement MakePanelHeading(FrameworkElement? icon, string title, string subtitle)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 18) };
-        var tile = new Border
+        if (icon is not null)
         {
-            Width = 48,
-            Height = 48,
-            CornerRadius = new CornerRadius(16),
-            Background = NativeTheme.Pink50Brush,
-            BorderBrush = NativeTheme.Pink200Brush,
-            BorderThickness = new Thickness(1),
-            Child = icon,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 0, 14, 0),
-        };
-        row.Children.Add(tile);
+            // 图标砖（48/圆角 16/粉底描边）；api-advanced「运行设置」等无砖标题传 null
+            var tile = new Border
+            {
+                Width = 48,
+                Height = 48,
+                CornerRadius = new CornerRadius(16),
+                Background = NativeTheme.Pink50Brush,
+                BorderBrush = NativeTheme.Pink200Brush,
+                BorderThickness = new Thickness(1),
+                Child = icon,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 0, 14, 0),
+            };
+            row.Children.Add(tile);
+        }
         var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
         copy.Children.Add(MakeText(title, 20, NativeTheme.TextStrongBrush, weight: FontWeights.SemiBold, lineHeight: 28));
         copy.Children.Add(MakeText(subtitle, 14, NativeTheme.TextMutedBrush, lineHeight: 22.4, margin: new Thickness(0, 4, 0, 0)));

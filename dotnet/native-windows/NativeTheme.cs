@@ -68,6 +68,8 @@ public static class NativeTheme
     public static readonly Color SwitchBorder = Color.FromRgb(0xD8, 0xD2, 0xDC);
     /// <summary>API 提示条描边（rgba(255,182,220,0.13) 合成白）。</summary>
     public static readonly Color NoteBorder = Color.FromRgb(0xFF, 0xF6, 0xFA);
+    /// <summary>导航文字（--rb-text-muted #4F4A57）：pearl-white 覆盖版，比 --rb-text-faint 深一档；导航项与页脚共用。</summary>
+    public static readonly Color NavText = Color.FromRgb(0x4F, 0x4A, 0x57);
 
     public static readonly SolidColorBrush Pink50Brush = Brush(Pink50);
     public static readonly SolidColorBrush Pink200Brush = Brush(Pink200);
@@ -78,6 +80,7 @@ public static class NativeTheme
     public static readonly SolidColorBrush BadgePinkBrush = Brush(BadgePinkBg);
     public static readonly SolidColorBrush BadgeVisionBrush = Brush(BadgeVisionBg);
     public static readonly SolidColorBrush NoteBorderBrush = Brush(NoteBorder);
+    public static readonly SolidColorBrush NavTextBrush = Brush(NavText);
 
     public static SolidColorBrush Brush(Color color)
     {
@@ -640,13 +643,13 @@ public static class NativeTheme
   <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
   <Setter Property="FontSize" Value="14"/>
   <Setter Property="FontWeight" Value="Medium"/>
-  <Setter Property="Foreground" Value="#2C2C2E"/>
+  <Setter Property="Foreground" Value="#4F4A57"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template">
     <Setter.Value>
       <ControlTemplate TargetType="RadioButton">
         <Border x:Name="bg" CornerRadius="12" Background="Transparent" BorderBrush="Transparent"
-                BorderThickness="1" Margin="0,1,0,1" Padding="10,8">
+                BorderThickness="1" Margin="0,0,0,5" Padding="10,8">
           <ContentPresenter VerticalAlignment="Center"/>
         </Border>
         <ControlTemplate.Triggers>
