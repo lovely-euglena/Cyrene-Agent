@@ -367,6 +367,8 @@
     "open": "ブラウザーを開く",
     "newTab": "新しいタブ",
     "closeTab": "{{title}}を閉じる",
+    "openInCyrene": "Cyrene で開く",
+    "openExternal": "外部ブラウザーで開く",
     "address": "アドレス",
     "addressPlaceholder": "HTTP または HTTPS の URL を入力",
     "back": "戻る",

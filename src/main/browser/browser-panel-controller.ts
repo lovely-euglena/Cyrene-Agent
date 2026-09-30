@@ -95,6 +95,19 @@ export class BrowserPanelController {
     return true;
   }
 
+  async openInNewTab(input: string): Promise<BrowserPanelResult> {
+    if (this.disposed) return { ok: false, error: "unavailable" };
+    const url = parseHttpUrl(input);
+    if (!url) {
+      const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
+      return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
+    }
+    const tab = this.createTab(true);
+    this.applyBounds();
+    this.publish();
+    return this.navigateTab(tab, url.href);
+  }
+
   activateTab(tabId: string): boolean {
     const tab = this.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return false;

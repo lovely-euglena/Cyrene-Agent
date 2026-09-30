@@ -71,6 +71,10 @@ export function registerBrowserPanelIpc(input: {
     if (!authorized(event)) return false;
     return controller.newTab();
   });
+  input.ipc.handle(IPC.BROWSER_PANEL_OPEN_IN_NEW_TAB, (event, url: unknown) => {
+    if (!authorized(event) || typeof url !== "string") return { ok: false, error: "unavailable" };
+    return controller.openInNewTab(url);
+  });
   input.ipc.handle(IPC.BROWSER_PANEL_ACTIVATE_TAB, (event, tabId: unknown) => {
     if (!authorized(event) || typeof tabId !== "string") return false;
     return controller.activateTab(tabId);

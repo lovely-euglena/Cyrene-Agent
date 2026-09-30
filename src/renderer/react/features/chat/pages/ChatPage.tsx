@@ -1639,6 +1639,18 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     setActiveTabId("browser");
   };
 
+  const openWebLink = useCallback(async (url: string, destination: "cyrene" | "external") => {
+    if (destination === "external") {
+      await window.system?.openExternal(url);
+      return;
+    }
+    setBrowserTabOpen(true);
+    setActiveTabId("browser");
+    const browser = window.browserPanel;
+    if (!browser) return;
+    await browser.openInNewTab(url);
+  }, []);
+
   /** 收起右侧面板：关闭全部标签（再次点击开关可重新展开文件树） */
   const collapseInspector = () => {
     setFilesTabOpen(false);
@@ -1933,6 +1945,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onOpenTaskInspector={openTaskInspector}
             workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
             onOpenFileLink={openFileTab}
+            onOpenWebLink={openWebLink}
           />
         )}
         <div className="cy-workspace-composer">

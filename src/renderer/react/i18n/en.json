@@ -351,6 +351,8 @@
     "open": "Open browser",
     "newTab": "New tab",
     "closeTab": "Close {{title}}",
+    "openInCyrene": "Open in Cyrene",
+    "openExternal": "Open in external browser",
     "address": "Address",
     "addressPlaceholder": "Enter an HTTP or HTTPS URL",
     "back": "Back",

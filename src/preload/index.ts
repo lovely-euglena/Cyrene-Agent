@@ -135,6 +135,7 @@ const browserPanelApi = {
   stop: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_STOP) as Promise<boolean>,
   clearCookies: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLEAR_COOKIES) as Promise<BrowserPanelResult>,
   newTab: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_NEW_TAB) as Promise<boolean>,
+  openInNewTab: (url: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_OPEN_IN_NEW_TAB, url) as Promise<BrowserPanelResult>,
   activateTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_ACTIVATE_TAB, tabId) as Promise<boolean>,
   closeTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLOSE_TAB, tabId) as Promise<boolean>,
   onStateChanged: (callback: (state: BrowserPanelState) => void) => {

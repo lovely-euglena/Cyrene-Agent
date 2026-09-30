@@ -125,6 +125,8 @@ interface ChatMessageListProps {
   workspaceRoot?: string;
   /** 点击界内文件链接 → 打开右侧预览标签并定位行号 */
   onOpenFileLink?: (relPath: string, line?: number) => void;
+  /** 点击助手消息网页链接 → 在 Cyrene 右侧浏览器打开，或从右键菜单选择外部浏览器。 */
+  onOpenWebLink?: (url: string, destination: "cyrene" | "external") => void | Promise<void>;
 }
 
 type CharacterMoodRenderContext = {
@@ -1399,6 +1401,7 @@ export function ChatMessageList({
   onOpenTaskInspector,
   workspaceRoot,
   onOpenFileLink,
+  onOpenWebLink,
 }: ChatMessageListProps) {
   // 性能探针：列表外壳执行次数（A0 实验补 markdownRenders 覆盖不到的 Bubble 外壳/footer 路径）
   reportChatPerfRender("listRenders");
@@ -1531,8 +1534,8 @@ export function ChatMessageList({
   const channelConversationLabel = resolveChannelConversationLabel(messages);
   const shouldVirtualizeMessages = items.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const fileLinkEnv = useMemo<FileLinkEnv>(
-    () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink }),
-    [conversationId, workspaceRoot, onOpenFileLink],
+    () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink, openWebLink: onOpenWebLink }),
+    [conversationId, workspaceRoot, onOpenFileLink, onOpenWebLink],
   );
   const characterMoodContext = useMemo(
     () => ({ moods: characterMoodAssets ?? {}, avatar: assistantAvatar ?? null }),
