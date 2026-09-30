@@ -167,6 +167,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 侧栏收起不进 React 状态：直接翻转根节点 class，避免整棵页面树为一次点击重渲染
   // （ZCode 同思路：布局类状态走 DOM，React 只负责内容）
   const pageRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLElement | null>(null);
   const [activePanel, setActivePanel] = useState<ChatPagePanel | null>(null);
   useEffect(() => {
     if (scheduledTasksNavigation > 0) setActivePanel("scheduledTasks");
@@ -1841,6 +1842,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       >
         <Panel id="chat" minSize={480} className="cy-dock-body">
       <main
+        ref={workspaceRef}
         className={`cy-page-main cy-workspace ${hasMessages ? "has-messages" : "is-empty"} ${isDraggingFiles ? "is-dragging-files" : ""}`}
         onDragEnter={dragHandlers.onDragEnter}
         onDragOver={dragHandlers.onDragOver}
@@ -1902,6 +1904,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           <TodoPanel
             state={activeSessionId ? todoStateBySession[activeSessionId] : null}
             mode={mode}
+            containerRef={workspaceRef}
           />
         )}
         {mode === "code" && activeSessionId && (
@@ -1909,6 +1912,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             sessionId={activeSessionId}
             projectName={workspaceNames.code}
             todoState={todoStateBySession[activeSessionId] ?? null}
+            containerRef={workspaceRef}
             planPhase={planReviewBySession[activeSessionId]?.phase}
             onOpenPlan={() => {
               setPlanDrawerOpen(true);
