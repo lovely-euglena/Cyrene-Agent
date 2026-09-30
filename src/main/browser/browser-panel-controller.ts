@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Menu, session, WebContentsView, type BrowserWindow, type Session } from "electron";
+import { Menu, session, WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
 import {
   type BrowserPanelBounds,
   type BrowserPanelResult,
@@ -9,6 +9,11 @@ import {
 import { getLocaleContext } from "../locale-context";
 import { allowInternalNavigation } from "../windows/external-link";
 import { BrowserSessionPersistence } from "./browser-session-persistence";
+import {
+  capturePlaywrightPageSnapshot,
+  resetPlaywrightPageSnapshot,
+  type RuntimeSnapshot,
+} from "./playwright-page-snapshot";
 
 const BROWSER_PARTITION = "persist:cyrene-right-browser";
 const EMPTY_TAB_STATE = {
@@ -48,6 +53,9 @@ export class BrowserPanelController {
   private persistQueue: Promise<void> = Promise.resolve();
   private readonly sessionPersistence = new BrowserSessionPersistence();
   private readonly observedWindows = new WeakSet<BrowserWindow>();
+  private readonly onPlaywrightSnapshotNavigation = (contents: WebContents): void => {
+    resetPlaywrightPageSnapshot(contents);
+  };
   private readonly onStateChanged: (state: BrowserPanelState) => void;
   private readonly getWindow: () => BrowserWindow | null;
 
@@ -71,6 +79,61 @@ export class BrowserPanelController {
       activeTabId: this.activeTabId,
       tabs: this.tabs.map((tab) => ({ ...tab.state })),
     };
+  }
+
+  async getActivePageSnapshot(): Promise<
+    | { ok: true; snapshot: RuntimeSnapshot }
+    | { ok: false; reason: string }
+  > {
+    await this.readyPromise;
+    const tab = this.getActiveTab();
+    const contents = tab?.view?.webContents;
+    const hasVisibleBounds = !!this.bounds && this.bounds.width > 0 && this.bounds.height > 0;
+    const contentsDestroyed = contents ? contents.isDestroyed() : null;
+    const contentsLoading = contents && !contentsDestroyed ? contents.isLoading() : null;
+    const hasPageUrl = !!tab?.state.url;
+    if (!hasVisibleBounds || !hasPageUrl || !contents || contentsDestroyed || contentsLoading) {
+      const reasons = [
+        !hasVisibleBounds ? "右侧浏览器面板当前没有可见区域" : "",
+        !tab ? "找不到当前选中的标签页" : "",
+        !hasPageUrl ? "当前选中的标签页为空，尚无网页地址" : "",
+        tab && !tab.view ? "当前标签页的网页视图尚未创建" : "",
+        contentsDestroyed ? "当前标签页的网页进程已关闭" : "",
+        contentsLoading ? "当前标签页仍在加载" : "",
+      ].filter(Boolean);
+      console.warn("[BrowserPanel] 无法读取当前标签页", {
+        activeTabId: this.activeTabId || null,
+        tabCount: this.tabs.length,
+        activeTabFound: !!tab,
+        activeTabHasUrl: hasPageUrl,
+        activeTabHasView: !!tab?.view,
+        tabs: this.tabs.map((candidate) => ({
+          id: candidate.id,
+          active: candidate.id === this.activeTabId,
+          hasUrl: !!candidate.state.url,
+          hasView: !!candidate.view,
+          loading: candidate.state.loading,
+          crashed: candidate.state.crashed,
+        })),
+        browserBounds: this.bounds
+          ? { width: this.bounds.width, height: this.bounds.height }
+          : null,
+        contentsDestroyed,
+        contentsLoading,
+      });
+      return { ok: false, reason: reasons.join("；") };
+    }
+    try {
+      return { ok: true, snapshot: await capturePlaywrightPageSnapshot(contents) };
+    } catch (error) {
+      console.warn("[BrowserPanel] Playwright 页面识别失败", {
+        activeTabId: this.activeTabId || null,
+        tabCount: this.tabs.length,
+        error,
+      });
+      const reason = error instanceof Error ? error.message : String(error);
+      return { ok: false, reason: `Playwright 页面识别失败：${reason}` };
+    }
   }
 
   setBounds(bounds: BrowserPanelBounds | null): void {
@@ -392,6 +455,7 @@ export class BrowserPanelController {
     };
     contents.on("did-start-loading", () => {
       if (!isLive()) return;
+      this.onPlaywrightSnapshotNavigation(contents);
       tab.state = { ...tab.state, loading: true, error: undefined, crashed: false };
       this.publish();
     });
@@ -413,6 +477,7 @@ export class BrowserPanelController {
       this.publish();
     });
     contents.on("render-process-gone", () => {
+      this.onPlaywrightSnapshotNavigation(contents);
       if (!this.tabs.includes(tab)) return;
       tab.state = { ...tab.state, loading: false, crashed: true, error: "renderer_crashed" };
       this.publish();

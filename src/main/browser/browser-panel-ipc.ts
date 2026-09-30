@@ -3,6 +3,7 @@ import { IPC } from "../../shared/ipc-channels";
 import type { BrowserPanelBounds } from "../../shared/browser-panel-types";
 import type { IpcScope } from "../application/ipc-scope";
 import { BrowserPanelController } from "./browser-panel-controller";
+import { registerBrowserPageTools } from "./browser-page-tools";
 
 function readBounds(input: unknown): BrowserPanelBounds | null {
   if (!input || typeof input !== "object") return null;
@@ -24,6 +25,7 @@ export function registerBrowserPanelIpc(input: {
     const win = input.getWindow();
     if (win && !win.isDestroyed()) win.webContents.send(IPC.BROWSER_PANEL_STATE_CHANGED, state);
   });
+  registerBrowserPageTools(controller);
   const authorized = (event: { sender: WebContents }) => {
     const win = input.getWindow();
     return !!win && !win.isDestroyed() && event.sender === win.webContents;
