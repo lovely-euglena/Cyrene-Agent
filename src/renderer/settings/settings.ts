@@ -18,7 +18,7 @@ import {
 import { isProactiveDeliveryTargetSelectable } from "../../shared/proactive-delivery";
 import type { UiTheme } from "../../shared/ui-theme";
 import { DEFAULT_UI_FONT, normalizeUiFont, type UiFont } from "../../shared/ui-font";
-import { normalizeUiIcon, type UiIcon } from "../../shared/ui-icon";
+import { DEFAULT_UI_ICON, normalizeUiIcon, type UiIcon } from "../../shared/ui-icon";
 import {
   DEFAULT_WINDOW_CORNER_RADIUS,
   normalizeWindowCornerRadius,
@@ -199,7 +199,7 @@ if (!window.settings) {
       uiTheme: "pearl-white",
       uiThemeRadius: false,
       uiFont: DEFAULT_UI_FONT,
-      uiIcon: "cyrene-sun",
+      uiIcon: DEFAULT_UI_ICON,
       windowCornerRadius: DEFAULT_WINDOW_CORNER_RADIUS,
       defaultChatMode: "chat",
       currentStyleId: "default",

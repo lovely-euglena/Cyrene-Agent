@@ -12,7 +12,7 @@ import {
 } from "../../shared/style-sampling";
 import { normalizeUiTheme } from "../../shared/ui-theme";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
-import { normalizeUiIcon } from "../../shared/ui-icon";
+import { DEFAULT_UI_ICON, normalizeUiIcon } from "../../shared/ui-icon";
 import { clampFiniteNumber, normalizeChatAppearance } from "../../shared/chat-appearance";
 import { normalizeUiLanguage } from "../../shared/ui-language";
 import { DEFAULT_UI_FONT, normalizeUiFont } from "../../shared/ui-font";
@@ -65,7 +65,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   uiTheme: "pearl-white",
   windowCornerRadius: DEFAULT_WINDOW_CORNER_RADIUS,
   uiThemeRadius: false,
-  uiIcon: "cyrene-sun",
+  uiIcon: DEFAULT_UI_ICON,
   uiFont: DEFAULT_UI_FONT,
   sidebarVisible: true,
   tasksVisible: true,

@@ -27,9 +27,10 @@ describe("appearance settings markup", () => {
     }
   });
 
-  it("offers the two supplied desktop icon presets", () => {
+  it("offers the supplied desktop icon presets", () => {
     const panel = form("appearance-form");
     expect(panel).toContain('id="ui-icon-select"');
+    expect(panel).toContain('data-icon="cyrene-sticker"');
     expect(panel).toContain('data-icon="cyrene-pink"');
     expect(panel).toContain('data-icon="cyrene-sun"');
     expect(panel).not.toContain('data-icon="classic"');

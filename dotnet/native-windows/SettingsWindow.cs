@@ -498,7 +498,7 @@ public sealed partial class SettingsWindow : NativeWindow
 
         panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("界面"));
-        panel.Children.Add(MakeUiIconRow(GetString("uiIcon", "cyrene-sun")));
+        panel.Children.Add(MakeUiIconRow(GetString("uiIcon", "cyrene-sticker")));
         panel.Children.Add(MakeUiFontRow());
         panel.Children.Add(MakeSoonPlaceholderRow("聊天背景"));
 
@@ -599,15 +599,23 @@ public sealed partial class SettingsWindow : NativeWindow
         Child = new TextBlock { Text = "SOON", FontSize = 10.5, Foreground = NativeTheme.Pink600Brush },
     };
 
-    /// <summary>桌面图标二选一（绮梦/晴光）：显示预设图片，选中带粉色描边。</summary>
+    /// <summary>桌面图标三选一（贴纸/绮梦/晴光）：显示预设图片，选中带粉色描边。</summary>
     private FrameworkElement MakeUiIconRow(string current)
     {
-        var selected = current == "cyrene-pink" ? "cyrene-pink" : "cyrene-sun";
+        var selected = current == "cyrene-sticker" || current == "cyrene-pink" || current == "cyrene-sun"
+            ? current
+            : "cyrene-sticker";
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 6) };
+        Border? stickerTile = null;
         Border? pinkTile = null;
         Border? sunTile = null;
         void Refresh()
         {
+            if (stickerTile is not null)
+            {
+                stickerTile.BorderBrush = selected == "cyrene-sticker" ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush;
+                stickerTile.BorderThickness = new Thickness(selected == "cyrene-sticker" ? 2 : 1);
+            }
             if (pinkTile is not null)
             {
                 pinkTile.BorderBrush = selected == "cyrene-pink" ? NativeTheme.PinkBrush : NativeTheme.BorderSoftBrush;
@@ -653,9 +661,11 @@ public sealed partial class SettingsWindow : NativeWindow
             };
             return tile;
         }
+        stickerTile = MakeTile("cyrene-sticker", "贴纸");
         pinkTile = MakeTile("cyrene-pink", "绮梦");
         sunTile = MakeTile("cyrene-sun", "晴光");
         Refresh();
+        row.Children.Add(stickerTile);
         row.Children.Add(pinkTile);
         row.Children.Add(sunTile);
         return MakeRow("桌面图标", row);
