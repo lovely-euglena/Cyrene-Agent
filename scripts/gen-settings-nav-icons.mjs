@@ -13,9 +13,10 @@ const svgIcons = [];
 const imgIcons = [];
 const meta = []; // {section, title, hint}
 
-// 单色线稿（-white.png）：旧页 pearl-white 主题换深色线稿；WPF 用前景色着色渲染，
-// 直接贴白色原图在浅色导航底上不可见。
-const TINT_ICONS = new Set(["icons/cyrene-avatar-line-white.png"]);
+// 单色线稿（-white.png）：渲染页 pearl-white 主题用 CSS content 换成深色线稿
+// （cyrene-avatar-line.svg）；WPF 没有 CSS 替换，直接改指向同款栅格化线稿，
+// 白色原图贴浅色导航底不可见。
+const SRC_REWRITE = new Map([["icons/cyrene-avatar-line-white.png", "icons/cyrene-avatar-line.png"]]);
 
 while ((m = navRe.exec(html)) !== null) {
   const section = m[1];
@@ -25,8 +26,9 @@ while ((m = navRe.exec(html)) !== null) {
   const img = body.match(/<img[^>]*src="([^"]+)"/);
   // 旧页 src 相对 settings/ 目录（../icons/x.png），assets 下为 icons/x.png：去掉 "../" 前缀
   if (img) {
-    const src = img[1].replace("../", "");
-    imgIcons.push([section, src, TINT_ICONS.has(src)]);
+    const rawSrc = img[1].replace("../", "");
+    const src = SRC_REWRITE.get(rawSrc) ?? rawSrc;
+    imgIcons.push([section, src, false]);
     continue;
   }
   const svg = body.match(/<svg[\s\S]*?<\/svg>/);
@@ -59,23 +61,24 @@ while ((m = navRe.exec(html)) !== null) {
 // 旧页「关于」是通用设置里的行（无导航图标）；WPF 独立 section 用应用图标
 imgIcons.push(["about", "icons/cyrene-pink.png", false]);
 
-// 各 section 的标题/说明（旧版 settings-nav / section-title / section-hint 语义）
+// 各 section 的标题/说明（对齐渲染页 settings.ts NAV_LABELS + i18n settings.nav.*Hint；
+// 上游 2026-09 更新后 memory/user 等 hint 已改，勿凭印象回退）
 const titles = {
-  general: ["通用设置", "控制状态栏、日程栏、基础音频和系统行为"],
+  general: ["通用设置", "管理窗口、音频和系统行为"],
   preferences: ["偏好设置", "设置聊天窗口和输出行为的默认偏好"],
-  appearance: ["外观设置", "桌宠显示、窗口样式与聊天排版"],
-  api: ["API 设置", "填写模型服务配置，保存在本地"],
-  "api-advanced": ["高级设置", "超时与并发等运行期参数"],
+  appearance: ["外观设置", "调整窗口布局、界面主题与昔涟桌宠"],
+  api: ["API 设置", "选择预设后只需要填写 API Key。"],
+  "api-advanced": ["高级设置", "配置 API 超时时间、调用模式．"],
   cyrene: ["昔涟设置", "管理 Agent 行为、记忆、RAG 与权限"],
-  memory: ["记忆", "长期画像、近况与事件片段"],
-  user: ["我的信息", "你的个人标识与本地资料"],
-  tasks: ["定时任务", "让昔涟按时执行任务"],
-  tokens: ["Token 用量", "本地统计的模型请求用量"],
-  plugins: ["工具配置", "插件管理与市场"],
+  memory: ["记忆", "管理长期记忆与画像"],
+  user: ["用户信息", "编辑你的个人资料"],
+  tasks: ["定时任务", "管理定时提醒与日程"],
+  tokens: ["Token 用量", "查看 API 调用统计与消耗"],
+  plugins: ["工具配置", "管理昔涟可调用的工具能力"],
   channels: ["连接手机", "渠道配置（Electron 窗口）"],
-  tts: ["TTS 设置", "语音合成、朗读偏好与音色管理"],
+  tts: ["TTS 设置", "语音合成与朗读偏好"],
   asr: ["ASR 设置", "语音识别与通话配置"],
-  disclaimer: ["免责声明", "免责声明与使用条款"],
+  disclaimer: ["免责声明", "使用条款与隐私说明"],
   about: ["关于", "版本与运行环境"],
 };
 for (const [section, [title, hint]] of Object.entries(titles)) meta.push([section, title, hint]);

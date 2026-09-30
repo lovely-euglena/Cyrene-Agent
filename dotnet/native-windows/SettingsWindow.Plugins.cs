@@ -25,7 +25,7 @@ public sealed partial class SettingsWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakePanelHeading(
-            NativeTheme.VectorGlyph(Glyphs.Card, 24, NativeTheme.TextDefaultBrush),
+            NativeTheme.FilledGlyph(Glyphs.Tools, 22, NativeTheme.TextDefaultBrush, viewBox: 24),
             "工具配置",
             "管理昔涟可调用的工具能力；关闭后调度层不会使用对应工具。"));
         panel.Children.Add(MakeSectionStatus("plugins"));

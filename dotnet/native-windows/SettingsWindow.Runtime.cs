@@ -17,8 +17,8 @@ public sealed partial class SettingsWindow
     {
         var panel = new StackPanel();
         panel.Children.Add(MakePanelHeading(
-            NativeTheme.VectorGlyph(Glyphs.Gear, 24, NativeTheme.TextDefaultBrush),
-            "高级设置",
+            null,
+            "运行设置",
             "控制模型请求、询问用户等待时间与 Harness 工具执行方式。"));
         panel.Children.Add(MakeSectionStatus("runtime"));
 

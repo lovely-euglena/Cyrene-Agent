@@ -15,9 +15,9 @@ namespace CyreneNative;
 /// WPF 原生设置窗（设置页 .NET 重写）。
 ///
 /// 范围（渐进迁移）：
-///   - 真 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于
-///   - 占位 section（TTS/ASR/插件/渠道）：显示跳转按钮 → cmd 事件
-///     （插件 section 走 .NET PluginManagerWindow；TTS/ASR/渠道走 Electron）
+///   - 真 section：记忆 / 用户信息 / 定时任务 / 工具配置 / 偏好 / 外观 / 通用 /
+///     API / 高级（运行设置）/ 昔涟 / TTS / ASR / Token / 免责声明 / 关于
+///   - 占位 section（连接手机）：显示跳转按钮 → cmd 事件（Electron 独立窗口）
 ///
 /// 数据流：settings.* 协议（RequestRouter）——
 ///   宿主 → native：{"op":"state.settings","settings":{...}} 快照推送
@@ -155,17 +155,44 @@ public sealed partial class SettingsWindow : NativeWindow
         Grid.SetRow(titleBar, 0);
         contentGrid.Children.Add(titleBar);
 
-        // ── 左侧导航（品牌行 + section 列表） ──
+        // ── 左侧导航（品牌行 + 可滚动 section 列表 + 版本页脚）——对齐 Electron .settings-nav ──
+        // Electron：padding 18/12/14、右侧 1px 分隔线；header 不滚动、列表滚动、footer 常驻。
         var nav = new Border
         {
             Background = NativeTheme.SurfaceNavBrush,
-            // 对齐 Electron .settings-nav 内边距（18/12/14 的垂直/水平近似）
-            Child = new StackPanel { Margin = new Thickness(12, 14, 12, 14) },
+            BorderBrush = NativeTheme.BorderSoftBrush,
+            BorderThickness = new Thickness(0, 0, 1, 0),
         };
+        var navRoot = new Grid { Margin = new Thickness(12, 18, 12, 14) };
+        navRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        navRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        navRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        nav.Child = navRoot;
         Grid.SetColumn(nav, 0);
         Grid.SetRow(nav, 0);
         grid.Children.Add(nav);
-        var navPanel = (StackPanel)nav.Child;
+        var navPanel = new StackPanel();
+        var navScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = navPanel,
+            Focusable = false,
+        };
+        Grid.SetRow(navScroll, 1);
+        navRoot.Children.Add(navScroll);
+        // 页脚版本（Electron .settings-nav__footer，vite 注入「昔涟 v<version>」）
+        _navVersion = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = NativeTheme.NavTextBrush,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(8, 10, 8, 0),
+        };
+        Grid.SetRow(_navVersion, 2);
+        navRoot.Children.Add(_navVersion);
+        _navVersion.Text = VersionText();
 
         _scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0) };
         _sections = new StackPanel { Margin = new Thickness(24, 16, 24, 24) };
@@ -176,12 +203,22 @@ public sealed partial class SettingsWindow : NativeWindow
         Grid.SetColumn(contentGrid, 1);
         grid.Children.Add(contentGrid);
 
-        BuildSections(navPanel);
+        BuildSections(navRoot, navPanel);
         _window.Closed += (_, _) => { StopDebounceTimers(); DisposeTtsPreview(); RaiseClosed(); };
     }
 
     private readonly TextBlock _sectionTitle = new();
     private readonly TextBlock _sectionHint = new();
+
+    /// <summary>导航页脚版本行（Electron .settings-nav__footer：昔涟 v&lt;version&gt;）。</summary>
+    private TextBlock? _navVersion;
+
+    /// <summary>版本文案（vite appVersionPlugin 同款：昔涟 v&lt;version&gt;）。</summary>
+    private string VersionText()
+    {
+        var version = GetString("version", "");
+        return version.Length > 0 ? $"昔涟 v{version}" : "昔涟";
+    }
 
     // ── 窗口外观（投影 / 圆角跟随设置） ──
     private Border? _rootBorder;
@@ -212,11 +249,12 @@ public sealed partial class SettingsWindow : NativeWindow
     /// <summary>导航项样式：圆角高亮条（选中/悬停）—— 见 NativeTheme。</summary>
     private static Style BuildNavItemStyle() => NativeTheme.NavItemStyle;
 
-    private void BuildSections(StackPanel nav)
+    private void BuildSections(Grid navRoot, StackPanel nav)
     {
         var navStyle = BuildNavItemStyle();
         // 导航头部品牌行（logo + 昔涟）——对齐 Electron 设置页 settings-nav__brand
-        var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 2, 8, 14) };
+        // （.settings-nav__header padding 0 8px 14px；不随列表滚动）
+        var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 8, 14) };
         var brandLogo = new Image
         {
             Width = 28,
@@ -236,10 +274,24 @@ public sealed partial class SettingsWindow : NativeWindow
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
         });
-        nav.Children.Add(brand);
+        Grid.SetRow(brand, 0);
+        navRoot.Children.Add(brand);
+
+        // 分组分隔线——Electron <hr class="nav-divider">（pearl-white：--rb-border-strong，margin 9px 2px）；
+        // 列表 gap 5 由导航项自身 margin-bottom 提供，故下边距补到 14（5+9 与 9+5 等效 14）。
+        void AddDivider()
+        {
+            nav.Children.Add(new Border
+            {
+                Height = 1,
+                Background = NativeTheme.BorderStrongBrush,
+                Margin = new Thickness(2, 9, 2, 14),
+            });
+        }
+
         void AddSection(string id, string label, bool native, string? legacyHash = null, bool pluginManager = false)
         {
-            // 导航项内容：图标（旧版 SVG 几何/图片）+ 文本
+            // 导航项内容：图标（对齐渲染页 SVG 几何/图片）+ 文本（gap 8 = .nav-item gap）
             var content = new StackPanel { Orientation = Orientation.Horizontal };
             var icon = SettingsNavIcons.Create(id);
             if (icon is not null)
@@ -251,7 +303,7 @@ public sealed partial class SettingsWindow : NativeWindow
             {
                 Text = label,
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(icon is null ? 0 : 10, 0, 0, 0),
+                Margin = new Thickness(icon is null ? 0 : 8, 0, 0, 0),
             });
             var btn = new RadioButton
             {
@@ -276,20 +328,25 @@ public sealed partial class SettingsWindow : NativeWindow
             }
         }
 
-        AddSection("general", "通用", native: true);
+        // 顺序/分组/文案对齐渲染页 index.html 导航（上游 2026-09 更新后在先）：
+        //   记忆/用户信息 │ 定时任务/工具配置 │ 偏好/外观/通用/API/高级/昔涟/连接手机/TTS/ASR/Token │ 免责声明
+        AddSection("memory", "记忆", native: true);
+        AddSection("user", "用户信息", native: true);
+        AddDivider();
+        AddSection("tasks", "定时任务", native: true);
+        AddSection("plugins", "工具配置", native: true);
+        AddDivider();
         AddSection("preferences", "偏好设置", native: true);
-        AddSection("appearance", "外观", native: true);
-        AddSection("api", "API 与模型", native: true);
+        AddSection("appearance", "外观设置", native: true);
+        AddSection("general", "通用设置", native: true);
+        AddSection("api", "API 设置", native: true);
         AddSection("api-advanced", "高级设置", native: true);
         AddSection("cyrene", "昔涟设置", native: true);
-        AddSection("memory", "记忆", native: true);
-        AddSection("tts", "语音合成 TTS", native: true);
-        AddSection("asr", "语音识别 ASR", native: true);
-        AddSection("plugins", "插件", native: true);
-        AddSection("user", "用户信息", native: true);
-        AddSection("tasks", "定时任务", native: true);
+        AddSection("channels", "连接手机", native: false, legacyHash: "channels");
+        AddSection("tts", "TTS 设置", native: true);
+        AddSection("asr", "ASR 设置", native: true);
         AddSection("tokens", "Token 用量", native: true);
-        AddSection("channels", "渠道配置", native: false, legacyHash: "channels");
+        AddDivider();
         AddSection("disclaimer", "免责声明", native: true);
         AddSection("about", "关于", native: true);
 
@@ -345,7 +402,7 @@ public sealed partial class SettingsWindow : NativeWindow
         }
     }
 
-    // ── 原生 section：通用 / 外观 / 用户信息 / API 与模型 / 记忆 / 定时任务 / 关于 ──
+    // ── 原生 section：记忆 / 用户信息 / 定时任务 / 工具配置 / 偏好 / 外观 / 通用 / API / 高级 / 昔涟 / TTS / ASR / Token / 免责声明 / 关于 ──
 
     private static bool IsNativeSection(string id)
         => id is "general" or "preferences" or "appearance" or "user" or "api" or "api-advanced" or "cyrene" or "disclaimer" or "memory" or "tasks" or "tokens" or "plugins" or "tts" or "asr" or "about";
@@ -460,6 +517,12 @@ public sealed partial class SettingsWindow : NativeWindow
             v => SetSetting("gitCommitAuthorName", v)));
         panel.Children.Add(MakeTextRow("邮箱", GetString("gitCommitAuthorEmail"),
             v => SetSetting("gitCommitAuthorEmail", v)));
+
+        // 关于（对齐上游通用页 .setting-row--about：版本 + 副标题；完整运行信息在「关于」section）
+        panel.Children.Add(BlockMark());
+        panel.Children.Add(MakeSubHeader("关于"));
+        panel.Children.Add(MakeText($"{VersionText()} · 轻量情感陪伴桌面 Agent", 14,
+            NativeTheme.TextMutedBrush, lineHeight: 22.4, margin: new Thickness(0, 4, 0, 4)));
         CardifySubBlocks(panel);
 
         return panel;
@@ -741,7 +804,7 @@ public sealed partial class SettingsWindow : NativeWindow
         var btn = new Button
         {
             Content = pluginManager ? "打开插件管理（原生窗口）"
-              : section == "channels" ? "打开渠道配置（独立窗口）" : "在旧版设置中打开",
+              : section == "channels" ? "打开连接手机（独立窗口）" : "在旧版设置中打开",
             Width = 220,
             Margin = new Thickness(0, 14, 0, 0),
             FontSize = 14,
@@ -778,6 +841,7 @@ public sealed partial class SettingsWindow : NativeWindow
     {
         if (settings.ValueKind != JsonValueKind.Object) return;
         _settings = settings;
+        if (_navVersion is not null) _navVersion.Text = VersionText();
         StopDebounceTimers();
         // 窗口圆角跟随设置（快照键 windowCornerRadius；旧实现 native 硬编码 12）
         var radius = GetInt("windowCornerRadius", -1);
