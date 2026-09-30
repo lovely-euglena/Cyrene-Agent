@@ -2,11 +2,13 @@ import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
-import { computeLayout } from "../window-layout";
+import { computeLayout, DEFAULT_WORKSPACE_WINDOW_SIZE } from "../window-layout";
 import { loadGeneralSettings } from "../settings/settings-facade";
 import { stopCall, setCallWindow } from "../call/call-manager";
+import { attachContextMenu } from "./context-menu";
 import { attachExternalLinkHandler } from "./external-link";
 import { attachChatIdleReclaim } from "./chat-idle-reclaim";
+import { getWorkspaceInitialBounds } from "./workspace-window-bounds";
 import { isNativeWindowActive, spawnNativeWindow, closeNativeWindow } from "./native-windows-bridge";
 import {
   callWindow,
@@ -116,9 +118,10 @@ export function createLazyReactChatWindowHandle(
 export function persistedWindowState(
   name: string,
   enabled: boolean,
+  persistDisplayMode = false,
 ): { name?: string; windowStatePersistence?: { bounds: boolean; displayMode: boolean } } {
   return enabled
-    ? { name, windowStatePersistence: { bounds: true, displayMode: false } }
+    ? { name, windowStatePersistence: { bounds: true, displayMode: persistDisplayMode } }
     : {};
 }
 
@@ -136,14 +139,14 @@ export function createReactChatWindowShell(): BrowserWindow {
   // 新建窗口：dispatcher 重置；pending 仅服务于"未 ready 期间又收到请求"
   reactChatSession.reset();
 
-  const layout = computeLayout();
+  const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const bounds = getWorkspaceInitialBounds(workArea);
+  const rememberWindowState = loadGeneralSettings().rememberWindowState;
   const window = new BrowserWindow({
-    x: layout.chat.x,
-    y: layout.chat.y,
-    width: 1280,
-    height: 760,
-    minWidth: 960,
-    minHeight: 540,
+    ...persistedWindowState("cyrene.workspace", rememberWindowState, true),
+    ...bounds,
+    minWidth: Math.min(960, workArea.width),
+    minHeight: Math.min(540, workArea.height),
     title: "Cyrene · 聊天",
     icon: getCurrentAppIconPath(),
     backgroundColor: "#00000000",
@@ -163,6 +166,20 @@ export function createReactChatWindowShell(): BrowserWindow {
     },
   });
   setReactChatWindow(window);
+  attachContextMenu(window);
+
+  if (rememberWindowState) {
+    window.once("ready-to-show", () => {
+      if (window.isMaximized()) return;
+      const restored = window.getBounds();
+      if (
+        restored.width === DEFAULT_WORKSPACE_WINDOW_SIZE.width &&
+        restored.height === DEFAULT_WORKSPACE_WINDOW_SIZE.height
+      ) {
+        window.setBounds(bounds);
+      }
+    });
+  }
 
   // 最小化空闲 15 分钟 → 销毁窗口回收渲染进程；下次打开经惰性 handle 重建。
   attachChatIdleReclaim(window);
@@ -210,6 +227,43 @@ export function loadReactChatWindowPage(window: BrowserWindow, sessionId?: strin
     return window.loadURL(`http://localhost:5173/react/${search ?? ""}`);
   }
   return window.loadFile(indexPath, search ? { search } : undefined);
+}
+
+/** 加载独立欢迎窗口，共用 React 构建产物但运行在单独的 BrowserWindow 中。 */
+export function loadOnboardingWindowPage(window: BrowserWindow): Promise<void> {
+  const indexPath = path.join(app.getAppPath(), "dist", "renderer", "react", "index.html");
+  if (isDev) return window.loadURL("http://localhost:5173/react/?onboarding=1");
+  return window.loadFile(indexPath, { search: "?onboarding=1" });
+}
+
+/** 独立欢迎弹窗：非透明、无原生标题栏，内容由 onboarding React 路由绘制。 */
+export function createOnboardingBrowserWindow(): BrowserWindow {
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(880, workArea.width);
+  const height = Math.min(820, workArea.height);
+  const window = new BrowserWindow({
+    width,
+    height,
+    minWidth: Math.min(680, workArea.width),
+    minHeight: Math.min(600, workArea.height),
+    center: true,
+    title: "欢迎使用 Cyrene",
+    icon: getCurrentAppIconPath(),
+    backgroundColor: "#fff8fb",
+    autoHideMenuBar: true,
+    show: false,
+    frame: false,
+    transparent: false,
+    resizable: true,
+    webPreferences: {
+      preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  window.setMenuBarVisibility(false);
+  return window;
 }
 
 /**
@@ -470,6 +524,7 @@ export async function createStickerManagerWindow(): Promise<{ ok: boolean; error
     },
   });
   setStickerManagerWindow(window);
+  attachContextMenu(window);
 
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     console.error("[stickers] did-fail-load", { errorCode, errorDescription, validatedURL });
@@ -571,6 +626,7 @@ export function createCallWindow(): void {
     },
   });
   setCallWindowLocal(window);
+  attachContextMenu(window);
 
   if (isDev) {
     window.loadURL("http://localhost:5173/call/");

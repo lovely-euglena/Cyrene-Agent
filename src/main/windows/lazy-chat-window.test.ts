@@ -21,6 +21,10 @@ vi.mock("electron", () => ({
     show() { calls.push("show"); }
     focus() { calls.push("focus"); }
     on() { /* no-op */ }
+    once() { /* no-op */ }
+    getBounds() { return { x: 0, y: 0, width: 1280, height: 760 }; }
+    isMaximized() { return false; }
+    setBounds() { /* no-op */ }
     loadFile() { return Promise.resolve(); }
     loadURL() { return Promise.resolve(); }
     constructor() {
@@ -31,6 +35,7 @@ vi.mock("electron", () => ({
     getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
     getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
     getCursorScreenPoint: () => ({ x: 0, y: 0 }),
+    getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
   },
 }));
 

@@ -28,8 +28,8 @@ import {
   markStartupPhaseReady,
   reactChatWindow,
   setGetCurrentAppIconPath,
-  sidebarWindow,
   settingsWindow,
+  sidebarWindow,
   tasksWindow,
 } from "../windows/window-state";
 import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
@@ -44,6 +44,7 @@ import { registerCacheDirIpc } from "../portable/cache-ipc";
 import { resolveCacheDir, setCacheDirOverride } from "../cache-dir";
 import { getPortableDataLocationStatus } from "../portable/portable-runtime";
 import type { PortableApplyRequest } from "../../shared/portable-mode";
+import { registerNewsIpc } from "../news/news-feed";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -76,14 +77,18 @@ import { registerAllTools } from "../orchestrator/tools/registry/tool-registrati
 import { LspManager } from "../lsp/manager";
 import { initSandbox } from "../orchestrator/sandbox/sandbox-exec";
 import {
+  encodePlanSessionKey,
   enterPlanDiscussing,
   exitPlanMode,
   getPlanState,
   initPlanPaths,
   initPlanStateBroadcaster,
+  initPlanStatePersister,
+  restorePlanSession,
+  type PlanStateSnapshot,
 } from "../orchestrator/plan-mode";
 import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
-import { syncPlaywrightMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
+import { syncPlaywrightMcp, syncFilesystemMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
 import { addMcpServer } from "../orchestrator/mcp-manager";
 import { parseCommandLine } from "../../shared/parse-command-line";
 import { ACCESS_LEVEL_LABEL, applyLevel, getCurrentLevel } from "../permission";
@@ -97,7 +102,7 @@ import {
 } from "../protocols/bootstrap";
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
-import { registerChatsIpc } from "../chats/chats-ipc";
+import { broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
 import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
 import { registerMomentsIpc } from "../moments/moments-ipc";
 import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
@@ -159,6 +164,7 @@ import {
 } from "../../plugins/limits";
 import type { PluginUsage } from "../../plugins/manager";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
+import { reconcileCrashedInterruptions } from "../orchestrator/conversation-interruption-reconciliation";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createTranscriptCompactorGetter } from "./transcript-compaction-wiring";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -168,6 +174,7 @@ import { createGitService } from "../code-git/git-service";
 import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/git-executable";
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
+import { migrateLegacyUserData } from "../user-data-migration";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
 import { setSidebarWindowVisible, setTasksWindowVisible } from "../windows/create-aux-windows";
@@ -252,6 +259,38 @@ async function reconcileUserMemoryIndex(): Promise<void> {
   logger.info(LogTag.RAG, "reconciliation:", report);
 }
 
+/**
+ * 启动崩溃恢复：扫描 userData/plans/各会话目录/state.json，把中断的非 NORMAL 会话还原。
+ * 只恢复事实不恢复执行权——统一降级 PLAN_DISCUSSING，REVIEW/EXECUTING 来源
+ * 由 [PLAN_RECOVERY] 注入中断事实，模型先查证工作区再修订计划重新审批。
+ * 快照的会话键取自文件内容（原始 conversationId），目录名只是物理位置；
+ * 单个快照损坏只跳过该会话，不阻塞其他恢复。
+ */
+function recoverInterruptedPlanSessions(plansRoot: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(plansRoot);
+  } catch {
+    return; // plans 目录不存在 = 从未用过计划模式
+  }
+  for (const entry of entries) {
+    const stateFile = path.join(plansRoot, entry, "state.json");
+    try {
+      if (!fs.existsSync(stateFile)) continue;
+      const snapshot = JSON.parse(fs.readFileSync(stateFile, "utf8")) as PlanStateSnapshot;
+      const conversationId = typeof snapshot.conversationId === "string" ? snapshot.conversationId : entry;
+      const result = restorePlanSession(conversationId, snapshot);
+      if (result.ok) {
+        console.log(`[PlanMode] 恢复中断会话 ${conversationId}: ${snapshot.state} → PLAN_DISCUSSING`);
+      } else {
+        console.warn(`[PlanMode] 跳过非法快照 ${entry}: ${result.reason}`);
+      }
+    } catch (err) {
+      console.warn(`[PlanMode] 读取快照失败 ${stateFile}:`, err);
+    }
+  }
+}
+
 export function createDefaultApplicationDependencies(): ApplicationDependencies {
   // Agent Runtime 早于插件管理器构造；通过窄闭包在运行期转发宿主事件，避免反转启动顺序。
   let pluginManager: PluginManager | undefined;
@@ -261,6 +300,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       store: getConversationTranscriptStore(app.getPath("userData")),
       runReader: getHarnessRunStore(app.getPath("userData")),
       loadModelSettings: () => resolveModelSettingsProfile(loadModelSettings()),
+      // 压缩阶段推给窗口：自动压缩发生在 run 开始前的主进程侧，
+      // 渲染端拿不到 AG-UI 事件，靠这条推送显示消息流尾部的呼吸提示。
+      onPhase: (phase, conversationId) => broadcastCompactionPhase(conversationId, phase),
     }));
 
   // 插件运行时动态启动用：startPlugins 首次调用的实参（core 阶段保存）
@@ -282,7 +324,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       schedulerStore: scheduler.store,
       agentRuntime: runtime,
       onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
-      getPanelHostWebContents: () => settingsWindow?.webContents ?? null,
+      getPanelHostWebContents: () => (settingsWindow?.webContents ? [settingsWindow.webContents] : []),
     });
     return pluginManager;
   };
@@ -928,6 +970,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           isSidecarEnabled() ? runDocumentImportJobViaSidecar : runDocumentIndexJob,
         ),
       installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
+      migrateLegacyUserData: () => {
+        migrateLegacyUserData({
+          appDataPath: app.getPath("appData"),
+          targetUserDataPath: app.getPath("userData"),
+        });
+      },
       registerPrivilegedSchemes,
       configureGpuSwitches: () => {
         if (loadGeneralSettings().disableGpuElectron) {
@@ -1452,6 +1500,20 @@ createTray: (input) => {
         // 主动聊天服务初始化是纯装配；触发器由 background 阶段启动
         proactiveLifecycle.initializeProactiveChatService();
 
+        // 崩溃对账：启动时对进程崩溃遗留的 interrupted run 幂等补写 crashed 中断边界。
+        // 异步、失败仅日志，不阻塞启动关键路径；两 store 单例在此刻均已就绪。
+        void reconcileCrashedInterruptions({
+          runStore: getHarnessRunStore(app.getPath("userData")),
+          transcriptStore: getConversationTranscriptStore(app.getPath("userData")),
+          now: Date.now,
+        }).then((result) => {
+          if (result.written > 0) {
+            console.log(`[CrashReconcile] 补写 ${result.written} 条崩溃边界，跳过 ${result.skipped} 个已有边界的中断 run`);
+          }
+        }).catch((error) => {
+          console.error("[CrashReconcile] 崩溃对账失败（仅日志，不阻塞启动）:", error);
+        });
+
         const ttsSessionService = new TtsSessionService((request, signal, emit) =>
           ttsSynthesisService.synthesizeSession(request, signal, emit),
         );
@@ -1480,7 +1542,7 @@ createTray: (input) => {
         // 偶发超时导致 Git 面板误报"未检测到可用 Git"；探测失败不缓存，下次自动重试
         let resolvedGit: ResolvedGitExecutable | null = null;
         const git = createGitService({
-          getSession: chatsStore.getSession,
+          getSession: chatsStore.getSessionRecord,
           resolveExecutable: async () => {
             resolvedGit ??= await resolveGitExecutable({
               systemCommand: "git",
@@ -1543,8 +1605,20 @@ createTray: (input) => {
       initSandbox: () => initSandbox(),
 
       initPlanMode: () => {
-        // 计划模式路径根注入：write_plan / plan.md 读写基于 userData/plans/<conversationId>/
+        const plansRoot = path.join(app.getPath("userData"), "plans");
+        // 计划模式路径根注入：write_plan / plan.md 读写基于 userData/plans/<会话键>/
         initPlanPaths(app.getPath("userData"));
+        // 状态持久化（durable transition）：同步写盘，approvePlan 返回时 state.json 已落盘，
+        // 崩溃恢复不丢"执行正在进行"的事实；null = 回 NORMAL，删除 state.json 清尸
+        initPlanStatePersister((conversationId, snapshot) => {
+          const stateFile = path.join(plansRoot, encodePlanSessionKey(conversationId), "state.json");
+          if (!snapshot) {
+            fs.rmSync(stateFile, { force: true });
+            return;
+          }
+          fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+          fs.writeFileSync(stateFile, JSON.stringify(snapshot, null, 2), "utf8");
+        });
         // 计划模式状态广播：所有状态切换都广播到所有窗口
         initPlanStateBroadcaster((conversationId, state) => {
           const payload = { conversationId, state };
@@ -1552,6 +1626,8 @@ createTray: (input) => {
             win.webContents.send(IPC.PLAN_STATE_CHANGED, payload);
           }
         });
+        // 启动崩溃恢复：非 NORMAL 快照统一降级 PLAN_DISCUSSING，不自动恢复执行权
+        recoverInterruptedPlanSessions(plansRoot);
       },
 
       // 工具注册：集中到一个显式入口（依赖沙箱/Git/LSP 就绪）
@@ -1731,6 +1807,7 @@ createTray: (input) => {
           embeddingIndexService: services.embedding,
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
+          syncFilesystemMcp,
         });
 
         // 便携模式：数据目录迁移/覆盖 + 重启（指针文件在程序目录）
@@ -1744,6 +1821,9 @@ createTray: (input) => {
           ipc,
           getParentWindow: () => settingsWindow,
         });
+
+        // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
+        registerNewsIpc(ipc);
 
         registerMemoryUserToolIpc({
           ipc,
@@ -1903,8 +1983,12 @@ createTray: (input) => {
         }
       },
       syncBuiltInMcp: async () => {
-        // 内置 MCP 自动连接：Playwright（默认关闭，选项控制）
+        // 内置 MCP 自动连接：Playwright / Filesystem（均默认关闭，选项控制）
         await syncPlaywrightMcp(loadGeneralSettings());
+        await syncFilesystemMcp({
+          filesystemMcpEnabled: loadGeneralSettings().filesystemMcpEnabled,
+          allowedDir: app.getPath("downloads"),
+        });
       },
       restoreMcp: (signal) => initMcpManager({ signal }),
       reconcileMemory: async (signal) => {

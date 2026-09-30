@@ -1,6 +1,7 @@
 import "./window-corner-radius";
+import "./message-typography";
 import { normalizeUiTheme, type UiTheme } from "../../shared/ui-theme";
-import { DEFAULT_UI_FONT, normalizeUiFont, type UiFont } from "../../shared/ui-font";
+import type { UiFont } from "../../shared/ui-font";
 import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
 
 declare global {
@@ -22,41 +23,23 @@ declare global {
   }
 }
 
-function applyTheme(theme: unknown): void {
+export function applyUiTheme(theme: unknown): void {
   document.documentElement.dataset.uiTheme = normalizeUiTheme(theme);
+  delete document.documentElement.dataset.uiThemePending;
 }
 
 function applyRadius(radius: boolean): void {
   document.documentElement.dataset.uiRadius = radius ? undefined : "false";
 }
 
-const CUSTOM_FONT_STYLE_ID = "cyrene-custom-font";
-const DEFAULT_FONT_STACK = '"Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
-
-function applyFont(value: unknown): void {
-  const font = normalizeUiFont(value);
-  const style = document.getElementById(CUSTOM_FONT_STYLE_ID);
-  if (font.kind !== "custom") {
-    style?.remove();
-    document.documentElement.style.setProperty("--rb-font-sans", DEFAULT_FONT_STACK);
-    document.documentElement.dataset.uiFont = "source-han";
-    return;
-  }
-  const customStyle = style ?? document.head.appendChild(Object.assign(document.createElement("style"), { id: CUSTOM_FONT_STYLE_ID }));
-  const format = font.fileName.toLowerCase().endsWith(".otf") ? "opentype" : "truetype";
-  customStyle.textContent = `@font-face { font-family: "Cyrene Custom Font"; src: url("local-font://${encodeURIComponent(font.fileName)}") format("${format}"); font-display: swap; }`;
-  document.documentElement.style.setProperty("--rb-font-sans", `"Cyrene Custom Font", ${DEFAULT_FONT_STACK}`);
-  document.documentElement.dataset.uiFont = "custom";
-}
-
-applyTheme("pearl-white");
+document.documentElement.dataset.uiFont = "source-han";
 
 void window.cyreneTheme?.get()
-  .then(applyTheme)
-  .catch(() => applyTheme("pearl-white"));
+  .then(applyUiTheme)
+  .catch(() => applyUiTheme("pearl-white"));
 
 window.cyreneTheme?.onChanged((theme) => {
-  applyTheme(theme);
+  applyUiTheme(theme);
 });
 
 void window.cyreneTheme?.getRadius()
@@ -66,7 +49,3 @@ void window.cyreneTheme?.getRadius()
 window.cyreneTheme?.onRadiusChanged((theme) => {
   applyRadius(theme);
 });
-
-applyFont(DEFAULT_UI_FONT);
-void window.cyreneFont?.get().then(applyFont).catch(() => applyFont(DEFAULT_UI_FONT));
-window.cyreneFont?.onChanged((font) => applyFont(font));

@@ -109,6 +109,10 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
       }
     },
     activate: async (request) => {
+      if (windowManager.hasCurrentDisclaimerConsent?.() === false) {
+        windowManager.showOnboardingWindow?.();
+        return;
+      }
       switch (request.kind) {
         case "chat":
           await windowManager.openReactChatWindow(request.sessionId);
@@ -120,7 +124,6 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
           // 默认 WPF 设置窗（channels/TTS/ASR 例外弹 Electron，见 settings-router）
           if (deps.openSettings) deps.openSettings(request.section);
           else windowManager.createSettingsWindow(request.section);
-          break;
       }
     },
   });

@@ -8,11 +8,12 @@ import "../fs-tools";
 import { registerLifeTools, setTranslateConfig } from "../life-tools";
 import { registerMomentsTools } from "../moments-tools";
 import { registerRecallHistoryTool } from "../history-tools";
-import { registerSearchCodeTool, registerSearchTextTool } from "../search-code-tools";
+import { registerSearchTextTool } from "../search-text-tools";
 import { registerApplyPatchTool } from "../apply-patch-tools";
 import { registerAstGrepTools } from "../ast-grep-tools";
 import { toolRegistry } from "./tool-registry";
 import { registerTravelTools } from "../travel-tools";
+import { registerZCodeFileTools } from "../zcode-file-tools";
 import type { GitService } from "../../../code-git/git-service";
 import { registerCodeGitTools } from "../git-tools";
 import type { LspManager } from "../../../lsp/manager";
@@ -27,7 +28,6 @@ export function syncBuiltInToolToggles(settings: GeneralSettings): void {
 export function registerAllTools(deps: { codeGitService: GitService; lspManager: LspManager }): void {
   registerCodeGitTools(deps.codeGitService, toolRegistry);
   registerLspTool(deps.lspManager, toolRegistry);
-  registerSearchCodeTool();
   registerSearchTextTool();
   registerApplyPatchTool();
   registerAstGrepTools();
@@ -41,6 +41,13 @@ export function registerAllTools(deps: { codeGitService: GitService; lspManager:
       : null;
   });
   registerLifeTools();
+  registerZCodeFileTools({
+    read: toolRegistry.getById("read_file")!,
+    readImage: toolRegistry.getById("read_image")!,
+    write: toolRegistry.getById("write_file")!,
+    edit: toolRegistry.getById("str_replace")!,
+    grep: toolRegistry.getById("search_text")!,
+  });
   registerMomentsTools();
 
   registerTravelTools();

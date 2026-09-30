@@ -17,6 +17,7 @@ export interface PetWindowSettingsSlice {
   petZoom?: number;
   /** 桌宠置顶（重建窗口时恢复运行期属性）。 */
   petAlwaysOnTop?: boolean;
+  disclaimerAcceptedVersion?: string;
 }
 
 export interface CreatePetWindowContext {

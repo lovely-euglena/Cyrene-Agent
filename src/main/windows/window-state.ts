@@ -14,13 +14,13 @@ import {
  * 配套的 setter 函数，避免 TS2632 编译错误与循环依赖。
  */
 export let reactChatWindow: BrowserWindow | null = null;
-export let sidebarWindow: BrowserWindow | null = null;
-export let tasksWindow: BrowserWindow | null = null;
-export let settingsWindow: BrowserWindow | null = null;
 export let stickerManagerWindow: BrowserWindow | null = null;
 export let callWindow: BrowserWindow | null = null;
 export let musicPlayerWindow: BrowserWindow | null = null;
 export let toastWindow: BrowserWindow | null = null;
+export let sidebarWindow: BrowserWindow | null = null;
+export let tasksWindow: BrowserWindow | null = null;
+export let settingsWindow: BrowserWindow | null = null;
 
 export function setReactChatWindow(win: BrowserWindow | null): void {
   reactChatWindow = win;
@@ -34,6 +34,14 @@ export function setMusicPlayerWindow(win: BrowserWindow | null): void {
   musicPlayerWindow = win;
 }
 
+export function setStickerManagerWindow(win: BrowserWindow | null): void {
+  stickerManagerWindow = win;
+}
+
+export function setCallWindowLocal(win: BrowserWindow | null): void {
+  callWindow = win;
+}
+
 export function setSidebarWindow(win: BrowserWindow | null): void {
   sidebarWindow = win;
 }
@@ -44,14 +52,6 @@ export function setTasksWindow(win: BrowserWindow | null): void {
 
 export function setSettingsWindow(win: BrowserWindow | null): void {
   settingsWindow = win;
-}
-
-export function setStickerManagerWindow(win: BrowserWindow | null): void {
-  stickerManagerWindow = win;
-}
-
-export function setCallWindowLocal(win: BrowserWindow | null): void {
-  callWindow = win;
 }
 
 // 启动阶段控制：在 app startup 完成前，新创建的辅助窗口先不 show，

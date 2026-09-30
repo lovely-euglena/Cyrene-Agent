@@ -4,8 +4,17 @@ import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getStickerManagerConfig, setStickerEnabled } from "../orchestrator/sticker-settings";
 import { addUserSticker, deleteUserSticker } from "../sticker-storage";
 import { loadMemoryPanelData } from "./panel";
-import { loadUserProfile, saveUserProfile, loadAvatarDataUrl } from "../settings-store";
-import { addMcpServer, removeMcpServer, listMcpServers } from "../orchestrator/mcp-manager";
+import * as fs from "fs";
+import * as path from "path";
+import {
+  CYRENE_AVATAR_EXTENSIONS,
+  findCyreneAvatarPath,
+  getCyreneAvatarPath,
+  loadAvatarDataUrl,
+  loadUserProfile,
+  saveUserProfile,
+} from "../settings-store";
+import { addMcpServer, listMcpServerConfigs, listMcpServers, removeMcpServer } from "../orchestrator/mcp-manager";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import type { ConversationMode } from "../../shared/chat-types";
 import { loadGeneralSettings, saveGeneralSettings } from "../settings/settings-facade";
@@ -14,9 +23,6 @@ import type { SkillMode } from "../skills/types";
 import type { WindowManager } from "../windows/window-manager";
 import {
   reactChatWindow,
-  sidebarWindow,
-  tasksWindow,
-  settingsWindow,
   stickerManagerWindow,
 } from "../windows/window-state";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -43,10 +49,9 @@ export interface MemoryUserToolIpcDependencies {
 }
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
-  for (const win of [reactChatWindow, sidebarWindow, tasksWindow, settingsWindow]) {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send(channel, payload);
-    }
+  const win = reactChatWindow;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, payload);
   }
 }
 
@@ -128,6 +133,24 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
     return loadAvatarDataUrl();
   });
 
+  ipc.handle(IPC.CYRENE_AVATAR_GET, () => {
+    try {
+      const avatarPath = findCyreneAvatarPath();
+      if (!avatarPath) return null;
+      const extension = path.extname(avatarPath).toLowerCase();
+      const mime = extension === ".jpg" || extension === ".jpeg"
+        ? "image/jpeg"
+        : extension === ".webp"
+          ? "image/webp"
+          : extension === ".bmp"
+            ? "image/bmp"
+            : "image/png";
+      return `data:${mime};base64,${fs.readFileSync(avatarPath).toString("base64")}`;
+    } catch {
+      return null;
+    }
+  });
+
   // 记忆面板
   ipc.handle(IPC.MEMORY_PANEL_GET_DATA, () => loadMemoryPanelData());
 
@@ -187,6 +210,59 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
     return { avatarPath: picked.avatarPath, profile: picked.profile };
   });
 
+  ipc.handle(IPC.CYRENE_AVATAR_UPLOAD, async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return false;
+
+    const sourcePath = result.filePaths[0];
+    const extension = path.extname(sourcePath).toLowerCase();
+    if (!CYRENE_AVATAR_EXTENSIONS.includes(extension as typeof CYRENE_AVATAR_EXTENSIONS[number])) {
+      throw new Error("不支持的图片格式");
+    }
+
+    const targetPath = getCyreneAvatarPath(extension as typeof CYRENE_AVATAR_EXTENSIONS[number]);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    const uploadId = `${process.pid}-${Date.now()}`;
+    const tempPath = `${targetPath}.${uploadId}.tmp`;
+    const backupPath = `${targetPath}.${uploadId}.bak`;
+    let movedExistingTarget = false;
+    try {
+      fs.copyFileSync(sourcePath, tempPath);
+      if (fs.existsSync(targetPath)) {
+        fs.renameSync(targetPath, backupPath);
+        movedExistingTarget = true;
+      }
+      fs.renameSync(tempPath, targetPath);
+      if (movedExistingTarget) {
+        fs.rmSync(backupPath, { force: true });
+        movedExistingTarget = false;
+      }
+      for (const oldExtension of CYRENE_AVATAR_EXTENSIONS) {
+        const oldPath = getCyreneAvatarPath(oldExtension);
+        if (oldPath !== targetPath) fs.rmSync(oldPath, { force: true });
+      }
+    } catch (error) {
+      fs.rmSync(tempPath, { force: true });
+      if (movedExistingTarget && !fs.existsSync(targetPath)) {
+        fs.renameSync(backupPath, targetPath);
+      }
+      throw error;
+    }
+
+    deps.windowManager?.broadcast(IPC.CYRENE_AVATAR_CHANGED, null);
+    return true;
+  });
+
+  ipc.handle(IPC.CYRENE_AVATAR_RESET, () => {
+    for (const extension of CYRENE_AVATAR_EXTENSIONS) {
+      fs.rmSync(getCyreneAvatarPath(extension), { force: true });
+    }
+    deps.windowManager?.broadcast(IPC.CYRENE_AVATAR_CHANGED, null);
+  });
+
   // MCP servers
   ipc.handle(IPC.MCP_ADD_SERVER, async (_event, config: unknown) => {
     console.log("[MCP IPC] add-server:", JSON.stringify(config).slice(0, 200));
@@ -206,6 +282,11 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
     const servers = listMcpServers();
     console.log("[MCP IPC] list-servers:", servers.length + " servers");
     return servers;
+  });
+
+  // 持久化配置（含连接失败的），设置页列表以此为准
+  ipc.handle(IPC.MCP_LIST_SERVER_CONFIGS, () => {
+    return listMcpServerConfigs();
   });
 
   // Tool toggles

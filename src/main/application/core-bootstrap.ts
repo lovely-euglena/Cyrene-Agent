@@ -37,6 +37,7 @@ import { loadAvatarDataUrl } from "../settings-store";
 import { TIMEZONE_OPTIONS } from "../../shared/timezone-options";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
+import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 
 export interface CoreServices {
   runtimeState: RuntimeStateService;
@@ -315,12 +316,18 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // 启动期一次性完整应用通用设置（登录项同步等）；petVisible=true 时经
   // showPetWindow 懒建窗口，隐藏时不建
   deps.applyGeneralSettings(generalSettings, services);
+  // 首次启动免责声明（上游 onboarding）：未接受时创建欢迎/免责声明窗，桌宠延后创建
+  const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
+    || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+  const onboardingWindow = disclaimerAccepted
+    ? null
+    : await shell.windowManager.createOnboardingWindow?.() ?? null;
   // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-  if (generalSettings.petVisible) shell.windowManager.createPetWindow(true);
-  shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
-  shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
+  if (generalSettings.petVisible && disclaimerAccepted) shell.windowManager.createPetWindow(true);
   if (generalSettings.sidebarVisible) shell.windowManager.createSidebarWindow();
   if (generalSettings.tasksVisible) shell.windowManager.createTasksWindow();
+  shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
+  shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
 
   // 注册核心资源清理（固定阶段）；scheduler/proactive/更新定时器由 background 注册
   shutdown.register({
@@ -360,6 +367,8 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     // 在 reveal 同点关闭；bridge 未启用时 no-op（closeNativeWindow 短路）
     closeSplashWindow: () => { void closeNativeWindow("splash"); },
     chatWindow: lazyChat && !shell.chat.isMaterialized?.() ? null : shell.chat.window,
+    onboardingWindow,
+    showOnboardingWindow: !disclaimerAccepted,
     loadingShownAt: shell.loadingShownAt,
     minimumDurationMs: deps.minimumSplashMs,
   });

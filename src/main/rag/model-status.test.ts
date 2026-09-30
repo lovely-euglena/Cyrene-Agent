@@ -24,6 +24,10 @@ vi.mock("os", async () => {
 vi.mock("electron", () => ({
   app: {
     getAppPath: () => ISOLATED_ROOT,
+    // 数据/缓存分离后（cache-dir.ts）HF 缓存解析需要 getPath("appData") + getName：
+    // 解析结果 = <appData>/../Local/<name>/Cache，本测试固定用 cyrene-test。
+    getPath: () => ISOLATED_ROOT + "/appdata",
+    getName: () => "cyrene-test",
   },
 }));
 
@@ -41,6 +45,9 @@ import {
 void checkRerankerModelInstalled;
 
 const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
+
+/** HF 缓存落点 = 缓存根（<appData>/../Local/<appName>/Cache）下的 huggingface/Xenova。 */
+const HF_CACHE_XENOVA = path.join(ISOLATED_ROOT, "Local", "cyrene-test", "Cache", "huggingface", "Xenova");
 
 function ensureFakeDir(...parts: string[]): string {
   const dir = path.join(ISOLATED_ROOT, ...parts);
@@ -62,9 +69,9 @@ function ensurePartialFakeDir(...parts: string[]): string {
   return dir;
 }
 
-/** Drop a fully-installed model into the simulated HF cache (~/.cache/huggingface/Xenova). */
+/** Drop a fully-installed model into the simulated HF cache (cache root/huggingface/Xenova). */
 function ensureHfCache(...parts: string[]): string {
-  const dir = path.join(ISOLATED_HOME, ".cache", "huggingface", "Xenova", ...parts);
+  const dir = path.join(HF_CACHE_XENOVA, ...parts);
   fs.mkdirSync(dir, { recursive: true });
   for (const file of REQUIRED_FILES) {
     const filePath = path.join(dir, file);
@@ -173,7 +180,7 @@ describe("model-status: HF cache fallback semantics", () => {
     expect(detail.installed).toBe(true);
     expect(detail.source).toBe("hf-cache");
     expect(detail.matchedAt).toBe(
-      path.join(ISOLATED_HOME, ".cache", "huggingface", "Xenova", "bge-m3"),
+      path.join(HF_CACHE_XENOVA, "bge-m3"),
     );
     expect(detail.existingProjectDir).toBeNull();
   });

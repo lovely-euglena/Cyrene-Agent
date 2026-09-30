@@ -312,3 +312,19 @@ export interface SettingsApi {
   beginScreenshotHotkeyCapture: () => Promise<boolean>;
   endScreenshotHotkeyCapture: () => Promise<boolean>;
 }
+
+/**
+ * renderer 侧的 MCP server 配置视图。
+ * 与主进程 McpServerConfig 对应（effectKindOverrides 等高级字段对 UI 不可见）。
+ */
+export interface McpServerConfigView {
+  id: string;
+  name: string;
+  transport: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+}
