@@ -103,6 +103,7 @@ export async function runModelRequestWithRetry<T>(
         clearStatus();
       };
       options.signal?.addEventListener("abort", onCallerAbort, { once: true });
+      if (options.signal?.aborted) onCallerAbort();
       resetIdleTimer();
 
       try {

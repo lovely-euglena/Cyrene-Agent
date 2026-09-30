@@ -60,7 +60,7 @@ export interface AgentLoopEvent {
   stepName?: string;
   totalUsage?: unknown;
   content?: string;
-  status?: string;
+  status?: string | import("../../shared/model-retry").ModelRetryStatus;
   snapshot?: unknown;
   taskPlan?: unknown;
   /** 上下文容量快照（chat-loop 发射；type 为 "context_usage"）。 */
@@ -327,6 +327,12 @@ export function toAguiEvent(event: AgentLoopEvent): BaseEvent {
         type: EventType.CUSTOM,
         name: "cyrene.context.usage",
         value: event.contextUsage,
+      } as BaseEvent;
+    case "model_retry":
+      return {
+        type: EventType.CUSTOM,
+        name: "cyrene.model.retry",
+        value: event.status,
       } as BaseEvent;
     default:
       // v3: 未知事件类型转为 CUSTOM 占位，不再抛错
