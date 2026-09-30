@@ -9,8 +9,6 @@ const SESSIONS_DIR_NAME = "sessions";
 const INDEX_FILE_NAME = "index.json";
 const LEGACY_SCHEMA_VERSION = 1;
 const SCHEMA_VERSION = 2;
-/** index.json 写入防抖窗口（ms）。创建、终态、删除和启动对账立即写；旧版写入路径防抖。 */
-const INDEX_WRITE_DEBOUNCE_MS = 500;
 
 export type HarnessRunStatus = "running" | "interrupted" | "completed" | "cancelled" | "failed";
 export type PersistedToolCallStatus = "planned" | "started" | "committed" | "unknown" | "not_executed";
@@ -137,8 +135,6 @@ export class HarnessRunStore {
   private readonly indexPath: string;
   private readonly now: () => number;
   private index = new Map<string, IndexRow>();
-  /** 问题 5 P0：index 防抖写的 pending 定时器（writeIndexNow 会取消它）。 */
-  private indexWriteTimer: ReturnType<typeof setTimeout> | undefined;
   /** 问题 5 P0：写放大量度（实例生命周期累计；markTerminal 时输出一行日志）。 */
   private diskWrites = 0;
   private diskBytes = 0;
@@ -167,7 +163,7 @@ export class HarnessRunStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.write(session, "now");
+    this.write(session);
     this.appendEvent(session, "run_created");
     return clone(session);
   }
@@ -208,7 +204,7 @@ export class HarnessRunStore {
     session.status = status;
     session.completedAt = this.now();
     session.updatedAt = session.completedAt;
-    this.write(session, "now");
+    this.write(session);
     this.appendEvent(session, `run_${status}`);
     // 写入量度用于观察运行元数据和索引的实际写放大。
     console.log(`[HarnessRunStore] run=${runId} terminal=${status} diskWrites=${this.diskWrites} diskBytes=${this.diskBytes}`);
@@ -312,7 +308,7 @@ export class HarnessRunStore {
       }
       session.status = "interrupted";
       session.updatedAt = this.now();
-      this.write(session, "now");
+      this.write(session);
       this.appendEvent(session, "run_interrupted");
       changed = true;
     }
@@ -345,7 +341,7 @@ export class HarnessRunStore {
   }
 
   /** 新运行只写运行元数据；旧版 session 文件保持只读。 */
-  private write(session: HarnessRunMetadata, mode: "now" | "lazy" = "lazy"): void {
+  private write(session: HarnessRunMetadata): void {
     if (session.schemaVersion !== SCHEMA_VERSION) throw new Error("HARNESS_RUN_LEGACY_READ_ONLY");
     const persisted = {
       schemaVersion: SCHEMA_VERSION,
@@ -363,8 +359,7 @@ export class HarnessRunStore {
       status: session.status,
       updatedAt: session.updatedAt,
     });
-    if (mode === "now") this.writeIndexNow();
-    else this.writeIndexLazy();
+    this.writeIndexNow();
   }
 
   private readIndex(): void {
@@ -384,26 +379,8 @@ export class HarnessRunStore {
     }
   }
 
-  /** 热路径防抖写：窗口内多次 write() 只触发一次落盘；回调从 index 现值构造，不捕获快照。 */
-  private writeIndexLazy(): void {
-    if (this.indexWriteTimer !== undefined) return;
-    this.indexWriteTimer = setTimeout(() => {
-      this.indexWriteTimer = undefined;
-      try {
-        this.writeIndexNow();
-      } catch (error) {
-        // index 非权威数据（session 文件才是）：写失败由 initialize 权威校正兜底
-        console.warn("[HarnessRunStore] lazy index write failed:", error);
-      }
-    }, INDEX_WRITE_DEBOUNCE_MS);
-  }
-
-  /** 立即写：先取消 pending 的 lazy 定时器，防止旧回调把 stale 状态覆盖回去。 */
+  /** Run metadata changes only at creation, terminal settlement, and crash reconciliation. */
   private writeIndexNow(): void {
-    if (this.indexWriteTimer !== undefined) {
-      clearTimeout(this.indexWriteTimer);
-      this.indexWriteTimer = undefined;
-    }
     this.atomicWrite(this.indexPath, [...this.index.values()]);
   }
 

@@ -203,7 +203,7 @@ describe("AgentRunController", () => {
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
     await promise;
 
-    const final = store.upsert.mock.calls.at(-1)?.[1] as { toolExecutions?: Array<{ id: string; terminalOutput?: string }> };
+    const final = host.patchMessage.mock.calls.at(-1)?.[2] as { toolExecutions?: Array<{ id: string; terminalOutput?: string }> };
     expect(final.toolExecutions?.find((tool) => tool.id === "shell-a")?.terminalOutput).toBe("第一行\n");
     expect(final.toolExecutions?.find((tool) => tool.id === "other-b")?.terminalOutput).toBeUndefined();
   });
@@ -233,21 +233,23 @@ describe("AgentRunController", () => {
     expect(order.slice(0, -1).every((entry) => entry.startsWith("checkpoint:"))).toBe(true);
   });
 
-  it("derives the mutation key from the exact queued patch", async () => {
+  it("uses short, unique mutation keys for queued patches", async () => {
     const api = createFakeApi({ success: true, runId: "run-key" });
     const store = createFakeStore();
     const { host } = createRecordingHost();
     const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
     await flush();
     const firstCall = store.checkpointPresentation.mock.calls[0] as [string, string, string, Record<string, unknown>];
-    const encoded = firstCall[2].split(":").slice(3).join(":");
-    expect(JSON.parse(decodeURIComponent(encoded))).toEqual(firstCall[3]);
+    expect(firstCall[2]).toMatch(/^run:assistant-1:[^:]+:p1$/);
+    expect(firstCall[2].length).toBeLessThan(100);
     api.emit({ type: "RUN_STARTED", runId: "run-key" });
     api.emit({ type: "TEXT_MESSAGE_START", runId: "run-key" });
     api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-key", delta: "ok" });
     api.emit({ type: "TEXT_MESSAGE_END", runId: "run-key" });
     api.emit({ type: "RUN_FINISHED", runId: "run-key", result: { status: "success" } });
     await promise;
+    const keys = store.checkpointPresentation.mock.calls.map((call) => call[2]);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("keeps pre-ack RUN_STARTED buffered until the acknowledged run is bound", async () => {
@@ -291,6 +293,23 @@ describe("AgentRunController", () => {
 
     await expect(promise).rejects.toThrow("journal unavailable");
     expect(api.reportRunPersisted).not.toHaveBeenCalled();
+  });
+
+  it("does not start a run when its initial presentation checkpoint fails", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const registries = createRegistries();
+    store.checkpointPresentation.mockRejectedValue(new Error("journal unavailable"));
+
+    await expect(launch(createInput(), { api, store, host, registries }).promise)
+      .rejects.toThrow("journal unavailable");
+    expect(api.run).not.toHaveBeenCalled();
+    expect(registries.activeRuns.current["session-1"]).toBeUndefined();
+    expect(registries.checkpointTriggers.current["session-1"]).toBeUndefined();
+    expect(host.onRunFinished).toHaveBeenCalledWith({
+      mode: "chat", sessionId: "session-1", queuePaused: true,
+    });
   });
 
   it("writes the first running checkpoint to the real journal before invoking api.run", async () => {
@@ -570,7 +589,9 @@ describe("AgentRunController", () => {
       .map((call) => call[2] as { transientText?: string; waitingForFirstEvent?: boolean })
       .filter((patch) => patch.transientText);
     expect(candidatePatches.map((patch) => patch.transientText)).toEqual(["你好，", "你好，世界"]);
-    expect(store.upsert.mock.calls.slice(0, -1).every((call) => call[1].content === "")).toBe(true);
+    expect(store.checkpointPresentation.mock.calls.slice(0, -1).every((call) =>
+      (call[3] as { content?: string; transientText?: string }).content !== "权威最终答案" &&
+      !Object.prototype.hasOwnProperty.call(call[3], "transientText"))).toBe(true);
     // 候选正文流式喂早播队列：每个 delta 到达即 append，不等 run 结束
     expect(earlyTtsQueue.append).toHaveBeenCalledTimes(2);
     expect(earlyTtsQueue.append).toHaveBeenNthCalledWith(1, "你好，");
@@ -807,7 +828,7 @@ describe("AgentRunController", () => {
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
     await promise;
 
-    const finalUpsert = store.upsert.mock.calls.at(-1)?.[1] as {
+    const finalUpsert = host.patchMessage.mock.calls.at(-1)?.[2] as {
       processMessages?: Array<{ content: string; seq?: number }>;
       reasoningBlocks?: Array<{ content: string; seq?: number }>;
       toolExecutions?: Array<{ name: string; seq?: number }>;
@@ -845,7 +866,7 @@ describe("AgentRunController", () => {
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
     await promise;
 
-    const finalUpsert = store.upsert.mock.calls.at(-1)?.[1] as { processMessages?: Array<{ content: string }> };
+    const finalUpsert = host.patchMessage.mock.calls.at(-1)?.[2] as { processMessages?: Array<{ content: string }> };
     const matches = finalUpsert.processMessages?.filter((message) => message.content === longText) ?? [];
     expect(matches).toHaveLength(1);
   });
@@ -968,7 +989,7 @@ describe("AgentRunController", () => {
     api.emit({ type: "RUN_ERROR", runId: "run-1", message: "连接中断" });
     await promise;
 
-    const finalUpsert = store.upsert.mock.calls.at(-1)?.[1] as { processMessages?: Array<{ content: string }> };
+    const finalUpsert = host.patchMessage.mock.calls.at(-1)?.[2] as { processMessages?: Array<{ content: string }> };
     expect(finalUpsert.processMessages?.filter((message) => message.content === "正在检查关键文件。")).toHaveLength(1);
   });
 

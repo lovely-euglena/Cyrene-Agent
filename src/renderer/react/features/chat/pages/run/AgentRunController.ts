@@ -330,7 +330,19 @@ export class AgentRunController {
         void this.checkpointRun(status, true);
       },
     };
-    await this.checkpointRun("running", true);
+    try {
+      await this.checkpointRun("running", true, true);
+    } catch (error) {
+      const checkpointCallbacks = { ...this.deps.registries.checkpointTriggers.current };
+      delete checkpointCallbacks[this.input.sessionId];
+      this.deps.registries.checkpointTriggers.current = checkpointCallbacks;
+      const activeRuns = { ...this.deps.registries.activeRuns.current };
+      delete activeRuns[this.input.sessionId];
+      this.deps.registries.activeRuns.current = activeRuns;
+      this.deps.host.setModeBusy(this.input.targetMode, false);
+      this.deps.host.onRunFinished({ mode: this.input.targetMode, sessionId: this.input.sessionId, queuePaused: true });
+      throw error;
+    }
 
     const eventGate = new RunEventGate<AguiEvent>();
     const off = api.onEvent((event) => {
@@ -432,7 +444,7 @@ export class AgentRunController {
           },
         };
         for (const accepted of eventGate.bind(ack.runId)) this.handleEvent(accepted);
-        await this.checkpointRun("running", true);
+        await this.checkpointRun("running", true, true);
         if (this.deps.registries.cancelRequestedSessions.current.delete(this.input.sessionId)) {
           await api.cancel(ack.runId);
         }
@@ -602,7 +614,7 @@ export class AgentRunController {
   }
 
   /** 把展示差量写入会话轨迹；幂等键短小，串行顺序沿用 run 内事件顺序。 */
-  private writeCheckpoint(status: "running" | "waiting_user" | "terminal"): Promise<boolean> {
+  private writeCheckpoint(status: "running" | "waiting_user" | "terminal", required = false): Promise<boolean> {
     const snapshot = this.buildCheckpoint(status);
     this.checkpointChain = this.checkpointChain
       .catch((error) => {
@@ -628,6 +640,7 @@ export class AgentRunController {
           return true;
         } catch (error) {
           console.error("[AgentRunController] presentation checkpoint failed:", error);
+          if (required || status === "terminal") throw error;
           return false;
         }
       });
@@ -641,12 +654,13 @@ export class AgentRunController {
   private checkpointRun(
     status: "running" | "waiting_user" | "terminal",
     immediate = false,
+    required = false,
   ): Promise<boolean> {
     if (this.checkpointTimer !== undefined) {
       window.clearTimeout(this.checkpointTimer);
       this.checkpointTimer = undefined;
     }
-    if (immediate) return this.writeCheckpoint(status);
+    if (immediate) return this.writeCheckpoint(status, required);
     this.checkpointTimer = window.setTimeout(() => {
       this.checkpointTimer = undefined;
       void this.writeCheckpoint(status);
@@ -846,6 +860,15 @@ export class AgentRunController {
   }
 
   private moveCandidateToInterruptedProcess(): void {
+    const pending = this.pendingCandidateClassification;
+    if (pending) {
+      this.pendingCandidateClassification = undefined;
+      this.processMessages = this.processMessages.map((message) => message.id === pending.processId
+        ? { ...message, content: pending.content, interrupted: true }
+        : message);
+      this.resetCandidateState();
+      return;
+    }
     if (!this.candidateText.trim()) {
       this.resetCandidateState();
       return;
