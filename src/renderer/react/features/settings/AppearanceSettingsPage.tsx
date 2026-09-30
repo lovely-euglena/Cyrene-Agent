@@ -4,7 +4,7 @@ import { ArrowLeft, AudioLines, BarChart3, Bot, Boxes, Brain, FileText, Headphon
 import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
 import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
-import { normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
+import { DEFAULT_UI_ICON, normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
 import {
   DEFAULT_MESSAGE_TYPOGRAPHY,
@@ -55,7 +55,7 @@ interface AppearanceValues {
 const defaults: AppearanceValues = {
   uiTheme: "pearl-white",
   windowCornerRadius: 6,
-  uiIcon: "cyrene-sun",
+  uiIcon: DEFAULT_UI_ICON,
   messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
   petAlwaysOnTop: false,
   petVisible: true,
