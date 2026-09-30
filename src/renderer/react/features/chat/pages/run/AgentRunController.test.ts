@@ -180,6 +180,27 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it("shows retry progress in the live message and clears it at run completion", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.model.retry", runId: "run-1", value: {
+      phase: "waiting", retryNumber: 2, maxRetries: 5, delayMs: 4000, category: "NETWORK",
+    } });
+
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", {
+      modelRetry: { phase: "waiting", retryNumber: 2, maxRetries: 5, delayMs: 4000, category: "NETWORK" },
+    });
+    expect(store.checkpointPresentation.mock.calls.some((call) => JSON.stringify(call[3]).includes("modelRetry"))).toBe(false);
+
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+    expect(host.patchMessage.mock.calls.some(([, , patch]) => (patch as { modelRetry?: unknown }).modelRetry === null)).toBe(true);
+  });
+
   it("keeps shell output with its own tool across the final result and checkpoint", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();

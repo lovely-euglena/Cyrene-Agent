@@ -14,6 +14,7 @@ import type {
 import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../../shared/context-usage";
 import type { TodoItem } from "../../../../../../shared/todo-types";
 import { isModelFailureInfo, type ModelFailureInfo } from "../../../../../../shared/model-error";
+import type { ModelRetryStatus } from "../../../../../../shared/model-retry";
 import type { ChatMessageItem } from "../../components/ChatMessageList";
 import type { ComposerAttachment } from "../../components/ChatComposer";
 import {
@@ -234,6 +235,20 @@ function createCheckpointRunToken(): string {
  * 正文渐显、早播 TTS 接线与终态结算全部内聚于此。
  * 不依赖 React，可注入假桥与记录型宿主做全流程单测。
  */
+function normalizeModelRetryStatus(value: unknown): ModelRetryStatus | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const status = value as Partial<ModelRetryStatus>;
+  if ((status.phase !== "waiting" && status.phase !== "attempting" && status.phase !== "cleared")
+    || !Number.isInteger(status.retryNumber) || !Number.isInteger(status.maxRetries)) return undefined;
+  return {
+    phase: status.phase,
+    retryNumber: status.retryNumber!,
+    maxRetries: status.maxRetries!,
+    ...(typeof status.delayMs === "number" ? { delayMs: status.delayMs } : {}),
+    ...(typeof status.category === "string" ? { category: status.category } : {}),
+  };
+}
+
 export class AgentRunController {
   private readonly input: AgentRunInput;
   private readonly deps: AgentRunDeps;
@@ -1247,6 +1262,11 @@ export class AgentRunController {
         this.deps.host.updateContextUsage(this.input.sessionId, snapshot);
         if (snapshot.phase === "terminal") void this.checkpointRun("running");
       }
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.model.retry") {
+      const status = normalizeModelRetryStatus(event.value);
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+        modelRetry: status?.phase === "cleared" ? null : status,
+      });
     } else if (event.type === "CUSTOM" && event.name === "cyrene.sticker") {
       this.sticker = typeof event.value === "string" ? event.value : null;
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { sticker: this.sticker });
@@ -1256,6 +1276,7 @@ export class AgentRunController {
         this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { weather });
       }
     } else if (event.type === "RUN_FINISHED") {
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { modelRetry: null });
       // 读取 result.status 区分终态（success / cancelled / timeout / runtime_error）
       const result = (event as { result?: { status?: string } }).result;
       this.terminalStatus = result?.status;
@@ -1272,6 +1293,7 @@ export class AgentRunController {
       }
       this.resolveTerminal();
     } else if (event.type === "RUN_ERROR") {
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { modelRetry: null });
       this.revealCancelled = true;
       this.abortCandidateReveal();
       this.completeRunActivity(true);

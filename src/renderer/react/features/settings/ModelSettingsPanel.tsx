@@ -81,6 +81,7 @@ interface ModelProfile {
 
 interface RuntimeValues {
   modelRequestTimeoutSec: number | null;
+  modelRequestMaxRetries: number | null;
   userChoiceTimeoutSec: number | null;
   maxParallelToolCalls: number | null;
   testTimeout: number | null;
@@ -110,6 +111,7 @@ const iconByProvider: Record<string, ProviderIconSet> = {
 
 const runtimeDefaults: RuntimeValues = {
   modelRequestTimeoutSec: 60,
+  modelRequestMaxRetries: 5,
   userChoiceTimeoutSec: DEFAULT_TIMEOUT_SETTINGS.userChoiceTimeout / 1000,
   maxParallelToolCalls: 4,
   testTimeout: DEFAULT_TIMEOUT_SETTINGS.testTimeout,
@@ -297,6 +299,7 @@ export function ModelSettingsPanel() {
         const generalValues = general && typeof general === "object" ? general as Record<string, unknown> : {};
         setRuntime({
           modelRequestTimeoutSec: timeout.modelRequestTimeoutSec ?? runtimeDefaults.modelRequestTimeoutSec,
+          modelRequestMaxRetries: typeof config.modelRequestMaxRetries === "number" ? config.modelRequestMaxRetries : runtimeDefaults.modelRequestMaxRetries,
           userChoiceTimeoutSec: Math.round(timeout.userChoiceTimeout / 1000),
           maxParallelToolCalls: typeof generalValues.maxParallelToolCalls === "number" ? generalValues.maxParallelToolCalls : runtimeDefaults.maxParallelToolCalls,
           testTimeout: timeout.testTimeout ?? runtimeDefaults.testTimeout,
@@ -714,11 +717,16 @@ export function ModelSettingsPanel() {
   async function saveRuntime() {
     if (!window.settings) return;
     const requestTimeout = runtime.modelRequestTimeoutSec;
+    const maxRetries = Number(runtime.modelRequestMaxRetries);
     const userWait = Number(runtime.userChoiceTimeoutSec);
     const parallel = Number(runtime.maxParallelToolCalls);
     const testTimeout = Number(runtime.testTimeout);
     if (requestTimeout !== null && (!Number.isInteger(requestTimeout) || requestTimeout < 10 || requestTimeout > 600)) {
       setStatus({ kind: "error", text: t("settingsPage.modelSettings.requestTimeoutRange") });
+      return;
+    }
+    if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 10) {
+      setStatus({ kind: "error", text: t("settingsPage.modelSettings.retryCountRange") });
       return;
     }
     if (!Number.isInteger(userWait) || userWait < 1) {
@@ -741,6 +749,7 @@ export function ModelSettingsPanel() {
         testTimeout,
       } as Partial<TimeoutSettings>);
       await window.settings.saveGeneral({ maxParallelToolCalls: parallel });
+      await window.settings.saveConfig({ modelRequestMaxRetries: maxRetries });
       setStatus({ kind: "success", text: t("settingsPage.modelSettings.runtimeSaved") });
     } catch {
       setStatus({ kind: "error", text: t("settingsPage.saveFailed") });
@@ -756,6 +765,11 @@ export function ModelSettingsPanel() {
           <span>{t("settingsPage.modelSettings.requestTimeout")}</span>
           <InputNumber min={10} max={600} step={5} value={runtime.modelRequestTimeoutSec} onChange={(value) => setRuntime((current) => ({ ...current, modelRequestTimeoutSec: value }))} addonAfter={t("settingsPage.modelSettings.seconds")} />
           <small>{t("settingsPage.modelSettings.requestTimeoutHint")}</small>
+        </label>
+        <label className="cy-model-field">
+          <span>{t("settingsPage.modelSettings.retryCount")}</span>
+          <InputNumber min={0} max={10} step={1} value={runtime.modelRequestMaxRetries} onChange={(value) => setRuntime((current) => ({ ...current, modelRequestMaxRetries: value }))} />
+          <small>{t("settingsPage.modelSettings.retryCountHint")}</small>
         </label>
         <label className="cy-model-field">
           <span>{t("settingsPage.modelSettings.userWait")}</span>

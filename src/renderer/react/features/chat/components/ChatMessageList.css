@@ -372,6 +372,17 @@
   gap: 9px;
 }
 
+.cy-run-activity__retry {
+  margin-inline-start: auto;
+  color: var(--rb-text-secondary);
+  font: 500 12px/1.4 var(--rb-font-sans, sans-serif);
+}
+
+.cy-model-wait__retry {
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+}
+
 .cy-run-activity__art {
   position: relative;
   display: block;

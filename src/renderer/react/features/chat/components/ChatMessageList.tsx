@@ -6,6 +6,7 @@ import { resolveAsset } from "../../../../../shared/renderer-base";
 import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import type { ModelRetryStatus } from "../../../../../shared/model-retry";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
 import workingMoodUrl from "../../../assets/status-moods/工作中.png?url";
@@ -60,6 +61,8 @@ export interface ChatMessageItem {
   loading?: boolean;
   /** 请求已发出但尚未收到 Think、工具或正文等首个可视事件。 */
   waitingForFirstEvent?: boolean;
+  /** 当前请求重试状态，只作为界面临时状态，不持久化。 */
+  modelRetry?: ModelRetryStatus | null;
   ttsCacheKey?: string;
   ttsCacheVersion?: string;
   sticker?: string | null;
@@ -362,9 +365,22 @@ function DotSpinner() {
   );
 }
 
-function ModelWaitContent() {
+function retryStatusLabel(status: ModelRetryStatus | null | undefined, t: (key: string, values?: Record<string, unknown>) => string) {
+  if (!status || status.phase === "cleared") return null;
+  if (status.phase === "waiting") {
+    return t("messageList.retryWaiting", {
+      retryNumber: status.retryNumber,
+      maxRetries: status.maxRetries,
+      seconds: Math.ceil((status.delayMs ?? 0) / 1000),
+    });
+  }
+  return t("messageList.retryAttempting", { retryNumber: status.retryNumber, maxRetries: status.maxRetries });
+}
+
+function ModelWaitContent({ modelRetry }: { modelRetry?: ModelRetryStatus | null }) {
   const { t } = useTranslation();
   const connectingArt = useCharacterMoodUrl("连接中");
+  const retryLabel = retryStatusLabel(modelRetry, t);
   return (
     <section className="cy-model-wait" aria-label={t("messageList.modelWaitAria")}>
       <span className="cy-model-wait__art" aria-hidden="true">
@@ -372,6 +388,7 @@ function ModelWaitContent() {
         <DotSpinner />
       </span>
       <span>{t("messageList.modelWaitText")}</span>
+      {retryLabel && <span className="cy-model-wait__retry" role="status">{retryLabel}</span>}
     </section>
   );
 }
@@ -679,6 +696,7 @@ function RunActivityContent({
   tools,
   stage,
   taskPlan,
+  modelRetry,
   expanded,
   onExpand,
   onOpenTaskInspector,
@@ -692,6 +710,7 @@ function RunActivityContent({
   tools: ToolExecutionRecord[];
   stage?: AgentRunStage;
   taskPlan?: TaskPlanPresentation;
+  modelRetry?: ModelRetryStatus | null;
   expanded: boolean;
   onExpand: (expanded: boolean) => void;
   onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
@@ -711,6 +730,7 @@ function RunActivityContent({
     ? t("messageList.activityProcessingTitle", { elapsed: formatElapsed(snapshot.processingMs) })
     : t("messageList.activityProcessedTitle", { elapsed: formatElapsed(snapshot.processingMs) });
   const image = snapshot.processing ? workingArt : processedArt;
+  const retryLabel = retryStatusLabel(modelRetry, t);
 
   return (
     <section className={`cy-run-activity${snapshot.processing ? " is-processing" : " is-complete"}`}>
@@ -729,6 +749,7 @@ function RunActivityContent({
             <span>{title}</span>
             {stage && <RunStageIndicator stage={stage} />}
         </span>
+        {retryLabel && <span className="cy-run-activity__retry" role="status">{retryLabel}</span>}
         <svg className={`cy-run-activity__chevron${expanded ? " is-expanded" : ""}`} viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
         </svg>
@@ -1100,6 +1121,7 @@ function createRoles(
         tools?: ToolExecutionRecord[];
         runStage?: AgentRunStage;
         taskPlan?: TaskPlanPresentation;
+        modelRetry?: ModelRetryStatus | null;
       };
     }) => {
       const activityId = info.extraInfo?.activityId;
@@ -1116,6 +1138,7 @@ function createRoles(
           tools={info.extraInfo?.tools ?? []}
           stage={info.extraInfo?.runStage}
           taskPlan={info.extraInfo?.taskPlan}
+          modelRetry={info.extraInfo?.modelRetry}
           expanded={resolveRunActivityExpanded(reasoningExpanded, activityId, activity)}
           onExpand={(expanded) => onReasoningExpand(activityId, expanded)}
           onOpenTaskInspector={onOpenTaskInspector}
@@ -1137,7 +1160,7 @@ function createRoles(
     variant: "borderless" as const,
     avatar: null,
     rootClassName: "cy-message cy-message--waiting",
-    contentRender: () => <ModelWaitContent />,
+    contentRender: (_content: string, info: { extraInfo?: { modelRetry?: ModelRetryStatus | null } }) => <ModelWaitContent modelRetry={info.extraInfo?.modelRetry} />,
   },
   weather: {
     placement: "start" as const,
@@ -1213,6 +1236,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
       key: `${message.id}-waiting`,
       role: "waiting",
       content: "",
+      extraInfo: { modelRetry: message.modelRetry },
     });
   }
   const reasoningBlocks = message.reasoningBlocks?.length
@@ -1258,6 +1282,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
           tools,
           runStage: message.runStage,
           taskPlan: message.taskPlan,
+          modelRetry: message.modelRetry,
         },
       });
     }
