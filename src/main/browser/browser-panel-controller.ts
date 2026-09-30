@@ -9,6 +9,7 @@ import {
 import { getLocaleContext } from "../locale-context";
 import { allowInternalNavigation } from "../windows/external-link";
 import { BrowserSessionPersistence } from "./browser-session-persistence";
+import { appendBrowserObservationLog } from "./browser-observation-log";
 import {
   capturePlaywrightPageSnapshot,
   resetPlaywrightPageSnapshot,
@@ -124,7 +125,9 @@ export class BrowserPanelController {
       return { ok: false, reason: reasons.join("；") };
     }
     try {
-      return { ok: true, snapshot: await capturePlaywrightPageSnapshot(contents) };
+      const snapshot = await capturePlaywrightPageSnapshot(contents);
+      await appendBrowserObservationLog({ tabId: tab.id, url: tab.state.url, snapshot });
+      return { ok: true, snapshot };
     } catch (error) {
       console.warn("[BrowserPanel] Playwright 页面识别失败", {
         activeTabId: this.activeTabId || null,

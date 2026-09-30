@@ -5,14 +5,26 @@ import type { WebContents } from "electron";
 
 const PLAYWRIGHT_WORLD_ID = 9876;
 const PLAYWRIGHT_GLOBAL = "__cyrenePlaywrightInjected";
-const MAX_REFERENCES = 80;
-const MAX_OUTPUT_CHARS = 8_000;
 const GENERATED_SOURCE_ASSIGNMENT = /\bsource\d+\s*=\s*/g;
 
+export interface RuntimePageElement {
+  ref: string;
+  description: string;
+  tag: string;
+  href?: string;
+  context?: string;
+  bounds: [number, number, number, number];
+  inViewport: boolean;
+  disabled: boolean;
+  id?: string;
+  classes: string[];
+  attributes: Record<string, string>;
+}
+
 export interface RuntimeSnapshot {
-  elements: Array<Record<string, unknown>>;
+  ariaSnapshot: string;
+  elements: RuntimePageElement[];
   totalReferences: number;
-  truncated: boolean;
   note: string;
 }
 
@@ -153,46 +165,37 @@ const SNAPSHOT_SCRIPT = `(() => {
     const href = element instanceof HTMLAnchorElement ? element.href : "";
     const contextContainer = element.closest("tr,[role='row'],li,[role='listitem'],article,[role='article'],[role='dialog']");
     const contextText = contextContainer && contextContainer !== element
-      ? String(contextContainer.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 180)
+      ? String(contextContainer.innerText || "").replace(/\\s+/g, " ").trim()
       : "";
+    const attributes = {};
+    for (const name of ["aria-label", "aria-labelledby", "title", "alt", "placeholder", "type", "name", "href", "data-testid"]) {
+      const value = element.getAttribute?.(name);
+      if (value) attributes[name] = String(value);
+    }
+
     elements.push({
       ref,
       description: line.trim().replace(/^[-*]\\s*/, "").replace(/\\s*\\[ref=[^\\]]+\\]/, ""),
       tag,
-      ...(href && /^https?:/i.test(href) ? { href: href.slice(0, 180) } : {}),
+      ...(href && /^https?:/i.test(href) ? { href } : {}),
       ...(contextText ? { context: contextText } : {}),
       bounds: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
       inViewport: rect.top < viewportHeight && rect.bottom > 0 && rect.left < viewportWidth && rect.right > 0,
       disabled: Boolean(element.disabled || element.getAttribute?.("aria-disabled") === "true"),
+      ...(element.id ? { id: String(element.id) } : {}),
+      classes: Array.from(element.classList || []).map((name) => String(name)),
+      attributes,
     });
   }
 
   elements.sort((left, right) => Number(Boolean(right.inViewport)) - Number(Boolean(left.inViewport)));
   globalThis.__cyreneBrowserRefs = refs;
-  const result = {
-    elements: [],
+  return {
+    ariaSnapshot: String(snapshot || ""),
+    elements,
     totalReferences: elements.length,
-    truncated: elements.length > ${MAX_REFERENCES},
-    note: "元素按视口内优先排列；bounds 为 [x,y,width,height]。ref 是当前页面的临时引用。列表受数量和输出大小限制。",
+    note: "ariaSnapshot 是 Playwright 原始语义树；ref 与树中的编号对应。elements 保存位置、属性和 CSS class 等补充信息。",
   };
-  for (const element of elements.slice(0, ${MAX_REFERENCES})) {
-    const compactElement = {
-      ref: element.ref,
-      description: String(element.description || "").slice(0, 140),
-      ...(element.href ? { href: element.href } : {}),
-      ...(element.context ? { context: String(element.context).slice(0, 120) } : {}),
-      bounds: element.bounds,
-      inViewport: element.inViewport,
-      ...(element.disabled ? { disabled: true } : {}),
-    };
-    result.elements.push(compactElement);
-    if (JSON.stringify(result).length > ${MAX_OUTPUT_CHARS}) {
-      result.elements.pop();
-      result.truncated = true;
-      break;
-    }
-  }
-  return result;
   } catch (error) {
     return {
       __cyrenePlaywrightError: {
@@ -249,8 +252,8 @@ export async function capturePlaywrightPageSnapshot(contents: WebContents): Prom
   ]);
   throwIfRuntimeError("页面快照", snapshot);
   const result = snapshot as Partial<RuntimeSnapshot> | null;
-  if (!result || !Array.isArray(result.elements) || typeof result.totalReferences !== "number"
-    || typeof result.truncated !== "boolean") {
+  if (!result || typeof result.ariaSnapshot !== "string" || !Array.isArray(result.elements)
+    || typeof result.totalReferences !== "number") {
     throw new Error("Playwright 页面快照脚本没有返回有效快照");
   }
   return result as RuntimeSnapshot;
