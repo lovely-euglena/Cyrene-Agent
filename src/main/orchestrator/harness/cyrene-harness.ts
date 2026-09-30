@@ -23,6 +23,7 @@
  * - harness-observability.ts — 上下文容量快照与缓存结构诊断（调用点仍在主循环）
  */
 
+import { AgentRuntimeError } from "../agent-runtime-error";
 import type {
   ChatMessage,
   ChatResponse,
@@ -173,7 +174,10 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         `\n  error: ${errCode} ${errorMsg}`,
         err,
       );
-      return finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
+      const failed = finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
+      return err instanceof AgentRuntimeError && err.modelFailure
+        ? { ...failed, modelFailure: err.modelFailure }
+        : failed;
     }
 
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
@@ -293,10 +297,14 @@ function createRun(input: HarnessInput): HarnessRun {
     ...getHarnessBuiltinToolSpecs({
       includeInteractive: input.includeInteractiveTools,
       includeTask: Boolean(input.taskExecutor),
+      includeCloseTask: Boolean(input.closeTaskExecutor),
+      openTaskCompanions: input.openTaskCompanions,
       planState: input.planState,
     }),
   ];
 
+  // 排他轮（ask_user / submit_plan）分发上下文：submit_plan 交卷需要会话身份
+  // （conversationId / runId）驱动状态机与注意力提醒，因此 toolContext 必须在此就位
   const askDispatchContext: ToolDispatchContext = {
     state,
     tools: input.tools,
@@ -304,6 +312,7 @@ function createRun(input: HarnessInput): HarnessRun {
     requestUserClarification: input.requestUserClarification,
     includeInteractiveTools: input.includeInteractiveTools,
     toolOutputStore: input.toolOutputStore,
+    toolContext: input.toolContext,
   };
 
   return {
@@ -324,6 +333,7 @@ function createRun(input: HarnessInput): HarnessRun {
       toolContext: input.toolContext,
       executionLedger: input.executionLedger,
       taskExecutor: input.taskExecutor,
+      closeTaskExecutor: input.closeTaskExecutor,
       deferOutputPersistence: true,
     },
     toolCallStartedAt: new Map(),

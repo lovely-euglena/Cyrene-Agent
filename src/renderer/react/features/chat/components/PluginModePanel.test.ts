@@ -34,6 +34,7 @@ vi.mock("../../../i18n", () => {
         "pluginPanel.market.subtitle": "从官方收录仓库在线安装插件",
         "pluginPanel.market.toggle": "插件市场",
         "pluginPanel.market.back": "返回插件管理",
+        "pluginPanel.market.details": "详情",
         "pluginPanel.market.install": "安装",
         "pluginPanel.market.update": "更新",
         "pluginPanel.market.installing": "安装中…",
@@ -120,6 +121,7 @@ function apiFor(items: PluginListEntry[]): PluginManagementApi {
     importZip: vi.fn(async () => ({ ok: false, canceled: true })),
     uninstall: vi.fn(async () => ({ ok: true, overview: { plugins: [], issues: [] } })),
     marketList: vi.fn(async () => ({ ok: true, plugins: [] })),
+    marketDetails: vi.fn(async () => ({ ok: false, error: "not implemented" })),
     marketInstall: vi.fn(async () => ({ ok: false, error: "not implemented" })),
   };
 }
@@ -251,7 +253,7 @@ describe("PluginModePanel", () => {
     // 市场视图隐藏搜索框
     expect(container.querySelector(".plugin-panel__search")).toBeNull();
     // 未安装的市场插件展示粉色主按钮「安装」
-    const installButton = container.querySelector<HTMLButtonElement>(".plugin-card-ui__actions button");
+    const installButton = container.querySelector<HTMLButtonElement>(".plugin-card-ui__actions > button:last-child");
     expect(installButton?.textContent).toBe("安装");
     expect(installButton?.className).toContain("is-enabled");
 
@@ -286,7 +288,7 @@ describe("PluginModePanel", () => {
 
     const cards = [...container.querySelectorAll<HTMLElement>(".plugin-card-ui")];
     expect(cards).toHaveLength(6);
-    const buttons = cards.map((card) => card.querySelector<HTMLButtonElement>("button"));
+    const buttons = cards.map((card) => card.querySelector<HTMLButtonElement>(".plugin-card-ui__actions > button:last-child"));
     expect(buttons.map((button) => button?.textContent)).toEqual([
       "安装",
       "更新",
@@ -354,7 +356,7 @@ describe("PluginModePanel", () => {
     await renderPanel(api);
     await clickMarketToggle();
 
-    const installButton = container.querySelector<HTMLButtonElement>(".plugin-card-ui__actions button");
+    const installButton = container.querySelector<HTMLButtonElement>(".plugin-card-ui__actions > button:last-child");
     await act(async () => installButton?.click());
 
     expect(api.marketInstall).toHaveBeenCalledWith("market-demo");
@@ -375,7 +377,7 @@ describe("PluginModePanel", () => {
     await renderPanel(api);
     await clickMarketToggle();
 
-    const installButton = container.querySelector<HTMLButtonElement>(".plugin-card-ui__actions button");
+    const installButton = container.querySelector<HTMLButtonElement>(".plugin-card-ui__actions > button:last-child");
     await act(async () => installButton?.click());
 
     expect(container.textContent).toContain("安装失败：插件包校验失败");

@@ -24,12 +24,14 @@ import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manag
 import * as os from "os";
 import { testVendorConnection } from "../orchestrator/vendors/test-connection";
 import { testVisionConnection } from "./vision-test";
+import { getAdapterForConfig } from "../orchestrator/vendors";
 import type { VendorConfig } from "../orchestrator/vendors";
 import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
 import type { ModelSettings } from "./model-settings";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
-import type { syncPlaywrightMcp } from "../sync-mcp-builtin";
+import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
+import { broadcastChatsChanged } from "../chats/chats-ipc";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -43,6 +45,7 @@ export interface SettingsIpcDependencies {
   embeddingIndexService: EmbeddingIndexService;
   syncVolcanoSearchMcp: typeof syncVolcanoSearchMcp;
   syncPlaywrightMcp: typeof syncPlaywrightMcp;
+  syncFilesystemMcp: typeof syncFilesystemMcp;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
 }
@@ -57,6 +60,9 @@ function getCustomFontDisplayName(filePath: string): string {
   );
 }
 
+const VISION_TEST_IMAGE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJ0lEQVR42u3NsQkAAAjAsP7/tF7hIASyp6lTCQQCgUAgEAgEgi/BAjLD/C5w/SM9AAAAAElFTkSuQmCC";
+
 export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   const ipc = deps.ipc ?? createIpcScope();
   const {
@@ -70,6 +76,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     embeddingIndexService,
     syncVolcanoSearchMcp,
     syncPlaywrightMcp,
+    syncFilesystemMcp,
   } = deps;
   // 注意：windowManager 不解构，统一用 deps.windowManager 实时读取 getter。
   // registerSettingsIpc 在模块加载阶段调用，那时 windowManager 仍为 null，
@@ -85,6 +92,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   function broadcastModelConfigChanged(settings = getModelSettings()): void {
     broadcastToAuxWindows(IPC.MODEL_CONFIG_CHANGED, getPublicModelConfig(settings));
+    // 聊天窗口不在 aux 窗口里：模型窗口容量变更后它不会自己重读会话，
+    // 环形图分母会停在旧快照上。这里顺带广播一次会话变更，触发聊天窗口重载。
+    broadcastChatsChanged();
   }
 
   function broadcastRuntimeStateChanged(): void {
@@ -203,6 +213,14 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       await syncPlaywrightMcp(saved);
     }
 
+    // Filesystem MCP：按 settings 字段自动连接/断开（允许目录固定为下载文件夹）
+    if ("filesystemMcpEnabled" in tts) {
+      await syncFilesystemMcp({
+        filesystemMcpEnabled: saved.filesystemMcpEnabled,
+        allowedDir: app.getPath("downloads"),
+      });
+    }
+
     // 主动聊天总开关变化时使现有评估失效（频率档位由 ProactiveChat 内部判定，无需重启）。
     if ("proactiveChatMode" in tts) {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
@@ -259,6 +277,15 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => testVendorConnection(cfg));
+  ipc.handle(IPC.SETTINGS_PREVIEW_REASONING, (_event, cfg: VendorConfig) => {
+    const request = getAdapterForConfig(cfg).buildRequest({
+      model: cfg.model,
+      messages: [{ role: "user", content: "Hello" }],
+      stream: false,
+    }, cfg);
+    // 仅返回请求正文，不将认证头或 API 密钥暴露给设置页。
+    return JSON.parse(request.body) as Record<string, unknown>;
+  });
 
   // 视觉模型连通性测试（实现与 native 设置窗共用：settings/vision-test.ts）
   ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) =>

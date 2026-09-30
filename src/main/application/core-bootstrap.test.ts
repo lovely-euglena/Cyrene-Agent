@@ -96,6 +96,7 @@ function makeCoreDeps(calls: string[], overrides: Partial<CoreDependencies> = {}
     },
     createScheduler: () => ({ initialize: () => { calls.push("scheduler-initialize"); }, start: vi.fn(() => { calls.push("scheduler-start"); }), stop: vi.fn() } as never),
     registerCoreIpc: () => { calls.push("register-core-ipc"); },
+    wireToastCenter: () => { calls.push("wire-toast-center"); },
     loadGeneralSettings: () => ({ petVisible: true, sidebarVisible: false, tasksVisible: false }) as never,
     applyGeneralSettings: () => { calls.push("apply-settings"); },
     revealStartupWindows: async () => { calls.push("reveal"); },
@@ -184,7 +185,7 @@ describe("startCore", () => {
     expect(deps.petWindowCreated).toBe(true);
 
     const hidden = makeCoreDeps([], {
-      loadGeneralSettings: () => ({ petVisible: false, sidebarVisible: false, tasksVisible: false }) as never,
+      loadGeneralSettings: () => ({ petVisible: false }) as never,
     });
     await startCore(hidden);
     // 隐藏桌宠时窗口不创建（显示时经 showPetWindow 按需重建）；

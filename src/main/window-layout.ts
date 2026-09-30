@@ -110,3 +110,5 @@ export function computeLayout(): {
   const [chatPos, sidebarPos, tasksPos] = computePanelLayout(workArea, panels, 8);
   return { chat: chatPos, sidebar: sidebarPos, tasks: tasksPos };
 }
+
+export const DEFAULT_WORKSPACE_WINDOW_SIZE = { width: 1200, height: 800 } as const;

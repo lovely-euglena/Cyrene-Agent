@@ -2,6 +2,8 @@ import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
 import type { UiTheme } from "../../shared/ui-theme";
 import type { UiFont } from "../../shared/ui-font";
 import type { UiIcon } from "../../shared/ui-icon";
+import type { UiLanguage } from "../../shared/ui-language";
+import type { MessageTypography } from "../../shared/message-typography";
 import type {
   DefaultChatMode,
   MobileMessageSegmentationMode,
@@ -16,7 +18,7 @@ import type { LspServerOverride } from "../lsp/types";
 
 /**
  * 通用设置（GeneralSettings）：与模型配置无关的 UI、TTS、工具开关、快捷键等。
- * 与 ChatAppearanceSettings 组合，统一保存到 general-settings.json。
+ * 统一保存到 general-settings.json。
  */
 export interface GeneralSettings extends ChatAppearanceSettings {
   /** 功能插件开关表：pluginId -> enabled */
@@ -45,6 +47,11 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   pluginMemoryLimitMb?: number;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
   maxParallelToolCalls: number;
+  /** 子代理系统提示词是否叠加所选黄金裔的人设。 */
+  taskCharacterPersonaEnabled: boolean;
+  /** 子代理固定使用的模型档案与档案内模型；未设置时跟随主 Agent。 */
+  taskModelProfileId?: string;
+  taskModel?: string;
   citaEnabled: boolean;
   citaSemanticEngine: "remote";
   /** Chat 模式的轻量社交上下文；默认关闭，开启后每轮最多多一次异步抽取调用。 */
@@ -78,13 +85,16 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
-  language: "zh-CN";
+  /** 界面语言：已支持中文、英文、日文，其余语言待翻译补齐后开放。 */
+  language: UiLanguage;
   uiTheme: UiTheme;
   windowCornerRadius: number;
   /** @deprecated 旧版透明窗口开关，仅保留用于配置兼容。 */
   uiThemeRadius: boolean;
   uiFont: UiFont;
   uiIcon: UiIcon;
+  /** 昔涟回复正文的排版（字号/行距/字距/字重），只作用于 AI 回复气泡。 */
+  messageTypography: MessageTypography;
   /** 聊天窗口打开时默认选中的模式。 */
   defaultChatMode: DefaultChatMode;
   /** 聊天窗口当前风格，启动时恢复；本轮请求仍以 renderer 显式 styleId 为准。 */
@@ -150,6 +160,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   travelEnabled: boolean;
   /** 🖥️ 浏览器自动化（Playwright MCP）是否启用。默认 false，需用户手动开启。 */
   playwrightMcpEnabled: boolean;
+  /** 📁 文件系统 MCP（官方 server-filesystem，允许目录为下载文件夹）是否启用。默认 false。 */
+  filesystemMcpEnabled: boolean;
   // 联网搜索：选哪个搜索源 + 对应 key
   searchEngine: "off" | "bocha" | "tavily" | "minimax" | "anySearch";
   searchBochaKey: string;
@@ -177,14 +189,16 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   emailImapPort: number;
   /** IMAP 使用 SSL/TLS（993 通常 true，143 通常 false） */
   emailImapSecure: boolean;
-  /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | local(本地,占位) */
-  asrEngine: "off" | "aliyun" | "mossland" | "local";
+  /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | minimax | local(本地,占位) */
+  asrEngine: "off" | "aliyun" | "mossland" | "minimax" | "local";
   /** 阿里云智能语音交互 AppKey */
   asrAliyunAppKey: string;
   /** 阿里云 RAM AccessKey ID */
   asrAliyunAccessKeyId: string;
   /** 阿里云 RAM AccessKey Secret */
   asrAliyunAccessKeySecret: string;
+  /** MiniMax 语音识别 API Key */
+  asrMinimaxKey: string;
   /** ASR 识别语言：zh(中文) | en(英文) | auto(自动) */
   asrLanguage: "zh" | "en" | "auto";
   /** VAD 静默检测阈值（毫秒），500~2000，默认 1000 */
@@ -223,4 +237,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * Git 提交作者邮箱（必填）：未填写时 git_commit 会拒绝提交并提示来设置里补填。
    */
   gitCommitAuthorEmail: string;
+  /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
+  recentProjects: string[];
+  /** 用户明确接受的免责声明版本；空字符串表示尚未接受当前条款。 */
+  disclaimerAcceptedVersion?: string;
 }

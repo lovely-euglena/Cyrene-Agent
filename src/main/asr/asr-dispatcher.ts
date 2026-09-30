@@ -1,5 +1,6 @@
 import type { AsrConfig } from "./asr-config";
 import { MosslandAsrStream } from "./mossland-asr-engine";
+import { MiniMaxAsrStream } from "./minimax-asr-engine";
 import { AliyunAsrStream } from "./aliyun-asr-engine";
 
 export interface AsrStreamSession {
@@ -154,6 +155,9 @@ export function createAsrStream(
   }
   if (config.engine === "mossland") {
     return withVadGate(new MosslandAsrStream(config.apiKey, onFinal));
+  }
+  if (config.engine === "minimax") {
+    return withVadGate(new MiniMaxAsrStream(config.apiKey, onFinal));
   }
 
   // 阿里云流式会话的 start 需要 4 个凭据参数，这里适配成统一的无参 start

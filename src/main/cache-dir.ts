@@ -12,6 +12,7 @@
 
 import { app } from "electron";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { loadGeneralSettings } from "./settings/settings-facade";
 import { getPortableDataLocationStatus } from "./portable/portable-runtime";
@@ -38,8 +39,16 @@ export function resolveCacheDir(): string {
   }
   // Electron 43 无 getPath("cache")（44 才引入）：按 Windows 标准布局反拼
   // %LOCALAPPDATA%/<appName>/Cache，与 Electron 44 语义/位置一致。
-  const appData = app.getPath("appData");
-  return path.join(appData, "..", "Local", app.getName(), "Cache");
+  // 加固：测试/极早期环境里 electron mock 可能没有 app（属性访问即抛），
+  // 此时退回系统临时目录下的确定性路径，绝不 throw（否则 import 链上的
+  // 模块级调用会把整个测试文件拖崩）。
+  try {
+    const appData = app.getPath("appData");
+    const appName = typeof app.getName === "function" ? app.getName() : "cyrene-native";
+    return path.join(appData, "..", "Local", appName, "Cache");
+  } catch {
+    return path.join(os.tmpdir(), "cyrene-cache");
+  }
 }
 
 /** 缓存根下的命名子目录（确保存在）。 */

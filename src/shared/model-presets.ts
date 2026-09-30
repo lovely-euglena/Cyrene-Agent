@@ -6,9 +6,18 @@
 
 import type { ApiTransport } from "./api-endpoint";
 import { CUSTOM_ENDPOINT_PROVIDERS, type CustomEndpointMode } from "./custom-endpoint-state";
+import type { BuiltinProviderId } from "./vendor-registry";
+
+/**
+ * 预设与厂商注册表的静态关联键：真实厂商用注册表推导的 BuiltinProviderId
+ * （写错编译期即报），自定义端点伪条目用 custom 两 id。
+ */
+export type ModelPresetProviderId = BuiltinProviderId | "custom-cloud" | "custom-local";
 
 export interface ModelPreset {
   providerName: string;
+  /** 与厂商注册表的静态关联键（跨层一致性校验用）。 */
+  providerId: ModelPresetProviderId;
   // 厂商短名（去括号后缀），用于状态栏"正在喂养"显示和昵称默认值。
   // 如 "MiniMax（稀宇科技）" → shortName "MiniMax"。
   shortName: string;
@@ -36,10 +45,11 @@ export interface ModelPreset {
 }
 
 export const MODEL_PRESETS: ModelPreset[] = [
-  // 当前已适配 9 家：MiniMax / DeepSeek / 豆包 / 智谱 GLM / Kimi / Qwen / ChatGPT / Claude / MiMo
+  // 当前已适配 11 家：MiniMax / DeepSeek / 豆包 / 智谱 GLM / Kimi / Qwen / GPT / Claude / MiMo / Grok / Gemini
   // 顺序按使用频率 + 适配优先级；未在此清单内的厂商已硬删，需要时再补回。
   {
     providerName: "MiniMax（稀宇科技）",
+    providerId: "minimax",
     shortName: "MiniMax",
     baseUrl: "https://api.minimaxi.com/v1",
     anthropicBaseUrl: "https://api.minimaxi.com/anthropic",
@@ -58,6 +68,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     // 旧名 v4-flash / v4-flash-vision-exp 是它的别名；v4-pro 官方将于 2026-09-14
     // 起路由到 V4.1 Flash，保留在列表里供存量配置参考。
     providerName: "DeepSeek（深度求索）",
+    providerId: "deepseek",
     shortName: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
     anthropicBaseUrl: "https://api.deepseek.com/anthropic",
@@ -68,6 +79,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "豆包（火山方舟）",
+    providerId: "doubao",
     shortName: "豆包",
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     transport: "openai",
@@ -82,6 +94,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "GLM（智谱）",
+    providerId: "glm",
     shortName: "GLM",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     anthropicBaseUrl: "https://open.bigmodel.cn/api/anthropic",
@@ -92,6 +105,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "Kimi（月之暗面）",
+    providerId: "kimi",
     shortName: "Kimi",
     baseUrl: "https://api.moonshot.cn/v1",
     transport: "openai",
@@ -101,6 +115,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "Qwen（通义千问）",
+    providerId: "qwen",
     shortName: "Qwen",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     transport: "openai",
@@ -110,7 +125,8 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "ChatGPT（OpenAI）",
-    shortName: "ChatGPT",
+    providerId: "chatgpt",
+    shortName: "GPT",
     baseUrl: "https://api.openai.com/v1",
     // 官方主推 Responses（o 系列完整思考摘要仅此协议有），新建档案默认预填 responses。
     transport: "responses",
@@ -123,6 +139,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "Claude（Anthropic）",
+    providerId: "claude",
     shortName: "Claude",
     baseUrl: "https://api.anthropic.com/v1",
     transport: "anthropic",
@@ -132,6 +149,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "MiMo（小米）",
+    providerId: "mimo",
     shortName: "MiMo",
     baseUrl: "https://api.xiaomimimo.com/v1",
     anthropicBaseUrl: "https://api.xiaomimimo.com/anthropic",
@@ -146,7 +164,31 @@ export const MODEL_PRESETS: ModelPreset[] = [
     visionModels: ["mimo-v2.5"],
   },
   {
+    providerName: "Grok（xAI）",
+    providerId: "grok",
+    shortName: "Grok",
+    baseUrl: "https://api.x.ai/v1",
+    transport: "openai",
+    // grok-4.7（2026-09-21 发布）为旗舰；grok-build-0.1 为编码专用轻量款（思考行为未核实）
+    mainModels: ["grok-4.7", "grok-4.6", "grok-4.5", "grok-build-0.1"],
+    iconUrl: "../icons/providers/grok.svg",
+    websiteUrl: "https://console.x.ai/",
+  },
+  {
+    providerName: "Gemini（Google）",
+    providerId: "gemini",
+    shortName: "Gemini",
+    // 官方 OpenAI 兼容层（generativelanguage …/v1beta/openai），API Key 走 Bearer
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    transport: "openai",
+    // gemini-3.8-flash 为官方文档示例首选；3.1-pro 尚为 preview；2.5-flash 支持关闭思考
+    mainModels: ["gemini-3.8-flash", "gemini-3.1-pro", "gemini-3.5-flash", "gemini-2.5-flash"],
+    iconUrl: "../icons/providers/gemini.svg",
+    websiteUrl: "https://aistudio.google.com/",
+  },
+  {
     providerName: CUSTOM_ENDPOINT_PROVIDERS.cloud,
+    providerId: "custom-cloud",
     shortName: "自定义",
     baseUrl: "",
     transport: "openai",
@@ -156,6 +198,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: CUSTOM_ENDPOINT_PROVIDERS.local,
+    providerId: "custom-local",
     shortName: "本地模型",
     baseUrl: "",
     transport: "openai",

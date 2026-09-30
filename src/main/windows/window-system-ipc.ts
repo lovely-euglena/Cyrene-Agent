@@ -106,6 +106,21 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
     deps.windowManager?.createCallWindow();
   });
 
+  ipc.on(IPC.CALL_OPEN, () => {
+    deps.windowManager?.createCallWindow();
+  });
+
+  // 渲染端请求切到设置页指定标签（头像菜单等）：复用统一设置路由
+  ipc.handle(IPC.SETTINGS_REQUEST_SWITCH_SECTION, (_event, section?: string) => {
+    const target = typeof section === "string" ? section : "appearance";
+    if (deps.openSettings) {
+      deps.openSettings(target);
+      return true;
+    }
+    deps.windowManager?.createSettingsWindow(target);
+    return true;
+  });
+
   ipc.on(IPC.TASKS_MINIMIZE, () => {
     tasksWindow?.minimize();
   });
@@ -126,8 +141,9 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   });
 
   // Token 用量查询 IPC（临时挂靠，后续归到统计模块）
+  // 上限 366：用量统计页的 52 周热力图需要一整年的按天数据。
   ipc.handle(IPC.TOKEN_USAGE_GET, (_event, days: number) => {
-    return getUsageReport(Math.max(1, Math.min(90, Number(days) || 7)));
+    return getUsageReport(Math.max(1, Math.min(366, Number(days) || 7)));
   });
   ipc.handle(IPC.TOKEN_USAGE_CLEAR, () => {
     clearUsage();

@@ -18,6 +18,7 @@ let listener: EventCallback | null = null;
 let appended: Array<{ sessionId: string; items: ChatMessageItem[] }> = [];
 let patched: Array<{ sessionId: string; id: string; patch: Partial<ChatMessageItem> }> = [];
 let liveMessages = new Map<string, ChatMessageItem>();
+let activeSessionId: string | undefined = "session-a";
 
 function emit(event: unknown): void {
   act(() => {
@@ -30,6 +31,7 @@ beforeEach(() => {
   appended = [];
   patched = [];
   liveMessages = new Map();
+  activeSessionId = "session-a";
   (window as unknown as { schedulerEvents?: unknown }).schedulerEvents = {
     onEvent: (callback: EventCallback) => {
       listener = callback;
@@ -40,6 +42,7 @@ beforeEach(() => {
 
   function Probe() {
     useSchedulerEvents({
+      getActiveSessionId: () => activeSessionId,
       appendMessages: (sessionId, items) => {
         appended.push({ sessionId, items });
         for (const item of items) liveMessages.set(item.id, item);
@@ -96,6 +99,7 @@ describe("useSchedulerEvents", () => {
   });
 
   it("无激活会话时不插入消息且后续事件被忽略", () => {
+    activeSessionId = undefined;
     emit({
       type: "CUSTOM",
       name: "scheduler.started",

@@ -2,7 +2,7 @@
 
 exports[`mode prompt assembly snapshot > assembles the chat persona prompt from stable sources 1`] = `
 {
-  "chars": 12133,
+  "chars": 12720,
   "headings": [
     "# 系统规则（Chat 模式专用）",
     "## 模式职责",
@@ -45,7 +45,7 @@ exports[`mode prompt assembly snapshot > assembles the chat persona prompt from 
 
 exports[`mode prompt assembly snapshot > assembles the code persona prompt from stable sources 1`] = `
 {
-  "chars": 4193,
+  "chars": 4641,
   "headings": [
     "# Code 模式核心规则",
     "## 模式定义",
@@ -72,7 +72,7 @@ exports[`mode prompt assembly snapshot > assembles the code persona prompt from 
 
 exports[`mode prompt assembly snapshot > assembles the learn persona prompt from stable sources 1`] = `
 {
-  "chars": 7370,
+  "chars": 8011,
   "headings": [
     "# Cyrene Learn 模式常驻规则",
     "## 总体目标",
@@ -99,7 +99,7 @@ exports[`mode prompt assembly snapshot > assembles the learn persona prompt from
 
 exports[`mode prompt assembly snapshot > assembles the work persona prompt from stable sources 1`] = `
 {
-  "chars": 4954,
+  "chars": 6190,
   "headings": [
     "# 系统规则（Work 模式专用）",
     "## 当前职责",
@@ -131,7 +131,7 @@ exports[`mode prompt assembly snapshot > assembles the work persona prompt from 
 exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1`] = `
 [
   {
-    "chars": 2133,
+    "chars": 2277,
     "file": "cyrene_harness.md",
     "headings": [
       "# Cyrene Harness 身份核心",
@@ -145,7 +145,7 @@ exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1
     ],
   },
   {
-    "chars": 4498,
+    "chars": 4753,
     "file": "tool_usage.md",
     "headings": [
       "# 工具使用规范（Work / Learn / Code 通用）",
@@ -162,7 +162,7 @@ exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1
     ],
   },
   {
-    "chars": 611,
+    "chars": 671,
     "file": "phone_system.md",
     "headings": [
       "# 系统规则（通话专用）",
@@ -176,7 +176,7 @@ exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1
     ],
   },
   {
-    "chars": 276,
+    "chars": 300,
     "file": "phone_identity.md",
     "headings": [
       "# 昔涟 · Identity（通话专用）",
@@ -186,7 +186,7 @@ exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1
     ],
   },
   {
-    "chars": 431,
+    "chars": 467,
     "file": "phone_style.md",
     "headings": [
       "# 风格：通话（电话专用）",
@@ -197,7 +197,7 @@ exports[`mode prompt assembly snapshot > keeps standalone prompt sizes visible 1
     ],
   },
   {
-    "chars": 1007,
+    "chars": 1024,
     "file": "cita_system.md",
     "headings": [],
   },
