@@ -480,6 +480,11 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
       history,
       run.allToolSpecs,
       input.signal,
+      {
+        maxRetries: config.modelRequestMaxRetries,
+        idleTimeoutMs: config.modelRequestIdleTimeoutMs,
+        onStatus: (status) => input.onEvent?.({ type: "model_retry", status }),
+      },
     ),
   });
   if (compactedMessages !== run.messages) {
@@ -521,6 +526,7 @@ async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers, roundId
         const visibleDelta = candidateFilter.push(delta);
         if (visibleDelta) run.input.onEvent?.({ type: "candidate_text_delta", roundId, delta: visibleDelta });
       },
+      (status) => run.input.onEvent?.({ type: "model_retry", status }),
     );
   } finally {
     const tail = candidateFilter.finish();

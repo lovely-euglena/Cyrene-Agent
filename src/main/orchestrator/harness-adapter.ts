@@ -28,6 +28,8 @@ export { sendHarnessEventAsAgui, sendTaskLifecycleAsAgui } from "./harness/adapt
 import { completePlanRun } from "./harness/adapter/plan-lifecycle";
 import { prepareHarnessRun } from "./harness/adapter/run-preparation";
 import { prepareToolRuntime } from "./harness/adapter/tool-runtime";
+import { getTimeoutSettings } from "../timeout-manager";
+import { resolveModelRequestTimeoutMs } from "./config/model-timeout";
 
 const LOG_PREFIX = "[HarnessAdapter]";
 export { filterToolsForConversationMode } from "./harness/adapter/run-preparation";
@@ -81,6 +83,8 @@ export async function runHarnessWithAdapter(
       // 0 表示禁用整轮执行时钟；单次模型/工具超时仍由各自策略处理。
       totalTimeoutMs: 0,
       contextWindowTokens: options.settings.contextWindowTokens,
+      modelRequestMaxRetries: options.settings.modelRequestMaxRetries ?? 5,
+      modelRequestIdleTimeoutMs: resolveModelRequestTimeoutMs(getTimeoutSettings()),
     },
     signal,
     onEvent: (event: HarnessEvent) => {
