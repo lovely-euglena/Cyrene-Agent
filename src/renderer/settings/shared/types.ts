@@ -64,6 +64,8 @@ export interface ModelSettings {
   stickerSimilarityThreshold: number;
   /** 整个聊天请求的超时（秒）。30-1800，默认 300。 */
   chatRequestTimeoutSec: number;
+  /** 主模型请求的额外重试次数；0–10，默认 5。 */
+  modelRequestMaxRetries: number;
   /** CITA 结构化输出重试总预算（秒）。4-30，默认 8。 */
   citaRepairBudgetSec: number;
   vision?: {

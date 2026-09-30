@@ -155,6 +155,8 @@ export interface ModelSettings {
   stickerSimilarityThreshold: number;
   /** 整个聊天请求的总超时（秒）。30-1800，默认 300。 */
   chatRequestTimeoutSec: number;
+  /** 主模型请求的额外重试次数；0–10，默认 5。 */
+  modelRequestMaxRetries: number;
   /** CITA 结构化输出重试总预算（秒）。4-30，默认 8。 */
   citaRepairBudgetSec: number;
   rerankerMode: "standard" | "none";
@@ -199,6 +201,7 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   stickerSize: "standard",
   stickerSimilarityThreshold: 0.55,
   chatRequestTimeoutSec: 300,
+  modelRequestMaxRetries: 5,
   citaRepairBudgetSec: 8,
   rerankerMode: "standard",
   embeddingModel: "bgem3",
@@ -429,6 +432,10 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
       && Number.isFinite(input.chatRequestTimeoutSec)
       ? Math.max(30, Math.min(1800, Math.round(input.chatRequestTimeoutSec)))
       : 300,
+    modelRequestMaxRetries: typeof input?.modelRequestMaxRetries === "number"
+      && Number.isFinite(input.modelRequestMaxRetries)
+      ? Math.max(0, Math.min(10, Math.round(input.modelRequestMaxRetries)))
+      : 5,
     citaRepairBudgetSec: typeof input?.citaRepairBudgetSec === "number" && Number.isFinite(input.citaRepairBudgetSec)
       ? Math.max(4, Math.min(30, Math.round(input.citaRepairBudgetSec)))
       : 8,

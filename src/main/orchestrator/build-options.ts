@@ -234,6 +234,8 @@ export interface ModelSettingsLite {
   vision?: { baseUrl: string; apiKey: string; model: string };
   /** 上下文窗口大小（Token）。来自 ModelSettings.contextWindowTokens。 */
   contextWindowTokens?: number;
+  /** 主模型请求的额外重试次数；旧设置回退到 5。 */
+  modelRequestMaxRetries?: number;
 }
 
 export interface StyleSettingsLite {
@@ -982,6 +984,7 @@ export async function buildAgentRunOptions(
         reasoning: settings.reasoning,
         manualReasoning: settings.manualReasoning,
         contextWindowTokens: settings.contextWindowTokens ?? 256000,
+        modelRequestMaxRetries: settings.modelRequestMaxRetries ?? 5,
       },
       maxParallelToolCalls: typeof generalSettings.maxParallelToolCalls === "number"
         ? Math.max(1, Math.min(MAX_PARALLEL_TOOL_CALLS, Math.trunc(generalSettings.maxParallelToolCalls)))

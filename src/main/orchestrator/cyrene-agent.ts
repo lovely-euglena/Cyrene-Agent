@@ -89,6 +89,8 @@ export interface AgentLoopSettings {
   manualReasoning?: import("../../shared/manual-reasoning").ManualReasoningConfig;
   /** 用户设置的模型上下文窗口（Token）。用于非 code 模式的对话压缩触发阈值。 */
   contextWindowTokens: number;
+  /** 主模型请求的额外重试次数；旧调用回退到 5。 */
+  modelRequestMaxRetries?: number;
 }
 
 export type AgentExecutionMode = "work" | "chat";

@@ -100,6 +100,32 @@ describe("normalize 六步契约（档案模型清单）", () => {
   });
 });
 
+describe("model request retry settings", () => {
+  it("旧配置默认额外重试 5 次，并将异常值归一到 0–10 的整数", () => {
+    expect(normalizeModelSettings({ ...GLM_BASE } as never).modelRequestMaxRetries).toBe(5);
+    expect(normalizeModelSettings({ ...GLM_BASE, modelRequestMaxRetries: 0 } as never).modelRequestMaxRetries).toBe(0);
+    expect(normalizeModelSettings({ ...GLM_BASE, modelRequestMaxRetries: 10 } as never).modelRequestMaxRetries).toBe(10);
+    expect(normalizeModelSettings({ ...GLM_BASE, modelRequestMaxRetries: 4.6 } as never).modelRequestMaxRetries).toBe(5);
+    expect(normalizeModelSettings({ ...GLM_BASE, modelRequestMaxRetries: -2 } as never).modelRequestMaxRetries).toBe(0);
+    expect(normalizeModelSettings({ ...GLM_BASE, modelRequestMaxRetries: 24 } as never).modelRequestMaxRetries).toBe(10);
+    expect(normalizeModelSettings({ ...GLM_BASE, modelRequestMaxRetries: Number.NaN } as never).modelRequestMaxRetries).toBe(5);
+  });
+
+  it("切换会话模型档案时仍保留全局重试次数", () => {
+    const configured = normalizeModelSettings({
+      ...GLM_BASE,
+      modelRequestMaxRetries: 3,
+      modelProfiles: [
+        { id: "p-a", provider: GLM_BASE.provider, baseUrl: "https://a.example", apiKey: "key-a", model: "a" },
+        { id: "p-b", provider: GLM_BASE.provider, baseUrl: "https://b.example", apiKey: "key-b", model: "b" },
+      ],
+      defaultModelProfileId: "p-a",
+    } as never);
+
+    expect(resolveSessionModelSettings(configured, { modelProfileId: "p-b", model: "b" }).modelRequestMaxRetries).toBe(3);
+  });
+});
+
 describe("MiniMax Responses 端点迁移", () => {
   const oldResponsesBase = "https://api.minimaxi.com/v1";
   const officialResponsesBase = "https://api.minimax.cn/v1";
