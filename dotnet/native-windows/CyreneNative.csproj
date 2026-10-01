@@ -37,6 +37,10 @@
     <PackageReference Include="Jieba.NET" Version="0.42.2" />
     <!-- SSH 托管宿主：会话/认证（DPAPI 由 net10.0-windows 框架自带） -->
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <!-- 云存储托管宿主：FTP/FTPS（SFTP 复用 SSH.NET；WebDAV 自带 HttpClient 极简实现） -->
+    <PackageReference Include="FluentFTP" Version="55.0.0" />
+    <!-- S3 及兼容对象存储（MinIO/R2 等：自定义 endpoint + path style） -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.104" />
   </ItemGroup>
   <ItemGroup>
     <!-- Jieba.NET 老式 content 包：SDK 项目不自动拷 Resources（词典）——
