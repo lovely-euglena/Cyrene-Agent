@@ -48,9 +48,9 @@ function renderStatus(status: OcrStatus | undefined): void {
     return;
   }
   if (status.localAvailable) {
-    const count = status.languages.length;
-    const def = status.defaultLanguage ? `，默认 ${status.defaultLanguage}` : "";
-    ocrEngineStatus.textContent = t("panel.ocr.engineReady", { count, default: def });
+    const total = status.languages.length;
+    const fallback = status.defaultLanguage ? `，默认 ${status.defaultLanguage}` : "";
+    ocrEngineStatus.textContent = t("panel.ocr.engineReady", { total, fallback });
   } else if (status.error) {
     ocrEngineStatus.textContent = t("panel.ocr.engineError", { error: status.error });
   } else {

@@ -227,3 +227,35 @@ describe("general interface language settings", () => {
     expect(reloaded.loadGeneralSettings().language).toBe(language);
   });
 });
+
+describe("general OCR settings", () => {
+  it("defaults to local provider enabled with auto language", () => {
+    const settings = normalizeGeneralSettings({});
+    expect(settings.ocrEnabled).toBe(true);
+    expect(settings.ocrProvider).toBe("local");
+    expect(settings.ocrLanguage).toBe("");
+    expect(settings.ocrCloudBaseUrl).toBe("");
+    expect(settings.ocrCloudApiKey).toBe("");
+    expect(settings.ocrCloudModel).toBe("");
+  });
+
+  it("keeps explicit values and drops unknown providers", () => {
+    const kept = normalizeGeneralSettings({
+      ocrEnabled: false,
+      ocrProvider: "cloud",
+      ocrLanguage: " zh-Hans-CN ",
+      ocrCloudBaseUrl: " https://example.test ",
+      ocrCloudApiKey: "secret",
+      ocrCloudModel: "ocr-model",
+    });
+    expect(kept.ocrEnabled).toBe(false);
+    expect(kept.ocrProvider).toBe("cloud");
+    expect(kept.ocrLanguage).toBe("zh-Hans-CN");
+    expect(kept.ocrCloudBaseUrl).toBe("https://example.test");
+    expect(kept.ocrCloudApiKey).toBe("secret");
+    expect(kept.ocrCloudModel).toBe("ocr-model");
+
+    expect(normalizeGeneralSettings({ ocrProvider: "bogus" } as never).ocrProvider).toBe("local");
+    expect(normalizeGeneralSettings({ ocrProvider: "off" }).ocrProvider).toBe("off");
+  });
+});

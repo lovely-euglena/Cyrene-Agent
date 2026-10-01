@@ -954,7 +954,7 @@
         "localTitle": "本地引擎",
         "languageLabel": "识别语言",
         "languageAuto": "自动（跟随系统）",
-        "engineReady": "本地引擎就绪，共 {{count}} 种可用语言{{default}}。",
+        "engineReady": "本地引擎就绪，共 {{total}} 种可用语言{{fallback}}。",
         "engineMissing": "未检测到本地 OCR 引擎（CyreneOcr.exe）：请重新安装或使用完整版安装包。",
         "engineError": "本地引擎状态查询失败：{{error}}",
         "cloudTitle": "云端服务商（预留）",
