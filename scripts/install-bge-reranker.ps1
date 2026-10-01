@@ -1,126 +1,185 @@
-# install-bge-reranker.ps1
-# 下载 bge-reranker-base 的 ONNX 量化模型到 models/bge-reranker-base/onnx/model_quantized.onnx
+﻿# install-bge-reranker.ps1
+# 下载 bge-reranker-base（重排序模型，可选）到 models/bge-reranker-base/
+# 目录布局与 src/main/rag/model-status.ts 的探测约定一致：
+#   tokenizer.json / config.json / onnx/model_quantized.onnx  （必装，三缺一判「未安装」）
+#   tokenizer_config.json / special_tokens_map.json / sentencepiece.bpe.model （可选附属）
+#
 # 用法（PowerShell）：
-#   .\scripts\install-bge-reranker.ps1           # 自动按优先级尝试
-#   .\scripts\install-bge-reranker.ps1 -Force    # 不询问，强制执行
+#   .\scripts\install-bge-reranker.ps1                     # 自动选源：hf-mirror → 魔搭 → 官方源
+#   .\scripts\install-bge-reranker.ps1 -Mirror official    # 只用官方源
+#   .\scripts\install-bge-reranker.ps1 -Force              # 已存在文件也重新下载
+#   powershell -ExecutionPolicy Bypass -File .\scripts\install-bge-reranker.ps1
 
 param(
-    [switch]$Force
+    [switch]$Force,
+    [ValidateSet("auto", "hf-mirror", "modelscope", "official")]
+    [string]$Mirror = "auto"
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"   # 关掉 IWR 进度条（大文件下会严重拖慢）
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$targetDir = Join-Path $repoRoot "models\bge-reranker-base\onnx"
-$targetFile = Join-Path $targetDir "model_quantized.onnx"
+$targetDir = Join-Path $repoRoot "models\bge-reranker-base"
 
-Write-Host ""
-Write-Host "[install-bge-reranker] 目标路径: $targetFile" -ForegroundColor Cyan
-
-# ── 已有则跳过 ──
-if (Test-Path $targetFile) {
-    $existingSize = (Get-Item $targetFile).Length
-    Write-Host "[install-bge-reranker] 文件已存在 ($([math]::Round($existingSize/1MB,1)) MB)，跳过下载。" -ForegroundColor Yellow
-    if (-not $Force) {
-        $ans = Read-Host "要覆盖吗？[y/N]"
-        if ($ans -ne "y" -and $ans -ne "Y") { exit 0 }
-    }
-}
-
-New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-
-# ── 候选下载源（按推荐顺序） ──
-# 1) Hugging Face 国内镜像（hf-mirror.com）— 优先，体积最小（~105MB）
-# 2) ModelScope 魔搭 — 兜底，1GB 完整版（code 自动复制为 model_quantized.onnx 名称）
-$candidates = @(
-    @{
-        name        = "hf-mirror.com (Xenova 量化版, ~105MB)"
-        url         = "https://hf-mirror.com/Xenova/bge-reranker-base/resolve/main/onnx/model_quantized.onnx"
-        type        = "quantized"
-    },
-    @{
-        name        = "魔搭 (model.onnx 完整版, ~1.06GB)"
-        url         = "https://www.modelscope.cn/models/BAAI/bge-reranker-base/resolve/master/onnx/model.onnx"
-        type        = "full"
-    }
+# rel：目标相对路径（/ 分隔）；minBytes：低于此值视为不完整；required：缺失 = 安装失败
+$files = @(
+    @{ rel = "onnx/model_quantized.onnx"; minBytes = 50MB; required = $true },
+    @{ rel = "tokenizer.json";            minBytes = 1MB;  required = $true },
+    @{ rel = "config.json";               minBytes = 10;   required = $true },
+    @{ rel = "tokenizer_config.json";     minBytes = 10;   required = $false },
+    @{ rel = "special_tokens_map.json";   minBytes = 10;   required = $false },
+    @{ rel = "sentencepiece.bpe.model";   minBytes = 1MB;  required = $false }
 )
 
-function Test-UrlReachable($url, $timeoutSec = 10) {
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($url)
-        $req.Method = "HEAD"
-        $req.Timeout = $timeoutSec * 1000
-        $req.UserAgent = "Mozilla/5.0"
-        $resp = $req.GetResponse()
-        $status = [int]$resp.StatusCode
-        $resp.Close()
-        return $status
-    } catch {
-        return $null
+# ── 候选下载源（按尝试顺序） ──
+# 1) hf-mirror.com — Xenova 量化版（~266MB）
+# 2) 魔搭 ModelScope — BAAI 完整版（~1.06GB，onnx/model.onnx 落盘时改名为 model_quantized.onnx）
+# 3) huggingface.co — 官方源（部分网络不可达，放最后）
+$sources = @()
+if ($Mirror -ne "official" -and $Mirror -ne "modelscope") {
+    $sources += @{ name = "hf-mirror.com（Xenova 量化版 ~266MB）"; base = "https://hf-mirror.com/Xenova/bge-reranker-base/resolve/main/" }
+}
+if ($Mirror -ne "hf-mirror" -and $Mirror -ne "official") {
+    $sources += @{
+        name  = "魔搭 ModelScope（BAAI 完整版 ~1.06GB）"
+        base  = "https://www.modelscope.cn/models/BAAI/bge-reranker-base/resolve/master/"
+        remap = @{ "onnx/model_quantized.onnx" = "onnx/model.onnx" }
     }
 }
+if ($Mirror -ne "hf-mirror" -and $Mirror -ne "modelscope") {
+    $sources += @{ name = "huggingface.co（官方源 ~266MB）"; base = "https://huggingface.co/Xenova/bge-reranker-base/resolve/main/" }
+}
 
-function Download-File($url, $dest, $label) {
-    Write-Host ""
-    Write-Host "[install-bge-reranker] 从 $label 下载..." -ForegroundColor Green
-    Write-Host "[install-bge-reranker] URL: $url"
-    try {
-        # BITS 或 Invoke-WebRequest 二选一，优先 BITS（更稳，支持大文件、断点续传）
-        if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
-            Start-BitsTransfer -Source $url -Destination $dest -DisplayName $label -Description "bge-reranker-base onnx" -ErrorAction Stop
-        } else {
-            # 退回 Invoke-WebRequest（不支持断点续传，但 PowerShell 自带）
-            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 600
+# ── 工具函数 ──
+
+function Get-LocalPath([string]$rel) {
+    return Join-Path $targetDir ($rel -replace '/', '\')
+}
+
+# HEAD 探测；服务器不支持 HEAD（405）时退回 Range: 0-0 的 GET。
+function Test-UrlReachable([string]$url, [int]$timeoutSec = 20) {
+    foreach ($method in @("HEAD", "GET")) {
+        try {
+            $req = [System.Net.HttpWebRequest]::Create($url)
+            $req.Method = $method
+            $req.Timeout = $timeoutSec * 1000
+            $req.UserAgent = "Mozilla/5.0 (cyrene-model-installer)"
+            if ($method -eq "GET") { $req.AddRange(0, 0) }
+            $resp = $req.GetResponse()
+            $status = [int]$resp.StatusCode
+            $resp.Close()
+            if ($status -ge 200 -and $status -lt 400) { return $status }
+        } catch {
+            $resp = $_.Exception.Response
+            if ($resp) {
+                $status = [int]$resp.StatusCode
+                if ($status -ge 200 -and $status -lt 400) { return $status }
+            }
         }
-        return $true
-    } catch {
-        Write-Host "[install-bge-reranker] 下载失败: $_" -ForegroundColor Red
-        if (Test-Path $dest) { Remove-Item $dest -Force }
-        return $false
     }
+    return $null
 }
 
-# ── 自动按优先级尝试 ──
-foreach ($c in $candidates) {
-    Write-Host ""
-    Write-Host "[install-bge-reranker] 探测: $($c.name)" -ForegroundColor Cyan
-    $status = Test-UrlReachable $c.url
-    if ($status -ge 200 -and $status -lt 400) {
-        Write-Host "[install-bge-reranker]   ✓ 可达 (HTTP $status)" -ForegroundColor Green
-    } else {
-        Write-Host "[install-bge-reranker]   ✗ 不可达 (status=$status)" -ForegroundColor DarkGray
-        continue
+# 下载：优先 BITS（支持断点续传），失败退回 Invoke-WebRequest。
+function Download-File([string]$url, [string]$dest, [string]$label) {
+    Write-Host "        下载 $label ..." -ForegroundColor DarkGray
+    $attempts = @()
+    if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+        $attempts += { Start-BitsTransfer -Source $url -Destination $dest -ErrorAction Stop }
     }
-
-    if (-not (Download-File $c.url $targetFile $c.name)) { continue }
-
-    # 如果是 model.onnx（魔搭），复制为 model_quantized.onnx 名称以匹配代码期望
-    if ($c.type -eq "full") {
-        Write-Host "[install-bge-reranker] 完整版下载完成，复制为 model_quantized.onnx 名称" -ForegroundColor Yellow
-        Copy-Item $targetFile $targetFile -Force
+    $attempts += { Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 3600 }
+    foreach ($attempt in $attempts) {
+        try {
+            & $attempt
+            return $true
+        } catch {
+            if (Test-Path $dest) { Remove-Item $dest -Force -ErrorAction SilentlyContinue }
+        }
     }
+    return $false
+}
 
-    # 验证
-    if (Test-Path $targetFile) {
-        $size = (Get-Item $targetFile).Length
-        $sizeMB = [math]::Round($size / 1MB, 1)
-        if ($size -lt 1MB) {
-            Write-Host "[install-bge-reranker] 失败：文件太小 ($sizeMB MB)，疑似下载错误" -ForegroundColor Red
-            Remove-Item $targetFile -Force
+# 已完成文件集合（本次会话内：下载成功或确认已完整）
+$downloaded = @{}
+
+# ── 主流程 ──
+Write-Host ""
+Write-Host "[install-bge-reranker] 目标目录：$targetDir" -ForegroundColor Cyan
+New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+
+$anyDownload = $false
+foreach ($src in $sources) {
+    # 计算当前待下载文件（已有完整文件且非 -Force 时直接跳过）
+    $pendingFiles = @()
+    foreach ($f in $files) {
+        if ($downloaded.ContainsKey($f.rel)) { continue }
+        $local = Get-LocalPath $f.rel
+        if ((-not $Force) -and (Test-Path $local) -and ((Get-Item $local).Length -ge $f.minBytes)) {
+            $downloaded[$f.rel] = $true
             continue
         }
-        Write-Host ""
-        Write-Host "[install-bge-reranker] ✓ 下载完成" -ForegroundColor Green
-        Write-Host "[install-bge-reranker]   路径: $targetFile" -ForegroundColor Green
-        Write-Host "[install-bge-reranker]   大小: $sizeMB MB" -ForegroundColor Green
-        if ($c.type -eq "full") {
-            Write-Host "[install-bge-reranker]   类型: 完整版（推荐用 optimum 量化以减小打包体积）" -ForegroundColor Yellow
-        } else {
-            Write-Host "[install-bge-reranker]   类型: Xenova 量化版" -ForegroundColor Green
-        }
-        exit 0
+        $pendingFiles += $f
     }
+    if ($pendingFiles.Count -eq 0) { break }
+
+    Write-Host ""
+    Write-Host "[install-bge-reranker] 尝试源：$($src.name)" -ForegroundColor Cyan
+    foreach ($f in $pendingFiles) {
+        $rel = [string]$f.rel
+        $remote = if ($src.ContainsKey("remap") -and $src.remap.ContainsKey($rel)) { $src.remap[$rel] } else { $rel }
+        $url = [string]$src.base + $remote
+        $local = Get-LocalPath $rel
+
+        $status = Test-UrlReachable $url
+        if (-not $status) {
+            Write-Host "  ✗ $rel 不可达（跳过）" -ForegroundColor DarkGray
+            continue
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $local) | Out-Null
+        if (-not (Download-File $url $local $rel)) {
+            Write-Host "  ✗ $rel 下载失败（跳过）" -ForegroundColor DarkGray
+            continue
+        }
+
+        $size = (Get-Item $local).Length
+        if ($size -lt $f.minBytes) {
+            Write-Host "  ✗ $rel 大小异常（$([math]::Round($size / 1MB, 2)) MB），删除后尝试其它源" -ForegroundColor Red
+            Remove-Item $local -Force -ErrorAction SilentlyContinue
+            continue
+        }
+        $downloaded[$rel] = $true
+        $anyDownload = $true
+        Write-Host "  ✓ $rel（$([math]::Round($size / 1MB, 2)) MB）" -ForegroundColor Green
+    }
+}
+
+# ── 结果校验 ──
+$missingRequired = @()
+$missingOptional = @()
+$totalBytes = 0
+foreach ($f in $files) {
+    $local = Get-LocalPath $f.rel
+    $ok = (Test-Path $local) -and ((Get-Item $local).Length -ge $f.minBytes)
+    if ($ok) { $totalBytes += (Get-Item $local).Length; continue }
+    if ($f.required) { $missingRequired += $f.rel } else { $missingOptional += $f.rel }
 }
 
 Write-Host ""
-Write-Host "[install-bge-reranker] 所有候选源都失败，请检查网络后重试。" -ForegroundColor Red
-exit 1
+if ($missingRequired.Count -gt 0) {
+    Write-Host "[install-bge-reranker] ✗ 安装未完成，缺少必装文件：" -ForegroundColor Red
+    foreach ($m in $missingRequired) { Write-Host "  - $m" -ForegroundColor Red }
+    Write-Host "  可切换镜像源重试（-Mirror hf-mirror / -Mirror modelscope / -Mirror official），或参考 docs/local-models.md 手动下载。" -ForegroundColor Yellow
+    exit 1
+}
+
+if (-not $anyDownload) {
+    Write-Host "[install-bge-reranker] ✓ 文件已齐全，无需下载（-Force 可强制重新下载）。" -ForegroundColor Green
+} else {
+    Write-Host "[install-bge-reranker] ✓ bge-reranker-base 安装完成（共 $([math]::Round($totalBytes / 1MB, 1)) MB）" -ForegroundColor Green
+}
+if ($missingOptional.Count -gt 0) {
+    Write-Host "[install-bge-reranker] 提示：可选文件未下载（不影响使用）：$($missingOptional -join '、')" -ForegroundColor Yellow
+}
+Write-Host "[install-bge-reranker] 回到 设置 → 昔涟设置 → RAG 页面「刷新状态」即可看到「已下载」。" -ForegroundColor Green
+exit 0
