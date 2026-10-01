@@ -189,7 +189,7 @@ import {
   pushWindowRadiusToNative,
 } from "../windows/native-windows-bridge";
 import { connectDetachedTray, showTrayBalloon } from "../tray-detached";
-import { openSettingsWindow } from "../windows/settings-router";
+import { openSettingsEntry, openSettingsWindow } from "../windows/settings-router";
 import { pickAndImportUiFont, resetUiFont } from "../settings/ui-font";
 import { createSplashWindow } from "../startup/create-splash-window";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
@@ -1013,18 +1013,25 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       registerProtocolHandlers,
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
         // quit 由组合根注入（上游 2026-09-24 语义）：窗口系统 IPC 不直接依赖 electron app
+        // openSettings 为回退路由：窗口 IPC 默认走聊天窗内设置页（见 window-system-ipc）
         registerWindowSystemIpc({ ipc, windowManager, openSettings: openSettingsWindow, quit: () => app.quit() });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
-      // 托盘/协议激活的设置入口：默认 WPF（例外见 settings-router）
+      // 托盘/协议激活的设置入口：默认聊天窗内设置页（shell-bootstrap 内实现）；
+      // 这里注入的是回退路由（原生 WPF / Electron 裁决见 settings-router）
       openSettings: openSettingsWindow,
       // native 三件套窗口（默认启用）：动作转发回
       // 既有 windowManager / aux 窗口管理；未启用时 initialize 是 no-op
       initializeNativeWindows: (windowManager) => {
         initNativeWindowsBridge({
-          // 设置窗路由：默认 WPF（.NET）；channels/TTS/ASR 及 Electron 专属
-          // section 弹 Electron（settings-router 统一裁决 + 失败回退）
-          openSettings: openSettingsWindow,
+          // 设置入口（native 状态栏「设置」/「切换模型」）：默认聊天窗内设置页；
+          // 失败回退 WPF/Electron（settings-router 统一裁决 + 失败回退）
+          openSettings: (section) => {
+            openSettingsEntry(section, {
+              openInChat: (target) => windowManager.openSettings(target),
+              openFallback: (target) => openSettingsWindow(target),
+            });
+          },
           // native 状态栏「打开聊天」：必须走 openReactChatWindow（建壳+载页+显示）；
           // 只调 createReactChatWindowShell 会创建不可见的空壳，点了没反应。
           openChatWindow: () => { void windowManager.openReactChatWindow(); },

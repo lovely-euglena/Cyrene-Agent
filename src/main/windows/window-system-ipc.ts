@@ -8,11 +8,13 @@ import {
   settingsWindow,
 } from "./window-state";
 import type { WindowManager } from "./window-manager";
+import { openSettingsEntry } from "./settings-router";
 
 export interface WindowSystemIpcDependencies {
   get windowManager(): WindowManager | null;
   /**
-   * 设置入口路由（默认 WPF；channels/TTS/ASR 等例外弹 Electron）。
+   * 设置入口回退路由（聊天窗设置页不可用时）：默认 WPF；
+   * channels/TTS/ASR 等例外弹 Electron。
    * 缺省回退：直接创建 Electron 设置窗（兼容旧装配/测试桩）。
    */
   openSettings?(section?: string): void;
@@ -92,14 +94,30 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
     deps.windowManager?.createTasksWindow();
   });
 
-  ipc.on(IPC.SIDEBAR_OPEN_SETTINGS, (_event, section?: string) => {
-    // 默认 WPF 设置窗（channels/TTS/ASR 等例外弹 Electron，见 settings-router）
-    const target = typeof section === "string" ? section : undefined;
-    if (deps.openSettings) {
-      deps.openSettings(target);
+  // 设置入口统一路由（2026-10 上游对齐）：默认打开聊天窗内设置页；
+  // 聊天窗不可用（windowManager 缺失 / 加载失败）时回退既有 WPF/Electron 路由。
+  function openSettingsFromEntry(section: string | undefined): void {
+    const windowManager = deps.windowManager;
+    const fallback = (target?: string): void => {
+      if (deps.openSettings) {
+        deps.openSettings(target);
+        return;
+      }
+      windowManager?.createSettingsWindow(target);
+    };
+    if (!windowManager) {
+      fallback(section);
       return;
     }
-    deps.windowManager?.createSettingsWindow(target);
+    openSettingsEntry(section, {
+      openInChat: (target) => windowManager.openSettings(target),
+      openFallback: fallback,
+    });
+  }
+
+  ipc.on(IPC.SIDEBAR_OPEN_SETTINGS, (_event, section?: string) => {
+    // 聊天窗/状态栏/任务窗的「设置」按钮：默认聊天窗内设置页
+    openSettingsFromEntry(typeof section === "string" ? section : undefined);
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_CALL, () => {
@@ -112,12 +130,7 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
 
   // 渲染端请求切到设置页指定标签（头像菜单等）：复用统一设置路由
   ipc.handle(IPC.SETTINGS_REQUEST_SWITCH_SECTION, (_event, section?: string) => {
-    const target = typeof section === "string" ? section : "appearance";
-    if (deps.openSettings) {
-      deps.openSettings(target);
-      return true;
-    }
-    deps.windowManager?.createSettingsWindow(target);
+    openSettingsFromEntry(typeof section === "string" ? section : "appearance");
     return true;
   });
 

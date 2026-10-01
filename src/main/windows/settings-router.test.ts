@@ -14,7 +14,7 @@ vi.mock("./create-aux-windows", () => ({
   createSettingsWindow: mocks.createSettingsWindow,
 }));
 
-import { openSettingsWindow } from "./settings-router";
+import { openSettingsEntry, openSettingsWindow } from "./settings-router";
 
 /** 冲掉 spawnNativeWindow(...).then(...) 的微任务 */
 async function flush(): Promise<void> {
@@ -92,5 +92,39 @@ describe("openSettingsWindow · 路由", () => {
     openSettingsWindow("about");
     await flush();
     expect(mocks.createSettingsWindow).toHaveBeenCalledWith(undefined);
+  });
+});
+
+describe("openSettingsEntry · 默认聊天窗内设置页", () => {
+  it("聊天窗打开成功：不再触碰回退路由", async () => {
+    const openInChat = vi.fn(async () => undefined);
+    const openFallback = vi.fn();
+    openSettingsEntry("general", { openInChat, openFallback });
+    await flush();
+    expect(openInChat).toHaveBeenCalledWith("general");
+    expect(openFallback).not.toHaveBeenCalled();
+  });
+
+  it("聊天窗加载失败：回退原生设置窗（同 section）", async () => {
+    const openFallback = vi.fn();
+    openSettingsEntry("channels", {
+      openInChat: vi.fn(async () => {
+        throw new Error("chat page load failed");
+      }),
+      openFallback,
+    });
+    await flush();
+    expect(openFallback).toHaveBeenCalledWith("channels");
+  });
+
+  it("openInChat 同步抛错也走回退（入口不失效）", () => {
+    const openFallback = vi.fn();
+    openSettingsEntry(undefined, {
+      openInChat: () => {
+        throw new Error("window manager unavailable");
+      },
+      openFallback,
+    });
+    expect(openFallback).toHaveBeenCalledWith(undefined);
   });
 });
