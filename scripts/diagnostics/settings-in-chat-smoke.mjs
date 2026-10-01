@@ -132,6 +132,25 @@ async function main() {
     { label: "sidebar:open-settings handler", timeoutMs: 60_000 },
   );
 
+  // ── 等核心阶段就绪 ──
+  // 真实入口（托盘/状态栏/原生侧栏）经 WindowActivationBroker 排队到 core-ready 才放行；
+  // 本脚本直接 emit IPC 会绕过这道门，过早打开聊天窗会导致渲染端 bootstrap 撞上
+  // 尚未注册的 chats IPC。桌宠窗在 core 阶段创建（晚于 chats IPC 注册）——用它当门；
+  // 桌宠被关闭时退回固定等待。
+  const petWindowSeen = await waitFor(
+    () => evaluate(`(() => {
+      const { BrowserWindow } = process.mainModule.require("electron");
+      return BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.webContents.getURL().includes("/renderer/index.html"));
+    })()`),
+    { label: "core ready (pet window)", timeoutMs: 20_000, intervalMs: 300 },
+  ).catch(() => null);
+  if (!petWindowSeen) {
+    log("core", "pet window not seen; waiting fixed grace period");
+    await sleep(6_000);
+  } else {
+    log("core", "pet window present (core IPC registered)");
+  }
+
   // ── 收集渲染端错误（窗口一创建就挂监听） ──
   await evaluate(`(() => {
     const { app } = process.mainModule.require("electron");
