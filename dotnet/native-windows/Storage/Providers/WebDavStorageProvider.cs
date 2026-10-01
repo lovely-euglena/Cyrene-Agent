@@ -101,7 +101,7 @@ internal sealed class WebDavStorageProvider : IStorageProvider
     {
         if (createParents) EnsureDir(ParentOf(relPath));
         using var content = new StreamContent(source);
-        content.Headers.ContentLength = length;
+        if (length >= 0) content.Headers.ContentLength = length;
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         using var resp = Send(HttpMethod.Put, relPath, content, HttpCompletionOption.ResponseContentRead);
     }
@@ -149,10 +149,30 @@ internal sealed class WebDavStorageProvider : IStorageProvider
     }
 
     public void Move(string fromRel, string toRel, bool overwrite)
-        => MoveOrCopy(new HttpMethod("MOVE"), fromRel, toRel, overwrite);
+    {
+        try
+        {
+            MoveOrCopy(new HttpMethod("MOVE"), fromRel, toRel, overwrite);
+        }
+        catch (StorageException ex) when (ex.Code is "STORAGE_UNSUPPORTED" or "STORAGE_IO_ERROR")
+        {
+            // 部分 WebDAV 服务（如 123 云盘）不支持 MOVE/COPY：退化为流式复制 + 删除
+            StreamCopy(fromRel, toRel);
+            DeleteFile(fromRel);
+        }
+    }
 
     public void Copy(string fromRel, string toRel, bool overwrite)
-        => MoveOrCopy(new HttpMethod("COPY"), fromRel, toRel, overwrite);
+    {
+        try
+        {
+            MoveOrCopy(new HttpMethod("COPY"), fromRel, toRel, overwrite);
+        }
+        catch (StorageException ex) when (ex.Code is "STORAGE_UNSUPPORTED" or "STORAGE_IO_ERROR")
+        {
+            StreamCopy(fromRel, toRel);
+        }
+    }
 
     public long Test()
     {
@@ -258,8 +278,21 @@ internal sealed class WebDavStorageProvider : IStorageProvider
             new StorageException("STORAGE_ALREADY_EXISTS", $"目标已存在：{rel}"),
         HttpStatusCode.PreconditionFailed =>
             new StorageException("STORAGE_ALREADY_EXISTS", $"目标已存在（Precondition Failed）：{rel}"),
+        HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented =>
+            new StorageException("STORAGE_UNSUPPORTED", $"服务器不支持该操作（HTTP {(int)status}）：{rel}"),
         _ => new StorageException("STORAGE_IO_ERROR", $"WebDAV 请求失败（HTTP {(int)status}）：{rel}"),
     };
+
+    /// <summary>GET → PUT 流式复制（不落盘、不进内存整块），供不支持 COPY 的服务器兜底。</summary>
+    private void StreamCopy(string fromRel, string toRel)
+    {
+        using var get = Send(HttpMethod.Get, fromRel, null, HttpCompletionOption.ResponseHeadersRead);
+        using var body = get.Content.ReadAsStream();
+        using var content = new StreamContent(body);
+        if (get.Content.Headers.ContentLength is long length) content.Headers.ContentLength = length;
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var put = Send(HttpMethod.Put, toRel, content, HttpCompletionOption.ResponseContentRead);
+    }
 
     private void MoveOrCopy(HttpMethod method, string fromRel, string toRel, bool overwrite)
     {

@@ -345,12 +345,24 @@ internal sealed class S3StorageProvider : IStorageProvider
         for (var i = 0; i < keys.Count; i += DeleteBatch)
         {
             var batch = keys.Skip(i).Take(DeleteBatch).Select(k => new KeyVersion { Key = k }).ToList();
-            DeleteObjects(new DeleteObjectsRequest
+            try
             {
-                BucketName = _profile.Bucket,
-                Objects = batch,
-                Quiet = true,
-            });
+                DeleteObjects(new DeleteObjectsRequest
+                {
+                    BucketName = _profile.Bucket,
+                    Objects = batch,
+                    Quiet = true,
+                });
+            }
+            catch (Exception)
+            {
+                // 部分 S3 兼容服务（Rains3/Ceph 系）对多对象删除挑剔（如强制 Content-MD5）：
+                // 逐个删除兜底；单个删除也失败时抛出真实错误
+                foreach (var key in batch)
+                {
+                    DeleteObject(new DeleteObjectRequest { BucketName = _profile.Bucket, Key = key.Key });
+                }
+            }
         }
     }
 
