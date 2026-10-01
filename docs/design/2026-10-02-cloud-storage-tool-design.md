@@ -157,11 +157,9 @@ cyrene-native（.NET，常驻子进程）
 | `profiles.remove` | `id` | `true/false` | — |
 | `profiles.test` | `profileId` | `{ok, latencyMs, error?}` | 设置页「测试连接」/ 未来工具 |
 | `status` | — | `{sessions:[{profileId,state,lastUsedAt}]}` | 会话状态 |
-| `ls` | `profileId,path,maxEntries?` | `{entries:[{name,path,type,size,modifiedAt}],truncated}` | type: dir/file/link |
-| `read` | `profileId,path,maxBytes?` | `{kind:"dir"…}` 或 `{kind:"file",text,truncated,encoding}` / `{kind:"binary",size}` | 目录→列表；文件→小文本内联（默认上限 256KB，二进制不返回内容） |
-| `write` | `profileId,path,content?/localPath?,overwrite?,createParents?` | `{bytes}` | 本地文件或文本内容写入远端 |
-| `copyFrom` | `profileId,path,localPath,overwrite?,timeoutMs?` | `{bytes}` | 远端→本地（下载） |
-| `copyTo` | `profileId,localPath,path,overwrite?,timeoutMs?` | `{bytes}` | 本地→远端（上传） |
+| `read` | `profileId,path?,maxBytes?,maxEntries?` | `{kind:"dir",entries,truncated}` / `{kind:"text",text}` / `{kind:"binary"}` / `{kind:"file",truncated}` | 目录→列表；文件→小文本内联（默认 256KB；大文件/二进制只回元数据与下载提示） |
+| `write` | `profileId,path,content?/localPath?,overwrite?,createParents?` | `{path,bytes}` | 文本内容或本地文件写入远端（二选一） |
+| `download` | `profileId,path,localPath,overwrite?` | `{path,localPath,bytes}` | 远端→本地（临时文件 + 原子改名） |
 | `mkdir` | `profileId,path,recursive?` | `true` | — |
 | `delete` | `profileId,paths[],recursive?` | `{deleted:[…],failed:[…]}` | 逐条结果，部分失败不整单失败 |
 | `move` | `profileId,from,to,overwrite?` | `true` | 同档案内 |
@@ -289,3 +287,30 @@ P1/P2 按「宿主骨架 → 各 Provider → 工具面」分批提交，每个 
 3. **设置页同批做**：档案 CRUD + 测试连接（Electron 设置区 + WPF 导航入口，照 OCR 模式）。
 4. **冒烟环境**：本机自测（Windows OpenSSH sshd / 本地临时服务）；WebDAV 与 S3 由用户提供
    真实生产环境服务器做最终验证。
+
+## 15. 实现记录（2026-10-02）
+
+- 落地范围与本设计一致（P1+P2+P3 同批）：
+  - `dotnet/native-windows/Storage/`：`StorageHost` / `StorageProfileStore` / `StorageSessionManager` /
+    `StoragePaths` / `Providers`（Ftp / Sftp / WebDav / S3）+ `Program.cs` 的 `--storage-host` 分支；
+  - `src/main/cloud-storage/`：`native-storage-host` 薄代理 + 6 个 `cloud_*` 工具 + 设置页 IPC；
+  - 设置页：Electron「云存储」section（档案 CRUD + 保存并测试连接）+ WPF 导航入口（native:false）。
+- 选型修正：**WebDAV 未使用 WebDAVClient**，改为自带 HttpClient 极简实现
+  （Basic/Digest/NTLM 协商 + 自签证书回调 + MOVE/COPY 不支持时流式兜底），依赖表少一个包；
+  S3 用 AWSSDK.S3 v4（async-only API，宿主 Task.Run 线程同步等待）。
+- 真实服务冒烟（`scripts/diagnostics/cloud-storage-smoke.mjs`，24 项断言，均针对 **dotnet publish 产物**）：
+
+  | 目标 | 结果 | 备注 |
+  | --- | --- | --- |
+  | WebDAV：123 云盘（生产测试账号） | 24/24 | DELETE 最终一致（冒烟轮询确认）；COPY/MOVE 走流式兜底 |
+  | S3：Rains3（生产隔离桶） | 24/24 | 多对象删除被拒（要求 Content-MD5）→ 逐个删除兜底 |
+  | SFTP：Rains3（8022 网关） | 24/24 | GetAttributes 对不存在路径返回属性 → 改为父目录列表判存在；RENAME 不支持 → 复制删除兜底 |
+  | FTP / FTPS：本地 pyftpdlib（含自签证书） | 24/24 | `%` 文件名放行（SanitizeUrlEncoding=false），控制字符防护保留 |
+
+  覆盖场景：中文/特殊字符（`+ # % & （）`）文件名、嵌套目录递归复制/移动、空文件、
+  二进制识别、大文本内联截断、目录列表截断、路径越界（`..`）拒绝、4MB 二进制往返、
+  覆盖保护（write/copy/move 默认拒绝）。
+- 发布接线：`package.json` 新增 `build:native-windows` 并接入 `package:win:dir`；
+  `.github/workflows/package-windows.yml` 补 native/OCR publish 步骤（历史缺口）。
+- 已知边界：SCP 未做；S3 单对象 >5GB 不支持（PutObject 上限）；长传输占住该档案队列
+  （TS 侧超时只放弃等待，宿主继续完成）。
