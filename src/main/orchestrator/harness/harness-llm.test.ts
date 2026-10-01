@@ -33,7 +33,7 @@ function makeResponse(text = "done"): ChatResponse {
 const adapter: ChatVendorAdapter = {
   id: "chatgpt",
   transport: "openai",
-  capability: { id: "chatgpt", displayName: "OpenAI", transport: "openai", baseUrl: "https://example.test/v1", authStyle: "bearer", defaultModel: "m", supportsTools: true, supportsThinking: true, thinkingField: null, cacheStrategy: "none", testStrategy: "text", supportsVision: true },
+  capability: { id: "chatgpt", displayName: "OpenAI", transport: "openai", baseUrl: "https://example.test/v1", authStyle: "bearer", defaultModel: "m", supportsTools: true, supportsThinking: true, thinkingField: null, cacheStrategy: "none", testStrategy: "text" },
   buildRequest: (request) => ({ url: "https://example.test/v1/chat/completions", method: "POST", headers: {}, body: JSON.stringify(request) }),
   buildStreamRequest: (request) => ({ url: "https://example.test/v1/chat/completions", method: "POST", headers: {}, body: JSON.stringify(request) }),
   parseResponse: (raw) => makeResponse(typeof (raw as { text?: unknown })?.text === "string" ? String((raw as { text: string }).text) : "summary"),

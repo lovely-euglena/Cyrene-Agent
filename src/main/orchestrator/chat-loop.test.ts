@@ -47,7 +47,6 @@ const capability: ProviderCapability = {
   thinkingField: null,
   cacheStrategy: "none",
   testStrategy: "text",
-  supportsVision: false,
 };
 
 class FakeAdapter implements ChatVendorAdapter {

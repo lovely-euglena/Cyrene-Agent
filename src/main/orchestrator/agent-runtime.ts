@@ -174,8 +174,8 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       loadModelSettings: (modelProfileId?: string) => resolveModelSettingsProfile(rawDeps.loadModelSettings(), modelProfileId),
       loadGeneralSettings: () => rawDeps.loadGeneralSettings(),
       loadUserProfile: () => rawDeps.loadUserProfile(),
-      buildEnvironmentContext: ((model, profile) =>
-        buildEnvironmentContext(model, profile as any)) as BuildOptionsDeps["buildEnvironmentContext"],
+      buildEnvironmentContext: ((profile) =>
+        buildEnvironmentContext(profile as any)) as BuildOptionsDeps["buildEnvironmentContext"],
       buildSkillCatalog: ((skills) =>
         buildSkillCatalog(skills as any)) as BuildOptionsDeps["buildSkillCatalog"],
       buildAutoInjectedSkillContext: ((skills) =>
@@ -339,7 +339,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         : rawDeps.skillRegistry.getEnabledForMode(mode, generalSettings.skillModeOverrides);
       const systemContent = [
         buildModePrompt(mode),
-        buildEnvironmentContext({ provider: settings.provider, model: settings.model }, profile),
+        buildEnvironmentContext(profile),
         buildSkillCatalog(scheduledSkills),
         await buildAlwaysOnContext(task.prompt, messages),
         await rawDeps.buildPluginPromptContext({

@@ -76,7 +76,7 @@ export interface BuildOptionsDeps {
   loadModelSettings: (modelProfileId?: string) => ModelSettingsLite;
   loadGeneralSettings: () => StyleSettingsLite;
   loadUserProfile: () => UserProfileLite;
-  buildEnvironmentContext: (model: { provider: string; model: string }, profile: unknown) => string;
+  buildEnvironmentContext: (profile: unknown) => string;
   /** @deprecated 仅保留旧测试/调用方结构兼容；生产不再使用。 */
   buildSystemPrompt?: (styleFile: string) => string;
   buildSkillCatalog: (skills: ReadonlyArray<unknown>) => string;
@@ -262,6 +262,7 @@ export interface UserProfileLite {
   defaultCity?: string;
   timezone?: string;
   gender?: string;
+  replyLanguage?: string;
 }
 
 export function buildChannelSystem(channel?: RelationshipChannel): string {
@@ -638,17 +639,15 @@ export async function buildAgentRunOptions(
   let environmentContext = "";
   const envTimer = perf.begin("build_environment_context");
   try {
-    environmentContext = deps.buildEnvironmentContext(
-      { provider: settings.provider, model: settings.model },
-      {
-        nickname: profile.nickname,
-        callPreference: profile.callPreference,
-        birthday: profile.birthday,
-        defaultCity: profile.defaultCity,
-        timezone: profile.timezone,
-        gender: profile.gender,
-      },
-    );
+    environmentContext = deps.buildEnvironmentContext({
+      nickname: profile.nickname,
+      callPreference: profile.callPreference,
+      birthday: profile.birthday,
+      defaultCity: profile.defaultCity,
+      timezone: profile.timezone,
+      gender: profile.gender,
+      replyLanguage: profile.replyLanguage,
+    });
   } catch (err) {
     console.warn("[Cyrene] environment context build failed:", err);
   }
