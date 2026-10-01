@@ -48,7 +48,7 @@ export interface LearnExamDraftStore {
   createDraft(plan: unknown, owner: DraftOwner): Promise<LearnExamDraftRecord>;
   appendBatch(draftId: string, type: LearnExamQuestionType, questions: unknown, owner: DraftOwner): Promise<{ progress: LearnExamDraftProgress }>;
   getDraft(draftId: string, owner: DraftOwner): Promise<LearnExamDraftRecord | null>;
-  publish(draftId: string, owner: DraftOwner): Promise<LearnExamRecord>;
+  publish(draftId: string, owner: DraftOwner): Promise<{ record: LearnExamRecord; alreadyPublished: boolean }>;
   deleteExpired(): Promise<number>;
 }
 
@@ -181,6 +181,10 @@ export function validateLearnExamQuestionBatch(type: LearnExamQuestionType, inpu
     questions.push(question as LearnExamQuestionInput);
   }
   return { ok: true, value: questions };
+}
+
+export function getLearnExamQuestionJsonSchema(type: LearnExamQuestionType): object {
+  return structuredClone(questionSchemas[type]);
 }
 
 function materializeQuestion(question: LearnExamQuestionInput, id: string): LearnExamQuestionRecord {
@@ -327,7 +331,7 @@ export function createExamDraftStore(userDataDir: string, paperStore: ExamPaperS
         const record = await getOwned(draftId, owner);
         if (record.status === "published") {
           const existing = await paperStore.get(record.examId);
-          if (existing?.conversationId === owner.conversationId) return existing;
+          if (existing?.conversationId === owner.conversationId) return { record: existing, alreadyPublished: true };
           throw error("已发布试卷记录缺失", "E_LEARN_EXAM_PUBLISH_RECOVERY_FAILED");
         }
         const incomplete = record.plan.quotas.flatMap((quota) => {
@@ -366,7 +370,7 @@ export function createExamDraftStore(userDataDir: string, paperStore: ExamPaperS
         }
         record.status = "published";
         await write(record);
-        return existing ?? formal;
+        return { record: existing ?? formal, alreadyPublished: false };
       });
     },
     async deleteExpired() {

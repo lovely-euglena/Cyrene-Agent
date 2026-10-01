@@ -80,9 +80,10 @@ describe("Learn exam draft domain store", () => {
     expect(records).toHaveLength(0);
     await store.appendBatch(draft.draftId, "single_choice", [singleChoice("题目二")], owner);
     const published = await store.publish(draft.draftId, owner);
-    expect(published.questions).toHaveLength(2);
+    expect(published.record.questions).toHaveLength(2);
     expect(records).toHaveLength(1);
-    expect(await store.getDraft(draft.draftId, owner)).toMatchObject({ status: "published", examId: published.examId });
+    expect(await store.getDraft(draft.draftId, owner)).toMatchObject({ status: "published", examId: published.record.examId });
+    expect(await store.publish(draft.draftId, owner)).toMatchObject({ record: { examId: published.record.examId }, alreadyPublished: true });
   });
 
   it("does not expose a draft to another conversation or run", async () => {

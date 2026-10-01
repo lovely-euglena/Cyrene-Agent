@@ -136,6 +136,10 @@ import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle"
 import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
+import { createExamPaperStore } from "../learn/exam-paper-store";
+import { createExamDraftStore } from "../learn/exam-draft";
+import { registerExamPaperIpc } from "../learn/exam-paper-ipc";
+import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
 
 import { createIpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -680,6 +684,17 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         // pop_quiz 抽查工具：IPC（提交/跳过）与工具注册（learn 模式可见）
         registerPopQuizIpc(ipc);
         registerPopQuizTool();
+        // 正式试卷：答案与评分资料仅由主进程存储；Learn 工具负责出卷、取卷批改与保存结果。
+        const examPaperStore = createExamPaperStore(app.getPath("userData"));
+        const examDraftStore = createExamDraftStore(app.getPath("userData"), examPaperStore);
+        void examDraftStore.deleteExpired().catch((error) => {
+          console.warn("[LearnExam] 清理过期出卷草稿失败:", error);
+        });
+        void examPaperStore.recoverInterruptedGrading().catch((error) => {
+          console.warn("[LearnExam] 恢复中断批改状态失败:", error);
+        });
+        registerExamPaperIpc(examPaperStore, ipc);
+        registerLearnExamTools(examPaperStore, examDraftStore);
         registerCallIpc(ipc);
       },
 
