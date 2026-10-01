@@ -14,6 +14,7 @@ import {
   callWindow,
   getCurrentAppIconPath,
   reactChatSession,
+  reactChatSettingsSection,
   reactChatWindow,
   setCallWindowLocal,
   setReactChatWindow,
@@ -138,6 +139,7 @@ export function createReactChatWindowShell(): BrowserWindow {
 
   // 新建窗口：dispatcher 重置；pending 仅服务于"未 ready 期间又收到请求"
   reactChatSession.reset();
+  reactChatSettingsSection.reset();
 
   const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   const bounds = getWorkspaceInitialBounds(workArea);
@@ -189,6 +191,7 @@ export function createReactChatWindowShell(): BrowserWindow {
 
   window.webContents.on("did-start-loading", () => {
     reactChatSession.markLoading();
+    reactChatSettingsSection.markLoading();
   });
 
   window.on("closed", () => {
@@ -196,6 +199,7 @@ export function createReactChatWindowShell(): BrowserWindow {
     if (reactChatWindow === window) {
       setReactChatWindow(null);
       reactChatSession.reset();
+      reactChatSettingsSection.reset();
     }
   });
   return window;

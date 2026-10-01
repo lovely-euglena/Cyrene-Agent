@@ -40,6 +40,8 @@ vi.mock("./startup-window-load", () => ({
 vi.mock("./broadcast", () => ({ broadcastToAllWindows: vi.fn() }));
 
 import { createWindowManager } from "./window-manager";
+import { createLazyReactChatWindowHandle } from "./create-aux-windows";
+import { reactChatSettingsSection } from "./window-state";
 
 interface FakeWindow {
   destroyed: boolean;
@@ -156,5 +158,50 @@ describe("window-manager · 桌宠隐藏回收", () => {
     expect(createPetWindowMock).toHaveBeenCalledTimes(2);
     manager.hidePetWindow();
     expect(second.destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 设置入口冷启动定位：ready-to-show 早于 React 挂载 onSwitchSection 监听，
+// 未 ready 时把 section 挂起，CHATS_REACT_READY（dispatcher.markReady）后由
+// chat-ui-ipc 冲发；ready 后直发。丢帧现象 = 「点设置没反应」。
+describe("window-manager · 设置入口冷启动定位", () => {
+  beforeEach(() => {
+    vi.mocked(createLazyReactChatWindowHandle).mockReset();
+    reactChatSettingsSection.reset();
+  });
+
+  it("未 ready 时挂起 section，ready 后冲发；ready 时直发", async () => {
+    const fake = makeFakeWindow();
+    vi.mocked(createLazyReactChatWindowHandle).mockReturnValue({
+      window: fake,
+      load: vi.fn(async () => undefined),
+      show: vi.fn(),
+      isMaterialized: () => true,
+      isLazy: true,
+      onMaterialized: vi.fn(),
+    } as never);
+    const manager = makeManager();
+
+    // 模拟 React 未 ready（新窗/加载中）
+    reactChatSettingsSection.markLoading();
+    await manager.openSettings("api");
+    expect(fake.webContents.send).not.toHaveBeenCalled();
+    expect(reactChatSettingsSection.getPending()).toBe("api");
+
+    // ready 帧到达：dispatcher 交出 pending（chat-ui-ipc 在此 send 给渲染端）
+    expect(reactChatSettingsSection.markReady()).toBe("api");
+
+    // ready 后直发
+    await manager.openSettings("general");
+    expect(fake.webContents.send).toHaveBeenCalledWith(IPC.SETTINGS_SWITCH_SECTION, "general");
+  });
+
+  it("窗口关闭/重建时清空挂起队列（防止下次启动回放旧 section）", () => {
+    reactChatSettingsSection.markLoading();
+    expect(reactChatSettingsSection.queueOrTake("appearance")).toBeNull();
+    expect(reactChatSettingsSection.getPending()).toBe("appearance");
+    reactChatSettingsSection.reset();
+    expect(reactChatSettingsSection.getPending()).toBeNull();
+    expect(reactChatSettingsSection.markReady()).toBeNull();
   });
 });

@@ -94,6 +94,16 @@ export const reactChatSession: ReactChatSessionDispatcher =
   createReactChatSessionDispatcher();
 
 /**
+ * 设置入口定位队列（与 reactChatSession 同一状态机）。
+ *
+ * `windowManager.openSettings` 把 section 入队/直发；聊天窗 ready-to-show 早于
+ * React 挂载 onSwitchSection 监听，冷启动直接 send 会丢帧（现象=「点设置没反应」），
+ * 未 ready 时挂在队列里，CHATS_REACT_READY 后由 chat-ui-ipc 冲发。
+ */
+export const reactChatSettingsSection: ReactChatSessionDispatcher =
+  createReactChatSessionDispatcher();
+
+/**
  * 应用图标路径提供者。
  *
  * 由于获取当前图标依赖尚未解耦的 loadGeneralSettings，为避免窗口工厂与

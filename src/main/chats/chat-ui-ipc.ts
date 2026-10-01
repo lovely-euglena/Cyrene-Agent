@@ -27,7 +27,7 @@ import { retrieveQueuedDocumentChunks } from "../rag/document-index-worker";
 import { validateCaptionImagePath, buildImageCaptionPrompt } from "../chat/image-caption";
 import { decideImageSendStrategy } from "../chat/image-send-strategy";
 import type { WindowManager } from "../windows/window-manager";
-import { reactChatSession, reactChatWindow } from "../windows/window-state";
+import { reactChatSession, reactChatSettingsSection, reactChatWindow } from "../windows/window-state";
 import {
   activeChatTargetRegistry,
   parseActiveTargetPayload,
@@ -271,6 +271,11 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     const pending = reactChatSession.markReady();
     if (pending) {
       win.webContents.send(IPC.CHATS_REACT_SWITCH_SESSION, pending);
+    }
+    // 设置入口定位：未 ready 期间挂起的 section 在 React 挂载完成后冲发
+    const pendingSection = reactChatSettingsSection.markReady();
+    if (pendingSection) {
+      win.webContents.send(IPC.SETTINGS_SWITCH_SECTION, pendingSection);
     }
   });
 

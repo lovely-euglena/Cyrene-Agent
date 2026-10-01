@@ -45,6 +45,7 @@ vi.mock("./window-state", () => ({
   callWindow: null,
   getCurrentAppIconPath: () => "",
   reactChatSession: { reset: vi.fn(), markLoading: vi.fn(), queueOrTake: vi.fn() },
+  reactChatSettingsSection: { reset: vi.fn(), markLoading: vi.fn(), queueOrTake: vi.fn(), markReady: vi.fn() },
   reactChatWindow: null,
   setCallWindowLocal: vi.fn(),
   setReactChatWindow: vi.fn(),

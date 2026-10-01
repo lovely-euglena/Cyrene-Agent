@@ -17,6 +17,7 @@ import {
 } from "./create-aux-windows";
 import { CHAT_READY_TIMEOUT_MS, loadWindowForStartup } from "./startup-window-load";
 import { broadcastToAllWindows } from "./broadcast";
+import { reactChatSettingsSection } from "./window-state";
 import { PetWindowMoveController } from "../pet-window-movement";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 
@@ -250,11 +251,20 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
 
     async openSettings(section = "appearance"): Promise<void> {
       const window = await this.openReactChatWindow();
-      window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, section);
+      // 冷启动竞态：ready-to-show 会早于 React 挂载 onSwitchSection 监听，直接 send
+      // 可能丢帧（现象=「点设置没反应」）。未 ready 时入队，由 CHATS_REACT_READY
+      // 冲发（与 sessionId 分发同一状态机）。
+      const immediate = reactChatSettingsSection.queueOrTake(section);
+      if (immediate) {
+        window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, immediate);
+      }
     },
     async openScheduledTasks(): Promise<void> {
       const window = await this.openReactChatWindow();
-      window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, "tasks");
+      const immediate = reactChatSettingsSection.queueOrTake("tasks");
+      if (immediate) {
+        window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, immediate);
+      }
     },
     createStickerManagerWindow,
     createSidebarWindow,
