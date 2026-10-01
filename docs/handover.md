@@ -86,6 +86,7 @@ docs/build-guide.md        # 构建/发版流程
 ## 6. 发版流程（test.N）
 
 1. `dotnet publish -c Release -r win-x64 --self-contained false`（注意 jieba 词典 Resources 已在 csproj 配置拷贝）
+1b. `dotnet publish -c Release -r win-x64 /p:SelfContained=false dotnet/ocr-sidecar/CyreneOcr.csproj`（本地 OCR 侧车；`electron-builder.yml` 映射到 `resources/ocr/`，`package:win:dir` 已含此步）
 2. `rsync -a --delete dotnet/native-windows/bin/Release/net10.0-windows/win-x64/publish/ release/win-unpacked/resources/native-windows/`
 3. 压缩链（~50min）：`tar -cf - -C win-unpacked . | xz -6 -T1 - > Cyrene-Portable-<ver>-x64.tar.xz` → `xz -t` 验证 → `split -b 95m`（仅 Gitee）→ SHA256SUMS；**zip 版**（S3 用，顶层结构同 tar）
 4. Gitee：建 release（prerelease）→ 传分卷+bat+SUMS → 下载回验 SHA256（test.4 传输损坏教训）
