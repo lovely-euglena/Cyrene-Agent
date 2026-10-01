@@ -587,6 +587,8 @@
     "nextQuestion": "次の質問",
     "customAnswerLabel": "その他の回答",
     "customAnswerPlaceholder": "回答を入力…",
+    "additionalContextLabel": "キュレネへの追加情報：",
+    "additionalContextPlaceholder": "任意です。役立つ情報があれば入力してください…",
     "questionProgressAria": "質問の進捗",
     "submitAll": "すべて送信",
     "submit": "送信",

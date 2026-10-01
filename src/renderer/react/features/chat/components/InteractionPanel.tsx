@@ -105,9 +105,11 @@ export function AskUserPanel({
   }];
   const [page, setPage] = useState(0);
   const [drafts, setDrafts] = useState(() => createAskDrafts(questions));
+  const [additionalContext, setAdditionalContext] = useState("");
   useEffect(() => {
     setPage(0);
     setDrafts(createAskDrafts(questions));
+    setAdditionalContext("");
   }, [interaction.id]);
   const current = questions[Math.min(page, questions.length - 1)];
   const currentDraft = drafts[current.id] ?? { source: null, optionIds: [], customText: "" };
@@ -115,12 +117,13 @@ export function AskUserPanel({
   const submit = () => {
     if (!canSubmit) return;
     if (interaction.responseKind === "submission") {
-      onAnswer?.(buildAskSubmission(interaction, drafts));
+      onAnswer?.(buildAskSubmission(interaction, drafts, additionalContext));
       return;
     }
     if (interaction.responseKind === "clarification") {
       onAnswer?.({
         requestId: interaction.id,
+        ...(additionalContext.trim() ? { additionalContext: additionalContext.trim() } : {}),
         answers: questions.map((question) => {
           const draft = drafts[question.id];
           return draft.source === "custom"
@@ -199,6 +202,18 @@ export function AskUserPanel({
             return <button type="button" key={question.id} className={page === index ? "is-current" : ""} disabled={disabled} onClick={() => setPage(index)}>{answered ? "✓" : "○"} {index + 1}</button>;
           })}
         </div>
+      )}
+      {interaction.allowAdditionalContext && (
+        <label className="cy-interaction-panel__additional-context">
+          <span>{t("interaction.additionalContextLabel")}</span>
+          <textarea
+            value={additionalContext}
+            disabled={disabled}
+            rows={3}
+            placeholder={t("interaction.additionalContextPlaceholder")}
+            onChange={(event) => setAdditionalContext(event.target.value)}
+          />
+        </label>
       )}
       <div className="cy-interaction-panel__actions">
         <button type="button" className="is-primary" disabled={disabled || !canSubmit} onClick={submit}>{questions.length > 1 ? t("interaction.submitAll") : t("interaction.submit")}</button>

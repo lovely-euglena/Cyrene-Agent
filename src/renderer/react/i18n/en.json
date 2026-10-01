@@ -571,6 +571,8 @@
     "nextQuestion": "Next question",
     "customAnswerLabel": "Something else",
     "customAnswerPlaceholder": "Type your answer…",
+    "additionalContextLabel": "Anything else for Cyrene:",
+    "additionalContextPlaceholder": "Optional. Add anything else that might help…",
     "questionProgressAria": "Question progress",
     "submitAll": "Submit all",
     "submit": "Submit",
