@@ -157,6 +157,11 @@ async function main() {
   })()`;
   const chatId = await waitFor(() => evaluate(chatProbe), { label: "chat window", timeoutMs: 60_000 });
   log("chat", `chat window id=${chatId}`);
+  const windowUrls = await evaluate(`(() => {
+    const { BrowserWindow } = process.mainModule.require("electron");
+    return BrowserWindow.getAllWindows().map((w) => w.id + " " + (w.isDestroyed() ? "destroyed" : w.webContents.getURL()));
+  })()`);
+  log("windows", JSON.stringify(windowUrls));
 
   const chatEval = (expression) => evaluate(`(async () => {
     const { BrowserWindow } = process.mainModule.require("electron");
@@ -165,7 +170,13 @@ async function main() {
     return win.webContents.executeJavaScript(${JSON.stringify(expression)});
   })()`);
 
-  await waitFor(() => chatEval(`!!document.querySelector(".cy-settings-page")`), { label: "settings page", timeoutMs: 60_000 });
+  try {
+    await waitFor(() => chatEval(`!!document.querySelector(".cy-settings-page")`), { label: "settings page", timeoutMs: 60_000 });
+  } catch (error) {
+    const errors = await evaluate(`globalThis.__smokeErrors ?? []`).catch(() => []);
+    console.error("[smoke] settings page timeout; renderer errors:", JSON.stringify(errors));
+    throw error;
+  }
   const navCount = await chatEval(`document.querySelectorAll(".cy-settings-nav-item").length`);
   log("settings", `settings view open, nav items=${navCount}`);
 
