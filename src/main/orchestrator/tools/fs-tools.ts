@@ -139,7 +139,9 @@ async function executeReadFile(args: Record<string, unknown>): Promise<string> {
       const ln = startLine + i;
       return String(ln).padStart(5, " ") + " | " + line;
     }).join("\n"),
-    truncated: false,
+    // 窗口没盖满全部行时必须置位（曾硬编码 false，模型无法感知被截断；
+    // 与 .NET FsTools.ReadFile 同步修复，agent-loop 冒烟 P1 锁定）
+    truncated: endLine < totalLines,
   };
 
   console.log(LOG_PREFIX, "read_file 完成: lines=" + startLine + ".." + endLine + "/" + totalLines);

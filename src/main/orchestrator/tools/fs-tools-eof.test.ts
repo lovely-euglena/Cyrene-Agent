@@ -29,14 +29,18 @@ describe("read_file 假 EOF 修复", () => {
       totalLines: number; startLine: number; endLine: number; truncated: boolean;
     };
     expect(first.totalLines).toBe(10_000);
-    expect(first.truncated).toBe(false);
+    // 第一页只有 10/10000 行 → 截断标记必须置位（旧实现硬编码 false，
+    // 见 fs-tools.ts truncated 修复注释；本测试原断言 false 是把 Bug 钉死了）
+    expect(first.truncated).toBe(true);
 
     // 翻到真实末尾：内容可见，不再出现"假 EOF 后半丢失"
     const last = JSON.parse(await tool!.execute({ path: file, startLine: 9_995, maxLines: 10 })) as {
-      totalLines: number; startLine: number; endLine: number; content: string;
+      totalLines: number; startLine: number; endLine: number; content: string; truncated: boolean;
     };
     expect(last.endLine).toBe(10_000);
     expect(last.content).toContain("line-9999");
+    // 末页盖满剩余行 → 不再有截断
+    expect(last.truncated).toBe(false);
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
