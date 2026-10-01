@@ -135,6 +135,8 @@ describe("read_file structured output", () => {
     expect(result.startLine).toBe(2);
     expect(result.endLine).toBe(3);
     expect(result.totalLines).toBe(5);
+    // 窗口只盖到第 3 行、文件共 5 行 → 截断标记必须置位
+    expect(result.truncated).toBe(true);
   });
 
   it("handles empty file", async () => {
