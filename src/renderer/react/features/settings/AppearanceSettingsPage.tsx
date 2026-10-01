@@ -12,6 +12,7 @@ import {
   normalizeMessageTypography,
   type MessageTypography,
 } from "../../../../shared/message-typography";
+import { DEFAULT_UI_FONT, normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
 import { useTranslation } from "../../i18n";
 import { useCyreneAvatar } from "../../hooks/useCyreneAvatar";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
@@ -47,6 +48,10 @@ interface AppearanceValues {
   windowCornerRadius: number;
   uiIcon: UiIcon;
   messageTypography: MessageTypography;
+  /** 聊天行距（无单位数字；React 聊天 --cy-chat-line-height）。 */
+  chatLineHeight: number;
+  /** 昔涟正式回复气泡外观。 */
+  assistantBubbleEnabled: boolean;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
   petZoom: number;
@@ -57,6 +62,8 @@ const defaults: AppearanceValues = {
   windowCornerRadius: 6,
   uiIcon: DEFAULT_UI_ICON,
   messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
+  chatLineHeight: 1.75,
+  assistantBubbleEnabled: false,
   petAlwaysOnTop: false,
   petVisible: true,
   petZoom: 1,
@@ -77,6 +84,11 @@ function readAppearance(value: unknown): AppearanceValues {
     windowCornerRadius: normalizeWindowCornerRadius(input.windowCornerRadius),
     uiIcon: normalizeUiIcon(input.uiIcon),
     messageTypography: normalizeMessageTypography(input.messageTypography),
+    // 聊天排版（chat-appearance）：与 React 聊天消费的 --cy-chat-line-height 同源
+    chatLineHeight: finiteNumber(input.chatLineHeight, defaults.chatLineHeight),
+    assistantBubbleEnabled: typeof input.assistantBubbleEnabled === "boolean"
+      ? input.assistantBubbleEnabled
+      : defaults.assistantBubbleEnabled,
     petAlwaysOnTop: typeof input.petAlwaysOnTop === "boolean" ? input.petAlwaysOnTop : defaults.petAlwaysOnTop,
     petVisible: typeof input.petVisible === "boolean" ? input.petVisible : defaults.petVisible,
     petZoom: finiteNumber(input.petZoom, defaults.petZoom),
@@ -126,6 +138,8 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
   const versionTitleKey = resolveVersionTitleKey(packageJson.version);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  // 界面字体：导入 / 恢复默认（宿主弹文件框并落盘；theme.ts 消费 cyreneFont 广播）
+  const [uiFont, setUiFont] = useState<UiFont>(DEFAULT_UI_FONT);
   // 昔涟消息字体：ref 记住最新值，松手保存时不依赖可能过期的渲染闭包
   const typographyRef = useRef<MessageTypography>(DEFAULT_MESSAGE_TYPOGRAPHY);
 
@@ -144,6 +158,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         const next = readAppearance(config);
         setValues(next);
         typographyRef.current = next.messageTypography;
+        setUiFont(normalizeUiFont((config as { uiFont?: unknown }).uiFont));
         applyWindowCornerRadius(next.windowCornerRadius);
         setLoading(false);
       })
@@ -191,6 +206,30 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
       setStatus(t("settingsPage.cyreneAvatarFailed"));
     } finally {
       setAvatarBusy(false);
+    }
+  }
+
+  /** 界面字体：导入（宿主弹文件框 → 复制落盘 → 广播） */
+  async function importUiFontFile() {
+    try {
+      const sourcePath = await window.settings?.pickUiFont?.();
+      if (!sourcePath) return;
+      const font = await window.settings?.importUiFont?.(sourcePath);
+      if (font) setUiFont(font);
+      setStatus(t("settingsPage.uiFontImported"));
+    } catch {
+      setStatus(t("settingsPage.uiFontFailed"));
+    }
+  }
+
+  /** 界面字体：恢复默认（清理自定义字体文件） */
+  async function resetUiFontFile() {
+    try {
+      const font = await window.settings?.resetUiFont?.();
+      if (font) setUiFont(font);
+      setStatus(t("settingsPage.uiFontReset"));
+    } catch {
+      setStatus(t("settingsPage.uiFontFailed"));
     }
   }
 
@@ -318,7 +357,16 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.uiFont")}</strong><span>{t("settingsPage.defaultFont")}</span></div>
+                    <div className="cy-settings-row__copy">
+                      <strong>{t("settingsPage.uiFont")}</strong>
+                      <span>{uiFont.kind === "custom" ? uiFont.displayName : t("settingsPage.defaultFont")}</span>
+                    </div>
+                    <div className="cy-settings-row__control cy-settings-button-group">
+                      <Button onClick={() => void importUiFontFile()}>{t("settingsPage.uiFontImportButton")}</Button>
+                      {uiFont.kind === "custom" && (
+                        <Button onClick={() => void resetUiFontFile()}>{t("settingsPage.uiFontResetButton")}</Button>
+                      )}
+                    </div>
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.cyreneAvatar")}</strong><span>{t("settingsPage.cyreneAvatarDescription")}</span></div>
@@ -364,6 +412,35 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   </div>
                   <div className="cy-settings-row">
                     <p className="cy-message-typography-preview">{t("settingsPage.messageTypographyPreviewText")}</p>
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.chatLineHeight")}</strong><span>{t("settingsPage.chatLineHeightDescription")}</span></div>
+                    <div className="cy-settings-row__control cy-settings-slider">
+                      <SettingsSlider
+                        min={1.2}
+                        max={2}
+                        step={0.05}
+                        value={values.chatLineHeight}
+                        ariaLabel={t("settingsPage.chatLineHeight")}
+                        onChange={(value) => {
+                          setValues((current) => ({ ...current, chatLineHeight: value }));
+                          setStatus(t("settingsPage.applyOnRelease"));
+                        }}
+                        onChangeComplete={(value) => void savePatch({ chatLineHeight: value })}
+                      />
+                      <span>{values.chatLineHeight.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.assistantBubble")}</strong><span>{t("settingsPage.assistantBubbleDescription")}</span></div>
+                    <SettingsSwitch
+                      ariaLabel={t("settingsPage.assistantBubble")}
+                      checked={values.assistantBubbleEnabled}
+                      onChange={(checked) => {
+                        setValues((current) => ({ ...current, assistantBubbleEnabled: checked }));
+                        void savePatch({ assistantBubbleEnabled: checked });
+                      }}
+                    />
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.desktopIcon")}</strong><span>{t("settingsPage.desktopIconDescription")}</span></div>

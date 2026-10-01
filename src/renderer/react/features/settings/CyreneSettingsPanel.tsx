@@ -46,6 +46,17 @@ export function CyreneSettingsPanel() {
   const [stickerId, setStickerId] = useState("");
   const [stickerDescription, setStickerDescription] = useState("");
   const [stickerPhrases, setStickerPhrases] = useState("");
+  // RAG 下载镜像（general.ragDownloadMirror；与 native 昔涟 section 同键）
+  const [mirror, setMirror] = useState<"official" | "hf-mirror">("official");
+  // 模型操作进行中的 verb（按钮 loading；同时只允许一个操作）
+  const [modelActionBusy, setModelActionBusy] = useState("");
+
+  /** 重新体检本地模型（embedding + reranker 安装状态）。 */
+  function refreshModelStatus(): void {
+    void settingsApi()?.getRerankerStatus?.().then((status) => setRerankerInstalled(status.standard)).catch(() => {});
+    const modelConfig = (window as Window & { modelConfig?: { getModelInstallStatus?: () => Promise<{ embedding?: { bgem3?: boolean } }> } }).modelConfig;
+    void modelConfig?.getModelInstallStatus?.().then((status) => setEmbeddingInstalled(Boolean(status.embedding?.bgem3))).catch(() => {});
+  }
 
   useEffect(() => {
     let active = true;
@@ -53,6 +64,10 @@ export function CyreneSettingsPanel() {
     if (!api) { setNotice({ type: "error", text: t("settingsPage.cyrene.unavailable") }); setLoading(false); return; }
     void api.getConfig().then((config) => { if (active) { setValues(readValues(config)); setLoading(false); } }).catch(() => { if (active) { setNotice({ type: "error", text: t("settingsPage.cyrene.loadFailed") }); setLoading(false); } });
     void api.getRerankerStatus?.().then((status) => { if (active) setRerankerInstalled(status.standard); }).catch(() => {});
+    void api.getGeneral().then((general) => {
+      if (!active) return;
+      setMirror((general as { ragDownloadMirror?: string } | undefined)?.ragDownloadMirror === "hf-mirror" ? "hf-mirror" : "official");
+    }).catch(() => {});
     const modelConfig = (window as Window & { modelConfig?: { getModelInstallStatus?: () => Promise<{ embedding?: { bgem3?: boolean } }> } }).modelConfig;
     void modelConfig?.getModelInstallStatus?.().then((status) => { if (active) setEmbeddingInstalled(Boolean(status.embedding?.bgem3)); }).catch(() => {});
     return () => { active = false; };
@@ -141,6 +156,40 @@ export function CyreneSettingsPanel() {
     } catch { setNotice({ type: "error", text: t("settingsPage.cyrene.embeddingFailed") }); }
   }
 
+  /** RAG 下载镜像：即时保存（general.ragDownloadMirror；与 native 同键）。 */
+  async function selectMirror(value: "official" | "hf-mirror") {
+    if (value === mirror) return;
+    const previous = mirror;
+    setMirror(value);
+    try {
+      if (!window.settings) throw new Error("Settings API unavailable");
+      await window.settings.saveGeneral({ ragDownloadMirror: value });
+      setNotice({ type: "success", text: t("settingsPage.cyrene.mirrorSaved") });
+    } catch {
+      setMirror(previous);
+      setNotice({ type: "error", text: t("settingsPage.cyrene.saveFailed") });
+    }
+  }
+
+  /** RAG 模型操作：打开目录/说明/下载站、体检、删除缓存（宿主 settings:cyrene-model-action）。 */
+  async function runModelAction(verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") {
+    const api = window.settings;
+    if (!api?.cyreneModelAction || modelActionBusy) return;
+    if (verb === "delete-embedding" && !window.confirm(t("settingsPage.cyrene.deleteEmbeddingConfirm"))) return;
+    setModelActionBusy(verb);
+    try {
+      const result = await api.cyreneModelAction(verb);
+      setNotice(result.ok
+        ? { type: "success", text: result.message ?? t("settingsPage.cyrene.modelActionDone") }
+        : { type: "error", text: result.error ?? t("settingsPage.cyrene.modelActionFailed") });
+      if (verb === "check-model-update" || verb === "delete-embedding") refreshModelStatus();
+    } catch {
+      setNotice({ type: "error", text: t("settingsPage.cyrene.modelActionFailed") });
+    } finally {
+      setModelActionBusy("");
+    }
+  }
+
   return <>
     <h1>{t("settingsPage.cyrene.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.cyrene.description")}</p>
@@ -160,6 +209,14 @@ export function CyreneSettingsPanel() {
         <Card><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.embeddingModel")}</strong><span>{t("settingsPage.cyrene.embeddingHint")}</span></div><Button className="cy-cyrene-model-choice" onClick={() => void selectEmbedding()}>BGE-M3 · {embeddingInstalled === null ? t("settingsPage.cyrene.unknown") : embeddingInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</Button></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.embeddingDimensions")}</strong><span>{t("settingsPage.cyrene.embeddingDimensionsHint")}</span></div><SettingsInput className="cy-cyrene-dimensions" type="number" min={1} max={65536} value={values.embeddingDimensions ?? ""} placeholder={t("settingsPage.cyrene.autoDetect")} aria-label={t("settingsPage.cyrene.embeddingDimensions")} onChange={(event) => update("embeddingDimensions", event.target.value ? Number(event.target.value) : undefined)} /></div>
           <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.reranker")}</strong><span>{rerankerInstalled === null ? t("settingsPage.cyrene.unknown") : rerankerInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</span></div><Radio.Group value={rerankerMode} optionType="button" buttonStyle="solid" onChange={(event) => void selectReranker(event.target.value as "standard" | "none")}><Radio.Button value="standard">bge-reranker-base</Radio.Button><Radio.Button value="none">{t("settingsPage.cyrene.off")}</Radio.Button></Radio.Group></div>
+          <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.downloadMirror")}</strong><span>{t("settingsPage.cyrene.downloadMirrorHint")}</span></div><Radio.Group value={mirror} optionType="button" buttonStyle="solid" onChange={(event) => void selectMirror(event.target.value as "official" | "hf-mirror")}><Radio.Button value="official">{t("settingsPage.cyrene.mirrorOfficial")}</Radio.Button><Radio.Button value="hf-mirror">hf-mirror</Radio.Button></Radio.Group></div>
+          <div className="cy-settings-row cy-cyrene-actions">
+            <Button loading={modelActionBusy === "open-dir"} onClick={() => void runModelAction("open-dir")}>{t("settingsPage.cyrene.openModelDir")}</Button>
+            <Button loading={modelActionBusy === "open-docs"} onClick={() => void runModelAction("open-docs")}>{t("settingsPage.cyrene.openModelDocs")}</Button>
+            <Button loading={modelActionBusy === "open-site"} onClick={() => void runModelAction("open-site")}>{t("settingsPage.cyrene.openModelSite")}</Button>
+            <Button loading={modelActionBusy === "check-model-update"} onClick={() => void runModelAction("check-model-update")}>{t("settingsPage.cyrene.checkModelUpdate")}</Button>
+            <Button danger loading={modelActionBusy === "delete-embedding"} onClick={() => void runModelAction("delete-embedding")}>{t("settingsPage.cyrene.deleteEmbedding")}</Button>
+          </div>
         </Card>
       </section>
       <div className="cy-settings-form-footer"><Button type="primary" loading={saving} onClick={() => void save()}>{t("settingsPage.cyrene.save")}</Button></div>

@@ -1,19 +1,24 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Spin } from "antd";
-import { Info, Monitor, Settings2 } from "lucide-react";
+import { Eraser, GitBranch, Info, Monitor, Settings2 } from "lucide-react";
 import packageJson from "../../../../../package.json";
-import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
+import { SettingsInput, SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { setUiLocale, useTranslation } from "../../i18n";
 import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
 import { Card } from "../../components/ui/Card";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
 import { resolveAppUpdateView, resolveVersionTitleKey, WEBSITE_URL } from "./app-update-view";
+import { DataStorageSettings } from "./DataStorageSettings";
 
 interface GeneralValues {
   rememberWindowState: boolean;
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   disableGpuElectron: boolean;
+  sidebarVisible: boolean;
+  tasksVisible: boolean;
+  gitCommitAuthorName: string;
+  gitCommitAuthorEmail: string;
   language: UiLanguage;
 }
 
@@ -22,6 +27,10 @@ const defaults: GeneralValues = {
   toastSoundEnabled: true,
   launchAtLogin: false,
   disableGpuElectron: false,
+  sidebarVisible: true,
+  tasksVisible: true,
+  gitCommitAuthorName: "",
+  gitCommitAuthorEmail: "",
   language: "zh-CN",
 };
 
@@ -32,6 +41,12 @@ function readGeneral(value: unknown): GeneralValues {
     toastSoundEnabled: typeof input.toastSoundEnabled === "boolean" ? input.toastSoundEnabled : defaults.toastSoundEnabled,
     launchAtLogin: typeof input.launchAtLogin === "boolean" ? input.launchAtLogin : defaults.launchAtLogin,
     disableGpuElectron: typeof input.disableGpuElectron === "boolean" ? input.disableGpuElectron : defaults.disableGpuElectron,
+    // 状态栏/日程栏开关：旧 WPF/Electron 通用页同键；宿主持久化后立即显隐窗口
+    sidebarVisible: typeof input.sidebarVisible === "boolean" ? input.sidebarVisible : defaults.sidebarVisible,
+    tasksVisible: typeof input.tasksVisible === "boolean" ? input.tasksVisible : defaults.tasksVisible,
+    // Git 提交身份（工作区 Git 面板提交用；默认值对齐旧页/原生窗）
+    gitCommitAuthorName: typeof input.gitCommitAuthorName === "string" ? input.gitCommitAuthorName : "",
+    gitCommitAuthorEmail: typeof input.gitCommitAuthorEmail === "string" ? input.gitCommitAuthorEmail : "",
     language: normalizeUiLanguage(input.language),
   };
 }
@@ -43,6 +58,7 @@ export function GeneralSettingsPanel() {
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [clearingChat, setClearingChat] = useState(false);
   const updateState = useAppUpdate();
   const updateView = resolveAppUpdateView(updateState);
   // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
@@ -90,12 +106,38 @@ export function GeneralSettingsPanel() {
         toastSoundEnabled: values.toastSoundEnabled,
         launchAtLogin: values.launchAtLogin,
         language: values.language,
+        gitCommitAuthorName: values.gitCommitAuthorName.trim(),
+        gitCommitAuthorEmail: values.gitCommitAuthorEmail.trim(),
       });
       setStatus(t("settingsPage.saved"));
     } catch {
       setStatus(t("settingsPage.saveFailed"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** 清空聊天记录：逐会话删除（与旧 Electron 设置页 / 原生窗同口径）。 */
+  async function clearChatHistory() {
+    if (clearingChat) return;
+    if (!window.confirm(t("settingsPage.general.clearChatHistoryConfirm"))) return;
+    setClearingChat(true);
+    try {
+      const store = (window as typeof window & {
+        chatStore?: {
+          list?: () => Promise<Array<{ id: string }>>;
+          delete?: (id: string) => Promise<unknown>;
+        };
+      }).chatStore;
+      const sessions = (await store?.list?.()) ?? [];
+      for (const session of sessions) {
+        await store?.delete?.(session.id);
+      }
+      setStatus(t("settingsPage.general.clearChatHistoryOk"));
+    } catch {
+      setStatus(t("settingsPage.general.clearChatHistoryFailed"));
+    } finally {
+      setClearingChat(false);
     }
   }
 
@@ -136,6 +178,8 @@ export function GeneralSettingsPanel() {
           <div className="cy-settings-section__heading"><h2><Settings2 size={18} />{t("settingsPage.general.windows")}</h2><p>{t("settingsPage.general.windowsDescription")}</p></div>
           <Card>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.rememberWindowState")}</strong><span>{t("settingsPage.general.rememberWindowStateDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.rememberWindowState")} checked={values.rememberWindowState} onChange={(checked) => void saveImmediate("rememberWindowState", checked)} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.sidebarVisible")}</strong><span>{t("settingsPage.general.sidebarVisibleDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.sidebarVisible")} checked={values.sidebarVisible} onChange={(checked) => void saveImmediate("sidebarVisible", checked)} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.tasksVisible")}</strong><span>{t("settingsPage.general.tasksVisibleDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.tasksVisible")} checked={values.tasksVisible} onChange={(checked) => void saveImmediate("tasksVisible", checked)} /></div>
           </Card>
         </section>
 
@@ -146,6 +190,47 @@ export function GeneralSettingsPanel() {
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.launchAtLogin")}</strong><span>{t("settingsPage.general.launchAtLoginDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.launchAtLogin")} checked={values.launchAtLogin} onChange={(checked) => { setValues((current) => ({ ...current, launchAtLogin: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value={values.language} onChange={(next) => void changeLanguage(next as UiLanguage)} options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en" }, { label: t("settingsPage.general.japanese"), value: "ja-JP" }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.disableGpu")}</strong><span>{t("settingsPage.general.disableGpuDescription")}</span><span className="cy-settings-general__notice">{t("settingsPage.general.restartNotice")}</span></div><div className="cy-settings-row__control cy-settings-button-group"><SettingsSwitch ariaLabel={t("settingsPage.general.disableGpu")} checked={values.disableGpuElectron} onChange={(checked) => void saveImmediate("disableGpuElectron", checked)} /><Button onClick={() => window.settings?.openChromeGpu()}>{t("settingsPage.general.gpuInternals")}</Button></div></div>
+          </Card>
+        </section>
+
+        <DataStorageSettings />
+
+        <section className="cy-settings-section">
+          <div className="cy-settings-section__heading"><h2><Eraser size={18} />{t("settingsPage.general.chatHistory")}</h2><p>{t("settingsPage.general.chatHistoryDescription")}</p></div>
+          <Card>
+            <div className="cy-settings-row">
+              <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.clearChatHistory")}</strong><span>{t("settingsPage.general.clearChatHistoryDescription")}</span></div>
+              <div className="cy-settings-row__control">
+                <Button loading={clearingChat} onClick={() => void clearChatHistory()}>{t("settingsPage.general.clearChatHistoryButton")}</Button>
+              </div>
+            </div>
+          </Card>
+        </section>
+
+        <section className="cy-settings-section">
+          <div className="cy-settings-section__heading"><h2><GitBranch size={18} />{t("settingsPage.general.gitIdentity")}</h2><p>{t("settingsPage.general.gitIdentityDescription")}</p></div>
+          <Card>
+            <div className="cy-settings-row">
+              <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.gitAuthorName")}</strong><span>{t("settingsPage.general.gitAuthorNameDescription")}</span></div>
+              <div className="cy-settings-row__control">
+                <SettingsInput
+                  value={values.gitCommitAuthorName}
+                  placeholder="Cyrene"
+                  aria-label={t("settingsPage.general.gitAuthorName")}
+                  onChange={(event) => { setValues((current) => ({ ...current, gitCommitAuthorName: event.target.value })); setStatus(t("settingsPage.preferences.unsaved")); }}
+                />
+              </div>
+            </div>
+            <div className="cy-settings-row">
+              <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.gitAuthorEmail")}</strong><span>{t("settingsPage.general.gitAuthorEmailDescription")}</span></div>
+              <div className="cy-settings-row__control">
+                <SettingsInput
+                  value={values.gitCommitAuthorEmail}
+                  aria-label={t("settingsPage.general.gitAuthorEmail")}
+                  onChange={(event) => { setValues((current) => ({ ...current, gitCommitAuthorEmail: event.target.value })); setStatus(t("settingsPage.preferences.unsaved")); }}
+                />
+              </div>
+            </div>
           </Card>
         </section>
 

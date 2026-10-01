@@ -404,6 +404,13 @@ const settingsApi = {
   pickPortableDir: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_PICK_DIR) as Promise<string | null>,
   applyPortableMode: (payload: { enabled: boolean; dir: string }) =>
     ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_APPLY, payload),
+  // 缓存目录（数据/缓存分离）：查询 / 选目录 / 设置覆盖（重启换根）
+  getCacheDirStatus: () => ipcRenderer.invoke(IPC.SETTINGS_CACHE_GET),
+  pickCacheDir: () => ipcRenderer.invoke(IPC.SETTINGS_CACHE_PICK_DIR) as Promise<string | null>,
+  setCacheDir: (dir: string) => ipcRenderer.invoke(IPC.SETTINGS_CACHE_SET, dir),
+  // 昔涟设置：RAG 模型操作（与 native 昔涟 section 同一实现）
+  cyreneModelAction: (verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") =>
+    ipcRenderer.invoke(IPC.SETTINGS_CYRENE_MODEL_ACTION, verb),
   getTimeoutSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_TIMEOUT_SETTINGS),
   saveTimeoutSettings: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_TIMEOUT_SETTINGS, config),
   pickUiFont: () => ipcRenderer.invoke(IPC.SETTINGS_PICK_UI_FONT) as Promise<string | null>,
