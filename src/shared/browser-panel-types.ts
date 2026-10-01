@@ -9,6 +9,7 @@ export interface BrowserPanelTabState {
   id: string;
   url: string;
   title: string;
+  favicon?: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;

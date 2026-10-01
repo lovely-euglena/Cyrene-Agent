@@ -51,6 +51,17 @@ function parseHttpUrl(input: string): URL | null {
   }
 }
 
+function normalizeFaviconUrl(input: string, pageUrl: string): string | undefined {
+  if (input.length > 32_768) return undefined;
+  if (/^data:image\/(?:svg\+xml|png|webp|gif|x-icon|vnd\.microsoft\.icon)[;,]/i.test(input)) return input;
+  try {
+    const url = new URL(input, pageUrl);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class BrowserPanelController {
   private tabs: BrowserTab[] = [];
   private activeTabId = "";
@@ -790,7 +801,7 @@ export class BrowserPanelController {
       if (this.elementPickerTabId === tab.id) this.cancelElementPicker();
       this.forgetTabObservations(tab.id);
       this.onPlaywrightSnapshotNavigation(contents);
-      tab.state = { ...tab.state, loading: true, error: undefined, crashed: false };
+      tab.state = { ...tab.state, loading: true, error: undefined, crashed: false, favicon: undefined };
       this.publish();
     });
     contents.on("did-stop-loading", () => {
@@ -807,6 +818,15 @@ export class BrowserPanelController {
     contents.on("page-title-updated", (_event, title) => {
       if (!isLive()) return;
       tab.state = { ...tab.state, title };
+      this.publish();
+    });
+    contents.on("page-favicon-updated", (_event, favicons) => {
+      if (!isLive()) return;
+      const safeFavicons = favicons.flatMap((favicon) => {
+        const normalized = normalizeFaviconUrl(favicon, contents.getURL());
+        return normalized ? [normalized] : [];
+      });
+      tab.state = { ...tab.state, favicon: safeFavicons[0] };
       this.publish();
     });
     contents.on("did-fail-load", (_event, errorCode, _description, _validatedUrl, isMainFrame) => {
