@@ -1998,7 +1998,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onOpenWebLink={openWebLink}
           />
         )}
-        <div className="cy-workspace-composer">
+        <div className={`cy-workspace-composer${composerInteraction ? " has-interaction" : ""}`}>
           {scrollToBottomVisible && (
             <button
               type="button"

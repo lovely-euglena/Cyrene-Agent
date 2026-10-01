@@ -563,6 +563,9 @@
   "interaction": {
     "askingTitle": "昔涟正在询问",
     "permissionTitle": "昔涟正在获取审批",
+    "collapseCard": "收起待处理卡片",
+    "reopenCard": "展开待处理卡片",
+    "pendingCard": "有一张卡片待处理",
     "pagerAria": "切换问题",
     "prevQuestion": "上一个问题",
     "nextQuestion": "下一个问题",

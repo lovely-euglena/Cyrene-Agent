@@ -563,6 +563,9 @@
   "interaction": {
     "askingTitle": "I need to ask you something",
     "permissionTitle": "Waiting for your approval",
+    "collapseCard": "Collapse pending card",
+    "reopenCard": "Expand pending card",
+    "pendingCard": "A card is waiting for you",
     "pagerAria": "Switch question",
     "prevQuestion": "Previous question",
     "nextQuestion": "Next question",
