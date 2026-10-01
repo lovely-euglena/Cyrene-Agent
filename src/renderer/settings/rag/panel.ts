@@ -130,8 +130,10 @@
 
   downloadBtn?.addEventListener("click", async () => {
     // 打开模型安装说明文档
+    // ⚠️ 与 main 侧 default-dependencies.ts 的 LOCAL_MODELS_DOC_URL 保持一致
+    //（Gitee 主仓；GitHub 镜像在本机网络不可达，勿改回）
     await window.system?.openExternal(
-      "https://github.com/Playa-0v0/Cyrene-Agent/blob/master/docs/local-models.md"
+      "https://gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md"
     );
   });
 
@@ -173,7 +175,7 @@
   deleteBtn?.addEventListener("click", async () => {
     const model = getSelectedModel();
     const name = "BGE-M3";
-    var confirmed = await _showModal({ title: "删 除 模 型", message: "确 定 删 除 " + name + " 模 型 缓 存？下 次 使 用 需 重 新 下 载。", icon: "⚠️", confirmText: "删 除", cancelText: "取 消" });
+    var confirmed = await _showModal({ title: "删 除 模 型", message: "确定删除 " + name + " 模型？将移除已安装的模型文件（项目 models 目录与 HF 缓存），下次使用需重新安装。", icon: "⚠️", confirmText: "删 除", cancelText: "取 消" });
     if (!confirmed) return;
     deleteBtn.disabled = true;
     deleteBtn.textContent = "\u5220\u9664\u4E2D\u2026";

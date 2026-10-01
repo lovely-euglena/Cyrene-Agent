@@ -203,7 +203,7 @@ public sealed partial class SettingsWindow
             () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 104));
         ragActions.Children.Add(MakeActionButton("📂 打开模型目录",
             () => RequestRouter.SendSettingsAction("cyrene", "open-model-dir"), minWidth: 128));
-        ragActions.Children.Add(MakeActionButton("删除缓存", ConfirmDeleteEmbeddingCache, minWidth: 90));
+        ragActions.Children.Add(MakeActionButton("删除模型", ConfirmDeleteEmbeddingCache, minWidth: 90));
         panel.Children.Add(MakeDescribedRow("模型操作",
             "模型为手动安装；按「安装说明」放好文件后点「刷新状态」重新检测。",
             ragActions));
@@ -296,10 +296,10 @@ public sealed partial class SettingsWindow
         }
     }
 
-    /// <summary>删除 embedding 缓存（native 侧确认框；宿主只做删除）。</summary>
+    /// <summary>删除 embedding 模型（native 侧确认框；宿主只做删除，项目 models 目录 + HF 缓存两处都清）。</summary>
     private void ConfirmDeleteEmbeddingCache()
     {
-        if (MessageBox.Show("确定删除 BGE-M3 模型缓存？下次使用需重新安装（见「模型安装说明」）。", "删除模型缓存",
+        if (MessageBox.Show("确定删除 BGE-M3 模型？将移除项目 models 目录与 HF 缓存中的模型文件，下次使用需重新安装（见「模型安装说明」）。", "删除模型",
                 MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
         {
             return;
@@ -611,7 +611,7 @@ internal sealed class ModelDocsDialog : Window
         root.Children.Add(Section(
             "4 · 回来刷新状态",
             "点下方「刷新状态」重新体检；模型卡从「未下载」变成「已下载」即安装成功。\n" +
-            "「删除缓存」会删掉已下载模型，需按本说明重新安装。"));
+            "「删除模型」会删掉已安装的模型文件（项目 models 目录 + HF 缓存），需按本说明重新安装。"));
 
         var actions = new StackPanel
         {
