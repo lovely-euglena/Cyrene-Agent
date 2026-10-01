@@ -24,7 +24,11 @@ export function parseLearnExamPageRequest(requestUrl: string, options: { allowVi
       const relativePath = segments.join("/");
       if (ASSET_EXTENSION_PATTERN.test(relativePath)) return { kind: "asset", relativePath, ...(url.search ? { search: url.search } : {}) };
     }
-    if (options.allowViteDevRequests && segments.length > 0 && segments.every((segment) => segment !== "." && segment !== ".." && !segment.includes(":"))) {
+    const hasOnlySafeSegments = segments.every((segment) => segment !== "." && segment !== ".." && !segment.includes(":"));
+    const isViteWindowsFsPath = segments[0] === "@fs"
+      && /^[a-z]:$/i.test(segments[1] ?? "")
+      && segments.slice(2).every((segment) => segment !== "." && segment !== ".." && !segment.includes(":"));
+    if (options.allowViteDevRequests && segments.length > 0 && (hasOnlySafeSegments || isViteWindowsFsPath)) {
       const relativePath = segments.join("/");
       return { kind: "asset", relativePath, ...(url.search ? { search: url.search } : {}) };
     }

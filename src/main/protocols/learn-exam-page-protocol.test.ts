@@ -25,6 +25,14 @@ describe("learn exam page protocol", () => {
     expect(parseLearnExamPageRequest("cyrene-exam://paper/learn-exam-preview.tsx")).toBeNull();
   });
 
+  it("allows only Vite's Windows @fs drive prefix in development requests", () => {
+    expect(parseLearnExamPageRequest("cyrene-exam://paper/@fs/E:/Cyrene-Agent/node_modules/.vite/deps/react.js?v=abc", { allowViteDevRequests: true }))
+      .toEqual({ kind: "asset", relativePath: "@fs/E:/Cyrene-Agent/node_modules/.vite/deps/react.js", search: "?v=abc" });
+    expect(parseLearnExamPageRequest("cyrene-exam://paper/@fs/E:/../secret.js", { allowViteDevRequests: true })).toBeNull();
+    expect(parseLearnExamPageRequest("cyrene-exam://paper/@fs/E:/secret.js")).toBeNull();
+    expect(parseLearnExamPageRequest("cyrene-exam://paper/other:thing.js", { allowViteDevRequests: true })).toBeNull();
+  });
+
   it("resolves an asset under the renderer root and blocks traversal", () => {
     const root = path.resolve("dist/renderer");
     expect(resolveLearnExamPageAsset(root, "assets/exam.css")).toBe(path.join(root, "assets", "exam.css"));

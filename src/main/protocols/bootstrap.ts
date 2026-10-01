@@ -7,22 +7,9 @@ import { parseLocalStickerFileFromUrl, resolveLocalStickerPath } from "../sticke
 import { parseMomentMediaUrl, resolveMomentMediaPath } from "../moments/moment-media-protocol";
 import { getMomentsMediaRootDir } from "../moments/moments-store";
 import { parseLearnExamPageRequest, resolveLearnExamPageAsset } from "./learn-exam-page-protocol";
+import { buildLearnExamCsp } from "./learn-exam-csp";
 
 const LEARN_EXAM_SESSION_PARTITION = "cyrene-learn-exam";
-function learnExamCsp(isDev: boolean): string {
-  return [
-    "default-src 'self'",
-    `script-src 'self'${isDev ? " 'unsafe-eval'" : ""}`,
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data: https://fonts.gstatic.com",
-    `connect-src 'self'${isDev ? " http://localhost:5173 ws://localhost:5173" : ""}`,
-    "worker-src 'self' blob:",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-  ].join("; ");
-}
 
 export function getLearnExamPageSession(): Session {
   return session.fromPartition(LEARN_EXAM_SESSION_PARTITION);
@@ -77,7 +64,12 @@ export function registerProtocolHandlers(): void {
     if (isDev) {
       const pathname = parsed.kind === "document" ? "learn-exam.html" : parsed.relativePath;
       const search = parsed.kind === "asset" ? parsed.search ?? "" : "";
-      response = await net.fetch(`http://localhost:5173/${pathname}${search}`);
+      // Vite uses Accept to decide whether a .css request should return CSS or
+      // its JavaScript HMR wrapper. Preserve the browser's negotiation headers
+      // when proxying the custom protocol request.
+      response = await net.fetch(`http://localhost:5173/${pathname}${search}`, {
+        headers: { Accept: request.headers.get("accept") ?? "*/*" },
+      });
     } else {
       const rendererRoot = path.join(app.getAppPath(), "dist", "renderer");
       const filePath = parsed.kind === "document"
@@ -88,7 +80,7 @@ export function registerProtocolHandlers(): void {
     }
 
     const headers = new Headers(response.headers);
-    headers.set("Content-Security-Policy", learnExamCsp(isDev));
+    headers.set("Content-Security-Policy", buildLearnExamCsp(isDev));
     headers.set("X-Content-Type-Options", "nosniff");
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   });

@@ -85,7 +85,7 @@ const planValidator = ajv.compile<LearnExamPlanInput>({
 });
 
 const questionBase = {
-  prompt: { type: "string", minLength: 1 },
+  prompt: { type: "string", minLength: 1, description: "支持 Markdown；行内公式用 $...$，独立公式用 $$...$$，代码使用带语言名的 Markdown 代码围栏。" },
   points: { type: "number", exclusiveMinimum: 0 },
   learningObjective: { type: "string", minLength: 1 },
   explanation: { type: "string" },
@@ -93,12 +93,12 @@ const questionBase = {
 const questionSchemas: Record<LearnExamQuestionType, object> = {
   single_choice: {
     type: "object", additionalProperties: false,
-    properties: { ...questionBase, type: { const: "single_choice" }, options: { type: "array", minItems: 2, maxItems: 8, items: { type: "string", minLength: 1 } }, correctIndex: { type: "integer", minimum: 0 } },
+    properties: { ...questionBase, type: { const: "single_choice" }, options: { type: "array", minItems: 2, maxItems: 8, items: { type: "string", minLength: 1, description: "选项文本支持 Markdown、$...$ / $$...$$ 数学公式和代码围栏。" } }, correctIndex: { type: "integer", minimum: 0 } },
     required: ["type", "prompt", "points", "learningObjective", "explanation", "options", "correctIndex"],
   },
   multiple_choice: {
     type: "object", additionalProperties: false,
-    properties: { ...questionBase, type: { const: "multiple_choice" }, options: { type: "array", minItems: 2, maxItems: 8, items: { type: "string", minLength: 1 } }, correctIndexes: { type: "array", minItems: 1, uniqueItems: true, items: { type: "integer", minimum: 0 } } },
+    properties: { ...questionBase, type: { const: "multiple_choice" }, options: { type: "array", minItems: 2, maxItems: 8, items: { type: "string", minLength: 1, description: "选项文本支持 Markdown、$...$ / $$...$$ 数学公式和代码围栏。" } }, correctIndexes: { type: "array", minItems: 1, uniqueItems: true, items: { type: "integer", minimum: 0 } } },
     required: ["type", "prompt", "points", "learningObjective", "explanation", "options", "correctIndexes"],
   },
   true_false: {

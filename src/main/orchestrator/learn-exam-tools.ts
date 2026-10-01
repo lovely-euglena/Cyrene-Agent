@@ -72,7 +72,7 @@ const planSchema = objectSchema({
 }, ["schemaVersion", "title", "subject", "durationMinutes", "totalPoints", "quotas"]);
 
 const questionBaseProperties = {
-  prompt: { type: "string", description: "題干；公式使用 $...$ 或 $$...$$" },
+  prompt: { type: "string", description: "题干支持 Markdown；行内公式用 $...$，独立公式用 $$...$$，代码使用带语言名的 Markdown 代码围栏。" },
   points: { type: "number", description: "本题分值，合计须匹配计划配额" },
   learningObjective: { type: "string", description: "本题考察目标" },
   explanation: { type: "string", description: "供交卷后批改参考的解析，不在作答前展示" },

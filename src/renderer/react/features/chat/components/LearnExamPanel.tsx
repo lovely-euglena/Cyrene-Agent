@@ -1,8 +1,12 @@
+import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, ChevronLeft, ChevronRight, Circle, Clock3, Flag, Send } from "lucide-react";
-import katex from "katex";
+import { CodeHighlighter } from "@ant-design/x";
+import { createMathPlugin } from "@streamdown/math";
+import { BookOpen, Check, ChevronLeft, ChevronRight, Circle, Clock3, Flag, Moon, Send, Sun } from "lucide-react";
+import { defaultRehypePlugins, Streamdown, type Components, type ControlsConfig } from "streamdown";
+import type { ReactNode } from "react";
+import type { PluggableList } from "unified";
 import type { LearnExamAnswerValue, LearnExamQuestionView, LearnExamView } from "../../../../../shared/learn-exam";
-import "katex/dist/katex.min.css";
 import "./LearnExamPanel.css";
 
 const TYPE_LABEL: Record<LearnExamQuestionView["type"], string> = {
@@ -21,19 +25,53 @@ function isAnswered(answer?: LearnExamAnswerValue): boolean {
   return true;
 }
 
-function ExamText({ text }: { text: string }) {
-  const parts = text.split(/(\$\$[\s\S]+?\$\$|\$[^$\n]+\$)/g);
-  return <>{parts.map((part, index) => {
-    if (part.startsWith("$$") && part.endsWith("$$")) {
-      const html = katex.renderToString(part.slice(2, -2), { displayMode: true, throwOnError: false, trust: false });
-      return <div className="learn-exam-panel__math-block" key={index} dangerouslySetInnerHTML={{ __html: html }} />;
-    }
-    if (part.startsWith("$") && part.endsWith("$")) {
-      const html = katex.renderToString(part.slice(1, -1), { throwOnError: false, trust: false });
-      return <span key={index} dangerouslySetInnerHTML={{ __html: html }} />;
-    }
-    return <span key={index}>{part}</span>;
-  })}</>;
+function getCodeBlock(children: ReactNode): { code: string; language: string } | null {
+  let result: { code: string; language: string } | null = null;
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement<{ className?: string; children?: ReactNode }>(child)) return;
+    const language = /language-([\S]+)/.exec(child.props.className ?? "")?.[1] ?? "text";
+    result = { code: React.Children.toArray(child.props.children).map((part) => typeof part === "string" ? part : "").join("").replace(/\n$/, ""), language };
+  });
+  return result;
+}
+
+function ExamCodeBlock({ children }: { children?: ReactNode }) {
+  const block = getCodeBlock(children);
+  if (!block) return <pre>{children}</pre>;
+  return <CodeHighlighter
+    className="learn-exam-panel__code-block"
+    lang={block.language}
+    prismLightMode={false}
+    styles={{
+      root: { color: "var(--rb-text-primary)", background: "var(--rb-code-bg)" },
+      header: { color: "var(--rb-text-primary)", background: "var(--rb-bg-2)" },
+      code: { color: "var(--rb-text-primary)", background: "transparent", borderColor: "var(--rb-border-default)" },
+    }}
+  >{block.code}</CodeHighlighter>;
+}
+
+const examMathPlugin = createMathPlugin({ singleDollarTextMath: true });
+const examComponents: Components = {
+  code: ({ className, children, ...props }) => <code className={className} {...props}>{children}</code>,
+  pre: ({ children }) => <ExamCodeBlock>{children}</ExamCodeBlock>,
+};
+const examPlugins = { math: examMathPlugin };
+const examRehypePlugins: PluggableList = [
+  defaultRehypePlugins.raw,
+  defaultRehypePlugins.sanitize,
+  defaultRehypePlugins.harden,
+];
+const examControls: ControlsConfig = { table: false };
+
+function ExamRichText({ text, className }: { text: string; className?: string }) {
+  return <Streamdown
+    mode="static"
+    plugins={examPlugins}
+    components={examComponents}
+    rehypePlugins={examRehypePlugins}
+    controls={examControls}
+    className={className ?? "learn-exam-panel__rich-text"}
+  >{text}</Streamdown>;
 }
 
 export function LearnExamPanel({
@@ -55,6 +93,12 @@ export function LearnExamPanel({
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [isDark, setIsDark] = useState(() => {
+    const savedTheme = localStorage.getItem("learn-exam-preview-theme");
+    const theme = savedTheme ?? document.documentElement.dataset.uiTheme ?? "pearl-white";
+    document.documentElement.dataset.uiTheme = theme;
+    return theme === "charcoal-pink";
+  });
   const answerTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const pendingAnswers = useRef(new Map<string, LearnExamAnswerValue | null>());
   const onAnswerChangeRef = useRef(onAnswerChange);
@@ -80,6 +124,14 @@ export function LearnExamPanel({
   const activeSection = sections.find(([, questions]) => questions.some((item) => item.id === activeId));
   const activeSectionIndex = activeSection?.[1].findIndex((item) => item.id === activeId) ?? 0;
   const isLocked = exam.status !== "draft";
+
+  function toggleTheme() {
+    const nextIsDark = !isDark;
+    const theme = nextIsDark ? "charcoal-pink" : "pearl-white";
+    setIsDark(nextIsDark);
+    document.documentElement.dataset.uiTheme = theme;
+    localStorage.setItem("learn-exam-preview-theme", theme);
+  }
 
   async function flushAnswer(questionId: string): Promise<boolean> {
     const timer = answerTimers.current.get(questionId);
@@ -147,7 +199,7 @@ export function LearnExamPanel({
             <p>{exam.subject} · 共 {exam.questions.length} 题 · 满分 {exam.totalPoints} 分</p>
           </div>
         </div>
-        <div className="learn-exam-panel__meta"><span><Clock3 size={14} /> {exam.durationMinutes} 分钟</span><span>{answeredCount}/{exam.questions.length} 已作答</span></div>
+        <div className="learn-exam-panel__meta"><span className="learn-exam-panel__subject">{exam.subject}</span><span><Clock3 size={14} /> {exam.durationMinutes} 分钟</span><span>{answeredCount}/{exam.questions.length} 已作答</span><button className="learn-exam-panel__theme-toggle" type="button" aria-label={isDark ? "切换浅色模式" : "切换暗色模式"} title={isDark ? "切换浅色模式" : "切换暗色模式"} aria-pressed={isDark} onClick={toggleTheme}>{isDark ? <Sun size={16} /> : <Moon size={16} />}</button></div>
       </header>
 
       <div className="learn-exam-panel__layout">
@@ -184,7 +236,7 @@ export function LearnExamPanel({
               <button className={flagged.includes(question.id) ? "is-flagged" : ""} onClick={toggleFlag} disabled={isLocked}><Flag size={14} />{flagged.includes(question.id) ? "已标记" : "标记待检查"}</button>
             </div>
             <div className="learn-exam-panel__question-meta"><span>{TYPE_LABEL[question.type]}</span><b>{question.points} 分</b><i>·</i><span>第 {activeIndex + 1} 题 / 共 {exam.questions.length} 题</span></div>
-            <h2 className="learn-exam-panel__prompt"><ExamText text={question.prompt} /></h2>
+            <div className="learn-exam-panel__prompt" role="heading" aria-level={2}><ExamRichText text={question.prompt} /></div>
             <QuestionAnswer question={question} answer={answers[question.id]} disabled={isLocked} onChange={(answer) => saveAnswer(question.id, answer)} />
             <p className="learn-exam-panel__hint"><Circle size={14} />{question.type === "multiple_choice" ? "本题为多选题，请选择所有你认为正确的选项。" : question.type === "essay" ? "尽量写出完整思路，提交后 Cyrene 会结合评分标准批改。" : "可以通过左侧导航随时切换题目，已经填写的答案会保留。"}</p>
             {exam.status === "graded" && exam.gradingResult && <GradingResult exam={exam} question={question} />}
@@ -223,14 +275,14 @@ function QuestionAnswer({ question, answer, disabled, onChange }: { question: Le
     const selected = typeof answer?.value === "boolean" ? answer.value : undefined;
     return <div className="learn-exam-panel__answers">{[{ label: "正确", value: true }, { label: "错误", value: false }].map((option, index) => <label key={String(option.value)} className={selected === option.value ? "is-selected" : ""}>
       <input type="radio" name={`answer-${question.id}`} checked={selected === option.value} disabled={disabled} onChange={() => onChange({ value: option.value })} />
-      <b>{String.fromCharCode(65 + index)}</b><span><ExamText text={option.label} /></span>
+      <b>{String.fromCharCode(65 + index)}</b><div className="learn-exam-panel__answer-text"><ExamRichText text={option.label} /></div>
     </label>)}</div>;
   }
   if (question.type === "single_choice") {
     const selected = typeof answer?.value === "string" ? answer.value : "";
     return <div className="learn-exam-panel__answers">{options.map((option, index) => <label key={option.id} className={selected === option.id ? "is-selected" : ""}>
       <input type="radio" name={`answer-${question.id}`} checked={selected === option.id} disabled={disabled} onChange={() => onChange({ value: option.id })} />
-      <b>{String.fromCharCode(65 + index)}</b><span>{option.label}</span>
+      <b>{String.fromCharCode(65 + index)}</b><div className="learn-exam-panel__answer-text"><ExamRichText text={option.label} /></div>
     </label>)}</div>;
   }
   if (question.type === "multiple_choice") {
@@ -239,7 +291,7 @@ function QuestionAnswer({ question, answer, disabled, onChange }: { question: Le
       const checked = selected.includes(option.id);
       return <label key={option.id} className={checked ? "is-selected" : ""}>
         <input type="checkbox" checked={checked} disabled={disabled} onChange={() => onChange({ value: checked ? selected.filter((id) => id !== option.id) : [...selected, option.id] })} />
-        <b>{String.fromCharCode(65 + index)}</b><span><ExamText text={option.label} /></span>
+        <b>{String.fromCharCode(65 + index)}</b><div className="learn-exam-panel__answer-text"><ExamRichText text={option.label} /></div>
       </label>;
     })}</div>;
   }

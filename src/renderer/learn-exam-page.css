@@ -1,3 +1,23 @@
+:root {
+  color-scheme: light;
+  --background: 220 14% 96.5%;
+  --foreground: 240 6% 10%;
+  --card: 0 0% 100%;
+  --primary: 343 76% 60%;
+  --border: 240 6% 88%;
+  --muted-foreground: 240 4% 46%;
+}
+
+:root[data-ui-theme="charcoal-pink"] {
+  color-scheme: dark;
+  --background: 0 0% 8%;
+  --foreground: 0 0% 92%;
+  --card: 0 0% 11%;
+  --primary: 343 100% 68%;
+  --border: 0 0% 22%;
+  --muted-foreground: 0 0% 64%;
+}
+
 html,
 body,
 #learn-exam-preview-root {
@@ -11,6 +31,8 @@ body,
 body {
   overflow: hidden;
   background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--rb-font-ui, "Segoe UI", "Microsoft YaHei", sans-serif);
 }
 
 .learn-exam-page-root {
