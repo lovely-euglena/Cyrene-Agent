@@ -111,6 +111,7 @@ import { loadChannelsPanel } from "./channels/panel";
 import { renderProactiveDeliveryAvailability } from "./channels/panel";
 import "./asr/panel";  // 副作用导入：执行事件绑定 + 初始加载
 import { loadOcrConfig } from "./ocr/panel";  // 副作用导入：OCR 面板（事件绑定）+ 按需加载状态
+import { loadCloudStoragePanel } from "./cloud-storage/panel";  // 副作用导入：云存储面板（事件绑定）+ 按需加载档案
 import "./email/panel";  // 副作用导入：执行事件绑定 + 初始加载
 import "./search/panel";  // 副作用导入：执行事件绑定 + 初始加载
 import { saveTimeoutSettings } from "./timeout/panel";  // saveTimeoutSettings 被 API 表单处理器调用
@@ -321,6 +322,7 @@ const NAV_LABELS: Record<string, { emoji: string; title: string; hint: string }>
   tts: { emoji: "🎙️", title: t("settings.nav.tts"), hint: t("settings.nav.ttsHint") },
   asr: { emoji: "🎧", title: t("settings.nav.asr"), hint: t("settings.nav.asrHint") },
   ocr: { emoji: "🔍", title: t("settings.nav.ocr"), hint: t("settings.nav.ocrHint") },
+  "cloud-storage": { emoji: "☁️", title: t("settings.nav.cloudStorage"), hint: t("settings.nav.cloudStorageHint") },
 	  tokens: { emoji: `<svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true" style="vertical-align:-3px"><title>Token 用量</title><path d="M4 42H44" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><rect x="8" y="28" width="6" height="14" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="21" y="18" width="6" height="24" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="34" y="6" width="6" height="36" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/></svg>`, title: "Token 用量", hint: "查看 API 调用统计与消耗" },
 	  disclaimer: { emoji: `<svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true" style="vertical-align:-3px"><title>免责声明</title><rect x="13" y="10" width="28" height="34" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M35 10V4H8C7.44772 4 7 4.44772 7 5V38H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 22H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 30H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`, title: "免责声明", hint: "使用条款与隐私说明" },
 };
@@ -1629,6 +1631,7 @@ function switchSection(section: string): void {
   const isTts = section === "tts";
   const isAsr = section === "asr";
   const isOcr = section === "ocr";
+  const isCloudStorage = section === "cloud-storage";
   apiForm.classList.toggle("is-hidden", !isApi);
   apiRuntimeForm.classList.toggle("is-hidden", !isApiAdvanced);
   appearanceForm.classList.toggle("is-hidden", !isAppearance);
@@ -1656,9 +1659,12 @@ function switchSection(section: string): void {
   const ocrPanel = document.getElementById("ocr-panel");
   if (ocrPanel) ocrPanel.classList.toggle("is-hidden", !isOcr);
   if (isOcr) void loadOcrConfig();
+  const cloudStoragePanel = document.getElementById("cloud-storage-panel");
+  if (cloudStoragePanel) cloudStoragePanel.classList.toggle("is-hidden", !isCloudStorage);
+  if (isCloudStorage) void loadCloudStoragePanel();
   placeholderPanel.classList.toggle(
     "is-hidden",
-    isApi || isApiAdvanced || isAppearance || isGeneral || isPreferences || isCyrene || isDisclaimer || isMemory || isUser || isTasks || isPlugins || isTokens || isChannels || isTts || isAsr || isOcr,
+    isApi || isApiAdvanced || isAppearance || isGeneral || isPreferences || isCyrene || isDisclaimer || isMemory || isUser || isTasks || isPlugins || isTokens || isChannels || isTts || isAsr || isOcr || isCloudStorage,
   );
 
   if (
@@ -1677,7 +1683,8 @@ function switchSection(section: string): void {
     !isChannels &&
     !isTts &&
     !isAsr &&
-    !isOcr
+    !isOcr &&
+    !isCloudStorage
   ) {
 	    placeholderIcon.innerHTML = label.emoji;
     placeholderTitle.textContent = label.title;

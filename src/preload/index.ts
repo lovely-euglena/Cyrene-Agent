@@ -410,6 +410,13 @@ const settingsApi = {
   setCacheDir: (dir: string) => ipcRenderer.invoke(IPC.SETTINGS_CACHE_SET, dir),
   // OCR：设置页查询本地引擎可用性与语言列表（写入走 saveGeneral）
   getOcrStatus: () => ipcRenderer.invoke(IPC.SETTINGS_OCR_GET_STATUS) as Promise<import("../shared/ocr").OcrStatus>,
+  // 云存储：设置页档案管理（连接/凭据在 cyrene-native --storage-host）
+  cloudStorageProfiles: () => ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILES_LIST) as Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>,
+  cloudStorageSaveProfile: (profile: Record<string, unknown>) =>
+    ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILE_SAVE, profile) as Promise<import("../shared/cloud-storage").CloudStorageProfileView>,
+  cloudStorageRemoveProfile: (id: string) => ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILE_REMOVE, id) as Promise<boolean>,
+  cloudStorageTestProfile: (id: string) =>
+    ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILE_TEST, id) as Promise<{ ok: boolean; latencyMs?: number }>,
   // 昔涟设置：RAG 模型操作（与 native 昔涟 section 同一实现）
   cyreneModelAction: (verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") =>
     ipcRenderer.invoke(IPC.SETTINGS_CYRENE_MODEL_ACTION, verb),

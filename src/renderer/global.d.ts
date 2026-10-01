@@ -89,6 +89,11 @@ interface SettingsWindowApi {
   setCacheDir?: (dir: string) => Promise<{ ok: boolean; changed: boolean; restartRequired: boolean }>;
   // OCR（OCR 设置页：本地引擎可用性 + 语言列表）
   getOcrStatus?: () => Promise<import("../shared/ocr").OcrStatus>;
+  // 云存储（云存储设置页：档案 CRUD + 测试连接）
+  cloudStorageProfiles?: () => Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>;
+  cloudStorageSaveProfile?: (profile: Record<string, unknown>) => Promise<import("../shared/cloud-storage").CloudStorageProfileView>;
+  cloudStorageRemoveProfile?: (id: string) => Promise<boolean>;
+  cloudStorageTestProfile?: (id: string) => Promise<{ ok: boolean; latencyMs?: number }>;
   // 界面字体（外观设置：导入/恢复默认）
   pickUiFont?: () => Promise<string | null>;
   importUiFont?: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;

@@ -85,7 +85,7 @@ export const NATIVE_USER_PROFILE_FIELDS = [
  * 历史：tts / asr 曾在此列表（语音配置保持 Electron），后按用户要求迁移到
  * .NET 原生设置窗（见 docs/internal-issue/2026-09-26-voice-sections-native-migration.md）。
  */
-export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "ocr"] as const;
+export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "ocr", "cloud-storage"] as const;
 
 /**
  * WPF 设置窗认识的 section（与 SettingsWindow.cs 的 AddSection 对齐；
@@ -110,6 +110,7 @@ export const NATIVE_SETTINGS_SECTIONS = [
   "tts",
   "asr",
   "ocr",
+  "cloud-storage",
 ] as const;
 
 /**

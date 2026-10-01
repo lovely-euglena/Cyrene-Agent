@@ -350,6 +350,8 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("asr", "ASR 设置", native: true);
         // OCR 设置仍在 Electron 设置页：WPF 导航只放入口（native:false → 占位跳转按钮）
         AddSection("ocr", "OCR 设置", native: false, legacyHash: "ocr");
+        // 云存储设置同样在 Electron 设置页：WPF 导航只放入口
+        AddSection("cloud-storage", "云存储", native: false, legacyHash: "cloud-storage");
         AddSection("tokens", "Token 用量", native: true);
         AddDivider();
         AddSection("disclaimer", "免责声明", native: true);
