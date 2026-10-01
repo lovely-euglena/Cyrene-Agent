@@ -55,7 +55,27 @@ export function registerLearnExamPageIpc(store: ExamPaperStore, ipc: IpcScope): 
     if (!owned) return forbidden();
     const result = await store.submit(owned.page.examId);
     if (!result.record || result.record.conversationId !== owned.page.conversationId) return { ok: false, error: "E_LEARN_EXAM_SUBMIT_FAILED" } satisfies LearnExamPageResult;
-    publishLearnExamChanged({ conversationId: owned.page.conversationId, examId: owned.page.examId });
+    publishLearnExamChanged({
+      conversationId: owned.page.conversationId,
+      examId: owned.page.examId,
+      ...(result.alreadySubmitted ? {} : { gradingRequested: true }),
+    });
     return { ok: true, shouldStartGrading: !result.alreadySubmitted, exam: toLearnExamView(result.record) } satisfies LearnExamPageResult;
+  });
+
+  ipc.handle(IPC.LEARN_EXAM_PAGE_RETRY, async (event: PageIpcEvent) => {
+    const owned = await readOwnedRecord(event);
+    if (!owned || !owned.record.submittedAnswers
+      || (owned.record.status !== "submitted" && owned.record.status !== "grading_failed")) {
+      return { ok: false, error: "E_LEARN_EXAM_RETRY_NOT_ALLOWED" } satisfies LearnExamPageResult;
+    }
+    const updated = owned.record.status === "grading_failed"
+      ? await store.resetForRetry(owned.page.examId)
+      : owned.record;
+    if (!updated || updated.conversationId !== owned.page.conversationId) {
+      return { ok: false, error: "E_LEARN_EXAM_RETRY_FAILED" } satisfies LearnExamPageResult;
+    }
+    publishLearnExamChanged({ conversationId: owned.page.conversationId, examId: owned.page.examId, gradingRequested: true });
+    return { ok: true, shouldStartGrading: true, exam: toLearnExamView(updated) } satisfies LearnExamPageResult;
   });
 }

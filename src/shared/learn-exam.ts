@@ -185,6 +185,8 @@ export interface LearnExamCreatedEvent {
 export interface LearnExamChangedEvent {
   conversationId: string;
   examId: string;
+  /** Only set by the isolated answer page on the first successful user submission. */
+  gradingRequested?: boolean;
 }
 
 export interface LearnExamPageResult {
@@ -200,6 +202,7 @@ export interface LearnExamPageApi {
   saveAnswer(questionId: string, answer: LearnExamAnswerValue | null): Promise<LearnExamPageResult>;
   saveNavigation(activeQuestionId: string, flaggedQuestionIds: string[]): Promise<LearnExamPageResult>;
   submit(): Promise<LearnExamPageResult>;
+  retry(): Promise<LearnExamPageResult>;
   onChanged(callback: (event: LearnExamChangedEvent) => void): () => void;
 }
 

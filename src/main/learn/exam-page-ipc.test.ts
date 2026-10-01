@@ -42,7 +42,7 @@ describe("restricted Learn exam page IPC", () => {
     const { handlers, trusted } = register({ get: async () => record, submit } as unknown as ExamPaperStore);
     await handlers[IPC.LEARN_EXAM_PAGE_SUBMIT]({ sender: trusted }, { examId: "attacker-exam", conversationId: "attacker-conversation" });
     expect(submit).toHaveBeenCalledWith(examId);
-    expect(changed).toHaveBeenCalledWith({ conversationId, examId });
+    expect(changed).toHaveBeenCalledWith({ conversationId, examId, gradingRequested: true });
   });
 });
 

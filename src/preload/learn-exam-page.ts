@@ -9,6 +9,7 @@ const api: LearnExamPageApi = {
   saveNavigation: (activeQuestionId: string, flaggedQuestionIds: string[]) =>
     ipcRenderer.invoke(IPC.LEARN_EXAM_PAGE_SAVE_NAVIGATION, { activeQuestionId, flaggedQuestionIds }),
   submit: () => ipcRenderer.invoke(IPC.LEARN_EXAM_PAGE_SUBMIT),
+  retry: () => ipcRenderer.invoke(IPC.LEARN_EXAM_PAGE_RETRY),
   onChanged: (callback: (event: LearnExamChangedEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: LearnExamChangedEvent) => callback(payload);
     ipcRenderer.on(IPC.LEARN_EXAM_PAGE_CHANGED, listener);
