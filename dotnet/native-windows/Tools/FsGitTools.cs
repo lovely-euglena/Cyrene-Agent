@@ -24,7 +24,15 @@ internal static class FsTools
 
     public static string ReadFile(JsonElement args)
     {
-        var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
+        // 入参防御：args 非对象 / path 非字符串时给出人话错误，
+        // 不让 GetString()/TryGetProperty 抛 .NET 内部英文异常（冒烟 P2/P4）
+        if (args.ValueKind != JsonValueKind.Object)
+            return Err("E_FS_PATH", "参数必须是 JSON 对象（含 path 绝对路径）", false);
+        if (!args.TryGetProperty("path", out var pathEl))
+            return Err("E_FS_PATH", "path 不能为空", false);
+        if (pathEl.ValueKind != JsonValueKind.String)
+            return Err("E_FS_PATH", $"path 必须是字符串（收到 {pathEl.ValueKind}）", false);
+        var path = pathEl.GetString();
         if (string.IsNullOrWhiteSpace(path))
             return Err("E_FS_PATH", "path 不能为空", false);
         path = Path.GetFullPath(path);
@@ -71,22 +79,34 @@ internal static class FsTools
         if (currentLine >= startLine && window.Count < maxLines) window.Add(text[lineStart..]);
 
         var content = string.Join("\n", window.Select((line, i) => $"{startLine + i,5} | {line}"));
+        var endLine = startLine + window.Count - 1;
         return JsonSerializer.Serialize(new
         {
             path,
             startLine,
-            endLine = startLine + window.Count - 1,
+            endLine,
             totalLines,
             content,
-            truncated = false,
+            // 窗口没盖满全部行时必须置位（Bug，冒烟 P1：曾硬编码 false，
+            // 600 行读 500 行仍报 false，与 fs-tools.ts 同步修复）
+            truncated = endLine < totalLines,
         });
     }
 
     public static string WriteFile(JsonElement args)
     {
-        var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
-        var content = args.TryGetProperty("content", out var c) ? c.GetString() : null;
+        // 同 ReadFile：非对象 args / 非字符串 path·content 给人话错误
+        if (args.ValueKind != JsonValueKind.Object)
+            return Err("E_FS_PATH", "参数必须是 JSON 对象（含 path/content）", false);
+        if (!args.TryGetProperty("path", out var pathEl) || pathEl.ValueKind != JsonValueKind.String)
+            return Err("E_FS_PATH", "path 必须是非空字符串", false);
+        var path = pathEl.GetString();
         if (string.IsNullOrWhiteSpace(path)) return Err("E_FS_PATH", "path 不能为空", false);
+        var content = args.TryGetProperty("content", out var c)
+            ? (c.ValueKind == JsonValueKind.String ? c.GetString() : null)
+            : null;
+        if (args.TryGetProperty("content", out _) && c.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+            return Err("E_FS_PATH", $"content 必须是字符串（收到 {c.ValueKind}）", false);
         path = Path.GetFullPath(path);
         try
         {
@@ -102,7 +122,14 @@ internal static class FsTools
 
     public static string ListDir(JsonElement args)
     {
-        var raw = (args.TryGetProperty("path", out var p) ? p.GetString() : "")?.Trim();
+        // 入参防御：args 非对象 / path 非字符串 → E_FS_PATH（冒烟 P2 同类）
+        if (args.ValueKind != JsonValueKind.Object)
+            throw new ToolHostException("E_FS_PATH", "参数必须是 JSON 对象（含 path 绝对路径）");
+        if (!args.TryGetProperty("path", out var p))
+            throw new ToolHostException("E_FS_PATH", "path 不能为空");
+        if (p.ValueKind != JsonValueKind.String)
+            throw new ToolHostException("E_FS_PATH", $"path 必须是字符串（收到 {p.ValueKind}）");
+        var raw = p.GetString()?.Trim();
         if (string.IsNullOrEmpty(raw) || !Path.IsPathRooted(raw))
             throw new ToolHostException("E_FS_PATH", "path 必须是绝对路径");
         var dirPath = Path.GetFullPath(raw);
@@ -179,14 +206,17 @@ internal static class GitTools
 
     public static async Task<string> Run(JsonElement args)
     {
-        var sub = args.TryGetProperty("sub", out var s) ? s.GetString() : "status";
-        var cwd = args.TryGetProperty("cwd", out var c) ? c.GetString() : null;
+        // 入参防御：args 非对象时 TryGetProperty 会抛 .NET 内部异常（冒烟 P2 同类）
+        if (args.ValueKind != JsonValueKind.Object)
+            throw new ToolHostException("E_FS_PATH", "参数必须是 JSON 对象（含 cwd）");
+        var sub = args.TryGetProperty("sub", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : "status";
+        var cwd = args.TryGetProperty("cwd", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
         if (string.IsNullOrEmpty(cwd) || !Directory.Exists(cwd))
             throw new ToolHostException("E_FS_PATH", "cwd 不存在: " + (cwd ?? ""));
         // 写操作（init/commit/switch/push/revert）需 cwd 与 message 等参数；
         // 权限审批在 Electron 侧（risk=fs-write），本层只执行
-        var message = args.TryGetProperty("message", out var m) ? m.GetString() : null;
-        var branch = args.TryGetProperty("branch", out var b) ? b.GetString() : null;
+        var message = args.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+        var branch = args.TryGetProperty("branch", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
         var (gitArgs, name) = sub switch
         {
             "log" => ("--no-pager log --oneline -n 50", "git log"),

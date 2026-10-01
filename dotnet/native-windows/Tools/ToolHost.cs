@@ -2,8 +2,29 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CyreneNative.Tools;
+
+/// <summary>
+/// 通用 double 序列化保护：NaN / ±Infinity 按 TS JSON.stringify 语义写成 null。
+///
+/// 背景（Bug，agent-loop 冒烟 P3）：calculator 对 sqrt(-1) 返回 double.NaN，
+/// System.Text.Json 默认拒绝序列化 → JsonException 被 WriteFrame 静默吞掉 →
+/// result 帧根本不发 → 调用方挂到超时。TS 侧 JSON.stringify(NaN) 得到 null，
+/// 两侧语义对齐 + 消除序列化崩溃。
+/// </summary>
+internal sealed class SafeDoubleJsonConverter : JsonConverter<double>
+{
+    public override double Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.TryGetDouble(out var value) ? value : double.NaN;
+
+    public override void Write(Utf8JsonWriter writer, double value, JsonSerializerOptions options)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value)) writer.WriteNullValue();
+        else writer.WriteNumberValue(value);
+    }
+}
 
 /// <summary>
 /// 内置工具宿主（cyrene-native --tool-host）。
@@ -35,6 +56,15 @@ internal sealed class ToolHostException : Exception
 
 internal static class ToolHost
 {
+    /// <summary>args 缺失时的空对象（避免 Undefined JsonElement 在工具内探属性崩溃）。</summary>
+    private static readonly JsonElement EmptyArgs = JsonDocument.Parse("{}").RootElement.Clone();
+
+    /// <summary>协议帧序列化：NaN/±Infinity → null（见 <see cref="SafeDoubleJsonConverter"/>）。</summary>
+    private static readonly JsonSerializerOptions SafeJsonOptions = new()
+    {
+        Converters = { new SafeDoubleJsonConverter() },
+    };
+
     public static int Run()
     {
         var stdout = Console.OpenStandardOutput();
@@ -103,10 +133,14 @@ internal static class ToolHost
                         "now" => NowTool.Execute(args),
                         "clipboard" => ClipboardTool.Execute(args),
                         "sysinfo" => SysInfo.Execute(),
-                        "fs_read_file" => FsTools.ReadFile(args.GetValueOrDefault()),
-                        "fs_write_file" => FsTools.WriteFile(args.GetValueOrDefault()),
-                        "fs_list_dir" => FsTools.ListDir(args.GetValueOrDefault()),
-                        "git" => GitTools.Run(args.GetValueOrDefault()).GetAwaiter().GetResult(),
+                        // args 缺失时传空对象而非 Undefined JsonElement——
+                        // 否则 fs/git 工具里 TryGetProperty 直接抛
+                        // InvalidOperationException（.NET 内部英文串），
+                        // 模型拿到的是不可读错误（冒烟 P2）
+                        "fs_read_file" => FsTools.ReadFile(args ?? EmptyArgs),
+                        "fs_write_file" => FsTools.WriteFile(args ?? EmptyArgs),
+                        "fs_list_dir" => FsTools.ListDir(args ?? EmptyArgs),
+                        "git" => GitTools.Run(args ?? EmptyArgs).GetAwaiter().GetResult(),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });
@@ -129,9 +163,28 @@ internal static class ToolHost
 
     internal static void WriteFrame(Stream stdout, SemaphoreSlim ioLock, object frame)
     {
+        byte[] bytes;
         try
         {
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(frame);
+            bytes = JsonSerializer.SerializeToUtf8Bytes(frame, SafeJsonOptions);
+        }
+        catch (Exception ex)
+        {
+            // 序列化失败：绝不静默丢帧——丢 result 帧会让调用方挂到超时
+            // （NaN 已由 SafeJsonOptions 拦下，这里兜底其余非法值）。
+            try
+            {
+                bytes = Encoding.UTF8.GetBytes(
+                    "{\"op\":\"log\",\"level\":\"error\",\"message\":"
+                    + JsonSerializer.Serialize("帧序列化失败: " + ex.Message) + "}");
+            }
+            catch
+            {
+                return;
+            }
+        }
+        try
+        {
             ioLock.Wait();
             try
             {
