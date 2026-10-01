@@ -14,7 +14,7 @@ Cyrene 能在同一次任务中打开右侧浏览器、进入指定网站、读�
 
 | 已有能力或现成接口 | 复用方式 | 还需补齐 |
 | --- | --- | --- |
-| [BrowserPanelController](../../src/main/browser/browser-panel-controller.ts) 的多标签 `WebContentsView`、HTTP(S) 导航及持久化会话 | 直接操作同一网页视图和 Cookie 分区；不启动第二套浏览器 | 按任务绑定标签页、控制权和自动打开右侧面板 |
+| [BrowserPanelController](../../src/main/browser/browser-panel-controller.ts) 的多标签 `WebContentsView`、HTTP(S) 导航及持久化会话 | 直接操作同一网页视图和 Cookie 分区；不启动第二套浏览器 | 按对话绑定标签页和控制权，并自动打开右侧面板 |
 | [Playwright 页面快照](../../src/main/browser/playwright-page-snapshot.ts) 的原始语义树、`observationId`、`ref` 映射 | 延续现有元素识别和用户手选元素的编号，不另造 HTML 清理器 | 操作前重新确认节点、可见性、命中位置和编号有效性 |
 | 已安装的 `@playwright/mcp` | 保留作能力参考，不作为右侧浏览器控制入口 | 单独接 MCP 不会自动绑定当前 Electron 标签；仍需连接与标签映射，还增加一层工具传输 |
 | Electron 的 `webContents` 输入及 `capturePage` 接口 | 对既有网页视图输入和截图；截图直接取网页视口 | 输入事件在当前窗口、焦点与复杂网页上的行为需先做针对性验证；图片还要送进模型视觉链路 |
@@ -25,11 +25,11 @@ Playwright 官方的 `connectOverCDP` 可以接入现有 Chromium，但其官方
 
 ## 控制会话与标签页规则
 
-1. `browser_control_start` 打开并激活右侧浏览器面板，等待网页视图拿到有效尺寸，然后绑定 `conversationId + runId + tabId`。默认绑定用户当前选中的网页标签；空标签也可进入，随后由 Cyrene 打开网址。
-2. 同一浏览器控制器同时只允许一个任务持有控制权。其他任务和子代理不能借用该任务的控制会话；普通读代码、写代码和终端工具仍可用。
+1. `browser_control_start` 打开并激活右侧浏览器面板，等待网页视图拿到有效尺寸，然后绑定 `conversationId + tabId`。默认绑定用户当前选中的网页标签；空标签也可进入，随后由 Cyrene 打开网址。`runId` 用于调用上下文和审计，不决定控制会话的生命周期。
+2. 同一浏览器控制器同时只允许一个对话持有控制权。这个对话可以跨多轮运行继续控制；其他对话和子代理不能借用该控制会话。普通读代码、写代码和终端工具仍可用。
 3. 所有交互和截图作用于绑定的 `tabId`，不随用户手动切换标签而悄悄转移。用户切换标签或收起右侧浏览器后，下一次操作返回可恢复的“目标未显示”错误；Cyrene 须重新选择目标或等面板恢复。
 4. `browser_open_url` 默认在绑定标签页导航；显式要求新标签时，创建、显示并原子地绑定新标签。网页自身打开新标签时，工具结果报告新 `tabId`，Cyrene 可显式切换过去。
-5. `browser_control_stop`、任务结束／取消、标签页关闭或窗口销毁都会释放控制权。网页与已有登录状态保留。重新开始任务须建立新控制会话。
+5. 只有 `browser_control_stop`、绑定标签关闭或窗口销毁会释放控制权。Cyrene 一轮回复结束或任务取消不会自动释放；网页与已有登录状态保留。显式停止后，重新开始控制须建立新控制会话。
 
 ## 工具协议
 
