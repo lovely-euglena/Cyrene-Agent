@@ -410,6 +410,22 @@ export const IPC = {
   // main → renderer：结算广播（提交/跳过/run 取消），渲染端据此清卡
   POP_QUIZ_SETTLED: "pop-quiz:settled",
 
+  // Learn 正式试卷：短工具创建，用户本地作答，交卷后新一轮批改
+  LEARN_EXAM_CREATED: "learn-exam:created",
+  LEARN_EXAM_CHANGED: "learn-exam:changed",
+  LEARN_EXAM_LIST: "learn-exam:list",
+  LEARN_EXAM_GET: "learn-exam:get",
+  LEARN_EXAM_SAVE_ANSWER: "learn-exam:save-answer",
+  LEARN_EXAM_SAVE_NAVIGATION: "learn-exam:save-navigation",
+  LEARN_EXAM_SUBMIT: "learn-exam:submit",
+  LEARN_EXAM_RETRY: "learn-exam:retry",
+  LEARN_EXAM_MARK_GRADING_FAILED: "learn-exam:mark-grading-failed",
+  LEARN_EXAM_PAGE_GET: "learn-exam-page:get",
+  LEARN_EXAM_PAGE_SAVE_ANSWER: "learn-exam-page:save-answer",
+  LEARN_EXAM_PAGE_SAVE_NAVIGATION: "learn-exam-page:save-navigation",
+  LEARN_EXAM_PAGE_SUBMIT: "learn-exam-page:submit",
+  LEARN_EXAM_PAGE_CHANGED: "learn-exam-page:changed",
+
   // call window (voice call)
   CALL_OPEN: "call:open",                 // 角色信息浮层 → main：打开通话窗口
   CALL_START: "call:start",               // renderer → main：开始通话（初始化 ASR）

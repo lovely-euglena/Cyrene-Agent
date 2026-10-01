@@ -187,6 +187,22 @@ export interface LearnExamChangedEvent {
   examId: string;
 }
 
+export interface LearnExamPageResult {
+  ok: boolean;
+  exam?: LearnExamView;
+  error?: string;
+  shouldStartGrading?: boolean;
+}
+
+/** 只注入应用自有考试页的窄 API；不接受 renderer 自行指定会话或试卷编号。 */
+export interface LearnExamPageApi {
+  getExam(): Promise<LearnExamPageResult>;
+  saveAnswer(questionId: string, answer: LearnExamAnswerValue | null): Promise<LearnExamPageResult>;
+  saveNavigation(activeQuestionId: string, flaggedQuestionIds: string[]): Promise<LearnExamPageResult>;
+  submit(): Promise<LearnExamPageResult>;
+  onChanged(callback: (event: LearnExamChangedEvent) => void): () => void;
+}
+
 export function toLearnExamView(record: LearnExamRecord): LearnExamView {
   return {
     examId: record.examId,

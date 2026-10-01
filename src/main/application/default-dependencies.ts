@@ -139,6 +139,7 @@ import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-qui
 import { createExamPaperStore } from "../learn/exam-paper-store";
 import { createExamDraftStore } from "../learn/exam-draft";
 import { registerExamPaperIpc } from "../learn/exam-paper-ipc";
+import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
 import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
 
 import { createIpcScope } from "./ipc-scope";
@@ -694,6 +695,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           console.warn("[LearnExam] 恢复中断批改状态失败:", error);
         });
         registerExamPaperIpc(examPaperStore, ipc);
+        registerLearnExamPageIpc(examPaperStore, ipc);
         registerLearnExamTools(examPaperStore, examDraftStore);
         registerCallIpc(ipc);
       },
