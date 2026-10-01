@@ -40,6 +40,13 @@ public static class Program
             return Ssh.SshHost.Run(args);
         }
 
+        // 云存储托管宿主：FTP/FTPS/SFTP/WebDAV/S3 有状态会话常驻
+        // （档案/凭据落 --data-dir），协议见 Storage.StorageHost。
+        if (args.Length > 0 && args[0] == "--storage-host")
+        {
+            return Storage.StorageHost.Run(args);
+        }
+
         // Snipaste 命令行截图：一次性捕获，stdout 单行 JSON（见 Screenshot.SnipasteCapture）。
         if (args.Length > 0 && args[0] == "--snipaste-capture")
         {

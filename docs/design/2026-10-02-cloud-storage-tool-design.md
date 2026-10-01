@@ -282,9 +282,10 @@ P1/P2 按「宿主骨架 → 各 Provider → 工具面」分批提交，每个 
 插件/市场渠道分发；届时工具面与权限注解（readOnlyHint/destructiveHint）可按 `mcp-adapter.ts`
 的推导规则映射。本设计的分层（Provider 接口 + 档案/路径/会话组件）保证那时只需加一层 server 壳。
 
-## 14. 待确认
+## 14. 评审结论（2026-10-02）
 
-1. 方案 B（.NET 有状态宿主）是否拍板？还是希望走 MCP server 渠道？
-2. P1 范围是否按建议先 SFTP+FTP/FTPS，还是一次把 5 种协议全做完？
-3. 冒烟环境：是否有可用的 NAS / 公网服务器 / MinIO 可以直接真机验证？
-4. P3 设置页这轮是否一起排，还是先只做工具、设置页后置？
+1. **方案 B 拍板**：`cyrene-native --storage-host` + `cloud_*` 薄工具。
+2. **范围**：FTP / FTPS / SFTP / WebDAV / S3 一次做全，按 Provider 分批提交。
+3. **设置页同批做**：档案 CRUD + 测试连接（Electron 设置区 + WPF 导航入口，照 OCR 模式）。
+4. **冒烟环境**：本机自测（Windows OpenSSH sshd / 本地临时服务）；WebDAV 与 S3 由用户提供
+   真实生产环境服务器做最终验证。
