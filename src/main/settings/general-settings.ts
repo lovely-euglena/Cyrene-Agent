@@ -215,6 +215,16 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   screenshotBackend: "builtin" | "snipaste";
   /** Snipaste.exe 路径；空字符串 = 自动检测（PATH / 常见目录 / 注册表） */
   snipastePath: string;
+  /** 🔍本地 OCR（图像文字识别）工具开关 */
+  ocrEnabled: boolean;
+  /** OCR 服务商：off(关闭) | local(本地，Windows 内置) | cloud(云端，预留未接入) */
+  ocrProvider: "off" | "local" | "cloud";
+  /** OCR 识别语言 tag（如 zh-Hans-CN）；空字符串 = 自动（跟随系统） */
+  ocrLanguage: string;
+  /** 云端 OCR 预留配置（当前未接入；provider=cloud 时使用） */
+  ocrCloudBaseUrl: string;
+  ocrCloudApiKey: string;
+  ocrCloudModel: string;
   /** 工具-模式覆盖层：用户自定义每个工具在 learn/code/work 模式下的可见性。
    *  key = toolId，value = { mode: enabled }。覆盖优先于工具声明的 modes 字段。
    *  空对象 = 全部按默认（modes 字段或全可见），由设置面板 UI 写入。 */

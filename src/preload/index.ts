@@ -408,6 +408,8 @@ const settingsApi = {
   getCacheDirStatus: () => ipcRenderer.invoke(IPC.SETTINGS_CACHE_GET),
   pickCacheDir: () => ipcRenderer.invoke(IPC.SETTINGS_CACHE_PICK_DIR) as Promise<string | null>,
   setCacheDir: (dir: string) => ipcRenderer.invoke(IPC.SETTINGS_CACHE_SET, dir),
+  // OCR：设置页查询本地引擎可用性与语言列表（写入走 saveGeneral）
+  getOcrStatus: () => ipcRenderer.invoke(IPC.SETTINGS_OCR_GET_STATUS) as Promise<import("../shared/ocr").OcrStatus>,
   // 昔涟设置：RAG 模型操作（与 native 昔涟 section 同一实现）
   cyreneModelAction: (verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") =>
     ipcRenderer.invoke(IPC.SETTINGS_CYRENE_MODEL_ACTION, verb),

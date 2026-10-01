@@ -41,6 +41,7 @@ import { activeConversationRegistry } from "../chats/active-conversation-registr
 import { registerSettingsIpc } from "../settings/settings-ipc";
 import { registerPortableIpc, applyPortableChange } from "../portable/portable-ipc";
 import { registerCacheDirIpc } from "../portable/cache-ipc";
+import { registerOcrIpc } from "../ocr/ocr-ipc";
 import { resolveCacheDir, setCacheDirOverride } from "../cache-dir";
 import { getPortableDataLocationStatus } from "../portable/portable-runtime";
 import type { PortableApplyRequest } from "../../shared/portable-mode";
@@ -1846,6 +1847,9 @@ createTray: (input) => {
           ipc,
           getParentWindow: () => settingsWindow,
         });
+
+        // OCR 设置：本地引擎可用性 + 语言列表查询（写入走 save-general）
+        registerOcrIpc({ ipc });
 
         // 昔涟设置：RAG 模型操作（渲染端 IPC；与 native cyreneAction 共用实现）
         ipc.handle(IPC.SETTINGS_CYRENE_MODEL_ACTION, (_event, verb: unknown) =>

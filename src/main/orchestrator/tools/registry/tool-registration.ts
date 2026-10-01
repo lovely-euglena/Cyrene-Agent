@@ -19,10 +19,13 @@ import { registerCodeGitTools } from "../git-tools";
 import type { LspManager } from "../../../lsp/manager";
 import { registerLspTool } from "../lsp-tool";
 import "../built-in-tools";
+import { ocrImageTool } from "../builtin-tools/ocr-image-tool";
 
 export function syncBuiltInToolToggles(settings: GeneralSettings): void {
   toolRegistry.setEnabled("weather", settings.weatherEnabled);
   toolRegistry.setEnabled("plan_trip", settings.travelEnabled);
+  // OCR：开关 + 服务商（off 关闭；local/cloud 开启，cloud 未接入时执行期如实报错）
+  toolRegistry.setEnabled("ocr_image", settings.ocrEnabled !== false && settings.ocrProvider !== "off");
 }
 
 export function registerAllTools(deps: { codeGitService: GitService; lspManager: LspManager }): void {
@@ -52,6 +55,9 @@ export function registerAllTools(deps: { codeGitService: GitService; lspManager:
 
   registerTravelTools();
   registerEmailTools();
+
+  // 本地 OCR：读图取字（服务商抽象见 src/main/ocr/，设置页可切换/预留云端）
+  toolRegistry.register(ocrImageTool);
 
   syncBuiltInToolToggles(loadGeneralSettings());
 }
