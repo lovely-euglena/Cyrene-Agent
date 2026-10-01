@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using Renci.SshNet;
 using Renci.SshNet.Common;
+using Renci.SshNet.Sftp;
 
 namespace CyreneNative.Storage;
 
@@ -47,25 +48,15 @@ internal sealed class SftpStorageProvider : IStorageProvider
         _client.Connect();
     }
 
+    /// <summary>
+    /// 注意：存在性判断一律走「父目录列表」（而非 GetAttributes/Exists）。
+    /// 部分 S3 网关型 SFTP（如 Rains3）对不存在的路径也返回属性，GetAttributes 不可信。
+    /// </summary>
     public StorageEntry? Stat(string relPath)
     {
-        if (relPath.Length == 0) return new StorageEntry { Name = "", Path = "", Type = "dir" };
-        try
-        {
-            var attrs = Client.GetAttributes(Abs(relPath));
-            return new StorageEntry
-            {
-                Name = LastSegment(relPath),
-                Path = relPath,
-                Type = attrs.IsDirectory ? "dir" : "file",
-                Size = attrs.IsDirectory ? null : attrs.Size,
-                ModifiedAt = attrs.LastWriteTimeUtc == default ? null : attrs.LastWriteTimeUtc.ToUniversalTime().ToString("O"),
-            };
-        }
-        catch (SftpPathNotFoundException)
-        {
-            return null;
-        }
+        if (relPath.Length == 0) return RootEntry();
+        var match = FindEntry(Abs(relPath));
+        return match is null ? null : ToEntry(match);
     }
 
     public List<StorageEntry> List(string relPath, int maxEntries, out bool truncated)
@@ -76,16 +67,7 @@ internal sealed class SftpStorageProvider : IStorageProvider
         {
             if (file.Name is "." or "..") continue;
             if (entries.Count >= maxEntries) { truncated = true; break; }
-            entries.Add(new StorageEntry
-            {
-                Name = file.Name,
-                Path = StoragePaths.ToRelative(_profile.RootPath, file.FullName),
-                Type = file.IsDirectory ? "dir" : (file.IsSymbolicLink ? "link" : "file"),
-                Size = file.IsDirectory ? null : file.Length,
-                ModifiedAt = file.LastWriteTimeUtc == default
-                    ? null
-                    : file.LastWriteTimeUtc.ToUniversalTime().ToString("O"),
-            });
+            entries.Add(ToEntry(file));
         }
         return entries;
     }
@@ -104,9 +86,9 @@ internal sealed class SftpStorageProvider : IStorageProvider
 
     public void Delete(string relPath, bool recursive)
     {
+        var entry = Stat(relPath) ?? throw StorageException.NotFound($"远端不存在：{relPath}");
         var abs = Abs(relPath);
-        var attrs = Client.GetAttributes(abs);
-        if (attrs.IsDirectory)
+        if (entry.Type == "dir")
         {
             if (!recursive)
             {
@@ -132,7 +114,18 @@ internal sealed class SftpStorageProvider : IStorageProvider
     public void Move(string fromRel, string toRel, bool overwrite)
     {
         if (overwrite) DeleteIfExists(toRel);
-        Client.RenameFile(Abs(fromRel), Abs(toRel));
+        try
+        {
+            Client.RenameFile(Abs(fromRel), Abs(toRel));
+        }
+        catch (Exception ex)
+        {
+            // 部分 S3 网关型 SFTP（如 Rains3）不支持 SSH_FXP_RENAME：复制 + 删除兜底
+            var mapped = StorageErrors.Map(ex);
+            if (mapped.Code is not ("STORAGE_IO_ERROR" or "STORAGE_UNSUPPORTED")) throw;
+            Copy(fromRel, toRel, overwrite: true);
+            Delete(fromRel, recursive: true);
+        }
     }
 
     public void Copy(string fromRel, string toRel, bool overwrite)
@@ -155,7 +148,7 @@ internal sealed class SftpStorageProvider : IStorageProvider
     {
         var sw = Stopwatch.StartNew();
         Connect();
-        Client.GetAttributes(Abs(""));
+        Client.ListDirectory(Abs("")).FirstOrDefault();
         sw.Stop();
         return sw.ElapsedMilliseconds;
     }
@@ -172,27 +165,62 @@ internal sealed class SftpStorageProvider : IStorageProvider
 
     private string Abs(string rel) => StoragePaths.CombinePosix(_profile.RootPath, rel);
 
-    private static string LastSegment(string rel)
+    private static string LastSegment(string abs)
     {
-        var idx = rel.LastIndexOf('/');
-        return idx < 0 ? rel : rel[(idx + 1)..];
+        var trimmed = abs.TrimEnd('/');
+        var idx = trimmed.LastIndexOf('/');
+        return idx < 0 ? trimmed : trimmed[(idx + 1)..];
     }
 
     private static string ParentOf(string abs)
     {
-        var idx = abs.LastIndexOf('/');
-        return idx <= 0 ? "/" : abs[..idx];
+        var idx = abs.TrimEnd('/').LastIndexOf('/');
+        return idx <= 0 ? "/" : abs.TrimEnd('/')[..idx];
     }
+
+    private static StorageEntry RootEntry() => new() { Name = "", Path = "", Type = "dir" };
+
+    private StorageEntry ToEntry(ISftpFile file) => new()
+    {
+        Name = file.Name,
+        Path = StoragePaths.ToRelative(_profile.RootPath, file.FullName),
+        Type = file.IsDirectory ? "dir" : (file.IsSymbolicLink ? "link" : "file"),
+        Size = file.IsDirectory ? null : file.Length,
+        ModifiedAt = file.LastWriteTimeUtc == default
+            ? null
+            : file.LastWriteTimeUtc.ToUniversalTime().ToString("O"),
+    };
+
+    /// <summary>在父目录列表里找目标条目（存在性判断的唯一可信来源）。</summary>
+    private ISftpFile? FindEntry(string abs)
+    {
+        var parent = ParentOf(abs);
+        var name = LastSegment(abs);
+        try
+        {
+            foreach (var file in Client.ListDirectory(parent))
+            {
+                if (file.Name == name) return file;
+            }
+        }
+        catch (SftpPathNotFoundException)
+        {
+            return null;
+        }
+        return null;
+    }
+
+    private bool DirExists(string abs) => FindEntry(abs)?.IsDirectory == true;
 
     private void EnsureDir(string abs)
     {
-        if (abs.Length <= 1 || Client.Exists(abs)) return;
+        if (abs.Length <= 1) return;
         var parts = abs.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         var current = "";
         foreach (var part in parts)
         {
             current += "/" + part;
-            if (!Client.Exists(current)) Client.CreateDirectory(current);
+            if (!DirExists(current)) Client.CreateDirectory(current);
         }
     }
 
@@ -209,13 +237,7 @@ internal sealed class SftpStorageProvider : IStorageProvider
 
     private void DeleteIfExists(string relPath)
     {
-        try
-        {
-            Delete(relPath, recursive: true);
-        }
-        catch (SftpPathNotFoundException)
-        {
-            // 目标不存在：无需清理
-        }
+        if (Stat(relPath) is null) return;
+        Delete(relPath, recursive: true);
     }
 }
