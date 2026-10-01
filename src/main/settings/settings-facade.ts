@@ -140,6 +140,12 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   screenshotHotkey: "Alt+Shift+S",
   screenshotBackend: "builtin",
   snipastePath: "",
+  ocrEnabled: true,
+  ocrProvider: "local",
+  ocrLanguage: "",
+  ocrCloudBaseUrl: "",
+  ocrCloudApiKey: "",
+  ocrCloudModel: "",
   chatLineHeight: 1.75,
   toolModeOverrides: {},
   chatToolsEnabled: false,
@@ -378,6 +384,16 @@ export function normalizeGeneralSettings(
       : DEFAULT_GENERAL_SETTINGS.screenshotHotkey,
     screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
+    ocrEnabled: input?.ocrEnabled === undefined
+      ? DEFAULT_GENERAL_SETTINGS.ocrEnabled
+      : Boolean(input.ocrEnabled),
+    ocrProvider: ["off", "local", "cloud"].includes(String(input?.ocrProvider))
+      ? (input!.ocrProvider as "off" | "local" | "cloud")
+      : DEFAULT_GENERAL_SETTINGS.ocrProvider,
+    ocrLanguage: typeof input?.ocrLanguage === "string" ? input.ocrLanguage.trim() : "",
+    ocrCloudBaseUrl: typeof input?.ocrCloudBaseUrl === "string" ? input.ocrCloudBaseUrl.trim() : "",
+    ocrCloudApiKey: typeof input?.ocrCloudApiKey === "string" ? input.ocrCloudApiKey : "",
+    ocrCloudModel: typeof input?.ocrCloudModel === "string" ? input.ocrCloudModel.trim() : "",
     ttsGptsovitsBaseUrl: typeof input?.ttsGptsovitsBaseUrl === "string"
       ? input.ttsGptsovitsBaseUrl
       : DEFAULT_GENERAL_SETTINGS.ttsGptsovitsBaseUrl,

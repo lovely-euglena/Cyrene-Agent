@@ -87,6 +87,8 @@ interface SettingsWindowApi {
   getCacheDirStatus?: () => Promise<{ effectiveDir: string; override: string | null; portableActive: boolean }>;
   pickCacheDir?: () => Promise<string | null>;
   setCacheDir?: (dir: string) => Promise<{ ok: boolean; changed: boolean; restartRequired: boolean }>;
+  // OCR（OCR 设置页：本地引擎可用性 + 语言列表）
+  getOcrStatus?: () => Promise<import("../shared/ocr").OcrStatus>;
   // 界面字体（外观设置：导入/恢复默认）
   pickUiFont?: () => Promise<string | null>;
   importUiFont?: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;
