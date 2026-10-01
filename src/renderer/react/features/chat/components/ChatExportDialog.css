@@ -1,0 +1,213 @@
+/* 聊天记录导出弹窗：布局与列表样式；颜色统一走主题 token，深浅主题通用。 */
+
+.cy-chat-export__hint {
+  margin: 0 0 12px;
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cy-chat-export__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cy-chat-export__toolbar .ant-input-affix-wrapper {
+  flex: 1;
+}
+
+.cy-chat-export__search-icon {
+  color: var(--rb-text-disabled);
+}
+
+.cy-chat-export__count {
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cy-chat-export__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--rb-border-subtle);
+  border-radius: var(--rb-radius-md);
+}
+
+.cy-chat-export__state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 12px;
+  color: var(--rb-text-secondary);
+  font-size: 13px;
+}
+
+.cy-chat-export__state.is-error {
+  color: var(--rb-danger);
+}
+
+.cy-chat-export__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--rb-radius-sm);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.cy-chat-export__row:hover {
+  background: var(--rb-surface-hover);
+}
+
+.cy-chat-export__row.is-selected {
+  background: color-mix(in srgb, var(--rb-accent) 9%, transparent);
+  border-color: var(--rb-border-focus);
+}
+
+.cy-chat-export__row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cy-chat-export__row-title {
+  color: var(--rb-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.cy-chat-export__row-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 3px;
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+}
+
+.cy-chat-export__ws {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-chat-export__tags {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cy-chat-export__tag {
+  padding: 1px 8px;
+  border: 1px solid var(--rb-border-subtle);
+  border-radius: var(--rb-radius-full);
+  color: var(--rb-text-secondary);
+  background: var(--rb-surface-hover);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cy-chat-export__tag.is-proactive {
+  color: var(--rb-accent);
+  border-color: var(--rb-border-focus);
+}
+
+.cy-chat-export__action-error {
+  margin-top: 10px;
+  color: var(--rb-danger);
+  font-size: 12px;
+}
+
+.cy-chat-export__result {
+  max-height: 150px;
+  overflow-y: auto;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--rb-border-subtle);
+  border-radius: var(--rb-radius-md);
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+}
+
+.cy-chat-export__result.is-ok {
+  border-color: color-mix(in srgb, var(--rb-success) 40%, transparent);
+}
+
+.cy-chat-export__result.is-error {
+  border-color: color-mix(in srgb, var(--rb-danger) 40%, transparent);
+}
+
+.cy-chat-export__result-head {
+  margin-bottom: 6px;
+  color: var(--rb-text-primary);
+  font-weight: 500;
+}
+
+.cy-chat-export__files,
+.cy-chat-export__errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cy-chat-export__errors {
+  margin-top: 6px;
+}
+
+.cy-chat-export__file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cy-chat-export__file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-chat-export__reveal {
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--rb-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cy-chat-export__reveal:hover {
+  text-decoration: underline;
+}
+
+.cy-chat-export__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cy-chat-export__formats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.cy-chat-export__footer-actions {
+  display: flex;
+  gap: 8px;
+}

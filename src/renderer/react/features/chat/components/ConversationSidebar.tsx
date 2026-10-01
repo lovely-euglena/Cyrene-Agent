@@ -1,5 +1,5 @@
 import { Conversations, type ConversationItemType } from "@ant-design/x";
-import { DeleteOutlined, EditOutlined, FolderOpenOutlined, PushpinOutlined } from "@ant-design/icons";
+import { DeleteOutlined, DownloadOutlined, EditOutlined, FolderOpenOutlined, PushpinOutlined } from "@ant-design/icons";
 import { ColorPicker, Dropdown, Input, Menu, Modal, Popover, Tooltip } from "antd";
 import type { InputRef } from "antd";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import { useTranslation } from "../../../i18n";
 import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 import { SettingsSegmented } from "../../../components/ui/SettingsControls";
 import { reportChatPerfRender } from "./chat-perf-probe";
+import { ChatExportDialog } from "./ChatExportDialog";
 import type { ChatSessionMeta, ConversationMode } from "../../../../../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 
@@ -453,6 +454,11 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     sessionTitle: string;
     pinned: boolean;
   }>({ open: false, x: 0, y: 0, sessionId: "", sessionTitle: "", pinned: false });
+  // 导出弹窗：右键会话打开时预勾选该会话，弹窗内可搜索/多选
+  const [exportDialog, setExportDialog] = useState<{ open: boolean; sessionIds: string[] }>({
+    open: false,
+    sessionIds: [],
+  });
 
   const [editing, setEditing] = useState<{
     sessionId: string;
@@ -909,6 +915,9 @@ export const ConversationSidebar = memo(function ConversationSidebar({
       });
     } else if (key === "toggle-pin") {
       void onTogglePin(contextMenu.sessionId, !contextMenu.pinned);
+    } else if (key === "export") {
+      // 打开批量导出弹窗并预勾选当前会话；列表/搜索/多选都在弹窗内完成
+      setExportDialog({ open: true, sessionIds: [contextMenu.sessionId] });
     } else if (key === "delete") {
       // 删除会话不可恢复：危险确认，默认聚焦取消，确认后才触发删除
       const confirmed = await feedback.confirm({
@@ -1196,6 +1205,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
             items={[
               { key: "rename", label: t("sidebar.rename"), icon: <EditOutlined /> },
               { key: "toggle-pin", label: contextMenu.pinned ? t("sidebar.unpin") : t("sidebar.pin"), icon: <PushpinOutlined /> },
+              { key: "export", label: t("chatExport.menuItem"), icon: <DownloadOutlined /> },
               { key: "delete", label: t("sidebar.delete"), icon: <DeleteOutlined />, danger: true },
               ...(organization?.groups.length ? [{ type: "divider" as const }] : []),
               ...(organization?.groups ?? []).map((group) => ({ key: `move-to-group:${group.id}`, label: `${t("sidebar.moveToGroup")}: ${group.title}` })),
@@ -1237,6 +1247,11 @@ export const ConversationSidebar = memo(function ConversationSidebar({
           </div>
         )}
       </Modal>
+      <ChatExportDialog
+        open={exportDialog.open}
+        onClose={() => setExportDialog((current) => ({ ...current, open: false }))}
+        preselectedIds={exportDialog.sessionIds}
+      />
     </nav>
   );
 });
