@@ -4,7 +4,8 @@
 //   1. Cyrene-Setup-<version>.exe 存在且体积合理
 //   2. latest.yml 的 version 与 package.json 一致，path 指向同一安装器，sha512 存在
 //   3. 安装器同名 .blockmap（差分更新指纹表）存在且非空
-//   4. win-unpacked/resources 内截图辅助程序、mpv、MinGit、skills 快照齐全
+//   4. win-unpacked/resources 内截图辅助程序、mpv、MinGit、skills 快照、
+//      语音 sidecar（CyreneVoice.exe + models/silero_vad.onnx）齐全
 // 用法：node scripts/verify/installer-artifacts.mjs [--expect-version x.y.z]
 //   --expect-version：标签构建时传入标签版本，校验「产物版本与标签一致」
 import { stat } from "node:fs/promises";
@@ -80,6 +81,15 @@ export async function verifyInstallerArtifacts(options = {}) {
     timeout: 10_000,
   });
   await stat(path.join(resourcesDir, "cyrene-skills", "skills-snapshot.zip"));
+  // 语音 sidecar 与 VAD 模型（csproj Content 随 publish 落入 models/）
+  const voiceExe = await stat(path.join(resourcesDir, "voice", "CyreneVoice.exe"));
+  if (voiceExe.size <= 0) {
+    throw new Error(`CyreneVoice.exe 体积异常（${voiceExe.size} bytes）`);
+  }
+  const vadModel = await stat(path.join(resourcesDir, "voice", "models", "silero_vad.onnx"));
+  if (vadModel.size < 1024 * 1024) {
+    throw new Error(`silero_vad.onnx 体积异常（${vadModel.size} bytes）：应不小于 1MB`);
+  }
 
   return {
     installerPath,
@@ -88,6 +98,8 @@ export async function verifyInstallerArtifacts(options = {}) {
     mpvVersion: mpv.version,
     gitVersion: gitVersion.trim(),
     screenshotSize: screenshot.size,
+    voiceExeSize: voiceExe.size,
+    vadModelSize: vadModel.size,
   };
 }
 
@@ -105,6 +117,9 @@ if (isDirectRun) {
       console.log(`[installer] mpv: ${result.mpvVersion}`);
       console.log(`[installer] mingit: ${result.gitVersion}`);
       console.log(`[installer] screenshot helper: ${result.screenshotSize} bytes`);
+      console.log(
+        `[installer] voice sidecar: ${result.voiceExeSize} bytes + VAD model ${result.vadModelSize} bytes`,
+      );
     })
     .catch((error) => {
       console.error(`[installer] verification failed: ${error.message}`);

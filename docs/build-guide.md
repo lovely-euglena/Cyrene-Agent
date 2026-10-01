@@ -70,7 +70,7 @@ node scripts/ensure-win-natives.mjs
 
 ## 3. 日常构建流程
 
-三段编译（JS 双端 + .NET）→ 打包 → 压缩，全链约 **2.5~3 小时**：
+编译（JS 双端 + .NET 原生窗口/语音 sidecar）→ 打包 → 压缩，全链约 **2.5~3 小时**：
 
 ```bash
 # ① 主进程 + preload（tsc）
@@ -84,6 +84,9 @@ npx vite build
 cd dotnet/native-windows
 dotnet publish -c Release -r win-x64 --self-contained false
 cd ../..
+
+# ③b 语音 sidecar（CyreneVoice；silero_vad.onnx 由 csproj Content 随 publish 输出）
+dotnet publish -c Release -r win-x64 /p:SelfContained=false dotnet/voice/CyreneVoice/CyreneVoice.csproj
 
 # ④ electron-builder（win 便携版，模块收集+asar 约 40~60 分钟）
 npx electron-builder --win dir --x64 -c.electronDist=<你的win-dist路径>
@@ -192,6 +195,7 @@ release/win-unpacked/
 │   ├── native-windows/
 │   │   ├── cyrene-native.exe       # .NET 五窗 + 分离托盘
 │   │   └── *.dll
+│   ├── voice/                      # 语音 sidecar（TTS/ASR + VAD 模型 silero_vad.onnx）
 │   ├── components/                 # Live2D 模型等
 │   └── cyrene-skills/              # 技能包
 └── （其余 Electron 运行时）
