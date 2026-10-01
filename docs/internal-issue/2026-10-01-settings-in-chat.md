@@ -57,14 +57,20 @@ React 页 CSP `font-src` 放行 `local-font:`（协议处理器白名单文件�
 4. native 与渲染端共用的模型操作用 `runCyreneModelAction`；改行为要一起改（native notice 与 IPC 返回同源）。
 5. 界面字体依赖 `local-font:` CSP 与 `local-font://` 协议；改 CSP/协议时要三处（vite CSP、preload、main bootstrap）对齐。
 6. WPF 设置窗代码保留但**不再是默认入口**；其 section 动作白名单（`NATIVE_SECTION_ACTIONS`）契约测试继续有效。
+7. **设置定位必须走 `reactChatSettingsSection` 队列**：`windowManager.openSettings` 等的是 ready-to-show，
+   早于 React 挂载 `onSwitchSection` 监听；直接 `send` 冷启动会丢帧（现象=「点设置没反应」）。
+   未 ready 挂起、`CHATS_REACT_READY` 冲发；窗口新建/关闭要 `reset`（防旧 section 回放）。
+8. 渲染端**禁用浏览器 `alert/confirm`**（`default-dialogs-regression` 扫描）；二次确认用 antd `Modal.confirm`。
 
 ## 5. 验证
 
 - 单测：`settings-router`（openSettingsEntry 成功/失败回退）、`shell-bootstrap`（settings 激活进聊天窗 + 回退）、
-  `settingsNavigation`（fork section 落点）、i18n 资源三语言一致性；`tsc`（main/preload/renderer）0 错。
+  `settingsNavigation`（fork section 落点）、`window-manager`（设置定位挂起/直发两态）、i18n 资源三语言一致性；
+  `tsc`（main/preload/renderer）0 错。
 - E2E：`node scripts/diagnostics/settings-in-chat-smoke.mjs`（需先 `npm run build`）——
   inspector 驱动 `sidebar:open-settings` → 断言聊天窗内设置页 17 个导航项、逐 section 关键文案、
-  滚动截图、界面字体 apply/reset、渲染端 0 console error。
+  滚动截图、界面字体 apply/reset、渲染端 0 console error；**连跑 3 次冷启动全绿**（验证队列修复）。
+- 打包版：`node scripts/diagnostics/settings-in-chat-smoke.mjs --exe release/win-unpacked/Cyrene.exe`。
 - 打包：`release/win-unpacked` 整目录重打；native 侧未改动（WPF 窗保留）。
 
 ## 6. 遗留 / 说明
