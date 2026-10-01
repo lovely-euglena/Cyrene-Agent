@@ -214,6 +214,10 @@ export const IPC = {
   // renderer → main：用本机默认方式打开 / 在资源管理器中定位会话工作区内的文件
   // （FileChangeCard 右键菜单；主进程校验拼出的绝对路径必须仍在该会话绑定的工作区内）
   CHATS_SHELL_FILE: "chats:shell-file",
+  // 聊天记录导出：批量导出所选会话为 HTML / Markdown（主进程弹目录框并写文件）
+  CHATS_EXPORT: "chats:export",
+  // 导出结果里的「打开所在文件夹」：只允许定位本次导出产出的文件
+  CHATS_EXPORT_REVEAL: "chats:export-reveal",
   CHATS_MIGRATE_LEGACY: "chats:migrate-legacy",
   // 任意会话变动后 main → 所有渲染窗口 broadcast，触发列表/标题刷新
   CHATS_CHANGED: "chats:changed",

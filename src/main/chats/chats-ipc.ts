@@ -59,6 +59,9 @@ import {
   saveGeneralSettings,
   MAX_RECENT_PROJECTS,
 } from "../settings/settings-facade";
+import { findCyreneAvatarPath, getAvatarPath } from "../settings-store";
+import { collectChatExportAvatars, exportSessionsToDirectory } from "./chat-export";
+import type { ChatExportError, ChatExportFormat, ChatExportRequest } from "../../shared/chat-export";
 
 function latestContextUsage(session: ChatSession | null): ContextUsageSnapshot | undefined {
   return session?.messages.reduce<ContextUsageSnapshot | undefined>((latest, message) => {
@@ -155,6 +158,20 @@ export function broadcastCompactionPhase(sessionId: string, phase: "running" | "
 
 function visibleUserText(content: string): string {
   return content.replace(/\[sticker:[^\]]+\]/gi, "").trim();
+}
+
+/** 导出请求白名单校验：会话 id 非空字符串、格式限 html/markdown；去重并限量。 */
+function normalizeChatExportRequest(payload: unknown): ChatExportRequest | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  const sessionIds = Array.isArray(record.sessionIds)
+    ? [...new Set(record.sessionIds.filter((id): id is string => typeof id === "string" && id.length > 0))].slice(0, 500)
+    : [];
+  const formats = Array.isArray(record.formats)
+    ? [...new Set(record.formats.filter((format): format is ChatExportFormat => format === "html" || format === "markdown"))]
+    : [];
+  if (sessionIds.length === 0 || formats.length === 0) return null;
+  return { sessionIds, formats };
 }
 
 export function registerChatsIpc(
@@ -549,6 +566,72 @@ export function registerChatsIpc(
   ipc.handle(IPC.CHATS_OPEN_FOLDER, async () => {
     await chatsStore.openStorageFolder();
     return true;
+  });
+
+  // 聊天记录导出：组合 v2 轨迹里的完整消息 → 渲染 HTML/Markdown 落盘。
+  // 目录选择在主进程弹系统框（取消静默返回 canceled）；导出产物路径登记后
+  // 才允许渲染端用 CHATS_EXPORT_REVEAL 在资源管理器中定位。
+  const exportedFilePaths = new Set<string>();
+
+  ipc.handle(IPC.CHATS_EXPORT, async (event, payload: unknown) => {
+    const request = normalizeChatExportRequest(payload);
+    if (!request) return { ok: false as const, error: "invalid-payload" };
+
+    const dialogOptions: Electron.OpenDialogOptions = {
+      title: "选择导出文件夹",
+      buttonLabel: "导出到此处",
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const picked = win
+      ? await dialog.showOpenDialog(win, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false as const, canceled: true };
+    const targetDir = picked.filePaths[0];
+
+    const sessions: ChatSession[] = [];
+    const errors: ChatExportError[] = [];
+    for (const id of request.sessionIds) {
+      const session = await sessionMigration.loadComposedSession(id);
+      if (session) sessions.push(session);
+      else errors.push({ sessionId: id, title: id, error: "会话不存在" });
+    }
+
+    // 昔涟头像优先用用户自定义；没有则回退打包内置的默认头像（asar 内可读）。
+    const bundledAssistantAvatar = path.join(
+      app.getAppPath(),
+      "dist",
+      "renderer",
+      "avatars",
+      "cyrene-avatar.png",
+    );
+    const avatars = collectChatExportAvatars({
+      userAvatarPath: getAvatarPath(),
+      assistantAvatarPath: findCyreneAvatarPath() ?? bundledAssistantAvatar,
+    });
+    const outcome = exportSessionsToDirectory({
+      sessions,
+      formats: request.formats,
+      targetDir,
+      avatars,
+    });
+    for (const file of outcome.files) exportedFilePaths.add(file.path);
+    return {
+      ok: true as const,
+      dir: targetDir,
+      files: outcome.files,
+      errors: [...errors, ...outcome.errors],
+    };
+  });
+
+  ipc.handle(IPC.CHATS_EXPORT_REVEAL, (_event, filePath: unknown) => {
+    const target = typeof filePath === "string" ? filePath : "";
+    if (!target || !exportedFilePaths.has(target)) {
+      return { ok: false as const, error: "unknown-export-path" };
+    }
+    if (!fs.existsSync(target)) return { ok: false as const, error: "missing" };
+    shell.showItemInFolder(target);
+    return { ok: true as const };
   });
 
   ipc.handle(IPC.CHATS_OPEN_WORKSPACE, async (_event, workspaceRoot: unknown) => {

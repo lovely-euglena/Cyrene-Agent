@@ -12,6 +12,7 @@ import type {
   SpeechInputCommitResult,
 } from "../../../../../shared/ipc-channels";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
+import type { ChatExportRequest, ChatExportResponse } from "../../../../../shared/chat-export";
 import type { TaskSession } from "../../../../../shared/task-session";
 import type { ModelFailureInfo } from "../../../../../shared/model-error";
 
@@ -94,6 +95,10 @@ export interface ChatStoreApi {
   onCompactionPhase: (callback: (payload: { sessionId: string; phase: "running" | "finished" }) => void) => () => void;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;
   openWorkspace: (workspaceRoot: string) => Promise<{ ok: boolean; error?: string }>;
+  // 聊天记录导出：批量导出所选会话为 HTML / Markdown（主进程弹目录框并写文件）
+  exportChats: (payload: ChatExportRequest) => Promise<ChatExportResponse>;
+  // 导出结果里的「打开所在文件夹」（主进程只允许定位本次导出产出的文件）
+  revealExportPath: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   // 聊天文件卡片右键菜单：本机默认方式打开 / 在资源管理器中定位工作区内文件
   // （主进程校验路径在工作区内；失败静默，不弹错误）
   shellFile: (
