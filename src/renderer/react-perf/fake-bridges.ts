@@ -123,6 +123,9 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
 
   const fakeStore: ChatStoreApi = {
     list: async () => [perfSessionMeta(session)],
+    // perf 环境没有真实导出：桩返回空结果，不触碰文件系统
+    exportChats: async () => ({ ok: true, dir: "", files: [], errors: [] }),
+    revealExportPath: async () => ({ ok: true }),
     // perf 环境没有任务会话，桩返回 null 即可
     getTaskSession: async () => null,
     getSidebarOrganization: async () => sidebarOrganization,
