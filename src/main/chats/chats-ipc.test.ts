@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("electron", () => ({
   app: {
     getPath: () => mocks.userDataDir,
+    getAppPath: () => process.cwd(),
   },
   shell: {
     openPath: mocks.openPath,
@@ -22,6 +23,7 @@ vi.mock("electron", () => ({
   },
   BrowserWindow: {
     getAllWindows: () => mocks.windows,
+    fromWebContents: () => null,
   },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: any[]) => unknown) => {
@@ -898,6 +900,79 @@ describe("chats IPC mode filtering", () => {
     await expect(setSessionModel(event, { id: "missing", model: "glm-x" })).resolves.toEqual({
       ok: false,
       error: "session-not-found",
+    });
+  });
+
+  it("CHATS_EXPORT 组合轨迹消息导出 HTML/Markdown，REVEAL 只放行本次导出产物", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const electron = await import("electron");
+    const store = getConversationTranscriptStore(mocks.userDataDir);
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-chats-export-"));
+    vi.mocked(electron.dialog.showOpenDialog).mockResolvedValue({
+      canceled: false,
+      filePaths: [targetDir],
+    } as Awaited<ReturnType<typeof electron.dialog.showOpenDialog>>);
+
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const exportChats = mocks.handlers.get(IPC.CHATS_EXPORT);
+    const reveal = mocks.handlers.get(IPC.CHATS_EXPORT_REVEAL);
+    if (!create || !exportChats || !reveal) throw new Error("chat export IPC handlers were not registered");
+    const event = { sender: {} };
+
+    const session = await create(event, { mode: "chat" }) as { id: string; title: string };
+    await store.append(session.id, {
+      id: "export-u1", at: 1, kind: "user", turnId: "u1", revision: 1,
+      payload: { text: "导出问题" },
+    });
+    await store.append(session.id, {
+      id: "export-a1", at: 2, kind: "assistant", turnId: "a1",
+      payload: { role: "assistant", content: "导出回答" },
+    });
+
+    const result = await exportChats(event, {
+      sessionIds: [session.id, "missing-session"],
+      formats: ["html", "markdown"],
+    }) as {
+      ok: true;
+      dir: string;
+      files: Array<{ name: string; path: string }>;
+      errors: Array<{ sessionId: string; error: string }>;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.dir).toBe(targetDir);
+    expect(result.files).toHaveLength(2);
+    expect(result.errors).toEqual([expect.objectContaining({ sessionId: "missing-session" })]);
+
+    const html = result.files.find((file) => file.name.endsWith(".html"));
+    const markdown = result.files.find((file) => file.name.endsWith(".md"));
+    if (!html || !markdown) throw new Error("exported files missing");
+    expect(fs.readFileSync(html.path, "utf8")).toContain("导出回答");
+    expect(fs.readFileSync(markdown.path, "utf8")).toContain("导出问题");
+
+    // 白名单只放行本次导出登记过的路径
+    expect(reveal(event, html.path)).toEqual({ ok: true });
+    expect(mocks.showItemInFolder).toHaveBeenCalledWith(html.path);
+    expect(reveal(event, "C:\\Windows\\System32\\cmd.exe")).toEqual({
+      ok: false,
+      error: "unknown-export-path",
+    });
+  });
+
+  it("CHATS_EXPORT 空选择/空格式返回 invalid-payload", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+    const exportChats = mocks.handlers.get(IPC.CHATS_EXPORT);
+    if (!exportChats) throw new Error("chat export IPC handler was not registered");
+    const event = { sender: {} };
+    await expect(exportChats(event, { sessionIds: [], formats: ["html"] })).resolves.toEqual({
+      ok: false,
+      error: "invalid-payload",
+    });
+    await expect(exportChats(event, { sessionIds: ["s1"], formats: [] })).resolves.toEqual({
+      ok: false,
+      error: "invalid-payload",
     });
   });
 });
