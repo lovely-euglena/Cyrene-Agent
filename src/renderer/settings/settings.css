@@ -4799,3 +4799,41 @@ body {
   background: transparent;
   transition: height 180ms ease;
 }
+
+/* ── 云存储设置面板：档案列表与操作按钮 ─────────────────────── */
+.cloud-storage-item__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cloud-storage-item__main .tts-hint {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+}
+
+.cloud-storage-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 182, 220, 0.14);
+  border: 1px solid rgba(255, 182, 220, 0.25);
+}
+
+.cloud-storage-actions,
+.cloud-storage-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cloud-storage-toolbar {
+  margin-top: 12px;
+}
+
+#cloud-storage-status.is-ok { color: #4ade80; }
+#cloud-storage-status.is-error { color: #ff9db1; }

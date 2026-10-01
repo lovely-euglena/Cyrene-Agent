@@ -155,6 +155,11 @@ export const IPC = {
   SETTINGS_CACHE_PICK_DIR: "settings:cache-pick-dir",
   // OCR：设置页状态查询（本地引擎可用性 + 语言列表）
   SETTINGS_OCR_GET_STATUS: "settings:ocr-get-status",
+  // 云存储：设置页档案管理（列表 / 保存 / 删除 / 测试连接）
+  CLOUD_STORAGE_PROFILES_LIST: "cloud-storage:profiles-list",
+  CLOUD_STORAGE_PROFILE_SAVE: "cloud-storage:profile-save",
+  CLOUD_STORAGE_PROFILE_REMOVE: "cloud-storage:profile-remove",
+  CLOUD_STORAGE_PROFILE_TEST: "cloud-storage:profile-test",
   // 昔涟设置：RAG 模型操作（打开目录/安装说明/下载站/体检/删除缓存）
   SETTINGS_CYRENE_MODEL_ACTION: "settings:cyrene-model-action",
   SETTINGS_GET_TIMEOUT_SETTINGS: "settings:get-timeout-settings",

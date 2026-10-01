@@ -34,6 +34,7 @@
         <button type="button" class="nav-item" data-section="tts"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>TTS</title><rect x="17" y="4" width="14" height="27" rx="7" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M9 23C9 31.2843 15.7157 38 24 38C32.2843 38 39 31.2843 39 23" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 38V44" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.tts">TTS 设置</span></button>
         <button type="button" class="nav-item" data-section="asr"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>ASR</title><path d="M36 32V32C40.4183 32 44 28.4183 44 24C44 19.5817 40.4183 16 36 16" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M12 16C7.58172 16 4 19.5817 4 24C4 28.4183 7.58172 32 12 32V32" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 32V31.5V29V24V16C12 9.37258 17.3726 4 24 4C30.6274 4 36 9.37258 36 16V32C36 38.6274 30.6274 44 24 44" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.asr">ASR 设置</span></button>
         <button type="button" class="nav-item" data-section="ocr"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>OCR</title><path d="M4 14V8C4 5.79086 5.79086 4 8 4H14" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M34 4H40C42.2091 4 44 5.79086 44 8V14" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M44 34V40C44 42.2091 42.2091 44 40 44H34" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 44H8C5.79086 44 4 42.2091 4 40V34" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 30V18M21 30V18M27 30V22M33 30V18" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.ocr">OCR 设置</span></button>
+        <button type="button" class="nav-item" data-section="cloud-storage"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>云存储</title><path d="M13 38C7.47715 38 3 33.5228 3 28C3 22.4772 7.47715 18 13 18C14.1974 18 15.3439 18.2104 16.4072 18.5939C18.2255 13.2653 23.2635 9.4 29.2 9.4C36.4865 9.4 42.4 15.3135 42.4 22.6C42.4 23.2283 42.3575 23.8466 42.2745 24.4519C44.8417 25.9998 46.6 28.8027 46.6 32C46.6 36.4183 43.0183 40 38.6 40H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 27V37" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M19.5 32.5L24 37L28.5 32.5" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.cloudStorage">云存储</span></button>
         <button type="button" class="nav-item" data-section="tokens"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>Token 用量</title><path d="M4 42H44" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><rect x="8" y="28" width="6" height="14" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="21" y="18" width="6" height="24" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="34" y="6" width="6" height="36" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/></svg></span><span data-i18n="nav.tokens">Token 用量</span></button>
         <hr class="nav-divider" />
         <button type="button" class="nav-item" data-section="disclaimer"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>免责声明</title><rect x="13" y="10" width="28" height="34" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M35 10V4H8C7.44772 4 7 4.44772 7 5V38H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 22H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 30H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.disclaimer">免责声明</span></button>
@@ -2317,6 +2318,192 @@ title="查看复刻说明（费用 / 规格 / 过期规则）" aria-label="复�
                 <input type="text" id="ocr-cloud-model" placeholder="—" disabled />
               </div>
               <p class="tts-hint"><span data-i18n="panel.ocr.cloudHint">云端 OCR 尚未接入，以上字段为后续版本预留，当前不可编辑。</span></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-panel is-hidden" id="cloud-storage-panel" data-panel="cloud-storage">
+          <div class="panel-heading">
+            <div class="panel-heading__icon"><svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>云存储</title><path d="M13 38C7.47715 38 3 33.5228 3 28C3 22.4772 7.47715 18 13 18C14.1974 18 15.3439 18.2104 16.4072 18.5939C18.2255 13.2653 23.2635 9.4 29.2 9.4C36.4865 9.4 42.4 15.3135 42.4 22.6C42.4 23.2283 42.3575 23.8466 42.2745 24.4519C44.8417 25.9998 46.6 28.8027 46.6 32C46.6 36.4183 43.0183 40 38.6 40H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 27V37" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M19.5 32.5L24 37L28.5 32.5" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div>
+              <h1><span data-i18n="panel.cloudStorage.heading">云存储</span></h1>
+              <p><span data-i18n="panel.cloudStorage.subheading">FTP / FTPS / SFTP / WebDAV / S3：让昔涟直接读取、上传、下载与管理远端文件</span></p>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="tts-section">
+              <h2 class="tts-section__title"><span data-i18n="panel.cloudStorage.listTitle">已配置的存储</span></h2>
+              <p class="tts-hint"><span data-i18n="panel.cloudStorage.listHint">凭据保存在本机（DPAPI 加密）。对话里让昔涟「传到我的 NAS」「把报告放到网盘」，它会使用这里的档案。</span></p>
+              <div class="settings-list" id="cloud-storage-list"></div>
+              <div class="cloud-storage-toolbar">
+                <button type="button" class="btn-secondary" id="cloud-storage-add"><span data-i18n="panel.cloudStorage.add">＋ 添加存储</span></button>
+              </div>
+            </div>
+
+            <div class="tts-section is-hidden" id="cloud-storage-editor">
+              <h2 class="tts-section__title" id="cloud-storage-editor-title"><span data-i18n="panel.cloudStorage.addTitle">添加存储</span></h2>
+              <div class="tts-field">
+                <label for="cloud-storage-protocol"><span data-i18n="panel.cloudStorage.protocolLabel">协议</span></label>
+                <select id="cloud-storage-protocol">
+                  <option value="sftp">SFTP</option>
+                  <option value="ftp">FTP</option>
+                  <option value="ftps">FTPS</option>
+                  <option value="webdav">WebDAV</option>
+                  <option value="s3">S3 / 兼容对象存储</option>
+                </select>
+              </div>
+              <div class="tts-field">
+                <label for="cloud-storage-name"><span data-i18n="panel.cloudStorage.nameLabel">名称</span></label>
+                <input type="text" id="cloud-storage-name" placeholder="我的 NAS" data-i18n-placeholder="panel.cloudStorage.namePlaceholder" />
+              </div>
+
+              <div data-cs-group="host">
+                <div class="tts-field">
+                  <label for="cloud-storage-host"><span data-i18n="panel.cloudStorage.hostLabel">主机</span></label>
+                  <input type="text" id="cloud-storage-host" placeholder="192.168.1.10" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-port"><span data-i18n="panel.cloudStorage.portLabel">端口</span></label>
+                  <input type="number" id="cloud-storage-port" placeholder="22" min="1" max="65535" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-username"><span data-i18n="panel.cloudStorage.usernameLabel">用户名</span></label>
+                  <input type="text" id="cloud-storage-username" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-password"><span data-i18n="panel.cloudStorage.passwordLabel">密码</span></label>
+                  <input type="password" id="cloud-storage-password" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-root"><span data-i18n="panel.cloudStorage.rootLabel">根目录</span></label>
+                  <input type="text" id="cloud-storage-root" placeholder="/" />
+                  <p class="tts-hint"><span data-i18n="panel.cloudStorage.rootHint">AI 只能在这个目录范围内操作（留空 = 服务器根）。</span></p>
+                </div>
+              </div>
+
+              <div data-cs-group="ftp-auth">
+                <label class="setting-row">
+                  <div>
+                    <strong><span data-i18n="panel.cloudStorage.passiveLabel">被动模式</span></strong>
+                    <p class="tts-hint"><span data-i18n="panel.cloudStorage.passiveHint">家用 / 公网服务器保持开启；老式服务器连不上时再关闭。</span></p>
+                  </div>
+                  <input type="checkbox" id="cloud-storage-passive" checked />
+                </label>
+              </div>
+
+              <div data-cs-group="ftps">
+                <div class="tts-field">
+                  <label for="cloud-storage-tls-mode"><span data-i18n="panel.cloudStorage.tlsModeLabel">TLS 模式</span></label>
+                  <select id="cloud-storage-tls-mode">
+                    <option value="explicit" data-i18n="panel.cloudStorage.tlsExplicit">Explicit（AUTH TLS，默认）</option>
+                    <option value="implicit" data-i18n="panel.cloudStorage.tlsImplicit">Implicit（隐式，通常 990 端口）</option>
+                  </select>
+                </div>
+                <label class="setting-row">
+                  <div>
+                    <strong><span data-i18n="panel.cloudStorage.allowInvalidCertLabel">允许自签证书</span></strong>
+                    <p class="tts-hint"><span data-i18n="panel.cloudStorage.allowInvalidCertHint">仅当服务器使用自签证书时开启；开启会跳过证书校验。</span></p>
+                  </div>
+                  <input type="checkbox" id="cloud-storage-allow-invalid-cert" />
+                </label>
+              </div>
+
+              <div data-cs-group="sftp">
+                <div class="tts-field">
+                  <label for="cloud-storage-auth-type"><span data-i18n="panel.cloudStorage.authTypeLabel">认证方式</span></label>
+                  <select id="cloud-storage-auth-type">
+                    <option value="password" data-i18n="panel.cloudStorage.authPassword">密码</option>
+                    <option value="privateKey" data-i18n="panel.cloudStorage.authPrivateKey">私钥文件</option>
+                  </select>
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-private-key"><span data-i18n="panel.cloudStorage.privateKeyLabel">私钥文件路径</span></label>
+                  <input type="text" id="cloud-storage-private-key" placeholder="C:\Users\me\.ssh\id_ed25519" />
+                  <p class="tts-hint"><span data-i18n="panel.cloudStorage.privateKeyHint">认证方式为「私钥文件」时必填（本机路径）。</span></p>
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-passphrase"><span data-i18n="panel.cloudStorage.passphraseLabel">私钥口令</span></label>
+                  <input type="password" id="cloud-storage-passphrase" autocomplete="off" />
+                </div>
+              </div>
+
+              <div data-cs-group="webdav">
+                <div class="tts-field">
+                  <label for="cloud-storage-webdav-url"><span data-i18n="panel.cloudStorage.webdavUrlLabel">服务器地址</span></label>
+                  <input type="text" id="cloud-storage-webdav-url" placeholder="https://webdav.example.com/dav" data-i18n-placeholder="panel.cloudStorage.webdavUrlPlaceholder" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-webdav-username"><span data-i18n="panel.cloudStorage.webdavUsernameLabel">账号</span></label>
+                  <input type="text" id="cloud-storage-webdav-username" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-webdav-password"><span data-i18n="panel.cloudStorage.webdavPasswordLabel">应用密码 / 密码</span></label>
+                  <input type="password" id="cloud-storage-webdav-password" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-webdav-auth-type"><span data-i18n="panel.cloudStorage.webdavAuthLabel">认证方式</span></label>
+                  <select id="cloud-storage-webdav-auth-type">
+                    <option value="basic" data-i18n="panel.cloudStorage.webdavAuthBasic">Basic（默认）</option>
+                    <option value="digest" data-i18n="panel.cloudStorage.webdavAuthDigest">Digest</option>
+                    <option value="none" data-i18n="panel.cloudStorage.webdavAuthNone">无需认证</option>
+                  </select>
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-webdav-root"><span data-i18n="panel.cloudStorage.rootLabel">根目录</span></label>
+                  <input type="text" id="cloud-storage-webdav-root" placeholder="/" />
+                </div>
+                <label class="setting-row">
+                  <div>
+                    <strong><span data-i18n="panel.cloudStorage.allowInvalidCertLabel">允许自签证书</span></strong>
+                    <p class="tts-hint"><span data-i18n="panel.cloudStorage.allowInvalidCertHint">仅当服务器使用自签证书时开启；开启会跳过证书校验。</span></p>
+                  </div>
+                  <input type="checkbox" id="cloud-storage-webdav-allow-invalid-cert" />
+                </label>
+              </div>
+
+              <div data-cs-group="s3">
+                <div class="tts-field">
+                  <label for="cloud-storage-s3-bucket"><span data-i18n="panel.cloudStorage.s3BucketLabel">Bucket</span></label>
+                  <input type="text" id="cloud-storage-s3-bucket" placeholder="my-bucket" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-s3-endpoint"><span data-i18n="panel.cloudStorage.s3EndpointLabel">Endpoint</span></label>
+                  <input type="text" id="cloud-storage-s3-endpoint" placeholder="https://s3.example.com" />
+                  <p class="tts-hint"><span data-i18n="panel.cloudStorage.s3EndpointHint">MinIO / Cloudflare R2 等自建服务填地址；AWS 官方留空。</span></p>
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-s3-region"><span data-i18n="panel.cloudStorage.s3RegionLabel">Region</span></label>
+                  <input type="text" id="cloud-storage-s3-region" placeholder="us-east-1" />
+                  <p class="tts-hint"><span data-i18n="panel.cloudStorage.s3RegionHint">AWS 填实际区域；自建服务按服务商要求填（常可留空）。</span></p>
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-s3-access-key"><span data-i18n="panel.cloudStorage.s3AccessKeyLabel">Access Key ID</span></label>
+                  <input type="password" id="cloud-storage-s3-access-key" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-s3-secret-key"><span data-i18n="panel.cloudStorage.s3SecretKeyLabel">Secret Access Key</span></label>
+                  <input type="password" id="cloud-storage-s3-secret-key" autocomplete="off" />
+                </div>
+                <div class="tts-field">
+                  <label for="cloud-storage-s3-prefix"><span data-i18n="panel.cloudStorage.s3PrefixLabel">Key 前缀</span></label>
+                  <input type="text" id="cloud-storage-s3-prefix" placeholder="backup/" />
+                  <p class="tts-hint"><span data-i18n="panel.cloudStorage.s3PrefixHint">AI 只能在这个前缀范围内操作（留空 = 整个 bucket）。</span></p>
+                </div>
+                <label class="setting-row">
+                  <div>
+                    <strong><span data-i18n="panel.cloudStorage.s3PathStyleLabel">Path style 寻址</span></strong>
+                    <p class="tts-hint"><span data-i18n="panel.cloudStorage.s3PathStyleHint">自建 endpoint 通常开启；AWS 官方保持关闭。</span></p>
+                  </div>
+                  <input type="checkbox" id="cloud-storage-s3-path-style" />
+                </label>
+              </div>
+
+              <div class="cloud-storage-toolbar">
+                <button type="button" class="btn-secondary" id="cloud-storage-save"><span data-i18n="panel.cloudStorage.save">保存</span></button>
+                <button type="button" class="btn-secondary" id="cloud-storage-test"><span data-i18n="panel.cloudStorage.saveAndTest">保存并测试连接</span></button>
+                <button type="button" class="btn-secondary" id="cloud-storage-cancel"><span data-i18n="panel.cloudStorage.cancel">取消</span></button>
+              </div>
+              <p class="tts-hint" id="cloud-storage-status"></p>
             </div>
           </div>
         </section>
