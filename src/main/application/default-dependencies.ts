@@ -1237,11 +1237,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
                   nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
               return;
             }
-            // RAG：删除 embedding 缓存（确认框在 native 侧弹；宿主只做删除）
+            // RAG：删除 embedding 模型（确认框在 native 侧弹；宿主只做删除）
+            // 清两个落点：项目侧 models/Xenova/bge-m3（候选目录全扫）+ HF 缓存
             if (verb === "delete-embedding") {
               try {
-                deleteEmbeddingModel("bgem3");
-                nativeNotice("cyrene", "ok", "BGE-M3 模型缓存已删除（下次使用需重新安装）");
+                const removed = deleteEmbeddingModel("bgem3");
+                console.log("[Cyrene] embedding model deleted:", removed.length > 0 ? removed.join("; ") : "(no files found)");
+                nativeNotice("cyrene", "ok", "BGE-M3 模型已删除（项目 models 目录 + HF 缓存；下次使用需重新安装）");
               } catch (err) {
                 nativeNotice("cyrene", "error", `删除失败：${err instanceof Error ? err.message : String(err)}`);
               }

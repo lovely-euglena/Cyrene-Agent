@@ -385,8 +385,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const p = payload as { model?: string };
     const model = p.model || "bgem3";
     try {
-      deleteEmbeddingModel(model);
-      return { ok: true };
+      const removed = deleteEmbeddingModel(model);
+      console.log("[Cyrene] embedding model deleted:", removed.length > 0 ? removed.join("; ") : "(no files found)");
+      return { ok: true, removed };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, error: message };

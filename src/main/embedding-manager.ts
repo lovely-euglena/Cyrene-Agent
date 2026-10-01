@@ -1,7 +1,7 @@
 import * as path from "path";
 import { hfModelCacheDir } from "./cache-dir";
+import { getProjectModelsDirCandidates } from "./rag/model-status";
 import * as fs from "fs";
-import * as os from "os";
 
 // --- Model definitions ---
 
@@ -13,7 +13,7 @@ interface ModelInfo {
 }
 
 const MODELS: ModelInfo[] = [
-  { key: "bgem3", name: "Xenova/bge-m3", dir: "Xenova\\bge-m3", onnx: "onnx\\model_quantized.onnx" },
+  { key: "bgem3", name: "Xenova/bge-m3", dir: "Xenova/bge-m3", onnx: "onnx/model_quantized.onnx" },
 ];
 
 function getCacheDir(): string {
@@ -71,12 +71,33 @@ export async function downloadEmbeddingModel(
 
 // --- Delete ---
 
-export function deleteEmbeddingModel(modelKey: string): void {
+/**
+ * 删除已安装的 embedding 模型。
+ *
+ * 模型有两个落点（探测顺序见 rag/model-status.ts）：
+ *   1. 项目侧手动安装：<候选根目录>/Xenova/bge-m3（状态页「已安装」的常规来源）
+ *   2. HF 缓存兜底：hfModelCacheDir()/Xenova/bge-m3（旧下载器 / transformers.js 落点）
+ *
+ * 两处都清，并把实际删除的路径返回给调用方（日志/提示用）。
+ */
+export function deleteEmbeddingModel(modelKey: string): string[] {
   const model = MODELS.find((m) => m.key === modelKey);
   if (!model) throw new Error("Unknown model: " + modelKey);
-  const cacheDir = getCacheDir();
-  const modelDir = path.join(cacheDir, model.dir);
-  if (fs.existsSync(modelDir)) {
-    fs.rmSync(modelDir, { recursive: true, force: true });
+
+  const removed: string[] = [];
+  const removeDir = (dir: string): void => {
+    if (!fs.existsSync(dir)) return;
+    fs.rmSync(dir, { recursive: true, force: true });
+    removed.push(dir);
+  };
+
+  // 1) 项目侧：每个候选根目录都可能有安装
+  //    （CYRENE_MODELS_DIR / cwd / exe 同级 / resources/embed-models …）
+  for (const baseDir of getProjectModelsDirCandidates()) {
+    removeDir(path.join(baseDir, model.dir));
   }
+  // 2) HF 缓存兜底
+  removeDir(path.join(getCacheDir(), model.dir));
+
+  return removed;
 }
