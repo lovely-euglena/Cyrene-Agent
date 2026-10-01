@@ -51,7 +51,7 @@ function reactRendererCsp(isDev: boolean): string {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data: https://fonts.gstatic.com",
+    "font-src 'self' data: local-font: https://fonts.gstatic.com",
     `connect-src ${connectSrc}`,
     "media-src 'self' data: blob: https:",
     "worker-src 'self' blob:",
