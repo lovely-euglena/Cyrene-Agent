@@ -4,13 +4,18 @@ import * as path from "path";
 
 // vi.hoisted runs before mocks are installed, so we compute paths using
 // process.env / require("path") instead of importing "os" or "path".
-const { ISOLATED_ROOT, ISOLATED_HOME } = vi.hoisted(() => {
+const { ISOLATED_ROOT, ISOLATED_HOME, mockAppState } = vi.hoisted(() => {
   const pathMod = require("path") as typeof import("path");
   const root = pathMod.join(
     process.env.TEMP || process.env.TMP || "/tmp",
     `cyrene-model-status-test-${process.pid}`,
   );
-  return { ISOLATED_ROOT: root, ISOLATED_HOME: pathMod.join(root, "home") };
+  return {
+    ISOLATED_ROOT: root,
+    ISOLATED_HOME: pathMod.join(root, "home"),
+    // 各用例可临时翻转 isPackaged 验证打包态候选顺序
+    mockAppState: { isPackaged: false },
+  };
 });
 
 vi.mock("os", async () => {
@@ -28,6 +33,9 @@ vi.mock("electron", () => ({
     // 解析结果 = <appData>/../Local/<name>/Cache，本测试固定用 cyrene-test。
     getPath: () => ISOLATED_ROOT + "/appdata",
     getName: () => "cyrene-test",
+    get isPackaged() {
+      return mockAppState.isPackaged;
+    },
   },
 }));
 
@@ -95,6 +103,7 @@ beforeEach(() => {
   // not the real project tree (which has real model dirs).
   process.chdir(ISOLATED_ROOT);
   delete process.env.CYRENE_MODELS_DIR;
+  mockAppState.isPackaged = false;
 });
 
 afterEach(() => {
@@ -132,6 +141,26 @@ describe("model-status: getProjectModelsDirCandidates priority", () => {
 
   it("includes the directory beside the packaged executable as a model location", () => {
     expect(getProjectModelsDirCandidates()).toContain(path.join(path.dirname(process.execPath), "models"));
+  });
+
+  it("includes resources/embed-models when process.resourcesPath is available", () => {
+    const resourcesDir = path.join(ISOLATED_ROOT, "resources");
+    (process as unknown as { resourcesPath?: string }).resourcesPath = resourcesDir;
+    try {
+      expect(getProjectModelsDirCandidates()).toContain(path.join(resourcesDir, "embed-models"));
+    } finally {
+      delete (process as unknown as { resourcesPath?: string }).resourcesPath;
+    }
+  });
+
+  it("packaged builds prefer the executable-side models dir over cwd", () => {
+    mockAppState.isPackaged = true;
+    try {
+      const dirs = getProjectModelsDirCandidates();
+      expect(dirs[0]).toBe(path.join(path.dirname(process.execPath), "models"));
+    } finally {
+      mockAppState.isPackaged = false;
+    }
   });
 
   it("uses the directory containing the complete model instead of an earlier empty candidate", () => {

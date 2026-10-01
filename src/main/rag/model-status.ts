@@ -78,12 +78,17 @@ function probeCandidates(
 /**
  * Resolve all candidate base directories in priority order.
  *
- * Priority:
+ * 开发态（app.isPackaged=false）：
  *   1. CYRENE_MODELS_DIR env var (highest — explicit override)
- *   2. process.cwd() + "models"  (when launched from project root, e.g. `electron .`)
- *   3. directory beside the executable + "models" (release users drop models here)
- *   4. app.getAppPath() + "models"  (development fallback)
- *   5. process.resourcesPath + "models"  (packaged extraResources fallback)
+ *   2. process.cwd() + "models"  (npm run dev / electron . 从仓库根启动)
+ *   3. directory beside the executable + "models"
+ *   4. app.getAppPath() + "models"
+ *   5. process.resourcesPath + "models"
+ *   6. process.resourcesPath + "embed-models"  (自定义打包 extraResources 映射)
+ *
+ * 打包态（app.isPackaged=true）：cwd 不可靠（快捷方式/命令行启动时可能是
+ * 任意目录），因此把「exe 同级 models/」（用户手动放置模型的落点）提到最前，
+ * embed-models（自定义内嵌模型的约定目录，与 .NET 侧车一致）次之。
  *
  * Why this matters: the previous implementation used
  * `path.join(__dirname, "..", "..", "..", "models")` — but the compiled
@@ -94,20 +99,47 @@ function probeCandidates(
  */
 export function getProjectModelsDirCandidates(): string[] {
   const out: string[] = [];
-  if (process.env.CYRENE_MODELS_DIR) out.push(process.env.CYRENE_MODELS_DIR);
+  const push = (dir: string | null | undefined): void => {
+    if (dir && !out.includes(dir)) out.push(dir);
+  };
+
   const cwdModels = path.join(process.cwd(), "models");
-  if (!out.includes(cwdModels)) out.push(cwdModels);
   const executableModels = path.join(path.dirname(process.execPath), "models");
-  if (!out.includes(executableModels)) out.push(executableModels);
+  const resourcesModels = process.resourcesPath
+    ? path.join(process.resourcesPath, "models")
+    : null;
+  // 侧车/.NET 侧的约定目录：resources/embed-models/Xenova/bge-m3
+  // （自定义构建可用 electron-builder extraResources 把模型映射到这里）
+  const resourcesEmbedModels = process.resourcesPath
+    ? path.join(process.resourcesPath, "embed-models")
+    : null;
+  let appModels: string | null = null;
   try {
-    const appModels = path.join(app.getAppPath(), "models");
-    if (!out.includes(appModels)) out.push(appModels);
+    appModels = path.join(app.getAppPath(), "models");
   } catch {
     // app not ready yet — fall through
   }
-  if (process.resourcesPath) {
-    const resModels = path.join(process.resourcesPath, "models");
-    if (!out.includes(resModels)) out.push(resModels);
+
+  let packaged = false;
+  try {
+    packaged = app.isPackaged === true;
+  } catch {
+    // app not ready yet — default to development ordering
+  }
+
+  push(process.env.CYRENE_MODELS_DIR);
+  if (packaged) {
+    push(executableModels);
+    push(resourcesEmbedModels);
+    push(resourcesModels);
+    push(appModels);
+    push(cwdModels);
+  } else {
+    push(cwdModels);
+    push(executableModels);
+    push(appModels);
+    push(resourcesModels);
+    push(resourcesEmbedModels);
   }
   return out;
 }

@@ -35,6 +35,7 @@ import * as path from "path";
 import { app } from "electron";
 import { trackChildProcess } from "../child-processes";
 import { DecodedFrame, SidecarFrameDecoder } from "./sidecar-frame-decoder";
+import { getProjectModelDir } from "./model-status";
 
 interface SidecarResponse {
   header: Record<string, unknown>;
@@ -397,23 +398,15 @@ export class EmbeddingSidecarClient {
   }
 
   private modelDirArg(modelKey: string): string {
-    // 模型目录解析与 embedding-pipeline 的 getProjectModelBaseDir 一致：
-    // models/Xenova/bge-m3（bgem3 唯一模型）
-    const key = modelKey || "bgem3";
-    const candidates: string[] = [];
-    try {
-      candidates.push(path.join(process.resourcesPath, "embed-models", "Xenova", key === "bgem3" ? "bge-m3" : key));
-    } catch {
-      /* 非打包环境 */
+    // 模型目录解析统一走 model-status.ts（设置页状态探测 / reranker / 本地兜底同一套）：
+    // CYRENE_MODELS_DIR → cwd/models → exe 同级 models → resources/embed-models → …
+    // 命中第一个「三个必装文件齐全」的目录；打包态用户把模型放到 exe 同级
+    // models/ 也能被侧车识别，不再只认 resources/embed-models。
+    const resolved = getProjectModelDir("embedding", modelKey || "bgem3");
+    if (!resolved) {
+      throw new Error(`Embedding sidecar model dir not found for ${modelKey}`);
     }
-    if (!app.isPackaged) {
-      // 开发态：仓库根（app.getAppPath()）
-      const repoRoot = app.getAppPath();
-      candidates.push(path.join(repoRoot, "models", "Xenova", "bge-m3"));
-    }
-    const found = candidates.find((candidate) => fs.existsSync(candidate));
-    if (!found) throw new Error(`Embedding sidecar model dir not found for ${modelKey}`);
-    return found;
+    return resolved;
   }
 
   private writeFrame(header: Record<string, unknown>): void {
