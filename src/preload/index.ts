@@ -22,6 +22,7 @@ import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
+import type { ChatExportRequest, ChatExportResponse } from "../shared/chat-export";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
 
@@ -815,6 +816,12 @@ const chatStoreApi = {
   setSessionModel: (id: string, model: string) =>
     ipcRenderer.invoke(IPC.CHATS_SET_SESSION_MODEL, { id, model }),
   openFolder: () => ipcRenderer.invoke(IPC.CHATS_OPEN_FOLDER),
+  // 聊天记录导出：主进程弹目录框、组合 v2 轨迹消息并写 HTML/Markdown
+  exportChats: (payload: ChatExportRequest) =>
+    ipcRenderer.invoke(IPC.CHATS_EXPORT, payload) as Promise<ChatExportResponse>,
+  // 仅允许定位本次导出产出的文件（主进程白名单）
+  revealExportPath: (filePath: string) =>
+    ipcRenderer.invoke(IPC.CHATS_EXPORT_REVEAL, filePath) as Promise<{ ok: boolean; error?: string }>,
   openWorkspace: (workspaceRoot: string) =>
     ipcRenderer.invoke(IPC.CHATS_OPEN_WORKSPACE, workspaceRoot),
   // 聊天文件卡片右键菜单：用本机默认方式打开 / 在资源管理器中定位工作区内的文件
