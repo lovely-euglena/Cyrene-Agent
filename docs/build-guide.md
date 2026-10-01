@@ -88,6 +88,9 @@ cd ../..
 # ③b 语音 sidecar（CyreneVoice；silero_vad.onnx 由 csproj Content 随 publish 输出）
 dotnet publish -c Release -r win-x64 /p:SelfContained=false dotnet/voice/CyreneVoice/CyreneVoice.csproj
 
+# ③c 本地 OCR sidecar（CyreneOcr，Windows.Media.Ocr；仅 Windows，TFM 带平台版本）
+dotnet publish -c Release -r win-x64 /p:SelfContained=false dotnet/ocr-sidecar/CyreneOcr.csproj
+
 # ④ electron-builder（win 便携版，模块收集+asar 约 40~60 分钟）
 npx electron-builder --win dir --x64 -c.electronDist=<你的win-dist路径>
 ```
