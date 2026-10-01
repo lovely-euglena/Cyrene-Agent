@@ -171,11 +171,27 @@ export function CyreneSettingsPanel() {
     }
   }
 
-  /** RAG 模型操作：打开目录/说明/下载站、体检、删除缓存（宿主 settings:cyrene-model-action）。 */
-  async function runModelAction(verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") {
+  /** RAG 模型操作入口：删除缓存先 antd Modal 二次确认（渲染端禁用浏览器 confirm）。 */
+  function runModelAction(verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding"): void {
+    if (modelActionBusy) return;
+    if (verb === "delete-embedding") {
+      Modal.confirm({
+        title: t("settingsPage.cyrene.deleteEmbedding"),
+        content: t("settingsPage.cyrene.deleteEmbeddingConfirm"),
+        okText: t("settingsPage.cyrene.deleteEmbedding"),
+        okButtonProps: { danger: true },
+        cancelText: t("settingsPage.cyrene.cancel"),
+        onOk: () => executeModelAction(verb),
+      });
+      return;
+    }
+    void executeModelAction(verb);
+  }
+
+  /** RAG 模型操作执行：打开目录/说明/下载站、体检、删除缓存（宿主 settings:cyrene-model-action）。 */
+  async function executeModelAction(verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding"): Promise<void> {
     const api = window.settings;
     if (!api?.cyreneModelAction || modelActionBusy) return;
-    if (verb === "delete-embedding" && !window.confirm(t("settingsPage.cyrene.deleteEmbeddingConfirm"))) return;
     setModelActionBusy(verb);
     try {
       const result = await api.cyreneModelAction(verb);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Spin } from "antd";
+import { Alert, Button, Modal, Spin } from "antd";
 import { Eraser, GitBranch, Info, Monitor, Settings2 } from "lucide-react";
 import packageJson from "../../../../../package.json";
 import { SettingsInput, SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
@@ -117,10 +117,20 @@ export function GeneralSettingsPanel() {
     }
   }
 
-  /** 清空聊天记录：逐会话删除（与旧 Electron 设置页 / 原生窗同口径）。 */
-  async function clearChatHistory() {
+  /** 清空聊天记录：二次确认（antd Modal，渲染端禁用浏览器 confirm）后逐会话删除。 */
+  function clearChatHistory(): void {
     if (clearingChat) return;
-    if (!window.confirm(t("settingsPage.general.clearChatHistoryConfirm"))) return;
+    Modal.confirm({
+      title: t("settingsPage.general.clearChatHistory"),
+      content: t("settingsPage.general.clearChatHistoryConfirm"),
+      okText: t("settingsPage.general.clearChatHistoryButton"),
+      okButtonProps: { danger: true },
+      cancelText: t("settingsPage.preferences.cancel"),
+      onOk: () => doClearChatHistory(),
+    });
+  }
+
+  async function doClearChatHistory(): Promise<void> {
     setClearingChat(true);
     try {
       const store = (window as typeof window & {
