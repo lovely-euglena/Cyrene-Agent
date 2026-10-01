@@ -1,18 +1,18 @@
-﻿# install-bge-reranker.ps1
-# 下载 bge-reranker-base（重排序模型，可选）到 models/bge-reranker-base/
+﻿# install-bge-m3.ps1
+# 下载 BGE-M3（Xenova ONNX 量化版）到 models/Xenova/bge-m3/
 # 目录布局与 src/main/rag/model-status.ts 的探测约定一致：
 #   tokenizer.json / config.json / onnx/model_quantized.onnx  （必装，三缺一判「未安装」）
 #   tokenizer_config.json / special_tokens_map.json / sentencepiece.bpe.model （可选附属）
 #
 # 用法（PowerShell）：
-#   .\scripts\install-bge-reranker.ps1                     # 自动选源：hf-mirror → 魔搭 → 官方源
-#   .\scripts\install-bge-reranker.ps1 -Mirror official    # 只用官方源
-#   .\scripts\install-bge-reranker.ps1 -Force              # 已存在文件也重新下载
-#   powershell -ExecutionPolicy Bypass -File .\scripts\install-bge-reranker.ps1
+#   .\scripts\install-bge-m3.ps1                    # 自动选源：hf-mirror → 官方源
+#   .\scripts\install-bge-m3.ps1 -Mirror official   # 只用官方源
+#   .\scripts\install-bge-m3.ps1 -Force             # 已存在文件也重新下载
+#   powershell -ExecutionPolicy Bypass -File .\scripts\install-bge-m3.ps1
 
 param(
     [switch]$Force,
-    [ValidateSet("auto", "hf-mirror", "modelscope", "official")]
+    [ValidateSet("auto", "hf-mirror", "official")]
     [string]$Mirror = "auto"
 )
 
@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # 关掉 IWR 进度条（大文件下会严重拖慢）
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$targetDir = Join-Path $repoRoot "models\bge-reranker-base"
+$targetDir = Join-Path $repoRoot "models\Xenova\bge-m3"
 
 # rel：目标相对路径（/ 分隔）；minBytes：低于此值视为不完整；required：缺失 = 安装失败
 $files = @(
@@ -33,22 +33,12 @@ $files = @(
 )
 
 # ── 候选下载源（按尝试顺序） ──
-# 1) hf-mirror.com — Xenova 量化版（~266MB）
-# 2) 魔搭 ModelScope — BAAI 完整版（~1.06GB，onnx/model.onnx 落盘时改名为 model_quantized.onnx）
-# 3) huggingface.co — 官方源（部分网络不可达，放最后）
 $sources = @()
-if ($Mirror -ne "official" -and $Mirror -ne "modelscope") {
-    $sources += @{ name = "hf-mirror.com（Xenova 量化版 ~266MB）"; base = "https://hf-mirror.com/Xenova/bge-reranker-base/resolve/main/" }
+if ($Mirror -ne "official") {
+    $sources += @{ name = "hf-mirror.com（国内镜像）"; base = "https://hf-mirror.com/Xenova/bge-m3/resolve/main/" }
 }
-if ($Mirror -ne "hf-mirror" -and $Mirror -ne "official") {
-    $sources += @{
-        name  = "魔搭 ModelScope（BAAI 完整版 ~1.06GB）"
-        base  = "https://www.modelscope.cn/models/BAAI/bge-reranker-base/resolve/master/"
-        remap = @{ "onnx/model_quantized.onnx" = "onnx/model.onnx" }
-    }
-}
-if ($Mirror -ne "hf-mirror" -and $Mirror -ne "modelscope") {
-    $sources += @{ name = "huggingface.co（官方源 ~266MB）"; base = "https://huggingface.co/Xenova/bge-reranker-base/resolve/main/" }
+if ($Mirror -ne "hf-mirror") {
+    $sources += @{ name = "huggingface.co（官方源）"; base = "https://huggingface.co/Xenova/bge-m3/resolve/main/" }
 }
 
 # ── 工具函数 ──
@@ -105,7 +95,7 @@ $downloaded = @{}
 
 # ── 主流程 ──
 Write-Host ""
-Write-Host "[install-bge-reranker] 目标目录：$targetDir" -ForegroundColor Cyan
+Write-Host "[install-bge-m3] 目标目录：$targetDir" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 
 $anyDownload = $false
@@ -124,7 +114,7 @@ foreach ($src in $sources) {
     if ($pendingFiles.Count -eq 0) { break }
 
     Write-Host ""
-    Write-Host "[install-bge-reranker] 尝试源：$($src.name)" -ForegroundColor Cyan
+    Write-Host "[install-bge-m3] 尝试源：$($src.name)" -ForegroundColor Cyan
     foreach ($f in $pendingFiles) {
         $rel = [string]$f.rel
         $remote = if ($src.ContainsKey("remap") -and $src.remap.ContainsKey($rel)) { $src.remap[$rel] } else { $rel }
@@ -167,19 +157,19 @@ foreach ($f in $files) {
 
 Write-Host ""
 if ($missingRequired.Count -gt 0) {
-    Write-Host "[install-bge-reranker] ✗ 安装未完成，缺少必装文件：" -ForegroundColor Red
+    Write-Host "[install-bge-m3] ✗ 安装未完成，缺少必装文件：" -ForegroundColor Red
     foreach ($m in $missingRequired) { Write-Host "  - $m" -ForegroundColor Red }
-    Write-Host "  可切换镜像源重试（-Mirror hf-mirror / -Mirror modelscope / -Mirror official），或参考 docs/local-models.md 手动下载。" -ForegroundColor Yellow
+    Write-Host "  可切换镜像源重试（-Mirror hf-mirror / -Mirror official），或参考 docs/local-models.md 手动下载。" -ForegroundColor Yellow
     exit 1
 }
 
 if (-not $anyDownload) {
-    Write-Host "[install-bge-reranker] ✓ 文件已齐全，无需下载（-Force 可强制重新下载）。" -ForegroundColor Green
+    Write-Host "[install-bge-m3] ✓ 文件已齐全，无需下载（-Force 可强制重新下载）。" -ForegroundColor Green
 } else {
-    Write-Host "[install-bge-reranker] ✓ bge-reranker-base 安装完成（共 $([math]::Round($totalBytes / 1MB, 1)) MB）" -ForegroundColor Green
+    Write-Host "[install-bge-m3] ✓ BGE-M3 安装完成（共 $([math]::Round($totalBytes / 1MB, 1)) MB）" -ForegroundColor Green
 }
 if ($missingOptional.Count -gt 0) {
-    Write-Host "[install-bge-reranker] 提示：可选文件未下载（不影响使用）：$($missingOptional -join '、')" -ForegroundColor Yellow
+    Write-Host "[install-bge-m3] 提示：可选文件未下载（不影响使用）：$($missingOptional -join '、')" -ForegroundColor Yellow
 }
-Write-Host "[install-bge-reranker] 回到 设置 → 昔涟设置 → RAG 页面「刷新状态」即可看到「已下载」。" -ForegroundColor Green
+Write-Host "[install-bge-m3] 回到 设置 → 昔涟设置 → RAG 页面「刷新状态」即可看到「已下载」。" -ForegroundColor Green
 exit 0
