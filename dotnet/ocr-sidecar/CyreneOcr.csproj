@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 本地 OCR 依赖 Windows.Media.Ocr（WinRT），必须使用带平台版本的 TFM；
+         net10.0-windows（默认 7.0）拿不到 WinRT 投影。 -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <AssemblyName>CyreneOcr</AssemblyName>
+    <RootNamespace>CyreneOcr</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 合成白底需要直接访问 SoftwareBitmap 像素缓冲（IMemoryBufferByteAccess） -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Linux CI 上做编译验证 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+</Project>
