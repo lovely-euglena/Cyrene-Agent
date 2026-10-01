@@ -348,6 +348,8 @@ public sealed partial class SettingsWindow : NativeWindow
         AddSection("channels", "连接手机", native: false, legacyHash: "channels");
         AddSection("tts", "TTS 设置", native: true);
         AddSection("asr", "ASR 设置", native: true);
+        // OCR 设置仍在 Electron 设置页：WPF 导航只放入口（native:false → 占位跳转按钮）
+        AddSection("ocr", "OCR 设置", native: false, legacyHash: "ocr");
         AddSection("tokens", "Token 用量", native: true);
         AddDivider();
         AddSection("disclaimer", "免责声明", native: true);
@@ -807,7 +809,8 @@ public sealed partial class SettingsWindow : NativeWindow
         var btn = new Button
         {
             Content = pluginManager ? "打开插件管理（原生窗口）"
-              : section == "channels" ? "打开连接手机（独立窗口）" : "在旧版设置中打开",
+              : section == "channels" ? "打开连接手机（独立窗口）"
+              : section == "ocr" ? "打开 OCR 设置（旧版窗口）" : "在旧版设置中打开",
             Width = 220,
             Margin = new Thickness(0, 14, 0, 0),
             FontSize = 14,
