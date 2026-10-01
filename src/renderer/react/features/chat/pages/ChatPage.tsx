@@ -44,6 +44,7 @@ import {
   aguiApi,
   chatStore,
   choiceApi,
+  learnExamApi,
   settingsApprovalApi,
   sidebarApi,
   type ModelConfigApi,
@@ -417,6 +418,22 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const draft = drafts[scopeKey] ?? "";
   const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
   const activeInteraction = sessionInteraction(interactionsBySession, activeSessionId);
+  useEffect(() => {
+    if (!activeSessionId || mode !== "learn") return;
+    const api = learnExamApi();
+    if (!api) return;
+    const onCreated = (event: { conversationId: string; examId: string }) => {
+      if (event.conversationId !== activeSessionId) return;
+      void window.browserPanel?.openExam(event.examId, event.conversationId);
+    };
+    const onChanged = (event: { conversationId: string; examId: string; gradingRequested?: boolean }) => {
+      if (event.conversationId !== activeSessionId) return;
+      if (event.gradingRequested) void queueLearnExamGrading(event.conversationId, event.examId);
+    };
+    const offCreated = api.onCreated(onCreated);
+    const offChanged = api.onChanged(onChanged);
+    return () => { offCreated(); offChanged(); };
+  }, [activeSessionId, mode]);
   const composerInteraction = activeInteraction?.interaction;
   const interactionBusy = activeInteraction?.busy ?? false;
   const hasMessages = messages.length > 0;
@@ -996,8 +1013,23 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           finish: finishEarlyTtsQueue,
         },
         onRunFinished: ({ mode, sessionId, queuePaused }) => {
-          // 刷新列表与队列投影；queuePaused 时暂停消费（先恢复认领再说），否则消费下一条
-          queueFlow.handleRunFinished({ mode, sessionId, queuePaused });
+          void (async () => {
+            try {
+              // 先修复本轮未完成的批改状态，再消费下一条队列，避免把下一轮的 grading 状态误判为本轮失败。
+              if (mode === "learn") {
+                const api = learnExamApi();
+                if (api) {
+                  const exams = await api.listByConversation(sessionId).catch(() => []);
+                  for (const exam of exams) {
+                    if (exam.status === "grading") await api.markGradingFailed(sessionId, exam.examId).catch(() => undefined);
+                  }
+                }
+              }
+            } finally {
+              // 刷新列表与队列投影；queuePaused 时暂停消费（先恢复认领再说），否则消费下一条。
+              queueFlow.handleRunFinished({ mode, sessionId, queuePaused });
+            }
+          })();
         },
       },
       registries: {
@@ -1504,6 +1536,15 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     return { ok: true };
   }
 
+  async function queueLearnExamGrading(conversationId: string, examId: string) {
+    const result = await submitTextToSession({
+      sessionId: conversationId,
+      mode: "learn",
+      text: `请批改我刚刚提交的试卷（试卷编号：${examId}）。先调用 learn_exam_get_submission 获取冻结的试卷与作答，再按试卷中的评分标准逐题批改，最后调用 learn_exam_save_grading 保存评分结果。`,
+    });
+    if (!result.ok) console.warn("[LearnExam] 批改请求入队失败:", result.error.message);
+  }
+
   async function cancelCurrentRun() {
     const sessionId = activeSessionId;
     if (!sessionId) return;
@@ -1695,7 +1736,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   /** 计划标签 ID：会话内唯一（计划内容始终跟随当前会话） */
   const planTabId = `plan:${activeSessionId ?? "session"}`;
 
-  /** 右侧面板标签的固定顺序：文件树 → 文件预览 → Diff → 计划 */
+  /** 右侧面板标签固定顺序：浏览器 → 文件树 → 文件预览 → Diff → 子任务 → 计划 */
   const inspectorTabIds = [
     ...(browserTabOpen ? ["browser"] : []),
     ...(filesTabOpen ? ["files"] : []),
