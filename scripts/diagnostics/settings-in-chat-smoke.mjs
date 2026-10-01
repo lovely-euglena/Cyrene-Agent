@@ -2,17 +2,18 @@
 //
 // 流程：
 //   1) electron . --inspect=<port>（file:// 产物模式，需要先 build:main/preload/renderer）
+//      或 --exe <path> 直接跑打包版（release/win-unpacked/Cyrene.exe）
 //   2) 监听 browser-window-created，收集渲染端 console error / render-process-gone
 //   3) ipcMain.emit("sidebar:open-settings", {}, section) —— 等价状态栏「设置」按钮
 //   4) 等聊天窗出现并渲染 settings 视图；逐 section 点击导航并校验关键文案
-//   5) 截图到 --out 目录；报告错误列表；退出应用
+//   5) 截图到 --out 目录；验证界面字体 apply/reset；报告错误列表；退出应用
 //
 // 用法：
 //   node scripts/diagnostics/settings-in-chat-smoke.mjs
+//   node scripts/diagnostics/settings-in-chat-smoke.mjs --exe release/win-unpacked/Cyrene.exe
 //   node scripts/diagnostics/settings-in-chat-smoke.mjs --out <dir> --keep-running
 //
-// 说明：依赖 dev 环境（npm start 等价的 electron .），userData 与打包版共用；
-// 若应用正在运行会因单实例锁直接退出——先关掉正在运行的 Cyrene。
+// 说明：userData 与打包版共用；若应用正在运行会因单实例锁直接退出——先关掉正在运行的 Cyrene。
 
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -27,6 +28,9 @@ const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out");
 const outDir = resolve(outIndex >= 0 ? (args[outIndex + 1] ?? join(ROOT, ".smoke-out")) : join(ROOT, ".smoke-out"));
 const keepRunning = args.includes("--keep-running");
+// --exe <path>：对打包版（release/win-unpacked/Cyrene.exe）做同样的 E2E（默认 dev: electron .）
+const exeIndex = args.indexOf("--exe");
+const packagedExe = exeIndex >= 0 ? resolve(args[exeIndex + 1] ?? "") : null;
 const INSPECT_PORT = 9229;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -51,16 +55,16 @@ async function waitFor(fn, { timeoutMs = 60_000, intervalMs = 500, label = "cond
 }
 
 async function main() {
-  if (!existsSync(join(ROOT, "dist", "renderer", "react", "index.html"))) {
+  if (packagedExe) {
+    if (!existsSync(packagedExe)) throw new Error(`打包版不存在：${packagedExe}`);
+  } else if (!existsSync(join(ROOT, "dist", "renderer", "react", "index.html"))) {
     throw new Error("缺少 dist/renderer/react —— 先执行 npm run build");
   }
   mkdirSync(outDir, { recursive: true });
 
-  const child = spawn(electronPath, [`--inspect=${INSPECT_PORT}`, "."], {
-    cwd: ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
-  });
+  const child = packagedExe
+    ? spawn(packagedExe, [`--inspect=${INSPECT_PORT}`], { cwd: dirname(packagedExe), stdio: ["ignore", "pipe", "pipe"] })
+    : spawn(electronPath, [`--inspect=${INSPECT_PORT}`, "."], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } });
   child.stdout.on("data", () => {});
   child.stderr.on("data", () => {});
   child.on("exit", (code) => {
