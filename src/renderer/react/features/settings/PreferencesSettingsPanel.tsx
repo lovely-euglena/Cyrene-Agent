@@ -36,6 +36,10 @@ interface PreferencesValues {
   momentsLiveliness: Liveliness;
   chatSocialContextEnabled: boolean;
   citaEnabled: boolean;
+  /** 截图后端：内置 / Snipaste（宿主切换截图服务实现）。 */
+  screenshotBackend: "builtin" | "snipaste";
+  /** Snipaste 可执行文件路径（后端为 snipaste 时必填）。 */
+  snipastePath: string;
 }
 
 type ChannelStatus = Record<string, { phase?: string }>;
@@ -52,6 +56,8 @@ const defaults: PreferencesValues = {
   momentsLiveliness: "quiet",
   chatSocialContextEnabled: false,
   citaEnabled: false,
+  screenshotBackend: "builtin",
+  snipastePath: "",
 };
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -73,6 +79,8 @@ function readPreferences(value: unknown): PreferencesValues {
     momentsLiveliness: liveliness === "natural" || liveliness === "lively" ? liveliness : "quiet",
     chatSocialContextEnabled: normalizeChatSocialContextEnabled(input.chatSocialContextEnabled),
     citaEnabled: input.citaEnabled === true,
+    screenshotBackend: input.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
+    snipastePath: typeof input.snipastePath === "string" ? input.snipastePath : "",
   };
 }
 
@@ -142,6 +150,8 @@ export function PreferencesSettingsPanel() {
         mobileMessageSegmentation,
         proactiveChatMode,
         proactiveDeliveryTarget,
+        screenshotBackend,
+        snipastePath,
       } = values;
       await window.settings.saveGeneral({
         citaEnabled,
@@ -154,6 +164,8 @@ export function PreferencesSettingsPanel() {
         mobileMessageSegmentation,
         proactiveChatMode,
         proactiveDeliveryTarget,
+        screenshotBackend,
+        snipastePath: snipastePath.trim(),
       });
       setStatus(t("settingsPage.preferences.saved"));
     } catch {
@@ -260,6 +272,24 @@ export function PreferencesSettingsPanel() {
             <Card>
               <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.chatSocialContext")}</strong><span>{t("settingsPage.preferences.chatSocialContextDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.chatSocialContext")} checked={values.chatSocialContextEnabled} onChange={(checked) => update("chatSocialContextEnabled", checked)} /></div>
               <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.cita")}</strong><span>{t("settingsPage.preferences.citaDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.cita")} checked={values.citaEnabled} onChange={(checked) => update("citaEnabled", checked)} /></div>
+            </Card>
+          </section>
+
+          <section className="cy-settings-section">
+            <div className="cy-settings-section__heading"><h2>{t("settingsPage.preferences.screenshot")}</h2><p>{t("settingsPage.preferences.screenshotDescription")}</p></div>
+            <Card>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.screenshotBackend")}</strong><span>{t("settingsPage.preferences.screenshotBackendDescription")}</span></div>
+                <SettingsSegmented value={values.screenshotBackend} options={[{ label: t("settingsPage.preferences.screenshotBuiltin"), value: "builtin" }, { label: "Snipaste", value: "snipaste" }]} onChange={(value) => update("screenshotBackend", value as "builtin" | "snipaste")} />
+              </div>
+              {values.screenshotBackend === "snipaste" && (
+                <div className="cy-settings-row">
+                  <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.snipastePath")}</strong><span>{t("settingsPage.preferences.snipastePathDescription")}</span></div>
+                  <div className="cy-settings-row__control">
+                    <SettingsInput value={values.snipastePath} placeholder="C:\\Program Files\\Snipaste\\Snipaste.exe" aria-label={t("settingsPage.preferences.snipastePath")} onChange={(event) => update("snipastePath", event.target.value)} />
+                  </div>
+                </div>
+              )}
             </Card>
           </section>
 

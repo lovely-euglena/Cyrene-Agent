@@ -405,6 +405,63 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   // 模型安装说明文档（Gitee 主仓；GitHub 在本机网络不可达，勿换回）
   const LOCAL_MODELS_DOC_URL = "https://gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md";
 
+  /**
+   * 「昔涟设置」RAG 模型操作（native cyreneAction 与渲染端 IPC 共用）：
+   *   open-docs / open-dir / open-site / check-model-update / delete-embedding。
+   * 返回可直接展示的反馈；native 侧包一层 notice，渲染端直接展示 message。
+   */
+  async function runCyreneModelAction(verb: string): Promise<{
+    ok: boolean;
+    message?: string;
+    dir?: string;
+    error?: string;
+  }> {
+    try {
+      switch (verb) {
+        case "open-docs":
+          await electronShell.openExternal(LOCAL_MODELS_DOC_URL);
+          return { ok: true, message: "已在浏览器打开模型安装说明" };
+        case "open-dir": {
+          const dir = getProjectModelsDir();
+          fs.mkdirSync(dir, { recursive: true });
+          const openError = await electronShell.openPath(dir);
+          if (openError) return { ok: false, error: `打开目录失败：${openError}` };
+          return { ok: true, message: `已打开模型目录：${dir}`, dir };
+        }
+        case "open-site": {
+          const mirror = loadGeneralSettings().ragDownloadMirror;
+          const url = mirror === "hf-mirror"
+            ? "https://hf-mirror.com/Xenova/bge-m3"
+            : "https://huggingface.co/Xenova/bge-m3";
+          await electronShell.openExternal(url);
+          return { ok: true, message: `已打开模型下载站（${mirror === "hf-mirror" ? "hf-mirror" : "官方"}）` };
+        }
+        case "check-model-update": {
+          pushSettingsSnapshotToNative();
+          const embedding = getModelInstallStatusDetail("embedding", "bgem3");
+          const reranker = getModelInstallStatusDetail("reranker", "standard");
+          const embeddingText = embedding.installed
+            ? "BGE-M3 已安装"
+            : `BGE-M3 未安装${embedding.missingFiles.length > 0 ? `（缺少 ${embedding.missingFiles.join("、")}）` : ""}`;
+          const rerankerText = reranker.installed
+            ? "bge-reranker-base 已安装"
+            : "bge-reranker-base 未安装（可选）";
+          return { ok: true, message: `已重新检测：${embeddingText}；${rerankerText}。` };
+        }
+        case "delete-embedding": {
+          const removed = deleteEmbeddingModel("bgem3");
+          console.log("[Cyrene] embedding model deleted:", removed.length > 0 ? removed.join("; ") : "(no files found)");
+          pushSettingsSnapshotToNative();
+          return { ok: true, message: "BGE-M3 模型已删除（项目 models 目录 + HF 缓存；下次使用需重新安装）" };
+        }
+        default:
+          return { ok: false, error: `未知操作：${verb}` };
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   const asStr = (value: unknown): string => (typeof value === "string" ? value : "");
   const asObj = (value: unknown): Record<string, unknown> =>
     value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -1209,70 +1266,29 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               windowManager.createStickerManagerWindow();
               return;
             }
-            // RAG：模型安装说明（浏览器打开 Gitee 文档；native 侧另有应用内说明弹窗）
-            if (verb === "open-model-docs") {
-              void electronShell.openExternal(LOCAL_MODELS_DOC_URL)
-                .then(() => nativeNotice("cyrene", "ok", "已在浏览器打开模型安装说明"))
-                .catch((err) =>
-                  nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
-              return;
-            }
-            // RAG：打开模型目录（手动安装：把模型文件放进去）
-            if (verb === "open-model-dir") {
-              const modelsDir = getProjectModelsDir();
-              try {
-                fs.mkdirSync(modelsDir, { recursive: true });
-              } catch (err) {
-                nativeNotice("cyrene", "error", `创建模型目录失败：${err instanceof Error ? err.message : String(err)}`);
-                return;
-              }
-              void electronShell.openPath(modelsDir).then((error) => {
-                if (error.length > 0) nativeNotice("cyrene", "error", `打开目录失败：${error}`);
-                else nativeNotice("cyrene", "ok", `已打开模型目录：${modelsDir}`);
+            // RAG 模型操作（打开说明/目录/下载站、体检、删除缓存）：
+            // 与渲染端 IPC（settings:cyrene-model-action）共用 runCyreneModelAction。
+            const modelAction = verb === "open-model-docs"
+              ? "open-docs"
+              : verb === "open-model-dir"
+                ? "open-dir"
+                : verb === "open-model-site"
+                  ? "open-site"
+                  : verb;
+            if (
+              modelAction === "open-docs" ||
+              modelAction === "open-dir" ||
+              modelAction === "open-site" ||
+              modelAction === "check-model-update" ||
+              modelAction === "delete-embedding"
+            ) {
+              void runCyreneModelAction(modelAction).then((result) => {
+                nativeNotice(
+                  "cyrene",
+                  result.ok ? "ok" : "error",
+                  result.ok ? (result.message ?? "完成") : (result.error ?? "操作失败"),
+                );
               });
-              return;
-            }
-            // RAG：打开模型下载站（按当前镜像源：hf-mirror / 官方）
-            if (verb === "open-model-site") {
-              const mirror = loadGeneralSettings().ragDownloadMirror;
-              const url = mirror === "hf-mirror"
-                ? "https://hf-mirror.com/Xenova/bge-m3"
-                : "https://huggingface.co/Xenova/bge-m3";
-              void electronShell.openExternal(url)
-                .then(() => nativeNotice("cyrene", "ok", `已打开模型下载站（${mirror === "hf-mirror" ? "hf-mirror" : "官方源"}）`))
-                .catch((err) =>
-                  nativeNotice("cyrene", "error", `打开失败：${err instanceof Error ? err.message : String(err)}`));
-              return;
-            }
-            // RAG：删除 embedding 模型（确认框在 native 侧弹；宿主只做删除）
-            // 清两个落点：项目侧 models/Xenova/bge-m3（候选目录全扫）+ HF 缓存
-            if (verb === "delete-embedding") {
-              try {
-                const removed = deleteEmbeddingModel("bgem3");
-                console.log("[Cyrene] embedding model deleted:", removed.length > 0 ? removed.join("; ") : "(no files found)");
-                nativeNotice("cyrene", "ok", "BGE-M3 模型已删除（项目 models 目录 + HF 缓存；下次使用需重新安装）");
-              } catch (err) {
-                nativeNotice("cyrene", "error", `删除失败：${err instanceof Error ? err.message : String(err)}`);
-              }
-              pushSettingsSnapshotToNative();
-              return;
-            }
-            // RAG：重新体检模型状态（更新=手动替换后回到本页看状态）
-            if (verb === "check-model-update") {
-              pushSettingsSnapshotToNative();
-              const embedding = getModelInstallStatusDetail("embedding", "bgem3");
-              const reranker = getModelInstallStatusDetail("reranker", "standard");
-              const embeddingText = embedding.installed
-                ? "BGE-M3 已安装"
-                : `BGE-M3 未安装${embedding.missingFiles.length > 0 ? `（缺少 ${embedding.missingFiles.join("、")}）` : ""}`;
-              const rerankerText = reranker.installed
-                ? "bge-reranker-base 已安装"
-                : "bge-reranker-base 未安装（可选）";
-              nativeNotice(
-                "cyrene",
-                embedding.installed ? "ok" : "info",
-                `已重新检测：${embeddingText}；${rerankerText}。`,
-              );
               return;
             }
             if (verb === "add-sticker") {
@@ -1830,6 +1846,10 @@ createTray: (input) => {
           ipc,
           getParentWindow: () => settingsWindow,
         });
+
+        // 昔涟设置：RAG 模型操作（渲染端 IPC；与 native cyreneAction 共用实现）
+        ipc.handle(IPC.SETTINGS_CYRENE_MODEL_ACTION, (_event, verb: unknown) =>
+          runCyreneModelAction(typeof verb === "string" ? verb : ""));
 
         // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
         registerNewsIpc(ipc);

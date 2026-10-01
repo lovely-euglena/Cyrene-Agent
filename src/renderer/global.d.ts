@@ -79,6 +79,21 @@ interface SettingsWindowApi {
   setPetAlwaysOnTop: (value: boolean) => void;
   setPetVisible: (value: boolean) => void;
   setPetZoom: (value: number) => void;
+  // 便携模式 / 缓存目录（通用设置「数据与存储」）
+  getPortableStatus?: () => Promise<import("../shared/portable-mode").PortableDataLocationStatus>;
+  pickPortableDir?: () => Promise<string | null>;
+  applyPortableMode?: (payload: { enabled: boolean; dir: string }) =>
+    Promise<import("../shared/portable-mode").PortableApplyResult>;
+  getCacheDirStatus?: () => Promise<{ effectiveDir: string; override: string | null; portableActive: boolean }>;
+  pickCacheDir?: () => Promise<string | null>;
+  setCacheDir?: (dir: string) => Promise<{ ok: boolean; changed: boolean; restartRequired: boolean }>;
+  // 界面字体（外观设置：导入/恢复默认）
+  pickUiFont?: () => Promise<string | null>;
+  importUiFont?: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;
+  resetUiFont?: () => Promise<import("../shared/ui-font").UiFont>;
+  // 昔涟设置：RAG 模型操作（打开目录/安装说明/下载站/体检/删除缓存）
+  cyreneModelAction?: (verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") =>
+    Promise<{ ok: boolean; message?: string; dir?: string; error?: string }>;
   listModelProfiles: () => Promise<{ profiles: Array<{
     id: string;
     provider: string;

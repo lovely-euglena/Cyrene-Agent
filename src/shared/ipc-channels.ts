@@ -153,6 +153,8 @@ export const IPC = {
   SETTINGS_CACHE_GET: "settings:cache-get",
   SETTINGS_CACHE_SET: "settings:cache-set",
   SETTINGS_CACHE_PICK_DIR: "settings:cache-pick-dir",
+  // 昔涟设置：RAG 模型操作（打开目录/安装说明/下载站/体检/删除缓存）
+  SETTINGS_CYRENE_MODEL_ACTION: "settings:cyrene-model-action",
   SETTINGS_GET_TIMEOUT_SETTINGS: "settings:get-timeout-settings",
   SETTINGS_SAVE_TIMEOUT_SETTINGS: "settings:save-timeout-settings",
   UI_THEME_GET: "ui-theme:get",
