@@ -27,6 +27,7 @@ import { runVerificationTool } from "./builtin-tools/run-verification-tool";
 import { runShellTool } from "./builtin-tools/run-shell-tool";
 import { shellJobTool } from "./builtin-tools/shell-job-tool";
 import { sshTools } from "../../ssh/ssh-tools";
+import { storageTools } from "../../cloud-storage/storage-tools";
 
 let sendToLive2DWindow: (channel: string, payload?: unknown) => void = () => {};
 export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
@@ -45,6 +46,8 @@ toolRegistry.register(wrapToolForNativeHost(runShellTool));
 toolRegistry.register(wrapToolForNativeHost(shellJobTool));
 // SSH 托管工具：会话在 cyrene-native --ssh-host，与本地 shell 相邻展示
 for (const tool of sshTools) toolRegistry.register(tool);
+// 云存储托管工具：连接在 cyrene-native --storage-host，紧随 SSH 展示
+for (const tool of storageTools) toolRegistry.register(tool);
 toolRegistry.register(wrapToolForNativeHost(runVerificationTool));
 toolRegistry.register(wrapToolForNativeHost(installMcpServerTool));
 logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_shell / install_mcp_server");
