@@ -74,6 +74,9 @@ extraResources:
   # .NET embedding sidecar（bge-m3 ORT 加速；exe 存在时默认启用，缺失回退 worker）
   - from: dotnet/embedding-sidecar/bin/Release/net10.0/win-x64/publish
     to: embed-sidecar
+  # 本地 OCR sidecar（Windows.Media.Ocr；缺失时 ocr_image 工具明确报「引擎未安装」）
+  - from: dotnet/ocr-sidecar/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish
+    to: ocr
   # 模型不打进安装包（CI 无 models/；用户按 docs/local-models.md 手动安装）。
   # 运行时探测顺序见 src/main/rag/model-status.ts：
   #   打包态 = exe 同级 models/ → resources/embed-models → resources/models → …
