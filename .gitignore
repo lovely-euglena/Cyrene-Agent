@@ -189,6 +189,8 @@ nul
 .idea/
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
 
 # Sensitive keys and credentials
 *.key
