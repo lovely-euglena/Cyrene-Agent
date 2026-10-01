@@ -37,7 +37,11 @@ internal static class Calculator
     {
         if (args is null || !args.Value.TryGetProperty("expression", out var exprEl))
             throw new InvalidOperationException("缺少 expression 参数");
-        var src = exprEl.GetString();
+        // 坏端点可能传数字（expression: 42）——GetString() 会抛 .NET 内部英文
+        // 异常串给模型（冒烟 number_args），这里给人话错误
+        if (exprEl.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+            throw new InvalidOperationException($"expression 必须是字符串（收到 {exprEl.ValueKind}）");
+        var src = exprEl.ValueKind == JsonValueKind.String ? exprEl.GetString() : null;
         if (string.IsNullOrWhiteSpace(src))
             throw new InvalidOperationException("expression 不能为空");
         var value = Parse(src);
