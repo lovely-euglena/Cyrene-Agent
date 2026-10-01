@@ -4837,3 +4837,13 @@ body {
 
 #cloud-storage-status.is-ok { color: #4ade80; }
 #cloud-storage-status.is-error { color: #ff9db1; }
+
+/* 云存储编辑表单：协议分组显隐（.is-hidden 无全局规则，按组件声明） */
+[data-cs-group].is-hidden {
+  display: none;
+}
+
+/* OCR：服务商切到云端时隐藏本地引擎配置（预留行为） */
+#ocr-local-config.is-hidden {
+  display: none;
+}

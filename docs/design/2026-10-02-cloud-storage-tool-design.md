@@ -95,7 +95,7 @@ cyrene-native（.NET，常驻子进程）
 | --- | --- | --- | --- | --- |
 | SFTP | SSH.NET（已引用） | 2026.0.0 | MIT | 与 `--ssh-host` 同库；`SftpClient` 直接可用 |
 | FTP / FTPS | FluentFTP | 55.0.0 | MIT | explicit（AUTH TLS, 21）/ implicit（990）都支持；UTF-8、被动模式成熟 |
-| WebDAV | WebDAVClient | 2.7.0 | MIT | saguiitay/WebDAVClient，2026-05 更新；PROPFIND 兼容性交给库 |
+| WebDAV | 自带 HttpClient 极简实现 | — | — | 实现时替换了 WebDAVClient：Basic/Digest/NTLM 协商 + 自签证书回调更可控（见 §15） |
 | S3 | AWSSDK.S3 | 4.0.104 | Apache-2.0 | 官方 SDK；`ServiceURL` + `ForcePathStyle` 覆盖 MinIO/R2/B2；multipart 自动 |
 
 补充：
