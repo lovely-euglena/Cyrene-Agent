@@ -69,9 +69,12 @@ React 页 CSP `font-src` 放行 `local-font:`（协议处理器白名单文件�
   `tsc`（main/preload/renderer）0 错。
 - E2E：`node scripts/diagnostics/settings-in-chat-smoke.mjs`（需先 `npm run build`）——
   inspector 驱动 `sidebar:open-settings` → 断言聊天窗内设置页 17 个导航项、逐 section 关键文案、
-  滚动截图、界面字体 apply/reset、渲染端 0 console error；**连跑 3 次冷启动全绿**（验证队列修复）。
-- 打包版：`node scripts/diagnostics/settings-in-chat-smoke.mjs --exe release/win-unpacked/Cyrene.exe`。
-- 打包：`release/win-unpacked` 整目录重打；native 侧未改动（WPF 窗保留）。
+  滚动截图、界面字体 apply/reset、渲染端 0 console error；dev 连跑 3 次冷启动全绿。
+  注意脚本先等「core-ready 门」（桌宠窗）= 对齐真实入口的激活代理排队语义；少了这道门
+  会绕过 core 阶段直接开窗，渲染端 bootstrap 撞上未注册的 chats IPC（打包版必现假阴性）。
+- 打包版：`node scripts/diagnostics/settings-in-chat-smoke.mjs --exe release/win-unpacked/Cyrene.exe` 全绿
+  （`release/win-unpacked` 已重打，2026-10-01 18:46）。
+- native 侧未改动（WPF 窗保留为回退）。
 
 ## 6. 遗留 / 说明
 
