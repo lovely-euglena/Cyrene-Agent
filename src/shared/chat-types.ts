@@ -9,6 +9,7 @@ import type { MusicCardData } from "./music-card";
 import type { TodoItem } from "./todo-types";
 import type { TaskDelegationPresentation } from "./task-session";
 import type { ContextUsageSnapshot } from "./context-usage";
+import type { BrowserElementSelection } from "./browser-panel-types";
 
 // - schemaVersion 用于以后改 schema 时的迁移判断；当前固定 1。
 
@@ -205,7 +206,7 @@ export type ChatPresentationCheckpointPatch = Partial<Pick<ChatMessage,
   "runSnapshot" | "ttsCacheKey" | "ttsCacheVersion" | "musicCard" | "contextUsage"
 >> & { delta?: ChatPresentationDelta };
 
-export type MessageAttachment = ImageMessageAttachment | DocumentMessageAttachment;
+export type MessageAttachment = ImageMessageAttachment | DocumentMessageAttachment | WebElementMessageAttachment;
 
 export interface ImageMessageAttachment {
   kind: "image";
@@ -229,6 +230,12 @@ export interface DocumentMessageAttachment {
   reason?: string;
 }
 
+export interface WebElementMessageAttachment {
+  kind: "web-element";
+  name: string;
+  element: BrowserElementSelection;
+}
+
 /** 对话工作区绑定：将一个可信目录绑定到对话 */
 export interface ConversationWorkspaceBinding {
   /** 规范化后的绝对路径（realpath + Windows 标准化） */
@@ -244,14 +251,15 @@ export interface ConversationWorkspaceBinding {
  * blob: 预览 URL、预处理状态等瞬态数据不落盘，派发时由渲染层重建。
  */
 export interface PendingChatAttachment {
-  kind: "image" | "document";
+  kind: "image" | "document" | "web-element";
   name: string;
   /** 主进程落盘的附件绝对路径（临时文件或用户文件），派发时按它重新读取。 */
-  filePath: string;
+  filePath?: string;
   mime?: string;
   caption?: string;
   /** 截图标注标记：标注像素已由截图 helper 绘入图片文件，此标记供派发时的 caption 提示词分支与展示使用。 */
   hasAnnotations?: boolean;
+  element?: BrowserElementSelection;
 }
 
 /**

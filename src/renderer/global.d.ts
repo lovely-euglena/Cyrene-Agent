@@ -153,7 +153,11 @@ interface BrowserPanelApi {
   openInNewTab: (url: string) => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
   activateTab: (tabId: string) => Promise<boolean>;
   closeTab: (tabId: string) => Promise<boolean>;
+  startElementPicker: () => Promise<boolean>;
+  cancelElementPicker: () => Promise<boolean>;
   onStateChanged: (callback: (state: import("../shared/browser-panel-types").BrowserPanelState) => void) => () => void;
+  onElementSelected: (callback: (element: import("../shared/browser-panel-types").BrowserElementSelection) => void) => () => void;
+  onOpenForControl: (callback: () => void) => () => void;
 }
 
 declare global {

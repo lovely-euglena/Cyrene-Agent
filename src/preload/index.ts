@@ -23,7 +23,7 @@ import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
-import type { BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
+import type { BrowserElementSelection, BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
 
 // 渲染目标标识：preload 每次加载（即每次页面初始化/重新加载）生成一次，
 // 随活动会话一并上报主进程；同一页面内切换会话不改变该标识。
@@ -138,10 +138,22 @@ const browserPanelApi = {
   openInNewTab: (url: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_OPEN_IN_NEW_TAB, url) as Promise<BrowserPanelResult>,
   activateTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_ACTIVATE_TAB, tabId) as Promise<boolean>,
   closeTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLOSE_TAB, tabId) as Promise<boolean>,
+  startElementPicker: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_START_ELEMENT_PICKER) as Promise<boolean>,
+  cancelElementPicker: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_CANCEL_ELEMENT_PICKER) as Promise<boolean>,
   onStateChanged: (callback: (state: BrowserPanelState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: BrowserPanelState) => callback(state);
     ipcRenderer.on(IPC.BROWSER_PANEL_STATE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.BROWSER_PANEL_STATE_CHANGED, listener);
+  },
+  onElementSelected: (callback: (element: BrowserElementSelection) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, element: BrowserElementSelection) => callback(element);
+    ipcRenderer.on(IPC.BROWSER_PANEL_ELEMENT_SELECTED, listener);
+    return () => ipcRenderer.removeListener(IPC.BROWSER_PANEL_ELEMENT_SELECTED, listener);
+  },
+  onOpenForControl: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.BROWSER_PANEL_OPEN_FOR_CONTROL, listener);
+    return () => ipcRenderer.removeListener(IPC.BROWSER_PANEL_OPEN_FOR_CONTROL, listener);
   },
 };
 contextBridge.exposeInMainWorld("browserPanel", browserPanelApi);

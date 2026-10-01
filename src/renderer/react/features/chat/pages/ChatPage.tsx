@@ -1640,6 +1640,11 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     setActiveTabId("browser");
   };
 
+  useEffect(() => window.browserPanel?.onOpenForControl(() => {
+    setBrowserTabOpen(true);
+    setActiveTabId("browser");
+  }), []);
+
   const openWebLink = useCallback(async (url: string, destination: "cyrene" | "external") => {
     if (destination === "external") {
       await window.system?.openExternal(url);
