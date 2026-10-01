@@ -91,6 +91,13 @@ public static class Program
             return Agents.AgentOrchestrator.RunProtocolLoop();
         }
 
+        // 纯后端 Agent 循环测试版：LLM function-calling while 循环全在本进程
+        // （mock/真实端点均可），无 Electron 依赖——见 Agents.AgentLoop 头注释。
+        if (args.Length > 0 && args[0] == "--agent-loop")
+        {
+            return Agents.AgentLoop.Run(args[1..]).GetAwaiter().GetResult();
+        }
+
         var app = new WpfApplication
         {
             ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,
