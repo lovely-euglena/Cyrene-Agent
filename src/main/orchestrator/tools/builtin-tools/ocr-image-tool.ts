@@ -16,6 +16,14 @@ import type { OcrResult } from "../../../ocr/types";
 const LOG_PREFIX = "[OcrImageTool]";
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 
+/** 可重试的错误码（引擎临时故障/超时/无结果）；配置/文件类错误重试无意义。 */
+const RETRYABLE_OCR_CODES = new Set([
+  "OCR_TIMEOUT",
+  "OCR_NO_RESULT",
+  "OCR_ENGINE_START_FAILED",
+  "OCR_FAILED",
+]);
+
 function ensureAbsolute(p: string): string | null {
   if (!p) return null;
   if (!path.isAbsolute(p)) return null;
@@ -81,10 +89,18 @@ async function executeOcrImage(args: Record<string, unknown>): Promise<string> {
     const result = await runOcr({ imagePath: filePath, language: language || undefined, withPositions });
     return formatResult(result, withPositions);
   } catch (err) {
-    const code = (err as { code?: unknown })?.code;
+    const code = typeof (err as { code?: unknown })?.code === "string"
+      ? (err as { code: string }).code
+      : "OCR_FAILED";
     const message = err instanceof Error ? err.message : String(err);
-    console.log(LOG_PREFIX, "ocr_image 失败:", code ?? "", message);
-    return `[错误·OCR${typeof code === "string" ? ` ${code}` : ""}] ${message}`;
+    console.log(LOG_PREFIX, "ocr_image 失败:", code, message);
+    // 结构化失败：执行边界按 success:false 标记失败并透出 errorCode
+    return JSON.stringify({
+      success: false,
+      errorCode: code,
+      error: message,
+      retryable: RETRYABLE_OCR_CODES.has(code),
+    });
   }
 }
 

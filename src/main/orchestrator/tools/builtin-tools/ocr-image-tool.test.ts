@@ -77,13 +77,17 @@ describe("ocr_image 工具", () => {
     fs.rmSync(path.dirname(file), { recursive: true, force: true });
   });
 
-  it("OcrError 映射为 [错误·OCR <code>]", async () => {
+  it("OcrError 映射为结构化失败（success:false + errorCode）", async () => {
     const file = makeTempImage();
     ocrState.error = new OcrError("OCR_IMAGE_NOT_FOUND", "图片不存在");
 
     const out = await ocrImageTool.execute({ path: file });
-    expect(out).toContain("[错误·OCR OCR_IMAGE_NOT_FOUND]");
-    expect(out).toContain("图片不存在");
+    expect(JSON.parse(out)).toMatchObject({
+      success: false,
+      errorCode: "OCR_IMAGE_NOT_FOUND",
+      error: "图片不存在",
+      retryable: false,
+    });
 
     fs.rmSync(path.dirname(file), { recursive: true, force: true });
   });
