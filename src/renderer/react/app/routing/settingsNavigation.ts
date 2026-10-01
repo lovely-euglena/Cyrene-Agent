@@ -26,6 +26,13 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   mcp: "mcp",
   channels: "channels",
   disclaimer: "disclaimer",
+  // fork 旧 section 名 → 聊天窗设置页落点（2026-10 入口统一后，
+  // 主进程可能带着这些历史 section 进来；不能落错页）
+  user: "general", // 个人资料在头像菜单的用户资料弹窗维护
+  about: "general", // 版本 / 更新在「常规」；运行信息不再单独成页
+  portable: "general", // 便携模式 / 数据目录在「常规」
+  cache: "general", // 缓存目录在「常规」
+  runtime: "models", // 旧「高级设置」（请求超时 / 工具并发）
 };
 
 export function resolveSettingsDestination(section?: string): SettingsDestination {

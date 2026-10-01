@@ -20,7 +20,12 @@ function makeShellDeps(overrides: Partial<ShellDependencies> = {}): ShellDepende
   fireTrayChat(): void;
   splashWindow: ReturnType<typeof createFakeBrowserWindow>;
   chatWindow: ReturnType<typeof createFakeBrowserWindow>;
-  windowManager: { createPetWindow: ReturnType<typeof vi.fn>; openReactChatWindow: ReturnType<typeof vi.fn> };
+  windowManager: {
+    createPetWindow: ReturnType<typeof vi.fn>;
+    openReactChatWindow: ReturnType<typeof vi.fn>;
+    openSettings: ReturnType<typeof vi.fn>;
+    createSettingsWindow: ReturnType<typeof vi.fn>;
+  };
 } {
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
@@ -29,6 +34,8 @@ function makeShellDeps(overrides: Partial<ShellDependencies> = {}): ShellDepende
   const windowManager = {
     createPetWindow: vi.fn(),
     openReactChatWindow: vi.fn(async () => chatWindow),
+    openSettings: vi.fn(async () => undefined),
+    createSettingsWindow: vi.fn(),
   };
   let trayChatRequest: ((request: { kind: string }) => void) | null = null;
 
@@ -131,6 +138,32 @@ describe("startShell", () => {
 
     await deps.activation.markReady();
     expect(deps.windowManager.openReactChatWindow).toHaveBeenCalledWith("s1");
+  });
+
+  it("routes settings activation to the in-chat settings page (section 透传)", async () => {
+    const openSettings = vi.fn();
+    const deps = makeShellDeps({ openSettings });
+    await startShell(deps);
+    await deps.activation.markReady();
+
+    deps.activation.request({ kind: "settings", section: "api" });
+    await vi.waitFor(() => {
+      expect(deps.windowManager.openSettings).toHaveBeenCalledWith("api");
+    });
+    expect(openSettings).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the native settings entry when the chat window fails to open", async () => {
+    const openSettings = vi.fn();
+    const deps = makeShellDeps({ openSettings });
+    deps.windowManager.openSettings.mockRejectedValueOnce(new Error("chat load failed"));
+    await startShell(deps);
+    await deps.activation.markReady();
+
+    deps.activation.request({ kind: "settings", section: "general" });
+    await vi.waitFor(() => {
+      expect(openSettings).toHaveBeenCalledWith("general");
+    });
   });
 
   it("attaches Windows session-end handlers to the chat shell window", async () => {

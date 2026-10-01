@@ -121,9 +121,14 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
           windowManager.createSidebarWindow();
           break;
         case "settings":
-          // 默认 WPF 设置窗（channels/TTS/ASR 例外弹 Electron，见 settings-router）
-          if (deps.openSettings) deps.openSettings(request.section);
-          else windowManager.createSettingsWindow(request.section);
+          // 默认聊天窗内设置页（2026-10 上游对齐）；聊天窗不可用/加载失败时
+          // 回退 WPF/Electron 设置窗（settings-router 统一裁决）。
+          await windowManager.openSettings(request.section).catch((error: unknown) => {
+            console.warn("[shell-bootstrap] 聊天窗设置页打开失败，回退原生设置窗：", error);
+            if (deps.openSettings) deps.openSettings(request.section);
+            else windowManager.createSettingsWindow(request.section);
+          });
+          break;
       }
     },
   });
