@@ -73,7 +73,7 @@ export function formatDateCompact(ms: unknown): string {
 export function sanitizeFileName(name: unknown): string {
   const cleaned = String(name ?? "")
     .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, FILE_TITLE_LIMIT);

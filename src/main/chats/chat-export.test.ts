@@ -56,6 +56,10 @@ describe("sanitizeFileName", () => {
     expect(sanitizeFileName("  多   空格  ")).toBe("多 空格");
   });
 
+  it("控制字符（含 NUL）一并清除", () => {
+    expect(sanitizeFileName("标题\u0000\u0007换行\n结束")).toBe("标题 换行 结束");
+  });
+
   it("空标题回退默认名，超长截断", () => {
     expect(sanitizeFileName("")).toBe("未命名会话");
     expect(sanitizeFileName("x".repeat(100))).toHaveLength(60);
