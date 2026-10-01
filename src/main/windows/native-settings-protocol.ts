@@ -81,10 +81,11 @@ export const NATIVE_USER_PROFILE_FIELDS = [
 /**
  * Electron 专属 section：内容仍在 Electron，入口一律弹 Electron 页——
  *   - channels：渠道配置独立 Electron 窗（用户指定不迁 .NET）
+ *   - ocr：OCR 设置（本地引擎状态/语言列表走 Electron IPC，暂不迁 .NET）
  * 历史：tts / asr 曾在此列表（语音配置保持 Electron），后按用户要求迁移到
  * .NET 原生设置窗（见 docs/internal-issue/2026-09-26-voice-sections-native-migration.md）。
  */
-export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels"] as const;
+export const ELECTRON_ONLY_SETTINGS_SECTIONS = ["channels", "ocr"] as const;
 
 /**
  * WPF 设置窗认识的 section（与 SettingsWindow.cs 的 AddSection 对齐；
@@ -108,6 +109,7 @@ export const NATIVE_SETTINGS_SECTIONS = [
   "channels",
   "tts",
   "asr",
+  "ocr",
 ] as const;
 
 /**
