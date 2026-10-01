@@ -87,6 +87,8 @@ export interface ToolDefinition {
   ledgerPolicy?: "success_terminal" | "bypass";
   /** 标记为已废弃：从新运行的模型可用工具列表中隐藏，但保留注册用于旧会话兼容。 */
   deprecated?: boolean;
+  /** Browser tools are exposed only in the matching run-local control phase. */
+  browserControlPhase?: "entry" | "active";
   /** 工具效果类型。未配置默认 "unknown"，不静默放行。 */
   effectKind?: ToolEffectKind;
   /** 动态效果解析器（覆盖 effectKind）。用于 run_shell 等根据参数判断效果的工具。 */

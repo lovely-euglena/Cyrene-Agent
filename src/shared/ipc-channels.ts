@@ -81,6 +81,7 @@ export const IPC = {
   BROWSER_PANEL_START_ELEMENT_PICKER: "browser-panel:start-element-picker",
   BROWSER_PANEL_CANCEL_ELEMENT_PICKER: "browser-panel:cancel-element-picker",
   BROWSER_PANEL_ELEMENT_SELECTED: "browser-panel:element-selected",
+  BROWSER_PANEL_OPEN_FOR_CONTROL: "browser-panel:open-for-control",
 
   // AG-UI 事件流
   AGUI_RUN: "agui:run",

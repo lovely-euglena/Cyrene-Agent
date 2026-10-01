@@ -150,6 +150,11 @@ const browserPanelApi = {
     ipcRenderer.on(IPC.BROWSER_PANEL_ELEMENT_SELECTED, listener);
     return () => ipcRenderer.removeListener(IPC.BROWSER_PANEL_ELEMENT_SELECTED, listener);
   },
+  onOpenForControl: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.BROWSER_PANEL_OPEN_FOR_CONTROL, listener);
+    return () => ipcRenderer.removeListener(IPC.BROWSER_PANEL_OPEN_FOR_CONTROL, listener);
+  },
 };
 contextBridge.exposeInMainWorld("browserPanel", browserPanelApi);
 

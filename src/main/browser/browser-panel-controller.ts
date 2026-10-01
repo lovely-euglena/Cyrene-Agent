@@ -17,6 +17,7 @@ import {
   readPlaywrightElementPicker,
   resetPlaywrightPageSnapshot,
   startPlaywrightElementPicker,
+  validatePlaywrightSnapshotTarget,
   type RuntimeSnapshot,
 } from "./playwright-page-snapshot";
 
@@ -78,6 +79,11 @@ export class BrowserPanelController {
   private elementPickerBusy = false;
   private readonly observations = new Map<string, BrowserObservationRecord>();
   private readonly sessionPersistence = new BrowserSessionPersistence();
+  private controlLease: { conversationId: string; tabId: string } | null = null;
+  private openPanelForControl: (() => void) | null = null;
+  private visibleBoundsWaiters = new Set<() => void>();
+  private controlAction: "starting" | "opening" | "switching" | "clicking" | "filling" | "pressing" | "scrolling" | "screenshot" | "active" | undefined;
+  private controlActionTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly observedWindows = new WeakSet<BrowserWindow>();
   private readonly onPlaywrightSnapshotNavigation = (contents: WebContents): void => {
     resetPlaywrightPageSnapshot(contents);
@@ -110,8 +116,283 @@ export class BrowserPanelController {
     return {
       activeTabId: this.activeTabId,
       elementPickerActive: this.elementPickerTabId === this.activeTabId,
+      ...(this.controlLease ? { controlTabId: this.controlLease.tabId } : {}),
+      ...(this.controlAction ? { controlAction: this.controlAction } : {}),
       tabs: this.tabs.map((tab) => ({ ...tab.state })),
     };
+  }
+
+  setOpenPanelForControl(handler: (() => void) | null): void {
+    this.openPanelForControl = handler;
+  }
+
+  async startControl(input: { conversationId?: string; runId?: string; tabId?: string }): Promise<string> {
+    await this.readyPromise;
+    if (!input.conversationId || !input.runId) return "浏览器控制需要有效的 conversationId 和 runId。";
+    if (this.controlLease) {
+      if (this.controlLease.conversationId !== input.conversationId) {
+        return "右侧浏览器正由另一个任务控制。请等该任务退出后重试。";
+      }
+      return `浏览器控制已开启，绑定标签 ${this.controlLease.tabId}。`;
+    }
+    const tab = input.tabId ? this.tabs.find((candidate) => candidate.id === input.tabId) : this.getActiveTab();
+    if (!tab) return "找不到要绑定的浏览器标签。";
+    this.controlLease = { conversationId: input.conversationId, tabId: tab.id };
+    this.setControlAction("starting");
+    if (!this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) {
+      const visible = new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          this.visibleBoundsWaiters.delete(finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, 8_000);
+        this.visibleBoundsWaiters.add(finish);
+      });
+      this.openPanelForControl?.();
+      await visible;
+    }
+    if (!this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) {
+      this.controlLease = null;
+      this.setControlAction(undefined);
+      return "右侧浏览器面板未能显示，请先打开浏览器标签后重试。";
+    }
+    if (tab.id !== this.activeTabId) this.activateTab(tab.id);
+    if (!tab.view) {
+      try { this.ensureView(tab); }
+      catch {
+        this.controlLease = null;
+        this.setControlAction(undefined);
+        return "右侧网页视图初始化失败，浏览器控制没有启动。";
+      }
+    }
+    this.setControlAction("active");
+    return `浏览器控制已开启，绑定标签 ${tab.id}。后续网页操作只作用于这个可见标签。`;
+  }
+
+  stopControl(conversationId?: string, _runId?: string): string {
+    if (!this.controlLease) return "当前没有浏览器控制会话。";
+    if (this.controlLease.conversationId !== conversationId) {
+      return "当前任务不持有浏览器控制权，未执行退出操作。";
+    }
+    this.controlLease = null;
+    this.setControlAction(undefined);
+    return "浏览器控制已退出；网页标签和登录状态保留。";
+  }
+
+  private setControlAction(action: BrowserPanelState["controlAction"]): void {
+    if (this.controlActionTimer) clearTimeout(this.controlActionTimer);
+    this.controlActionTimer = null;
+    this.controlAction = action;
+    if (action && action !== "active") {
+      this.controlActionTimer = setTimeout(() => {
+        if (this.controlAction === action) {
+          this.controlAction = "active";
+          this.publish();
+        }
+      }, 2_000);
+    }
+    this.publish();
+  }
+
+  getControlState(conversationId?: string, runId?: string): "active" | "inactive" {
+    return this.matchesControlOwner(conversationId, runId) ? "active" : "inactive";
+  }
+
+  hasActiveControl(): boolean {
+    return this.controlLease !== null;
+  }
+
+  private matchesControlOwner(conversationId?: string, _runId?: string): boolean {
+    return !!this.controlLease
+      && this.controlLease.conversationId === conversationId;
+  }
+
+  private assertControl(conversationId?: string, runId?: string): { ok: true; tab: BrowserTab; contents: WebContents } | { ok: false; reason: string } {
+    if (!this.matchesControlOwner(conversationId, runId) || !this.controlLease) {
+      return { ok: false, reason: "当前任务没有有效的浏览器控制会话。请先调用 browser_control_start。" };
+    }
+    if (!this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) {
+      return { ok: false, reason: "右侧浏览器当前已隐藏，操作已暂停。重新打开浏览器面板后再试。" };
+    }
+    if (this.activeTabId !== this.controlLease.tabId) {
+      return { ok: false, reason: "右侧浏览器已切换到其他标签。请调用 browser_select_tab 明确选择控制目标。" };
+    }
+    const tab = this.tabs.find((candidate) => candidate.id === this.controlLease?.tabId);
+    const contents = tab?.view?.webContents;
+    if (!tab || !contents || contents.isDestroyed()) return { ok: false, reason: "绑定的浏览器标签已关闭。请重新选择标签。" };
+    if (tab.state.loading || contents.isLoading()) return { ok: false, reason: "网页仍在加载，请等页面完成后重试。" };
+    return { ok: true, tab, contents };
+  }
+
+  async controlOpenUrl(input: { conversationId?: string; runId?: string; url: string; newTab?: boolean }): Promise<string> {
+    const checked = this.assertControl(input.conversationId, input.runId);
+    if (!checked.ok) return checked.reason;
+    this.setControlAction("opening");
+    const result = input.newTab
+      ? await this.openInNewTab(input.url)
+      : await this.navigateTab(checked.tab, input.url);
+    if (!result.ok) return `打开网页失败：${result.error}。只支持完整的 HTTP 或 HTTPS 地址。`;
+    if (input.newTab && this.controlLease) this.controlLease.tabId = this.activeTabId;
+    const active = this.getActiveTab();
+    return JSON.stringify({ web: active?.state.url ?? input.url, tabId: active?.id, title: active?.state.title ?? "", status: active?.state.loading ? "loading" : "loaded" });
+  }
+
+  controlListTabs(conversationId?: string, runId?: string): string {
+    if (!this.matchesControlOwner(conversationId, runId)) return "当前任务没有浏览器控制权。";
+    if (!this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) return "右侧浏览器当前已隐藏，请重新打开后再列出标签。";
+    return JSON.stringify(this.tabs.map(({ id, state }) => ({ tabId: id, url: state.url, title: state.title, loading: state.loading, active: id === this.activeTabId })));
+  }
+
+  controlSelectTab(input: { conversationId?: string; runId?: string; tabId: string }): string {
+    if (!this.matchesControlOwner(input.conversationId, input.runId) || !this.controlLease) return "当前任务没有浏览器控制权。";
+    if (!this.tabs.some((tab) => tab.id === input.tabId)) return "找不到该标签页。请先调用 browser_list_tabs。";
+    this.setControlAction("switching");
+    this.controlLease.tabId = input.tabId;
+    if (!this.activateTab(input.tabId)) return "切换标签失败。";
+    return `已绑定标签 ${input.tabId}。请重新读取页面元素后再操作。`;
+  }
+
+  async controlClick(input: { conversationId?: string; runId?: string; observationId: string; ref: string }): Promise<string> {
+    const checked = this.resolveControlTarget(input);
+    if (!checked.ok) return checked.reason;
+    this.setControlAction("clicking");
+    const hit = await this.validateTargetAt(checked.contents, checked.target, input.observationId);
+    if (!hit.ok) return hit.reason;
+    const win = this.getWindow();
+    if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
+    checked.contents.sendInputEvent({ type: "mouseMove", x: hit.x, y: hit.y });
+    checked.contents.sendInputEvent({ type: "mouseDown", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
+    checked.contents.sendInputEvent({ type: "mouseUp", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
+    this.observations.delete(input.observationId);
+    return `已点击 ${input.ref}（${checked.target.description}）。页面可能发生变化；请重新读取页面元素。`;
+  }
+
+  async controlFill(input: { conversationId?: string; runId?: string; observationId: string; ref: string; value: string }): Promise<string> {
+    const checked = this.resolveControlTarget(input);
+    if (!checked.ok) return checked.reason;
+    const sensitive = this.isSensitiveInput(checked.target);
+    if (sensitive) return `拒绝代理填写 ${input.ref}：疑似密码、一次性验证码或支付字段，请由用户手动输入。`;
+    this.setControlAction("filling");
+    const hit = await this.validateTargetAt(checked.contents, checked.target, input.observationId);
+    if (!hit.ok) return hit.reason;
+    const win = this.getWindow();
+    if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
+    checked.contents.sendInputEvent({ type: "mouseMove", x: hit.x, y: hit.y });
+    checked.contents.sendInputEvent({ type: "mouseDown", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
+    checked.contents.sendInputEvent({ type: "mouseUp", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
+    checked.contents.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: ["control"] });
+    checked.contents.sendInputEvent({ type: "keyUp", keyCode: "A", modifiers: ["control"] });
+    checked.contents.insertText(input.value);
+    this.observations.delete(input.observationId);
+    return `已向 ${input.ref} 填入文本。页面可能发生变化；请重新读取页面元素。`;
+  }
+
+  async controlPress(input: { conversationId?: string; runId?: string; key: string; observationId?: string; ref?: string }): Promise<string> {
+    const checked = this.assertControl(input.conversationId, input.runId);
+    if (!checked.ok) return checked.reason;
+    this.setControlAction("pressing");
+    const win = this.getWindow();
+    if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
+    const keys: Record<string, string> = { Enter: "ENTER", Escape: "ESC", Tab: "TAB", ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", Backspace: "BACKSPACE", Delete: "DELETE", Space: "SPACE" };
+    const keyCode = keys[input.key];
+    if (!keyCode) return "不支持该按键。可用：Enter、Escape、Tab、方向键、Backspace、Delete、Space。";
+    if (input.ref || input.observationId) {
+      if (!input.ref || !input.observationId) return "指定元素时必须同时传 observationId 和 ref。";
+      const target = this.resolveControlTarget({ ...input, observationId: input.observationId, ref: input.ref });
+      if (!target.ok) return target.reason;
+      const hit = await this.validateTargetAt(target.contents, target.target, input.observationId);
+      if (!hit.ok) return hit.reason;
+      target.contents.sendInputEvent({ type: "mouseDown", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
+      target.contents.sendInputEvent({ type: "mouseUp", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
+      this.observations.delete(input.observationId);
+    }
+    checked.contents.sendInputEvent({ type: "keyDown", keyCode });
+    checked.contents.sendInputEvent({ type: "keyUp", keyCode });
+    if (input.observationId) this.observations.delete(input.observationId);
+    return `已按下 ${input.key}。页面可能发生变化；请重新读取页面元素。`;
+  }
+
+  async controlScroll(input: { conversationId?: string; runId?: string; direction: "up" | "down"; amount?: number; observationId?: string; ref?: string }): Promise<string> {
+    let checked = this.assertControl(input.conversationId, input.runId);
+    if (!checked.ok) return checked.reason;
+    this.setControlAction("scrolling");
+    const win = this.getWindow();
+    if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
+    let x = Math.floor(this.bounds!.width / 2);
+    let y = Math.floor(this.bounds!.height / 2);
+    if (input.ref || input.observationId) {
+      if (!input.ref || !input.observationId) return "指定滚动容器时必须同时传 observationId 和 ref。";
+      const target = this.resolveControlTarget({ ...input, observationId: input.observationId, ref: input.ref });
+      if (!target.ok) return target.reason;
+      const hit = await this.validateTargetAt(target.contents, target.target, input.observationId);
+      if (!hit.ok) return hit.reason;
+      x = hit.x;
+      y = hit.y;
+      checked = { ok: true, tab: target.tab, contents: target.contents };
+    }
+    const amount = Math.max(80, Math.min(1200, Math.floor(input.amount ?? 600))) * (input.direction === "down" ? 1 : -1);
+    checked.contents.sendInputEvent({ type: "mouseWheel", x, y, deltaY: amount });
+    if (input.observationId) this.observations.delete(input.observationId);
+    return `已向${input.direction === "down" ? "下" : "上"}滚动页面。请重新读取页面元素。`;
+  }
+
+  async captureControlScreenshot(input: { conversationId?: string; runId?: string }): Promise<{ ok: true; base64: string; width: number; height: number; url: string; tabId: string } | { ok: false; reason: string }> {
+    const checked = this.assertControl(input.conversationId, input.runId);
+    if (!checked.ok) return checked;
+    this.setControlAction("screenshot");
+    if (!checked.tab.state.url) return { ok: false, reason: "当前标签还没有打开网页。" };
+    if (checked.contents.isLoading()) return { ok: false, reason: "网页仍在加载。" };
+    if (this.elementPickerTabId === checked.tab.id) return { ok: false, reason: "网页元素选择工具正在运行，请先结束选择后截图。" };
+    const image = await checked.contents.capturePage();
+    if (image.isEmpty()) return { ok: false, reason: "当前网页视口截图为空。" };
+    const size = image.getSize();
+    if (size.width * size.height > 16_000_000) return { ok: false, reason: "网页截图超过 1600 万像素，已停止传输。" };
+    const png = image.toPNG();
+    if (png.byteLength > 8 * 1024 * 1024) return { ok: false, reason: "网页截图超过 8 MB，已停止传输。" };
+    return { ok: true, base64: png.toString("base64"), width: size.width, height: size.height, url: checked.tab.state.url, tabId: checked.tab.id };
+  }
+
+  private resolveControlTarget(input: { conversationId?: string; runId?: string; observationId: string; ref: string }):
+    | { ok: true; tab: BrowserTab; contents: WebContents; target: RuntimeSnapshot["elements"][number] }
+    | { ok: false; reason: string } {
+    const checked = this.assertControl(input.conversationId, input.runId);
+    if (!checked.ok) return checked;
+    const observation = this.observations.get(input.observationId);
+    if (!observation || observation.tabId !== checked.tab.id || observation.url !== checked.tab.state.url) {
+      return { ok: false, reason: "页面观察已过期或来自其他标签。请重新调用 browser_get_page_elements。" };
+    }
+    const target = observation.snapshot.elements.find((element) => element.ref === input.ref);
+    if (!target) return { ok: false, reason: `当前观察 ${input.observationId} 中找不到 ${input.ref}。请重新读取页面。` };
+    if (!target.inViewport || target.disabled || target.bounds[2] <= 0 || target.bounds[3] <= 0) {
+      return { ok: false, reason: `${input.ref} 当前不可见或已禁用。请滚动后重新读取页面。` };
+    }
+    return { ...checked, target };
+  }
+
+  private async validateTargetAt(contents: WebContents, target: RuntimeSnapshot["elements"][number], observationId: string): Promise<{ ok: true; x: number; y: number } | { ok: false; reason: string }> {
+    const [x, y, width, height] = target.bounds;
+    try {
+      const valid = await validatePlaywrightSnapshotTarget(contents, {
+        observationId,
+        ref: target.ref,
+        description: target.description,
+        x: x + width / 2,
+        y: y + height / 2,
+      });
+      if (valid.ok && Number.isFinite(valid.x) && Number.isFinite(valid.y)) return { ok: true, x: valid.x!, y: valid.y! };
+      return { ok: false, reason: `无法确认 ${target.ref} 仍是快照中的同一个可见 DOM 元素，已拒绝操作。请重新读取页面。` };
+    } catch (error) {
+      return { ok: false, reason: `验证网页元素失败：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  private isSensitiveInput(target: RuntimeSnapshot["elements"][number]): boolean {
+    const values = Object.entries(target.attributes).map(([name, value]) => `${name}=${value}`).join(" ").toLowerCase();
+    return /type=password|one-time-code|current-password|new-password|password|passwd|otp|verification|security.?code|credit.?card|card.?number|cvv|cvc|payment/i.test(values);
   }
 
   async startElementPicker(): Promise<boolean> {
@@ -206,11 +487,17 @@ export class BrowserPanelController {
     this.publish();
   }
 
-  async getActivePageSnapshot(): Promise<
+  async getActivePageSnapshot(owner?: { conversationId?: string; runId?: string }): Promise<
     | { ok: true; snapshot: RuntimeSnapshot }
     | { ok: false; reason: string }
   > {
     await this.readyPromise;
+    if (this.controlLease && !this.matchesControlOwner(owner?.conversationId, owner?.runId)) {
+      return { ok: false, reason: "右侧浏览器正由另一个任务控制，当前任务不能读取页面。" };
+    }
+    if (this.matchesControlOwner(owner?.conversationId, owner?.runId) && this.activeTabId !== this.controlLease?.tabId) {
+      return { ok: false, reason: "浏览器当前显示的标签与控制绑定不一致。请先调用 browser_select_tab 选择目标。" };
+    }
     const tab = this.getActiveTab();
     const contents = tab?.view?.webContents;
     const hasVisibleBounds = !!this.bounds && this.bounds.width > 0 && this.bounds.height > 0;
@@ -264,9 +551,15 @@ export class BrowserPanelController {
     }
   }
 
-  async getElementCss(input: { ref: string; observationId: string; tabId?: string }): Promise<string> {
+  async getElementCss(input: { ref: string; observationId: string; tabId?: string }, owner?: { conversationId?: string; runId?: string }): Promise<string> {
     await this.readyPromise;
     const observation = this.observations.get(input.observationId);
+    if (this.controlLease && !this.matchesControlOwner(owner?.conversationId, owner?.runId)) {
+      return "右侧浏览器正由另一个任务控制，当前任务不能读取其元素样式。";
+    }
+    if (this.matchesControlOwner(owner?.conversationId, owner?.runId) && observation?.tabId !== this.controlLease?.tabId) {
+      return "这个快照不属于当前控制标签。请读取绑定标签的页面后重试。";
+    }
     if (!observation || (input.tabId && input.tabId !== observation.tabId)) {
       return "找不到这个页面快照。请重新读取当前页面元素，再用新返回的 observationId 和 ref 查询样式。";
     }
@@ -475,6 +768,9 @@ export class BrowserPanelController {
 
   setBounds(bounds: BrowserPanelBounds | null): void {
     this.bounds = bounds;
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      for (const resolve of [...this.visibleBoundsWaiters]) resolve();
+    }
     if (!this.initialized) return;
     const win = this.getWindow();
     if (this.parentWindow && this.parentWindow !== win) {
@@ -530,6 +826,10 @@ export class BrowserPanelController {
     if (!this.initialized) return false;
     const tab = this.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return false;
+    if (this.activeTabId !== tabId) {
+      this.forgetTabObservations(this.activeTabId);
+      this.forgetTabObservations(tabId);
+    }
     if (this.elementPickerTabId && this.elementPickerTabId !== tabId) this.cancelElementPicker();
     this.activeTabId = tab.id;
     if (this.bounds && tab.state.url && !tab.view) {
@@ -548,6 +848,7 @@ export class BrowserPanelController {
     if (!this.initialized) return false;
     const index = this.tabs.findIndex((candidate) => candidate.id === tabId);
     if (index < 0) return false;
+    if (this.controlLease?.tabId === tabId) this.controlLease = null;
     if (this.elementPickerTabId === tabId) this.cancelElementPicker();
     const tab = this.tabs[index];
     this.forgetTabObservations(tabId);
@@ -609,6 +910,12 @@ export class BrowserPanelController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.controlLease = null;
+    if (this.controlActionTimer) clearTimeout(this.controlActionTimer);
+    this.controlActionTimer = null;
+    this.controlAction = undefined;
+    for (const resolve of [...this.visibleBoundsWaiters]) resolve();
+    this.visibleBoundsWaiters.clear();
     if (this.elementPickerTimer) clearTimeout(this.elementPickerTimer);
     this.elementPickerTimer = null;
     this.elementPickerTabId = "";
@@ -639,6 +946,7 @@ export class BrowserPanelController {
       const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
       return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
     }
+    this.forgetTabObservations(tab.id);
     let view: WebContentsView | null;
     try {
       view = this.ensureView(tab, false);

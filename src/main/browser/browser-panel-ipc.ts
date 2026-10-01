@@ -4,6 +4,7 @@ import type { BrowserPanelBounds } from "../../shared/browser-panel-types";
 import type { IpcScope } from "../application/ipc-scope";
 import { BrowserPanelController } from "./browser-panel-controller";
 import { registerBrowserPageTools } from "./browser-page-tools";
+import { setBrowserPanelController } from "./browser-panel-runtime";
 
 function readBounds(input: unknown): BrowserPanelBounds | null {
   if (!input || typeof input !== "object") return null;
@@ -27,6 +28,11 @@ export function registerBrowserPanelIpc(input: {
   }, (element) => {
     const win = input.getWindow();
     if (win && !win.isDestroyed()) win.webContents.send(IPC.BROWSER_PANEL_ELEMENT_SELECTED, element);
+  });
+  setBrowserPanelController(controller);
+  controller.setOpenPanelForControl(() => {
+    const win = input.getWindow();
+    if (win && !win.isDestroyed()) win.webContents.send(IPC.BROWSER_PANEL_OPEN_FOR_CONTROL);
   });
   registerBrowserPageTools(controller);
   const authorized = (event: { sender: WebContents }) => {

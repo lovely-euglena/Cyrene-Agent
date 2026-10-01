@@ -403,6 +403,40 @@ export async function capturePlaywrightPageSnapshot(contents: WebContents): Prom
   return { ...result, observationId } as RuntimeSnapshot;
 }
 
+/** Validate the original node kept in the same isolated world as Playwright's aria-ref map. */
+export async function validatePlaywrightSnapshotTarget(
+  contents: WebContents,
+  input: { observationId: string; ref: string; description: string; x: number; y: number },
+): Promise<{ ok: true; x: number; y: number } | { ok: false }> {
+  const serialized = JSON.stringify(input);
+  const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [{
+    code: `(() => {
+      const expected = ${serialized};
+      const refs = globalThis.__cyreneBrowserRefs;
+      if (globalThis.__cyreneBrowserObservationId !== expected.observationId || !(refs instanceof Map)) return { ok: false };
+      const node = refs.get(expected.ref);
+      if (!(node instanceof Element) || !node.isConnected) return { ok: false };
+      const injected = globalThis.${PLAYWRIGHT_GLOBAL};
+      if (!injected) return { ok: false };
+      const currentLine = String(injected.ariaSnapshot(node, { mode: "ai" }) || "").split("\\n")[0]
+        .trim().replace(/^[-*]\\s*/, "").replace(/\\s*\\[ref=[^\\]]+\\]/, "");
+      if (currentLine !== expected.description) return { ok: false };
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") return { ok: false };
+      if (rect.width <= 0 || rect.height <= 0 || style.visibility === "hidden" || style.display === "none" || style.pointerEvents === "none") return { ok: false };
+      let hit = document.elementFromPoint(expected.x, expected.y);
+      for (let depth = 0; hit && depth < 8; depth += 1, hit = hit.parentElement) {
+        if (hit === node) return { ok: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      }
+      return { ok: false };
+    })()`,
+  }]);
+  return result && typeof result === "object" && (result as { ok?: boolean }).ok === true
+    ? result as { ok: true; x: number; y: number }
+    : { ok: false };
+}
+
 export async function startPlaywrightElementPicker(contents: WebContents): Promise<RuntimeSnapshot> {
   const snapshot = await capturePlaywrightPageSnapshot(contents);
   const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [

@@ -208,6 +208,9 @@ export function BrowserPanel({ active }: { active: boolean }) {
           </form>
           <div className="cy-browser-panel__page-meta">
             <span className="cy-browser-panel__page-title" title={activeTab.title || activeTab.url}>{activeTab.title || activeTab.url || t("browserPanel.emptyTitle")}</span>
+            {state.controlTabId === activeTab.id && <span className="cy-browser-panel__control-state" role="status">
+              {t("browserPanel.agentControl")}{state.controlAction && state.controlAction !== "active" ? ` · ${t(`browserPanel.actions.${state.controlAction}`)}` : ""}
+            </span>}
             {activeTab.loading && <LoaderCircle size={13} className="cy-browser-panel__spinner" aria-label={t("browserPanel.loading")} />}
           </div>
           {pageError && <div className="cy-browser-panel__error" role="status"><span>{pageError}</span>{activeTab.crashed && <button type="button" onClick={() => void window.browserPanel?.reload()}>{t("browserPanel.reload")}</button>}</div>}

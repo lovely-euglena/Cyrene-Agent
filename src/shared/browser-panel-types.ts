@@ -21,6 +21,9 @@ export interface BrowserPanelState {
   activeTabId: string;
   tabs: BrowserPanelTabState[];
   elementPickerActive?: boolean;
+  /** The run currently controlling the browser, if any. */
+  controlTabId?: string;
+  controlAction?: "starting" | "opening" | "switching" | "clicking" | "filling" | "pressing" | "scrolling" | "screenshot" | "active";
 }
 
 /** Selected browser element facts: visible summary is separate from this model-facing payload. */
