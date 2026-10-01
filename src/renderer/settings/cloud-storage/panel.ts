@@ -154,7 +154,10 @@ function clearEditor(): void {
   ];
   for (const input of textInputs) {
     if (input) input.value = "";
-    if (input) input.placeholder = "";
+  }
+  // 「留空保持不变」占位符只属于秘密字段，编辑态按需设置；其它 placeholder 保持 HTML/i18n 原文
+  for (const secret of [cloudStoragePassword, cloudStoragePassphrase, cloudStorageWebdavPassword, cloudStorageS3AccessKey, cloudStorageS3SecretKey]) {
+    if (secret) secret.placeholder = "";
   }
   if (cloudStoragePassive) cloudStoragePassive.checked = true;
   if (cloudStorageAllowInvalidCert) cloudStorageAllowInvalidCert.checked = false;
