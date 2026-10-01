@@ -26,4 +26,12 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Silero VAD 模型（发布必需）：随 publish 落到 models/silero_vad.onnx，
+         命中 VadEngine 的首选探测路径（exe 同级 models/） -->
+    <Content Include="models\silero_vad.onnx"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

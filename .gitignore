@@ -222,6 +222,10 @@ models/*.zip
 **/*.safetensors
 !models/.gitkeep
 
+# 例外：语音 sidecar 的 Silero VAD 门控模型（~1.8MB，MIT）是发布必需件，
+# 由 CyreneVoice.csproj 的 Content 拷进 publish 目录随包分发，显式豁免。
+!dotnet/voice/CyreneVoice/models/silero_vad.onnx
+
 # Local opener voice pack files. Keep the directory and installation note tracked.
 opener-pack/*
 !opener-pack/.gitkeep
