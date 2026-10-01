@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Globe, LoaderCircle, MousePointerClick, Plus, RotateCw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Globe, LoaderCircle, MousePointerClick, Plus, RotateCw, Square, X } from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import type { BrowserPanelState, BrowserPanelTabState } from "../../../../../shared/browser-panel-types";
@@ -12,6 +12,7 @@ const EMPTY_STATE: BrowserPanelState = {
 
 const EMPTY_TAB: BrowserPanelTabState = {
   id: "",
+  kind: "web",
   url: "",
   title: "",
   loading: false,
@@ -20,11 +21,13 @@ const EMPTY_TAB: BrowserPanelTabState = {
   crashed: false,
 };
 
-function BrowserTabIcon({ favicon }: { favicon?: string }) {
+function BrowserTabIcon({ favicon, kind }: { favicon?: string; kind: "web" | "exam" }) {
   const [failedFavicon, setFailedFavicon] = useState("");
   useEffect(() => setFailedFavicon(""), [favicon]);
   const showFavicon = favicon && failedFavicon !== favicon;
-  return showFavicon
+  return kind === "exam"
+    ? <BookOpen className="cy-browser-panel__tab-icon cy-browser-panel__tab-icon--fallback" size={14} aria-hidden="true" />
+    : showFavicon
     ? <img className="cy-browser-panel__tab-icon" src={favicon} alt="" aria-hidden="true" onError={() => setFailedFavicon(favicon)} />
     : <Globe className="cy-browser-panel__tab-icon cy-browser-panel__tab-icon--fallback" size={14} aria-hidden="true" />;
 }
@@ -148,7 +151,7 @@ export function BrowserPanel({ active }: { active: boolean }) {
                     className="cy-browser-panel__tab-select"
                     title={tab.title || tab.url || t("browserPanel.newTab")}
                   >
-                    <BrowserTabIcon favicon={tab.favicon} />
+                    <BrowserTabIcon favicon={tab.favicon} kind={tab.kind} />
                     <span className="cy-browser-panel__tab-label">{label}</span>
                     {tab.loading && <LoaderCircle size={12} className="cy-browser-panel__spinner" aria-label={t("browserPanel.loading")} />}
                   </TabsTrigger>

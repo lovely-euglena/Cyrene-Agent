@@ -7,6 +7,7 @@ export interface BrowserPanelBounds {
 
 export interface BrowserPanelTabState {
   id: string;
+  kind: "web" | "exam";
   url: string;
   title: string;
   favicon?: string;

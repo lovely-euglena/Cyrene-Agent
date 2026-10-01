@@ -75,6 +75,7 @@ export const IPC = {
   BROWSER_PANEL_CLEAR_COOKIES: "browser-panel:clear-cookies",
   BROWSER_PANEL_NEW_TAB: "browser-panel:new-tab",
   BROWSER_PANEL_OPEN_IN_NEW_TAB: "browser-panel:open-in-new-tab",
+  BROWSER_PANEL_OPEN_EXAM: "browser-panel:open-exam",
   BROWSER_PANEL_ACTIVATE_TAB: "browser-panel:activate-tab",
   BROWSER_PANEL_CLOSE_TAB: "browser-panel:close-tab",
   BROWSER_PANEL_STATE_CHANGED: "browser-panel:state-changed",
@@ -424,6 +425,7 @@ export const IPC = {
   LEARN_EXAM_PAGE_SAVE_ANSWER: "learn-exam-page:save-answer",
   LEARN_EXAM_PAGE_SAVE_NAVIGATION: "learn-exam-page:save-navigation",
   LEARN_EXAM_PAGE_SUBMIT: "learn-exam-page:submit",
+  LEARN_EXAM_PAGE_RETRY: "learn-exam-page:retry",
   LEARN_EXAM_PAGE_CHANGED: "learn-exam-page:changed",
 
   // call window (voice call)

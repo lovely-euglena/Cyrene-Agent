@@ -1,6 +1,7 @@
 import { app, safeStorage, type Session } from "electron";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { parseLearnExamPageRequest } from "../protocols/learn-exam-page-protocol";
 
 const SNAPSHOT_VERSION = 1;
 const SNAPSHOT_FILE = "browser-session.enc";
@@ -8,6 +9,7 @@ const SNAPSHOT_FILE = "browser-session.enc";
 export interface BrowserSessionTabSnapshot {
   id: string;
   url: string;
+  examConversationId?: string;
 }
 
 export interface BrowserSessionSnapshot {
@@ -30,6 +32,14 @@ function isHttpUrl(value: unknown): value is string {
   }
 }
 
+function isExamPageUrl(value: unknown): value is string {
+  return typeof value === "string" && parseLearnExamPageRequest(value)?.kind === "document";
+}
+
+export function isBrowserPanelUrl(value: unknown): value is string {
+  return isHttpUrl(value) || isExamPageUrl(value);
+}
+
 function readSnapshot(value: unknown): PersistedSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<PersistedSnapshot>;
@@ -40,9 +50,10 @@ function readSnapshot(value: unknown): PersistedSnapshot | null {
     if (!item || typeof item !== "object") return [];
     const tab = item as Partial<BrowserSessionTabSnapshot>;
     if (typeof tab.id !== "string" || !tab.id || ids.has(tab.id)) return [];
-    if (tab.url !== "" && !isHttpUrl(tab.url)) return [];
+    if (tab.url !== "" && !isHttpUrl(tab.url) && !isExamPageUrl(tab.url)) return [];
+    if (isExamPageUrl(tab.url) && (typeof tab.examConversationId !== "string" || !tab.examConversationId)) return [];
     ids.add(tab.id);
-    return [{ id: tab.id, url: tab.url ?? "" }];
+    return [{ id: tab.id, url: tab.url ?? "", ...(isExamPageUrl(tab.url) ? { examConversationId: tab.examConversationId as string } : {}) }];
   }).slice(0, 50);
 
   const sessionCookies = candidate.sessionCookies.filter((cookie): cookie is Electron.Cookie =>

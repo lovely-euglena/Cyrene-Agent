@@ -624,7 +624,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerWorkspaceFilesIpc(ipc);
         // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
         registerOpenInAppIpc(ipc);
-        const browserPanel = registerBrowserPanelIpc({ ipc, getWindow: () => reactChatWindow });
+        const examPaperStore = createExamPaperStore(app.getPath("userData"));
+        const browserPanel = registerBrowserPanelIpc({
+          ipc,
+          getWindow: () => reactChatWindow,
+          getExamRecord: (examId) => examPaperStore.get(examId),
+        });
         shutdown.register({
           id: "browser-panel-session",
           phase: "flushPersistence",
@@ -686,7 +691,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerPopQuizIpc(ipc);
         registerPopQuizTool();
         // 正式试卷：答案与评分资料仅由主进程存储；Learn 工具负责出卷、取卷批改与保存结果。
-        const examPaperStore = createExamPaperStore(app.getPath("userData"));
         const examDraftStore = createExamDraftStore(app.getPath("userData"), examPaperStore);
         void examDraftStore.deleteExpired().catch((error) => {
           console.warn("[LearnExam] 清理过期出卷草稿失败:", error);

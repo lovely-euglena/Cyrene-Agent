@@ -5,6 +5,9 @@ import type { IpcScope } from "../application/ipc-scope";
 import { BrowserPanelController } from "./browser-panel-controller";
 import { registerBrowserPageTools } from "./browser-page-tools";
 import { setBrowserPanelController } from "./browser-panel-runtime";
+import type { LearnExamRecord } from "../../shared/learn-exam";
+
+const EXAM_ID_PATTERN = /^exam-[0-9a-f-]{36}$/i;
 
 function readBounds(input: unknown): BrowserPanelBounds | null {
   if (!input || typeof input !== "object") return null;
@@ -21,6 +24,7 @@ function readBounds(input: unknown): BrowserPanelBounds | null {
 export function registerBrowserPanelIpc(input: {
   ipc: IpcScope;
   getWindow: () => BrowserWindow | null;
+  getExamRecord?: (examId: string) => Promise<LearnExamRecord | null>;
 }): BrowserPanelController {
   const controller = new BrowserPanelController(input.getWindow, (state) => {
     const win = input.getWindow();
@@ -87,6 +91,14 @@ export function registerBrowserPanelIpc(input: {
   input.ipc.handle(IPC.BROWSER_PANEL_OPEN_IN_NEW_TAB, (event, url: unknown) => {
     if (!authorized(event) || typeof url !== "string") return { ok: false, error: "unavailable" };
     return controller.openInNewTab(url);
+  });
+  input.ipc.handle(IPC.BROWSER_PANEL_OPEN_EXAM, async (event, payload: unknown) => {
+    if (!authorized(event) || !payload || typeof payload !== "object" || !input.getExamRecord) return false;
+    const { examId, conversationId } = payload as { examId?: unknown; conversationId?: unknown };
+    if (typeof examId !== "string" || !EXAM_ID_PATTERN.test(examId) || typeof conversationId !== "string") return false;
+    const record = await input.getExamRecord(examId);
+    if (!record || record.conversationId !== conversationId) return false;
+    return controller.openExam(record.examId, record.conversationId);
   });
   input.ipc.handle(IPC.BROWSER_PANEL_ACTIVATE_TAB, (event, tabId: unknown) => {
     if (!authorized(event) || typeof tabId !== "string") return false;

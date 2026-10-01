@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { Menu, session, WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
+import { app, Menu, session, WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
+import * as path from "node:path";
 import {
   type BrowserPanelBounds,
   type BrowserElementSelection,
@@ -10,6 +11,9 @@ import {
 import { getLocaleContext } from "../locale-context";
 import { allowInternalNavigation } from "../windows/external-link";
 import { BrowserSessionPersistence } from "./browser-session-persistence";
+import { getLearnExamPageSession } from "../protocols/bootstrap";
+import { parseLearnExamPageRequest } from "../protocols/learn-exam-page-protocol";
+import { registerExamPageSource } from "../learn/exam-page-authority";
 import { appendBrowserObservationLog } from "./browser-observation-log";
 import {
   capturePlaywrightPageSnapshot,
@@ -22,7 +26,9 @@ import {
 } from "./playwright-page-snapshot";
 
 const BROWSER_PARTITION = "persist:cyrene-right-browser";
+const EXAM_ID_PATTERN = /^exam-[0-9a-f-]{36}$/i;
 const EMPTY_TAB_STATE = {
+  kind: "web",
   url: "",
   title: "",
   loading: false,
@@ -33,6 +39,9 @@ const EMPTY_TAB_STATE = {
 
 interface BrowserTab {
   id: string;
+  kind: "web" | "exam";
+  examConversationId?: string;
+  unregisterExamPage?: () => void;
   view: WebContentsView | null;
   state: BrowserPanelTabState;
 }
@@ -137,6 +146,7 @@ export class BrowserPanelController {
     }
     const tab = input.tabId ? this.tabs.find((candidate) => candidate.id === input.tabId) : this.getActiveTab();
     if (!tab) return "找不到要绑定的浏览器标签。";
+    if (tab.kind === "exam") return "考试答题页不能作为外部网页控制目标。请先切换到普通网页标签。";
     this.controlLease = { conversationId: input.conversationId, tabId: tab.id };
     this.setControlAction("starting");
     if (!this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) {
@@ -397,6 +407,7 @@ export class BrowserPanelController {
 
   async startElementPicker(): Promise<boolean> {
     await this.readyPromise;
+    if (this.getActiveTab()?.kind === "exam") return false;
     const tab = this.getActiveTab();
     const contents = tab?.view?.webContents;
     if (!tab || !contents || contents.isDestroyed() || contents.isLoading() || !tab.state.url
@@ -499,6 +510,7 @@ export class BrowserPanelController {
       return { ok: false, reason: "浏览器当前显示的标签与控制绑定不一致。请先调用 browser_select_tab 选择目标。" };
     }
     const tab = this.getActiveTab();
+    if (tab?.kind === "exam") return { ok: false, reason: "当前标签是应用内考试答题页，浏览器页面元素工具只支持普通网页。" };
     const contents = tab?.view?.webContents;
     const hasVisibleBounds = !!this.bounds && this.bounds.width > 0 && this.bounds.height > 0;
     const contentsDestroyed = contents ? contents.isDestroyed() : null;
@@ -800,6 +812,35 @@ export class BrowserPanelController {
     return this.navigateTab(activeTab, input);
   }
 
+  async openExam(examId: string, conversationId: string): Promise<boolean> {
+    await this.readyPromise;
+    if (this.disposed || !EXAM_ID_PATTERN.test(examId) || !conversationId) return false;
+    const existing = this.tabs.find((tab) => {
+      const page = tab.kind === "exam" ? parseLearnExamPageRequest(tab.state.url) : null;
+      return page?.kind === "document" && page.examId === examId;
+    });
+    if (existing) {
+      if (existing.examConversationId !== conversationId) return false;
+      this.activateTab(existing.id);
+      this.openPanelForControl?.();
+      return true;
+    }
+    const tab = this.createTab(true, { kind: "exam", examConversationId: conversationId, url: `cyrene-exam://paper/${examId}` });
+    this.openPanelForControl?.();
+    if (this.bounds?.width && this.bounds.height) {
+      try {
+        const view = this.ensureView(tab, false);
+        if (!view) return false;
+        await view.webContents.loadURL(tab.state.url);
+      } catch {
+        tab.state = { ...tab.state, loading: false, error: "load_failed" };
+      }
+    }
+    this.applyBounds();
+    this.publish();
+    return true;
+  }
+
   newTab(): boolean {
     if (this.disposed || !this.initialized) return false;
     this.createTab(true);
@@ -854,6 +895,8 @@ export class BrowserPanelController {
     this.forgetTabObservations(tabId);
     if (this.tabs.length === 1) {
       this.destroyTabView(tab);
+      tab.kind = "web";
+      tab.examConversationId = undefined;
       tab.state = { id: tab.id, ...EMPTY_TAB_STATE };
       this.activeTabId = tab.id;
     } else {
@@ -902,6 +945,7 @@ export class BrowserPanelController {
     await browserSession.cookies.flushStore();
     await this.persistSession();
     for (const tab of this.tabs) {
+      if (tab.kind !== "web") continue;
       const contents = tab.view?.webContents;
       if (contents && !contents.isDestroyed() && tab.state.url) contents.reload();
     }
@@ -931,9 +975,16 @@ export class BrowserPanelController {
     return this.tabs.find((tab) => tab.id === this.activeTabId);
   }
 
-  private createTab(activate: boolean): BrowserTab {
+  private createTab(activate: boolean, options: { kind?: "web" | "exam"; url?: string; examConversationId?: string } = {}): BrowserTab {
     const id = randomUUID();
-    const tab: BrowserTab = { id, view: null, state: { id, ...EMPTY_TAB_STATE } };
+    const kind = options.kind ?? "web";
+    const tab: BrowserTab = {
+      id,
+      kind,
+      ...(options.examConversationId ? { examConversationId: options.examConversationId } : {}),
+      view: null,
+      state: { id, ...EMPTY_TAB_STATE, kind, ...(options.url ? { url: options.url } : {}) },
+    };
     this.tabs.push(tab);
     if (activate || !this.activeTabId) this.activeTabId = id;
     return tab;
@@ -945,6 +996,14 @@ export class BrowserPanelController {
     if (!url) {
       const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
       return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
+    }
+    if (tab.kind === "exam") {
+      tab.unregisterExamPage?.();
+      tab.unregisterExamPage = undefined;
+      tab.kind = "web";
+      tab.examConversationId = undefined;
+      if (tab.view) this.destroyTabView(tab);
+      tab.state = { id: tab.id, ...EMPTY_TAB_STATE, url: url.href };
     }
     this.forgetTabObservations(tab.id);
     let view: WebContentsView | null;
@@ -987,19 +1046,26 @@ export class BrowserPanelController {
     try {
       const snapshot = await this.sessionPersistence.restore(browserSession);
       if (snapshot?.tabs.length) {
-        this.tabs = snapshot.tabs.map(({ id, url }) => ({
-          id,
-          view: null,
-          state: {
+        this.tabs = snapshot.tabs.map(({ id, url, examConversationId }) => {
+          const page = parseLearnExamPageRequest(url);
+          const isExam = page?.kind === "document" && !!examConversationId;
+          return {
             id,
-            url,
-            title: "",
-            loading: false,
-            canGoBack: false,
-            canGoForward: false,
-            crashed: false,
-          },
-        }));
+            kind: isExam ? "exam" as const : "web" as const,
+            ...(isExam ? { examConversationId } : {}),
+            view: null,
+            state: {
+              id,
+              kind: isExam ? "exam" as const : "web" as const,
+              url: isExam ? url : (parseHttpUrl(url)?.href ?? ""),
+              title: "",
+              loading: false,
+              canGoBack: false,
+              canGoForward: false,
+              crashed: false,
+            },
+          };
+        });
         this.activeTabId = snapshot.activeTabId || this.tabs[0].id;
       }
     } catch {
@@ -1041,7 +1107,11 @@ export class BrowserPanelController {
       if (this.disposed) return;
       await this.sessionPersistence.save(this.getSession(), {
         activeTabId: this.activeTabId,
-        tabs: this.tabs.map((tab) => ({ id: tab.id, url: tab.state.url })),
+        tabs: this.tabs.map((tab) => ({
+          id: tab.id,
+          url: tab.state.url,
+          ...(tab.kind === "exam" && tab.examConversationId ? { examConversationId: tab.examConversationId } : {}),
+        })),
       });
     });
     this.persistQueue = operation;
@@ -1055,9 +1125,11 @@ export class BrowserPanelController {
     if (tab.view) this.destroyTabView(tab);
     if (this.parentWindow && this.parentWindow !== win) this.destroyViews();
     this.parentWindow = win;
+    const isExam = tab.kind === "exam";
     const view = new WebContentsView({
       webPreferences: {
-        session: this.getSession(),
+        session: isExam ? getLearnExamPageSession() : this.getSession(),
+        ...(isExam ? { preload: path.join(app.getAppPath(), "dist", "preload", "preload", "learn-exam-page.js") } : {}),
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
@@ -1066,6 +1138,12 @@ export class BrowserPanelController {
       },
     });
     tab.view = view;
+    if (isExam) {
+      const page = parseLearnExamPageRequest(tab.state.url);
+      if (page?.kind === "document" && tab.examConversationId) {
+        tab.unregisterExamPage = registerExamPageSource(view.webContents, page.examId, tab.examConversationId);
+      }
+    }
     win.contentView.addChildView(view);
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     this.attachEvents(tab, view);
@@ -1149,10 +1227,13 @@ export class BrowserPanelController {
       this.publish();
     });
     contents.on("will-navigate", (event, targetUrl) => {
-      if (!parseHttpUrl(targetUrl)) event.preventDefault();
+      const allowed = tab.kind === "exam"
+        ? targetUrl === tab.state.url && parseLearnExamPageRequest(targetUrl)?.kind === "document"
+        : !!parseHttpUrl(targetUrl);
+      if (!allowed) event.preventDefault();
     });
     contents.on("will-redirect", (event, targetUrl) => {
-      if (!parseHttpUrl(targetUrl)) event.preventDefault();
+      if (tab.kind === "exam" || !parseHttpUrl(targetUrl)) event.preventDefault();
     });
     contents.setWindowOpenHandler(({ url, disposition }) => {
       if (parseHttpUrl(url)) this.openNewTab(url, disposition !== "background-tab");
@@ -1204,6 +1285,8 @@ export class BrowserPanelController {
     const view = tab.view;
     const win = this.parentWindow;
     tab.view = null;
+    tab.unregisterExamPage?.();
+    tab.unregisterExamPage = undefined;
     if (!view) return;
     try {
       if (win && !win.isDestroyed()) win.contentView.removeChildView(view);

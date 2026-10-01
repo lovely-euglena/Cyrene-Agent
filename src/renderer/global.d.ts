@@ -151,6 +151,7 @@ interface BrowserPanelApi {
   clearCookies: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
   newTab: () => Promise<boolean>;
   openInNewTab: (url: string) => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  openExam: (examId: string, conversationId: string) => Promise<boolean>;
   activateTab: (tabId: string) => Promise<boolean>;
   closeTab: (tabId: string) => Promise<boolean>;
   startElementPicker: () => Promise<boolean>;
@@ -184,6 +185,7 @@ declare global {
     chat?: ChatWindowApi;
     settings?: SettingsWindowApi;
     browserPanel?: BrowserPanelApi;
+    learnExamPage: import("../../shared/learn-exam").LearnExamPageApi;
     memoryPanel?: import("./settings/shared/types").MemoryPanelApi;
     tts?: {
       loadSettings: () => Promise<Record<string, unknown>>;

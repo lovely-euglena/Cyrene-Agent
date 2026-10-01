@@ -24,6 +24,7 @@ import type { ConversationMode } from "../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
 import type { BrowserElementSelection, BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
+import type { LearnExamAnswerValue, LearnExamChangedEvent, LearnExamCreatedEvent, LearnExamView } from "../shared/learn-exam";
 
 // 渲染目标标识：preload 每次加载（即每次页面初始化/重新加载）生成一次，
 // 随活动会话一并上报主进程；同一页面内切换会话不改变该标识。
@@ -136,6 +137,7 @@ const browserPanelApi = {
   clearCookies: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLEAR_COOKIES) as Promise<BrowserPanelResult>,
   newTab: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_NEW_TAB) as Promise<boolean>,
   openInNewTab: (url: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_OPEN_IN_NEW_TAB, url) as Promise<BrowserPanelResult>,
+  openExam: (examId: string, conversationId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_OPEN_EXAM, { examId, conversationId }) as Promise<boolean>,
   activateTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_ACTIVATE_TAB, tabId) as Promise<boolean>,
   closeTab: (tabId: string) => ipcRenderer.invoke(IPC.BROWSER_PANEL_CLOSE_TAB, tabId) as Promise<boolean>,
   startElementPicker: () => ipcRenderer.invoke(IPC.BROWSER_PANEL_START_ELEMENT_PICKER) as Promise<boolean>,
@@ -841,6 +843,35 @@ const chatStoreApi = {
 };
 
 contextBridge.exposeInMainWorld("chatStore", chatStoreApi);
+
+const learnExamApi = {
+  listByConversation: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_LIST, { conversationId }) as Promise<LearnExamView[]>,
+  getView: (conversationId: string, examId: string) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_GET, { conversationId, examId }) as Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>,
+  saveAnswer: (conversationId: string, examId: string, questionId: string, answer: LearnExamAnswerValue | null) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_SAVE_ANSWER, { conversationId, examId, questionId, answer }) as Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>,
+  saveNavigation: (conversationId: string, examId: string, activeQuestionId: string, flaggedQuestionIds: string[]) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_SAVE_NAVIGATION, { conversationId, examId, activeQuestionId, flaggedQuestionIds }) as Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>,
+  submit: (conversationId: string, examId: string) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_SUBMIT, { conversationId, examId }) as Promise<{ ok: boolean; shouldStartGrading?: boolean; exam?: LearnExamView; error?: string }>,
+  retry: (conversationId: string, examId: string) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_RETRY, { conversationId, examId }) as Promise<{ ok: boolean; shouldStartGrading?: boolean; exam?: LearnExamView; error?: string }>,
+  markGradingFailed: (conversationId: string, examId: string) =>
+    ipcRenderer.invoke(IPC.LEARN_EXAM_MARK_GRADING_FAILED, { conversationId, examId }) as Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>,
+  onCreated: (callback: (event: LearnExamCreatedEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: LearnExamCreatedEvent) => callback(payload);
+    ipcRenderer.on(IPC.LEARN_EXAM_CREATED, listener);
+    return () => ipcRenderer.removeListener(IPC.LEARN_EXAM_CREATED, listener);
+  },
+  onChanged: (callback: (event: LearnExamChangedEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: LearnExamChangedEvent) => callback(payload);
+    ipcRenderer.on(IPC.LEARN_EXAM_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.LEARN_EXAM_CHANGED, listener);
+  },
+};
+
+contextBridge.exposeInMainWorld("learnExam", learnExamApi);
 
 // Review 快照：获取指定 Run 的不可变文件变更审查数据
 const reviewApi = {
