@@ -25,6 +25,10 @@ internal sealed class FtpStorageProvider : IStorageProvider
             : FtpEncryptionMode.None;
         cfg.ValidateAnyCertificate = profile.AllowInvalidCert;
         cfg.DataConnectionType = profile.Passive ? FtpDataConnectionType.AutoPassive : FtpDataConnectionType.AutoActive;
+        // 真实文件名可能含 %（如 "100% done.txt"）：关闭 URL 编码拦截；
+        // 控制字符（CR/LF/NUL）注入防护保持开启，路径越界由 StoragePaths 侧钳制。
+        cfg.SanitizeUrlEncoding = false;
+        cfg.SanitizeControlChars = true;
     }
 
     public bool IsConnected => _client.IsConnected;
@@ -95,12 +99,40 @@ internal sealed class FtpStorageProvider : IStorageProvider
     public void Move(string fromRel, string toRel, bool overwrite)
     {
         if (overwrite) DeleteIfExists(toRel);
-        _client.Rename(Abs(fromRel), Abs(toRel));
+        try
+        {
+            _client.Rename(Abs(fromRel), Abs(toRel));
+        }
+        catch (Exception ex)
+        {
+            // 部分服务器 RENAME 受限：复制 + 删除兜底
+            var mapped = StorageErrors.Map(ex);
+            if (mapped.Code is not ("STORAGE_IO_ERROR" or "STORAGE_UNSUPPORTED")) throw;
+            CopyTree(fromRel, toRel);
+            Delete(fromRel, recursive: true);
+        }
     }
 
     public void Copy(string fromRel, string toRel, bool overwrite)
     {
         if (overwrite) DeleteIfExists(toRel);
+        CopyTree(fromRel, toRel);
+    }
+
+    /// <summary>文件/目录递归复制（目录逐层建、文件走本地临时文件中转）。</summary>
+    private void CopyTree(string fromRel, string toRel)
+    {
+        var entry = Stat(fromRel) ?? throw StorageException.NotFound($"远端不存在：{fromRel}");
+        if (entry.Type == "dir")
+        {
+            Mkdir(toRel, recursive: true);
+            foreach (var child in List(fromRel, 10_000, out _))
+            {
+                CopyTree(child.Path, JoinRel(toRel, child.Name));
+            }
+            return;
+        }
+
         var tmp = Path.GetTempFileName();
         try
         {
@@ -113,6 +145,9 @@ internal sealed class FtpStorageProvider : IStorageProvider
             try { File.Delete(tmp); } catch { /* 尽力清理 */ }
         }
     }
+
+    private static string JoinRel(string parent, string name)
+        => parent.Length == 0 ? name : parent + "/" + name;
 
     public long Test()
     {

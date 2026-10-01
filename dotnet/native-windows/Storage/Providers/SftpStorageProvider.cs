@@ -123,7 +123,7 @@ internal sealed class SftpStorageProvider : IStorageProvider
             // 部分 S3 网关型 SFTP（如 Rains3）不支持 SSH_FXP_RENAME：复制 + 删除兜底
             var mapped = StorageErrors.Map(ex);
             if (mapped.Code is not ("STORAGE_IO_ERROR" or "STORAGE_UNSUPPORTED")) throw;
-            Copy(fromRel, toRel, overwrite: true);
+            CopyTree(fromRel, toRel);
             Delete(fromRel, recursive: true);
         }
     }
@@ -131,6 +131,23 @@ internal sealed class SftpStorageProvider : IStorageProvider
     public void Copy(string fromRel, string toRel, bool overwrite)
     {
         if (overwrite) DeleteIfExists(toRel);
+        CopyTree(fromRel, toRel);
+    }
+
+    /// <summary>文件/目录递归复制（目录逐层建、文件走本地临时文件中转）。</summary>
+    private void CopyTree(string fromRel, string toRel)
+    {
+        var entry = Stat(fromRel) ?? throw StorageException.NotFound($"远端不存在：{fromRel}");
+        if (entry.Type == "dir")
+        {
+            Mkdir(toRel, recursive: true);
+            foreach (var child in List(fromRel, 10_000, out _))
+            {
+                CopyTree(child.Path, JoinRel(toRel, child.Name));
+            }
+            return;
+        }
+
         var tmp = Path.GetTempFileName();
         try
         {
@@ -143,6 +160,9 @@ internal sealed class SftpStorageProvider : IStorageProvider
             try { File.Delete(tmp); } catch { /* 尽力清理 */ }
         }
     }
+
+    private static string JoinRel(string parent, string name)
+        => parent.Length == 0 ? name : parent + "/" + name;
 
     public long Test()
     {

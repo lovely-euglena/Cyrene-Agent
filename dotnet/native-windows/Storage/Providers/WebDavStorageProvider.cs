@@ -157,8 +157,8 @@ internal sealed class WebDavStorageProvider : IStorageProvider
         catch (StorageException ex) when (ex.Code is "STORAGE_UNSUPPORTED" or "STORAGE_IO_ERROR")
         {
             // 部分 WebDAV 服务（如 123 云盘）不支持 MOVE/COPY：退化为流式复制 + 删除
-            StreamCopy(fromRel, toRel);
-            DeleteFile(fromRel);
+            StreamCopyTree(fromRel, toRel);
+            Delete(fromRel, recursive: true);
         }
     }
 
@@ -170,7 +170,7 @@ internal sealed class WebDavStorageProvider : IStorageProvider
         }
         catch (StorageException ex) when (ex.Code is "STORAGE_UNSUPPORTED" or "STORAGE_IO_ERROR")
         {
-            StreamCopy(fromRel, toRel);
+            StreamCopyTree(fromRel, toRel);
         }
     }
 
@@ -293,6 +293,25 @@ internal sealed class WebDavStorageProvider : IStorageProvider
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         using var put = Send(HttpMethod.Put, toRel, content, HttpCompletionOption.ResponseContentRead);
     }
+
+    /// <summary>GET → PUT 递归复制（目录逐层建），供不支持 COPY 的服务器兜底。</summary>
+    private void StreamCopyTree(string fromRel, string toRel)
+    {
+        var entry = Stat(fromRel) ?? throw StorageException.NotFound($"远端不存在：{fromRel}");
+        if (entry.Type == "dir")
+        {
+            EnsureDir(toRel);
+            foreach (var child in List(fromRel, 10_000, out _))
+            {
+                StreamCopyTree(child.Path, JoinRel(toRel, child.Name));
+            }
+            return;
+        }
+        StreamCopy(fromRel, toRel);
+    }
+
+    private static string JoinRel(string parent, string name)
+        => parent.Length == 0 ? name : parent + "/" + name;
 
     private void MoveOrCopy(HttpMethod method, string fromRel, string toRel, bool overwrite)
     {

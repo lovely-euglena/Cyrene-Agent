@@ -22,6 +22,7 @@
 // - 凭据只经命令行传入；宿主侧档案文件由 DPAPI 加密落盘，脚本本身不写凭据
 
 import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -162,7 +163,6 @@ async function main() {  const args = parseArgs(process.argv.slice(2));
   const localDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-storage-local-"));
   const localUpload = path.join(localDir, "upload.bin");
   fs.writeFileSync(localUpload, Buffer.from([0, 1, 2, 3, 4, 5, 250, 251, 252, 253]));
-  const localDownload = path.join(localDir, "downloaded.txt");
 
   let profileId = null;
   try {
@@ -185,6 +185,7 @@ async function main() {  const args = parseArgs(process.argv.slice(2));
     await client.call("mkdir", { profileId, path: base, recursive: true });
     check("mkdir", true);
 
+    // ── 文本读写 / 覆盖语义 ─────────────────────────────
     await client.call("write", { profileId, path: `${base}/hello.txt`, content: "hello 云存储 smoke\n" });
     check("write(content)", true);
 
@@ -202,26 +203,95 @@ async function main() {  const args = parseArgs(process.argv.slice(2));
     }
     check("覆盖保护（默认拒绝）", overwriteGuard);
 
+    await client.call("write", { profileId, path: `${base}/hello.txt`, content: "覆盖后的内容", overwrite: true });
+    const overwritten = await client.call("read", { profileId, path: `${base}/hello.txt` });
+    check("write(overwrite=true)", overwritten.kind === "text" && String(overwritten.text).includes("覆盖后"), JSON.stringify(overwritten).slice(0, 160));
+
+    // ── 二进制 / 空文件 ─────────────────────────────────
     await client.call("write", { profileId, path: `${base}/upload.bin`, localPath: localUpload });
     check("write(localPath)", true);
 
-    const downloaded = await client.call("download", {
-      profileId,
-      path: `${base}/upload.bin`,
-      localPath: localDownload,
-    });
-    const expected = fs.readFileSync(localUpload);
-    const actual = fs.readFileSync(localDownload);
-    check("download 字节一致", Buffer.compare(expected, actual) === 0, `${downloaded.bytes} bytes`);
+    const binRead = await client.call("read", { profileId, path: `${base}/upload.bin` });
+    check("read(binary) 返回二进制提示", binRead.kind === "binary", JSON.stringify(binRead).slice(0, 160));
 
+    await client.call("write", { profileId, path: `${base}/empty.txt`, content: "" });
+    const emptyRead = await client.call("read", { profileId, path: `${base}/empty.txt` });
+    check("空文件读写", emptyRead.kind === "text" && String(emptyRead.text) === "", JSON.stringify(emptyRead).slice(0, 160));
+
+    // ── 嵌套目录 + 中文/特殊字符文件名 ───────────────────
+    const unicodeName = "中文 文件名+特殊#%&（测试）.txt";
+    await client.call("write", { profileId, path: `${base}/nested/deep/${unicodeName}`, content: "unicode ok" });
+    const unicodeRead = await client.call("read", { profileId, path: `${base}/nested/deep/${unicodeName}` });
+    check("嵌套目录 + 特殊文件名读写", unicodeRead.kind === "text" && String(unicodeRead.text) === "unicode ok", JSON.stringify(unicodeRead).slice(0, 160));
+
+    // ── 大文本内联截断 ──────────────────────────────────
+    await client.call("write", { profileId, path: `${base}/big.txt`, content: "A".repeat(300 * 1024) });
+    const truncatedRead = await client.call("read", { profileId, path: `${base}/big.txt`, maxBytes: 1024 });
+    check("read(maxBytes) 大文件截断提示", truncatedRead.truncated === true && truncatedRead.text == null, JSON.stringify(truncatedRead).slice(0, 200));
+
+    // ── 目录列表截断 ────────────────────────────────────
+    for (const name of ["l1.txt", "l2.txt", "l3.txt"]) {
+      await client.call("write", { profileId, path: `${base}/list/${name}`, content: name });
+    }
+    const listTrunc = await client.call("read", { profileId, path: `${base}/list`, maxEntries: 2 });
+    check("read(maxEntries) 截断标记", listTrunc.kind === "dir" && listTrunc.truncated === true && listTrunc.entries.length === 2, JSON.stringify(listTrunc).slice(0, 200));
+
+    // ── 路径越界钳制 ────────────────────────────────────
+    let clamped = false;
+    try {
+      await client.call("read", { profileId, path: "../escape.txt" });
+    } catch (error) {
+      clamped = error.errorCode === "STORAGE_PATH_INVALID";
+    }
+    check("路径越界拒绝（..）", clamped);
+
+    // ── 4MB 二进制上传 / 下载（流式路径）─────────────────
+    const bigLocal = path.join(localDir, "big.bin");
+    fs.writeFileSync(bigLocal, crypto.randomBytes(4 * 1024 * 1024));
+    await client.call("write", { profileId, path: `${base}/big.bin`, localPath: bigLocal }, 300_000);
+    const bigDownload = path.join(localDir, "big-downloaded.bin");
+    const bigResult = await client.call("download", { profileId, path: `${base}/big.bin`, localPath: bigDownload }, 300_000);
+    check(
+      "4MB 二进制上传/下载字节一致",
+      Buffer.compare(fs.readFileSync(bigLocal), fs.readFileSync(bigDownload)) === 0,
+      `${bigResult.bytes} bytes`,
+    );
+
+    // ── 目录递归复制 / 移动 ─────────────────────────────
+    await client.call("copy", { profileId, from: `${base}/nested`, to: `${base}/nested-copy` }, 120_000);
+    const nestedCopy = await client.call("read", { profileId, path: `${base}/nested-copy/deep/${unicodeName}` });
+    check("copy(dir) 递归复制", nestedCopy.kind === "text", JSON.stringify(nestedCopy).slice(0, 160));
+
+    await client.call("move", { profileId, from: `${base}/nested-copy`, to: `${base}/nested-moved` }, 120_000);
+    const nestedMoved = await client.call("read", { profileId, path: `${base}/nested-moved/deep/${unicodeName}` });
+    check("move(dir) 递归移动", nestedMoved.kind === "text", JSON.stringify(nestedMoved).slice(0, 160));
+
+    // ── 单文件复制 / 移动 + 覆盖保护 ─────────────────────
     await client.call("copy", { profileId, from: `${base}/hello.txt`, to: `${base}/copy.txt` });
     const copied = await client.call("read", { profileId, path: `${base}/copy.txt` });
     check("copy + read", copied.kind === "text");
+
+    let copyGuard = false;
+    try {
+      await client.call("copy", { profileId, from: `${base}/hello.txt`, to: `${base}/copy.txt` });
+    } catch (error) {
+      copyGuard = error.errorCode === "STORAGE_ALREADY_EXISTS";
+    }
+    check("copy 覆盖保护（默认拒绝）", copyGuard);
 
     await client.call("move", { profileId, from: `${base}/copy.txt`, to: `${base}/moved.txt` });
     const moved = await client.call("read", { profileId, path: `${base}/moved.txt` });
     check("move + read", moved.kind === "text");
 
+    let moveGuard = false;
+    try {
+      await client.call("move", { profileId, from: `${base}/hello.txt`, to: `${base}/moved.txt` });
+    } catch (error) {
+      moveGuard = error.errorCode === "STORAGE_ALREADY_EXISTS";
+    }
+    check("move 覆盖保护（默认拒绝）", moveGuard);
+
+    // ── 删除（含目录递归）与最终清理 ─────────────────────
     await client.call("delete", { profileId, paths: [`${base}/moved.txt`] });
     const fileGone = await waitGone(client, profileId, `${base}/moved.txt`);
     check("delete(file) → NOT_FOUND", fileGone);
