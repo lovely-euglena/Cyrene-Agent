@@ -65,6 +65,15 @@ jobs:
       - name: Publish voice sidecar
         run: dotnet publish -c Release -r win-x64 /p:SelfContained=false --nologo dotnet/voice/CyreneVoice/CyreneVoice.csproj
 
+      # native 窗口/托管宿主（extraResources: resources/native-windows/）：
+      # 含 SSH/云存储/MCP 宿主，缺 publish 目录 electron-builder 会报源不存在
+      - name: Publish native windows host
+        run: dotnet publish -c Release -r win-x64 /p:SelfContained=false --nologo dotnet/native-windows/CyreneNative.csproj
+
+      # 本地 OCR sidecar（extraResources: resources/ocr/）
+      - name: Publish OCR sidecar
+        run: dotnet publish -c Release -r win-x64 /p:SelfContained=false --nologo dotnet/ocr-sidecar/CyreneOcr.csproj
+
       - name: Build screenshot helper (Rust, --locked)
         run: npm run build:screenshot-helper
 
