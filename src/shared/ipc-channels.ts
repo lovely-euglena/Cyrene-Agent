@@ -159,6 +159,8 @@ export const IPC = {
   SETTINGS_PANDOC_DETECT: "settings:pandoc-detect",
   // WSL：设置页探测本机 wsl.exe 与已安装发行版（只读）
   SETTINGS_WSL_DETECT: "settings:wsl-detect",
+  // WSL：设置页「重启 WSL」（wsl --shutdown，仅用户 UI 触发；AI 侧仍禁止）
+  SETTINGS_WSL_SHUTDOWN: "settings:wsl-shutdown",
   // 云存储：设置页档案管理（列表 / 保存 / 删除 / 测试连接）
   CLOUD_STORAGE_PROFILES_LIST: "cloud-storage:profiles-list",
   CLOUD_STORAGE_PROFILE_SAVE: "cloud-storage:profile-save",

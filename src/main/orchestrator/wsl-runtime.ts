@@ -173,6 +173,60 @@ export function resetWslDiscoveryCache(): void {
   discoveryCache = null;
 }
 
+/** WSL 重启结果：ok=false 时 error 为可展示的失败原因。 */
+export interface WslShutdownResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * 重启 WSL（`wsl --shutdown`）：终止发行版与 WSL2 轻量 VM 的**全部**实例。
+ *
+ * 仅由设置页 UI 的显式用户操作调用——AI 侧（run_shell）的发行版管理守卫仍禁止
+ * 该操作。用途：Windows 侧新建/改了分区或盘符后，正在运行的实例不会刷新 drvfs
+ * 挂载，需要重启 WSL 让 /mnt/* 重新映射。
+ *
+ * 成功后清空探测缓存，使下次列发行版走实时结果。
+ */
+export async function restartWsl(timeoutMs: number = WSL_PROBE_TIMEOUT_MS): Promise<WslShutdownResult> {
+  const executable = resolveWslExecutablePath();
+  if (!executable) return { ok: false, error: "WSL_UNAVAILABLE" };
+  resetWslDiscoveryCache();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: WslShutdownResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    let child: ChildProcess;
+    try {
+      child = spawn(executable, ["--shutdown"], {
+        windowsHide: true,
+        shell: false,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (error) {
+      finish({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    const stderrChunks: Buffer[] = [];
+    child.stderr?.on("data", (chunk: Buffer) => { stderrChunks.push(chunk); });
+    child.on("error", (error) => finish({ ok: false, error: error.message }));
+    child.on("close", (code) => {
+      resetWslDiscoveryCache();
+      if (code === 0) finish({ ok: true });
+      else finish({ ok: false, error: decodeWslText(Buffer.concat(stderrChunks)).trim() || `退出码 ${code}` });
+    });
+    setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* 已退出则忽略 */ }
+      finish({ ok: false, error: "WSL 重启超时" });
+    }, timeoutMs);
+  });
+}
+
 /**
  * 解析 WSL 执行器。找不到 wsl.exe 返回 null（→ WSL_UNAVAILABLE）。
  * distro 为空 = 使用 WSL 自身配置的默认发行版（调用参数不带 -d）。

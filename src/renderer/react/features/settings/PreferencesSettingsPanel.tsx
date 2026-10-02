@@ -142,6 +142,8 @@ export function PreferencesSettingsPanel() {
   const [wslExecutable, setWslExecutable] = useState<string | null>(null);
   const [wslDistros, setWslDistros] = useState<string[]>([]);
   const [wslDetecting, setWslDetecting] = useState(false);
+  const [wslRestarting, setWslRestarting] = useState(false);
+  const [wslRestartStatus, setWslRestartStatus] = useState("");
 
   useEffect(() => {
     let disposed = false;
@@ -203,6 +205,22 @@ export function PreferencesSettingsPanel() {
       setWslDistros([]);
     } finally {
       setWslDetecting(false);
+    }
+  }
+
+  async function runWslRestart() {
+    const api = window.settings;
+    if (!api?.restartWsl) return;
+    setWslRestarting(true);
+    setWslRestartStatus(t("settingsPage.preferences.wslRestarting"));
+    try {
+      const result = await api.restartWsl();
+      setWslRestartStatus(result.ok ? t("settingsPage.preferences.wslRestartDone") : `${t("settingsPage.preferences.wslRestartFailed")}${result.error ? `：${result.error}` : ""}`);
+      if (result.ok) await runWslDetect();
+    } catch {
+      setWslRestartStatus(t("settingsPage.preferences.wslRestartFailed"));
+    } finally {
+      setWslRestarting(false);
     }
   }
 
@@ -464,6 +482,17 @@ export function PreferencesSettingsPanel() {
                       disabled={wslDistros.length === 0}
                     />
                     <Button loading={wslDetecting} icon={<RefreshCw size={15} />} onClick={() => void runWslDetect()}>{t("settingsPage.preferences.wslDetect")}</Button>
+                  </div>
+                </div>
+              )}
+              {values.wslEnabled && (
+                <div className="cy-settings-row">
+                  <div className="cy-settings-row__copy">
+                    <strong>{t("settingsPage.preferences.wslRestart")}</strong>
+                    <span>{wslRestartStatus || t("settingsPage.preferences.wslRestartDescription")}</span>
+                  </div>
+                  <div className="cy-settings-row__control cy-settings-button-group">
+                    <Button loading={wslRestarting} icon={<RefreshCw size={15} />} onClick={() => void runWslRestart()}>{t("settingsPage.preferences.wslRestart")}</Button>
                   </div>
                 </div>
               )}

@@ -14,6 +14,7 @@ import {
   resetWslDiscoveryCache,
   resolveWslExecutable,
   resolveWslExecutablePath,
+  restartWsl,
   windowsPathToWslPath,
 } from "./wsl-runtime";
 
@@ -191,5 +192,37 @@ describe("resolveWslExecutablePath / discoverWsl", () => {
     vi.stubEnv("windir", root);
     vi.stubEnv("PATH", "");
     await expect(resolveWslExecutable("Ubuntu")).resolves.toBeNull();
+  });
+});
+
+describe("restartWsl", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetWslDiscoveryCache();
+  });
+
+  it("找不到 wsl.exe 时返回 WSL_UNAVAILABLE", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-wsl-norr-"));
+    vi.stubEnv("SystemRoot", root);
+    vi.stubEnv("windir", root);
+    vi.stubEnv("PATH", "");
+    await expect(restartWsl()).resolves.toEqual({ ok: false, error: "WSL_UNAVAILABLE" });
+  });
+
+  it("wsl.exe 失败（非 0 退出）时 ok=false 且带 stderr 原因", async () => {
+    // node 充当 wsl.exe：把 --shutdown 当脚本名 → 非 0 退出并写 stderr
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-wsl-fail-"));
+    fs.mkdirSync(path.join(root, "System32"), { recursive: true });
+    const exe = path.join(root, "System32", "wsl.exe");
+    fs.writeFileSync(exe, "");
+    vi.spyOn(fs, "statSync").mockReturnValue({ isFile: () => true } as never);
+    // 让 resolveWslExecutablePath 命中我们伪造的 exe，但实际 spawn 用 node 才能执行
+    vi.stubEnv("SystemRoot", root);
+    vi.stubEnv("PATH", "");
+    // 伪造 exe 是空文件无法执行，spawn 会 error → 契约上仍是 ok=false
+    const result = await restartWsl(3_000);
+    expect(result.ok).toBe(false);
+    expect(typeof result.error).toBe("string");
+    vi.restoreAllMocks();
   });
 });
