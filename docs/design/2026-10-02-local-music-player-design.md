@@ -240,3 +240,24 @@ TS `spawnWindow("music")`；Agent 工具按需拉起；设置页也可打开。
 | 大曲库扫描卡 UI | 后台线程 + SQLite 事务批写 + 列表虚拟化 |
 | 权限绕过 | 专用档 + `fs-write` 双重闸门；off 一律 fail-closed；工具快照测试锁定 risk |
 | 与旧 MusicCardData 混淆 | 新工具/状态不复用网易云 `MusicCardData`；历史卡片保持只读渲染 |
+
+## 14. 实施记录（2026-10-02，P1 已落地）
+
+- **.NET 核心**（`dotnet/native-windows/Music/`）：
+  - `MusicLibrary.cs`：SQLite 曲库 + 增量扫描（mark-and-sweep）+ 检索/文件夹统计；
+  - `MpvController.cs`：mpv 子进程 + named-pipe JSON IPC（`PipeOptions.Asynchronous` +
+    异步读，避免 .NET 同步读写互锁）；事件 time-pos/duration/pause/eof-reached/volume/end-file；
+  - `MusicService.cs`：进程内单例（窗口无关），队列/模式/音量/歌词行；`music.*` 请求处理；
+  - `LrcParser.cs`：侧车 .lrc 多标签/offset/双语；`MusicSelfTest.cs`：`--selftest music`。
+- **WPF 窗口**（`MusicWindow.cs`，kind=`music`）：列表/搜索/文件夹管理/歌词高亮与点击跳转/
+  进度音量/模式/Agent 权限下拉；`HostProtocol.ReplyOk(id, data)` + `RequestRouter` 新 op。
+- **TS 胶水**：`music-manager.ts`（配置下发/窗口打开/设置持久化）、`music-tools.ts`（四工具 +
+  权限档 fail-closed）；`native-windows-host.requestData<T>`；偏好设置新增「音乐」权限分组；
+  侧栏新增「本地音乐」入口。
+- **与设计稿的差异**：窗口动作直接调用进程内 MusicService（不再经 TS 转发往返）；
+  P1 音乐工具声明 `risk:"safe"`，专用权限档是唯一同意闸门（不触碰任意文件系统），
+  P2 写标签/改名等文件操作会额外叠加全局 `fs-write` 审批。
+- **验证**：`cyrene-native --selftest music` 19/19；`verify:music-native` 协议+真播冒烟 10/10
+  （扫描/播放推进/歌词行/音量/暂停/停止）；TS 侧 `music-tools.test.ts` 权限矩阵与请求形状。
+- **P2 待做**：TagLib# 标签/封面/歌词读写（一次一首、原子写）、播放列表、FileSystemWatcher、
+  改名、SMTC 全局媒体键、播放状态进 CITA、mpv 崩溃自动重启一次。
