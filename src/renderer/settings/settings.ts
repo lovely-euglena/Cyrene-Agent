@@ -28,7 +28,6 @@ import { getCitaUiState } from "./cita-settings-state";
 import { type ReasoningPreference } from "../../shared/reasoning";
 import { resolveApiEndpoint, type ApiTransport } from "../../shared/api-endpoint";
 import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
-import type { ChatStoreApi } from "../react/features/chat/pages/chat-page-bridge";
 import {
   DEFAULT_CUSTOM_STYLE,
   normalizeCustomStyleConfig,
@@ -68,7 +67,7 @@ import { apiState, type SavedProfileLite } from "./api/state";
 import { apiForm, apiRuntimeForm, presetCards, profileList, profileListCount, profileEditorTitle, deleteProfileBtn, presetWebsiteLink, displayNameInput, baseUrlInput, baseUrlResetBtn, modelInput, modelInputSuggestions, contextWindowInput, apiKeyInput, apiKeyLabel, apiKeyHint, testConnectionBtn, transportSelect, transportHint, endpointPreview, customEndpointControls, customEndpointOverrides, customEndpointSummary, customEndpointGuideBtn, workFlowAdaptBtn, apiNoteText, multimodalToggle, embeddingDimensionsInput, toggleEnableThinking, toggleDisableThinking, toggleDisableMaxToken } from "./api/dom";
 import { visionBaseUrlInput, visionApiKeyInput, visionModelInput, visionFieldsWrap, testVisionBtn, visionTestStatus } from "./vision/dom";
 import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, assistantBubbleEnabledInput, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, snipastePathInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput, toastSoundEnabledInput } from "./appearance/dom";
-import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, momentsEnabledInput, cyreneMomentsPostingEnabledInput, cyreneMomentsReactionsEnabledInput, momentsCharacterReactionsEnabledInput, momentsLivelinessSelect, momentsPostingRow, momentsReactionsRow, momentsCharacterRow, momentsLivelinessRow, citaEnabledInput, citaEngineSelect, clearChatHistoryBtn, customStyleSamplingBtn, customStylePromptBtn, gitCommitAuthorNameInput, gitCommitAuthorEmailInput } from "./general/dom";
+import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, momentsEnabledInput, cyreneMomentsPostingEnabledInput, cyreneMomentsReactionsEnabledInput, momentsCharacterReactionsEnabledInput, momentsLivelinessSelect, momentsPostingRow, momentsReactionsRow, momentsCharacterRow, momentsLivelinessRow, citaEnabledInput, citaEngineSelect, customStyleSamplingBtn, customStylePromptBtn, gitCommitAuthorNameInput, gitCommitAuthorEmailInput } from "./general/dom";
 import { minBtn, closeBtn, preferencesForm, sectionTitle, sectionHint, placeholderPanel, cyrenePanel, disclaimerPanel, pluginsPanel, placeholderIcon, placeholderTitle, placeholderCopy, saveStatus, runtimeSaveStatus, preferencesSaveStatus, cyreneSaveStatus, openStickerManagerBtn, addStickerBtn } from "./shared/shell";
 import { pluginAddBtn, permissionBlocksWrap, permissionNote } from "./plugins/dom";
 import { preferencesState } from "./preferences/state";
@@ -86,7 +85,7 @@ import type {
   UserApi,
 } from "./shared/types";
 import { MODEL_PRESETS } from "./api/presets";
-import { showModal, showHtmlModal, showInputModal } from "./shared/modal";
+import { showConfirm, showHtmlModal, showInputModal } from "./shared/modal";
 import {
   setSaveStatus, setCyreneSaveStatus, setPreferencesSaveStatus, setAppearanceSaveStatus,
   setGeneralSaveStatus, setRuntimeSaveStatus,
@@ -1809,12 +1808,13 @@ memoryImportedList?.addEventListener("click", async (event) => {
   const importId = deleteBtn.dataset.importId || "";
   const fileName = deleteBtn.dataset.fileName || t("settings.importDoc.unnamed");
 
-  const confirmed = await showModal({
+  // 删除导入文档不可撤销：危险确认，默认聚焦取消
+  const confirmed = await showConfirm({
     title: t("settings.importDoc.deleteTitle"),
     message: t("settings.importDoc.deleteMessage", { fileName }),
-    icon: "⚠️",
     confirmText: t("settings.importDoc.deleteConfirm"),
     cancelText: t("settings.modal.customStyle.cancel"),
+    dangerous: true,
   });
 
   if (!confirmed) return;
@@ -1836,25 +1836,6 @@ void loadMemoryPanel();
 
 
 
-
-// ── 清空聊天历史 ─────────────────────────────────────────────
-clearChatHistoryBtn.addEventListener("click", async () => {
-  if (!window.confirm(t("settings.chatHistory.clearConfirm"))) return;
-  const chatStore = (window as typeof window & { chatStore?: ChatStoreApi }).chatStore;
-  try {
-    const sessions = await chatStore?.list();
-    if (sessions && sessions.length > 0) {
-      // 串行删除（store 不支持批量删除；会话数量不会大，可接受）
-      for (const s of sessions) {
-        await chatStore?.delete(s.id);
-      }
-    }
-    setGeneralSaveStatus(t("settings.chatHistory.clearOk"), "is-ok");
-  } catch (err) {
-    console.warn("[settings] 清空聊天会话失败:", err);
-    setGeneralSaveStatus(t("settings.chatHistory.clearFailed"), "is-error");
-  }
-});
 
 // ── 预设卡：选择厂商 = 开始新建档案草稿 ───────────────────────
 presetCards?.addEventListener("click", (e) => {
