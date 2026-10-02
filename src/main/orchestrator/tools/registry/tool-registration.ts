@@ -8,6 +8,7 @@ import "../fs-tools";
 import { registerLifeTools, setTranslateConfig } from "../life-tools";
 import { registerMomentsTools } from "../moments-tools";
 import { registerRecallHistoryTool } from "../history-tools";
+import { registerWikiMemoryTools } from "../wiki-memory-tools";
 import { registerSearchTextTool } from "../search-text-tools";
 import { registerApplyPatchTool } from "../apply-patch-tools";
 import { registerAstGrepTools } from "../ast-grep-tools";
@@ -35,6 +36,7 @@ export function registerAllTools(deps: { codeGitService: GitService; lspManager:
   registerApplyPatchTool();
   registerAstGrepTools();
   registerRecallHistoryTool();
+  registerWikiMemoryTools();
   registerDocumentTools();
 
   setTranslateConfig(() => {
