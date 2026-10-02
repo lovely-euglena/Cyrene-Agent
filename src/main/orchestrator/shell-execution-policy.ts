@@ -10,9 +10,14 @@
 // - "write"：明确有写副作用的命令（git commit, npm install, > redirect 等）
 // - "unknown"：无法判断（node script.js, some-tool.cmd 等）
 //
-// 灾难守卫：
-// - isCatastrophicCommand() 拦截明显灾难操作（format, shutdown, dd 等）
-//   不试图穷举所有危险命令——沙箱才是最终裁判。
+// 灾难守卫（best-effort 安全带，不是安全边界）：
+// - isCatastrophicCommand() 拦截「不可逆 + 灾难范围 + 助手无正当理由」的操作：
+//   磁盘/分区格式化、电源、引导/恢复/备份删除、整盘/系统目录递归删除、勒索软件惯用法、
+//   下载即执行/常见混淆、持久化与防火墙关闭等。
+// - 普通破坏性命令（rm 单个文件、git reset、apt remove）不在这里硬拦——交给沙箱/审批，
+//   否则既误伤可用性，又制造「字符串过滤 = 安全」的虚假安全感。
+// - 静态分析拦不住的东西（务必承认）：解释器内构造（node -e / eval / $'\x72\x6d' / base64 /
+//   %VAR% 间接）、8.3 短名、UNC/ADS、跨调用的分步执行。这些只靠审批 + 沙箱兜底。
 
 /** 命令副作用分类（仅用于 approval / UI / logging，不是安全边界） */
 export type ShellEffect = "read" | "write" | "unknown";
@@ -55,27 +60,146 @@ const GIT_REMOTE_WRITE_SUBCOMMANDS = new Set(["add", "remove", "rename", "set-ur
 const FIND_WRITE_FLAGS = new Set(["-delete", "-exec", "-execdir", "-ok"]);
 
 // ── 灾难命令守卫 ────────────────────────────────────────
+//
+// 分两层，互补：
+//   1) HARD_BLOCK_COMMANDS：命令位置一级拦截。把命令按 shell 控制符切成段，每段跳过
+//      包装器（cmd/bash/powershell/sudo/timeout ...）与其选项/数字参数，取首个「真命令」
+//      的 basename 比对。可穿透 `a && format`、`C:\...\shutdown.exe`、`cmd /c format`。
+//   2) HARD_BLOCK_PATTERNS：特征鲜明的灾难惯用法，对整串归一化文本做正则匹配。用于
+//      命令名无法表达的场景（`rm -rf /`、`vssadmin delete shadows`、`curl | sh` 等）。
 
-/** 灾难级命令首词：无论什么档位都直接拒绝 */
-const CATASTROPHIC_FIRST_WORDS = new Set([
-  "format", "mkfs", "fdisk",
-  "shutdown", "reboot", "halt", "poweroff",
-  "dd",
+/** 命令位置一级拦截：不可逆、灾难范围、助手无正当理由的命令名（basename）。 */
+const HARD_BLOCK_COMMANDS = new Set([
+  // 磁盘 / 分区 / 格式化 / 原始设备
+  "format", "diskpart", "mkfs", "fdisk", "sfdisk", "cfdisk", "parted",
+  "mkswap", "wipefs", "dd",
+  // 电源 / 会话
+  "shutdown", "reboot", "halt", "poweroff", "logoff",
+  "restart-computer", "stop-computer",
+  // 引导 / 恢复 / 备份删除
+  "bcdedit", "bootrec", "vssadmin", "wbadmin", "reagentc", "manage-bde", "bootcfg",
 ]);
 
-// ── 灾难守卫 ────────────────────────────────────────────
+/** 运行另一个命令的包装器：解析命令位置时跳过它们及其选项/数字参数。 */
+const WRAPPER_COMMANDS = new Set([
+  "cmd", "powershell", "pwsh", "sh", "bash", "zsh", "dash", "ksh", "wsl",
+  "sudo", "doas", "runas", "env", "nohup", "nice", "time", "timeout", "xargs",
+  "start", "command", "setsid",
+]);
 
 /**
- * 灾难命令检测：拦截明显的灾难操作（format / shutdown / dd 等）。
- * 不试图穷举所有危险命令——沙箱才是最终裁判。
+ * 灾难惯用法（对归一化后的整串匹配：小写、去引号）。
+ * 每条都要足够「特征鲜明」，避免把普通开发命令（rm node_modules、del *.log）误伤。
+ */
+const HARD_BLOCK_PATTERNS: RegExp[] = [
+  // POSIX 递归强删根 / 家目录 / WSL 挂载的 Windows 盘（不匹配普通绝对路径如 /tmp/x）
+  /\brm\s+(?=[^&|;\n]*(?:-r\b|-rf\b|-fr\b|--recursive))(?=[^&|;\n]*(?:-f\b|-rf\b|-fr\b|--force))[^&|;\n]*\s+(?:\/(?:\*)?|~(?:\/\*)?|\$home(?:\/\*)?|\/mnt\/[a-z](?:\/\*)?)(?=\s|$)/,
+  // WSL 下递归删除挂载盘里的 Windows 系统/用户目录
+  /\brm\s+(?=[^&|;\n]*(?:-r\b|-rf\b|-fr\b|--recursive))(?=[^&|;\n]*(?:-f\b|-rf\b|-fr\b|--force))[^&|;\n]*\s+\/mnt\/[a-z]\/(?:windows|users|program files|programdata)(?=\/|\s|$)/,
+  // 直接写块设备
+  /\bdd\b[^\n]*\bof=\/dev\//,
+  // fork 炸弹
+  /:\(\)\s*\{\s*:\|:\s*&\s*\}\s*;\s*:/,
+  // Windows 整盘 / 系统目录递归删除
+  /\b(?:del|erase)(?:\.exe)?\b[^\n]*\/[fsq](?:\s|$)[^\n]*\b[a-z]:[\\/]/,
+  /\b(?:del|erase)(?:\.exe)?\b[^\n]*\/[fsq](?:\s|$)[^\n]*\\(?:windows|users|program files|programdata)\b/,
+  /\b(?:rd|rmdir)(?:\.exe)?\b[^\n]*\/s[^\n]*\b[a-z]:[\\/]/,
+  /\b(?:rd|rmdir)(?:\.exe)?\b[^\n]*\/s[^\n]*\\(?:windows|users|program files|programdata)\b/,
+  /\bremove-item\b(?=[^\n]*(?:-recurse\b|-r\b))(?=[^\n]*(?:-force\b|-fo\b))[^\n]*\b[a-z]:[\\/]/,
+  // 勒索软件 / 备份删除 / 恢复破坏
+  /\bvssadmin(?:\.exe)?\b[^\n]*\bdelete\b[^\n]*\bshadows?\b/,
+  /\bwbadmin(?:\.exe)?\b[^\n]*\bdelete\b/,
+  /\bwmic(?:\.exe)?\b[^\n]*shadowcopy[^\n]*delete/,
+  /\bbcdedit(?:\.exe)?\b[^\n]*(?:recoveryenabled\s+no|ignoreallfailures)/,
+  /\bcipher(?:\.exe)?\b[^\n]*\/w\b/,
+  /\bmanage-bde(?:\.exe)?\b[^\n]*(?:-off|delete)/,
+  /\bnvme(?:\.exe)?\b[^\n]*\bformat\b/,
+  /\bhdparm\b[^\n]*--security-erase/,
+  /\bbadblocks\b[^\n]*-w\b/,
+  // 防火墙关闭
+  /\bnetsh(?:\.exe)?\b[^\n]*advfirewall[^\n]*state\s+off/,
+  /\bset-netfirewallprofile\b[^\n]*-enabled[^\n]*false/,
+  // 注册表 / 账户破坏
+  /\breg(?:\.exe)?\s+delete\s+(?:hklm|hkcr|hkey_local_machine|hkey_classes_root)\b/,
+  /\bnet(?:\.exe)?\s+(?:user|localgroup)\b[^\n]*(?:\/add|\/delete|\/active:no|(?:\s+[^\s/]+\s+[^\s/]+))/,
+  // 持久化（助手没有正当理由操纵系统任务/服务）
+  /\bschtasks(?:\.exe)?\b[^\n]*\/create\b/,
+  /\breg(?:\.exe)?\s+add\b[^\n]*\\(?:run|runonce)\b/,
+  /\bsc(?:\.exe)?\s+(?:create|delete)\b/,
+  /\bnew-service\b/,
+  // 下载即执行 / 常见混淆（尽力而为；解释器内构造拦不住）
+  /\b(?:curl|wget|iwr|invoke-webrequest)(?:\.exe)?\b[^\n]*\|\s*(?:ba|z|da|k)?sh\b/,
+  /\b(?:curl|wget|iwr|invoke-webrequest)(?:\.exe)?\b[^\n]*\|\s*(?:powershell|pwsh|cmd)\b/,
+  /\b(?:iwr|invoke-webrequest|downloadstring|downloadfile|net\.webclient)\b[^\n]*\biex\b/,
+  /\biex\b[^\n]*(?:iwr|invoke-webrequest|downloadstring|downloadfile|net\.webclient)\b/,
+  /\b(?:powershell|pwsh)\b[^\n]*-enc(?:odedcommand)?\b/,
+  /\bcertutil(?:\.exe)?\b[^\n]*-(?:decode|urlcache)\b/,
+  /\bmshta(?:\.exe)?\b/,
+  /\brundll32(?:\.exe)?\b[^\n]*javascript:/,
+  /\bregsvr32(?:\.exe)?\b[^\n]*\/i:https?:/,
+  /\bbitsadmin(?:\.exe)?\b[^\n]*\/transfer\b/,
+  /\bwmic(?:\.exe)?\b[^\n]*process[^\n]*call[^\n]*create/,
+];
+
+/** 归一化整串：小写、去引号（保留反斜杠/正斜杠）。 */
+function normalizeCommand(command: string): string {
+  return command.toLowerCase().replace(/["'`]/g, "");
+}
+
+/** 归一化单个 token：去首尾引号/括号/标点、取 basename、去常见脚本扩展名、小写。 */
+function normalizeToken(token: string): string {
+  const stripped = token
+    .trim()
+    .replace(/^[`("'[{]+/, "")
+    .replace(/[`)"'\]};,]+$/, "");
+  const basename = stripped.replace(/^.*[\\/]/, "");
+  return basename
+    .replace(/\.(?:exe|com|bat|cmd|ps1|sh|bash|zsh|py|js|vbs|lnk|scr|msi)$/i, "")
+    .toLowerCase();
+}
+
+/** 按 shell 控制符切段（引号内的分隔符也会切，属可接受的近似）。 */
+function splitCommandSegments(command: string): string[] {
+  return command.split(/&&|\|\||[;|&\n\r()`]/);
+}
+
+/** 取一段命令的「命令位置」名：跳过包装器与选项/数字参数后的首个真命令 basename。 */
+function commandPositionName(segment: string): string | null {
+  const tokens = segment.trim().replace(/^[`(]+/, "").split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    const raw = token.trim().replace(/^[`(]+/, "");
+    if (!raw) continue;
+    // 先判选项/数字：普通 token 才取 basename（否则 cmd 的 /c 会被当成路径取成 "c"）
+    if (raw.startsWith("-") || /^\d+$/.test(raw) || /^\/[a-z]$/i.test(raw)) continue;
+    const name = normalizeToken(token);
+    if (!name) continue;
+    if (WRAPPER_COMMANDS.has(name)) continue;
+    return name;
+  }
+  return null;
+}
+
+/** 命令位置名是否属于灾难命令（含 mkfs.ext4 这类「基名 + 文件系统后缀」）。 */
+function isHardBlockedName(name: string): boolean {
+  return HARD_BLOCK_COMMANDS.has(name) || name.startsWith("mkfs.");
+}
+
+/**
+ * 灾难命令检测（best-effort）。命中即无条件拒绝，与权限档位无关。
+ * 拦不住混淆/解释器构造——那由审批与沙箱兜底，见文件头。
  */
 export function isCatastrophicCommand(command: string): boolean {
-  const trimmed = command.trim().toLowerCase();
+  const trimmed = command.trim();
   if (!trimmed) return false;
-  // 取第一个 token（可能是路径，取 basename），去掉任何文件扩展名（.exe/.cmd/.ext4 等）
-  const firstToken = trimmed.split(/\s+/)[0];
-  const basename = firstToken.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
-  return CATASTROPHIC_FIRST_WORDS.has(basename);
+
+  const normalized = normalizeCommand(trimmed);
+  if (HARD_BLOCK_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
+
+  for (const segment of splitCommandSegments(trimmed)) {
+    const name = commandPositionName(segment);
+    if (name && isHardBlockedName(name)) return true;
+  }
+  return false;
 }
 
 // ── WSL 管理命令守卫 ────────────────────────────────────
