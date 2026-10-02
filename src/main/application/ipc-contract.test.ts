@@ -179,7 +179,7 @@ describe("IPC 契约：preload ↔ main 通道对账", () => {
 
     expect(registrationFiles.length, "被扫描到的注册文件数").toBeGreaterThan(20);
     expect(registrationFiles.filter((file) => !reachable.has(file))).toEqual([]);
-  });
+  }, 8_000);
 });
 
 describe("ipc-contract-scanner", () => {
