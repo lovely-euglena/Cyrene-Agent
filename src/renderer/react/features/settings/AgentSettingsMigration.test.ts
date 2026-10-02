@@ -75,10 +75,11 @@ describe("agent settings migration", () => {
       l2: [], importedDocs: [], reflections: [],
     };
     Object.assign(window, {
-      settings: { getGeneral: async () => ({}) },
+      settings: { getGeneral: async () => ({}), getConfig: async () => ({ memoryMode: "vector" }) },
       memoryPanel: {
         getData: async () => payload,
         getVaultConfig: async () => ({ vaultPath: "", autoSync: false, lastSyncAt: 0 }),
+        getSummaryMemory: async () => null,
         saveL0: async (patch: typeof payload.l0) => { payload.l0 = { ...patch }; return { ok: true }; },
       },
     });
@@ -141,11 +142,12 @@ describe("agent settings migration", () => {
     let vaultPath = "";
     const deleteImportedDoc = vi.fn(async () => { payload.importedDocs = []; return { ok: true, deleted: 1 }; });
     Object.assign(window, {
-      settings: { getGeneral: async () => ({}) },
+      settings: { getGeneral: async () => ({}), getConfig: async () => ({ memoryMode: "vector" }) },
       memoryPanel: {
         getData: async () => payload,
         getVaultConfig: async () => ({ vaultPath, autoSync: false, lastSyncAt: 0 }),
         deleteImportedDoc,
+        getSummaryMemory: async () => null,
         bindVault: async () => { vaultPath = "C:/Notes"; return { ok: true, vaultPath, fileCount: 2 }; },
       },
     });
