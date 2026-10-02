@@ -111,7 +111,7 @@ export class NativeWindowsClient {
    */
   private pendingFrameLength: number | null = null;
   private nextId = 1;
-  private pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
+  private pending = new Map<number, { resolve: (data?: unknown) => void; reject: (e: Error) => void }>();
   private onCommand: CommandHandler;
   private readonly exePath: string;
 
@@ -287,19 +287,22 @@ export class NativeWindowsClient {
     if (!pending) return;
     this.pending.delete(frame.id);
     debugLog(`[NativeWindows] ← #${frame.id} ${frame.ok ? "ok" : `err=${frame.error ?? ""}`}`);
-    if (frame.ok) pending.resolve();
+    if (frame.ok) pending.resolve(frame.data);
     else pending.reject(new Error(frame.error ?? "native windows request failed"));
   }
 
-  private async request(payload: Record<string, unknown>): Promise<void> {
+  private async request<T = void>(payload: Record<string, unknown>): Promise<T> {
     const child = this.child;
     if (!child || !child.stdin || child.exitCode !== null) {
       throw new Error("native windows process is not running");
     }
     const id = this.nextId++;
     debugLog(`[NativeWindows] → #${id} ${frameSummary(payload)}`);
-    return new Promise<void>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: (data) => resolve(data as T),
+        reject,
+      });
       const json = Buffer.from(JSON.stringify({ id, ...payload }), "utf8");
       const prefix = Buffer.alloc(4);
       prefix.writeInt32LE(json.length);
@@ -308,9 +311,18 @@ export class NativeWindowsClient {
     });
   }
 
+  /**
+   * 带数据回执的请求（music.* 等查询类 op；HostProtocol.ReplyOk(id, data)）。
+   * 旧请求路径的 data 为 undefined，返回值与 request 等价。
+   */
+  async requestData<T = unknown>(payload: Record<string, unknown>): Promise<T> {
+    await this.ensureStarted();
+    return this.request<T>(payload);
+  }
+
   // ── 公开 API：窗口生命周期 + 状态推送 ──
 
-  async spawnWindow(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins", layout?: unknown): Promise<void> {
+  async spawnWindow(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music", layout?: unknown): Promise<void> {
     await this.ensureStarted();
     await this.request({ op: "win.spawn", kind, layout: layout ?? {} });
   }

@@ -7,6 +7,12 @@ namespace CyreneNative;
 /// </summary>
 internal static class Glyphs
 {
+    /// <summary>音乐（sidebar「本地音乐」按钮；音符轮廓）。</summary>
+    public const string Music =
+        "M18 38 A5 4.5 0 1 1 18 29 A5 4.5 0 0 1 18 38 Z "
+        + "M34 34 A5 4.5 0 1 1 34 25 A5 4.5 0 0 1 34 34 Z "
+        + "M23 36V14L39 10V30";
+
     /// <summary>侧栏「置顶」图钉（sidebar/index.html #pin-btn）。</summary>
     public const string Pin =
         "M10.6963 17.5042C13.3347 14.8657 16.4701 14.9387 19.8781 16.8076L32.62 9.74509L31.8989 4.78683"

@@ -217,6 +217,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   snipastePath: string;
   /** Pandoc.exe 路径；空字符串 = 自动探测 PATH（文档转换：docx/odt/rtf/epub 等） */
   pandocPath: string;
+  /** 本地音乐文件夹（绝对路径；音乐窗管理，Agent 查询/管理共用）。 */
+  musicFolders: string[];
+  /** Agent 音乐权限档：off=关闭 / read=只读查询 / control=控制播放 / manage=管理曲库。 */
+  musicAgentAccess: "off" | "read" | "control" | "manage";
   /** 🔍本地 OCR（图像文字识别）工具开关 */
   ocrEnabled: boolean;
   /** OCR 服务商：off(关闭) | local(本地，Windows 内置) | cloud(云端，预留未接入) */

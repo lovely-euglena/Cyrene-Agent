@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Modal, Radio, Spin } from "antd";
-import { FileText, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { FileText, Music, RefreshCw, SlidersHorizontal } from "lucide-react";
 import {
   normalizeChatSocialContextEnabled,
   normalizeMobileMessageSegmentationMode,
@@ -42,6 +42,8 @@ interface PreferencesValues {
   snipastePath: string;
   /** Pandoc 可执行文件路径；空 = 自动探测 PATH（文档转换）。 */
   pandocPath: string;
+  /** 本地音乐 Agent 权限档（工具 fail-closed；音乐窗口亦可改）。 */
+  musicAgentAccess: "off" | "read" | "control" | "manage";
 }
 
 type ChannelStatus = Record<string, { phase?: string }>;
@@ -61,6 +63,7 @@ const defaults: PreferencesValues = {
   screenshotBackend: "builtin",
   snipastePath: "",
   pandocPath: "",
+  musicAgentAccess: "read",
 };
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -85,6 +88,9 @@ function readPreferences(value: unknown): PreferencesValues {
     screenshotBackend: input.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input.snipastePath === "string" ? input.snipastePath : "",
     pandocPath: typeof input.pandocPath === "string" ? input.pandocPath : "",
+    musicAgentAccess: input.musicAgentAccess === "off" || input.musicAgentAccess === "control" || input.musicAgentAccess === "manage"
+      ? input.musicAgentAccess
+      : "read",
   };
 }
 
@@ -177,6 +183,7 @@ export function PreferencesSettingsPanel() {
         screenshotBackend,
         snipastePath,
         pandocPath,
+        musicAgentAccess,
       } = values;
       await window.settings.saveGeneral({
         citaEnabled,
@@ -192,6 +199,7 @@ export function PreferencesSettingsPanel() {
         screenshotBackend,
         snipastePath: snipastePath.trim(),
         pandocPath: pandocPath.trim(),
+        musicAgentAccess,
       });
       setStatus(t("settingsPage.preferences.saved"));
     } catch {
@@ -333,6 +341,25 @@ export function PreferencesSettingsPanel() {
                 <div className="cy-settings-row__control cy-settings-button-group">
                   <Button loading={pandocDetecting} icon={<RefreshCw size={15} />} onClick={() => void runPandocDetect(values.pandocPath)}>{t("settingsPage.preferences.pandocDetect")}</Button>
                 </div>
+              </div>
+            </Card>
+          </section>
+
+          <section className="cy-settings-section">
+            <div className="cy-settings-section__heading"><h2><Music size={18} />{t("settingsPage.preferences.music")}</h2><p>{t("settingsPage.preferences.musicDescription")}</p></div>
+            <Card>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.musicAgentAccess")}</strong><span>{t("settingsPage.preferences.musicAgentAccessDescription")}</span></div>
+                <SettingsSegmented
+                  value={values.musicAgentAccess}
+                  options={[
+                    { label: t("settingsPage.preferences.musicAccessOff"), value: "off" },
+                    { label: t("settingsPage.preferences.musicAccessRead"), value: "read" },
+                    { label: t("settingsPage.preferences.musicAccessControl"), value: "control" },
+                    { label: t("settingsPage.preferences.musicAccessManage"), value: "manage" },
+                  ]}
+                  onChange={(value) => update("musicAgentAccess", value as PreferencesValues["musicAgentAccess"])}
+                />
               </div>
             </Card>
           </section>

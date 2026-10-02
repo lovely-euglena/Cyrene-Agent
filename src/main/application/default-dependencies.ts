@@ -190,6 +190,7 @@ import {
   disposeNativeWindowsBridge,
   pushWindowRadiusToNative,
 } from "../windows/native-windows-bridge";
+import { handleMusicAction, openMusicWindow } from "../music/music-manager";
 import { connectDetachedTray, showTrayBalloon } from "../tray-detached";
 import { openSettingsEntry, openSettingsWindow } from "../windows/settings-router";
 import { pickAndImportUiFont, resetUiFont } from "../settings/ui-font";
@@ -1095,6 +1096,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           // 只调 createReactChatWindowShell 会创建不可见的空壳，点了没反应。
           openChatWindow: () => { void windowManager.openReactChatWindow(); },
           openCallWindow: () => windowManager.createCallWindow(),
+          // 侧栏「音乐」→ 本地音乐播放器（WPF music 窗；配置先下发）
+          openMusicWindow: () => { void openMusicWindow(); },
+          // 音乐窗设置变更（文件夹/Agent 权限）→ 宿主持久化
+          musicAction: (action, payload) => handleMusicAction(action, payload),
           toggleSidebarPin: () => windowManager.createSidebarWindow(),
           onSplashShown: () => { /* onShown 由 spawnNativeSplash 注册的 hook 触发 */ },
           // 窗口圆角：spawn 时随窗口下发（native 进程重启后可恢复）；

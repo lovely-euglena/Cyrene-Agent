@@ -28,6 +28,7 @@ import { runShellTool } from "./builtin-tools/run-shell-tool";
 import { shellJobTool } from "./builtin-tools/shell-job-tool";
 import { sshTools } from "../../ssh/ssh-tools";
 import { storageTools } from "../../cloud-storage/storage-tools";
+import { musicTools } from "../../music/music-tools";
 
 let sendToLive2DWindow: (channel: string, payload?: unknown) => void = () => {};
 export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
@@ -54,3 +55,5 @@ logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_sh
 toolRegistry.register(wrapToolForNativeHost(weatherTool));
 toolRegistry.register(wrapToolForNativeHost(webSearchTool));
 toolRegistry.register(wrapToolForNativeHost(createPlayLive2DActionTool({ sendToLive2DWindow })));
+// 本地音乐工具：播放器在 cyrene-native（MusicService），权限档 musicAgentAccess
+for (const tool of musicTools) toolRegistry.register(tool);

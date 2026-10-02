@@ -36,6 +36,10 @@ const BUILT_IN_TOOL_IDS = [
   "weather",
   "web_search",
   "play_live2d_action",
+  "music_library",
+  "music_now_playing",
+  "music_play",
+  "music_manage",
 ] as const;
 
 describe("built-in-tools 注册快照", () => {

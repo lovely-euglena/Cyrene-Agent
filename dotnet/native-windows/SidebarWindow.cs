@@ -379,10 +379,11 @@ public sealed class SidebarWindow : NativeWindow
         var stack = new StackPanel();
         var chatBtn = MakeModelButton("打开聊天", Glyphs.Chat, Glyphs.ChatDots, () => RequestRouter.SendCommand(Kind, "openChat"));
         var callBtn = MakeModelButton("语音通话", Glyphs.Phone, null, () => RequestRouter.SendCommand(Kind, "openCall"));
+        var musicBtn = MakeModelButton("本地音乐", Glyphs.Music, null, () => RequestRouter.SendCommand(Kind, "openMusic"));
         // 旧版语义（sidebar.ts）：切换模型 = 打开 API 设置页，而不是默认页
         var switchBtn = MakeModelButton("切换模型", Glyphs.Sync, null, () => RequestRouter.SendCommand(Kind, "openSettings", "api"));
         // 对齐 .model-card gap 8 + .model-switch-btn margin-top 2 → 相邻间距 10
-        foreach (var btn in new[] { chatBtn, callBtn, switchBtn })
+        foreach (var btn in new[] { chatBtn, callBtn, musicBtn, switchBtn })
         {
             btn.Margin = new Thickness(0, 2, 0, 8);
             stack.Children.Add(btn);
