@@ -52,6 +52,7 @@ export interface ModelSettings {
   // 按厂商缓存：切回该厂商时，从这里恢复 baseUrl / model / apiKey
   perProvider?: Record<string, ProviderProfile>;
   runtimeSync: "off" | "local" | "llm";
+  memoryMode: "vector" | "summary" | "off";
   stickerEnabled: boolean;
   stickerSize: "small" | "standard" | "large";
   stickerSimilarityThreshold: number;
@@ -175,6 +176,7 @@ export interface ObsidianVaultConfig {
 
 export interface MemoryPanelApi {
   getData: () => Promise<MemoryPanelPayload>;
+  getSummaryMemory: () => Promise<MemorySummaryPayload | null>;
   deleteImportedDoc: (importId: string, fileName?: string) => Promise<{ ok: boolean; deleted: number }>;
   saveL0: (patch: Record<string, unknown>) => Promise<{ ok: boolean }>;
   saveL1: (patch: Record<string, unknown>) => Promise<{ ok: boolean }>;
@@ -196,6 +198,18 @@ export interface MemoryPanelApi {
   getVaultConfig: () => Promise<ObsidianVaultConfig>;
   setAutoSync: (autoSync: boolean) => Promise<{ ok: boolean; config: ObsidianVaultConfig }>;
   syncNow: () => Promise<{ ok: boolean; vaultPath?: string; fileCount?: number; error?: string; skipped?: boolean }>;
+}
+
+export interface MemorySummaryPayload {
+  sessionId: string;
+  sessionPath: string;
+  workspacePath?: string;
+  sessionContent: string;
+  workspaceContent?: string;
+  sessionTruncated: boolean;
+  workspaceTruncated: boolean;
+  stablePrompt: string;
+  runtimeContext: string;
 }
 
 export interface SettingsApi {

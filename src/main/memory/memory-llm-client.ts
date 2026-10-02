@@ -35,11 +35,12 @@ import {
   MEMORY_JUDGE_JSON_SCHEMA,
   MEMORY_REFLECTION_JSON_SCHEMA,
   MEMORY_RESOLVE_JSON_SCHEMA,
+  SUMMARY_MEMORY_JSON_SCHEMA,
 } from "./memory-schemas";
 
 // ── 类型 ──
 
-export type MemoryLlmOperation = "judge" | "compress" | "reflect" | "resolve";
+export type MemoryLlmOperation = "judge" | "compress" | "reflect" | "resolve" | "summary";
 
 export interface MemoryLlmRequest {
   operation: MemoryLlmOperation;
@@ -73,6 +74,7 @@ const OPERATION_TO_TOKEN_STAGE: Record<MemoryLlmOperation, RuntimeStage> = {
   compress: "memory-compressor",
   reflect: "memory-reflect",
   resolve: "memory-resolver",
+  summary: "memory-summary",
 };
 
 const OPERATION_TO_SO_STAGE: Record<MemoryLlmOperation, StructuredOutputStage> = {
@@ -80,6 +82,7 @@ const OPERATION_TO_SO_STAGE: Record<MemoryLlmOperation, StructuredOutputStage> =
   compress: "memory_compress",
   reflect: "memory_reflect",
   resolve: "memory_resolve",
+  summary: "memory_summary",
 };
 
 const OPERATION_REPAIR_FORMAT: Record<MemoryLlmOperation, string> = {
@@ -87,6 +90,7 @@ const OPERATION_REPAIR_FORMAT: Record<MemoryLlmOperation, string> = {
   compress: '顶层必须是 JSON 对象，格式为 {"groups":[...]}。',
   reflect: '顶层必须是 JSON 对象，格式为 {"updates":[...]}；没有更新时返回 {"updates":[]}。',
   resolve: "顶层必须是一个符合原始字段要求的 JSON 对象。",
+  summary: '顶层必须是 JSON 对象，格式为 {"sessionSummary":"...","workspaceSummary":"..."}；超出长度限制时必须压缩内容。',
 };
 
 function buildRepairMessage(
@@ -268,6 +272,7 @@ const OPERATION_JSON_SCHEMA: Record<
   judge: MEMORY_JUDGE_JSON_SCHEMA,
   reflect: MEMORY_REFLECTION_JSON_SCHEMA,
   resolve: MEMORY_RESOLVE_JSON_SCHEMA,
+  summary: SUMMARY_MEMORY_JSON_SCHEMA,
 };
 
 function buildStructuredOutputRequest(

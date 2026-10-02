@@ -1,4 +1,4 @@
-import { dialog } from "electron";
+import { app, dialog } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getStickerManagerConfig, setStickerEnabled } from "../orchestrator/sticker-settings";
@@ -40,6 +40,10 @@ import {
   unbindMemoryVault,
 } from "./memory-actions";
 import { pickAndSaveUserAvatar } from "./user-avatar";
+import { activeConversationRegistry } from "../chats/active-conversation-registry";
+import * as chatsStore from "../chats/chats-store";
+import { loadSummaryMemoryContext } from "./summary-memory-context";
+import { isSummaryMemoryEnabled } from "./memory-mode";
 
 export interface MemoryUserToolIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -153,6 +157,17 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
 
   // 记忆面板
   ipc.handle(IPC.MEMORY_PANEL_GET_DATA, () => loadMemoryPanelData());
+  ipc.handle(IPC.MEMORY_PANEL_GET_SUMMARY, async () => {
+    if (!isSummaryMemoryEnabled()) return null;
+    const sessionId = activeConversationRegistry.getMostRecent()?.sessionId ?? chatsStore.getLatestSessionId();
+    if (!sessionId) return null;
+    const context = await loadSummaryMemoryContext({
+      conversationId: sessionId,
+      userDataRoot: app.getPath("userData"),
+      getSessionRecord: chatsStore.getSessionRecord,
+    });
+    return { sessionId, ...context };
+  });
 
   ipc.handle(IPC.MEMORY_PANEL_DELETE_IMPORTED_DOC, (_event, payload: { importId: string; fileName?: string }) => {
     const deleted = removeImportedDocEntry(payload.importId, payload.fileName);

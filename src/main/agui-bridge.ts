@@ -193,6 +193,8 @@ export type OnRunFinishedFn = (
     conversationId: string;
     channel?: string;
     runId?: string;
+    assistantEntryId?: string;
+    userTurnId?: string;
   },
 ) => Promise<void | RunFinishedEffects> | void | RunFinishedEffects;
 
@@ -983,6 +985,8 @@ export function registerAgUiIpc(
               mode,
               conversationId: sessionId,
               runId,
+              assistantEntryId: options.transcriptSink?.getLastAssistantEntryId?.() ?? input.assistantTurnId ?? runId,
+              userTurnId: currentUser?.turnId,
             }));
             if (mode !== "code" && effects?.sticker !== undefined) {
               send({

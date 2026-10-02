@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Empty, Input, Modal, Spin } from "antd";
+import { Alert, Button, Empty, Input, Modal, Radio, Spin } from "antd";
 import { Brain, Clock3, FileSearch, FolderOpen, History, Pencil, Trash2 } from "lucide-react";
 import { siObsidian } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
-import type { MemoryPanelPayload, ObsidianVaultConfig } from "../../../settings/shared/types";
+import type { MemoryPanelPayload, MemorySummaryPayload, ObsidianVaultConfig } from "../../../settings/shared/types";
 import { formatDateTime } from "../../../settings/shared/format";
 import { useTranslation } from "../../i18n";
 import { SettingsInput, SettingsSwitch } from "../../components/ui/SettingsControls";
@@ -20,10 +20,14 @@ export function MemorySettingsPanel() {
   const [vault, setVault] = useState<ObsidianVaultConfig | null>(null);
   const [draftL0, setDraftL0] = useState<L0 | null>(null);
   const [draftL1, setDraftL1] = useState<L1 | null>(null);
+  const [memoryMode, setMemoryMode] = useState<"vector" | "summary" | "off">("vector");
+  const [summaryMemory, setSummaryMemory] = useState<MemorySummaryPayload | null>(null);
+  const [modeLoading, setModeLoading] = useState(true);
   const [editing, setEditing] = useState<"l0" | "l1" | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  const [modeSaving, setModeSaving] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ImportedDoc | null>(null);
 
@@ -40,6 +44,11 @@ export function MemorySettingsPanel() {
     setVault(await window.memoryPanel.getVaultConfig());
   }, []);
 
+  const reloadSummaryMemory = useCallback(async () => {
+    if (!window.memoryPanel) throw new Error("Memory API unavailable");
+    setSummaryMemory(await window.memoryPanel.getSummaryMemory());
+  }, []);
+
   useEffect(() => {
     let active = true;
     if (!window.memoryPanel) {
@@ -47,7 +56,8 @@ export function MemorySettingsPanel() {
       setLoading(false);
       return;
     }
-    void Promise.allSettled([window.memoryPanel.getData(), window.memoryPanel.getVaultConfig()]).then(([memoryResult, vaultResult]) => {
+    const settingsPromise = window.settings?.getConfig() ?? Promise.reject(new Error("Settings API unavailable"));
+    void Promise.allSettled([window.memoryPanel.getData(), window.memoryPanel.getVaultConfig(), settingsPromise, window.memoryPanel.getSummaryMemory()]).then(([memoryResult, vaultResult, settingsResult, summaryResult]) => {
       if (!active) return;
       if (memoryResult.status === "fulfilled") {
         setData(memoryResult.value);
@@ -55,10 +65,32 @@ export function MemorySettingsPanel() {
         setDraftL1({ ...memoryResult.value.l1 });
       } else setNotice({ type: "error", text: t("settingsPage.memory.loadFailed") });
       if (vaultResult.status === "fulfilled") setVault(vaultResult.value);
+      if (settingsResult.status === "fulfilled") setMemoryMode(settingsResult.value.memoryMode === "summary" ? "summary" : settingsResult.value.memoryMode === "off" ? "off" : "vector");
+      else setNotice({ type: "error", text: t("settingsPage.memory.modeLoadFailed") });
+      if (summaryResult.status === "fulfilled") setSummaryMemory(summaryResult.value);
+      setModeLoading(false);
       setLoading(false);
     });
     return () => { active = false; };
   }, [t]);
+
+  async function changeMemoryMode(mode: "vector" | "summary" | "off") {
+    const api = window.settings;
+    if (!api || modeLoading || modeSaving) return;
+    const previous = memoryMode;
+    setMemoryMode(mode);
+    setModeSaving(true);
+    setNotice(null);
+    try {
+      await api.saveConfig({ memoryMode: mode });
+      if (mode === "summary") await reloadSummaryMemory();
+      else setSummaryMemory(null);
+      setNotice({ type: "success", text: t("settingsPage.memory.saved") });
+    } catch {
+      setMemoryMode(previous);
+      setNotice({ type: "error", text: t("settingsPage.memory.saveFailed") });
+    } finally { setModeSaving(false); }
+  }
 
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -146,7 +178,18 @@ export function MemorySettingsPanel() {
     <h1>{t("settingsPage.memory.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.memory.description")}</p>
     {notice && <Alert className="cy-settings-alert" showIcon type={notice.type} title={notice.text} closable onClose={() => setNotice(null)} />}
+    <section className="cy-settings-section">
+      <div className="cy-settings-section__heading"><h2><Brain size={18} />{t("settingsPage.memory.modeTitle")}</h2><p>{t("settingsPage.memory.modeDescription")}</p></div>
+      <Card><div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.modeLabel")}</strong><span>{t(memoryMode === "off" ? "settingsPage.memory.modeOffHint" : memoryMode === "summary" ? "settingsPage.memory.modeSummaryHint" : "settingsPage.memory.modeVectorHint")}</span></div><Radio.Group value={memoryMode} disabled={modeLoading || modeSaving} optionType="button" buttonStyle="solid" onChange={(event) => void changeMemoryMode(event.target.value as "vector" | "summary" | "off")}><Radio.Button value="vector">{t("settingsPage.memory.vectorMode")}</Radio.Button><Radio.Button value="summary">{t("settingsPage.memory.summaryMode")}</Radio.Button><Radio.Button value="off">{t("settingsPage.memory.off")}</Radio.Button></Radio.Group></div></Card>
+    </section>
     {loading ? <div className="cy-settings-loading"><Spin /></div> : !data ? null : <>
+      {!modeLoading && memoryMode === "summary" && <section className="cy-settings-section">
+        <div className="cy-settings-section__heading"><h2><Brain size={18} />{t("settingsPage.memory.summaryTitle")}</h2><p>{t("settingsPage.memory.summaryDescription")}</p></div>
+        {summaryMemory ? <>
+          {summaryMemory.workspacePath && <Card className="cy-memory-card"><div className="cy-memory-card__top"><strong>{t("settingsPage.memory.workspaceSummary")}</strong></div><div className="cy-memory-vault-path">{summaryMemory.workspacePath}</div>{summaryMemory.workspaceTruncated && <Alert showIcon type="warning" title={t("settingsPage.memory.summaryTruncated")} />}<Input.TextArea readOnly autoSize={{ minRows: 4, maxRows: 14 }} value={summaryMemory.workspaceContent || t("settingsPage.memory.summaryEmpty")} /></Card>}
+          <Card className="cy-memory-card"><div className="cy-memory-card__top"><strong>{t("settingsPage.memory.sessionSummary")}</strong></div><div className="cy-memory-vault-path">{summaryMemory.sessionPath}</div>{summaryMemory.sessionTruncated && <Alert showIcon type="warning" title={t("settingsPage.memory.summaryTruncated")} />}<Input.TextArea readOnly autoSize={{ minRows: 4, maxRows: 14 }} value={summaryMemory.sessionContent || t("settingsPage.memory.summaryEmpty")} /></Card>
+        </> : <Card><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.memory.summaryNoSession")} /></Card>}
+      </section>}
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Brain size={18} />{t("settingsPage.memory.l0Title")}</h2><p>{t("settingsPage.memory.l0Description")}</p></div>
         <Card className="cy-memory-card">
@@ -164,11 +207,11 @@ export function MemorySettingsPanel() {
           <div className="cy-memory-card__actions">{editing === "l1" ? <><Button onClick={() => cancelEdit("l1")}>{t("settingsPage.memory.cancel")}</Button><Button type="primary" loading={busy === "l1"} onClick={() => void saveTier("l1")}>{t("settingsPage.memory.save")}</Button></> : <Button icon={<Pencil size={14} />} onClick={() => setEditing("l1")}>{t("settingsPage.memory.edit")}</Button>}</div>
         </Card>
       </section>
-      <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><FileSearch size={18} />{t("settingsPage.memory.l2Title")}</h2><p>{t("settingsPage.memory.l2Description")}</p></div>
+      {!modeLoading && memoryMode === "vector" && <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><FileSearch size={18} />{t("settingsPage.memory.l2Title")}</h2><p>{t("settingsPage.memory.l2Description")}</p></div>
         <Card className="cy-memory-card"><Input.Search value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("settingsPage.memory.searchPlaceholder")} allowClear />
           <div className="cy-memory-list">{filteredEvents.length ? filteredEvents.map((item) => <article className="cy-memory-record" key={item.id}><strong>{item.content}</strong><span>{item.triggerText || t("settingsPage.memory.noTrigger")}</span><small>{t(`settingsPage.memory.status.${item.status}`)} · {t("settingsPage.memory.weight", { weight: item.weight.toFixed(1) })} · {formatDateTime(item.createdAt)}</small></article>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={search ? t("settingsPage.memory.noMatch") : t("settingsPage.memory.noEvents")} />}</div>
         </Card>
-      </section>
+      </section>}
       <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><FolderOpen size={18} />{t("settingsPage.memory.importedTitle")}</h2><p>{t("settingsPage.memory.importedDescription")}</p></div>
         <Card className="cy-memory-list">{data.importedDocs.length ? data.importedDocs.map((item, index) => <article className="cy-memory-record cy-memory-record--document" key={`${item.importId ?? item.fileName}-${index}`}><div><strong>{item.fileName}</strong><span>{t("settingsPage.memory.chunkCount", { count: item.chunkCount })}</span><small>{t("settingsPage.memory.lastImported", { time: formatDateTime(item.lastImportedAt) })}</small></div><Button aria-label={t("settingsPage.memory.deleteDocument", { name: item.fileName })} type="text" danger icon={<Trash2 size={16} />} onClick={() => setDeleteTarget(item)} /></article>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.memory.noDocuments")} />}</Card>
       </section>

@@ -138,6 +138,7 @@ const REPAIR: StructuredOutputProfile["repair"] = {
   memory_compress: MEMORY_REPAIR,
   memory_reflect: MEMORY_REPAIR,
   memory_resolve: MEMORY_REPAIR,
+  memory_summary: MEMORY_REPAIR,
 };
 
 const A_STAGE_REPAIR = {
@@ -162,6 +163,7 @@ const A_REPAIR: StructuredOutputProfile["repair"] = {
   memory_compress: MEMORY_REPAIR,
   memory_reflect: MEMORY_REPAIR,
   memory_resolve: MEMORY_REPAIR,
+  memory_summary: MEMORY_REPAIR,
 };
 
 const KIMI_SLOW_REPAIR: StructuredOutputProfile["repair"] = {
@@ -179,6 +181,7 @@ const KIMI_SLOW_REPAIR: StructuredOutputProfile["repair"] = {
   memory_compress: MEMORY_REPAIR,
   memory_reflect: MEMORY_REPAIR,
   memory_resolve: MEMORY_REPAIR,
+  memory_summary: MEMORY_REPAIR,
 };
 
 const B_STAGE_REPAIR = {
@@ -203,6 +206,7 @@ const B_REPAIR: StructuredOutputProfile["repair"] = {
   memory_compress: MEMORY_REPAIR,
   memory_reflect: MEMORY_REPAIR,
   memory_resolve: MEMORY_REPAIR,
+  memory_summary: MEMORY_REPAIR,
 };
 
 const MINIMAX_STAGE_REPAIR = {
@@ -227,6 +231,7 @@ const MINIMAX_REPAIR: StructuredOutputProfile["repair"] = {
   memory_compress: MEMORY_REPAIR,
   memory_reflect: MEMORY_REPAIR,
   memory_resolve: MEMORY_REPAIR,
+  memory_summary: MEMORY_REPAIR,
 };
 
 function repairFor(

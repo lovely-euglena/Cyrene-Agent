@@ -32,6 +32,7 @@ function readValues(config: Partial<Values>): Values {
 export function CyreneSettingsPanel() {
   const { t } = useTranslation();
   const [values, setValues] = useState<Values>(defaults);
+  const [memoryMode, setMemoryMode] = useState<"vector" | "summary" | "off">("vector");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -62,7 +63,7 @@ export function CyreneSettingsPanel() {
     let active = true;
     const api = settingsApi();
     if (!api) { setNotice({ type: "error", text: t("settingsPage.cyrene.unavailable") }); setLoading(false); return; }
-    void api.getConfig().then((config) => { if (active) { setValues(readValues(config)); setLoading(false); } }).catch(() => { if (active) { setNotice({ type: "error", text: t("settingsPage.cyrene.loadFailed") }); setLoading(false); } });
+    void api.getConfig().then((config) => { if (active) { setValues(readValues(config)); setMemoryMode(config.memoryMode === "summary" ? "summary" : config.memoryMode === "off" ? "off" : "vector"); setLoading(false); } }).catch(() => { if (active) { setNotice({ type: "error", text: t("settingsPage.cyrene.loadFailed") }); setLoading(false); } });
     void api.getRerankerStatus?.().then((status) => { if (active) setRerankerInstalled(status.standard); }).catch(() => {});
     void api.getGeneral().then((general) => {
       if (!active) return;
@@ -86,7 +87,13 @@ export function CyreneSettingsPanel() {
     try {
       await api.saveConfig({ ...values, embeddingDimensions: values.embeddingDimensions && values.embeddingDimensions > 0 ? Math.min(65536, Math.round(values.embeddingDimensions)) : undefined });
       setNotice({ type: "success", text: t("settingsPage.cyrene.saved") });
-    } catch { setNotice({ type: "error", text: t("settingsPage.cyrene.saveFailed") }); }
+    } catch {
+      try {
+        const persisted = await api.getConfig();
+        setValues(readValues(persisted));
+      } catch { /* keep the current form if config reload also fails */ }
+      setNotice({ type: "error", text: t("settingsPage.cyrene.saveFailed") });
+    }
     finally { setSaving(false); }
   }
 
@@ -222,18 +229,21 @@ export function CyreneSettingsPanel() {
         </Card>
       </section>
       <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><BookOpen size={18} />{t("settingsPage.cyrene.retrievalTitle")}</h2><p>{t("settingsPage.cyrene.retrievalDescription")}</p></div>
-        <Card><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.embeddingModel")}</strong><span>{t("settingsPage.cyrene.embeddingHint")}</span></div><Button className="cy-cyrene-model-choice" onClick={() => void selectEmbedding()}>BGE-M3 · {embeddingInstalled === null ? t("settingsPage.cyrene.unknown") : embeddingInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</Button></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.embeddingDimensions")}</strong><span>{t("settingsPage.cyrene.embeddingDimensionsHint")}</span></div><SettingsInput className="cy-cyrene-dimensions" type="number" min={1} max={65536} value={values.embeddingDimensions ?? ""} placeholder={t("settingsPage.cyrene.autoDetect")} aria-label={t("settingsPage.cyrene.embeddingDimensions")} onChange={(event) => update("embeddingDimensions", event.target.value ? Number(event.target.value) : undefined)} /></div>
-          <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.reranker")}</strong><span>{rerankerInstalled === null ? t("settingsPage.cyrene.unknown") : rerankerInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</span></div><Radio.Group value={rerankerMode} optionType="button" buttonStyle="solid" onChange={(event) => void selectReranker(event.target.value as "standard" | "none")}><Radio.Button value="standard">bge-reranker-base</Radio.Button><Radio.Button value="none">{t("settingsPage.cyrene.off")}</Radio.Button></Radio.Group></div>
-          <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.downloadMirror")}</strong><span>{t("settingsPage.cyrene.downloadMirrorHint")}</span></div><Radio.Group value={mirror} optionType="button" buttonStyle="solid" onChange={(event) => void selectMirror(event.target.value as "official" | "hf-mirror")}><Radio.Button value="official">{t("settingsPage.cyrene.mirrorOfficial")}</Radio.Button><Radio.Button value="hf-mirror">hf-mirror</Radio.Button></Radio.Group></div>
-          <div className="cy-settings-row cy-cyrene-actions">
-            <Button type="primary" loading={modelActionBusy === "open-model-downloader"} onClick={() => void runModelAction("open-model-downloader")}>{t("settingsPage.cyrene.downloadModel")}</Button>
-            <Button loading={modelActionBusy === "open-dir"} onClick={() => void runModelAction("open-dir")}>{t("settingsPage.cyrene.openModelDir")}</Button>
-            <Button loading={modelActionBusy === "open-docs"} onClick={() => void runModelAction("open-docs")}>{t("settingsPage.cyrene.openModelDocs")}</Button>
-            <Button loading={modelActionBusy === "open-site"} onClick={() => void runModelAction("open-site")}>{t("settingsPage.cyrene.openModelSite")}</Button>
-            <Button loading={modelActionBusy === "check-model-update"} onClick={() => void runModelAction("check-model-update")}>{t("settingsPage.cyrene.checkModelUpdate")}</Button>
-            <Button danger loading={modelActionBusy === "delete-embedding"} onClick={() => void runModelAction("delete-embedding")}>{t("settingsPage.cyrene.deleteEmbedding")}</Button>
-          </div>
+        <Card>
+          {memoryMode === "vector" && <>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.embeddingModel")}</strong><span>{t("settingsPage.cyrene.embeddingHint")}</span></div><Button className="cy-cyrene-model-choice" onClick={() => void selectEmbedding()}>BGE-M3 · {embeddingInstalled === null ? t("settingsPage.cyrene.unknown") : embeddingInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</Button></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.embeddingDimensions")}</strong><span>{t("settingsPage.cyrene.embeddingDimensionsHint")}</span></div><SettingsInput className="cy-cyrene-dimensions" type="number" min={1} max={65536} value={values.embeddingDimensions ?? ""} placeholder={t("settingsPage.cyrene.autoDetect")} aria-label={t("settingsPage.cyrene.embeddingDimensions")} onChange={(event) => update("embeddingDimensions", event.target.value ? Number(event.target.value) : undefined)} /></div>
+            <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.reranker")}</strong><span>{rerankerInstalled === null ? t("settingsPage.cyrene.unknown") : rerankerInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</span></div><Radio.Group value={rerankerMode} optionType="button" buttonStyle="solid" onChange={(event) => void selectReranker(event.target.value as "standard" | "none")}><Radio.Button value="standard">bge-reranker-base</Radio.Button><Radio.Button value="none">{t("settingsPage.cyrene.off")}</Radio.Button></Radio.Group></div>
+            <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.downloadMirror")}</strong><span>{t("settingsPage.cyrene.downloadMirrorHint")}</span></div><Radio.Group value={mirror} optionType="button" buttonStyle="solid" onChange={(event) => void selectMirror(event.target.value as "official" | "hf-mirror")}><Radio.Button value="official">{t("settingsPage.cyrene.mirrorOfficial")}</Radio.Button><Radio.Button value="hf-mirror">hf-mirror</Radio.Button></Radio.Group></div>
+            <div className="cy-settings-row cy-cyrene-actions">
+              <Button type="primary" loading={modelActionBusy === "open-model-downloader"} onClick={() => void runModelAction("open-model-downloader")}>{t("settingsPage.cyrene.downloadModel")}</Button>
+              <Button loading={modelActionBusy === "open-dir"} onClick={() => void runModelAction("open-dir")}>{t("settingsPage.cyrene.openModelDir")}</Button>
+              <Button loading={modelActionBusy === "open-docs"} onClick={() => void runModelAction("open-docs")}>{t("settingsPage.cyrene.openModelDocs")}</Button>
+              <Button loading={modelActionBusy === "open-site"} onClick={() => void runModelAction("open-site")}>{t("settingsPage.cyrene.openModelSite")}</Button>
+              <Button loading={modelActionBusy === "check-model-update"} onClick={() => void runModelAction("check-model-update")}>{t("settingsPage.cyrene.checkModelUpdate")}</Button>
+              <Button danger loading={modelActionBusy === "delete-embedding"} onClick={() => void runModelAction("delete-embedding")}>{t("settingsPage.cyrene.deleteEmbedding")}</Button>
+            </div>
+          </>}
         </Card>
       </section>
       <div className="cy-settings-form-footer"><Button type="primary" loading={saving} onClick={() => void save()}>{t("settingsPage.cyrene.save")}</Button></div>
