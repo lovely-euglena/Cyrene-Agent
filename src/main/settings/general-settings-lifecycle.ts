@@ -14,6 +14,7 @@ import type { GeneralSettings } from "./general-settings";
 import type { UiIcon } from "../../shared/ui-icon";
 import { syncLaunchAtLogin } from "./launch-at-login";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import { getEffectiveUiTheme } from "../system-ui-theme";
 
 export interface GeneralSettingsLifecycleDependencies {
   get windowManager(): WindowManager | null;
@@ -159,7 +160,7 @@ export function handleGeneralSettingsChanged(
     });
   }
   if (before.uiTheme !== after.uiTheme) {
-    deps.windowManager?.broadcast(IPC.UI_THEME_CHANGED, after.uiTheme);
+    deps.windowManager?.broadcast(IPC.UI_THEME_CHANGED, getEffectiveUiTheme(after.uiTheme));
   }
   if (before.uiThemeRadius !== after.uiThemeRadius) {
     deps.windowManager?.broadcast(IPC.UI_THEME_RADIUS_CHANGED, after.uiThemeRadius);

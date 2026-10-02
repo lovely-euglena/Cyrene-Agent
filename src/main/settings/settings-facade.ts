@@ -10,7 +10,7 @@ import {
   normalizeCustomStyleConfig,
   normalizeStyleId,
 } from "../../shared/style-sampling";
-import { normalizeUiTheme } from "../../shared/ui-theme";
+import { normalizeUiThemeChoice } from "../../shared/ui-theme";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 import { DEFAULT_UI_ICON, normalizeUiIcon } from "../../shared/ui-icon";
 import { clampFiniteNumber, normalizeChatAppearance } from "../../shared/chat-appearance";
@@ -300,7 +300,7 @@ export function normalizeGeneralSettings(
     launchAtLogin: Boolean(input?.launchAtLogin),
     // 界面语言只认已翻译完成的语种，非法值（含旧配置的 ja/ko）一律回落中文
     language: normalizeUiLanguage(input?.language),
-    uiTheme: normalizeUiTheme(input?.uiTheme),
+    uiTheme: normalizeUiThemeChoice(input?.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input?.windowCornerRadius),
     uiThemeRadius: input?.uiThemeRadius ?? true,
     // 一次性迁移：旧版本默认「晴光」会在保存任意设置时写入配置文件，无法与

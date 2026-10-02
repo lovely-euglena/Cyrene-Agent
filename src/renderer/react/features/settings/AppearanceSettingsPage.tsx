@@ -3,7 +3,7 @@ import { Alert, Button, Spin } from "antd";
 import { ArrowLeft, AudioLines, BarChart3, Bot, Boxes, Brain, FileText, Globe, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
 import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
-import { normalizeUiTheme, type UiTheme } from "../../../../shared/ui-theme";
+import { normalizeUiThemeChoice, type UiThemeChoice } from "../../../../shared/ui-theme";
 import { DEFAULT_UI_ICON, normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
 import {
@@ -17,7 +17,7 @@ import { useTranslation } from "../../i18n";
 import { useCyreneAvatar } from "../../hooks/useCyreneAvatar";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
 import { applyMessageTypography } from "../../../ui/message-typography";
-import { applyUiTheme } from "../../../ui/theme";
+import { applyUiThemeChoice } from "../../../ui/theme";
 import { WindowControls } from "../../components/ui/WindowControls";
 import { Card } from "../../components/ui/Card";
 import { SettingsSegmented, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
@@ -45,7 +45,7 @@ import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
 
 interface AppearanceValues {
-  uiTheme: UiTheme;
+  uiTheme: UiThemeChoice;
   windowCornerRadius: number;
   uiIcon: UiIcon;
   messageTypography: MessageTypography;
@@ -81,7 +81,7 @@ function finiteNumber(value: unknown, fallback: number): number {
 function readAppearance(value: unknown): AppearanceValues {
   const input = objectValue(value);
   return {
-    uiTheme: normalizeUiTheme(input.uiTheme),
+    uiTheme: normalizeUiThemeChoice(input.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input.windowCornerRadius),
     uiIcon: normalizeUiIcon(input.uiIcon),
     messageTypography: normalizeMessageTypography(input.messageTypography),
@@ -168,7 +168,13 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         setLoading(false);
       });
 
-    return () => { disposed = true; };
+    const unsubscribeTheme = window.cyreneTheme?.onChanged(() => {
+      void settingsApi.getGeneral().then((config) => {
+        if (!disposed) setValues((current) => ({ ...current, uiTheme: readAppearance(config).uiTheme }));
+      }).catch(() => {});
+    });
+
+    return () => { disposed = true; unsubscribeTheme?.(); };
   }, []);
 
   async function savePatch(patch: Record<string, unknown>, successMessage = t("settingsPage.saved")) {
@@ -241,13 +247,13 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     setStatus(t("settingsPage.applyOnRelease"));
   }
 
-  async function selectTheme(uiTheme: UiTheme) {
+  async function selectTheme(uiTheme: UiThemeChoice) {
     const previous = values.uiTheme;
     setValues((current) => ({ ...current, uiTheme }));
-    applyUiTheme(uiTheme);
+    applyUiThemeChoice(uiTheme);
     if (!await savePatch({ uiTheme })) {
       setValues((current) => ({ ...current, uiTheme: previous }));
-      applyUiTheme(previous);
+      applyUiThemeChoice(previous);
     }
   }
 
@@ -347,7 +353,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                 <Card>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.theme")}</strong><span>{t("settingsPage.themeDescription")}</span></div>
-                    <SettingsSegmented value={values.uiTheme} onChange={(value) => void selectTheme(value as UiTheme)} options={[{ label: t("settingsPage.themePearlWhite"), value: "pearl-white" }, { label: t("settingsPage.themeCharcoalPink"), value: "charcoal-pink" }]} />
+                    <SettingsSegmented value={values.uiTheme} onChange={(value) => void selectTheme(value as UiThemeChoice)} options={[{ label: t("settingsPage.themeSystem"), value: "system" }, { label: t("settingsPage.themePearlWhite"), value: "pearl-white" }, { label: t("settingsPage.themeCharcoalPink"), value: "charcoal-pink" }]} />
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.windowRadius")}</strong><span>{t("settingsPage.windowRadiusDescription")}</span></div>
