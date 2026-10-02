@@ -19,7 +19,7 @@ import {
 } from "../windows/window-state";
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
-import { initReranker, getRerankerInstallStatus } from "../rag/reranker";
+import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
 import { switchEmbeddingModel } from "../rag";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
@@ -35,6 +35,7 @@ import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
 import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
 import { discoverWsl, restartWsl } from "../orchestrator/wsl-runtime";
+import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -46,6 +47,7 @@ export interface SettingsIpcDependencies {
   proactiveLifecycle: { getProactiveChatService: () => { invalidate: () => void } | null };
   reconcileUserMemoryIndex: () => Promise<void>;
   embeddingIndexService: EmbeddingIndexService;
+  switchMemoryMode?: (mode: MemoryMode) => Promise<void>;
   syncVolcanoSearchMcp: typeof syncVolcanoSearchMcp;
   syncPlaywrightMcp: typeof syncPlaywrightMcp;
   syncFilesystemMcp: typeof syncFilesystemMcp;
@@ -124,6 +126,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     proactiveLifecycle,
     reconcileUserMemoryIndex,
     embeddingIndexService,
+    switchMemoryMode,
     syncVolcanoSearchMcp,
     syncPlaywrightMcp,
     syncFilesystemMcp,
@@ -336,8 +339,24 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   ipc.handle(IPC.RUNTIME_STATE_GET, () => runtimeStateService.getState());
 
-  ipc.handle(IPC.SETTINGS_SAVE_CONFIG, (_event, settings: Partial<ModelSettings>) => {
-    const saved = saveModelSettings(settings);
+  ipc.handle(IPC.SETTINGS_SAVE_CONFIG, async (_event, settings: Partial<ModelSettings>) => {
+    const previousMode = normalizeMemoryMode(getModelSettings().memoryMode);
+    const nextMode = normalizeMemoryMode(settings.memoryMode ?? previousMode);
+    const modeChanged = nextMode !== previousMode;
+    let saved: ModelSettings;
+    try {
+      if (modeChanged) await switchMemoryMode?.(nextMode);
+      saved = saveModelSettings({ ...settings, memoryMode: nextMode });
+    } catch (error) {
+      if (modeChanged) {
+        try {
+          await switchMemoryMode?.(previousMode);
+        } catch (rollbackError) {
+          console.error("[Settings] failed to restore memory mode after config update failure:", rollbackError);
+        }
+      }
+      throw error;
+    }
     broadcastModelConfigChanged(saved);
     return saved;
   });
@@ -380,7 +399,8 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.RERANKER_SET_MODE, async (_event, mode: "standard" | "none") => {
     const current = getModelSettings();
     saveModelSettings({ ...current, rerankerMode: mode });
-    await initReranker(mode);
+    if (normalizeMemoryMode(current.memoryMode) === "vector") await initReranker(mode);
+    else resetReranker();
     console.log("[Cyrene] reranker mode switched to", mode);
     return true;
   });

@@ -67,10 +67,15 @@ import {
   flushRAGStore,
   flushRAGStoreSync,
   getEntriesBySource,
-  initRAG,
+  initWorldbook,
+  initVectorMemory,
+  disposeVectorMemory,
   isUserMemoryVectorStoreReady,
 } from "../rag";
 import { getEmbeddingProvider, getSceneEmbeddingProvider } from "../rag/embedding";
+import { isMemoryEnabled, isSummaryMemoryEnabled, setMemoryMode, type MemoryMode } from "../memory/memory-mode";
+import { initializeSummaryMemoryScheduler, enableSummaryMemoryScheduler, flushAllSummaryMemory, scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
+import { loadSummaryMemoryContext } from "../memory/summary-memory-context";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { PluginManager } from "../../plugins/manager";
@@ -104,6 +109,7 @@ import {
 } from "../protocols/bootstrap";
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
+import { initReranker, resetReranker } from "../rag/reranker";
 import { broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
 import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
 import { registerBrowserPanelIpc } from "../browser/browser-panel-ipc";
@@ -252,6 +258,7 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
 }
 
 async function reconcileUserMemoryIndex(): Promise<void> {
+  if (!isMemoryEnabled()) return;
   if (!isUserMemoryVectorStoreReady()) {
     console.warn("[Memory/RAG] reconciliation skipped: vector store is not writable");
     return;
@@ -267,6 +274,30 @@ async function reconcileUserMemoryIndex(): Promise<void> {
     warn: (message, error) => console.warn(`[Memory/RAG] ${message}:`, error),
   });
   logger.info(LogTag.RAG, "reconciliation:", report);
+}
+
+async function switchMemoryMode(mode: MemoryMode): Promise<void> {
+  if (mode !== "vector") {
+    setMemoryMode(mode);
+    enableSummaryMemoryScheduler(mode === "summary");
+    resetReranker();
+    await disposeVectorMemory();
+    return;
+  }
+
+  enableSummaryMemoryScheduler(false);
+  setMemoryMode("vector");
+  try {
+    const modelSettings = loadModelSettings();
+    await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
+    await initReranker(modelSettings.rerankerMode);
+    await reconcileUserMemoryIndex();
+  } catch (error) {
+    setMemoryMode("off");
+    resetReranker();
+    await disposeVectorMemory().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -1718,7 +1749,19 @@ createTray: (input) => {
 
       initRag: async () => {
         const modelSettings = loadModelSettings();
-        await initRAG("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
+        setMemoryMode(modelSettings.memoryMode);
+        initializeSummaryMemoryScheduler({
+          userDataRoot: app.getPath("userData"),
+          sessions: chatsStore,
+          onError: (conversationId, error) => logger.warn(LogTag.RAG, "summary memory update failed:", conversationId, error),
+        });
+        enableSummaryMemoryScheduler(isSummaryMemoryEnabled());
+        await initWorldbook();
+        if (isMemoryEnabled()) {
+          await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
+        } else {
+          logger.info(LogTag.RAG, "vector memory disabled by settings");
+        }
         // 注册 RAG 落盘（上游 2026-09-24 语义）：受控退出在 flushPersistence
         // 阶段刷盘；Windows 会话结束（断电/强制关机）走同步紧急落盘兜底
         shutdown.register({
@@ -1727,6 +1770,11 @@ createTray: (input) => {
           dispose: async () => { await flushRAGStore(); },
         });
         shutdown.registerEmergencyFlush("rag-store", () => flushRAGStoreSync());
+        shutdown.register({
+          id: "summary-memory",
+          phase: "flushPersistence",
+          dispose: async () => { await flushAllSummaryMemory(); },
+        });
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
 
@@ -1751,6 +1799,12 @@ createTray: (input) => {
           citaService: services.cita,
           socialContextScheduler: services.social.scheduler,
           chatsStore,
+          buildSummaryMemoryContext: (conversationId) => loadSummaryMemoryContext({
+            conversationId,
+            userDataRoot: app.getPath("userData"),
+            getSessionRecord: chatsStore.getSessionRecord,
+          }),
+          scheduleSummaryTurn: (input) => scheduleSummaryTurn(input),
           socialAtomStore: services.social.store,
           buildPluginPromptContext: (input) => pluginPromptRegistry.build(input),
           publishPluginHostEvent: (event, payload) => pluginManager
@@ -1891,6 +1945,7 @@ createTray: (input) => {
           proactiveLifecycle: services.proactive,
           reconcileUserMemoryIndex,
           embeddingIndexService: services.embedding,
+          switchMemoryMode,
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
           syncFilesystemMcp,
@@ -2111,7 +2166,7 @@ createTray: (input) => {
       },
       restoreMcp: (signal) => initMcpManager({ signal }),
       reconcileMemory: async (signal) => {
-        if (signal.aborted) return;
+        if (signal.aborted || !isMemoryEnabled()) return;
         try {
           await reconcileUserMemoryIndex();
         } catch (err) {
@@ -2123,9 +2178,9 @@ createTray: (input) => {
         core.services.embedding.scheduleStartupRefreshes();
       },
       initializeReranker: async () => {
+        if (!isMemoryEnabled()) return;
         // initReranker 内部检测模型是否安装，未安装自动降级为 none
         try {
-          const { initReranker } = await import("../rag/reranker");
           const modelSettings = loadModelSettings();
           await initReranker(modelSettings.rerankerMode);
           logger.info(LogTag.Reranker, "initialized with mode:", modelSettings.rerankerMode);

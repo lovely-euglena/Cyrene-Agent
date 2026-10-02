@@ -451,3 +451,48 @@ export function validateMemoryReflectionBusiness(
   // 空数组是合法的 —— 表示没有需要更新的内容
   return { status: "accepted", value: items };
 }
+
+// ── Summary Memory Schema ──
+
+export interface SummaryMemoryResult {
+  sessionSummary: string;
+  /** Empty means there is no new durable workspace fact to save. */
+  workspaceSummary: string;
+}
+
+export const SUMMARY_MEMORY_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    sessionSummary: { type: "string" },
+    workspaceSummary: { type: "string" },
+  },
+  required: ["sessionSummary", "workspaceSummary"],
+};
+
+export function parseSummaryMemoryResult(value: unknown): SummaryMemoryResult {
+  const obj = requiredObject(value, "summary memory result");
+  if (typeof obj.sessionSummary !== "string" || typeof obj.workspaceSummary !== "string") {
+    throw new Error("summary memory fields must be strings");
+  }
+  return { sessionSummary: obj.sessionSummary, workspaceSummary: obj.workspaceSummary };
+}
+
+export function validateSummaryMemoryBusiness(
+  result: SummaryMemoryResult,
+  limits: { sessionChars: number; workspaceChars: number },
+): BusinessValidationResult<SummaryMemoryResult> {
+  const sessionLength = Array.from(result.sessionSummary).length;
+  const workspaceLength = Array.from(result.workspaceSummary).length;
+  if (sessionLength === 0 || sessionLength > limits.sessionChars || workspaceLength > limits.workspaceChars) {
+    return {
+      status: "rejected",
+      error: {
+        layer: "business",
+        code: `SUMMARY_LENGTH_SESSION_${sessionLength}_WORKSPACE_${workspaceLength}`,
+        disposition: "repair",
+      },
+    };
+  }
+  return { status: "accepted", value: result };
+}
