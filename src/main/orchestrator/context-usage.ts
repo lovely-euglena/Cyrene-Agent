@@ -13,7 +13,7 @@
 //   尾部消息，runtimeContext 由独立参数计量，否则双重计数。
 
 import type { ChatMessage } from "./vendors/types";
-import { estimateTokens, estimateMessageContentTokens } from "./context-manager";
+import { estimateTokens, DEFAULT_IMAGE_TOKEN_ESTIMATE } from "./context-manager";
 import { isCompactionCheckpointMessage } from "./harness/compaction";
 import type {
   ContextUsageCategory,
@@ -53,6 +53,11 @@ export interface ContextUsageSnapshotInput {
    * runtimeContext 由独立参数计量，避免双重计数。
    */
   messages: ChatMessage[];
+  /**
+   * 精确计数注入点（可选）：存在时所有文本计量改走它（含图片块保持固定估算）。
+   * 缺省 = 现有 estimateTokens 启发式，行为零变化。
+   */
+  tokenCounter?: (text: string) => number;
 }
 
 function classifyMessage(message: ChatMessage): ContextUsageCategoryKey {
@@ -65,7 +70,24 @@ function classifyMessage(message: ChatMessage): ContextUsageCategoryKey {
   return "other";
 }
 
+/** 消息内容计量：text 块走 counter，图片块保持固定估算（与 estimateMessageContentTokens 同口径）。 */
+function countMessageContent(
+  content: ChatMessage["content"],
+  count: (text: string) => number,
+): number {
+  if (content === undefined || content === null) return 0;
+  if (typeof content === "string") return count(content);
+  let sum = 0;
+  for (const block of content) {
+    if (block.type === "text") sum += count(block.text);
+    else sum += DEFAULT_IMAGE_TOKEN_ESTIMATE;
+  }
+  return sum;
+}
+
 export function buildContextUsageSnapshot(input: ContextUsageSnapshotInput): ContextUsageSnapshot {
+  // 文本计量统一走 count：缺省 estimateTokens（现状），启用精确统计时由调用方注入。
+  const count = input.tokenCounter ?? estimateTokens;
   const buckets: Record<ContextUsageCategoryKey, number> = {
     systemPrompt: 0,
     tools: 0,
@@ -77,18 +99,18 @@ export function buildContextUsageSnapshot(input: ContextUsageSnapshotInput): Con
     toolDefinitions: 0,
   };
 
-  buckets.systemPrompt += estimateTokens(input.personaContent);
+  buckets.systemPrompt += count(input.personaContent);
   // Skill 目录段先单独计量，再从工具层总量中扣除（skill 段嵌在 toolSystemContent 里，
   // 前后分隔符 \n\n---\n\n 的几 token 留在工具类，属估算容差）。
-  buckets.skills += estimateTokens(input.skillLayerContent ?? "");
-  buckets.tools += Math.max(0, estimateTokens(input.toolLayerContent ?? "") - buckets.skills);
+  buckets.skills += count(input.skillLayerContent ?? "");
+  buckets.tools += Math.max(0, count(input.toolLayerContent ?? "") - buckets.skills);
   for (const spec of input.toolSpecs ?? []) {
     // 与 computeTokenBudget 同公式。
-    buckets.tools += estimateTokens(spec.name + spec.description + JSON.stringify(spec.parameters));
+    buckets.tools += count(spec.name + spec.description + JSON.stringify(spec.parameters));
   }
   if (input.runtimeContext?.trim()) {
     // 与 composePromptLayers 的 wire 包装一致，含标签开销。
-    buckets.runtimeAndToolLogs += estimateTokens(
+    buckets.runtimeAndToolLogs += count(
       `<runtime_context>\n${input.runtimeContext.trim()}\n</runtime_context>`,
     );
   }
@@ -97,7 +119,7 @@ export function buildContextUsageSnapshot(input: ContextUsageSnapshotInput): Con
     // 图片块按 DEFAULT_IMAGE_TOKEN_ESTIMATE 计量（不计 base64 全长），
     // 与 estimateMessageTokens 同口径，防止计量与压缩判定分裂。
     // +4 为角色/格式开销，与 estimateMessageTokens 一致。
-    buckets[classifyMessage(message)] += estimateMessageContentTokens(message.content ?? "") + 4;
+    buckets[classifyMessage(message)] += countMessageContent(message.content, count) + 4;
   }
 
   const categories: ContextUsageCategory[] = CATEGORY_KEYS.map((key) => ({ key, tokens: buckets[key] }));

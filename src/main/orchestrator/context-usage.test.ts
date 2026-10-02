@@ -122,4 +122,43 @@ describe("buildContextUsageSnapshot", () => {
     expect(snapshot.runId).toBe("run-1");
     expect(snapshot.round).toBe(3);
   });
+
+  it("tokenCounter 注入接管全部文本计量；counter=estimateTokens 时与默认口径一致", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "你好，帮我看看天气" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "好的" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+        ] as ChatMessage["content"],
+      },
+    ];
+    const input = {
+      phase: "preRequest" as const,
+      contextWindowTokens: WINDOW,
+      personaContent: "你是昔涟。",
+      toolLayerContent: "工具层文本",
+      skillLayerContent: "技能层",
+      toolSpecs: [{ name: "weather", description: "查询天气", parameters: { type: "object" } }],
+      runtimeContext: "环境：桌面",
+      messages,
+    };
+    const texts: string[] = [];
+    const counted = buildContextUsageSnapshot({
+      ...input,
+      tokenCounter: (text) => {
+        texts.push(text);
+        return estimateTokens(text);
+      },
+    });
+    const plain = buildContextUsageSnapshot(input);
+    // 图片块仍走固定估算常量；其余文本经 counter 后总额与估算口径一致。
+    expect(counted.categories).toEqual(plain.categories);
+    expect(counted.totalTokens).toBe(plain.totalTokens);
+    expect(texts).toContain("你是昔涟。");
+    expect(texts).toContain("技能层");
+    expect(texts).toContain("<runtime_context>\n环境：桌面\n</runtime_context>");
+    expect(texts).toContain("好的");
+  });
 });

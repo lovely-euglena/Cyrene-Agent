@@ -20,6 +20,7 @@ import type { UnifiedStreamDelta } from "./vendors/sdk-stream/types";
 import type { ApprovedStyleSampling } from "./vendors/style-sampling";
 import { getTimeoutSettings } from "../timeout-manager";
 import { buildContextUsageSnapshot } from "./context-usage";
+import { buildContextUsageSnapshotExact, isTokenStatsEnabled } from "../token-stats/client";
 import { isExplicitStreamUnsupported } from "./vendors/stream-support";
 import { composePromptLayers } from "./prompt-layers";
 import type { TranscriptSink } from "./transcript-sink";
@@ -106,6 +107,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
   let usedImageCaptionFallback = false;
 
   const messages = options.messages;
+  /** 上下文快照发射序号：精确计数异步返回时只允许最新一次落地。 */
+  let contextUsageSeq = 0;
 
   // 上下文容量快照（preRequest）：请求前。
   // 消息即实际请求所用的历史（超预算压缩已在 buildAgentRunOptions 阶段
@@ -113,17 +116,25 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
   // 不含 composePromptLayers 追加的 runtime_context 尾部（不变量），
   // runtimeContext 由独立参数计量，避免双重计数。
   const emitContextUsage = (phase: "preRequest" | "terminal", extraAssistantReply?: string): void => {
-    options.onEvent?.({
-      type: "context_usage",
-      contextUsage: buildContextUsageSnapshot({
-        phase,
-        contextWindowTokens: options.settings.contextWindowTokens,
-        personaContent: options.soulSystemBaseContent,
-        ...(options.runtimeContext ? { runtimeContext: options.runtimeContext } : {}),
-        ...(extraAssistantReply !== undefined
-          ? { messages: [...messages, { role: "assistant" as const, content: extraAssistantReply }] }
-          : { messages }),
-      }),
+    const snapshotInput = {
+      phase,
+      contextWindowTokens: options.settings.contextWindowTokens,
+      personaContent: options.soulSystemBaseContent,
+      ...(options.runtimeContext ? { runtimeContext: options.runtimeContext } : {}),
+      ...(extraAssistantReply !== undefined
+        ? { messages: [...messages, { role: "assistant" as const, content: extraAssistantReply }] }
+        : { messages }),
+    };
+    if (!isTokenStatsEnabled()) {
+      options.onEvent?.({ type: "context_usage", contextUsage: buildContextUsageSnapshot(snapshotInput) });
+      return;
+    }
+    // 精确统计：异步计数（首次可能触发词表下载），完成前不阻塞请求；
+    // 慢响应不得倒退 UI —— 只允许最新一次发起的快照落地（terminal 覆盖 preRequest）。
+    const seq = ++contextUsageSeq;
+    void buildContextUsageSnapshotExact(snapshotInput, options.settings.model).then((contextUsage) => {
+      if (seq !== contextUsageSeq) return;
+      options.onEvent?.({ type: "context_usage", contextUsage });
     });
   };
   emitContextUsage("preRequest");

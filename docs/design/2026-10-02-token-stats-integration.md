@@ -27,6 +27,8 @@ cyrene-token（dotnet/token-stats，下载与计数唯一实现）
 
 - 数据目录：`<userData>/token-stats/tokenizers/<model>/tokenizer.json`。
 - 安全：TS 不能传任意 URL；只能传清单内的模型名与来源枚举。
+- TS 客户端：`src/main/token-stats/`（client 只管进程/协议；models 归一化模型名；
+  exact-counter 干跑探测 + 批量计数 + 整体回退）。
 
 ## 3. 协议（P1 已实现）
 
@@ -52,19 +54,21 @@ cyrene-token（dotnet/token-stats，下载与计数唯一实现）
 
 ## 5. 缓存与开关
 
-- `GeneralSettings`（待做）：`tokenStatsEnabled: boolean`（默认 false）、
+- `GeneralSettings`：`tokenStatsEnabled: boolean`（默认 false）、
   `tokenStatsSource: "modelscope" | "hf-mirror" | "huggingface"`（默认 modelscope）。
-- 设置页（React 偏好设置「Token 统计」分组）：开关 + 来源选择 + 已安装词表管理
-  （下载/删除/当前模型状态）。
+- 设置页（React 偏好设置「Token 统计」分组）：开关 + 来源选择；三语 i18n 已接入。
 - 关闭或词表缺失/下载失败时：调用方回退现有 `estimateTokens`，行为与今日完全一致。
 
 ## 6. 分阶段
 
 - **P1（已完成）**：`cyrene-token` .NET 宿主（清单/下载/缓存/校验/计数）+ 打包接线
-  （`build:token-stats`、`resources/token-stats`）+ 冒烟 `verify:token-stats`（11/11）。
-- **P2**：TS 客户端 + 设置字段/开关/来源/管理 UI + 上下文用量环精确计量
-  （`context-usage.ts` 异步精确计数，失败回退估算）。
-- **P3（可选）**：`count_tokens` Agent 工具；按会话模型自动选词表；下载进度/断点续传。
+  （`build:token-stats`、`resources/token-stats`）+ 冒烟 `verify:token-stats`（9/9）。
+- **P2（已完成）**：TS 客户端（进程/帧协议/模型名归一化）+ 设置字段/开关/来源 UI（三语）+
+  上下文用量精确计量：chat-loop 与 harness 的 `context_usage` 快照在启用时异步精确计数
+  （每 run 只允许最新序号落地；计数失败整体回退估算，不阻塞请求）。
+  单测：`exact-counter.test.ts`（回退/去重/异常）、`models.test.ts`、`context-usage.test.ts`（counter 注入口径一致）。
+- **P3（可选）**：`count_tokens` Agent 工具；压缩后会话级快照精确重算；
+  下载进度/断点续传；设置页词表安装状态与清理入口（宿主 `status`/`delete` 已就绪）。
 
 ## 7. 验收口径
 
