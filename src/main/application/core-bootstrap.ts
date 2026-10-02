@@ -259,6 +259,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
           return {
             screenshotBackend: gs.screenshotBackend,
             snipastePath: gs.snipastePath,
+            pandocPath: gs.pandocPath,
             mobileMessageSegmentation: gs.mobileMessageSegmentation,
             proactiveChatMode: gs.proactiveChatMode,
             proactiveDeliveryTarget: gs.proactiveDeliveryTarget,

@@ -1,6 +1,10 @@
 # Pandoc 文档转换接入规划
 
-> 2026-10-02 · 状态：规划（待实施）· 关联：`file-ingest` / `document-index-worker` / 设置页
+> 2026-10-02 · 状态：已实施（P1，转换实现位于 .NET 文档组件）· 关联：`cyrene-embed` / `file-ingest` / `document-index-worker` / 设置页
+>
+> 实施口径修订（用户指令「新模块尽量用 .NET」）：转换/探测/清洗的唯一实现放在
+> `dotnet/embedding-sidecar/PandocConverter.cs`（文档导入默认链路 sidecar 内）；
+> TS 侧只保留扩展名路由、设置传参与 UI 胶水，不再新增转换模块。
 
 ## 1. 现状（已核对）
 
@@ -39,29 +43,36 @@
 
 ## 3. 架构设计
 
-### 3.1 新模块 `src/main/rag/document-converter.ts`（不依赖 electron，主线程/worker 共用）
+### 3.1 核心模块 `dotnet/embedding-sidecar/PandocConverter.cs`（.NET，唯一转换实现）
 
-```ts
-PANDOC_INPUT_EXTS: ReadonlyMap<string, string>   // ext → pandoc reader 名
-isPandocExt(ext): boolean
-resolvePandocExecutable(customPath: string): string | null
-  // 自定义路径：文件直接用；目录则拼 pandoc(.exe)
-  // 空：PATH 探测（where/which 语义，Windows 补 .exe），失败返回 null
-probePandoc(exe): { version: string; inputFormats: Set<string> } | null
-  // pandoc --version + --list-input-formats，按 exe+mtime 缓存
-convertWithPandoc({ exe, reader, filePath, signal, timeoutMs }):
-  { ok: true; markdown: string } | { ok: false; reason: string }
-cleanConvertedMarkdown(text): string
+```csharp
+InputExts: Dictionary<string,string>        // ext → pandoc reader 名（与 TS PANDOC_EXTS 同源）
+IsPandocExt(ext) / GetReader(ext)
+ResolveExecutable(customPath)               // 文件直接用；目录拼 pandoc(.exe)；空查 PATH
+Probe(exe): ProbeResult?                    // --version + --list-input-formats，按 exe+mtime 缓存
+ConvertFile(filePath, pandocPath, isCancelled, timeoutMs)
+  → { Ok, Text(清洗后 markdown), Reason(可展示中文), Code }
+CleanMarkdown(text): (Text, Truncated)
 ```
+
+CLI 入口（`cyrene-embed`）：
+
+- `verify-pandoc [pandocPath]`：纯函数 + 真实转换自检（无 pandoc 时 SKIP，退出码 0）；
+- `pandoc-probe [pandocPath]`：设置页检测，stdout 输出 JSON（ok/exe/version/formats 或 error）。
 
 转换调用约定：
 
-- `spawn(exe, args, { stdio: ["pipe","pipe","pipe"], windowsHide: true })`，**不经过 shell**；
-- 文件内容走 stdin（`--from=<reader>`），argv 里不出现用户文件路径，避免参数注入与沙箱外读；
+- `ProcessStartInfo`（UseShellExecute=false，不经 shell），argv 里不出现用户文件路径，内容走 stdin；
 - args：`--from=<reader> --to=markdown --wrap=none --extract-media=<临时目录>`；
-- 优先 `--sandbox`（pandoc ≥ 2.15 限制 reader IO），遇到 "Unrecognized option" 自动去掉重试；
-- 超时 60s、stdout 上限（如 8MB）、取消信号 → kill 子进程；
-- 临时目录 `os.tmpdir()/cyrene-pandoc-<random>`，`finally` 删除（媒体文件不落地保留）。
+- 优先 `--sandbox`（pandoc ≥ 2.15 限制 reader IO），遇到 "Unrecognized option" 自动去掉重试一次；
+- 超时 60s、stdout 上限 8MB、取消回调 → `Kill(entireProcessTree: true)`；
+- 临时目录 `%TEMP%/cyrene-pandoc-<guid>`，`finally` 删除（媒体文件不落地保留）。
+
+TS 侧胶水（非转换实现）：
+
+- `file-ingest.ts`：`PANDOC_EXTS` 路由表（与 C# 同源注释）+ `isPandocExt`；
+- `document-import-sidecar.ts`：从 general settings 读 `pandocPath`，随 doc-import 帧下发；
+- `settings-ipc.ts`：`SETTINGS_PANDOC_DETECT` → spawn sidecar `pandoc-probe`。
 
 ### 3.2 格式清洗（需要，规则固定）
 
@@ -78,20 +89,21 @@ pandoc 输出是给人看的 Markdown，直接喂模型会有噪音，统一清�
 
 | 位置 | 改动 |
 | --- | --- |
-| `describePendingAttachment` | pandoc 扩展名 → `kind:"document"`（可加 `converter:"pandoc"` 标记）；其余维持 unsupported |
-| `file-ingest.ts` | `UNSUPPORTED_EXTS` 移除 pandoc 扩展名；`ingestOneFile` 在二进制判定前插入转换分支，转换结果按 30K 阈值走 text/indexed |
-| `document-index-worker.ts` | `prepareFile` 改 async：pandoc ext → 转换 → 继续走 text/prepared-indexed；`WorkerStartMessage` 增加 `pandocPath`；取消消息触发 kill |
-| `document-index-worker.ts` runner deps | 主线程 `createDefaultRunnerDependencies` 注入 `getPandocPath: () => settings.pandocPath`，随 start 消息下发 |
-| `default-dependencies.ts` | 无结构变化；设置读取沿用现有 facade |
+| `describePendingAttachment` | pandoc 扩展名 → `kind:"document"`；其余维持 unsupported |
+| `file-ingest.ts` | `UNSUPPORTED_EXTS` 移除 `.docx`；新增 `PANDOC_EXTS` 路由表；`ingestOneFile` 的 pandoc 分支明确指向 .NET 文档组件（该工具函数非生产链路） |
+| `document-import-sidecar.ts`（默认链路） | doc-import 帧携带 `pandocPath`（设置读取）；转换在 sidecar `DocImporter` 内完成 |
+| `dotnet/embedding-sidecar/DocImporter.cs` | pandoc ext → `PandocConverter.ConvertFile` → 清洗文本走既有 text/indexed 流程；`UnsupportedExts` 移除 `.docx` |
+| `document-index-worker.ts`（无组件回退链路） | pandoc ext → unsupported 并提示需要 .NET 文档组件（该链路无转换能力） |
+| `default-dependencies.ts` | 无结构变化；sidecar 可用时天然走转换链路 |
 
 ### 3.4 设置
 
 - `GeneralSettings` 新增 `pandocPath: string`（默认 `""` = 自动探测 PATH），与 `snipastePath` 同模式。
-- 设置页（Electron）新增一行「文档转换（Pandoc）」：路径输入 + 检测状态
+- 设置页（Electron React「偏好设置」）新增「文档转换」分组：路径输入 + 检测状态
   （已检测到 Pandoc 3.x / 未检测到 / 自定义路径无效）+ 「重新检测」按钮；
-  放「偏好」或「通用」的「数据与存储」附近，二选一实施时按现有分组就近。
+  检测走 `SETTINGS_PANDOC_DETECT` → sidecar `pandoc-probe`（不加载 embedding 模型）。
 - `native-settings-protocol.ts` 白名单加 `pandocPath`（WPF 偏好页同步显示，做法照 Snipaste）。
-- i18n：`panel.preferences.pandoc.*` 三语（zh-CN/en/ja-JP）。
+- i18n：`settingsPage.preferences.pandoc*` / `documents*` 三语（zh-CN/en/ja-JP）。
 
 ## 4. UI 行为
 
@@ -101,12 +113,15 @@ pandoc 输出是给人看的 Markdown，直接喂模型会有噪音，统一清�
 
 ## 5. 测试计划
 
-- 单测（不依赖真实 pandoc，注入假 spawn）：
-  - 扩展名路由、`resolvePandocExecutable`（自定义文件/目录/空）、版本与 reader 能力解析缓存；
-  - args/stdin 构造、`--sandbox` 回退、超时、取消 kill；
-  - 清洗规则（图片/属性/空行/上限/空结果）。
-- 集成（本机安装 pandoc 后跑）：docx/odt/rtf/epub 样例转换 → 小文件内联与大文件索引两条路径；worker 取消。
-- 回归：`file-ingest.test.ts` 中 `.docx` 从 unsupported 改为转换路径；worker 测试新增转换分支。
+- .NET 自检：`cyrene-embed verify-pandoc [pandocPath]` —— 扩展名路由 / 版本解析 /
+  清洗规则（图片/属性/空行/上限/空结果）/ 路径解析；本机有 pandoc 时追加真实
+  `.rst` 转换、无效路径文案、取消中止（无 pandoc 时 SKIP，不阻塞 CI）。
+- 端到端冒烟：`node scripts/diagnostics/pandoc-sidecar-smoke.mjs` —— 真实 sidecar 协议
+  + 真实 pandoc：`.rst`/`.docx`（jszip 现场构造 OOXML）→ `kind:"text"` 内容断言；
+  无效路径 → unsupported 可操作文案。
+- TS 单测：`file-ingest` 路由（`.docx` → document / `isPandocExt` / 非生产链路文案）、
+  `native-settings-protocol` 白名单与归一化、i18n key 门禁、core-bootstrap 快照字段。
+- 回归：文本/图片路径与全量 vitest 不回归；sidecar 无 pandoc 时既有格式不受影响。
 
 ## 6. 分阶段
 
@@ -131,3 +146,15 @@ pandoc 输出是给人看的 Markdown，直接喂模型会有噪音，统一清�
 3. 转换文本无 base64/图片噪音，表格与标题结构保留；
 4. 取消索职能中止转换子进程，临时目录无残留；
 5. 既有文本/图片路径与全部测试不回归。
+
+## 9. 实施记录（2026-10-02）
+
+- 核心：`dotnet/embedding-sidecar/PandocConverter.cs`（解析/探测/转换/清洗）、
+  `PandocSelfTest.cs`（`verify-pandoc`）、`PandocProbeCommand.cs`（`pandoc-probe`）；
+  `DocImporter.cs` 接入 pandoc 分支；`Program.cs` doc-import 帧新增 `pandocPath`。
+- TS：`file-ingest.ts` 路由与 `PANDOC_EXTS`；`document-import-sidecar.ts` 下发 `pandocPath`；
+  `document-index-worker.ts` 回退提示；设置字段/IPC/React UI/WPF 行/三语 i18n。
+- 验证：本机安装 Pandoc 3.12（winget，user scope）后
+  `verify-pandoc` 27/27、`pandoc-sidecar-smoke.mjs` 7/7（rst + 真实 docx OOXML）。
+- 已知边界：无 sidecar 的 worker 回退路径不提供转换（默认链路 sidecar 恒可用，打包态内置）；
+  `.pdf/.xls/.ppt` 等仍按 §2 进入 P2。

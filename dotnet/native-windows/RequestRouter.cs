@@ -258,7 +258,7 @@ public static class RequestRouter
         // assistantBubbleEnabled / disableGpuElectron / gitCommitAuthorName /
         // gitCommitAuthorEmail / sidebarVisible / tasksVisible 为 UI 写入键；
         // preferences 段（截图后端 / 偏好开关 / 朋友圈 / CITA / 自定义采样）：
-        // screenshotBackend / snipastePath / mobileMessageSegmentation /
+        // screenshotBackend / snipastePath / pandocPath / mobileMessageSegmentation /
         // proactiveChatMode / proactiveDeliveryTarget / chatSocialContextEnabled /
         // momentsEnabled / cyreneMomentsPostingEnabled / cyreneMomentsReactionsEnabled /
         // momentsCharacterReactionsEnabled / momentsLiveliness / citaEnabled / customStyle；
@@ -270,7 +270,7 @@ public static class RequestRouter
             "chatLineHeight", "assistantBubbleEnabled", "disableGpuElectron",
             "chatParaSpacing",
             "gitCommitAuthorName", "gitCommitAuthorEmail", "sidebarVisible", "tasksVisible",
-            "screenshotBackend", "snipastePath", "mobileMessageSegmentation",
+            "screenshotBackend", "snipastePath", "pandocPath", "mobileMessageSegmentation",
             "proactiveChatMode", "proactiveDeliveryTarget", "chatSocialContextEnabled",
             "momentsEnabled", "cyreneMomentsPostingEnabled", "cyreneMomentsReactionsEnabled",
             "momentsCharacterReactionsEnabled", "momentsLiveliness", "citaEnabled", "customStyle",

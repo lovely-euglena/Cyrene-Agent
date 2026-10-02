@@ -68,6 +68,15 @@ public sealed partial class SettingsWindow
                 })));
         panel.Children.Add(snipastePathRow);
 
+        // ── 文档转换 ──
+        panel.Children.Add(BlockMark());
+        panel.Children.Add(MakeSubHeader("文档转换"));
+        panel.Children.Add(MakeDescribedRow("Pandoc 路径",
+            "留空自动探测 PATH；也可填写 pandoc.exe 的完整路径（读取 docx/odt/rtf/epub 等文档）。",
+            MakeTextControl(GetString(prefs, "pandocPath"),
+                v => SetSetting("pandocPath", v), 260,
+                @"自动探测（如 C:\Users\<用户名>\AppData\Local\Programs\Pandoc\pandoc.exe）")));
+
         // ── 消息 ──
         panel.Children.Add(BlockMark());
         panel.Children.Add(MakeSubHeader("消息"));

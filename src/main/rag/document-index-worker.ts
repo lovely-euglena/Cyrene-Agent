@@ -8,7 +8,7 @@ import {
   createOpenAIEmbeddingProvider,
   type EmbeddingWorkerConfig,
 } from "./embedding";
-import { isBinary, isTextExt, isUnsupportedExt, SMALL_THRESHOLD } from "./file-ingest";
+import { isBinary, isPandocExt, isTextExt, isUnsupportedExt, SMALL_THRESHOLD } from "./file-ingest";
 import type { DocumentIndexJobResult, QueuedDocumentIndexJob } from "./document-index-queue";
 
 export type PreparedDocumentChunk = { text: string; index: number };
@@ -268,6 +268,15 @@ function prepareFile(filePath: string): WorkerPrepareFileResult {
 
   const ext = path.extname(filePath).toLowerCase();
   if (isUnsupportedExt(ext)) return { kind: "unsupported", name, reason: `暂不支持的文件格式 ${ext}（MVP-0 仅支持文本）` };
+  // pandoc 可读格式：转换实现唯一在 .NET 文档组件（cyrene-embed）。
+  // 默认链路走 sidecar runner；本 worker 是无组件回退路径，无法转换。
+  if (isPandocExt(ext)) {
+    return {
+      kind: "unsupported",
+      name,
+      reason: "此格式需要 .NET 文档组件（cyrene-embed）转换；当前为无组件回退路径",
+    };
+  }
 
   let buffer: Buffer;
   try {

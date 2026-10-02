@@ -55,9 +55,22 @@ export const IMAGE_EXTS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
 ]);
 
+/**
+ * Pandoc 可转换的扩展名（与 dotnet/embedding-sidecar/PandocConverter.cs 的
+ * InputExts 同源，改动需双端同步）。转换实现唯一在 .NET 文档组件
+ * （cyrene-embed），TS 侧只做路由与传参。
+ */
+export const PANDOC_EXTS = new Set([
+  ".docx", ".odt", ".rtf", ".epub", ".fb2", ".ipynb",
+  ".tex", ".latex", ".rst", ".org", ".opml",
+  ".dbk", ".docbook", ".textile", ".t2t",
+  ".asciidoc", ".adoc", ".typ", ".djot", ".muse", ".mdoc",
+  ".icml", ".jats", ".wiki", ".creole",
+]);
+
 const UNSUPPORTED_EXTS = new Set([
   ".zip", ".7z", ".rar", ".tar", ".gz",
-  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+  ".pdf", ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
   ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico",
   ".mp3", ".mp4", ".wav", ".avi", ".mov",
   ".exe", ".dll", ".so", ".dylib", ".bin",
@@ -67,6 +80,10 @@ const UNSUPPORTED_EXTS = new Set([
 
 export function isTextExt(ext: string): boolean {
   return TEXT_EXTS.has(ext.toLowerCase());
+}
+
+export function isPandocExt(ext: string): boolean {
+  return PANDOC_EXTS.has(ext.toLowerCase());
 }
 
 export function isImageExt(ext: string): boolean {
@@ -91,7 +108,7 @@ export function isUnsupportedExt(ext: string): boolean {
 
 export function isDocumentExt(ext: string): boolean {
   const normalized = ext.toLowerCase();
-  return normalized === "" || isTextExt(normalized);
+  return normalized === "" || isTextExt(normalized) || isPandocExt(normalized);
 }
 
 /** 拖入阶段的 pending 附件描述：图片按「扩展名或 MIME」判定，与渲染端预览口径一致。 */
@@ -216,6 +233,16 @@ export async function ingestOneFile(
   // 显式不支持的类型
   if (isUnsupportedExt(ext)) {
     return { name, kind: "unsupported", reason: `暂不支持的文件格式 ${ext}（MVP-0 仅支持文本）` };
+  }
+
+  // pandoc 可读格式：转换实现唯一在 .NET 文档组件（cyrene-embed，
+  // 聊天附件/文档索引链路）；此工具函数路径不直接接入转换。
+  if (isPandocExt(ext)) {
+    return {
+      name,
+      kind: "unsupported",
+      reason: "此格式需要 .NET 文档组件转换（cyrene-embed），请通过聊天附件或文档索引流程导入",
+    };
   }
 
   // 读取文件

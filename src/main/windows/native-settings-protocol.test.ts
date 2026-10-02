@@ -184,6 +184,7 @@ describe("sanitizeNativeGeneralSetting", () => {
       "tasksVisible",
       "screenshotBackend",
       "snipastePath",
+      "pandocPath",
       "mobileMessageSegmentation",
       "proactiveChatMode",
       "proactiveDeliveryTarget",
@@ -205,6 +206,10 @@ describe("sanitizeNativeGeneralSetting", () => {
     expect(sanitizeNativeGeneralSetting("snipastePath", "  C:/tools/Snipaste.exe  ")).toEqual({
       snipastePath: "C:/tools/Snipaste.exe",
     });
+    expect(sanitizeNativeGeneralSetting("pandocPath", "  C:/tools/Pandoc/pandoc.exe  ")).toEqual({
+      pandocPath: "C:/tools/Pandoc/pandoc.exe",
+    });
+    expect(sanitizeNativeGeneralSetting("pandocPath", 42)).toBeNull();
     expect(sanitizeNativeGeneralSetting("mobileMessageSegmentation", "on")).toEqual({
       mobileMessageSegmentation: "on",
     });
