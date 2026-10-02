@@ -91,6 +91,8 @@ interface SettingsWindowApi {
   getOcrStatus?: () => Promise<import("../shared/ocr").OcrStatus>;
   // 文档转换（偏好设置：Pandoc 路径检测，走 .NET 文档组件）
   detectPandoc?: (pandocPath?: string) => Promise<{ ok: boolean; version?: string; exe?: string; formats?: number; error?: string }>;
+  // WSL（偏好设置：探测本机 WSL 与已安装发行版，只读）
+  detectWsl?: () => Promise<{ executable: string | null; distros: string[] }>;
   // 云存储（云存储设置页：档案 CRUD + 测试连接）
   cloudStorageProfiles?: () => Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>;
   cloudStorageSaveProfile?: (profile: Record<string, unknown>) => Promise<import("../shared/cloud-storage").CloudStorageProfileView>;

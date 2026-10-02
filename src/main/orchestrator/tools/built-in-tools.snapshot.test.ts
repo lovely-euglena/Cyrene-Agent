@@ -90,7 +90,7 @@ describe("run_shell 纯拒绝路径（不 spawn、不联网）", () => {
       errorCode: "SHELL_UNSUPPORTED",
       exitCode: -1,
       stdout: "",
-      stderr: "[SHELL_UNSUPPORTED] shell 仅支持 cmd 或 bash",
+      stderr: "[SHELL_UNSUPPORTED] shell 仅支持 cmd、bash 或 wsl",
       timedOut: false,
       captureTruncated: false,
       effect: "unknown",

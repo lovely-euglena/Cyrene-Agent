@@ -413,6 +413,8 @@ const settingsApi = {
   getOcrStatus: () => ipcRenderer.invoke(IPC.SETTINGS_OCR_GET_STATUS) as Promise<import("../shared/ocr").OcrStatus>,
   // 文档转换：设置页 Pandoc 检测（走 .NET 文档组件 pandoc-probe）
   detectPandoc: (pandocPath?: string) => ipcRenderer.invoke(IPC.SETTINGS_PANDOC_DETECT, pandocPath ?? ""),
+  // WSL：设置页探测本机 wsl.exe 与已安装发行版（只读）
+  detectWsl: () => ipcRenderer.invoke(IPC.SETTINGS_WSL_DETECT) as Promise<{ executable: string | null; distros: string[] }>,
   // 云存储：设置页档案管理（连接/凭据在 cyrene-native --storage-host）
   cloudStorageProfiles: () => ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILES_LIST) as Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>,
   cloudStorageSaveProfile: (profile: Record<string, unknown>) =>

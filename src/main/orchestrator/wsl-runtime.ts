@@ -24,13 +24,17 @@ export const WSL_PROBE_TIMEOUT_MS = 5_000;
 /** 发行版列表缓存 TTL：设置页与首次执行共用，避免频繁 spawn wsl.exe。 */
 export const WSL_DISCOVERY_CACHE_TTL_MS = 30_000;
 
-/** 解析后的 WSL 执行器：可执行文件 + 目标发行版（null = 用 WSL 默认发行版）。 */
-export interface ResolvedWslExecutable {
-  kind: "wsl";
+/** WSL 执行目标：可执行文件 + 目标发行版。 */
+export interface WslTarget {
   /** wsl.exe 绝对路径 */
   executable: string;
-  /** 目标发行版名；null = 交给 wsl.exe 使用其默认发行版 */
-  distro: string | null;
+  /** 目标发行版名；null/undefined = 交给 wsl.exe 使用其默认发行版 */
+  distro?: string | null;
+}
+
+/** 解析后的 WSL 执行器。 */
+export interface ResolvedWslExecutable extends WslTarget {
+  kind: "wsl";
 }
 
 /** WSL 探测结果：可执行文件与已安装发行版列表。 */
@@ -211,7 +215,7 @@ export function posixSingleQuote(value: string): string {
  * 从根上避免注入。工作目录（WSL 路径）以单引号拼进脚本首部 `cd`。
  */
 export function buildWslInvocation(
-  resolved: ResolvedWslExecutable,
+  resolved: WslTarget,
   command: string,
   wslCwd?: string | null,
 ): WslInvocation {

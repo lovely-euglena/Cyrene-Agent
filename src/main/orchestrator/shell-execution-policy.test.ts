@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyShellEffect, isCatastrophicCommand } from "./shell-execution-policy";
+import { classifyShellEffect, isCatastrophicCommand, isWslManagementCommand } from "./shell-execution-policy";
 
 describe("isCatastrophicCommand", () => {
   it("rejects format / shutdown / dd regardless of path or .exe suffix", () => {
@@ -25,6 +25,39 @@ describe("isCatastrophicCommand", () => {
   it("is case-insensitive", () => {
     expect(isCatastrophicCommand("FORMAT C:")).toBe(true);
     expect(isCatastrophicCommand("Shutdown /r")).toBe(true);
+  });
+});
+
+describe("isWslManagementCommand", () => {
+  it("blocks distro install / uninstall / delete / shutdown and friends", () => {
+    expect(isWslManagementCommand("wsl --install")).toBe(true);
+    expect(isWslManagementCommand("wsl --unregister Ubuntu")).toBe(true);
+    expect(isWslManagementCommand("wsl --manage Ubuntu --delete")).toBe(true);
+    expect(isWslManagementCommand("wsl --shutdown")).toBe(true);
+    expect(isWslManagementCommand("wsl -t Ubuntu")).toBe(true);
+    expect(isWslManagementCommand("wsl --set-default Ubuntu")).toBe(true);
+    expect(isWslManagementCommand("wsl --export Ubuntu D:\\u.tar")).toBe(true);
+    expect(isWslManagementCommand('C:\\Windows\\System32\\wsl.exe --unregister Ubuntu')).toBe(true);
+  });
+
+  it("blocks the cmd/bash detour that invokes wsl.exe", () => {
+    expect(isWslManagementCommand("cmd /c wsl --unregister Ubuntu")).toBe(true);
+    expect(isWslManagementCommand("echo x && wsl --unregister Ubuntu")).toBe(true);
+  });
+
+  it("allows listing distros and ordinary commands in a distro", () => {
+    expect(isWslManagementCommand("wsl -l -q")).toBe(false);
+    expect(isWslManagementCommand("wsl --list --quiet")).toBe(false);
+    expect(isWslManagementCommand("wsl -d Ubuntu -e bash -lc pwd")).toBe(false);
+    expect(isWslManagementCommand("ls -la")).toBe(false);
+    expect(isWslManagementCommand("npm install")).toBe(false);
+    expect(isWslManagementCommand("awslogs get")).toBe(false);
+  });
+
+  it("is case-insensitive and ignores empty input", () => {
+    expect(isWslManagementCommand("WSL --UNREGISTER Ubuntu")).toBe(true);
+    expect(isWslManagementCommand("")).toBe(false);
+    expect(isWslManagementCommand("   ")).toBe(false);
   });
 });
 
