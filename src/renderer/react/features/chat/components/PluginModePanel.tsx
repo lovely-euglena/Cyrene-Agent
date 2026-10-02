@@ -1,4 +1,4 @@
-import { AppstoreOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import { Modal } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -8,6 +8,8 @@ import type {
   PluginListEntry,
   PluginManagementApi,
   PluginOverview,
+  PluginResourceLimits,
+  PluginRuntimeState,
   PluginRuntimeStatus,
 } from "../../../../../shared/plugin-management";
 import { isNewerVersion } from "../../../../../shared/version";
@@ -36,7 +38,7 @@ function marketSourceLabel(url: string, t: (key: string) => string): string {
 }
 
 type HeaderAction = "refresh" | "import" | null;
-type PanelView = "installed" | "market";
+type PanelView = "installed" | "market" | "settings";
 
 interface MarketState {
   phase: "idle" | "loading" | "ready" | "error";
@@ -113,17 +115,37 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
   const [detailsPlugin, setDetailsPlugin] = useState<MarketPluginEntry | null>(null);
   const [detailsState, setDetailsState] = useState<MarketDetailsState>({ phase: "idle" });
   const detailsRequestSeq = useRef(0);
+  // 插件运行时（默认关省内存）：null = 状态未知（首次加载中）
+  const [runtimeState, setRuntimeState] = useState<PluginRuntimeState | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeNotice, setRuntimeNotice] = useState<string | null>(null);
+  // 资源限制（「设置」视图：对应 WPF 插件管理窗的「设置」页）
+  const [limits, setLimits] = useState<PluginResourceLimits | null>(null);
+  const [limitsDraft, setLimitsDraft] = useState({ storage: "", memory: "" });
+  const [limitsBusy, setLimitsBusy] = useState(false);
+  const [limitsNotice, setLimitsNotice] = useState<string | null>(null);
+  const [limitsError, setLimitsError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!api) throw new Error(t("pluginPanel.apiUnavailable"));
     setOverview(normalizePluginOverview(await api.list()));
   }, [api, t]);
 
+  /** 同步运行时状态（首次加载与启用/停用后共用） */
+  const refreshRuntimeState = useCallback(async () => {
+    if (!api) return;
+    setRuntimeState(await api.getRuntimeState());
+  }, [api]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    reload()
+    // 运行时状态与清单并行拉取：未启用时 list 返回空清单，页面展示启用提示
+    Promise.all([
+      reload(),
+      api?.getRuntimeState().then((state) => { if (!cancelled) setRuntimeState(state); }) ?? Promise.resolve(),
+    ])
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       })
@@ -131,7 +153,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [reload]);
+  }, [reload, api]);
 
   // 每次切入市场视图都重新拉取列表；preferred 指定偏好源时把它提到探测首位；不监听不轮询
   const loadMarket = useCallback(async (preferred?: string) => {
@@ -156,8 +178,9 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
   }, [api, t]);
 
   useEffect(() => {
-    if (view === "market") void loadMarket();
-  }, [view, loadMarket]);
+    // 运行时未启用时市场接口不可用，展示专属空态而不是发请求
+    if (view === "market" && runtimeState?.active) void loadMarket();
+  }, [view, runtimeState?.active, loadMarket]);
 
   const visiblePlugins = useMemo(() => {
     const keyword = filter.trim().toLowerCase();
@@ -316,16 +339,170 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
     }
   }, [api, feedback, reload, t]);
 
+  /** 启用插件运行时：persist=true 写回设置（下次启动仍启用），false 仅本次运行。 */
+  const enableRuntime = useCallback(async (persist: boolean) => {
+    if (!api) return;
+    setRuntimeBusy(true);
+    setError(null);
+    setRuntimeNotice(null);
+    try {
+      const result = await api.setRuntimeEnabled(true, { persist });
+      if (!result.ok) {
+        setError(t("pluginPanel.runtime.enableFailed", { error: result.error ?? t("pluginPanel.unknownError") }));
+        await refreshRuntimeState();
+        return;
+      }
+      await Promise.all([reload(), refreshRuntimeState()]);
+      setRuntimeNotice(persist
+        ? t("pluginPanel.runtime.enabledRemembered")
+        : t("pluginPanel.runtime.enabledOnce"));
+      if (view === "market") void loadMarket();
+    } catch (cause) {
+      setError(t("pluginPanel.runtime.enableFailed", {
+        error: cause instanceof Error ? cause.message : String(cause),
+      }));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }, [api, loadMarket, refreshRuntimeState, reload, t, view]);
+
+  const disableRuntime = useCallback(async () => {
+    if (!api) return;
+    setRuntimeBusy(true);
+    setError(null);
+    setRuntimeNotice(null);
+    try {
+      const result = await api.setRuntimeEnabled(false, { persist: true });
+      if (!result.ok) {
+        setError(t("pluginPanel.runtime.disableFailed", { error: result.error ?? t("pluginPanel.unknownError") }));
+        return;
+      }
+      setOverview({ plugins: [], issues: [] });
+      await refreshRuntimeState();
+      setRuntimeNotice(t("pluginPanel.runtime.disabledNotice"));
+    } catch (cause) {
+      setError(t("pluginPanel.runtime.disableFailed", {
+        error: cause instanceof Error ? cause.message : String(cause),
+      }));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }, [api, refreshRuntimeState, t]);
+
+  const loadLimits = useCallback(async () => {
+    if (!api) return;
+    setLimitsError(null);
+    try {
+      const value = await api.getLimits();
+      setLimits(value);
+      setLimitsDraft({ storage: String(value.storageQuotaMb), memory: String(value.memoryLimitMb) });
+    } catch (cause) {
+      setLimitsError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [api]);
+
+  const saveLimits = useCallback(async () => {
+    if (!api) return;
+    const storage = Number(limitsDraft.storage.trim());
+    const memory = Number(limitsDraft.memory.trim());
+    if (!Number.isInteger(storage) || storage < 0 || !Number.isInteger(memory) || memory < 0) {
+      setLimitsError(t("pluginPanel.limits.invalid"));
+      return;
+    }
+    setLimitsBusy(true);
+    setLimitsError(null);
+    setLimitsNotice(null);
+    try {
+      const result = await api.setLimits({ storageQuotaMb: storage, memoryLimitMb: memory });
+      if (!result.ok) {
+        setLimitsError(t("pluginPanel.limits.saveFailed", { error: result.error ?? t("pluginPanel.unknownError") }));
+        return;
+      }
+      if (result.limits) {
+        setLimits(result.limits);
+        setLimitsDraft({
+          storage: String(result.limits.storageQuotaMb),
+          memory: String(result.limits.memoryLimitMb),
+        });
+      }
+      setLimitsNotice(t("pluginPanel.limits.saved"));
+    } catch (cause) {
+      setLimitsError(t("pluginPanel.limits.saveFailed", {
+        error: cause instanceof Error ? cause.message : String(cause),
+      }));
+    } finally {
+      setLimitsBusy(false);
+    }
+  }, [api, limitsDraft, t]);
+
+  // 进入「设置」视图时拉取当前资源限制（与 WPF 设置页同口径）
+  useEffect(() => {
+    if (view === "settings") void loadLimits();
+  }, [view, loadLimits]);
+
   const inMarket = view === "market";
+  const inSettings = view === "settings";
+  const runtimeKnown = runtimeState !== null;
+  const runtimeActive = runtimeState?.active === true;
   const marketToggleLabel = inMarket ? t("pluginPanel.market.back") : t("pluginPanel.market.toggle");
+  const settingsToggleLabel = inSettings ? t("pluginPanel.settings.back") : t("pluginPanel.settings.toggle");
+
+  /** 运行时启停按钮组（未启用横幅与「设置」视图共用） */
+  const renderRuntimeActions = (includeDisable = false) => (
+    <div className="plugin-panel__runtime-actions">
+      {!runtimeActive && (
+        <>
+          <button
+            type="button"
+            className="plugin-card-ui__button is-enabled"
+            disabled={runtimeBusy || !api}
+            onClick={() => void enableRuntime(true)}
+          >
+            {runtimeBusy && <LoadingOutlined spin />}
+            {runtimeBusy ? ` ${t("pluginPanel.runtime.working")}` : ` ${t("pluginPanel.runtime.enable")}`}
+          </button>
+          <button
+            type="button"
+            className="plugin-card-ui__button"
+            disabled={runtimeBusy || !api}
+            onClick={() => void enableRuntime(false)}
+          >
+            {t("pluginPanel.runtime.enableOnce")}
+          </button>
+        </>
+      )}
+      {runtimeActive && includeDisable && (
+        <>
+          {!runtimeState?.persisted && (
+            <button
+              type="button"
+              className="plugin-card-ui__button"
+              disabled={runtimeBusy || !api}
+              onClick={() => void enableRuntime(true)}
+            >
+              {t("pluginPanel.runtime.remember")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="plugin-card-ui__button is-danger"
+            disabled={runtimeBusy || !api}
+            onClick={() => void disableRuntime()}
+          >
+            {runtimeBusy ? ` ${t("pluginPanel.runtime.working")}` : ` ${t("pluginPanel.runtime.disable")}`}
+          </button>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="plugin-panel">
       <header className="plugin-panel__header">
         <div className="plugin-panel__heading">
           <img className="plugin-panel__heading-icon" src={pluginIconUrl} alt="" />
-          <h1 className="plugin-panel__title">{inMarket ? t("pluginPanel.market.title") : t("pluginPanel.title")}</h1>
-          <p className="plugin-panel__subtitle">{inMarket ? t("pluginPanel.market.subtitle") : t("pluginPanel.subtitle")}</p>
+          <h1 className="plugin-panel__title">{inSettings ? t("pluginPanel.settings.title") : inMarket ? t("pluginPanel.market.title") : t("pluginPanel.title")}</h1>
+          <p className="plugin-panel__subtitle">{inSettings ? t("pluginPanel.settings.subtitle") : inMarket ? t("pluginPanel.market.subtitle") : t("pluginPanel.subtitle")}</p>
           <p className="plugin-panel__subtitle plugin-panel__registry">
             {t("pluginPanel.registryPrefix")}
             <a
@@ -353,9 +530,19 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
           </button>
           <button
             type="button"
+            className={`plugin-panel__icon-button${inSettings ? " is-accent" : ""}`}
+            onClick={() => setView(inSettings ? "installed" : "settings")}
+            disabled={!api}
+            aria-label={settingsToggleLabel}
+            title={settingsToggleLabel}
+          >
+            <SettingOutlined />
+          </button>
+          <button
+            type="button"
             className="plugin-panel__icon-button"
             onClick={() => void refreshPlugins()}
-            disabled={!api || headerAction !== null}
+            disabled={!api || headerAction !== null || !runtimeActive}
             aria-label={t("pluginPanel.refresh")}
             title={t("pluginPanel.refresh")}
           >
@@ -365,7 +552,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
             type="button"
             className="plugin-panel__icon-button is-accent"
             onClick={() => void importPlugin()}
-            disabled={!api || headerAction !== null}
+            disabled={!api || headerAction !== null || !runtimeActive}
             aria-label={t("pluginPanel.add")}
             title={t("pluginPanel.add")}
           >
@@ -374,7 +561,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
         </div>
       </header>
 
-      {!inMarket && (
+      {!inMarket && !inSettings && (
         <div className="plugin-panel__search-row">
           <input
             className="plugin-panel__search"
@@ -385,7 +572,89 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
         </div>
       )}
 
-      {inMarket ? (
+      {inSettings ? (
+        <div className="plugin-panel__settings">
+          <section className="plugin-panel__settings-section">
+            <h2>{t("pluginPanel.runtime.sectionTitle")}</h2>
+            <p className={`plugin-panel__runtime-status${runtimeActive ? (runtimeState?.persisted ? " is-on" : " is-temp") : ""}`}>
+              {runtimeActive
+                ? (runtimeState?.persisted ? t("pluginPanel.runtime.statusOn") : t("pluginPanel.runtime.statusTemp"))
+                : t("pluginPanel.runtime.statusOff")}
+            </p>
+            {runtimeNotice && <div className="plugin-panel__notice">{runtimeNotice}</div>}
+            {renderRuntimeActions(true)}
+          </section>
+          <section className="plugin-panel__settings-section">
+            <h2>{t("pluginPanel.limits.title")}</h2>
+            <p className="plugin-panel__settings-hint">{t("pluginPanel.limits.description")}</p>
+            <label className="plugin-panel__settings-field">
+              <span>{t("pluginPanel.limits.storage")}</span>
+              <input
+                type="number"
+                min={0}
+                max={10240}
+                step={1}
+                value={limitsDraft.storage}
+                onChange={(event) => setLimitsDraft((current) => ({ ...current, storage: event.target.value }))}
+                disabled={limitsBusy}
+              />
+            </label>
+            <label className="plugin-panel__settings-field">
+              <span>{t("pluginPanel.limits.memory")}</span>
+              <input
+                type="number"
+                min={0}
+                max={65536}
+                step={1}
+                value={limitsDraft.memory}
+                onChange={(event) => setLimitsDraft((current) => ({ ...current, memory: event.target.value }))}
+                disabled={limitsBusy}
+              />
+            </label>
+            {limits && (
+              <p className="plugin-panel__settings-hint">
+                {t("pluginPanel.limits.effective", {
+                  storage: limits.storageQuotaMb === 0
+                    ? t("pluginPanel.limits.unlimited")
+                    : `${limits.storageQuotaMb} MiB`,
+                  memory: limits.memoryLimitMb === 0
+                    ? t("pluginPanel.limits.unlimited")
+                    : `${limits.memoryLimitMb} MiB`,
+                })}
+                {(!limits.storageQuotaConfigured || !limits.memoryLimitConfigured)
+                  ? t("pluginPanel.limits.unconfigured")
+                  : ""}
+              </p>
+            )}
+            {(limitsError || limitsNotice) && (
+              <div className="plugin-panel__notices" role="status">
+                {limitsError && <div className="plugin-panel__notice is-error">{limitsError}</div>}
+                {limitsNotice && <div className="plugin-panel__notice">{limitsNotice}</div>}
+              </div>
+            )}
+            <div className="plugin-panel__runtime-actions">
+              <button
+                type="button"
+                className="plugin-card-ui__button is-enabled"
+                disabled={limitsBusy || !api}
+                onClick={() => void saveLimits()}
+              >
+                {limitsBusy && <LoadingOutlined spin />}
+                {limitsBusy ? ` ${t("pluginPanel.limits.saving")}` : ` ${t("pluginPanel.limits.save")}`}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : inMarket ? (
+        !runtimeKnown ? (
+          <div className="plugin-panel__loading">{t("common.loading")}</div>
+        ) : !runtimeActive ? (
+          <div className="plugin-panel__runtime-empty">
+            <strong>{t("pluginPanel.runtime.marketDisabledTitle")}</strong>
+            <p>{t("pluginPanel.runtime.marketDisabledHint")}</p>
+            {renderRuntimeActions()}
+          </div>
+        ) : (
         <>
           {market.sources && market.sources.length > 0 && (
             <div className="plugin-panel__source-switch" role="group" aria-label={t("pluginPanel.market.sourceSection")}>
@@ -600,8 +869,18 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
             })()}
           </Modal>
         </>
+        )
       ) : (
         <>
+          {runtimeKnown && !runtimeActive && (
+            <div className="plugin-panel__runtime-banner">
+              <div className="plugin-panel__runtime-banner-copy">
+                <strong>{t("pluginPanel.runtime.disabledTitle")}</strong>
+                <p>{t("pluginPanel.runtime.disabledHint")}</p>
+              </div>
+              {renderRuntimeActions()}
+            </div>
+          )}
           {(error || overview.issues.length > 0) && (
             <div className="plugin-panel__notices" role="status">
               {error && <div className="plugin-panel__notice is-error">{error}</div>}

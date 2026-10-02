@@ -51,6 +51,18 @@ const api: PluginManagementApi = {
   }),
   marketDetails: async (): Promise<{ ok: true; details: MarketPluginDetails }> => ({ ok: true, details }),
   marketInstall: async () => ({ ok: true, plugin: { id: plugin.id, name: plugin.name, version: plugin.version } }),
+  getRuntimeState: async () => ({ active: true, persisted: true }),
+  setRuntimeEnabled: async () => ({ ok: true }),
+  getLimits: async () => ({
+    storageQuotaMb: 64,
+    memoryLimitMb: 2048,
+    storageQuotaConfigured: false,
+    memoryLimitConfigured: false,
+  }),
+  setLimits: async (limits) => ({
+    ok: true,
+    limits: { ...limits, storageQuotaConfigured: true, memoryLimitConfigured: true },
+  }),
 };
 
 const root = document.getElementById("preview-root");

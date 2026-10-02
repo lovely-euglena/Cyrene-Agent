@@ -372,6 +372,148 @@
   cursor: not-allowed;
 }
 
+/* 运行时未启用提示条（插件列表页） */
+.plugin-panel__runtime-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 28px 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 179, 0, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 179, 0, 0.08);
+}
+
+.plugin-panel__runtime-banner-copy strong {
+  display: block;
+  color: #8a5a00;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.plugin-panel__runtime-banner-copy p {
+  margin: 4px 0 0;
+  color: #8a5a00;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.plugin-panel__runtime-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 市场页：运行时未启用专属空态（与 WPF 管理窗市场页同语义） */
+.plugin-panel__runtime-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 24px 28px 0;
+  padding: 44px 24px;
+  border: 1px dashed var(--rb-border-default, #e8e8ec);
+  border-radius: 14px;
+  text-align: center;
+  background: var(--rb-surface-page, #f8f7f6);
+}
+
+.plugin-panel__runtime-empty strong {
+  color: var(--rb-text-primary, #1d1d1f);
+  font-size: 15px;
+}
+
+.plugin-panel__runtime-empty p {
+  margin: 0 0 6px;
+  max-width: 520px;
+  color: var(--rb-text-secondary, #6e6e73);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* 「设置」视图：运行时状态 + 资源限制（对应 WPF 管理窗「设置」页） */
+.plugin-panel__settings {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+  padding: 16px 28px 28px;
+}
+
+.plugin-panel__settings-section {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--rb-border-default, #e8e8ec);
+  border-radius: 14px;
+  background: var(--rb-surface-workspace, #fff);
+}
+
+.plugin-panel__settings-section h2 {
+  margin: 0;
+  color: var(--rb-text-primary, #1d1d1f);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.plugin-panel__runtime-status {
+  margin: 0;
+  color: var(--rb-text-secondary, #6e6e73);
+  font-size: 12.5px;
+}
+
+.plugin-panel__runtime-status.is-on {
+  color: #2e7d32;
+}
+
+.plugin-panel__runtime-status.is-temp {
+  color: #8a5a00;
+}
+
+.plugin-panel__settings-hint {
+  margin: 0;
+  color: var(--rb-text-secondary, #6e6e73);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.plugin-panel__settings-field {
+  display: grid;
+  grid-template-columns: 1fr 160px;
+  align-items: center;
+  gap: 12px;
+  color: var(--rb-text-primary, #1d1d1f);
+  font-size: 13px;
+}
+
+.plugin-panel__settings-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 12px;
+  border: 1px solid var(--rb-border-default, #e8e8ec);
+  border-radius: 8px;
+  outline: none;
+  color: var(--rb-text-primary, #1d1d1f);
+  background: var(--rb-surface-workspace, #fff);
+  font-size: 13px;
+}
+
+.plugin-panel__settings-field input:focus {
+  border-color: var(--cy-pill-border, #ff9fbd);
+  box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.1);
+}
+
+.plugin-panel__settings-section .plugin-panel__notices {
+  padding: 0;
+}
+
+.plugin-panel__settings-section .plugin-panel__runtime-actions {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+
 .plugin-panel::-webkit-scrollbar {
   width: 6px;
 }

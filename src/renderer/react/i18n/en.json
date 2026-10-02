@@ -419,6 +419,46 @@
       "stopping": "Stopping…",
       "failed": "Failed to start"
     },
+    "settings": {
+      "title": "Plugin settings",
+      "subtitle": "Plugin runtime and resource limits — the same configuration as the plugin manager's Settings tab.",
+      "toggle": "Plugin settings",
+      "back": "Back to plugins"
+    },
+    "runtime": {
+      "sectionTitle": "Plugin runtime",
+      "statusOn": "Running · remembered (starts automatically next time)",
+      "statusTemp": "Running for this session · not remembered (back to off after restart)",
+      "statusOff": "Not enabled (off by default to save memory)",
+      "enable": "Enable plugin runtime",
+      "enableOnce": "Enable for this session only",
+      "remember": "Remember this choice",
+      "disable": "Disable plugin runtime",
+      "working": "Working…",
+      "disabledTitle": "Plugin runtime is not enabled",
+      "disabledHint": "The plugin system is off by default to save memory. Once enabled, installed plugins start running and the marketplace and ZIP import become available.",
+      "marketDisabledTitle": "The marketplace needs the plugin runtime",
+      "marketDisabledHint": "Enable the plugin runtime to load the marketplace and install plugins online.",
+      "enabledRemembered": "Plugin runtime enabled (remembered; starts automatically next time)",
+      "enabledOnce": "Plugin runtime enabled for this session only (back to off after restart)",
+      "disabledNotice": "Plugin runtime disabled",
+      "enableFailed": "Couldn't enable: {{error}}",
+      "disableFailed": "Couldn't disable: {{error}}"
+    },
+    "limits": {
+      "title": "Resource limits",
+      "description": "Soft limits: the storage quota only constrains writes through the plugin storage API (takes effect for plugins started/restarted afterwards); the memory cap only applies to .NET plugin processes (enforced immediately — exceeding it terminates the process). 0 = unlimited.",
+      "storage": "KV storage quota (MiB)",
+      "memory": "Memory cap (MiB, .NET plugins only)",
+      "effective": "Effective now: storage {{storage}} · memory {{memory}}",
+      "unconfigured": " (unconfigured values come from environment variables/defaults)",
+      "unlimited": "unlimited",
+      "save": "Save limits",
+      "saving": "Saving…",
+      "saved": "Resource limits saved (the storage quota takes effect for plugins started/restarted afterwards)",
+      "invalid": "Enter 0 or a positive integer (MiB)",
+      "saveFailed": "Couldn't save: {{error}}"
+    },
     "market": {
       "title": "Plugin marketplace",
       "subtitle": "Install plugins online from the official registry. They're disabled by default — enable them from the plugin list.",

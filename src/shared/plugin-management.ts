@@ -48,6 +48,27 @@ export interface PluginOverview {
   issues: PluginScanIssue[];
 }
 
+/** 插件运行时状态：active=本次运行已启动；persisted=启动时是否自动启用（写入设置）。 */
+export interface PluginRuntimeState {
+  active: boolean;
+  persisted: boolean;
+}
+
+/** 插件资源限制生效值（0 = 不限）。 */
+export interface PluginResourceLimits {
+  storageQuotaMb: number;
+  memoryLimitMb: number;
+  /** 是否由设置页显式配置（false = 来自环境变量/内置默认） */
+  storageQuotaConfigured: boolean;
+  memoryLimitConfigured: boolean;
+}
+
+/** 写入资源限制的原始值（校验与钳制在主进程，0 = 不限）。 */
+export interface PluginResourceLimitsInput {
+  storageQuotaMb: number;
+  memoryLimitMb: number;
+}
+
 /** 插件市场条目（主进程校验 registry 后下发给渲染端的展示数据，不含 zip 地址与哈希） */
 export interface MarketPluginEntry {
   id: string;
@@ -110,6 +131,21 @@ export interface PluginManagementApi {
   marketList(preferred?: string): Promise<MarketListResult>;
   marketDetails(id: string, preferred?: string): Promise<MarketPluginDetailsResult>;
   marketInstall(id: string): Promise<MarketInstallResult>;
+  /** 运行时状态（管理页在运行时未启用时也要能打开，见插件运行时管理壳） */
+  getRuntimeState(): Promise<PluginRuntimeState>;
+  /** 运行期启停；persist=false 时仅本次运行生效，不写回设置 */
+  setRuntimeEnabled(enabled: boolean, options?: { persist?: boolean }): Promise<{
+    ok: boolean;
+    error?: string;
+    overview?: PluginOverview;
+  }>;
+  /** 资源限制生效值（含是否来自设置页配置） */
+  getLimits(): Promise<PluginResourceLimits>;
+  setLimits(limits: PluginResourceLimitsInput): Promise<{
+    ok: boolean;
+    error?: string;
+    limits?: PluginResourceLimits;
+  }>;
 }
 
 /**

@@ -524,6 +524,13 @@ export const IPC = {
   PLUGINS_MARKET_LIST: "plugins:market:list",
   PLUGINS_MARKET_DETAILS: "plugins:market:details",
   PLUGINS_MARKET_INSTALL: "plugins:market:install",
+  /** 插件运行时状态（active=本次运行已启动；persisted=启动时是否自动启用） */
+  PLUGINS_GET_RUNTIME_STATE: "plugins:get-runtime-state",
+  /** 运行期启停插件运行时（options.persist=false 时仅本次运行，不写回设置） */
+  PLUGINS_SET_RUNTIME_ENABLED: "plugins:set-runtime-enabled",
+  /** 插件资源限制（KV 存储配额 / .NET 内存上限） */
+  PLUGINS_GET_LIMITS: "plugins:get-limits",
+  PLUGINS_SET_LIMITS: "plugins:set-limits",
   // ── main 线通道（合并补齐：便携模式 / VAD / 模型管理等）──
   EMBEDDING_DELETE: "embedding:delete",
   EMBEDDING_DOWNLOAD: "embedding:download",

@@ -191,6 +191,11 @@ export function installPluginPanelProtocol(query: PluginPanelAccessQuery): void 
   // 宿主资产（panel-bridge.js 等）随构建复制到 dist/main/plugin-panel/；
   // 本文件编译产物在 dist/main/main/ 下，需回上一层才是资产目录
   const assetsRoot = path.join(__dirname, "..", "plugin-panel");
+  // 运行期启停：重新启用时替换旧 handler（重复 handle 会抛错；旧 handler 的
+  // query 闭包指向已停用的 manager，必须换成新的）
+  if (protocol.isProtocolHandled(PLUGIN_PANEL_SCHEME)) {
+    protocol.unhandle(PLUGIN_PANEL_SCHEME);
+  }
   protocol.handle(PLUGIN_PANEL_SCHEME, async (request) => {
     const result = await resolvePluginPanelRequest(request.url, query, assetsRoot);
     if (result.status === 404) {

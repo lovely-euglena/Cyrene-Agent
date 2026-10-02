@@ -278,3 +278,22 @@ describe("general WSL settings", () => {
     expect(normalizeGeneralSettings({ wslDistro: 42 } as never).wslDistro).toBe("");
   });
 });
+
+describe("desktop icon legacy default migration", () => {
+  it("migrates the legacy default 晴光 to the current default when never chosen", () => {
+    expect(normalizeGeneralSettings({ uiIcon: "cyrene-sun" }).uiIcon).toBe("cyrene-sticker");
+    expect(normalizeGeneralSettings({ uiIcon: "cyrene-sun", uiIconChosen: false }).uiIcon).toBe("cyrene-sticker");
+  });
+
+  it("keeps an explicitly chosen 晴光", () => {
+    const settings = normalizeGeneralSettings({ uiIcon: "cyrene-sun", uiIconChosen: true });
+    expect(settings.uiIcon).toBe("cyrene-sun");
+    expect(settings.uiIconChosen).toBe(true);
+  });
+
+  it("keeps non-default legacy selections and falls back for unknown values", () => {
+    expect(normalizeGeneralSettings({ uiIcon: "cyrene-pink" }).uiIcon).toBe("cyrene-pink");
+    expect(normalizeGeneralSettings({ uiIcon: "bogus" } as never).uiIcon).toBe("cyrene-sticker");
+    expect(normalizeGeneralSettings({}).uiIcon).toBe("cyrene-sticker");
+  });
+});

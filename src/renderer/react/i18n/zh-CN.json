@@ -419,6 +419,46 @@
       "stopping": "停用中",
       "failed": "启动失败"
     },
+    "settings": {
+      "title": "插件设置",
+      "subtitle": "插件运行时与资源限制；与插件管理窗「设置」页同一份配置。",
+      "toggle": "插件设置",
+      "back": "返回插件管理"
+    },
+    "runtime": {
+      "sectionTitle": "插件运行时",
+      "statusOn": "运行中 · 已记住（下次启动自动启用）",
+      "statusTemp": "本次运行已启用 · 未记住（重启后恢复默认关闭）",
+      "statusOff": "未启用（默认关闭以节省内存）",
+      "enable": "启用插件运行时",
+      "enableOnce": "仅本次启用",
+      "remember": "记住本次选择",
+      "disable": "停用插件运行时",
+      "working": "处理中…",
+      "disabledTitle": "插件运行时未启用",
+      "disabledHint": "插件系统默认关闭以节省内存；启用后已安装插件开始运行，市场与 ZIP 导入可用。",
+      "marketDisabledTitle": "插件市场需要插件运行时",
+      "marketDisabledHint": "启用插件运行时后即可加载市场并在线安装插件。",
+      "enabledRemembered": "插件运行时已启用（已记住，下次启动自动启用）",
+      "enabledOnce": "插件运行时已启用（仅本次运行，重启后恢复默认关闭）",
+      "disabledNotice": "插件运行时已停用",
+      "enableFailed": "启用失败：{{error}}",
+      "disableFailed": "停用失败：{{error}}"
+    },
+    "limits": {
+      "title": "资源限制",
+      "description": "软限制：存储配额只约束走插件存储 API 的写入（保存后对之后启动/重启的插件生效）；内存上限仅作用于 .NET 插件进程（实时生效，超出即终止）。0 = 不限。",
+      "storage": "KV 存储配额（MiB）",
+      "memory": "内存上限（MiB，仅 .NET 插件）",
+      "effective": "当前生效：存储 {{storage}} · 内存 {{memory}}",
+      "unconfigured": "（未配置项来自环境变量/默认值）",
+      "unlimited": "不限",
+      "save": "保存资源限制",
+      "saving": "保存中…",
+      "saved": "资源限制已保存（存储配额对之后启动/重启的插件生效）",
+      "invalid": "请输入 0 或正整数（MiB）",
+      "saveFailed": "保存失败：{{error}}"
+    },
     "market": {
       "title": "插件市场",
       "subtitle": "从官方收录仓库在线安装插件；安装后默认停用，可返回插件列表启用。",
