@@ -13,7 +13,7 @@ namespace CyreneNative;
 /// 本地音乐播放器窗口（kind="music"）：
 ///   - 左：搜索/文件夹过滤 + 曲目列表（双击播放）；
 ///   - 右：歌词面板（侧车 .lrc，当前行高亮 + 点击跳转 + 自动滚动）；
-///   - 底：上一首/播放暂停/下一首/模式 + 进度 + 音量 + Agent 权限下拉；
+///   - 底：上一首/播放暂停/下一首/模式 + 进度 + 音量 + 输出设备 + Agent 权限下拉；
 ///   - 顶：扫描/添加/移除文件夹。
 /// 播放与曲库由进程内 MusicService 持有（关窗后 Agent 仍可控制），
 /// 窗口只做视图与直连调用；文件夹与 Agent 权限变更经 cmd 事件交宿主持久化。
@@ -27,6 +27,7 @@ public sealed class MusicWindow : NativeWindow
     private readonly TextBox _searchBox = new();
     private readonly ComboBox _folderBox = new();
     private readonly ComboBox _accessBox = new();
+    private readonly ComboBox _deviceBox = new();
     private readonly TextBlock _statusText = new() { FontSize = 12, Foreground = NativeTheme.TextMutedBrush, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _nowTitle = new() { FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = NativeTheme.TextStrongBrush };
     private readonly TextBlock _nowArtist = new() { FontSize = 12, Foreground = NativeTheme.TextMutedBrush, Margin = new Thickness(0, 2, 0, 0) };
@@ -47,6 +48,7 @@ public sealed class MusicWindow : NativeWindow
     private int _lyricIndex = -1;
     private bool _updatingVolume;
     private bool _rebuildingFolders;
+    private bool _rebuildingDevices;
     private List<MusicService.TrackDto> _tracks = new();
 
     public override string Kind => "music";
@@ -108,6 +110,7 @@ public sealed class MusicWindow : NativeWindow
 
         RefreshFolders();
         RefreshTracks();
+        RefreshDevices();
         OnStateChanged();
         if (_service.TotalTracks() == 0 && _service.Folders.Count > 0) _service.Rescan();
     }
@@ -278,6 +281,7 @@ public sealed class MusicWindow : NativeWindow
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var prevButton = NativeTheme.MakeCircleButton(Md("\uE892", 15, NativeTheme.TextDefaultBrush), 34, "上一首", () => _service.PrevTrack());
         var playButton = NativeTheme.MakeCircleButton(_playGlyph, 40, "播放/暂停", () => _service.Toggle());
@@ -318,9 +322,26 @@ public sealed class MusicWindow : NativeWindow
         Grid.SetColumn(volumePanel, 5);
         row.Children.Add(volumePanel);
 
+        var devicePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        devicePanel.Children.Add(new TextBlock { Text = "输出", FontSize = 12, Foreground = NativeTheme.TextMutedBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+        _deviceBox.Width = 170;
+        _deviceBox.Height = 30;
+        _deviceBox.ToolTip = "选择音频输出设备（切换即时生效）";
+        _deviceBox.SelectionChanged += (_, _) =>
+        {
+            if (_rebuildingDevices) return;
+            if (_deviceBox.SelectedItem is ComboBoxItem { Tag: string deviceName } && !_service.TrySetAudioDevice(deviceName, out var deviceError))
+            {
+                _statusText.Text = deviceError;
+            }
+        };
+        devicePanel.Children.Add(_deviceBox);
+        Grid.SetColumn(devicePanel, 6);
+        row.Children.Add(devicePanel);
+
         var settingsButton = NativeTheme.MakeCircleButton(Md("\uE713", 15, NativeTheme.TextMutedBrush), 32, "打开宿主设置", () => RequestRouter.SendCommand("music", "open-settings"));
         settingsButton.Margin = new Thickness(8, 0, 0, 0);
-        Grid.SetColumn(settingsButton, 6);
+        Grid.SetColumn(settingsButton, 7);
         row.Children.Add(settingsButton);
 
         Grid.SetRow(row, 1);
@@ -363,6 +384,36 @@ public sealed class MusicWindow : NativeWindow
         finally
         {
             _rebuildingFolders = false;
+        }
+    }
+
+    private void RefreshDevices()
+    {
+        _rebuildingDevices = true;
+        try
+        {
+            var current = _service.CurrentAudioDevice();
+            _deviceBox.Items.Clear();
+            foreach (var device in _service.ListAudioDevices())
+            {
+                var label = device.Name == "auto"
+                    ? "自动选择"
+                    : string.IsNullOrWhiteSpace(device.Description) ? device.Name : device.Description;
+                _deviceBox.Items.Add(new ComboBoxItem { Content = label, Tag = device.Name, ToolTip = device.Name });
+            }
+            foreach (ComboBoxItem item in _deviceBox.Items)
+            {
+                if ((item.Tag as string) == current)
+                {
+                    _deviceBox.SelectedItem = item;
+                    break;
+                }
+            }
+            if (_deviceBox.SelectedItem is null && _deviceBox.Items.Count > 0) _deviceBox.SelectedIndex = 0;
+        }
+        finally
+        {
+            _rebuildingDevices = false;
         }
     }
 
@@ -420,6 +471,22 @@ public sealed class MusicWindow : NativeWindow
             _updatingVolume = true;
             _volume.Value = nowPlaying.Volume;
             _updatingVolume = false;
+            // 设备可能在别处被改（Agent 工具/其它窗口）：同步下拉选中项，不重建列表
+            if (!_rebuildingDevices)
+            {
+                var device = _service.CurrentAudioDevice();
+                if ((_deviceBox.SelectedItem as ComboBoxItem)?.Tag as string != device)
+                {
+                    foreach (ComboBoxItem item in _deviceBox.Items)
+                    {
+                        if ((item.Tag as string) == device)
+                        {
+                            _deviceBox.SelectedItem = item;
+                            break;
+                        }
+                    }
+                }
+            }
             UpdateProgress(nowPlaying.PositionSec, nowPlaying.DurationSec);
         });
     }

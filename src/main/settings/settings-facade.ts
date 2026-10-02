@@ -147,6 +147,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   tokenStatsSource: "modelscope",
   musicFolders: [],
   musicAgentAccess: "read",
+  /** 音频输出设备名（mpv --audio-device）；空/auto = 自动选择。设备名是机器相关的。 */
+  musicAudioDevice: "",
   ocrEnabled: true,
   ocrProvider: "local",
   ocrLanguage: "",
@@ -403,6 +405,7 @@ export function normalizeGeneralSettings(
     musicAgentAccess: input?.musicAgentAccess === "off" || input?.musicAgentAccess === "control" || input?.musicAgentAccess === "manage"
       ? input.musicAgentAccess
       : "read",
+    musicAudioDevice: typeof input?.musicAudioDevice === "string" ? input.musicAudioDevice.trim() : "",
     ocrEnabled: input?.ocrEnabled === undefined
       ? DEFAULT_GENERAL_SETTINGS.ocrEnabled
       : Boolean(input.ocrEnabled),
