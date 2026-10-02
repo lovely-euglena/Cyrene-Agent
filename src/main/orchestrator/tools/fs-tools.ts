@@ -161,10 +161,13 @@ toolRegistry.register({
     "- 凭印象猜内容（绝对不行，必须先 read）\n" +
     "- 读图片 → read_image\n" +
     "- 列目录 → list_dir\n\n" +
+    "用户本轮附加文件时，会提供绝对路径；读取附件必须先调用本工具。\n" +
     "参数：path (必填，绝对路径)，startLine (可选，默认 1)，maxLines (可选，默认 500)。",
   enabled: true,
   risk: "fs-read",
-  modes: ["learn", "code", "work"],
+  modes: ["chat", "learn", "code", "work"],
+  chatBuiltin: true,
+  requiresFileAttachments: true,
   effectKind: "read" as const,
   // 只读同步文件读取；不会改工作区或 Harness 父状态。
   isConcurrencySafe: () => true,
@@ -589,10 +592,13 @@ toolRegistry.register({
     "- 读文本文件 → read_file\n" +
     "- 批量读图（逐张调用，不要一次性塞多张）\n\n" +
     "若未配置视觉模型会返回错误，届时如实告诉用户看不了。" +
+    "用户本轮附加图片时，会提供绝对路径；图片只在调用本工具时读取。\n" +
     "参数：path (必填，绝对路径)。",
   enabled: true,
   risk: "fs-read",
-  modes: ["learn", "code", "work"],
+  modes: ["chat", "learn", "code", "work"],
+  chatBuiltin: true,
+  requiresFileAttachments: true,
   effectKind: "read" as const,
   verificationPolicy: "none" as const,
   needsContext: true,

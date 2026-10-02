@@ -923,8 +923,6 @@
 .cy-memory-record strong { color: var(--rb-text-primary); font: var(--rb-text-small-em); overflow-wrap: anywhere; }
 .cy-memory-record span { color: var(--rb-text-secondary); font: var(--rb-text-small); overflow-wrap: anywhere; }
 .cy-memory-record small { color: var(--rb-text-secondary); font: var(--rb-text-micro); }
-.cy-memory-record--document { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-.cy-memory-record--document > div { display: grid; min-width: 0; gap: 4px; }
 .cy-cyrene-note { min-height: 0; color: var(--rb-text-secondary); font: var(--rb-text-micro); }
 .cy-settings-row .cy-cyrene-dimensions { width: min(180px, 48%); flex: none; }
 .cy-cyrene-actions { justify-content: flex-end; min-height: 56px; }

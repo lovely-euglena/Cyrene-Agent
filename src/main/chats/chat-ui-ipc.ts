@@ -17,12 +17,6 @@ import { resolveVendorRuntimeSettings } from "../orchestrator/vendors/runtime-se
 import { resolveTransport } from "../orchestrator/vendors/transport-detector";
 import { getSession, getSessionRecord } from "./chats-store";
 import { describePendingAttachment } from "../rag/file-ingest";
-import { processDocumentIndexRequest } from "../rag/document-index-ipc";
-import {
-  enqueueDocumentIndexJob,
-  cancelDocumentIndexJob,
-} from "../rag/document-index-queue";
-import { retrieveQueuedDocumentChunks } from "../rag/document-index-worker";
 import { captionImageSafe, buildImageCaptionPrompt, validateCaptionImagePath } from "../chat/image-caption";
 import { resolveCaptionVisionConfig, resolveImageRoute } from "../orchestrator/image-router";
 import type { WindowManager } from "../windows/window-manager";
@@ -175,28 +169,6 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       console.error("[Cyrene] ingestFiles ERROR:", err?.message || err);
       return [];
     }
-  });
-
-  ipc.handle(IPC.CHAT_PROCESS_DOCUMENTS, async (event, payload: unknown) => {
-    const filePaths = payload && typeof payload === "object" && Array.isArray((payload as { filePaths?: unknown }).filePaths)
-      ? (payload as { filePaths: unknown[] }).filePaths.filter((p): p is string => typeof p === "string")
-      : [];
-    if (filePaths.length === 0) return [];
-    const query = typeof (payload as { query?: unknown }).query === "string"
-      ? (payload as { query: string }).query
-      : "";
-    return processDocumentIndexRequest({
-      filePaths,
-      query,
-      sender: event.sender,
-      enqueue: enqueueDocumentIndexJob,
-      retrieve: retrieveQueuedDocumentChunks,
-    });
-  });
-
-  ipc.handle(IPC.CHAT_CANCEL_DOCUMENT_INDEX, (_event, payload: unknown) => {
-    const jobId = payload && typeof payload === "object" ? (payload as { jobId?: unknown }).jobId : undefined;
-    return typeof jobId === "string" && cancelDocumentIndexJob(jobId);
   });
 
   ipc.handle(IPC.CHAT_CAPTION_IMAGE, async (_event, payload: unknown) => {

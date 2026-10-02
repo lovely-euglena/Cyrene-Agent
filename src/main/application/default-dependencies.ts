@@ -43,8 +43,6 @@ import {
   syncVolcanoSearchMcp,
 } from "../settings/general-settings-lifecycle";
 import { registerMemoryUserToolIpc } from "../memory/memory-user-ipc";
-import { configureDocumentIndexQueue } from "../rag/document-index-queue";
-import { runDocumentIndexJob } from "../rag/document-index-worker";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -263,7 +261,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     shutdown,
 
     prepare: () => prepareBeforeReady({
-      configureDocumentIndex: () => configureDocumentIndexQueue(runDocumentIndexJob),
       installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
       migrateLegacyUserData: () => {
         migrateLegacyUserData({

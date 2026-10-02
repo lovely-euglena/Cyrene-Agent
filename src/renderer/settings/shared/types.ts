@@ -179,12 +179,6 @@ export interface MemoryPanelPayload {
     weight: number;
     createdAt: number;
   }>;
-  importedDocs: Array<{
-    importId: string | null;
-    fileName: string;
-    chunkCount: number;
-    lastImportedAt: number;
-  }>;
   reflections: Array<{
     id: string;
     title: string;
@@ -201,7 +195,6 @@ export interface ObsidianVaultConfig {
 
 export interface MemoryPanelApi {
   getData: () => Promise<MemoryPanelPayload>;
-  deleteImportedDoc: (importId: string, fileName?: string) => Promise<{ ok: boolean; deleted: number }>;
   saveL0: (patch: Record<string, unknown>) => Promise<{ ok: boolean }>;
   saveL1: (patch: Record<string, unknown>) => Promise<{ ok: boolean }>;
   exportToObsidianVault: () => Promise<{

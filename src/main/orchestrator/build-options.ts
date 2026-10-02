@@ -109,6 +109,7 @@ export interface BuildOptionsDeps {
   resolveRunCapabilities?: (input: {
     mode: ConversationMode; activeSearchBackend: SearchBackend; toolModeOverrides?: ToolModeOverrides; skillModeOverrides?: SkillModeOverrides;
     chatToolsEnabled?: boolean;
+    hasFileAttachments?: boolean;
   }) => RunCapabilities;
   /** 已由 main 侧解析好的 style Markdown；build-options 只负责注入边界。 */
   readStylePrompt: (styleId: StyleId) => string;
@@ -308,10 +309,12 @@ function contentToText(content: ChatMessage["content"]): string {
 function stripTurnModelContextForSideEffects(text: string): string {
   const markers = [
     "\n\n【本轮文件】",
+    "\n\n【本轮附件路径】",
     "\n\n【文档内容】",
     "\n\n【图片视觉信息】",
     "\n\n【图片附件】",
     "【本轮文件】",
+    "【本轮附件路径】",
     "【文档内容】",
     "【图片视觉信息】",
     "【图片附件】",
@@ -321,6 +324,32 @@ function stripTurnModelContextForSideEffects(text: string): string {
     .filter((index) => index >= 0)
     .sort((a, b) => a - b)[0];
   return (cut === undefined ? text : text.slice(0, cut)).trim();
+}
+
+function withAttachmentPathReferences(
+  messages: ChatMessage[],
+  attachments: Array<{ kind: string; name: string; filePath?: string }> | undefined,
+): ChatMessage[] {
+  const files = attachments?.filter((attachment) =>
+    (attachment.kind === "image" || attachment.kind === "document")
+    && typeof attachment.filePath === "string"
+    && attachment.filePath.trim().length > 0,
+  ) ?? [];
+  if (files.length === 0) return messages;
+
+  const latestUserIndex = messages.map((message) => message.role).lastIndexOf("user");
+  if (latestUserIndex < 0) return messages;
+  const current = messages[latestUserIndex];
+  const text = contentToText(current.content);
+  if (text.includes("【本轮附件路径】")) return messages;
+
+  const pathList = files.map((file) => `- ${file.name}: ${file.filePath}`).join("\n");
+  const next = messages.slice();
+  next[latestUserIndex] = {
+    ...current,
+    content: `${text}${text ? "\n\n" : ""}【本轮附件路径】\n${pathList}`,
+  };
+  return next;
 }
 
 function withDirectImageAttachments(messages: ChatMessage[], input: AguiRunInput): ChatMessage[] {
@@ -573,16 +602,25 @@ export async function buildAgentRunOptions(
       }
     }
   }
-  const messages = transcriptContext?.messages
+  const transcriptMessages = transcriptContext?.messages
     ?? (input.currentUser
       ? [{ role: "user" as const, content: input.currentUser.text } as ChatMessage]
       : []);
+  const currentAttachments = input.currentUser?.attachments;
+  const hasFileAttachments = Boolean(currentAttachments?.some((attachment) =>
+    (attachment.kind === "image" || attachment.kind === "document")
+    && typeof attachment.filePath === "string"
+    && attachment.filePath.trim().length > 0,
+  ));
+  const messages = withAttachmentPathReferences(transcriptMessages, currentAttachments);
   if (messages.length === 0) {
     throw new Error("没有可发送的聊天内容。");
   }
   // slim view for downstream helpers that only need { role, content }
   const slimMessages = messages as unknown as Array<{ role: string; content?: string }>;
-  const latestUserText = contentToText(messages.filter((m) => m.role === "user").at(-1)?.content) ?? "";
+  const latestUserText = stripTurnModelContextForSideEffects(
+    contentToText(messages.filter((m) => m.role === "user").at(-1)?.content) ?? "",
+  );
   const executionMode = resolveExecutionMode(
     input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"),
   );
@@ -828,14 +866,25 @@ export async function buildAgentRunOptions(
   // 搜索后端互斥过滤：每轮只暴露当前后端对应的搜索工具
   const generalSettings = deps.loadGeneralSettings();
   const activeSearchBackend = ((generalSettings as Record<string, unknown>).searchEngine as string ?? "off") as SearchBackend;
-  // Chat 模式工具增强（fallbackCapabilities 路径，与 resolveRunCapabilities 同口径）：
-  // 总开关开启时仅放行 Chat tab 显式勾选（override.chat===true）的工具，
-  // 严格 opt-in——不走"未声明 modes 即全可见"的默认规则，防止 fs/git 等
-  // 未声明 modes 的工具意外漏进闲聊会话。
-  const chatOptInTools = (isChatMode && styleSettings.chatToolsEnabled === true)
+  // Chat 模式 fallbackCapabilities 路径：本轮附件对应的内置只读文件工具
+  // 与总开关独立开放；其他工具仍需 Chat tab 显式勾选。
+  const attachmentTools = isChatMode && hasFileAttachments
     ? (modeEnabledTools as readonly ToolDefinition[]).filter(
-      (t) => styleSettings.toolModeOverrides?.[t.id]?.chat === true,
+      (tool) => tool.chatBuiltin === true
+        && tool.requiresFileAttachments === true
+        && styleSettings.toolModeOverrides?.[tool.id]?.chat !== false,
     )
+    : [];
+  const chatOptInTools = isChatMode
+    ? [
+      ...attachmentTools,
+      ...((styleSettings.chatToolsEnabled === true)
+        ? (modeEnabledTools as readonly ToolDefinition[]).filter(
+          (tool) => styleSettings.toolModeOverrides?.[tool.id]?.chat === true
+            && !attachmentTools.some((attachmentTool) => attachmentTool.id === tool.id),
+        )
+        : []),
+    ]
     : [];
   const filteredBySearch = isChatMode
     ? filterToolsBySearchBackend(chatOptInTools as unknown as Array<{ id: string }>, activeSearchBackend)
@@ -857,6 +906,7 @@ export async function buildAgentRunOptions(
     toolModeOverrides: styleSettings.toolModeOverrides,
     skillModeOverrides: styleSettings.skillModeOverrides,
     chatToolsEnabled: styleSettings.chatToolsEnabled === true,
+    hasFileAttachments,
   }) ?? fallbackCapabilities;
   // ⚠️ resolveRunCapabilities 存在时的权威路径：覆盖上面 fallback 组的计算。
   enabledSkills = capabilities.skills;
@@ -936,34 +986,35 @@ export async function buildAgentRunOptions(
   const directVisionOk = imageRoute.mode === "direct";
   // [image-send] 链路日志①：直发判定。图片"传不过去"先看这条——
   // direct=false 时图片走 caption 降级/文本占位，根本不会以 image 块发给主模型。
-  if (input.imageAttachments?.length) {
+  const imageInput = hasFileAttachments ? { ...input, imageAttachments: undefined } : input;
+  if (imageInput.imageAttachments?.length) {
     console.log("[image-send] 直发判定:", {
       provider: settings.provider,
       model: settings.model,
       multimodal开关: settings.multimodal !== false,
-      图片数: input.imageAttachments.length,
+      图片数: imageInput.imageAttachments.length,
       结果: directVisionOk ? "直发 image 块" : imageRoute.mode === "caption" ? "降级（caption/文本占位）" : "拒绝（无可用视觉链路）",
     });
   }
   const fcMessages: ChatMessage[] = directVisionOk
-    ? withDirectImageAttachments(llmMessages as unknown as ChatMessage[], input)
+    ? withDirectImageAttachments(llmMessages as unknown as ChatMessage[], imageInput)
     : imageRoute.mode === "caption"
-      ? await withCaptionedImageAttachments(llmMessages as unknown as ChatMessage[], input, deps)
-      : withImageRejectNotice(llmMessages as unknown as ChatMessage[], input, imageRoute.reason);
+      ? await withCaptionedImageAttachments(llmMessages as unknown as ChatMessage[], imageInput, deps)
+      : withImageRejectNotice(llmMessages as unknown as ChatMessage[], imageInput, imageRoute.reason);
   const cleanFcMessages: ChatMessage[] = directVisionOk
-    ? withDirectImageAttachments(cleanLlm as unknown as ChatMessage[], input)
+    ? withDirectImageAttachments(cleanLlm as unknown as ChatMessage[], imageInput)
     : imageRoute.mode === "caption"
-      ? await withCaptionedImageAttachments(cleanLlm as unknown as ChatMessage[], input, deps)
-      : withImageRejectNotice(cleanLlm as unknown as ChatMessage[], input, imageRoute.reason);
+      ? await withCaptionedImageAttachments(cleanLlm as unknown as ChatMessage[], imageInput, deps)
+      : withImageRejectNotice(cleanLlm as unknown as ChatMessage[], imageInput, imageRoute.reason);
   const imageCaptionFallback = directVisionOk
     ? buildImageCaptionFallbackMessages(
-    isChatMode
-      ? [soulSystemWithoutCita, soulRuntimeContext].filter(Boolean).join("\n\n---\n\n")
-      : [toolSystemContent, soulSystemWithoutCita, soulRuntimeContext].filter(Boolean).join("\n\n---\n\n"),
-    llmMessages as unknown as ChatMessage[],
-    input,
-    deps,
-    )
+        isChatMode
+          ? [soulSystemWithoutCita, soulRuntimeContext].filter(Boolean).join("\n\n---\n\n")
+          : [toolSystemContent, soulSystemWithoutCita, soulRuntimeContext].filter(Boolean).join("\n\n---\n\n"),
+        llmMessages as unknown as ChatMessage[],
+        imageInput,
+        deps,
+      )
     : undefined;
 
   // 轨迹侧崩溃孤儿：并入 recoveryContext，与派发侧（渠道恢复上下文）在 bridge 合并

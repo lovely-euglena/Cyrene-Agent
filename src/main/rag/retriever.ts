@@ -47,7 +47,6 @@ const STOP_WEIGHT = 0.3;
 const NOUN_WEIGHT = 1.3;
 
 export interface RetrieveOptions {
-  importIds?: string[];
   allowedEntryIds?: string[];
 }
 
@@ -339,12 +338,9 @@ export class HybridRetriever {
       weight: number; createdAt: number; lastRecalledAt: number; metadata?: Record<string, unknown>;
     }>;
 
-    const allowedImportIds = new Set(options.importIds ?? []);
     const allowedEntryIds = options.allowedEntryIds ? new Set(options.allowedEntryIds) : null;
-    const docs = (source ? entries.filter((e) => e.source === source) : entries).filter((entry) =>
-      (!allowedImportIds.size || allowedImportIds.has(String(entry.metadata?.importId ?? ""))) &&
-      (!allowedEntryIds || allowedEntryIds.has(entry.id)),
-    );
+    const docs = (source ? entries.filter((e) => e.source === source) : entries)
+      .filter((entry) => !allowedEntryIds || allowedEntryIds.has(entry.id));
     if (docs.length === 0) return [];
 
     const queryTokenInfo = tokenize(query);

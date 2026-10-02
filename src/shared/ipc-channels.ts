@@ -55,9 +55,6 @@ export const IPC = {
   CHAT_TOGGLE_MAXIMIZE: "chat:toggle-maximize",
   CHAT_IS_MAXIMIZED: "chat:is-maximized",
   CHAT_INGEST_FILES: "chat:ingest-files",
-  CHAT_PROCESS_DOCUMENTS: "chat:process-documents",
-  CHAT_DOCUMENT_INDEX_PROGRESS: "chat:document-index-progress",
-  CHAT_CANCEL_DOCUMENT_INDEX: "chat:cancel-document-index",
   CHAT_CAPTION_IMAGE: "chat:caption-image",
   CHAT_GET_IMAGE_PREVIEW: "chat:get-image-preview",
   CHAT_GET_IMAGE_SEND_STRATEGY: "chat:get-image-send-strategy",
@@ -299,7 +296,6 @@ export const IPC = {
 
   // memory panel
   MEMORY_PANEL_GET_DATA: "memory-panel:get-data",
-  MEMORY_PANEL_DELETE_IMPORTED_DOC: "memory-panel:delete-imported-doc",
   MEMORY_PANEL_SAVE_L0: "memory-panel:save-l0",
   MEMORY_PANEL_SAVE_L1: "memory-panel:save-l1",
   MEMORY_EXPORT_OBSIDIAN_VAULT: "memory:export-obsidian-vault",

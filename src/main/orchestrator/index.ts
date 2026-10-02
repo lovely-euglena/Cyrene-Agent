@@ -1,6 +1,6 @@
 // Orchestrator — unified entry point
 // 只负责构建 always-on 上下文（世界书 + L0/L1）；工具的选择和执行由 CyreneHarness 处理
-import { updateWorldbookActivation, getPermanentWorldbookEntries, getActiveWorldbookEntries, getCascadeWorldbookEntries, searchMemory, INJECTION_HEADER, INJECTION_PREAMBLE } from "../rag";
+import { updateWorldbookActivation, getPermanentWorldbookEntries, getActiveWorldbookEntries, getCascadeWorldbookEntries, INJECTION_HEADER, INJECTION_PREAMBLE } from "../rag";
 import { memoryStore } from "../memory/memory-store";
 import { entityGraph } from "../memory/entity-graph";
 import { recordRecentMemoryInjection } from "../memory/recent-injected-memory";
@@ -18,7 +18,7 @@ export { buildToneInjection } from "./tone-injector";
 // topicState TTL 已移除——由 DMAE Activation 状态机接管（见 rag/worldbook.ts）
 
 /**
- * 构建相关记忆注入：返回经 V5 DMAE 排序后的 active L2 记忆，以及导入文档/实体关系。
+ * 构建相关记忆注入：返回经 V5 DMAE 排序后的 active L2 记忆，以及实体关系。
  * L2 DMAE 状态更新由调用方（call-prompt-builder.ts）在调用本函数前完成。
  */
 export async function buildMemoryInjection(
@@ -47,21 +47,6 @@ export async function buildMemoryInjection(
       parts.push("【记忆系统】\n⚠️ 向量索引维度不一致，记忆检索已暂停。请在设置中切换 Embedding 模型以重建索引。");
     } else {
       console.warn("[Orchestrator] L2 DMAE injection failed:", err);
-    }
-  }
-
-  try {
-    // 检索 top-2 导入文档片段
-    const docResults = await searchMemory(userInput, "imported_doc", 2);
-    if (docResults.length > 0) {
-      parts.push("【相关文档】\n" + docResults.map((d) => "· " + d).join("\n"));
-    }
-  } catch (err) {
-    if (isDimensionMismatchError(err)) {
-      console.error("[Orchestrator] imported_doc search blocked: embedding dimension mismatch. Index rebuild required.", err);
-      parts.push("【文档检索】\n⚠️ 向量索引维度不一致，文档检索已暂停。请在设置中切换 Embedding 模型以重建索引。");
-    } else {
-      console.warn("[Orchestrator] imported_doc search failed:", err);
     }
   }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Empty, Input, Modal, Spin } from "antd";
-import { Brain, Clock3, FileSearch, FolderOpen, History, Pencil, Trash2 } from "lucide-react";
+import { Alert, Button, Empty, Input, Spin } from "antd";
+import { Brain, Clock3, FileSearch, History, Pencil } from "lucide-react";
 import { siObsidian } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import type { MemoryPanelPayload, ObsidianVaultConfig } from "../../../settings/shared/types";
@@ -11,7 +11,6 @@ import { Card } from "../../components/ui/Card";
 
 type L0 = MemoryPanelPayload["l0"];
 type L1 = MemoryPanelPayload["l1"];
-type ImportedDoc = MemoryPanelPayload["importedDocs"][number];
 type Notice = { type: "success" | "error" | "info"; text: string };
 
 export function MemorySettingsPanel() {
@@ -25,7 +24,6 @@ export function MemorySettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ImportedDoc | null>(null);
 
   const reloadData = useCallback(async () => {
     if (!window.memoryPanel) throw new Error("Memory API unavailable");
@@ -85,20 +83,6 @@ export function MemorySettingsPanel() {
     if (tier === "l0" && data) setDraftL0({ ...data.l0 });
     if (tier === "l1" && data) setDraftL1({ ...data.l1 });
     setEditing(null);
-  }
-
-  async function deleteDocument() {
-    if (!deleteTarget || !window.memoryPanel) return;
-    setBusy("delete");
-    try {
-      const result = await window.memoryPanel.deleteImportedDoc(deleteTarget.importId ?? "", deleteTarget.fileName);
-      if (!result.ok) throw new Error("Delete failed");
-      await reloadData();
-      setDeleteTarget(null);
-      setNotice({ type: "success", text: t("settingsPage.memory.deleted") });
-    } catch {
-      setNotice({ type: "error", text: t("settingsPage.memory.deleteFailed") });
-    } finally { setBusy(""); }
   }
 
   async function vaultAction(action: "bind" | "sync" | "unbind") {
@@ -169,9 +153,6 @@ export function MemorySettingsPanel() {
           <div className="cy-memory-list">{filteredEvents.length ? filteredEvents.map((item) => <article className="cy-memory-record" key={item.id}><strong>{item.content}</strong><span>{item.triggerText || t("settingsPage.memory.noTrigger")}</span><small>{t(`settingsPage.memory.status.${item.status}`)} · {t("settingsPage.memory.weight", { weight: item.weight.toFixed(1) })} · {formatDateTime(item.createdAt)}</small></article>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={search ? t("settingsPage.memory.noMatch") : t("settingsPage.memory.noEvents")} />}</div>
         </Card>
       </section>
-      <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><FolderOpen size={18} />{t("settingsPage.memory.importedTitle")}</h2><p>{t("settingsPage.memory.importedDescription")}</p></div>
-        <Card className="cy-memory-list">{data.importedDocs.length ? data.importedDocs.map((item, index) => <article className="cy-memory-record cy-memory-record--document" key={`${item.importId ?? item.fileName}-${index}`}><div><strong>{item.fileName}</strong><span>{t("settingsPage.memory.chunkCount", { count: item.chunkCount })}</span><small>{t("settingsPage.memory.lastImported", { time: formatDateTime(item.lastImportedAt) })}</small></div><Button aria-label={t("settingsPage.memory.deleteDocument", { name: item.fileName })} type="text" danger icon={<Trash2 size={16} />} onClick={() => setDeleteTarget(item)} /></article>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.memory.noDocuments")} />}</Card>
-      </section>
       <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><History size={18} />{t("settingsPage.memory.reflectionsTitle")}</h2><p>{t("settingsPage.memory.reflectionsDescription")}</p></div>
         <Card className="cy-memory-list">{data.reflections.length ? data.reflections.map((item) => <article className="cy-memory-record" key={item.id}><strong>{item.title}</strong><span>{item.body}</span><small>{item.meta}</small></article>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.memory.noReflections")} />}</Card>
       </section>
@@ -179,6 +160,5 @@ export function MemorySettingsPanel() {
         <Card className="cy-memory-card">{vault?.vaultPath ? <><div className="cy-memory-vault-path">{vault.vaultPath}</div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.vault.autoSync")}</strong><span>{t("settingsPage.memory.vault.autoSyncDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.memory.vault.autoSync")} checked={vault.autoSync} onChange={(checked) => void setAutoSync(checked)} /></div><div className="cy-memory-vault-actions"><span>{vault.lastSyncAt ? t("settingsPage.memory.vault.lastSync", { time: formatDateTime(vault.lastSyncAt) }) : t("settingsPage.memory.vault.neverSynced")}</span><Button loading={busy === "sync"} onClick={() => void vaultAction("sync")}>{t("settingsPage.memory.vault.sync")}</Button><Button loading={busy === "unbind"} onClick={() => void vaultAction("unbind")}>{t("settingsPage.memory.vault.unbind")}</Button></div></> : <div className="cy-memory-vault-actions"><span>{t("settingsPage.memory.vault.notBound")}</span><Button loading={busy === "bind"} onClick={() => void vaultAction("bind")}>{t("settingsPage.memory.vault.bind")}</Button></div>}</Card>
       </section>
     </>}
-    <Modal className="cy-settings-theme-modal" open={Boolean(deleteTarget)} title={t("settingsPage.memory.deleteTitle")} okText={t("settingsPage.memory.confirmDelete")} okButtonProps={{ danger: true, loading: busy === "delete" }} cancelText={t("settingsPage.memory.cancel")} onOk={() => void deleteDocument()} onCancel={() => setDeleteTarget(null)}><p>{t("settingsPage.memory.deleteMessage", { name: deleteTarget?.fileName })}</p></Modal>
   </>;
 }
