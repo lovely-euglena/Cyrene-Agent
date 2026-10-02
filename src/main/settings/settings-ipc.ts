@@ -21,6 +21,7 @@ import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
 import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
 import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
+import { getEffectiveUiTheme, watchSystemUiTheme } from "../system-ui-theme";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -60,6 +61,11 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   // 注意：windowManager 不解构，统一用 deps.windowManager 实时读取 getter。
   // registerSettingsIpc 在模块加载阶段调用，那时 windowManager 仍为 null，
   // 解构会捕获 null 并导致后续 ?. 永远短路（设置里的打开侧边栏/日程等会失效）。
+
+  watchSystemUiTheme(
+    () => getGeneralSettings().uiTheme,
+    (theme) => deps.windowManager?.broadcast(IPC.UI_THEME_CHANGED, theme),
+  );
 
   function broadcastToAuxWindows(channel: string, payload: unknown): void {
     const win = reactChatWindow;
@@ -115,7 +121,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     saveTimeoutSettings(settings),
   );
 
-  ipc.handle(IPC.UI_THEME_GET, () => getGeneralSettings().uiTheme);
+  ipc.handle(IPC.UI_THEME_GET, () => getEffectiveUiTheme(getGeneralSettings().uiTheme));
 
   ipc.handle(IPC.UI_THEME_RADIUS_GET, () => getGeneralSettings().uiThemeRadius);
 
