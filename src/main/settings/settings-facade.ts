@@ -141,6 +141,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   screenshotBackend: "builtin",
   snipastePath: "",
   pandocPath: "",
+  musicFolders: [],
+  musicAgentAccess: "read",
   ocrEnabled: true,
   ocrProvider: "local",
   ocrLanguage: "",
@@ -386,6 +388,10 @@ export function normalizeGeneralSettings(
     screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
     pandocPath: typeof input?.pandocPath === "string" ? input.pandocPath.trim() : "",
+    musicFolders: normalizeMusicFolders(input?.musicFolders),
+    musicAgentAccess: input?.musicAgentAccess === "off" || input?.musicAgentAccess === "control" || input?.musicAgentAccess === "manage"
+      ? input.musicAgentAccess
+      : "read",
     ocrEnabled: input?.ocrEnabled === undefined
       ? DEFAULT_GENERAL_SETTINGS.ocrEnabled
       : Boolean(input.ocrEnabled),
@@ -436,6 +442,23 @@ export function normalizeGeneralSettings(
 
 /** 最近项目列表的保留上限。 */
 export const MAX_RECENT_PROJECTS = 10;
+
+/** 音乐文件夹上限（防止异常配置无限增长）。 */
+export const MAX_MUSIC_FOLDERS = 50;
+
+/** 规范化音乐文件夹列表：去空、去重、截断上限。 */
+function normalizeMusicFolders(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const unique: string[] = [];
+  for (const item of input) {
+    if (typeof item !== "string") continue;
+    const value = item.trim();
+    if (!value || unique.includes(value)) continue;
+    unique.push(value);
+    if (unique.length >= MAX_MUSIC_FOLDERS) break;
+  }
+  return unique;
+}
 
 /** 规范化最近项目列表：只保留非空字符串、去重，并截断到上限。 */
 function normalizeRecentProjects(input: unknown): string[] {

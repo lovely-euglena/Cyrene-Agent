@@ -20,6 +20,14 @@ export interface NativeBridgeActions {
   openSettings(section?: string): void;
   openChatWindow(): void;
   openCallWindow(): void;
+  /** 侧栏「音乐」按钮 → 打开本地音乐播放器（WPF music 窗）。 */
+  openMusicWindow?(): void;
+  /**
+   * 音乐窗动作（kind="music"）：
+   * folders-changed（folders 数组，宿主持久化）/ agent-access-changed（access）/
+   * open-settings（跳宿主偏好设置）。
+   */
+  musicAction?(action: string, payload: Record<string, unknown>): unknown;
   toggleSidebarPin(): void;
   onSplashShown(): void;
   /** native 设置窗写入设置键（白名单在宿主侧执行）。 */
@@ -152,6 +160,14 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "openSettings": actions.openSettings(section); break;
         case "openChat": actions.openChatWindow(); break;
         case "openCall": actions.openCallWindow(); break;
+        case "openMusic": actions.openMusicWindow?.(); break;
+        case "folders-changed":
+        case "agent-access-changed":
+          if (frameKind === "music") actions.musicAction?.(action, asRecord(frame));
+          break;
+        case "open-settings":
+          if (frameKind === "music") actions.openSettings?.("preferences");
+          break;
         case "togglePin": actions.toggleSidebarPin(); break;
         case "modelSwitch":
           // 旧版状态栏「切换模型」= 打开 API 设置页（sidebar.ts: openSettings("api")）
@@ -388,9 +404,14 @@ function activeClient(): NativeWindowsClient | null {
 }
 
 /** 是否走 native 路径（调用方据此跳过对应 BrowserWindow 创建）。 */
-export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins"): boolean {
+export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music"): boolean {
   const c = activeClient();
   return c !== null;
+}
+
+/** 当前 native 客户端（未初始化/未启用返回 null；music 工具与窗口管理共用）。 */
+export function getActiveNativeClient(): NativeWindowsClient | null {
+  return activeClient();
 }
 
 // ── 数据推送（aux 广播同源订阅调用） ──
@@ -420,7 +441,7 @@ export function pushWindowRadiusToNative(radius: number): void {
 // ── 窗口生命周期（替代 BrowserWindow 创建） ──
 
 export async function spawnNativeWindow(
-  kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins",
+  kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music",
   layout?: unknown,
 ): Promise<boolean> {
   const c = activeClient();
@@ -435,10 +456,11 @@ export async function spawnNativeWindow(
       void c.pushWindowRadius(radius).catch(() => undefined);
     }
     // 显窗时机（对齐 showWindowWhenStartupReady 语义）：
-    // splash 无门控（本来就是启动期首帧）；sidebar/tasks 在
-    // startup 阶段先 pending，markStartupPhaseReady 后统一 win.show
-    if (kind === "splash") {
-      await c.showWindow("splash");
+    // splash 无门控（本来就是启动期首帧）；music 是按需打开的独立窗口，
+    // spawn 即显；sidebar/tasks 在 startup 阶段先 pending，
+    // markStartupPhaseReady 后统一 win.show
+    if (kind === "splash" || kind === "music") {
+      await c.showWindow(kind);
       // 关闭请求早于本次 spawn 落地（冷启动竞态）→ 补发关闭，避免启动屏常驻
       if (splashDismissed) {
         debugLog("[NativeWindows] splash 关闭请求早于 spawn，补发 win.close");
