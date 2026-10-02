@@ -51,7 +51,7 @@ jobs:
       - name: Check plugin schema contract
         run: pnpm run check:plugin-schema
 
-      # 分块测试：与 vitest.config.ts 的 include 对应，各步骤之和不重不漏覆盖全部测试文件
+      # 分块测试：与 vitest.config.mts 的 include 对应，各步骤之和不重不漏覆盖全部测试文件
       # （已用 vitest list 逐一核对；filter 带尾斜杠、exclude 用根相对路径避免前缀误匹配）。
       # 拆成多个独立步骤是为了 CI 上出现 fork worker 崩溃时能一眼定位目录
       # （此前单步骤只有 “Worker exited unexpectedly”，无法判断死在哪）。
@@ -72,7 +72,7 @@ jobs:
       - name: Test · main / core（其余）
         run: pnpm exec vitest run src/main --exclude "src/main/orchestrator/**" --exclude "src/main/moments/**" --exclude "src/main/music/**" --exclude "src/main/memory/**" --exclude "src/main/rag/**" --exclude "src/main/channels/**" --exclude "src/main/tts/**" --exclude "src/main/plugin-host/**" --exclude "src/main/application/**" --exclude "src/main/cita/**" --exclude "src/main/skills/**" --exclude "src/main/scheduler/**" --exclude "src/main/proactive/**" --exclude "src/main/chats/**"
       - name: Test · packages + skills + poc
-        # packages 的 include 目前在 vitest.config.ts 中临时禁用（windows-2025 镜像下
+        # packages 的 include 目前在 vitest.config.mts 中临时禁用（windows-2025 镜像下
         # fork worker 静默崩溃，改由 plugin-sdk workflow 单独验证），skills / cline-poc
         # 暂无测试文件，因此允许空跑；packages 恢复或新增测试后本步骤自动生效。
         run: pnpm exec vitest run --exclude "src/**" --passWithNoTests
