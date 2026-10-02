@@ -40,6 +40,15 @@
 - 📱 **Multi-Platform Access** — Desktop, Feishu/Lark, WeChat iLink, and QQ through NapCat/OneBot 11, sharing character capabilities and conversation experience
 - 🌙 **Proactive Chat** — Starts conversations according to time, status, and user preferences, with targeted multi-channel delivery
 
+## 📚 Documentation
+
+- **Docs index**: [docs/README.md](./docs/README.md) — the map of current / design / record / historical docs
+- **Build & release**: [docs/build-guide.md](./docs/build-guide.md) ・ **Handover & ops**: [docs/handover.md](./docs/handover.md)
+- **.NET backend**: [docs/dotnet-backend.md](./docs/dotnet-backend.md) ・ **Multi-agent architecture**: [docs/multi-agent-architecture.md](./docs/multi-agent-architecture.md)
+- **User guides**: [docs/user-guide/](./docs/user-guide/) (Feishu / Learn / NapCat / QQ official bot)
+- **Plugin development**: [tutorial](./docs/plugins/plugin-dev-guide.md) ・ [API reference](./docs/plugins/plugin-authoring.md) ・ [.NET track](./docs/plugins/dotnet-plugins.md)
+- **Contributing**: [.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)
+
 ---
 
 ## ⚙️ CyreneHarness Core Engine
@@ -101,6 +110,7 @@ CyreneHarness is the core Agent Loop of Cyrene Agent. It chains **model decision
 - **Windows 10 / 11 64-bit**
 - **Node.js 24 LTS** (npm 10+)
 - **[Rust stable](https://www.rust-lang.org/tools/install)** + **[Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)** (required for building the screenshot helper from source; selecting the "Desktop development with C++" workload in Build Tools is sufficient)
+- **(This fork) [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** — required for the native windows / .NET backend enhancements; automatically falls back to the Electron / TS path when missing. Building a package from source (`npm run package:win:dir`) additionally requires the **.NET 10 SDK**.
 
 > Feishu, WeChat iLink, `nut-js` keyboard/mouse automation, and the native screenshot feature depend on the Windows environment.
 >
@@ -503,12 +513,13 @@ Cyrene includes many built-in and extensible tools, primarily covering the follo
 
 - Vitest 5 covers core modules including ASR, TTS, channels, chats, memory, orchestrator, plugins, RAG, and Skills.
 - Use `npm test` for a one-time run or `npm run test:watch` for watch mode.
+- Pre-submit check chain: `npm run build` → `npm run check:plugin-schema` → `npm test`.
 - Plugin development: `npm run check:plugin-sdk` validates SDK packaging, and `npm run test:plugin-examples` verifies the official examples end to end.
 
 #### 🎬 Scenario Simulation
 
 - Use `npm run sim` for the default scenario, or `sim:coffee`, `sim:mix`, and `sim:rescue` for individual scenario debugging; output is written to `sim-result/`.
-- Run `npm run sim:sweep --rewardGain=3,5,7,10` to sweep Worldbook scoring parameters.
+- Run `npm run sim:sweep` to sweep Worldbook scoring parameters (defaults to `--userRewardBase=3,5,7,10`; override with `npm run sim:sweep -- --userRewardBase=2,4,6`).
 
 </details>
 

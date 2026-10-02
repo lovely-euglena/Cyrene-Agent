@@ -51,6 +51,15 @@
 - 🐹 **桌宠内存治理** — Live2D 空闲三档降频（60→24→12fps），拖动坐标自适应校准（DPI 无关，修复对角抖动）
 - 🎯 **DeepSeek V4.1 Flash 适配** — `deepseek-flash` 新 id + 旧 id 兼容（按官方定价页校正）
 
+### 📚 文档导航
+
+- **文档索引**：[docs/README.md](./docs/README.md)——现行 / 设计 / 记录 / 历史四类文档的完整地图
+- **构建与发版**：[docs/build-guide.md](./docs/build-guide.md) ・ **交接与排障**：[docs/handover.md](./docs/handover.md)
+- **.NET 后端**：[docs/dotnet-backend.md](./docs/dotnet-backend.md) ・ **多 Agent 架构**：[docs/multi-agent-architecture.md](./docs/multi-agent-architecture.md)
+- **用户指南**：[docs/user-guide/](./docs/user-guide/)（飞书 / Learn / NapCat / QQ 官方机器人）
+- **插件开发**：[教程](./docs/plugins/plugin-dev-guide.md) ・ [API 规范](./docs/plugins/plugin-authoring.md) ・ [.NET 轨](./docs/plugins/dotnet-plugins.md)
+- **贡献指南**：[.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)（核心模块先开 Issue 讨论）
+
 ---
 
 ## ⚙️ CyreneHarness 核心引擎
@@ -112,6 +121,7 @@ CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、
 - **Windows 10 / 11 64 位**
 - **Node.js 24 LTS**（npm 10+）
 - **[Rust stable](https://www.rust-lang.org/tools/install)** + **[Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)**（源码构建截图功能必需；Build Tools 勾选「使用 C++ 的桌面开发」工作负载即可）
+- **（本 fork 增强）[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** — 原生窗口与 .NET 后端增强的运行前提，缺失时自动回退 Electron / TS 原路；从源码打包（`npm run package:win:dir`）另需 **.NET 10 SDK**
 
 > 飞书、微信 iLink、`nut-js` 键鼠自动化及原生截图功能依赖 Windows 环境。
 >
@@ -397,12 +407,13 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 
 - Vitest 5 覆盖 asr / tts / channels / chats / memory / orchestrator / plugins / rag / skills 等核心模块。
 - `npm test` 一次性 / `npm run test:watch` 监听模式。
+- 提交前自检链：`npm run build` → `npm run check:plugin-schema` → `npm test`。
 - 插件开发：`npm run check:plugin-sdk` 校验 SDK 打包，`npm run test:plugin-examples` 端到端验证官方示例。
 
 #### 🎬 场景模拟
 
 - `npm run sim` 默认场景，`sim:coffee` / `sim:mix` / `sim:rescue` 单场景调试，产物输出到 `sim-result/`。
-- `npm run sim:sweep --rewardGain=3,5,7,10` 跑 Worldbook 评分参数 sweep。
+- `npm run sim:sweep` 跑 Worldbook 评分参数 sweep（默认 `--userRewardBase=3,5,7,10`；自定义：`npm run sim:sweep -- --userRewardBase=2,4,6`）。
 
 </details>
 

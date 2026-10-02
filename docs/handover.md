@@ -1,6 +1,8 @@
 # Cyrene-Agent .NET 后端交接文档
 
-> 最后更新：2026-09-24 · 分支 `feature/dotnet-backend`（HEAD `565ce62f`）
+> 历史快照：初稿 2026-09-24 · `feature/dotnet-backend` @ `565ce62f`（2026-10-02 有增量补丁）。
+> 该分支已并入当前主线 `main`；文中测试数字为 Linux 构建机口径，构建/发版以
+> [build-guide.md](./build-guide.md) 为准，文档总索引见 [docs/README.md](./README.md)。
 > 前任维护者交接笔记——接手者从本文档出发可独立完成构建/测试/发版/排障全链路。
 
 ---
