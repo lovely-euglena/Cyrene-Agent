@@ -19,7 +19,8 @@ export type RuntimeStage =
   | "memory-compressor"
   | "memory-reflect"
   | "memory-resolver"
-  | "memory-summary";
+  | "memory-summary"
+  | "memory-wiki";
 
 export interface TokenBudgetPolicy {
   /** 该阶段的默认最大输出 token 数 */
@@ -62,6 +63,9 @@ const STAGE_DEFAULTS: Record<RuntimeStage, TokenBudgetPolicy> = {
   },
   "memory-summary": {
     defaultMaxOutputTokens: 3000,
+  },
+  "memory-wiki": {
+    defaultMaxOutputTokens: 5000,
   },
 };
 

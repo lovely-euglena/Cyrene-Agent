@@ -36,11 +36,12 @@ import {
   MEMORY_REFLECTION_JSON_SCHEMA,
   MEMORY_RESOLVE_JSON_SCHEMA,
   SUMMARY_MEMORY_JSON_SCHEMA,
+  WIKI_MEMORY_JSON_SCHEMA,
 } from "./memory-schemas";
 
 // ── 类型 ──
 
-export type MemoryLlmOperation = "judge" | "compress" | "reflect" | "resolve" | "summary";
+export type MemoryLlmOperation = "judge" | "compress" | "reflect" | "resolve" | "summary" | "wiki";
 
 export interface MemoryLlmRequest {
   operation: MemoryLlmOperation;
@@ -75,6 +76,7 @@ const OPERATION_TO_TOKEN_STAGE: Record<MemoryLlmOperation, RuntimeStage> = {
   reflect: "memory-reflect",
   resolve: "memory-resolver",
   summary: "memory-summary",
+  wiki: "memory-wiki",
 };
 
 const OPERATION_TO_SO_STAGE: Record<MemoryLlmOperation, StructuredOutputStage> = {
@@ -83,6 +85,7 @@ const OPERATION_TO_SO_STAGE: Record<MemoryLlmOperation, StructuredOutputStage> =
   reflect: "memory_reflect",
   resolve: "memory_resolve",
   summary: "memory_summary",
+  wiki: "memory_wiki",
 };
 
 const OPERATION_REPAIR_FORMAT: Record<MemoryLlmOperation, string> = {
@@ -91,6 +94,7 @@ const OPERATION_REPAIR_FORMAT: Record<MemoryLlmOperation, string> = {
   reflect: '顶层必须是 JSON 对象，格式为 {"updates":[...]}；没有更新时返回 {"updates":[]}。',
   resolve: "顶层必须是一个符合原始字段要求的 JSON 对象。",
   summary: '顶层必须是 JSON 对象，格式为 {"sessionSummary":"...","workspaceSummary":"..."}；超出长度限制时必须压缩内容。',
+  wiki: '顶层必须是 JSON 对象，格式为 {"candidates":[{"sourceId":"...","subject":"...","predicate":"...","value":"...","scope":"global","statementKind":"assertion","pageType":"self","tags":["chat"],"aliases":[],"validFrom":"","validTo":"","evidenceQuote":"原文片段"}]}；没有可保存知识时 candidates 为空数组。',
 };
 
 function buildRepairMessage(
@@ -273,6 +277,7 @@ const OPERATION_JSON_SCHEMA: Record<
   reflect: MEMORY_REFLECTION_JSON_SCHEMA,
   resolve: MEMORY_RESOLVE_JSON_SCHEMA,
   summary: SUMMARY_MEMORY_JSON_SCHEMA,
+  wiki: WIKI_MEMORY_JSON_SCHEMA,
 };
 
 function buildStructuredOutputRequest(

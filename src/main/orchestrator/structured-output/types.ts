@@ -10,7 +10,8 @@ export type StructuredOutputStage =
   | "memory_compress"
   | "memory_reflect"
   | "memory_resolve"
-  | "memory_summary";
+  | "memory_summary"
+  | "memory_wiki";
 
 export type StructuredOutputMode =
   | "provider_json_schema"

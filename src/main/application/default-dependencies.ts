@@ -57,6 +57,7 @@ import { configureDocumentIndexQueue } from "../rag/document-index-queue";
 import { runDocumentIndexJob } from "../rag/document-index-worker";
 import { runDocumentImportJobViaSidecar } from "../rag/document-import-sidecar";
 import { isSidecarEnabled } from "../rag/embedding-sidecar";
+import { registerWikiMemoryIpc } from "../memory/wiki-memory-ipc";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -75,6 +76,9 @@ import {
 import { getEmbeddingProvider, getSceneEmbeddingProvider } from "../rag/embedding";
 import { isMemoryEnabled, isSummaryMemoryEnabled, setMemoryMode, type MemoryMode } from "../memory/memory-mode";
 import { initializeSummaryMemoryScheduler, enableSummaryMemoryScheduler, flushAllSummaryMemory, scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
+import { createConversationSessionMigration } from "../orchestrator/conversation-session-migration";
+import { createWikiChatSourceReader } from "../memory/wiki-source";
+import { initializeWikiMemoryScheduler, enableWikiMemoryScheduler, scheduleWikiTurn } from "../memory/wiki-memory-scheduler";
 import { loadSummaryMemoryContext } from "../memory/summary-memory-context";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
@@ -280,6 +284,7 @@ async function switchMemoryMode(mode: MemoryMode): Promise<void> {
   if (mode !== "vector") {
     setMemoryMode(mode);
     enableSummaryMemoryScheduler(mode === "summary");
+    await enableWikiMemoryScheduler(mode === "wiki");
     resetReranker();
     await disposeVectorMemory();
     return;
@@ -287,6 +292,7 @@ async function switchMemoryMode(mode: MemoryMode): Promise<void> {
 
   enableSummaryMemoryScheduler(false);
   setMemoryMode("vector");
+  await enableWikiMemoryScheduler(false);
   try {
     const modelSettings = loadModelSettings();
     await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
@@ -1756,6 +1762,17 @@ createTray: (input) => {
           onError: (conversationId, error) => logger.warn(LogTag.RAG, "summary memory update failed:", conversationId, error),
         });
         enableSummaryMemoryScheduler(isSummaryMemoryEnabled());
+        const wikiMigration = createConversationSessionMigration(app.getPath("userData"));
+        initializeWikiMemoryScheduler({
+          userDataRoot: app.getPath("userData"),
+          sourceReader: createWikiChatSourceReader({
+            transcriptStore: getConversationTranscriptStore(app.getPath("userData")),
+            listSessions: chatsStore.listSessions,
+            ensureConversationMigrated: (id) => wikiMigration.ensureConversationMigrated(id),
+          }),
+          onError: (conversationId, error) => logger.warn(LogTag.RAG, "wiki memory update failed:", conversationId, error),
+        });
+        await enableWikiMemoryScheduler(modelSettings.memoryMode === "wiki");
         await initWorldbook();
         if (isMemoryEnabled()) {
           await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
@@ -1774,6 +1791,11 @@ createTray: (input) => {
           id: "summary-memory",
           phase: "flushPersistence",
           dispose: async () => { await flushAllSummaryMemory(); },
+        });
+        shutdown.register({
+          id: "wiki-memory",
+          phase: "flushPersistence",
+          dispose: async () => { await enableWikiMemoryScheduler(false); },
         });
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
@@ -1805,6 +1827,7 @@ createTray: (input) => {
             getSessionRecord: chatsStore.getSessionRecord,
           }),
           scheduleSummaryTurn: (input) => scheduleSummaryTurn(input),
+          scheduleWikiTurn: (input) => scheduleWikiTurn(input),
           socialAtomStore: services.social.store,
           buildPluginPromptContext: (input) => pluginPromptRegistry.build(input),
           publishPluginHostEvent: (event, payload) => pluginManager
@@ -1981,6 +2004,7 @@ createTray: (input) => {
           windowManager: shell.windowManager,
           embeddingIndexService: services.embedding,
         });
+        registerWikiMemoryIpc(ipc);
 
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
