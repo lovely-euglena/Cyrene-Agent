@@ -57,6 +57,11 @@ export function getPluginMarketService(): ReturnType<typeof createPluginMarketpl
   return marketService;
 }
 
+/** 运行期停用插件运行时：清空市场服务引用（下次启用重建）。 */
+export function clearPluginMarketService(): void {
+  marketService = null;
+}
+
 /**
  * 插件 ZIP 选择对话框（宿主侧弹框）：Electron 设置页插件区与 .NET 插件
  * 管理窗「导入 ZIP」共用同一入口与过滤器。
@@ -172,6 +177,16 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     installZip: (zipPath, opts) => manager.installZip(zipPath, opts),
   });
   marketService = market;
+  // 运行期启停：重新启用时先清掉上一次注册的市场/面板通道（IpcScope 重复注册
+  // 会抛错；正常停用路径已清理，这里兜底异常路径残留）。
+  for (const channel of [
+    IPC.PLUGINS_MARKET_LIST,
+    IPC.PLUGINS_MARKET_DETAILS,
+    IPC.PLUGINS_MARKET_INSTALL,
+    IPC.PLUGINS_PANEL_INVOKE,
+  ]) {
+    deps.ipc.removeHandler(channel);
+  }
   deps.ipc.handle(IPC.PLUGINS_MARKET_LIST, (_event, preferred: unknown) =>
     market.listMarket(),
   );

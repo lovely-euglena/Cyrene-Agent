@@ -93,6 +93,12 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   uiThemeRadius: boolean;
   uiFont: UiFont;
   uiIcon: UiIcon;
+  /**
+   * 用户是否显式选择过桌面图标。旧版本默认「晴光」会在任意设置保存时被写死，
+   * 与「用户主动选择」无法区分；缺省（undefined/false）视为未选择，加载时
+   * 跟随当前默认（见 settings-facade 的 uiIcon 迁移）。显式选择后置 true。
+   */
+  uiIconChosen?: boolean;
   /** 昔涟回复正文的排版（字号/行距/字距/字重），只作用于 AI 回复气泡。 */
   messageTypography: MessageTypography;
   /** 聊天窗口打开时默认选中的模式。 */

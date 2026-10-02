@@ -7,6 +7,8 @@ vi.mock("electron", () => ({
   protocol: {
     registerSchemesAsPrivileged: vi.fn(),
     handle: vi.fn(),
+    isProtocolHandled: vi.fn(() => false),
+    unhandle: vi.fn(),
   },
 }));
 
@@ -181,6 +183,13 @@ describe("installPluginPanelProtocol", () => {
 
     const missing = await handler({ url: "cyrene-plugin://ghost/ui.html" } as never);
     expect(missing.status).toBe(404);
+  });
+
+  it("运行期重装时先移除旧 handler（避免重复 handle 抛错）", () => {
+    vi.mocked(protocol.isProtocolHandled).mockReturnValueOnce(true);
+    installPluginPanelProtocol(query);
+    expect(protocol.unhandle).toHaveBeenCalledWith("cyrene-plugin");
+    expect(protocol.handle).toHaveBeenCalled();
   });
 });
 

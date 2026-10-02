@@ -601,6 +601,13 @@ const pluginsApi = {
   marketList: (preferred?: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_LIST, preferred),
   marketDetails: (id: string, preferred?: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_DETAILS, id, preferred),
   marketInstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_INSTALL, id),
+  // 运行时状态 / 运行期启停（persist=false 仅本次运行）/ 资源限制
+  getRuntimeState: () => ipcRenderer.invoke(IPC.PLUGINS_GET_RUNTIME_STATE),
+  setRuntimeEnabled: (enabled: boolean, options?: { persist?: boolean }) =>
+    ipcRenderer.invoke(IPC.PLUGINS_SET_RUNTIME_ENABLED, enabled, options),
+  getLimits: () => ipcRenderer.invoke(IPC.PLUGINS_GET_LIMITS),
+  setLimits: (limits: { storageQuotaMb: number; memoryLimitMb: number }) =>
+    ipcRenderer.invoke(IPC.PLUGINS_SET_LIMITS, limits),
 };
 
 contextBridge.exposeInMainWorld("plugins", pluginsApi);

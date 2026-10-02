@@ -303,7 +303,13 @@ export function normalizeGeneralSettings(
     uiTheme: normalizeUiTheme(input?.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input?.windowCornerRadius),
     uiThemeRadius: input?.uiThemeRadius ?? true,
-    uiIcon: normalizeUiIcon(input?.uiIcon),
+    // 一次性迁移：旧版本默认「晴光」会在保存任意设置时写入配置文件，无法与
+    // 用户主动选择区分。未显式选择过（uiIconChosen 不为 true）的旧配置跟随
+    // 当前默认；用户之后在设置里改图标会置位 uiIconChosen 并记住选择。
+    uiIcon: input?.uiIconChosen === true
+      ? normalizeUiIcon(input?.uiIcon)
+      : (input?.uiIcon === "cyrene-sun" ? DEFAULT_UI_ICON : normalizeUiIcon(input?.uiIcon)),
+    uiIconChosen: input?.uiIconChosen === true,
     uiFont: normalizeUiFont(input?.uiFont),
     messageTypography: normalizeMessageTypography(input?.messageTypography),
     defaultChatMode: normalizeDefaultChatMode(input?.defaultChatMode),

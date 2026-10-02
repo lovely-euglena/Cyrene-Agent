@@ -238,7 +238,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   ipc.handle(IPC.SETTINGS_SAVE_GENERAL, (_event, settings: Partial<GeneralSettings>) => {
-    const saved = saveGeneralSettings(settings);
+    // 显式写 uiIcon 视为用户选择（旧默认迁移只在未选择时生效）
+    const patch = settings?.uiIcon === undefined ? settings : { ...settings, uiIconChosen: true };
+    const saved = saveGeneralSettings(patch);
     if ("proactiveChatMode" in settings || "proactiveDeliveryTarget" in settings) {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }

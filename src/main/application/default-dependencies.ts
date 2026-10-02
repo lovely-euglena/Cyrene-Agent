@@ -153,7 +153,8 @@ import { registerOpenInAppIpc } from "../chats/open-in-app";
 import { registerWorkspaceFilesIpc } from "../chats/workspace-files-ipc";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
-import { startPluginRuntime, getPluginMarketService, pickPluginZipFile } from "../plugin-runtime";
+import { startPluginRuntime, getPluginMarketService, pickPluginZipFile, clearPluginMarketService } from "../plugin-runtime";
+import { createPluginRuntimeShell } from "../../plugins/runtime-shell";
 import { ensureCustomStylePrompt } from "../style-prompt";
 import { deleteEmbeddingModel } from "../embedding-manager";
 import { getModelInstallStatus, getModelInstallStatusDetail, getProjectModelsDir } from "../rag/model-status";
@@ -331,6 +332,29 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     });
     return pluginManager;
   };
+
+  // ── 插件运行时管理壳：常驻 IPC（运行时未启用也可用） ────────────────
+  // 回退注册 + 正式注册的条件互斥逻辑收在 plugins/runtime-shell（可单测）；
+  // 这里只提供 manager 引用、真实启动函数与设置读写。
+  const pluginRuntimeShell = createPluginRuntimeShell({
+    getIpc: () => shellIpcRef(),
+    getSettings: () => {
+      const general = loadGeneralSettings();
+      return {
+        pluginRuntimeEnabled: general.pluginRuntimeEnabled,
+        pluginStorageQuotaMb: general.pluginStorageQuotaMb,
+        pluginMemoryLimitMb: general.pluginMemoryLimitMb,
+      };
+    },
+    saveSettings: (patch) => { saveGeneralSettings(patch); },
+    getManager: () => pluginManager,
+    setManager: (manager) => { pluginManager = manager; },
+    startRuntime: async () => {
+      if (!lastPluginArgs) return null;
+      return startPluginsImpl(...lastPluginArgs);
+    },
+    clearMarketService: () => clearPluginMarketService(),
+  });
 
   // 插件快照（.NET 管理窗 state.plugins payload；含运行时开关态）
   // 最近一次插件操作结果（导入 ZIP / 刷新 / 安装失败等）：随快照下发到
@@ -1113,6 +1137,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           setSetting: (key, value) => {
             const patch = sanitizeNativeGeneralSetting(key, value);
             if (!patch) return;
+            // 显式写 uiIcon 视为用户选择（旧默认迁移只在未选择时生效）
+            if (key === "uiIcon") patch.uiIconChosen = true;
             saveGeneralSettings(patch);
             // 运行期联动：状态栏/日程栏开关立即开/关对应窗口（与 Electron 设置页同语义）
             if (key === "sidebarVisible") setSidebarWindowVisible(patch.sidebarVisible === true);
@@ -1352,16 +1378,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           pluginAction: async (action, id, payload) => {
             const manager = pluginManager;
             const market = getPluginMarketService();
-            // 运行时总开关动态起停（.NET 管理窗「未启用」提示条触发）
+            // 运行时总开关动态起停（.NET 管理窗「未启用」提示条触发）：
+            // 记忆开关状态（写回 pluginRuntimeEnabled），与渲染端插件页共用实现
             if (action === "enable-runtime" || action === "disable-runtime") {
-              if (action === "disable-runtime" && manager) {
-                await manager.stop();
-                pluginManager = undefined;
-              }
-              if (action === "enable-runtime" && !manager && lastPluginArgs) {
-                const [svcs, sched, rt] = lastPluginArgs;
-                pluginManager = await startPluginsImpl(svcs, sched, rt) ?? undefined;
-              }
+              const result = action === "enable-runtime"
+                ? await pluginRuntimeShell.enable()
+                : await pluginRuntimeShell.disable();
+              if (!result.ok) setPluginNotice("error", result.error ?? "插件运行时操作失败");
               await pushPluginsSnapshotToNative(async () => buildPluginSnapshot());
               return;
             }
@@ -1719,11 +1742,14 @@ createTray: (input) => {
       }),
 
       startPlugins: async (services, scheduler, runtime) => {
-        // 插件运行时总开关（默认关）：跳过整个插件系统（manager/market/IPC
-        // 均不构造）。lastPluginArgs 供运行期动态启动（管理窗 cmd）。
+        // 插件运行时总开关（默认关）：跳过整个插件系统（manager/market）。
+        // lastPluginArgs 供运行期动态启动（管理页/管理窗）；管理壳 IPC（状态/
+        // 启停/资源限制）常驻注册，保证运行时未启用时管理页也能正常打开。
         lastPluginArgs = [services, scheduler, runtime];
+        pluginRuntimeShell.registerControlIpc();
         if (!loadGeneralSettings().pluginRuntimeEnabled) {
           logger.info(LogTag.Runtime, "plugin runtime disabled by settings, skipping");
+          pluginRuntimeShell.registerListFallback();
           return null;
         }
         return startPluginsImpl(services, scheduler, runtime);

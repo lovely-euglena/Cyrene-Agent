@@ -140,8 +140,17 @@ describe("IPC 契约：preload ↔ main 通道对账", () => {
   it("同一通道没有被重复 handle 注册", () => {
     // createIpcScope 默认包裹全局 ipcMain，同通道二次 handle 会在启动时抛错，
     // 但只有走到那条注册路径才会暴露；这里提前静态拦住。
+    //
+    // 例外：插件运行时管理壳的「回退 + 正式」条件互斥注册——
+    //   - 运行时未启用：default-dependencies 注册空清单回退，保证管理页可打开；
+    //   - 运行时启用：PluginManager.start() 注册正式实现（启用前先移除回退）。
+    // 两条路径互斥，不会同时注册；注册点数固定为 2，漂移仍会被断言拦住。
+    const conditionalHandles = new Map<string, number>([["PLUGINS_LIST", 2]]);
+    for (const [key, expected] of conditionalHandles) {
+      expect(mainHandle.get(key)?.sites.length, `${key} 条件互斥注册点数`).toBe(expected);
+    }
     const duplicated = [...mainHandle.entries()]
-      .filter(([, use]) => use.sites.length > 1)
+      .filter(([key, use]) => use.sites.length > (conditionalHandles.get(key) ?? 1))
       .map(
         ([key, use]) =>
           `${key} (IPC.${key}) 注册 ${use.sites.length} 次：` +

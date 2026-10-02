@@ -30,6 +30,40 @@ vi.mock("../../../i18n", () => {
         "pluginPanel.status.stopping": "停用中",
         "pluginPanel.status.failed": "启动失败",
         "pluginPanel.builtinCannotDelete": "内置插件不可删除",
+        "pluginPanel.settings.title": "插件设置",
+        "pluginPanel.settings.subtitle": "插件运行时与资源限制",
+        "pluginPanel.settings.toggle": "插件设置",
+        "pluginPanel.settings.back": "返回插件管理",
+        "pluginPanel.runtime.sectionTitle": "插件运行时",
+        "pluginPanel.runtime.statusOn": "运行中 · 已记住",
+        "pluginPanel.runtime.statusTemp": "本次运行已启用",
+        "pluginPanel.runtime.statusOff": "未启用",
+        "pluginPanel.runtime.enable": "启用插件运行时",
+        "pluginPanel.runtime.enableOnce": "仅本次启用",
+        "pluginPanel.runtime.remember": "记住本次选择",
+        "pluginPanel.runtime.disable": "停用插件运行时",
+        "pluginPanel.runtime.working": "处理中…",
+        "pluginPanel.runtime.disabledTitle": "插件运行时未启用",
+        "pluginPanel.runtime.disabledHint": "插件系统默认关闭以节省内存",
+        "pluginPanel.runtime.marketDisabledTitle": "插件市场需要插件运行时",
+        "pluginPanel.runtime.marketDisabledHint": "启用插件运行时后即可加载市场",
+        "pluginPanel.runtime.enabledRemembered": "已启用（已记住）",
+        "pluginPanel.runtime.enabledOnce": "已启用（仅本次）",
+        "pluginPanel.runtime.disabledNotice": "已停用",
+        "pluginPanel.runtime.enableFailed": "启用失败：{{error}}",
+        "pluginPanel.runtime.disableFailed": "停用失败：{{error}}",
+        "pluginPanel.limits.title": "资源限制",
+        "pluginPanel.limits.description": "软限制说明",
+        "pluginPanel.limits.storage": "KV 存储配额（MiB）",
+        "pluginPanel.limits.memory": "内存上限（MiB，仅 .NET 插件）",
+        "pluginPanel.limits.effective": "当前生效：存储 {{storage}} · 内存 {{memory}}",
+        "pluginPanel.limits.unconfigured": "（未配置项来自环境变量/默认值）",
+        "pluginPanel.limits.unlimited": "不限",
+        "pluginPanel.limits.save": "保存资源限制",
+        "pluginPanel.limits.saving": "保存中…",
+        "pluginPanel.limits.saved": "资源限制已保存",
+        "pluginPanel.limits.invalid": "请输入 0 或正整数（MiB）",
+        "pluginPanel.limits.saveFailed": "保存失败：{{error}}",
         "pluginPanel.market.title": "插件市场",
         "pluginPanel.market.subtitle": "从官方收录仓库在线安装插件",
         "pluginPanel.market.toggle": "插件市场",
@@ -123,6 +157,18 @@ function apiFor(items: PluginListEntry[]): PluginManagementApi {
     marketList: vi.fn(async () => ({ ok: true, plugins: [] })),
     marketDetails: vi.fn(async () => ({ ok: false, error: "not implemented" })),
     marketInstall: vi.fn(async () => ({ ok: false, error: "not implemented" })),
+    getRuntimeState: vi.fn(async () => ({ active: true, persisted: true })),
+    setRuntimeEnabled: vi.fn(async () => ({ ok: true })),
+    getLimits: vi.fn(async () => ({
+      storageQuotaMb: 64,
+      memoryLimitMb: 2048,
+      storageQuotaConfigured: false,
+      memoryLimitConfigured: false,
+    })),
+    setLimits: vi.fn(async (limits: { storageQuotaMb: number; memoryLimitMb: number }) => ({
+      ok: true,
+      limits: { ...limits, storageQuotaConfigured: true, memoryLimitConfigured: true },
+    })),
   };
 }
 
@@ -381,6 +427,72 @@ describe("PluginModePanel", () => {
     await act(async () => installButton?.click());
 
     expect(container.textContent).toContain("安装失败：插件包校验失败");
+  });
+
+  it("运行时未启用：列表页显示提示条，可记忆启用（默认写回设置）", async () => {
+    const api = apiFor([]);
+    (api.getRuntimeState as ReturnType<typeof vi.fn>).mockResolvedValue({ active: false, persisted: false });
+    await renderPanel(api);
+
+    expect(container.textContent).toContain("插件运行时未启用");
+    // 运行时未启用时导入/刷新按钮禁用（避免 "No handler registered"）
+    const headerButtons = [...container.querySelectorAll<HTMLButtonElement>(".plugin-panel__header-actions button")];
+    expect(headerButtons[headerButtons.length - 1].disabled).toBe(true);
+
+    const enable = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("启用插件运行时"));
+    await act(async () => enable?.click());
+
+    expect(api.setRuntimeEnabled).toHaveBeenCalledWith(true, { persist: true });
+    expect(api.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("运行时未启用：支持仅本次启用（不写回设置）", async () => {
+    const api = apiFor([]);
+    (api.getRuntimeState as ReturnType<typeof vi.fn>).mockResolvedValue({ active: false, persisted: false });
+    await renderPanel(api);
+
+    const once = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "仅本次启用");
+    await act(async () => once?.click());
+
+    expect(api.setRuntimeEnabled).toHaveBeenCalledWith(true, { persist: false });
+  });
+
+  it("运行时未启用：市场页显示专属空态且不请求市场接口", async () => {
+    const api = apiFor([]);
+    (api.getRuntimeState as ReturnType<typeof vi.fn>).mockResolvedValue({ active: false, persisted: false });
+    await renderPanel(api);
+    await clickMarketToggle();
+
+    expect(container.textContent).toContain("插件市场需要插件运行时");
+    expect(api.marketList).not.toHaveBeenCalled();
+  });
+
+  it("「设置」视图可读写资源限制（与 WPF 设置页同口径）", async () => {
+    const api = apiFor([]);
+    await renderPanel(api);
+
+    const settingsToggle = [...container.querySelectorAll<HTMLButtonElement>(".plugin-panel__header-actions button")][1];
+    expect(settingsToggle.title).toBe("插件设置");
+    await act(async () => settingsToggle.click());
+
+    expect(api.getLimits).toHaveBeenCalledTimes(1);
+    const inputs = [...container.querySelectorAll<HTMLInputElement>(".plugin-panel__settings-field input")];
+    expect(inputs.map((input) => input.value)).toEqual(["64", "2048"]);
+    expect(container.textContent).toContain("KV 存储配额（MiB）");
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      setter?.call(inputs[0], "128");
+      inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const save = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("保存资源限制"));
+    await act(async () => save?.click());
+
+    expect(api.setLimits).toHaveBeenCalledWith({ storageQuotaMb: 128, memoryLimitMb: 2048 });
+    expect(container.textContent).toContain("资源限制已保存");
   });
 });
 
