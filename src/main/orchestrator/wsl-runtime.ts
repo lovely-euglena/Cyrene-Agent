@@ -196,10 +196,11 @@ export function windowsPathToWslPath(winPath: string): string | null {
   if (!value) return null;
   if (/^[\\/]{2}/.test(value)) return null; // UNC
   if (value.startsWith("/")) return value; // 已是 POSIX 绝对路径
-  const match = /^([A-Za-z]):[\\/]?(.*)$/.exec(value);
+  // 仅接受绝对盘符路径（D:\ 或 D:/）；盘符相对路径（D:code）语义依赖当前目录，拒绝。
+  const match = /^([A-Za-z]):(?:[\\/](.*))?$/.exec(value);
   if (!match) return null;
   const drive = match[1].toLowerCase();
-  const rest = match[2].replace(/\\/g, "/").replace(/\/+$/, "");
+  const rest = (match[2] ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
   return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
 }
 
@@ -219,7 +220,11 @@ export function buildWslInvocation(
   command: string,
   wslCwd?: string | null,
 ): WslInvocation {
-  const script = wslCwd ? `cd -- ${posixSingleQuote(wslCwd)} && ${command}` : command;
+  // 工作目录在发行版内不存在时（Windows 侧无法探测 WSL 路径），给出结构化错误与固定退出码，
+  // 而不是让 bash 原生的 "cd: No such file or directory" 混在业务输出里。
+  const script = wslCwd
+    ? `cd -- ${posixSingleQuote(wslCwd)} || { printf '[WSL_CWD_NOT_FOUND] %s\\n' ${posixSingleQuote(wslCwd)} >&2; exit 86; }; ${command}`
+    : command;
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const args: string[] = [];
   if (resolved.distro) args.push("-d", resolved.distro);
