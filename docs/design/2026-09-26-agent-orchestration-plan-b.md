@@ -1,6 +1,9 @@
 # Agent 编排 Plan B：编排下沉、循环复用（v1 已落地）
 
 > 日期：2026-09-26 · 状态：**机制 v1 已落地**（协议 + .NET 编排器 + TS worker/客户端 + 契约/单测/冒烟）
+> 更新（2026-10-03）：**子 Agent 接入接口层已就绪**（`task-orchestrator-runner.ts` +
+> task-runtime 注入点 + 真实 native 端到端集成测试），**生产未接线**；
+> 开关 `taskOrchestrator` 默认关闭，启用步骤见 §5.1。
 > 关联：`docs/multi-agent-architecture.md`（原 P1/P2 路线）、`src/main/orchestrator/harness/cyrene-harness.ts`
 
 ## 1. 决策：为什么不是把 CyreneHarness 搬进 .NET
@@ -98,20 +101,21 @@ Electron → host 通知帧：`step_result`（`stepId, callId, sessionId, ok, st
 | `src/main/orchestrator/agent-orchestration/harness-session-worker.ts` | 会话 transcript、邮箱组装、取消/失败归一 |
 | `src/main/orchestrator/agent-orchestration/step-runner.ts` | step → HarnessInput 生产装配（环境注入） |
 | `src/main/orchestrator/agent-orchestration/agent-orchestrator-client.ts` | 子进程生命周期 + 帧路由 + turn API |
-| `src/main/config.ts` | `agentOrchestrator` 开关（env/conf，统一解析入口） |
+| `src/main/orchestrator/agent-orchestration/task-orchestrator-runner.ts` | 子 Agent 编排执行接口（会话注册/回退规则/终态映射；生产未接线） |
+| `src/main/orchestrator/agent-orchestration/task-orchestrator-loop.integration.test.ts` | 真实 native 端到端循环集成测试（Windows + exe） |
+| `src/main/config.ts` | `agentOrchestrator` / `taskOrchestrator` 开关（env/conf，统一解析入口） |
 | `scripts/verify/agent-orchestrator-smoke.mjs` | 跨进程协议冒烟（stub worker） |
 
 ## 5. v1 范围与有意未做
 
 已做：协议、编排机制、worker/客户端、契约测试、单测、跨进程冒烟、
-配置开关、设计文档。
+配置开关、设计文档；**子 Agent 接入接口层**（2026-10-03，生产未接线）。
 
 未做（按优先级）：
 
-1. **生产环境解析器接线**：`createHarnessStepRunner(resolveEnvironment)`
-   需要从"当前设置 + registry + 权限 + FileToolOutputStore + prompt-builder"
-   组装每个会话的 `HarnessStepEnvironment`——复用 `harness-adapter` 的
-   `prepareToolRuntime` 思路，但走轻量路径（不带 AGUI/run-store/review）。
+1. **任务路径生产接线**：环境装配、回退规则、终态结算已在
+   `task-orchestrator-runner.ts` + `task-runtime` 注入点实现，并通过真实
+   native 端到端集成测试；生产启用只需按 §5.1 注入 runner 并打开开关。
 2. **聊天入口**：把用户消息从聊天 UI 路由到 `runTurn`（以及流式事件回渲染）。
 3. **worker 子进程化**：当前循环在 Electron 主进程内（I/O 密集，可接受）；
    `HarnessSessionWorker` 已是传输无关抽象，后续可把 runStep 换成
@@ -121,10 +125,24 @@ Electron → host 通知帧：`step_result`（`stepId, callId, sessionId, ok, st
    planner↔executor 往返需要 `mailbox.send` + 唤醒策略（P2 后半）。
 6. **三 host 合并 `--backend`**（P3）：与 MCP/SSH/tool host 共用监督器。
 
+## 5.1 子 Agent 接入步骤（接口已就绪，生产未接）
+
+1. `src/main/orchestrator/harness/adapter/tool-runtime.ts` 的
+   `createTaskExecutor({...})` 传入 `runOrchestrated: getTaskOrchestratorRunner()`；
+2. 打开开关：`config/cyrene.conf` 写 `taskOrchestrator = 1`，或环境变量
+   `CYRENE_TASK_ORCHESTRATOR=1`（`agentOrchestrator` 默认已开，exe 需就位）；
+3. 回退规则：开关未开 / exe 缺失 / 启动失败 / `group.create` 失败 /
+   首个 step 前的 turn 失败 → 自动回退直跑 TS Harness（`used:false`）；
+   已执行过 step、用户取消、host 超时 → 按终态结算，绝不回退（防工具副作用重复）；
+4. resume（同一任务续跑）：历史 messages（不含本轮 prompt）与旧 todo 状态经
+   `seedSession` 还给 worker，prompt 不重复；
+5. 单独验证：`npm run verify:task-orchestrator-loop`
+   （真实 `cyrene-native --agent-orchestrator` + 真循环；非 Windows/无 exe 自动 skip）。
+
 ## 6. 验证
 
 ```bash
-# TS：worker/客户端/契约/step-runner/config（26 用例）
+# TS：worker/客户端/契约/step-runner/runner/config
 npx vitest run src/main/orchestrator/agent-orchestration src/main/config.test.ts
 
 # C# 构建
@@ -132,4 +150,8 @@ dotnet build dotnet/native-windows/CyreneNative.csproj
 
 # 跨进程冒烟（真实 cyrene-native + stub worker）
 npm run verify:agent-orchestrator
+
+# 子 Agent 端到端循环（真实 cyrene-native + 真 worker/step-runner/Harness；
+# Windows + exe 才运行，否则自动 skip）
+npm run verify:task-orchestrator-loop
 ```
