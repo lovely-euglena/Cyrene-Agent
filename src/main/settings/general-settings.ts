@@ -1,5 +1,5 @@
 import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
-import type { UiTheme } from "../../shared/ui-theme";
+import type { UiThemeChoice } from "../../shared/ui-theme";
 import type { UiFont } from "../../shared/ui-font";
 import type { UiIcon } from "../../shared/ui-icon";
 import type { UiLanguage } from "../../shared/ui-language";
@@ -87,7 +87,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   launchAtLogin: boolean;
   /** 界面语言：已支持中文、英文、日文，其余语言待翻译补齐后开放。 */
   language: UiLanguage;
-  uiTheme: UiTheme;
+  uiTheme: UiThemeChoice;
   windowCornerRadius: number;
   /** @deprecated 旧版透明窗口开关，仅保留用于配置兼容。 */
   uiThemeRadius: boolean;

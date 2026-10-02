@@ -1,5 +1,5 @@
 import "./message-typography";
-import { normalizeUiTheme, type UiTheme } from "../../shared/ui-theme";
+import { normalizeUiTheme, resolveUiTheme, type UiTheme, type UiThemeChoice } from "../../shared/ui-theme";
 import { DEFAULT_UI_FONT, normalizeUiFont, type UiFont } from "../../shared/ui-font";
 import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
 
@@ -25,6 +25,10 @@ declare global {
 export function applyUiTheme(theme: unknown): void {
   document.documentElement.dataset.uiTheme = normalizeUiTheme(theme);
   delete document.documentElement.dataset.uiThemePending;
+}
+
+export function applyUiThemeChoice(choice: UiThemeChoice): void {
+  applyUiTheme(resolveUiTheme(choice, window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false));
 }
 
 function applyRadius(radius: boolean): void {

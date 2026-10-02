@@ -6,7 +6,7 @@
 import type { ApiTransport } from "../../../shared/api-endpoint";
 import type { ReasoningPreference } from "../../../shared/reasoning";
 import type { ChatAppearanceSettings } from "../../../shared/chat-appearance";
-import type { UiTheme } from "../../../shared/ui-theme";
+import type { UiThemeChoice } from "../../../shared/ui-theme";
 import type { UiFont } from "../../../shared/ui-font";
 import type { UiIcon } from "../../../shared/ui-icon";
 import type {
@@ -104,7 +104,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   language: "zh-CN";
-  uiTheme: UiTheme;
+  uiTheme: UiThemeChoice;
   windowCornerRadius: number;
   uiThemeRadius: boolean;
   uiFont: UiFont;
