@@ -80,6 +80,11 @@ describe("windowsPathToWslPath", () => {
     expect(windowsPathToWslPath("relative\\path")).toBeNull();
     expect(windowsPathToWslPath("")).toBeNull();
   });
+
+  it("盘符相对路径（D:code）返回 null，不做错误换算", () => {
+    expect(windowsPathToWslPath("D:code")).toBeNull();
+    expect(windowsPathToWslPath("D:")).toBe("/mnt/d");
+  });
 });
 
 describe("posixSingleQuote", () => {
@@ -103,14 +108,26 @@ describe("buildWslInvocation", () => {
     expect(invocation.args).not.toContain("-d");
   });
 
-  it("工作目录以单引号拼进脚本首部", () => {
+  it("工作目录以单引号拼进脚本首部（不存在时给出结构化错误）", () => {
     const invocation = buildWslInvocation({ ...VALIDATED, distro: "Ubuntu" }, "ls", "/mnt/d/my project");
-    expect(decodeScript(invocation.args)).toBe("cd -- '/mnt/d/my project' && ls");
+    expect(decodeScript(invocation.args)).toBe(
+      "cd -- '/mnt/d/my project' || { printf '[WSL_CWD_NOT_FOUND] %s\\n' '/mnt/d/my project' >&2; exit 86; }; ls",
+    );
   });
 
   it("工作目录含单引号也能安全转义", () => {
     const invocation = buildWslInvocation({ ...VALIDATED, distro: "Ubuntu" }, "ls", "/mnt/d/it's");
-    expect(decodeScript(invocation.args)).toBe("cd -- '/mnt/d/it'\\''s' && ls");
+    expect(decodeScript(invocation.args)).toBe(
+      "cd -- '/mnt/d/it'\\''s' || { printf '[WSL_CWD_NOT_FOUND] %s\\n' '/mnt/d/it'\\''s' >&2; exit 86; }; ls",
+    );
+  });
+
+  it("工作目录在发行版内不存在时输出 WSL_CWD_NOT_FOUND 并退出 86", () => {
+    const invocation = buildWslInvocation({ ...VALIDATED, distro: null }, "pwd", "/mnt/d/gone");
+    const script = decodeScript(invocation.args);
+    expect(script).toContain("WSL_CWD_NOT_FOUND");
+    expect(script).toContain("exit 86");
+    expect(script.endsWith("; pwd")).toBe(true);
   });
 
   it("命令含引号/管道/换行也不破坏外层协议", () => {

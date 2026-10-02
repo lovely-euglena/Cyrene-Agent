@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const wslState = vi.hoisted(() => ({
   enabled: true,
   distro: "",
+  builtDistro: null as string | null,
   discovery: {
     executable: "C:\\Windows\\System32\\wsl.exe" as string | null,
     distros: ["Ubuntu"] as string[],
@@ -20,11 +21,14 @@ vi.mock("../../wsl-runtime", async (importOriginal) => {
       distros: wslState.discovery.distros,
     }),
     // 用 node 冒充 wsl.exe 子进程，让执行链可观测
-    buildWslInvocation: () => ({
-      command: process.execPath,
-      args: ["-e", "process.stdout.write('WSL_OK')"],
-      windowsVerbatimArguments: false,
-    }),
+    buildWslInvocation: (resolved: { distro?: string | null }) => {
+      wslState.builtDistro = resolved.distro ?? null;
+      return {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('WSL_OK')"],
+        windowsVerbatimArguments: false,
+      };
+    },
   };
 });
 
@@ -60,6 +64,7 @@ describe("run_shell WSL 分支", () => {
     setCurrentLevel("read-only");
     wslState.enabled = true;
     wslState.distro = "";
+    wslState.builtDistro = null;
     wslState.discovery = { executable: "C:\\Windows\\System32\\wsl.exe", distros: ["Ubuntu"] };
   });
 
@@ -89,6 +94,17 @@ describe("run_shell WSL 分支", () => {
     expect(parsed.availableDistros).toEqual(["Ubuntu"]);
     expect(parsed.stderr).toContain("Debian");
     expect(parsed.stderr).toContain("Ubuntu");
+  });
+
+  it("发行版名大小写不敏感，命中后回传列表中的规范名", async () => {
+    wslState.distro = "ubuntu";
+    const parsed = await run(
+      { command: "echo hi", shell: "wsl" },
+      { permissionMode: "allow_all" },
+    );
+    expect(parsed.errorCode).toBeUndefined();
+    expect(parsed.exitCode).toBe(0);
+    expect(wslState.builtDistro).toBe("Ubuntu");
   });
 
   it("UNC 工作目录无法映射时返回 WSL_PATH_UNSUPPORTED", async () => {

@@ -599,7 +599,12 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
       });
     }
     const configuredDistro = (settings.wslDistro ?? "").trim();
-    if (configuredDistro && !discovery.distros.includes(configuredDistro)) {
+    // 发行版名大小写不敏感：用户可能写 "ubuntu" 而装的是 "Ubuntu"。
+    // 命中后用列表里的规范名传给 -d，避免因大小写被判为不存在。
+    const canonicalDistro = configuredDistro
+      ? discovery.distros.find((distro) => distro.toLowerCase() === configuredDistro.toLowerCase())
+      : undefined;
+    if (configuredDistro && !canonicalDistro) {
       return JSON.stringify({
         command, cwd, shell: "wsl", errorCode: "WSL_DISTRO_NOT_FOUND", availableDistros,
         exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
@@ -614,7 +619,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
         stderr: "[WSL_PATH_UNSUPPORTED] 该工作目录无法映射到 WSL 路径（网络/UNC 路径不支持）。请改用本地磁盘路径。", stdout: "",
       });
     }
-    resolvedShell = { kind: "wsl", executable: discovery.executable, distro: configuredDistro || null };
+    resolvedShell = { kind: "wsl", executable: discovery.executable, distro: canonicalDistro ?? null };
   } else {
     const resolved = await resolveShellExecutable(requestedShell);
     if (!resolved) {
