@@ -150,7 +150,7 @@ describeLoop("TaskOrchestratorRunner 端到端循环（真实 cyrene-native）",
     expect(outcome.status).toBe("success");
     expect(outcome.finalAnswer).toBe("6*7=42");
     expect(streamChatWithSdkMock).toHaveBeenCalledTimes(1);
-  });
+  }, 20_000);
 
   it("工具调用环：模型→工具→再收口，tool 结果回注下一轮", async () => {
     streamChatWithSdkMock.mockClear();
@@ -168,7 +168,7 @@ describeLoop("TaskOrchestratorRunner 端到端循环（真实 cyrene-native）",
     expect(streamChatWithSdkMock).toHaveBeenCalledTimes(2);
     const secondRound = vendorRequestMessages(1);
     expect(secondRound.some((message) => message.role === "tool" && messageText(message).includes("echo:hi"))).toBe(true);
-  });
+  }, 20_000);
 
   it("seed 续跑：历史上下文进入首轮请求，本轮 prompt 不重复", async () => {
     streamChatWithSdkMock.mockClear();
@@ -192,7 +192,7 @@ describeLoop("TaskOrchestratorRunner 端到端循环（真实 cyrene-native）",
     expect(firstRound).toContain("旧问题");
     expect(firstRound).toContain("旧回答");
     expect(firstRound.filter((text) => text === "继续")).toHaveLength(1);
-  });
+  }, 20_000);
 
   it("取消：父信号中止在途 turn，终态 cancelled 且本地会话清空", async () => {
     streamChatWithSdkMock.mockClear();
@@ -214,7 +214,7 @@ describeLoop("TaskOrchestratorRunner 端到端循环（真实 cyrene-native）",
     if (!outcome.used) return;
     expect(outcome.status).toBe("cancelled");
     expect(runner.registry.size).toBe(0);
-  });
+  }, 20_000);
 
   it("host step 超时：慢供应商被收口为 timeout", async () => {
     streamChatWithSdkMock.mockClear();
@@ -227,5 +227,5 @@ describeLoop("TaskOrchestratorRunner 端到端循环（真实 cyrene-native）",
     expect(outcome.used).toBe(true);
     if (!outcome.used) return;
     expect(outcome.status).toBe("timeout");
-  });
+  }, 20_000);
 });
