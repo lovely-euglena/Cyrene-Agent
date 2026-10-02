@@ -1,12 +1,15 @@
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace CyreneNative.Music;
 
 /// <summary>
 /// 本地音乐服务（进程内单例，窗口无关）：
 ///   - 曲库：MusicLibrary（SQLite，增量扫描）；
-///   - 播放：MpvController（named-pipe IPC）；
+///   - 播放：MpvController（named-pipe IPC）；音频输出设备运行时切换（--audio-device / set_property）；
 ///   - 歌词：LrcParser（侧车 .lrc，P1；内嵌歌词 P2）；
 ///   - 状态：播放列表/当前曲目/进度/音量/模式，窗口订阅事件刷新，
 ///     Agent 通过 RequestRouter 的 music.* 请求读写。
@@ -25,6 +28,9 @@ public sealed class MusicService : IDisposable
         string Album,
         string Ext,
         long Size);
+
+    /// <summary>音频输出设备：name 传给 mpv（--audio-device），description 供界面展示。</summary>
+    public sealed record AudioDeviceDto(string Name, string Description);
 
     public sealed record NowPlayingState(
         string Status,
@@ -48,6 +54,9 @@ public sealed class MusicService : IDisposable
     private MpvController? _mpv;
     private string _mpvPath = "";
     private string _dbPath = "";
+    private string _audioDevice = "auto";
+    private List<AudioDeviceDto>? _deviceCache;
+    private DateTime _deviceCacheAt = DateTime.MinValue;
     private List<string> _folders = new();
     private List<MusicLibrary.MusicTrack> _queue = new();
     private int _queueIndex = -1;
@@ -84,6 +93,7 @@ public sealed class MusicService : IDisposable
         var mpvPath = GetString(config, "mpvPath");
         var folders = GetStringArray(config, "folders");
         var volume = GetInt(config, "volume", 0);
+        var audioDevice = GetString(config, "audioDevice");
 
         var foldersChanged = false;
         lock (_lock)
@@ -95,6 +105,7 @@ public sealed class MusicService : IDisposable
             }
             if (!string.IsNullOrWhiteSpace(mpvPath)) _mpvPath = mpvPath;
             if (volume is > 0 and <= 100) _volume = volume;
+            _audioDevice = string.IsNullOrWhiteSpace(audioDevice) ? "auto" : audioDevice;
             var normalizedFolders = folders
                 .Where(folder => !string.IsNullOrWhiteSpace(folder))
                 .Select(NormalizePathOrRaw)
@@ -363,7 +374,7 @@ public sealed class MusicService : IDisposable
         };
 
         var volume = _volume;
-        if (!controller.Start(exe, volume))
+        if (!controller.Start(exe, volume, ResolveAudioDeviceForStart()))
         {
             controller.Dispose();
             return false;
@@ -589,6 +600,151 @@ public sealed class MusicService : IDisposable
             StateChanged?.Invoke();
         });
         return new { ok = true, scanning = true };
+    }
+
+    // ── 音频输出设备 ──
+
+    private const int DeviceCacheTtlSeconds = 30;
+
+    public string CurrentAudioDevice()
+    {
+        lock (_lock) return string.IsNullOrWhiteSpace(_audioDevice) ? "auto" : _audioDevice;
+    }
+
+    /// <summary>枚举输出设备（一次性 `mpv --audio-device=help`，带短 TTL 缓存）。</summary>
+    public List<AudioDeviceDto> ListAudioDevices()
+    {
+        lock (_lock)
+        {
+            if (_deviceCache is not null && (DateTime.UtcNow - _deviceCacheAt).TotalSeconds < DeviceCacheTtlSeconds)
+            {
+                return _deviceCache.ToList();
+            }
+        }
+        var exe = ResolveMpvPath();
+        var devices = exe is null ? new List<AudioDeviceDto>() : ProbeAudioDevices(exe);
+        if (devices.Count == 0) devices.Add(new AudioDeviceDto("auto", "自动选择"));
+        lock (_lock)
+        {
+            _deviceCache = devices;
+            _deviceCacheAt = DateTime.UtcNow;
+        }
+        return devices.ToList();
+    }
+
+    /// <summary>运行 mpv `--audio-device=help` 并解析设备列表；失败返回空。</summary>
+    public static List<AudioDeviceDto> ProbeAudioDevices(string exe)
+    {
+        var result = new List<AudioDeviceDto>();
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+            };
+            psi.ArgumentList.Add("--no-config");
+            psi.ArgumentList.Add("--audio-device=help");
+            using var process = Process.Start(psi);
+            if (process is null) return result;
+            // stderr 不排空可能阻塞子进程：后台排空
+            var drainError = Task.Run(() => { try { process.StandardError.ReadToEnd(); } catch { } });
+            var stdout = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(5_000);
+            if (!process.HasExited) { try { process.Kill(entireProcessTree: true); } catch { } }
+            drainError.Wait(500);
+            result.AddRange(ParseAudioDeviceList(stdout));
+        }
+        catch
+        {
+            // 探测失败返回空，调用方补 auto
+        }
+        return result;
+    }
+
+    /// <summary>解析 `--audio-device=help` 文本：设备行为 `  'name' (description)`。</summary>
+    public static List<AudioDeviceDto> ParseAudioDeviceList(string output)
+    {
+        var result = new List<AudioDeviceDto>();
+        var regex = new Regex(@"^\s*'(.+?)'\s*\((.*)\)\s*$");
+        foreach (var raw in (output ?? "").Replace("\r\n", "\n").Split('\n'))
+        {
+            var match = regex.Match(raw);
+            if (!match.Success) continue;
+            var name = match.Groups[1].Value.Trim();
+            if (name.Length == 0) continue;
+            result.Add(new AudioDeviceDto(name, match.Groups[2].Value.Trim()));
+        }
+        return result;
+    }
+
+    /// <summary>当前设备 + 设备列表（列表已剔除失效的当前设备）。</summary>
+    public object AudioDevices()
+    {
+        var devices = ListAudioDevices();
+        var current = CurrentAudioDevice();
+        if (!devices.Any(device => string.Equals(device.Name, current, StringComparison.OrdinalIgnoreCase)))
+        {
+            current = "auto";
+        }
+        return new { current, devices };
+    }
+
+    public object SetAudioDevice(JsonElement payload) => SetAudioDeviceResult(GetString(payload, "device"));
+
+    /// <summary>切换输出设备：校验设备名 → 更新状态 → 运行时切换 → 通知宿主持久化。</summary>
+    public bool TrySetAudioDevice(string device, out string error)
+    {
+        error = "";
+        var requested = (device ?? "").Trim();
+        if (requested.Length == 0)
+        {
+            error = "缺少设备名";
+            return false;
+        }
+        var canonical = ListAudioDevices()
+            .FirstOrDefault(d => string.Equals(d.Name, requested, StringComparison.OrdinalIgnoreCase));
+        if (canonical is null)
+        {
+            error = $"未知音频设备：{requested}";
+            return false;
+        }
+        MpvController? mpv;
+        lock (_lock)
+        {
+            _audioDevice = canonical.Name;
+            mpv = _mpv;
+        }
+        // 已启动 mpv：运行时切换（mpv 会调度音频输出重init，无需重启进程）
+        mpv?.SetAudioDevice(canonical.Name);
+        RequestRouter.SendCommand("music", "audio-device-changed", null,
+            new Dictionary<string, object?> { ["device"] = canonical.Name });
+        StateChanged?.Invoke();
+        return true;
+    }
+
+    private object SetAudioDeviceResult(string device)
+        => TrySetAudioDevice(device, out var error)
+            ? new { ok = true, audioDevice = CurrentAudioDevice() }
+            : new { ok = false, error };
+
+    /// <summary>播放前解析设备：已不存在的设备（如耳机拔出）回退 auto 并提示，避免静音。</summary>
+    private string? ResolveAudioDeviceForStart()
+    {
+        var configured = CurrentAudioDevice();
+        if (configured == "auto") return null;
+        if (ListAudioDevices().Any(d => string.Equals(d.Name, configured, StringComparison.OrdinalIgnoreCase)))
+        {
+            return configured;
+        }
+        lock (_lock) _audioDevice = "auto";
+        Notice?.Invoke("上次选择的音频设备已不可用，已回退到自动选择");
+        return null;
     }
 
     // ── JSON 辅助 ──

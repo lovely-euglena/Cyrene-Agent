@@ -133,20 +133,32 @@ export const musicNowPlayingTool: ToolDefinition = {
   id: "music_now_playing",
   name: "当前播放",
   description:
-    "查询本地音乐播放器当前状态：曲目、进度、暂停、音量、播放模式与当前歌词行（含翻译）。\n\n" +
+    "查询本地音乐播放器当前状态：曲目、进度、暂停、音量、播放模式与当前歌词行（含翻译）；也可列出音频输出设备。\n\n" +
     "何时用：\n" +
     "- 用户问'现在在放什么''这首歌叫什么''放到哪了''这句歌词是什么'\n" +
-    "- 想围绕正在播放的音乐聊天\n\n" +
-    "无参数。需要音乐权限档 ≥ 只读。",
+    "- 想围绕正在播放的音乐聊天\n" +
+    "- 用户问'有哪些播放设备''声音从哪个设备出来' → 传 action=audio-devices\n\n" +
+    "参数：action（可选，audio-devices = 列出音频输出设备与当前选择）；缺省返回播放状态。需要音乐权限档 ≥ 只读。",
   enabled: true,
   risk: "safe",
   modes: ["work", "chat"],
   effectKind: "read" as const,
   verificationPolicy: "none" as const,
-  inputSchema: { type: "object", properties: {}, required: [] },
-  async execute() {
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: { type: "string", description: "audio-devices（列出音频输出设备与当前选择）；缺省返回当前播放状态" },
+    },
+    required: [],
+  },
+  async execute(args) {
     const denied = requireMusicAccess("read");
     if (denied) return denied;
+    if (args.action === "audio-devices") {
+      const result = await musicRequest<{ current: string; devices: Array<{ name: string; description: string }> }>("music.audio-devices");
+      if (!result.ok) return result.error;
+      return JSON.stringify(result.data);
+    }
     const result = await musicRequest<MusicNowPlaying>("music.now-playing");
     if (!result.ok) return result.error;
     return JSON.stringify(result.data);
@@ -162,11 +174,12 @@ export const musicPlayTool: ToolDefinition = {
     "- 用户说'放首歌''播放 XX''来点音乐''换一首''大点声''暂停一下''继续'\n" +
     "- 用户点名歌手/歌名（先用 search 直接播放匹配结果）\n\n" +
     "参数：\n" +
-    "- action（可选）：play（默认）| toggle | pause | resume | next | prev | stop | volume | mode | seek\n" +
+    "- action（可选）：play（默认）| toggle | pause | resume | next | prev | stop | volume | mode | seek | audio-device\n" +
     "- path（可选）：精确曲目路径（来自 music_library）\n" +
     "- search（可选）：按标题/歌手搜索并播放匹配结果（作为播放队列）\n" +
     "- paths（可选）：路径数组，作为播放队列\n" +
     "- volume（0-100，action=volume 时）；seconds（action=seek 时）；mode（list|single|shuffle，action=mode 时）\n" +
+    "- device（action=audio-device 时，音频输出设备名；先用 music_now_playing action=audio-devices 查看）\n" +
     "- 无 path/search/paths 且无 action 时等价于 toggle（播放/暂停切换）\n\n" +
     "需要音乐权限档 ≥ 控制播放。",
   enabled: true,
@@ -177,13 +190,14 @@ export const musicPlayTool: ToolDefinition = {
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", description: "play | toggle | pause | resume | next | prev | stop | volume | mode | seek" },
+      action: { type: "string", description: "play | toggle | pause | resume | next | prev | stop | volume | mode | seek | audio-device" },
       path: { type: "string", description: "精确曲目路径" },
       search: { type: "string", description: "搜索并播放匹配曲目" },
       paths: { type: "array", items: { type: "string" }, description: "播放队列路径数组" },
       volume: { type: "number", description: "音量 0-100（action=volume）" },
       seconds: { type: "number", description: "跳转秒数（action=seek）" },
       mode: { type: "string", description: "播放模式 list|single|shuffle（action=mode）" },
+      device: { type: "string", description: "音频输出设备名（action=audio-device；可先用 music_now_playing action=audio-devices 查看）" },
     },
     required: [],
   },
@@ -211,6 +225,14 @@ export const musicPlayTool: ToolDefinition = {
           return "[错误] action=mode 需要 mode 参数：list | single | shuffle";
         }
         payload.mode = args.mode;
+      }
+      if (action === "audio-device") {
+        const device = typeof args.device === "string" ? args.device.trim() : "";
+        if (!device) return "[错误] action=audio-device 需要 device 参数（可先用 music_now_playing action=audio-devices 查看）";
+        const result = await musicRequest<{ ok: boolean; error?: string; audioDevice?: string }>("music.audio-device", { device });
+        if (!result.ok) return result.error;
+        if (result.data.ok === false) return `[错误] ${result.data.error ?? "切换设备失败"}`;
+        return JSON.stringify({ ok: true, audioDevice: result.data.audioDevice ?? device });
       }
       const result = await musicRequest<{ ok: boolean; error?: string; nowPlaying?: MusicNowPlaying }>("music.control", payload);
       if (!result.ok) return result.error;

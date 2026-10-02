@@ -236,6 +236,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   musicFolders: string[];
   /** Agent 音乐权限档：off=关闭 / read=只读查询 / control=控制播放 / manage=管理曲库。 */
   musicAgentAccess: "off" | "read" | "control" | "manage";
+  /** 音频输出设备名（mpv --audio-device）；空字符串 = 自动选择。设备名与机器相关。 */
+  musicAudioDevice: string;
   /** 🔍本地 OCR（图像文字识别）工具开关 */
   ocrEnabled: boolean;
   /** OCR 服务商：off(关闭) | local(本地，Windows 内置) | cloud(云端，预留未接入) */

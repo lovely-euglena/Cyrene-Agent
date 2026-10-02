@@ -39,7 +39,7 @@ public sealed class MpvController : IDisposable
     }
 
     /// <summary>启动 mpv 并连接 IPC；失败返回 false（调用方回退为 idle 状态）。</summary>
-    public bool Start(string exePath, int volume)
+    public bool Start(string exePath, int volume, string? audioDevice = null)
     {
         Stop();
         _disposed = false;
@@ -67,6 +67,10 @@ public sealed class MpvController : IDisposable
                  })
         {
             psi.ArgumentList.Add(argument);
+        }
+        if (!string.IsNullOrWhiteSpace(audioDevice) && audioDevice != "auto")
+        {
+            psi.ArgumentList.Add($"--audio-device={audioDevice}");
         }
 
         Process process;
@@ -139,6 +143,15 @@ public sealed class MpvController : IDisposable
     public void SetVolume(int volume)
     {
         Send("set_property", "volume", Math.Clamp(volume, 0, 100));
+    }
+
+    /// <summary>
+    /// 运行时切换音频输出设备（mpv 收到后调度音频输出重init，无需重启进程）。
+    /// 传入设备名须来自 <c>--audio-device=help</c> / <c>audio-device-list</c>。
+    /// </summary>
+    public void SetAudioDevice(string device)
+    {
+        Send("set_property", "audio-device", device);
     }
 
     public void StopPlayback()

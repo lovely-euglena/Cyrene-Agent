@@ -242,6 +242,12 @@ public static class RequestRouter
             case "music.rescan":
                 Protocol?.ReplyOk(id, MusicService.Shared.Rescan());
                 break;
+            case "music.audio-devices":
+                Protocol?.ReplyOk(id, MusicService.Shared.AudioDevices());
+                break;
+            case "music.audio-device":
+                Protocol?.ReplyOk(id, MusicService.Shared.SetAudioDevice(element));
+                break;
             default:
                 Protocol?.ReplyError(id, $"unsupported op: {op}");
                 break;

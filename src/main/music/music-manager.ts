@@ -1,5 +1,5 @@
 // 本地音乐窗口管理（TS 侧）：
-//   - 设置读取（musicFolders / musicAgentAccess）与持久化（音乐窗 cmd 事件）；
+//   - 设置读取（musicFolders / musicAgentAccess / musicAudioDevice）与持久化（音乐窗 cmd 事件）；
 //   - native 配置下发（dbPath / mpvPath / folders）与窗口打开；
 //   - 播放与曲库本体在 cyrene-native 进程（MusicService），本模块只做胶水。
 //
@@ -25,6 +25,11 @@ export function getMusicFolders(): string[] {
   return loadGeneralSettings().musicFolders ?? [];
 }
 
+/** 本地音乐播放器的音频输出设备名；空 = 自动选择（mpv auto）。 */
+export function getMusicAudioDevice(): string {
+  return loadGeneralSettings().musicAudioDevice ?? "";
+}
+
 export function getMusicDbPath(): string {
   return path.join(app.getPath("userData"), "music", "music-library.db");
 }
@@ -35,6 +40,7 @@ export function buildMusicConfig(): Record<string, unknown> {
     dbPath: getMusicDbPath(),
     mpvPath: detectMpvBinary(),
     folders: getMusicFolders(),
+    audioDevice: getMusicAudioDevice(),
   };
 }
 
@@ -54,7 +60,7 @@ export async function openMusicWindow(): Promise<boolean> {
   }
 }
 
-/** 音乐窗 cmd 事件 → 设置持久化（folders-changed / agent-access-changed）。 */
+/** 音乐窗 cmd 事件 → 设置持久化（folders-changed / agent-access-changed / audio-device-changed）。 */
 export function handleMusicAction(action: string, payload: Record<string, unknown>): void {
   if (action === "folders-changed") {
     const folders = Array.isArray(payload.folders)
@@ -68,5 +74,10 @@ export function handleMusicAction(action: string, payload: Record<string, unknow
     if (access === "off" || access === "read" || access === "control" || access === "manage") {
       saveGeneralSettings({ musicAgentAccess: access });
     }
+    return;
+  }
+  if (action === "audio-device-changed") {
+    const device = typeof payload.device === "string" ? payload.device.trim() : "";
+    saveGeneralSettings({ musicAudioDevice: device });
   }
 }

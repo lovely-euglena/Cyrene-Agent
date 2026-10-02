@@ -108,6 +108,14 @@ public static class MusicSelfTest
             // 目录被移除/不再存在：残留曲目应被清理，而不是永久留在库里
             var purged = library.Scan(Array.Empty<string>(), () => false);
             Check("移除目录后清理残留曲目", purged.Removed == 1 && purged.Total == 0 && library.Count() == 0);
+
+            // ── 音频输出设备列表解析 ──
+            var parsedDevices = MusicService.ParseAudioDeviceList(
+                "List of detected audio devices:\n  'auto' (Autoselect device)\n  'wasapi/{332e5418}' (扬声器 (USB Audio))\n");
+            Check("音频设备解析（含描述内括号）", parsedDevices.Count == 2
+                && parsedDevices[0].Name == "auto"
+                && parsedDevices[1].Name == "wasapi/{332e5418}"
+                && parsedDevices[1].Description == "扬声器 (USB Audio)");
         }
         finally
         {

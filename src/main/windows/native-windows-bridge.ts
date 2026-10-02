@@ -163,6 +163,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
         case "openMusic": actions.openMusicWindow?.(); break;
         case "folders-changed":
         case "agent-access-changed":
+        case "audio-device-changed":
           if (frameKind === "music") actions.musicAction?.(action, asRecord(frame));
           break;
         case "open-settings":

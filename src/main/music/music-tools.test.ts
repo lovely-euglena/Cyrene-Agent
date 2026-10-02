@@ -101,4 +101,23 @@ describe("音乐工具请求形状", () => {
     expect(client.requestData).toHaveBeenCalledWith({ op: "music.rescan" });
     expect(await musicManageTool.execute({ action: "drop-table" })).toContain("action 仅支持");
   });
+
+  it("music_now_playing action=audio-devices（只读）→ music.audio-devices", async () => {
+    mockedAccess.mockReturnValue("read");
+    const client = fakeClient({ current: "auto", devices: [{ name: "auto", description: "Autoselect" }] });
+    mockedClient.mockReturnValue(client as unknown as NativeWindowsClient);
+    const result = await musicNowPlayingTool.execute({ action: "audio-devices" });
+    expect(result).toContain("Autoselect");
+    expect(client.requestData).toHaveBeenCalledWith({ op: "music.audio-devices" });
+  });
+
+  it("music_play action=audio-device（控制）→ music.audio-device；缺 device 报错", async () => {
+    mockedAccess.mockReturnValue("control");
+    const client = fakeClient({ ok: true, audioDevice: "wasapi/{x}" });
+    mockedClient.mockReturnValue(client as unknown as NativeWindowsClient);
+    const result = await musicPlayTool.execute({ action: "audio-device", device: "wasapi/{x}" });
+    expect(result).toContain("wasapi/{x}");
+    expect(client.requestData).toHaveBeenCalledWith({ op: "music.audio-device", device: "wasapi/{x}" });
+    expect(await musicPlayTool.execute({ action: "audio-device" })).toContain("需要 device 参数");
+  });
 });
