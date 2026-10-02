@@ -40,12 +40,24 @@ export interface HarnessStepEnvironment {
   requestUserClarification?: HarnessInput["requestUserClarification"];
   includeInteractiveTools?: boolean;
   planState?: HarnessInput["planState"];
+  /**
+   * 每轮检查点旁路（workers 侧持久化用）：终态快照仍由 runner 捕获回传，
+   * 这里额外把每个检查点透传给任务/会话存储（崩溃恢复语义与直跑一致）。
+   */
+  onCheckpoint?: HarnessInput["onCheckpoint"];
   /** 覆盖 Harness 默认配置（并发/上下文窗口/超时等）。 */
   config?: Partial<HarnessConfig>;
 }
 
+/** 解析环境时可用的本 step 上下文（信号等）。 */
+export interface HarnessStepEnvironmentContext {
+  /** 本 step 的取消信号（host step.cancel / worker abort）。 */
+  signal: AbortSignal;
+}
+
 export type HarnessStepEnvironmentResolver = (
   step: OrchestratorStepFrame,
+  context: HarnessStepEnvironmentContext,
 ) => HarnessStepEnvironment | Promise<HarnessStepEnvironment>;
 
 /**
@@ -60,7 +72,7 @@ export function createHarnessStepRunner(
   return async function runHarnessStep(
     request: SessionStepExecutionRequest,
   ): Promise<SessionStepExecutionResult> {
-    const environment = await resolveEnvironment(request.step);
+    const environment = await resolveEnvironment(request.step, { signal: request.signal });
     // checkpoint 回调是活引用：先同步快照，再交给下一步；避免运行期继续变更。
     let messages: ChatMessage[] = request.messages;
     let state: AgentState | undefined = request.state;
@@ -81,6 +93,7 @@ export function createHarnessStepRunner(
         messages = checkpoint.messages;
         state = checkpoint.state;
         sawCheckpoint = true;
+        environment.onCheckpoint?.(checkpoint);
       },
       ...(environment.toolContext ? { toolContext: environment.toolContext } : {}),
       ...(environment.checkPermission ? { checkPermission: environment.checkPermission } : {}),

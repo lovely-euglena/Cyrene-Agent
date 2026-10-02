@@ -186,6 +186,10 @@ export class AgentOrchestratorClient {
       this.proc = null;
       this.starting = null;
       this.ready = null;
+      // host 已死：在途 step 的 AbortController 必须中止，否则本地 Harness 会
+      // 无人认领地继续跑（工具副作用/供应商请求泄漏）。
+      const aborted = this.worker.abortAll();
+      if (aborted > 0) this.log("warn", `host 退出：已中止 ${aborted} 个在途 step`);
       for (const [, pending] of this.pendingRequests) {
         clearTimeout(pending.timer);
         pending.reject(new Error(`agent-orchestrator 退出（code=${code}）`));

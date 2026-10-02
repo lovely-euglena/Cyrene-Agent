@@ -13,6 +13,7 @@ afterEach(() => {
 import { runCyreneHarness } from "../harness";
 import type { AgentState, HarnessInput, HarnessResult } from "../harness";
 import { createHarnessStepRunner } from "./step-runner";
+import type { HarnessStepEnvironmentContext } from "./step-runner";
 import type { OrchestratorStepFrame } from "./protocol";
 
 const VENDOR = { provider: "test", baseUrl: "http://x", model: "m", apiKey: "k" } as never;
@@ -104,5 +105,45 @@ describe("createHarnessStepRunner", () => {
     expect(input.systemPrompt).toBe("稳定前缀");
     expect(out.messages).toHaveLength(1);
     expect(out.state).toEqual(makeResult().finalState);
+  });
+
+  it("解析上下文带本 step 信号；环境 onCheckpoint 旁路逐检查点透传", async () => {
+    const contexts: HarnessStepEnvironmentContext[] = [];
+    const seenCheckpoints: unknown[] = [];
+    (runCyreneHarness as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: HarnessInput) => {
+      const state: AgentState = { todoItems: [], uncertainEffects: [] };
+      input.onCheckpoint?.({
+        messages: [...input.messages, { role: "assistant", content: "旁路" }],
+        state,
+        toolOutputs: [],
+        rounds: 1,
+        cache: { cacheEpoch: 1, epochReason: "run_start" },
+        at: 1,
+      });
+      return makeResult();
+    });
+    const runStep = createHarnessStepRunner((_step, context) => {
+      contexts.push(context);
+      return {
+        vendorConfig: VENDOR,
+        tools: [] as never,
+        promptLayers: { stablePrefix: "PERSONA" },
+        onCheckpoint: (checkpoint) => seenCheckpoints.push(checkpoint),
+      };
+    });
+    const signal = new AbortController().signal;
+
+    const out = await runStep({
+      step: makeStep(),
+      signal,
+      messages: [{ role: "user", content: "hi" }],
+      emit: vi.fn(),
+    });
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].signal).toBe(signal);
+    expect(seenCheckpoints).toHaveLength(1);
+    // 旁路不改变终态捕获：messages 仍含 checkpoint 追加的 assistant
+    expect(out.messages).toHaveLength(2);
   });
 });
