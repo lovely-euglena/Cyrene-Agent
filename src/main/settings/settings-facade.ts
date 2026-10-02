@@ -141,6 +141,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   screenshotBackend: "builtin",
   snipastePath: "",
   pandocPath: "",
+  wslEnabled: false,
+  wslDistro: "",
   tokenStatsEnabled: false,
   tokenStatsSource: "modelscope",
   musicFolders: [],
@@ -390,6 +392,8 @@ export function normalizeGeneralSettings(
     screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
     pandocPath: typeof input?.pandocPath === "string" ? input.pandocPath.trim() : "",
+    wslEnabled: Boolean(input?.wslEnabled),
+    wslDistro: typeof input?.wslDistro === "string" ? input.wslDistro.trim() : "",
     tokenStatsEnabled: Boolean(input?.tokenStatsEnabled),
     tokenStatsSource:
       input?.tokenStatsSource === "hf-mirror" || input?.tokenStatsSource === "huggingface"

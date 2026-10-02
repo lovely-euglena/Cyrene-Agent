@@ -218,6 +218,13 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** Pandoc.exe 路径；空字符串 = 自动探测 PATH（文档转换：docx/odt/rtf/epub 等） */
   pandocPath: string;
   /**
+   * 🐧 WSL 执行开关（默认关闭）：开启后 run_shell 可选择 shell="wsl" 在 Windows 上
+   * 已安装的 WSL 发行版内执行命令；关闭时不探测不 spawn（零开销）。
+   */
+  wslEnabled?: boolean;
+  /** 默认 WSL 发行版名；空字符串 = 使用 WSL 自身配置的默认发行版。 */
+  wslDistro?: string;
+  /**
    * 精确 token 统计（默认关闭）：开启后由 .NET cyrene-token 宿主按模型官方
    * tokenizer 精确计数（含上下文用量环），词表按需从 ModelScope/HF 下载并缓存；
    * 关闭、模型无词表或下载失败时回退现有启发式估算，不影响对话。

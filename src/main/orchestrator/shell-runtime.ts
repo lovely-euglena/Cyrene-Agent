@@ -2,17 +2,26 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 
-export type ShellKind = "cmd" | "bash";
+export type ShellKind = "cmd" | "bash" | "wsl";
+
+/** 本机解析出的解释器种类（cmd/bash）；WSL 走独立的 resolveWslExecutable。 */
+export type NativeShellKind = "cmd" | "bash";
 
 export interface ResolvedShellExecutable {
   kind: ShellKind;
   executable: string;
+  /** WSL 发行版名；kind==="wsl" 时有效（null = 使用 WSL 默认发行版） */
+  distro?: string | null;
 }
 
 export function buildDirectShellInvocation(
   shell: ResolvedShellExecutable,
   command: string,
 ): { command: string; args: string[]; windowsVerbatimArguments: boolean } {
+  if (shell.kind === "wsl") {
+    // WSL 调用必须经 buildWslInvocation 构造（含发行版与 cwd 换算），避免误回落 cmd。
+    throw new Error("WSL invocation must be built via buildWslInvocation");
+  }
   if (shell.kind === "bash") {
     return {
       command: shell.executable,
@@ -27,7 +36,7 @@ export function buildDirectShellInvocation(
   };
 }
 
-export async function resolveShellExecutable(kind: ShellKind): Promise<ResolvedShellExecutable | null> {
+export async function resolveShellExecutable(kind: NativeShellKind): Promise<ResolvedShellExecutable | null> {
   if (kind === "cmd") {
     return { kind, executable: process.env.ComSpec || "cmd.exe" };
   }
