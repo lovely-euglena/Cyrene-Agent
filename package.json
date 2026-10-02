@@ -2,6 +2,12 @@
   "name": "cyrene-agent",
   "productName": "Cyrene",
   "version": "1.3.0",
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "overrides": {
+      "rxjs": "7.8.1"
+    }
+  },
   "description": "Live2D desktop pet — Cyrene",
   "main": "dist/main/main/index.js",
   "bin": {
@@ -19,7 +25,7 @@
     "build:cli": "node scripts/build/cli.mjs",
     "build:screenshot-helper": "node scripts/build/screenshot-helper.mjs",
     "verify:screenshot-helper": "node scripts/verify/screenshot-helper.mjs resources/bin/cyrene-screenshot.exe",
-    "build": "npm run build:main && npm run build:preload && npm run build:cli && npm run build:renderer",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:cli && pnpm run build:renderer",
     "prepare:mingit": "node scripts/packaging/prepare-mingit.mjs",
     "prepare:mpv": "node scripts/packaging/prepare-mpv.mjs",
     "prepare:skills": "node scripts/packaging/build-skills-snapshot.mjs",
@@ -27,12 +33,12 @@
     "verify:installer": "node scripts/verify/installer-artifacts.mjs",
     "seed:usage": "node scripts/seed-usage-stats.mjs",
     "build:music-component": "node scripts/packaging/build-music-component.mjs",
-    "package:win:dir": "npm run build && npm run build:screenshot-helper && npm run prepare:mingit && npm run prepare:mpv && electron-builder --win --dir",
-    "dev": "npm run build:main && npm run build:preload && npm run build:cli && concurrently \"vite --strictPort\" \"cross-env VITE_DEV=1 electron .\"",
+    "package:win:dir": "pnpm run build && pnpm run build:screenshot-helper && pnpm run prepare:mingit && pnpm run prepare:mpv && electron-builder --win --dir",
+    "dev": "pnpm run build:main && pnpm run build:preload && pnpm run build:cli && concurrently \"vite --strictPort\" \"cross-env VITE_DEV=1 electron .\"",
     "start": "electron .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke:music": "npm run build:main && node scripts/verify/music-smoke.mjs",
+    "smoke:music": "pnpm run build:main && node scripts/verify/music-smoke.mjs",
     "build:sim": "tsc -p tsconfig.sim.json",
     "sim": "tsc -p tsconfig.sim.json && node dist/sim/main/sim/dmae-sim.js",
     "sim:coffee": "tsc -p tsconfig.sim.json && node dist/sim/main/sim/dmae-sim.js --scenario=coffee",
@@ -46,6 +52,7 @@
   },
   "engines": {
     "node": ">=24 <25",
+    "pnpm": ">=10.33.0",
     "npm": ">=10"
   },
   "devDependencies": {
@@ -159,13 +166,5 @@
     "wink-bm25-text-search": "^3.1.2",
     "ws": "^8.21.0",
     "yaml": "^2.9.0"
-  },
-  "allowScripts": {
-    "protobufjs@7.6.4": true,
-    "protobufjs@6.11.6": true,
-    "electron@43.1.0": true,
-    "esbuild@0.21.5": true,
-    "sharp@0.32.6": true,
-    "tree-sitter@0.22.4": true
   }
 }

@@ -97,7 +97,7 @@ CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、
 ### 前置条件
 
 - **Windows 10 / 11 64 位**
-- **Node.js 24 LTS**（npm 10+）
+- **Node.js 24 LTS**、**pnpm 10.33.0**（首次可运行 `npm install --global pnpm@10.33.0` 安装）
 - **[Rust stable](https://www.rust-lang.org/tools/install)** + **[Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)**（源码构建截图功能必需；Build Tools 勾选「使用 C++ 的桌面开发」工作负载即可）
 
 > 飞书、微信 iLink、`nut-js` 键鼠自动化及原生截图功能依赖 Windows 环境。
@@ -110,7 +110,7 @@ CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、
 git clone https://github.com/Playa-Cyrene/Cyrene-Agent.git
 # 或 Gitee（国内镜像）：git clone https://gitee.com/playa0/cyrene-agent.git
 cd Cyrene-Agent
-npm ci
+pnpm install --frozen-lockfile
 ```
 
 首次安装会下载 Electron、Pixi.js、Live2D 等相关依赖，具体耗时取决于网络环境。
@@ -120,28 +120,28 @@ npm ci
 首次从源码运行时，需要先构建 Rust 原生截图助手：
 
 ```bash
-npm run build:screenshot-helper
-npm run build
-npm start
+pnpm run build:screenshot-helper
+pnpm run build
+pnpm start
 ```
 
 > [!IMPORTANT]
 >
-> 原生截图助手不会以 `.exe` 形式提交到 Git 仓库，因此首次克隆后必须执行一次 `npm run build:screenshot-helper`。
+> 原生截图助手不会以 `.exe` 形式提交到 Git 仓库，因此首次克隆后必须执行一次 `pnpm run build:screenshot-helper`。
 >
-> **Windows 用户**也可以直接双击项目根目录的 `setup.bat` 完成依赖安装、构建和 `npm link`，之后双击 `start.bat` 即可启动。
+> **Windows 用户**也可以直接双击项目根目录的 `setup.bat` 完成依赖安装、构建和全局命令链接，之后双击 `start.bat` 即可启动。运行前需安装 pnpm 10.33.0。
 
 开发模式：
 
 ```bash
-npm run build:screenshot-helper
-npm run dev
+pnpm run build:screenshot-helper
+pnpm run dev
 ```
 
 构建 Windows 可分发版本（自动构建 Electron 应用和 Rust 截图助手）：
 
 ```bash
-npm run package:win:dir
+pnpm run package:win:dir
 ```
 
 ### 3. 安装 BGE-M3（推荐）
@@ -156,9 +156,9 @@ Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 
 
 ### 4. 命令行入口（可选）
 
-项目附带 `cyrene` 命令行入口，执行 `npm run build:cli && npm link` 后即可在任意目录使用，提供 `version`、`run` 等子命令，详见 `cyrene --help`。
+项目附带 `cyrene` 命令行入口，执行 `pnpm run build:cli && pnpm link --global` 后即可在任意目录使用，提供 `version`、`run` 等子命令，详见 `cyrene --help`。
 
-> `npm run build` 已包含 `build:cli`，但 `npm link` 仍需单独运行。正式安装版的 `cyrene desktop` 入口将在 1.x 提供。
+> `pnpm run build` 已包含 `build:cli`，但 `pnpm link --global` 仍需单独运行。正式安装版的 `cyrene desktop` 入口将在 1.x 提供。
 
 ---
 
@@ -386,13 +386,13 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 #### 🧪 单元测试
 
 - Vitest 5 覆盖 asr / tts / channels / chats / memory / orchestrator / plugins / rag / skills 等核心模块。
-- `npm test` 一次性 / `npm run test:watch` 监听模式。
-- 插件开发：`npm run check:plugin-sdk` 校验 SDK 打包，`npm run test:plugin-examples` 端到端验证官方示例。
+- `pnpm test` 一次性 / `pnpm run test:watch` 监听模式。
+- 插件开发：`pnpm run check:plugin-sdk` 校验 SDK 打包，`pnpm run test:plugin-examples` 端到端验证官方示例。
 
 #### 🎬 场景模拟
 
-- `npm run sim` 默认场景，`sim:coffee` / `sim:mix` / `sim:rescue` 单场景调试，产物输出到 `sim-result/`。
-- `npm run sim:sweep --rewardGain=3,5,7,10` 跑 Worldbook 评分参数 sweep。
+- `pnpm run sim` 默认场景，`sim:coffee` / `sim:mix` / `sim:rescue` 单场景调试，产物输出到 `sim-result/`。
+- `pnpm run sim:sweep --rewardGain=3,5,7,10` 跑 Worldbook 评分参数 sweep。
 
 </details>
 
