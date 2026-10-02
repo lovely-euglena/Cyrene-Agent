@@ -9,7 +9,7 @@
 **This fork (community continuation)**: [Gitee](https://gitee.com/ygwill/cyrene-agent) ・
 **Upstream**: [Gitee](https://gitee.com/playa0/cyrene-agent) / [GitHub](https://github.com/Playa-0v0/Cyrene-Agent)
 
-> 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)** and **.NET desktop architecture** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. Details in the [Chinese README](./README.md) and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
+> 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)** and **.NET desktop architecture** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. See **Fork Enhancements** below and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
 
 > ⚠️ **Temporary notice (2026-09-13)**: The upstream GitHub account is temporarily suspended and under appeal; please clone from a Gitee mirror in the meantime.
 </div>
@@ -39,6 +39,22 @@
 - 🧩 **Plugin System** — Local plugin packages extend AI tools, chat channels, custom windows, and voice input, with an npm SDK and development guide
 - 📱 **Multi-Platform Access** — Desktop, Feishu/Lark, WeChat iLink, and QQ through NapCat/OneBot 11, sharing character capabilities and conversation experience
 - 🌙 **Proactive Chat** — Starts conversations according to time, status, and user preferences, with targeted multi-channel delivery
+
+### 🚀 Fork Enhancements (v2.0.0 line)
+
+- 🪟 **.NET native windows** — splash / sidebar / schedule / settings windows are rendered by `cyrene-native` (WPF + WinForms, .NET 10) instead of the corresponding Chromium renderers, significantly reducing resident memory; the Electron path remains as a fallback
+- 🧱 **Detached tray** — a standalone `cyrene-native --tray` process (~20MB) stays resident while the Electron app starts on demand; when all windows are closed, only the tray remains
+- ⚙️ **Seven-host .NET backend** — built-in tools / RAG (SQLite WAL + jieba BM25 hybrid retrieval) / memory tables / agent sessions (multi-round tool loop) / conversation loop / MCP connections / voice (CyreneVoice) run as child-process hosts of `cyrene-native` over a stdio JSON-lines protocol, with dual-track switches for a full fallback to the TS path (see [docs/dotnet-backend.md](./docs/dotnet-backend.md))
+- 🧪 **Measured quality chain** — five Linux-side smoke suites with 96+ green tests (frame ordering / edge injection / tool matrix / agent loop / IPC stress) plus a calculator dual-track numeric equivalence diff
+- 🛡️ **Defense in depth** — MCP HTTP Host-header allowlist (DNS rebinding protection), .NET plugin risk gate (undeclared tools are refused), tool allowlist interception on the main path, screenshot helper idle self-termination + lazy prewarm
+- ⚡ **100ms batched token streaming** — AGUI stream events are batched per messageId; pushing pauses while the window is hidden
+- 🐈 **Lazy chat window** — the chat page is not preloaded at startup and opens on first activation
+- 🐹 **Desktop-pet memory governance** — Live2D idle throttling tiers (60→24→12fps) and DPI-independent drag calibration
+- 🎯 **DeepSeek V4.1 Flash support** — new `deepseek-flash` id plus legacy id compatibility (pricing checked against the official page)
+- 🎵 **Local music player** — native music window (`cyrene-native`, bundled mpv): local library / playlists / search and output-device switching; agents use `music_*` tools governed by an access tier — no NetEase account required
+- 🖼️ **Local OCR** — bundled `CyreneOcr` sidecar (Windows.Media.Ocr) recognizes image text offline with language tags and optional coordinates
+- 🧮 **Accurate token statistics** — bundled .NET tokenizer module counts tokens exactly for DeepSeek / GLM / MiniMax / Qwen (estimation fallback for others), powering the context-usage ring
+- 📤 **Chat export** — export conversations from the sidebar context menu (search / multi-select; HTML + Markdown)
 
 ## 📚 Documentation
 
@@ -187,7 +203,7 @@ After starting the application, **click the system tray icon → Open Settings**
 
 4. **📱 External Channels** (optional): Connect Feishu or WeChat iLink to chat with Cyrene from your phone.
 
-5. **🎵 Music** (optional): Configure NetEase Cloud Music OpenAPI credentials to enable music tools; the player is bundled, no NetEase desktop client required.
+5. **🎵 Music** (optional): Add local music folders in the music window to build your library; the player and mpv are bundled — no online account or NetEase desktop client required.
 
 Configuration is stored in the application's `<userData>/` directory. Most changes do not require a restart.
 
@@ -241,11 +257,10 @@ Credentials for the LLM, separate vision model, ASR, TTS, and other third-party 
 - `<userData>/weixin/credentials.json`: WeChat iLink Bot credentials (plaintext)
 - `<userData>/mcp-servers.json`: MCP Server configuration, including `env` environment variables (plaintext)
 - `<userData>/channels-settings.json`: Channel settings; Feishu `appSecret` and QQ `accessToken` use `safeStorage`
-- `<userData>/music/netease/account.enc`: NetEase Cloud Music login cookie (`safeStorage` encrypted)
 
 Most credentials are currently stored as plaintext local files and are primarily protected by operating-system permissions on the user data directory.
 
-Feishu channel credentials and the NetEase Cloud Music login cookie are encrypted with Electron `safeStorage`:
+Feishu channel credentials are encrypted with Electron `safeStorage`:
 
 - Windows: DPAPI
 - macOS: Keychain
@@ -262,7 +277,6 @@ To clear credentials and application configuration, delete the following files a
 <userData>/weixin/credentials.json
 <userData>/mcp-servers.json
 <userData>/channels-settings.json
-<userData>/music/netease/account.enc
 ```
 
 ### Can It Run on macOS or Linux?
@@ -420,11 +434,10 @@ The session modes below are consumers of the CyreneHarness core engine:
 
 <img src="./docs/image/music.png" alt="Cyrene Music player" width="800">
 
-- **Cyrene Music Window** — A dedicated built-in "Cyrene Music" player supporting playlist tabs, local caching, and playlist management.
-- **NetEase Cloud Music Source** — Powered by the self-developed `NeteaseOpenapiProvider` calling the NetEase OpenAPI for song / artist / album search, daily recommendations, playlists, and favorites.
-- **Bundled mpv Playback** — Controlled by `MpvController` driving the bundled mpv process for load, play, pause, seek, volume, and stop, without launching any external client.
-- **Tool Chaining** — In `Work / Learn` modes, music tools can combine with others (web search, files, documents) to complete flows like "search → add to playlist → play".
-- **Lazy Start with Graceful Degradation** — The music backend only establishes a network session on the first real music operation; a missing mpv never affects chat or other core features.
+- **Local library player** — the native "Cyrene Music" window (`cyrene-native`) manages a local library: add music folders (multiple roots), local playlists, and search (song / artist / album) without relying on any online music service.
+- **Bundled mpv Playback** — the native `MpvController` drives the bundled mpv process for play / pause / seek / volume / stop plus audio-output-device switching, without launching any external client.
+- **Agent music tools (access tiers)** — `music_library` / `music_now_playing` / `music_play` / `music_manage`, governed by the music access tier (off / read / control / manage); file operations such as tag writing additionally pass the global fs-write gate.
+- **Lazy Start with Graceful Degradation** — the player starts on demand with the music window; a missing mpv never affects chat or other core features.
 
 #### 🧠 Personalized Memory
 
@@ -449,7 +462,7 @@ Cyrene includes many built-in and extensible tools, primarily covering the follo
 - **Web Capabilities** — Web search, webpage reading, content extraction, and information organization.
 - **File Processing** — Read, write, and browse local files, as well as interpret images.
 - **Everyday Services** — Weather, maps, translation, currency conversion, bookkeeping, trip planning, and more.
-- **Music** — Search for songs, retrieve recommendations, and play through the bundled player.
+- **Music** — Browse the local library, control playback, and switch output devices (agents use the access-tiered `music_*` tools).
 - **Task Collaboration** — Task lists, user-choice cards, task delegation, and subtask handling.
 - **MCP Extensions** — Connect additional external tools and services through the Model Context Protocol.
 
@@ -573,7 +586,7 @@ src/
 │   ├── code-git/      # Git service for Code mode (status / commit / branch / push)
 │   ├── learn/         # Learn mode (Obsidian Vault binding + progress overview)
 │   ├── tasks/         # Task panel (task execution / delegation / sub-Agent runtime)
-│   ├── music/         # Music companion (playback / recommendations / sessions)
+│   ├── music/         # Local music (library / playback / agent tool tiers)
 │   ├── moments/       # Moments / social feed
 │   ├── news/          # Announcement messages
 │   ├── permission/    # Permission approval (checkPermission / risk levels)
