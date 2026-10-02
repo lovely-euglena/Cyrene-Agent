@@ -34,7 +34,7 @@ import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
 import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
-import { discoverWsl } from "../orchestrator/wsl-runtime";
+import { discoverWsl, restartWsl } from "../orchestrator/wsl-runtime";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -254,6 +254,10 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const discovery = await discoverWsl();
     return { executable: discovery.executable, distros: discovery.distros };
   });
+
+  // WSL：设置页「重启 WSL」（wsl --shutdown）。由用户 UI 显式触发，用于让 Windows 侧
+  // 分区/盘符变更后的 drvfs 挂载刷新；AI 侧 run_shell 仍禁止该管理操作。
+  ipc.handle(IPC.SETTINGS_WSL_SHUTDOWN, () => restartWsl());
 
   // TTS 面板调用的通用设置读写入口（历史命名遗留）
   ipc.handle(IPC.TTS_LOAD_SETTINGS, () => getGeneralSettings());

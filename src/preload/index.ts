@@ -415,6 +415,8 @@ const settingsApi = {
   detectPandoc: (pandocPath?: string) => ipcRenderer.invoke(IPC.SETTINGS_PANDOC_DETECT, pandocPath ?? ""),
   // WSL：设置页探测本机 wsl.exe 与已安装发行版（只读）
   detectWsl: () => ipcRenderer.invoke(IPC.SETTINGS_WSL_DETECT) as Promise<{ executable: string | null; distros: string[] }>,
+  // WSL：设置页「重启 WSL」（wsl --shutdown，仅用户 UI 触发）
+  restartWsl: () => ipcRenderer.invoke(IPC.SETTINGS_WSL_SHUTDOWN) as Promise<{ ok: boolean; error?: string }>,
   // 云存储：设置页档案管理（连接/凭据在 cyrene-native --storage-host）
   cloudStorageProfiles: () => ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILES_LIST) as Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>,
   cloudStorageSaveProfile: (profile: Record<string, unknown>) =>
