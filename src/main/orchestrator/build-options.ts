@@ -1,7 +1,7 @@
 // buildAgentRunOptions —— 把 AG-UI 桥的 buildOptions 闭包抽成纯函数。
 //
 // 设计原则：
-//   - 函数无模块级状态；所有 index.ts 模块级符号（runtimeState, stickerEmbeddingIndex 等）
+//   - 函数无模块级状态；所有 index.ts 模块级符号（runtimeState, stickerTextIndex 等）
 //     通过 deps 参数注入。
 //   - 函数无副作用（不算 console.warn）；副作用（记忆写入/sticker 广播）由 onRunFinished
 //     单独做，注入到同一个 deps 里。
@@ -15,9 +15,9 @@
 //   buildSystemPrompt / CHAT_REQUEST_TIMEOUT_MS
 //   normalizeChatMessages / buildAlwaysOnContext / ToolDefinition
 //   scheduleMemoryWrite / inferRuntimeState / runtimeState / feelingToExpression
-//   matchSticker / stickerEmbeddingIndex / getEmbeddingProvider / loadStickerSettings
+//   matchSticker / stickerTextIndex / loadStickerSettings
 //   broadcastRuntimeStateChanged / observeRuntimeState
-//   sticker 文本预处理 / stickerEmbeddingIndex / getEmbeddingProvider / loadStickerSettings
+//   sticker 文本预处理 / stickerTextIndex / loadStickerSettings
 //
 // 这些全部塞到 BuildOptionsDeps 里。dispatcher / agent-runtime 通过
 // buildBuildOptionsDeps()（agent-runtime.ts）注入同一份 deps，保证口径一致。
@@ -59,7 +59,8 @@ import type { ConversationMode } from "../../shared/chat-types";
 import type { SkillRouteInfo } from "./cyrene-agent";
 import { filterToolsBySearchBackend, type SearchBackend } from "./search-backend-filter";
 import type { RunCapabilities } from "./run-capabilities";
-import { buildStickerEmbeddingQuery } from "../sticker-query";
+import { buildStickerMatchQuery } from "../sticker-query";
+import type { StickerTextEntry } from "../sticker-text-matcher";
 import { isPlanReadOnly, getPlanState } from "./plan-mode";
 import { policyFor, type ToolRiskLevel } from "../permission-policy";
 import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
@@ -195,15 +196,13 @@ export interface OnRunFinishedDeps {
   };
   feelingToExpression: Record<string, number>;
   setRuntimeState: (next: { status?: string; expression?: number; updatedAt?: number; feeling?: string }) => void;
-  stickerEmbeddingIndex: unknown;
-  getStickerEmbeddingIndex?: () => unknown;
-  getEmbeddingProvider: () => unknown;
+  stickerTextIndex: readonly StickerTextEntry[];
+  getStickerTextIndex?: () => readonly StickerTextEntry[];
   matchSticker: (
     text: string,
-    provider: unknown,
-    index: unknown,
+    index: readonly StickerTextEntry[],
     threshold: number,
-  ) => Promise<{ id: string } | null | undefined>;
+  ) => { id: string } | null | undefined;
   loadStickerSettings: () => Record<string, boolean>;
   broadcastRuntimeStateChanged: () => void;
   observeRuntimeState: (
@@ -1157,23 +1156,22 @@ export async function onAgentRunFinished(
     });
   });
 
-  const stickerIndex = deps.getStickerEmbeddingIndex?.() ?? deps.stickerEmbeddingIndex;
-  const stickerQuery = buildStickerEmbeddingQuery(chatContent, sideEffectUserText);
-  let stickerCandidate: string | null = null;
-  // 只有代码/公式时 stickerQuery 为空：不请求 embedding，避免技术内容误触发表情。
-  if (settings.stickerEnabled && stickerIndex && stickerQuery) {
-    const matched = await perf.track("match_sticker", () =>
-      deps.matchSticker(
-        stickerQuery,
-        deps.getEmbeddingProvider(),
-        stickerIndex,
-        settings.stickerSimilarityThreshold ?? 0.55,
-      ),
-    );
-    stickerCandidate = matched?.id ?? null;
-  }
   const stickerSettings = deps.loadStickerSettings();
-  const sticker = stickerCandidate && stickerSettings[stickerCandidate] !== false ? stickerCandidate : null;
+  const stickerIndex = deps.getStickerTextIndex?.() ?? deps.stickerTextIndex;
+  const enabledStickerIndex = stickerIndex.filter((entry) => stickerSettings[entry.id] !== false);
+  const stickerQuery = buildStickerMatchQuery(chatContent, sideEffectUserText);
+  let sticker: string | null = null;
+  // 只有代码/公式时查询为空，避免技术内容误触发表情。
+  if (settings.stickerEnabled && enabledStickerIndex.length > 0 && stickerQuery) {
+    const matched = await perf.track("match_sticker", () =>
+      Promise.resolve(deps.matchSticker(
+        stickerQuery,
+        enabledStickerIndex,
+        settings.stickerSimilarityThreshold ?? 0.55,
+      )),
+    );
+    sticker = matched?.id ?? null;
+  }
 
   if (settings.runtimeSync === "local") {
     deps.broadcastRuntimeStateChanged();

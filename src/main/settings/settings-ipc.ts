@@ -9,7 +9,6 @@ import {
   reactChatWindow,
 } from "../windows/window-state";
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
-import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus } from "../rag/reranker";
 import { switchEmbeddingModel } from "../rag";
 import { testVendorConnection } from "../orchestrator/vendors/test-connection";
@@ -31,7 +30,6 @@ export interface SettingsIpcDependencies {
   runtimeStateService: RuntimeStateService;
   proactiveLifecycle: { getProactiveChatService: () => { invalidate: () => void } | null };
   reconcileUserMemoryIndex: () => Promise<void>;
-  embeddingIndexService: EmbeddingIndexService;
   syncVolcanoSearchMcp: typeof syncVolcanoSearchMcp;
   syncPlaywrightMcp: typeof syncPlaywrightMcp;
   syncFilesystemMcp: typeof syncFilesystemMcp;
@@ -52,7 +50,6 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     runtimeStateService,
     proactiveLifecycle,
     reconcileUserMemoryIndex,
-    embeddingIndexService,
     syncVolcanoSearchMcp,
     syncPlaywrightMcp,
     syncFilesystemMcp,
@@ -241,8 +238,6 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
         await reconcileUserMemoryIndex();
         saveModelSettings({ embeddingModel: "bgem3" });
         broadcastModelConfigChanged();
-        embeddingIndexService.invalidateStickerEmbeddingIndex();
-        embeddingIndexService.refreshStickerEmbeddingIndex("embedding-model-switch");
       }
       return result;
     } catch (err) {

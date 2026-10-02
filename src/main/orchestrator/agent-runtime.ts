@@ -15,7 +15,8 @@ import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
 import { buildEnvironmentContext } from "./environment";
 import { buildToneInjection } from "./tone-injector";
 import { buildAlwaysOnContext, scheduleMemoryWrite } from "./index";
-import { matchSticker } from "../sticker-embedder";
+import { matchSticker } from "../sticker-text-matcher";
+import type { StickerTextEntry } from "../sticker-text-matcher";
 import { buildRelationshipContext, recordRelationshipTurn } from "../relationship/relationship-log";
 import { compileSocialContextBlock } from "../social-context/context";
 import * as momentsStore from "../moments/moments-store";
@@ -84,8 +85,7 @@ export interface AgentRuntimeDeps {
     getEnabledToolsForMode: (mode: ConversationMode, overrides?: ToolModeOverrides) => ToolDefinition[];
   };
   skillRegistry: typeof skillRegistry;
-  getStickerEmbeddingIndex: () => unknown;
-  getEmbeddingProvider: () => unknown;
+  getStickerTextIndex: () => readonly StickerTextEntry[];
   broadcastRuntimeStateChanged: () => void;
   citaService: CitaService;
   socialContextScheduler: { schedule: (input: SocialExtractionInput) => void };
@@ -266,12 +266,8 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       feelingToExpression,
       setRuntimeState: ((next) =>
         runtimeStateService.setStateWithoutNotify(next as any)) as OnRunFinishedDeps["setRuntimeState"],
-      stickerEmbeddingIndex: rawDeps.getStickerEmbeddingIndex(),
-      getEmbeddingProvider: (() => rawDeps.getEmbeddingProvider() as unknown) as OnRunFinishedDeps["getEmbeddingProvider"],
-      matchSticker: ((text, provider, index, threshold) =>
-        matchSticker(text, provider as any, index as any, threshold) as Promise<{
-          id: string;
-        } | null | undefined>) as OnRunFinishedDeps["matchSticker"],
+      stickerTextIndex: rawDeps.getStickerTextIndex(),
+      matchSticker,
       loadStickerSettings,
       broadcastRuntimeStateChanged: rawDeps.broadcastRuntimeStateChanged,
       observeRuntimeState: ((settings, history, userText, reply) =>

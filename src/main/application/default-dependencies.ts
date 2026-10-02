@@ -45,8 +45,7 @@ import {
 import { registerMemoryUserToolIpc } from "../memory/memory-user-ipc";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
-import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
-import { momentsService, registerMomentsMediaMatcher } from "../moments/moments-service";
+import { momentsService } from "../moments/moments-service";
 import {
   addL2MemoryVector,
   deleteUserMemoryVectors,
@@ -56,7 +55,7 @@ import {
   initRAG,
   isUserMemoryVectorStoreReady,
 } from "../rag";
-import { getEmbeddingProvider } from "../rag/embedding";
+import { clearLegacyStickerEmbeddingCache, loadStickerTextIndex } from "../sticker-text-matcher";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { PluginManager } from "../../plugins/manager";
@@ -340,11 +339,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         const llmClient = createLlmClient();
         const ttsSynthesisService = createTtsSynthesisService();
-        const embeddingIndexService = createEmbeddingIndexService();
-        // Moments 配图：贴图 embedding 索引 getter 晚绑定给 moments-service 模块单例（索引未就绪时纯文字降级）
-        registerMomentsMediaMatcher({
-          getStickerIndex: () => embeddingIndexService.getStickerEmbeddingIndex(),
-        });
+        clearLegacyStickerEmbeddingCache(app.getPath("userData"));
         const citaService = createCitaService({ llmClient });
         const socialContextService = createSocialContextService({ llmClient, enqueueLLMTask });
         const proactiveLifecycle = createProactiveLifecycle({
@@ -442,7 +437,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           social: socialContextService,
           tts: ttsSynthesisService,
           ttsSession: ttsSessionService,
-          embedding: embeddingIndexService,
           proactive: proactiveLifecycle,
           git,
           lsp,
@@ -510,8 +504,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           loadUserProfile,
           toolRegistry,
           skillRegistry,
-          getStickerEmbeddingIndex: () => services.embedding.getStickerEmbeddingIndex(),
-          getEmbeddingProvider,
+          getStickerTextIndex: loadStickerTextIndex,
           broadcastRuntimeStateChanged: () => {
             broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, services.runtimeState.getState());
           },
@@ -591,7 +584,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           runtimeStateService: services.runtimeState,
           proactiveLifecycle: services.proactive,
           reconcileUserMemoryIndex,
-          embeddingIndexService: services.embedding,
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
           syncFilesystemMcp,
@@ -603,7 +595,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerMemoryUserToolIpc({
           ipc,
           windowManager: shell.windowManager,
-          embeddingIndexService: services.embedding,
         });
 
         // ── TTS IPC ──
@@ -778,9 +769,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           console.warn("[Memory/RAG] startup reconciliation failed:", err);
           throw err;
         }
-      },
-      scheduleEmbeddingRefresh: async () => {
-        core.services.embedding.scheduleStartupRefreshes();
       },
       initializeReranker: async () => {
         // initReranker 内部检测模型是否安装，未安装自动降级为 none
