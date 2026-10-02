@@ -98,6 +98,16 @@ public static class MusicSelfTest
             Check("文件夹统计", folders.Count == 1 && folders[0].TrackCount == 1);
 
             Check("取消扫描即时返回", library.Scan(new[] { musicDir }, () => true).Total == 1);
+
+            // 中途取消必须整笔回滚：不把已处理曲目误删、也不写入半成品
+            var beforeMidCancel = library.Count();
+            var cancelCalls = 0;
+            var midCancel = library.Scan(new[] { musicDir }, () => ++cancelCalls > 1);
+            Check("扫描中途取消回滚不误删", midCancel.Total == beforeMidCancel && library.Count() == beforeMidCancel);
+
+            // 目录被移除/不再存在：残留曲目应被清理，而不是永久留在库里
+            var purged = library.Scan(Array.Empty<string>(), () => false);
+            Check("移除目录后清理残留曲目", purged.Removed == 1 && purged.Total == 0 && library.Count() == 0);
         }
         finally
         {
