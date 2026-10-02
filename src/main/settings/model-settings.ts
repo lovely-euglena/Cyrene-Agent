@@ -15,7 +15,7 @@ import {
   type SessionModelBindingInput,
 } from "../../shared/session-model";
 import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type SavedModelProfile } from "./model-catalog";
-import type { MemoryMode } from "../memory/memory-mode";
+import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
 
 /**
  * 统一模型配置入口：所有模块（包括 Code 模式）必须通过此函数读取。
@@ -426,7 +426,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
     modelProfiles,
     defaultModelProfileId: typeof input?.defaultModelProfileId === "string" ? input.defaultModelProfileId : modelProfiles[0]?.id,
     runtimeSync: input?.runtimeSync === "llm" ? "llm" : input?.runtimeSync === "local" ? "local" : "off",
-    memoryMode: input?.memoryMode === "summary" ? "summary" : input?.memoryMode === "off" ? "off" : "vector",
+    memoryMode: normalizeMemoryMode(input?.memoryMode),
     stickerEnabled: input?.stickerEnabled !== false,
     stickerSize: input?.stickerSize === "small" || input?.stickerSize === "large" ? input.stickerSize : "standard",
     stickerSimilarityThreshold: typeof input?.stickerSimilarityThreshold === "number"

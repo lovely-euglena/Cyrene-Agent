@@ -111,7 +111,7 @@ interface SettingsWindowApi {
   deleteModelProfile: (id: string) => Promise<unknown>;
   setDefaultModelProfile: (id: string) => Promise<unknown>;
   getConfig: () => Promise<{
-    memoryMode?: "vector" | "summary" | "off";
+    memoryMode?: "vector" | "summary" | "wiki" | "off";
     vision?: { baseUrl: string; apiKey: string; model: string };
     thinkingOverride?: -1 | 0 | 1;
     disableMaxToken?: boolean;

@@ -3,11 +3,12 @@ import { Alert, Button, Empty, Input, Radio, Spin } from "antd";
 import { Brain, Clock3, FileSearch, History, Pencil } from "lucide-react";
 import { siObsidian } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
-import type { MemoryPanelPayload, MemorySummaryPayload, ObsidianVaultConfig } from "../../../settings/shared/types";
+import type { MemoryPanelPayload, MemorySummaryPayload, ModelSettings, ObsidianVaultConfig } from "../../../settings/shared/types";
 import { formatDateTime } from "../../../settings/shared/format";
 import { useTranslation } from "../../i18n";
 import { SettingsInput, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { Card } from "../../components/ui/Card";
+import { WikiKnowledgePanel } from "./WikiKnowledgePanel";
 
 type L0 = MemoryPanelPayload["l0"];
 type L1 = MemoryPanelPayload["l1"];
@@ -19,7 +20,7 @@ export function MemorySettingsPanel() {
   const [vault, setVault] = useState<ObsidianVaultConfig | null>(null);
   const [draftL0, setDraftL0] = useState<L0 | null>(null);
   const [draftL1, setDraftL1] = useState<L1 | null>(null);
-  const [memoryMode, setMemoryMode] = useState<"vector" | "summary" | "off">("vector");
+  const [memoryMode, setMemoryMode] = useState<ModelSettings["memoryMode"]>("vector");
   const [summaryMemory, setSummaryMemory] = useState<MemorySummaryPayload | null>(null);
   const [modeLoading, setModeLoading] = useState(true);
   const [editing, setEditing] = useState<"l0" | "l1" | null>(null);
@@ -63,7 +64,10 @@ export function MemorySettingsPanel() {
         setDraftL1({ ...memoryResult.value.l1 });
       } else setNotice({ type: "error", text: t("settingsPage.memory.loadFailed") });
       if (vaultResult.status === "fulfilled") setVault(vaultResult.value);
-      if (settingsResult.status === "fulfilled") setMemoryMode(settingsResult.value.memoryMode === "summary" ? "summary" : settingsResult.value.memoryMode === "off" ? "off" : "vector");
+      if (settingsResult.status === "fulfilled") {
+        const mode = settingsResult.value.memoryMode;
+        setMemoryMode(mode === "summary" || mode === "wiki" || mode === "off" ? mode : "vector");
+      }
       else setNotice({ type: "error", text: t("settingsPage.memory.modeLoadFailed") });
       if (summaryResult.status === "fulfilled") setSummaryMemory(summaryResult.value);
       setModeLoading(false);
@@ -72,20 +76,18 @@ export function MemorySettingsPanel() {
     return () => { active = false; };
   }, [t]);
 
-  async function changeMemoryMode(mode: "vector" | "summary" | "off") {
+  async function changeMemoryMode(mode: ModelSettings["memoryMode"]) {
     const api = window.settings;
     if (!api || modeLoading || modeSaving) return;
-    const previous = memoryMode;
-    setMemoryMode(mode);
     setModeSaving(true);
     setNotice(null);
     try {
       await api.saveConfig({ memoryMode: mode });
+      setMemoryMode(mode);
       if (mode === "summary") await reloadSummaryMemory();
       else setSummaryMemory(null);
       setNotice({ type: "success", text: t("settingsPage.memory.saved") });
     } catch {
-      setMemoryMode(previous);
       setNotice({ type: "error", text: t("settingsPage.memory.saveFailed") });
     } finally { setModeSaving(false); }
   }
@@ -164,9 +166,10 @@ export function MemorySettingsPanel() {
     {notice && <Alert className="cy-settings-alert" showIcon type={notice.type} title={notice.text} closable onClose={() => setNotice(null)} />}
     <section className="cy-settings-section">
       <div className="cy-settings-section__heading"><h2><Brain size={18} />{t("settingsPage.memory.modeTitle")}</h2><p>{t("settingsPage.memory.modeDescription")}</p></div>
-      <Card><div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.modeLabel")}</strong><span>{t(memoryMode === "off" ? "settingsPage.memory.modeOffHint" : memoryMode === "summary" ? "settingsPage.memory.modeSummaryHint" : "settingsPage.memory.modeVectorHint")}</span></div><Radio.Group value={memoryMode} disabled={modeLoading || modeSaving} optionType="button" buttonStyle="solid" onChange={(event) => void changeMemoryMode(event.target.value as "vector" | "summary" | "off")}><Radio.Button value="vector">{t("settingsPage.memory.vectorMode")}</Radio.Button><Radio.Button value="summary">{t("settingsPage.memory.summaryMode")}</Radio.Button><Radio.Button value="off">{t("settingsPage.memory.off")}</Radio.Button></Radio.Group></div></Card>
+      <Card><div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.modeLabel")}</strong><span>{t(memoryMode === "off" ? "settingsPage.memory.modeOffHint" : memoryMode === "summary" ? "settingsPage.memory.modeSummaryHint" : memoryMode === "wiki" ? "settingsPage.memory.modeWikiHint" : "settingsPage.memory.modeVectorHint")}</span></div><Radio.Group value={memoryMode} disabled={modeLoading || modeSaving} optionType="button" buttonStyle="solid" onChange={(event) => void changeMemoryMode(event.target.value as ModelSettings["memoryMode"])}><Radio.Button value="vector">{t("settingsPage.memory.vectorMode")}</Radio.Button><Radio.Button value="summary">{t("settingsPage.memory.summaryMode")}</Radio.Button><Radio.Button value="wiki">{t("settingsPage.memory.wikiMode")}</Radio.Button><Radio.Button value="off">{t("settingsPage.memory.off")}</Radio.Button></Radio.Group></div></Card>
     </section>
-    {loading ? <div className="cy-settings-loading"><Spin /></div> : !data ? null : <>
+    {!modeLoading && memoryMode === "wiki" && <WikiKnowledgePanel />}
+    {memoryMode !== "wiki" && (loading ? <div className="cy-settings-loading"><Spin /></div> : !data ? null : <>
       {!modeLoading && memoryMode === "summary" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Brain size={18} />{t("settingsPage.memory.summaryTitle")}</h2><p>{t("settingsPage.memory.summaryDescription")}</p></div>
         {summaryMemory ? <>
@@ -202,6 +205,6 @@ export function MemorySettingsPanel() {
       <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><BrandIcon icon={siObsidian} size={18} label="Obsidian" />{t("settingsPage.memory.vault.title")}</h2><p>{t("settingsPage.memory.vault.description")}</p></div>
         <Card className="cy-memory-card">{vault?.vaultPath ? <><div className="cy-memory-vault-path">{vault.vaultPath}</div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.vault.autoSync")}</strong><span>{t("settingsPage.memory.vault.autoSyncDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.memory.vault.autoSync")} checked={vault.autoSync} onChange={(checked) => void setAutoSync(checked)} /></div><div className="cy-memory-vault-actions"><span>{vault.lastSyncAt ? t("settingsPage.memory.vault.lastSync", { time: formatDateTime(vault.lastSyncAt) }) : t("settingsPage.memory.vault.neverSynced")}</span><Button loading={busy === "sync"} onClick={() => void vaultAction("sync")}>{t("settingsPage.memory.vault.sync")}</Button><Button loading={busy === "unbind"} onClick={() => void vaultAction("unbind")}>{t("settingsPage.memory.vault.unbind")}</Button></div></> : <div className="cy-memory-vault-actions"><span>{t("settingsPage.memory.vault.notBound")}</span><Button loading={busy === "bind"} onClick={() => void vaultAction("bind")}>{t("settingsPage.memory.vault.bind")}</Button></div>}</Card>
       </section>
-    </>}
+    </>)}
   </>;
 }

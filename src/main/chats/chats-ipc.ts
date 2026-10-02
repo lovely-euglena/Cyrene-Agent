@@ -46,6 +46,7 @@ import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import { getTaskSessionStore } from "../tasks/task-session-store";
 import { cancelSummaryMemorySession, releaseSummaryMemorySessionCancellation } from "../memory/summary-memory-scheduler";
+import { cancelWikiMemorySession, getWikiMemoryStore, releaseWikiMemorySessionCancellation } from "../memory/wiki-memory-scheduler";
 import { resolveSummaryMemoryPaths } from "../memory/summary-memory-paths";
 import { deleteSummaryFile } from "../memory/summary-memory-store";
 import type { LlmClient } from "../services/llm/llm-client";
@@ -379,6 +380,17 @@ export function registerChatsIpc(
     if (!id) return false;
     const sessionRecord = chatsStore.getSessionRecord(id);
     await cancelSummaryMemorySession(id);
+    await cancelWikiMemorySession(id);
+    const wikiStore = fs.existsSync(path.join(app.getPath("userData"), "memory", "wiki"))
+      ? getWikiMemoryStore() : null;
+    try {
+      await wikiStore?.tombstoneConversation(id);
+    } catch (error) {
+      releaseSummaryMemorySessionCancellation(id);
+      releaseWikiMemorySessionCancellation(id);
+      console.error("[ChatsIpc] failed to tombstone wiki sources", error);
+      return false;
+    }
     let summaryMemoryTarget: { filePath: string; allowedRoot: string } | null = null;
     if (sessionRecord) {
       try {
@@ -391,9 +403,25 @@ export function registerChatsIpc(
         console.warn("[ChatsIpc] failed to resolve session summary memory path:", id, error);
       }
     }
-    const ok = chatsStore.deleteSession(id);
-    releaseSummaryMemorySessionCancellation(id);
+    let ok: boolean;
+    try {
+      ok = chatsStore.deleteSession(id);
+      if (!ok) await wikiStore?.untombstoneConversation(id);
+    } catch (error) {
+      await wikiStore?.untombstoneConversation(id).catch((rollbackError) =>
+        console.error("[ChatsIpc] failed to restore wiki sources after delete failure", rollbackError));
+      throw error;
+    } finally {
+      releaseSummaryMemorySessionCancellation(id);
+      releaseWikiMemorySessionCancellation(id);
+    }
     if (ok) {
+      try {
+        await wikiStore?.reconcileConversationSources(id, []);
+      } catch (error) {
+        // The durable tombstone hides deleted sources until a later reconciliation.
+        console.error("[ChatsIpc] failed to reconcile deleted wiki sources", error);
+      }
       if (summaryMemoryTarget) {
         try {
           await deleteSummaryFile(summaryMemoryTarget.filePath, summaryMemoryTarget.allowedRoot);

@@ -5,12 +5,16 @@ import { searchMemory } from "../../../rag/index";
 import type { ToolRiskLevel } from "../../../permission";
 import type { ToolContext } from "./tool-context";
 import type { ConversationMode } from "../../../../shared/chat-types";
-import { isVectorMemoryEnabled } from "../../../memory/memory-mode";
+import { isVectorMemoryEnabled, isWikiMemoryEnabled } from "../../../memory/memory-mode";
+import { canReadWikiMemory } from "../../../memory/wiki-memory-health";
 
 const MEMORY_TOOL_IDS = new Set(["user_memory", "read_memory", "write_memory", "recall_history"]);
+const WIKI_TOOL_IDS = new Set(["wiki_search", "wiki_read_page"]);
 
 function isToolAvailable(tool: ToolDefinition): boolean {
-  return tool.enabled && !tool.deprecated && (isVectorMemoryEnabled() || !MEMORY_TOOL_IDS.has(tool.id));
+  return tool.enabled && !tool.deprecated &&
+    (isVectorMemoryEnabled() || !MEMORY_TOOL_IDS.has(tool.id)) &&
+    ((isWikiMemoryEnabled() && canReadWikiMemory()) || !WIKI_TOOL_IDS.has(tool.id));
 }
 
 /** 工具效果类型：决定工具对系统状态的影响分类。未配置默认 "unknown"。 */

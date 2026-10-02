@@ -16,6 +16,7 @@ import { buildEnvironmentContext } from "./environment";
 import { buildToneInjection } from "./tone-injector";
 import { buildAlwaysOnContext, scheduleMemoryWrite } from "./index";
 import { scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
+import { scheduleWikiTurn } from "../memory/wiki-memory-scheduler";
 import { matchSticker } from "../sticker-text-matcher";
 import type { StickerTextEntry } from "../sticker-text-matcher";
 import { buildRelationshipContext, recordRelationshipTurn } from "../relationship/relationship-log";
@@ -94,6 +95,7 @@ export interface AgentRuntimeDeps {
   socialAtomStore: { listActive: (conversationId: string, now: number) => SocialAtom[] };
   buildSummaryMemoryContext?: (conversationId: string) => Promise<{ stablePrompt: string; runtimeContext: string }>;
   scheduleSummaryTurn?: (input: Parameters<typeof scheduleSummaryTurn>[0]) => void;
+  scheduleWikiTurn?: (input: Parameters<typeof scheduleWikiTurn>[0]) => void;
   buildPluginPromptContext: (input: PluginPromptBuildInput) => Promise<string>;
   publishPluginHostEvent: <T>(event: string, payload: T) => Promise<void>;
   /** 工具完成事件发布入口；缺省不发布（早期装配与测试场景）。 */
@@ -265,6 +267,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       loadModelSettings: () => rawDeps.loadModelSettings(),
       scheduleMemoryWrite,
       scheduleSummaryTurn: rawDeps.scheduleSummaryTurn ?? ((input) => scheduleSummaryTurn(input)),
+      scheduleWikiTurn: rawDeps.scheduleWikiTurn ?? ((input) => scheduleWikiTurn(input)),
       scheduleSocialAtomExtraction: (input) => rawDeps.socialContextScheduler.schedule(input),
       scheduleMomentsTurn: (input) => momentsService.scheduleTurn(input),
       inferRuntimeState: ((userText, reply, flag) =>

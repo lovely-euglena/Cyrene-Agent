@@ -42,6 +42,7 @@ import { isModelFailureInfo } from "../shared/model-error";
 import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
 import { createConversationSessionMigration } from "./orchestrator/conversation-session-migration";
+import { refreshWikiMemorySources } from "./memory/wiki-memory-scheduler";
 import { ConversationJournalService } from "./orchestrator/conversation-journal-service";
 import type { MaterializedTranscript } from "./orchestrator/conversation-transcript-projection";
 import type { TranscriptPresentationPatch } from "./orchestrator/conversation-transcript-types";
@@ -533,6 +534,7 @@ export function registerAgUiIpc(
             rewind: input.transcriptRewind,
           });
         }
+        if (input.transcriptRewind) await refreshWikiMemorySources(sessionId);
         const presentationMessageId = input.transcriptRewind
           ? `${runId}:rewind:${input.transcriptRewind.anchorUserTurnId}`
           : `user:v1:${currentUser.turnId}:r1`;

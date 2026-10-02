@@ -43,6 +43,7 @@ import {
   syncVolcanoSearchMcp,
 } from "../settings/general-settings-lifecycle";
 import { registerMemoryUserToolIpc } from "../memory/memory-user-ipc";
+import { registerWikiMemoryIpc } from "../memory/wiki-memory-ipc";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { momentsService } from "../moments/moments-service";
@@ -59,6 +60,9 @@ import {
 } from "../rag";
 import { isMemoryEnabled, isSummaryMemoryEnabled, setMemoryMode, type MemoryMode } from "../memory/memory-mode";
 import { initializeSummaryMemoryScheduler, enableSummaryMemoryScheduler, flushAllSummaryMemory, scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
+import { createConversationSessionMigration } from "../orchestrator/conversation-session-migration";
+import { createWikiChatSourceReader } from "../memory/wiki-source";
+import { initializeWikiMemoryScheduler, enableWikiMemoryScheduler, scheduleWikiTurn } from "../memory/wiki-memory-scheduler";
 import { loadSummaryMemoryContext } from "../memory/summary-memory-context";
 import { clearLegacyStickerEmbeddingCache, loadStickerTextIndex } from "../sticker-text-matcher";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
@@ -191,6 +195,7 @@ async function switchMemoryMode(mode: MemoryMode): Promise<void> {
   if (mode !== "vector") {
     setMemoryMode(mode);
     enableSummaryMemoryScheduler(mode === "summary");
+    await enableWikiMemoryScheduler(mode === "wiki");
     resetReranker();
     await disposeVectorMemory();
     return;
@@ -198,6 +203,7 @@ async function switchMemoryMode(mode: MemoryMode): Promise<void> {
 
   enableSummaryMemoryScheduler(false);
   setMemoryMode("vector");
+  await enableWikiMemoryScheduler(false);
   try {
     const modelSettings = loadModelSettings();
     await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
@@ -519,6 +525,17 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           onError: (conversationId, error) => logger.warn(LogTag.RAG, "summary memory update failed:", conversationId, error),
         });
         enableSummaryMemoryScheduler(isSummaryMemoryEnabled());
+        const wikiMigration = createConversationSessionMigration(app.getPath("userData"));
+        initializeWikiMemoryScheduler({
+          userDataRoot: app.getPath("userData"),
+          sourceReader: createWikiChatSourceReader({
+            transcriptStore: getConversationTranscriptStore(app.getPath("userData")),
+            listSessions: chatsStore.listSessions,
+            ensureConversationMigrated: (id) => wikiMigration.ensureConversationMigrated(id),
+          }),
+          onError: (conversationId, error) => logger.warn(LogTag.RAG, "wiki memory update failed:", conversationId, error),
+        });
+        await enableWikiMemoryScheduler(modelSettings.memoryMode === "wiki");
         await initWorldbook();
         if (isMemoryEnabled()) {
           await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
@@ -537,6 +554,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           id: "summary-memory",
           phase: "flushPersistence",
           dispose: async () => { await flushAllSummaryMemory(); },
+        });
+        shutdown.register({
+          id: "wiki-memory",
+          phase: "flushPersistence",
+          dispose: async () => { await enableWikiMemoryScheduler(false); },
         });
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
@@ -565,6 +587,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             getSessionRecord: chatsStore.getSessionRecord,
           }),
           scheduleSummaryTurn: (input) => scheduleSummaryTurn(input),
+          scheduleWikiTurn: (input) => scheduleWikiTurn(input),
           socialAtomStore: services.social.store,
           buildPluginPromptContext: (input) => pluginPromptRegistry.build(input),
           publishPluginHostEvent: (event, payload) => pluginManager
@@ -651,6 +674,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           ipc,
           windowManager: shell.windowManager,
         });
+        registerWikiMemoryIpc(ipc);
 
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
