@@ -55,6 +55,13 @@ export interface HarnessSessionWorkerOptions {
   onEvent?: (event: HarnessEvent, step: OrchestratorStepFrame) => void;
 }
 
+/** 预置会话 transcript：resume/跨进程恢复时把历史上下文还给 worker。 */
+export interface WorkerSessionSeed {
+  messages: ChatMessage[];
+  /** 上一步结束时的 AgentState（todo/uncertainEffects 续跑）。 */
+  state?: AgentState;
+}
+
 /**
  * 把 host 下发的 step 组装成本轮 user 消息：
  * - 无邮箱消息（流水线首步）→ 原始用户消息；
@@ -158,6 +165,33 @@ export class HarnessSessionWorker {
     const stepId = this.activeBySession.get(sessionId);
     if (stepId) this.cancelStep(stepId);
     return this.sessions.delete(sessionId);
+  }
+
+  /**
+   * 预置会话 transcript（resume/跨进程恢复用）：
+   * - 有在途 step 时拒绝（执行中篡改上下文属编程错误）；
+   * - seed 是唯一权威：覆盖既有 transcript，stepCount 归零。
+   * 之后第一步的入参 = seed.messages + 本轮 user 消息（compose 语义不变）。
+   */
+  seedSession(sessionId: string, seed: WorkerSessionSeed): void {
+    if (this.activeBySession.has(sessionId)) {
+      throw new Error(`会话 ${sessionId} 已有在途 step，禁止预置 transcript`);
+    }
+    const transcript = this.ensureSession(sessionId);
+    transcript.messages = seed.messages;
+    if (seed.state) transcript.state = seed.state;
+    else delete transcript.state;
+    transcript.stepCount = 0;
+  }
+
+  /** 中止全部在途 step（host 退出/上层兜底）；返回中止数量。 */
+  abortAll(): number {
+    let aborted = 0;
+    for (const [, active] of this.activeSteps) {
+      active.controller.abort();
+      aborted++;
+    }
+    return aborted;
   }
 
   hasActiveStep(sessionId: string): boolean {

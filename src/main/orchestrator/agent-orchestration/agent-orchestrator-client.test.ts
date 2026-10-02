@@ -201,6 +201,37 @@ describe("AgentOrchestratorClient", () => {
     expect(result.error).toContain("退出");
   });
 
+  it("host 退出 → 在途 worker step 被 abortAll 中止（本地 Harness 不泄漏）", async () => {
+    const fake = makeFakeChild();
+    (mockSpawn as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(fake.child);
+    let aborted = false;
+    const worker = new HarnessSessionWorker({
+      runStep: (request) => new Promise((resolve) => {
+        request.signal.addEventListener("abort", () => {
+          aborted = true;
+          resolve({ result: makeResult({ terminateReason: "cancelled", finalAnswer: "" }) });
+        });
+      }),
+    });
+    const client = new AgentOrchestratorClient({ worker, logger: () => undefined });
+    const turnDone = client.runTurn("g1", "hi");
+    await tick();
+    fake.emitLine(JSON.stringify({ op: "ready" }));
+    await tick();
+    const start = framesOf(fake.written).find((f) => f.op === "turn.start");
+    fake.emitLine(JSON.stringify({ id: start?.id, ok: true, data: {} }));
+    await tick();
+    fake.emitLine(makeStepFrame({ callId: String(start?.callId) }));
+    await tick(20);
+    expect(aborted).toBe(false);
+
+    fake.emitExit();
+    const result = await turnDone;
+    expect(result.ok).toBe(false);
+    expect(aborted).toBe(true);
+    expect(worker.abortAll()).toBe(0);
+  });
+
   it("ready 超时回收后可重试：旧进程退出不锁死 exited、不干扰新进程", async () => {
     vi.useFakeTimers();
     try {

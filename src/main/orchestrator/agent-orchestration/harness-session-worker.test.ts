@@ -182,4 +182,79 @@ describe("HarnessSessionWorker", () => {
     expect(worker.destroySession("s1")).toBe(true);
     expect(worker.getTranscript("s1")).toBeUndefined();
   });
+
+  it("seedSession：预置历史与状态，第一步入参 = seed + 本轮 user，stepCount 归零", async () => {
+    const seen: SessionStepExecutionRequest[] = [];
+    const worker = new HarnessSessionWorker({
+      runStep: async (request) => {
+        seen.push(request);
+        return { result: makeResult() };
+      },
+    });
+    worker.seedSession("s1", {
+      messages: [
+        { role: "user", content: "上一轮提问" },
+        { role: "assistant", content: "上一轮回答" },
+      ],
+      state: { todoItems: [], uncertainEffects: [] },
+    });
+    expect(worker.getTranscript("s1")?.stepCount).toBe(0);
+
+    await worker.executeStep(makeStep());
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+    expect(seen[0].messages[2].content).toBe("帮我算个数");
+    expect(seen[0].state).toEqual({ todoItems: [], uncertainEffects: [] });
+    expect(worker.getTranscript("s1")?.stepCount).toBe(1);
+  });
+
+  it("seedSession：有在途 step 时拒绝；再次 seed 覆盖并清空旧状态", async () => {
+    const seen: SessionStepExecutionRequest[] = [];
+    const worker = new HarnessSessionWorker({
+      runStep: (request) => {
+        seen.push(request);
+        if (seen.length > 1) return Promise.resolve({ result: makeResult() });
+        return new Promise((resolve) => {
+          request.signal.addEventListener("abort", () => {
+            resolve({ result: makeResult({ terminateReason: "cancelled", finalAnswer: "" }) });
+          });
+        });
+      },
+    });
+    worker.seedSession("s1", { messages: [], state: { todoItems: [], uncertainEffects: [] } });
+    const pending = worker.executeStep(makeStep());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(() => worker.seedSession("s1", { messages: [] })).toThrow("已有在途 step");
+    worker.cancelStep("t1-s1");
+    await pending;
+
+    worker.seedSession("s1", { messages: [{ role: "user", content: "恢复的上下文" }] });
+    await worker.executeStep(makeStep({ stepId: "t1-s2" }));
+    expect(seen[1].messages).toHaveLength(2);
+    expect(seen[1].messages[0].content).toBe("恢复的上下文");
+    expect(seen[1].state).toBeUndefined();
+  });
+
+  it("abortAll：中止全部在途 step（多会话）并返回数量", async () => {
+    const aborted: string[] = [];
+    const worker = new HarnessSessionWorker({
+      runStep: (request) => new Promise((resolve) => {
+        request.signal.addEventListener("abort", () => {
+          aborted.push(request.step.sessionId);
+          resolve({ result: makeResult({ terminateReason: "cancelled", finalAnswer: "" }) });
+        });
+      }),
+    });
+    const first = worker.executeStep(makeStep({ sessionId: "s1", stepId: "st-1" }));
+    const second = worker.executeStep(makeStep({ sessionId: "s2", stepId: "st-2" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(worker.abortAll()).toBe(2);
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.status).toBe("cancelled");
+    expect(r2.status).toBe("cancelled");
+    expect(aborted.sort()).toEqual(["s1", "s2"]);
+    expect(worker.abortAll()).toBe(0);
+  });
 });
