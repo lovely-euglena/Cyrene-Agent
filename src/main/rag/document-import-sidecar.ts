@@ -23,6 +23,16 @@ function getRagDataDir(): string {
   return path.join(app.getPath("userData"), "rag-data");
 }
 
+/** pandoc 自定义路径（设置 → 偏好设置 → 文档转换）；读取失败回退 PATH 探测。 */
+function readPandocPath(): string {
+  try {
+    const facade = require("../settings/settings-facade") as typeof import("../settings/settings-facade");
+    return facade.loadGeneralSettings().pandocPath ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function runDocumentImportJobViaSidecar(
   job: QueuedDocumentIndexJob,
 ): Promise<DocumentIndexJobResult> {
@@ -40,7 +50,7 @@ export async function runDocumentImportJobViaSidecar(
   try {
     const header = await client.docImport(
       DEFAULT_MODEL_KEY,
-      { filePath: job.input.filePath, ragDataDir: getRagDataDir(), storeMode: getChosenStoreMode() },
+      { filePath: job.input.filePath, ragDataDir: getRagDataDir(), storeMode: getChosenStoreMode(), pandocPath: readPandocPath() },
       {
         onProgress: (progress) => {
           job.reportProgress({

@@ -29,6 +29,7 @@
     "verify:mpv": "node scripts/verify/mpv-helper.mjs resources/bin/mpv/mpv.exe",
     "verify:installer": "node scripts/verify/installer-artifacts.mjs",
     "verify:agent-orchestrator": "node scripts/verify/agent-orchestrator-smoke.mjs",
+    "verify:pandoc-sidecar": "node scripts/diagnostics/pandoc-sidecar-smoke.mjs",
     "seed:usage": "node scripts/seed-usage-stats.mjs",
     "build:music-component": "node scripts/packaging/build-music-component.mjs",
     "package:win:dir": "npm run build && npm run build:screenshot-helper && npm run build:embed-sidecar && npm run build:ocr-sidecar && npm run build:voice && npm run build:native-windows && npm run prepare:mingit && npm run prepare:mpv && electron-builder --win --dir",

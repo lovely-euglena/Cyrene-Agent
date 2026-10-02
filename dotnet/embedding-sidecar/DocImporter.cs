@@ -24,7 +24,7 @@ public sealed class DocImporter
     private static readonly HashSet<string> UnsupportedExts = new(StringComparer.OrdinalIgnoreCase)
     {
         ".zip", ".7z", ".rar", ".tar", ".gz",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".pdf", ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico",
         ".mp3", ".mp4", ".wav", ".avi", ".mov",
         ".exe", ".dll", ".so", ".dylib", ".bin",
@@ -49,7 +49,8 @@ public sealed class DocImporter
         EmbeddingEngine engine,
         IRagStore store,
         Func<bool> isCancelled,
-        Action<Progress>? onProgress)
+        Action<Progress>? onProgress,
+        string? pandocPath = null)
     {
         var name = Path.GetFileName(filePath);
         if (Directory.Exists(filePath) || !File.Exists(filePath))
@@ -63,21 +64,38 @@ public sealed class DocImporter
             return new Result("unsupported", name, 0, null, false, null, $"暂不支持的文件格式 {ext}（MVP-0 仅支持文本）");
         }
 
-        byte[] bytes;
-        try
+        // pandoc 支持的现代文档/标记格式：转换 → 清洗后的 markdown 走既有文本流程。
+        // 转换实现唯一在 .NET（PandocConverter），TS 侧只路由与传参。
+        string text;
+        if (PandocConverter.IsPandocExt(ext))
         {
-            bytes = File.ReadAllBytes(filePath);
+            onProgress?.Invoke(new Progress("reading"));
+            var converted = PandocConverter.ConvertFile(filePath, pandocPath, isCancelled);
+            if (!converted.Ok)
+            {
+                if (converted.Code == "cancelled") return Cancelled(name);
+                return new Result("unsupported", name, 0, null, false, null, converted.Reason);
+            }
+            text = converted.Text ?? "";
         }
-        catch (Exception ex)
+        else
         {
-            return new Result("unsupported", name, 0, null, false, null, ex.Message);
-        }
-        if (IsBinary(bytes))
-        {
-            return new Result("unsupported", name, 0, null, false, null, "二进制文件，暂不支持");
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(filePath);
+            }
+            catch (Exception ex)
+            {
+                return new Result("unsupported", name, 0, null, false, null, ex.Message);
+            }
+            if (IsBinary(bytes))
+            {
+                return new Result("unsupported", name, 0, null, false, null, "二进制文件，暂不支持");
+            }
+            text = Encoding.UTF8.GetString(bytes);
         }
 
-        var text = Encoding.UTF8.GetString(bytes);
         if (string.IsNullOrWhiteSpace(text))
         {
             return new Result("empty", name, 0, null, false, null, null);

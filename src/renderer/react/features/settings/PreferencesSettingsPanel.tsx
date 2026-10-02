@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Modal, Radio, Spin } from "antd";
-import { FileText, SlidersHorizontal } from "lucide-react";
+import { FileText, RefreshCw, SlidersHorizontal } from "lucide-react";
 import {
   normalizeChatSocialContextEnabled,
   normalizeMobileMessageSegmentationMode,
@@ -40,6 +40,8 @@ interface PreferencesValues {
   screenshotBackend: "builtin" | "snipaste";
   /** Snipaste 可执行文件路径（后端为 snipaste 时必填）。 */
   snipastePath: string;
+  /** Pandoc 可执行文件路径；空 = 自动探测 PATH（文档转换）。 */
+  pandocPath: string;
 }
 
 type ChannelStatus = Record<string, { phase?: string }>;
@@ -58,6 +60,7 @@ const defaults: PreferencesValues = {
   citaEnabled: false,
   screenshotBackend: "builtin",
   snipastePath: "",
+  pandocPath: "",
 };
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -81,6 +84,7 @@ function readPreferences(value: unknown): PreferencesValues {
     citaEnabled: input.citaEnabled === true,
     screenshotBackend: input.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input.snipastePath === "string" ? input.snipastePath : "",
+    pandocPath: typeof input.pandocPath === "string" ? input.pandocPath : "",
   };
 }
 
@@ -105,6 +109,8 @@ export function PreferencesSettingsPanel() {
   const [styleOpen, setStyleOpen] = useState(false);
   const [styleDraft, setStyleDraft] = useState<CustomStyleConfig>(DEFAULT_CUSTOM_STYLE);
   const [styleSaving, setStyleSaving] = useState(false);
+  const [pandocDetecting, setPandocDetecting] = useState(false);
+  const [pandocStatus, setPandocStatus] = useState("");
 
   useEffect(() => {
     let disposed = false;
@@ -117,9 +123,11 @@ export function PreferencesSettingsPanel() {
     void Promise.all([api.getGeneral(), api.channelsGetStatus().catch(() => ({}))])
       .then(([config, channelStatus]) => {
         if (disposed) return;
-        setValues(readPreferences(config));
+        const loaded = readPreferences(config);
+        setValues(loaded);
         setChannels(readChannelStatus(channelStatus));
         setLoading(false);
+        void runPandocDetect(loaded.pandocPath);
       })
       .catch(() => {
         if (disposed) return;
@@ -132,6 +140,22 @@ export function PreferencesSettingsPanel() {
   function update<K extends keyof PreferencesValues>(key: K, value: PreferencesValues[K]) {
     setValues((current) => ({ ...current, [key]: value }));
     setStatus(t("settingsPage.preferences.unsaved"));
+  }
+
+  async function runPandocDetect(pandocPath: string) {
+    const api = window.settings;
+    if (!api?.detectPandoc) return;
+    setPandocDetecting(true);
+    try {
+      const result = await api.detectPandoc(pandocPath.trim());
+      setPandocStatus(result.ok
+        ? t("settingsPage.preferences.pandocDetected", { version: result.version ?? "?" })
+        : (result.error ?? t("settingsPage.preferences.pandocNotDetected")));
+    } catch {
+      setPandocStatus(t("settingsPage.preferences.pandocDetectFailed"));
+    } finally {
+      setPandocDetecting(false);
+    }
   }
 
   async function savePreferences() {
@@ -152,6 +176,7 @@ export function PreferencesSettingsPanel() {
         proactiveDeliveryTarget,
         screenshotBackend,
         snipastePath,
+        pandocPath,
       } = values;
       await window.settings.saveGeneral({
         citaEnabled,
@@ -166,6 +191,7 @@ export function PreferencesSettingsPanel() {
         proactiveDeliveryTarget,
         screenshotBackend,
         snipastePath: snipastePath.trim(),
+        pandocPath: pandocPath.trim(),
       });
       setStatus(t("settingsPage.preferences.saved"));
     } catch {
@@ -290,6 +316,24 @@ export function PreferencesSettingsPanel() {
                   </div>
                 </div>
               )}
+            </Card>
+          </section>
+
+          <section className="cy-settings-section">
+            <div className="cy-settings-section__heading"><h2><FileText size={18} />{t("settingsPage.preferences.documents")}</h2><p>{t("settingsPage.preferences.documentsDescription")}</p></div>
+            <Card>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.pandocPath")}</strong><span>{t("settingsPage.preferences.pandocPathDescription")}</span></div>
+                <div className="cy-settings-row__control">
+                  <SettingsInput value={values.pandocPath} placeholder="C:\\Program Files\\Pandoc\\pandoc.exe" aria-label={t("settingsPage.preferences.pandocPath")} onChange={(event) => update("pandocPath", event.target.value)} />
+                </div>
+              </div>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.pandocStatus")}</strong><span>{pandocStatus || t("settingsPage.preferences.pandocNotDetected")}</span></div>
+                <div className="cy-settings-row__control cy-settings-button-group">
+                  <Button loading={pandocDetecting} icon={<RefreshCw size={15} />} onClick={() => void runPandocDetect(values.pandocPath)}>{t("settingsPage.preferences.pandocDetect")}</Button>
+                </div>
+              </div>
             </Card>
           </section>
 

@@ -10,6 +10,7 @@ import {
   describePendingAttachment,
   isBinary,
   isImageExt,
+  isPandocExt,
   isTextExt,
   isUnsupportedExt,
   getMimeFromExt,
@@ -82,6 +83,15 @@ describe("扩展名判断", () => {
     expect(isUnsupportedExt(".md")).toBe(false);
     expect(isUnsupportedExt("")).toBe(false);
     expect(isUnsupportedExt(".unknown")).toBe(false);
+    // .docx 已从显式拒绝名单移出，改由 .NET 文档组件（Pandoc）转换
+    expect(isUnsupportedExt(".docx")).toBe(false);
+  });
+  it("isPandocExt 识别可转换格式", () => {
+    expect(isPandocExt(".docx")).toBe(true);
+    expect(isPandocExt(".ODT")).toBe(true);
+    expect(isPandocExt(".rst")).toBe(true);
+    expect(isPandocExt(".pdf")).toBe(false);
+    expect(isPandocExt(".txt")).toBe(false);
   });
   it("isImageExt true 且返回图片 mime", () => {
     expect(isImageExt(".png")).toBe(true);
@@ -116,6 +126,19 @@ describe("describePendingAttachment", () => {
       name: "voice.wav",
       kind: "unsupported",
       reason: "暂不支持的文件格式 .wav",
+    });
+  });
+
+  it("拖入阶段把 pandoc 可转换格式登记为 document（转换在 .NET 组件）", () => {
+    expect(describePendingAttachment(fixture("report.docx"))).toMatchObject({
+      name: "report.docx",
+      kind: "document",
+      status: "pending",
+    });
+    expect(describePendingAttachment(fixture("notes.rst"))).toMatchObject({
+      name: "notes.rst",
+      kind: "document",
+      status: "pending",
     });
   });
 
@@ -287,6 +310,15 @@ describe("ingestOneFile", () => {
     const fp = write("img.png", makeBin(100));
     const r = await ingestOneFile(fp, mockImport);
     expect(r.kind).toBe("unsupported");
+  });
+
+  it("pandoc 格式 (.docx) → unsupported 并指向 .NET 文档组件", async () => {
+    const fp = write("report.docx", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]));
+    const r = await ingestOneFile(fp, mockImport);
+    expect(r.kind).toBe("unsupported");
+    if (r.kind === "unsupported") {
+      expect(r.reason).toContain("cyrene-embed");
+    }
   });
 
   it("无扩展名、二进制（含 null 字节） → unsupported", async () => {

@@ -5,6 +5,8 @@ using CyreneEmbedSidecar;
 //   verify <modelDir> <dump.json>   数值一致性验证：tokenIds 对账 + 向量余弦
 //   verify-rerank <rerankerDir> <dump.json>  reranker 句对 tokenIds + logits 对账
 //   verify-sqlite [workDir]         SQLite 向量库自检（schema/迁移/rev/检索对账）
+//   verify-pandoc [pandocPath]      Pandoc 转换自检（纯函数 + 本机真实转换）
+//   pandoc-probe [pandocPath]       探测 Pandoc 版本与可读格式（设置页检测，JSON 输出）
 //   bench  <modelDir> [textCount]   性能基准（自生成混合长短文本）
 //   serve  <modelDir>               stdio 帧协议服务（Electron spawn）
 //
@@ -35,6 +37,10 @@ switch (command)
     case "verify-sqlite":
         VerifySqlite.Run(args.Length > 1 ? args[1] : null);
         return 0;
+    case "verify-pandoc":
+        return PandocSelfTest.Run(args.Length > 1 ? args[1] : null);
+    case "pandoc-probe":
+        return PandocProbeCommand.Run(args.Length > 1 ? args[1] : null);
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
         return 0;
@@ -805,7 +811,8 @@ internal static class Server
                             {
                                 lock (_cancelLock) return _cancelledImports.Contains(importRequestId);
                             },
-                            (progress) => WriteProgressFrame(stdout, importRequestId, progress));
+                            (progress) => WriteProgressFrame(stdout, importRequestId, progress),
+                            request.PandocPath);
                         WriteFrame(new
                         {
                             id = importRequestId,
@@ -1017,9 +1024,10 @@ internal static class Server
         public double? VectorWeight { get; set; }
         public double? Bm25Weight { get; set; }
         public bool? UpdateRecall { get; set; }
-        // doc-import op：文件路径 / 取消目标请求 id
+        // doc-import op：文件路径 / 取消目标请求 id / pandoc 自定义路径
         public string? FilePath { get; set; }
         public int? TargetId { get; set; }
+        public string? PandocPath { get; set; }
         // 存储模式："sqlite"（默认）| "json"（TS 决定并透传；无 node:sqlite 时回退）
         public string? StoreMode { get; set; }
     }

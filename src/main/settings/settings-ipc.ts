@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, shell } from "electron";
+import { execFile } from "child_process";
 import { hfModelCacheDir, resolveCacheDir } from "../cache-dir";
 import * as fs from "fs";
 import * as path from "path";
@@ -20,6 +21,7 @@ import type { RuntimeStateService } from "../orchestrator/runtime-state-service"
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus } from "../rag/reranker";
 import { switchEmbeddingModel } from "../rag";
+import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
 import * as os from "os";
 import { testVendorConnection } from "../orchestrator/vendors/test-connection";
@@ -58,6 +60,53 @@ function getCustomFontDisplayName(filePath: string): string {
   return (
     path.basename(filePath, path.extname(filePath)).replace(/[-_]+/g, " ").trim().slice(0, 80) || "自定义字体"
   );
+}
+
+/**
+ * 设置页 Pandoc 检测：调用 .NET 文档组件（cyrene-embed）的 `pandoc-probe`。
+ * 转换实现唯一在 .NET；这里只做进程胶水与 JSON 形状收窄。
+ */
+function detectPandoc(pandocPath: string): Promise<{
+  ok: boolean;
+  version?: string;
+  exe?: string;
+  formats?: number;
+  error?: string;
+}> {
+  return new Promise((resolve) => {
+    const exePath = resolveSidecarPath();
+    if (!exePath) {
+      resolve({ ok: false, error: "文档组件（cyrene-embed）不可用，无法检测 Pandoc" });
+      return;
+    }
+    const args = ["pandoc-probe"];
+    const custom = pandocPath.trim();
+    if (custom) args.push(custom);
+    execFile(exePath, args, { timeout: 10_000, windowsHide: true, encoding: "utf8" }, (error, stdout) => {
+      if (error) {
+        resolve({ ok: false, error: `检测失败：${error.message}` });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(String(stdout).trim()) as {
+          ok?: unknown;
+          version?: unknown;
+          exe?: unknown;
+          formats?: unknown;
+          error?: unknown;
+        };
+        resolve({
+          ok: parsed.ok === true,
+          version: typeof parsed.version === "string" ? parsed.version : undefined,
+          exe: typeof parsed.exe === "string" ? parsed.exe : undefined,
+          formats: typeof parsed.formats === "number" ? parsed.formats : undefined,
+          error: typeof parsed.error === "string" ? parsed.error : undefined,
+        });
+      } catch {
+        resolve({ ok: false, error: "检测输出解析失败" });
+      }
+    });
+  });
 }
 
 const VISION_TEST_IMAGE_BASE64 =
@@ -194,6 +243,10 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     }
     return saved;
   });
+
+  ipc.handle(IPC.SETTINGS_PANDOC_DETECT, (_event, pandocPath: unknown) =>
+    detectPandoc(typeof pandocPath === "string" ? pandocPath : ""),
+  );
 
   // TTS 面板调用的通用设置读写入口（历史命名遗留）
   ipc.handle(IPC.TTS_LOAD_SETTINGS, () => getGeneralSettings());

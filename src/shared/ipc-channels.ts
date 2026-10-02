@@ -155,6 +155,8 @@ export const IPC = {
   SETTINGS_CACHE_PICK_DIR: "settings:cache-pick-dir",
   // OCR：设置页状态查询（本地引擎可用性 + 语言列表）
   SETTINGS_OCR_GET_STATUS: "settings:ocr-get-status",
+  // 文档转换：设置页 Pandoc 检测（走 .NET 文档组件 pandoc-probe）
+  SETTINGS_PANDOC_DETECT: "settings:pandoc-detect",
   // 云存储：设置页档案管理（列表 / 保存 / 删除 / 测试连接）
   CLOUD_STORAGE_PROFILES_LIST: "cloud-storage:profiles-list",
   CLOUD_STORAGE_PROFILE_SAVE: "cloud-storage:profile-save",

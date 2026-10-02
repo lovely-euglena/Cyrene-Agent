@@ -411,6 +411,8 @@ const settingsApi = {
   setCacheDir: (dir: string) => ipcRenderer.invoke(IPC.SETTINGS_CACHE_SET, dir),
   // OCR：设置页查询本地引擎可用性与语言列表（写入走 saveGeneral）
   getOcrStatus: () => ipcRenderer.invoke(IPC.SETTINGS_OCR_GET_STATUS) as Promise<import("../shared/ocr").OcrStatus>,
+  // 文档转换：设置页 Pandoc 检测（走 .NET 文档组件 pandoc-probe）
+  detectPandoc: (pandocPath?: string) => ipcRenderer.invoke(IPC.SETTINGS_PANDOC_DETECT, pandocPath ?? ""),
   // 云存储：设置页档案管理（连接/凭据在 cyrene-native --storage-host）
   cloudStorageProfiles: () => ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILES_LIST) as Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>,
   cloudStorageSaveProfile: (profile: Record<string, unknown>) =>

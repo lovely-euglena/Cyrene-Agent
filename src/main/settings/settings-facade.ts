@@ -140,6 +140,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   screenshotHotkey: "Alt+Shift+S",
   screenshotBackend: "builtin",
   snipastePath: "",
+  pandocPath: "",
   ocrEnabled: true,
   ocrProvider: "local",
   ocrLanguage: "",
@@ -384,6 +385,7 @@ export function normalizeGeneralSettings(
       : DEFAULT_GENERAL_SETTINGS.screenshotHotkey,
     screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
+    pandocPath: typeof input?.pandocPath === "string" ? input.pandocPath.trim() : "",
     ocrEnabled: input?.ocrEnabled === undefined
       ? DEFAULT_GENERAL_SETTINGS.ocrEnabled
       : Boolean(input.ocrEnabled),

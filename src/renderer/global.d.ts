@@ -89,6 +89,8 @@ interface SettingsWindowApi {
   setCacheDir?: (dir: string) => Promise<{ ok: boolean; changed: boolean; restartRequired: boolean }>;
   // OCR（OCR 设置页：本地引擎可用性 + 语言列表）
   getOcrStatus?: () => Promise<import("../shared/ocr").OcrStatus>;
+  // 文档转换（偏好设置：Pandoc 路径检测，走 .NET 文档组件）
+  detectPandoc?: (pandocPath?: string) => Promise<{ ok: boolean; version?: string; exe?: string; formats?: number; error?: string }>;
   // 云存储（云存储设置页：档案 CRUD + 测试连接）
   cloudStorageProfiles?: () => Promise<import("../shared/cloud-storage").CloudStorageProfileView[]>;
   cloudStorageSaveProfile?: (profile: Record<string, unknown>) => Promise<import("../shared/cloud-storage").CloudStorageProfileView>;

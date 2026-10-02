@@ -50,6 +50,7 @@ export const NATIVE_GENERAL_SETTING_KEYS = [
   // 偏好设置（preferences section）：
   "screenshotBackend",
   "snipastePath",
+  "pandocPath",
   "mobileMessageSegmentation",
   "proactiveChatMode",
   "proactiveDeliveryTarget",
@@ -245,6 +246,8 @@ export function sanitizeNativeGeneralSetting(
       return value === "builtin" || value === "snipaste" ? { screenshotBackend: value } : null;
     case "snipastePath":
       return typeof value === "string" ? { snipastePath: value.trim().slice(0, 500) } : null;
+    case "pandocPath":
+      return typeof value === "string" ? { pandocPath: value.trim().slice(0, 500) } : null;
     case "customStyle":
       return value !== null && typeof value === "object"
         ? { customStyle: normalizeCustomStyleConfig(value) }

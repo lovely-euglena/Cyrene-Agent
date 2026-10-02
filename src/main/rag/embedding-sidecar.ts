@@ -217,7 +217,7 @@ export class EmbeddingSidecarClient {
    */
   async docImport(
     modelKey: string,
-    payload: { filePath: string; ragDataDir: string; storeMode?: "sqlite" | "json" },
+    payload: { filePath: string; ragDataDir: string; storeMode?: "sqlite" | "json"; pandocPath?: string },
     callbacks: {
       onProgress?: (progress: DocImportProgress) => void;
       onStarted?: (requestId: number) => void;
