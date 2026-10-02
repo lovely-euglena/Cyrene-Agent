@@ -33,6 +33,7 @@
     "verify:pandoc-sidecar": "node scripts/diagnostics/pandoc-sidecar-smoke.mjs",
     "verify:music-native": "node scripts/diagnostics/music-native-smoke.mjs",
     "verify:token-stats": "node scripts/diagnostics/token-stats-smoke.mjs",
+    "verify:wsl": "node scripts/diagnostics/wsl-smoke.mjs",
     "seed:usage": "node scripts/seed-usage-stats.mjs",
     "build:music-component": "node scripts/packaging/build-music-component.mjs",
     "package:win:dir": "npm run build && npm run build:screenshot-helper && npm run build:embed-sidecar && npm run build:token-stats && npm run build:ocr-sidecar && npm run build:voice && npm run build:native-windows && npm run prepare:mingit && npm run prepare:mpv && electron-builder --win --dir",
