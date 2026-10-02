@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using CyreneNative.Music;
 using WpfApp = System.Windows.Application;
 
 namespace CyreneNative;
@@ -53,6 +54,7 @@ public static class RequestRouter
                             "splash" => new SplashWindow(),
                             "sidebar" => new SidebarWindow(layout),
                             "tasks" => new TasksWindow(layout),
+                            "music" => new MusicWindow(layout),
                             _ => throw new ArgumentException($"unknown window kind: {kind}"),
                         };
                         window.ClosedEvent += k =>
@@ -207,6 +209,39 @@ public static class RequestRouter
                 Protocol?.ReplyOk(id);
                 break;
             }
+            // ── 音乐（本地播放器；查询类请求带 data 回执） ──
+            case "music.config":
+            {
+                var config = element.TryGetProperty("config", out var configEl) && configEl.ValueKind == JsonValueKind.Object
+                    ? configEl
+                    : element;
+                Protocol?.ReplyOk(id, MusicService.Shared.ApplyConfig(config));
+                break;
+            }
+            case "music.query":
+                Protocol?.ReplyOk(id, MusicService.Shared.Query(element));
+                break;
+            case "music.now-playing":
+                Protocol?.ReplyOk(id, MusicService.Shared.NowPlaying());
+                break;
+            case "music.play":
+                Protocol?.ReplyOk(id, MusicService.Shared.Play(element));
+                break;
+            case "music.control":
+            {
+                var action = element.TryGetProperty("action", out var actionEl) ? actionEl.GetString() ?? "" : "";
+                Protocol?.ReplyOk(id, MusicService.Shared.Control(action, element));
+                break;
+            }
+            case "music.folders":
+            {
+                var action = element.TryGetProperty("action", out var actionEl) ? actionEl.GetString() ?? "" : "";
+                Protocol?.ReplyOk(id, MusicService.Shared.FolderAction(action, element));
+                break;
+            }
+            case "music.rescan":
+                Protocol?.ReplyOk(id, MusicService.Shared.Rescan());
+                break;
             default:
                 Protocol?.ReplyError(id, $"unsupported op: {op}");
                 break;
