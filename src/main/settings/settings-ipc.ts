@@ -34,6 +34,7 @@ import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
 import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
+import { discoverWsl } from "../orchestrator/wsl-runtime";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -247,6 +248,12 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.SETTINGS_PANDOC_DETECT, (_event, pandocPath: unknown) =>
     detectPandoc(typeof pandocPath === "string" ? pandocPath : ""),
   );
+
+  // WSL：设置页只读探测（定位 wsl.exe + 枚举发行版，带 30s 缓存，不触发安装）
+  ipc.handle(IPC.SETTINGS_WSL_DETECT, async () => {
+    const discovery = await discoverWsl();
+    return { executable: discovery.executable, distros: discovery.distros };
+  });
 
   // TTS 面板调用的通用设置读写入口（历史命名遗留）
   ipc.handle(IPC.TTS_LOAD_SETTINGS, () => getGeneralSettings());

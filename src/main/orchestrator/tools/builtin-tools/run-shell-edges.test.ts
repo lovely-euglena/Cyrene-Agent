@@ -44,7 +44,7 @@ describe.runIf(process.platform === "win32")("run_shell 边界分支", () => {
     const parsed = await run({ command: "echo hi", shell: "powershell" });
     expect(parsed.errorCode).toBe("SHELL_UNSUPPORTED");
     expect(parsed.exitCode).toBe(-1);
-    expect(parsed.stderr).toContain("仅支持 cmd 或 bash");
+    expect(parsed.stderr).toContain("仅支持 cmd、bash 或 wsl");
     expect(parsed.stdout).toBe("");
   });
 

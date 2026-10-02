@@ -14,7 +14,7 @@ import type { ShellOutputUpdate } from "../registry/tool-context";
 import { SHELL_VISIBLE_OUTPUT_LIMIT } from "../../../../shared/shell-output";
 import { wrapWithSandbox, type SandboxWrapOutcome } from "../../sandbox/sandbox-exec";
 import { getCurrentLevel } from "../../../permission";
-import { classifyShellEffect, isCatastrophicCommand, type ShellEffect } from "../../shell-execution-policy";
+import { classifyShellEffect, isCatastrophicCommand, isWslManagementCommand, type ShellEffect } from "../../shell-execution-policy";
 import { logger, LogTag } from "../../../logger";
 import {
   buildDirectShellInvocation,
@@ -22,6 +22,8 @@ import {
   type ResolvedShellExecutable,
   type ShellKind,
 } from "../../shell-runtime";
+import { buildWslInvocation, discoverWsl, windowsPathToWslPath } from "../../wsl-runtime";
+import { loadGeneralSettings } from "../../../settings/settings-facade";
 import { killTree, startShellJob, type ShellSpawnSpec } from "./shell-job-manager";
 
 const LOG_PREFIX = "[BuiltinTools]";
@@ -240,6 +242,33 @@ async function resolveExecutionPlan(
   return { ...base, kind: "rejected", reason: REJECT_REASON[outcome.reason] };
 }
 
+/** WSL 无法进 SRT 沙箱（SRT 管不到发行版内进程）时的 fail-closed 理由。 */
+const WSL_UNSANDBOXABLE_REASON = "WSL 命令无法被沙箱约束；请提升到完全信任档位，或改用 cmd/bash。";
+
+/**
+ * 统一的安全决策入口：在 resolveExecutionPlan 之上加两个前置分流。
+ * - 完全信任档：一律直跑（用户已显式授权）
+ * - WSL：永不进沙箱（SRT 能力边界外）——只读命令放行直跑，写/未知 fail-closed
+ * - 其余（cmd/bash 非 full）：沿用 resolveExecutionPlan 的沙箱路由
+ */
+async function resolveRunPlan(
+  command: string,
+  cwd: string | undefined,
+  requestedShell: ShellKind,
+  resolvedShell: ResolvedShellExecutable,
+  level: string,
+  requiresSandbox: boolean,
+): Promise<ExecutionPlan> {
+  if (level === "full") return { kind: "direct", command, cwd, requestedShell };
+  if (requestedShell === "wsl") {
+    logger.info(LogTag.BuiltinTools, `[run_shell] WSL unsandboxable: effect=${requiresSandbox ? "write/unknown" : "read"} → ${requiresSandbox ? "rejected" : "direct"}`);
+    return requiresSandbox
+      ? { kind: "rejected", command, cwd, requestedShell, reason: WSL_UNSANDBOXABLE_REASON }
+      : { kind: "direct", command, cwd, requestedShell };
+  }
+  return resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox);
+}
+
 /**
  * 从执行计划构造 spawn 规格：沙箱计划用 SRT 给的 argv/env，直跑计划包装 shell 调用。
  * 前台 executePlan 与后台 startShellJob 共用，保证两条路径的进程构造完全一致。
@@ -254,6 +283,20 @@ function buildSpawnSpec(plan: ExecutablePlan, resolvedShell: ResolvedShellExecut
       cwd: plan.cwd,
       windowsVerbatimArguments: false,
       ranViaSandbox: true,
+    };
+  }
+  // WSL：argv 由主进程构造（发行版 + base64 直通），工作目录换算后嵌进脚本，
+  // 因而 spawn 自身不再传 Windows cwd（否则 wsl.exe 会二次换算，语义不可控）。
+  if (resolvedShell.kind === "wsl") {
+    const wslCwd = plan.cwd ? windowsPathToWslPath(plan.cwd) : null;
+    const wslInvocation = buildWslInvocation(resolvedShell, plan.command, wslCwd);
+    return {
+      command: wslInvocation.command,
+      args: wslInvocation.args,
+      env: { ...process.env },
+      cwd: undefined,
+      windowsVerbatimArguments: wslInvocation.windowsVerbatimArguments,
+      ranViaSandbox: false,
     };
   }
   const directInvocation = buildDirectShellInvocation(resolvedShell, plan.command);
@@ -496,13 +539,15 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     ? "cmd"
     : args.shell === "bash"
       ? "bash"
-      : null;
+      : args.shell === "wsl"
+        ? "wsl"
+        : null;
   if (!command) return "[错误] command 不能为空";
   if (!requestedShell) {
     return JSON.stringify({
       command, cwd, shell: String(args.shell), errorCode: "SHELL_UNSUPPORTED",
       exitCode: -1, timedOut: false, captureTruncated: false, effect: "unknown", sandboxed: false,
-      stderr: "[SHELL_UNSUPPORTED] shell 仅支持 cmd 或 bash", stdout: "",
+      stderr: "[SHELL_UNSUPPORTED] shell 仅支持 cmd、bash 或 wsl", stdout: "",
     });
   }
 
@@ -516,18 +561,70 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     });
   }
 
+  // WSL 发行版管理守卫：安装/卸载/删除/关停等一律拒绝（含 cmd/bash 调用 wsl.exe 的绕道）。
+  // AI 只允许在发行版内执行命令、查看已安装发行版。
+  if (isWslManagementCommand(command)) {
+    logger.info(LogTag.BuiltinTools, `[run_shell] rejected: WSL management command="${command}"`);
+    return JSON.stringify({
+      command, cwd, shell: requestedShell,
+      exitCode: -1, timedOut: false, captureTruncated: false, effect: "unknown", sandboxed: false,
+      stderr: "[拒绝] 检测到 WSL 发行版管理命令（安装/卸载/删除等被禁止）；仅允许在发行版内执行命令或查看已安装发行版。", stdout: "",
+    });
+  }
+
   const level = context?.permissionMode === "allow_all" ? "full" : getCurrentLevel();
   const effect: ShellEffect = classifyShellEffect(command);
   logger.info(LogTag.BuiltinTools, `[run_shell] entry: command="${command}" cwd=${cwd || "(undefined)"} effect=${effect} level=${level}`);
 
-  // 解释器前置解析：直跑和沙箱包装都需要（bash 不可用在此提前返回，不进入执行计划）
-  const resolvedShell = await resolveShellExecutable(requestedShell);
-  if (!resolvedShell) {
-    return JSON.stringify({
-      command, cwd, shell: requestedShell, errorCode: "BASH_UNAVAILABLE",
-      exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
-      stderr: "[BASH_UNAVAILABLE] 未找到可用的 Bash。请安装 Git Bash，并确保 bash.exe 可执行。", stdout: "",
-    });
+  // 解释器前置解析：WSL 走独立探测与协议（含是否启用/发行版/路径），cmd/bash 走本机解析。
+  let resolvedShell: ResolvedShellExecutable;
+  /** 仅 shell="wsl" 时附带：本机已安装发行版列表（供模型查看） */
+  let availableDistros: string[] | undefined;
+  if (requestedShell === "wsl") {
+    const settings = loadGeneralSettings();
+    if (!settings.wslEnabled) {
+      return JSON.stringify({
+        command, cwd, shell: "wsl", errorCode: "WSL_DISABLED",
+        exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+        stderr: "[WSL_DISABLED] WSL 执行未启用。请在设置 → 偏好设置中开启「WSL 命令执行」。", stdout: "",
+      });
+    }
+    const discovery = await discoverWsl();
+    availableDistros = discovery.distros;
+    if (!discovery.executable || discovery.distros.length === 0) {
+      return JSON.stringify({
+        command, cwd, shell: "wsl", errorCode: "WSL_UNAVAILABLE", availableDistros,
+        exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+        stderr: "[WSL_UNAVAILABLE] 未检测到可用的 WSL 发行版。请先安装 WSL 及至少一个发行版。", stdout: "",
+      });
+    }
+    const configuredDistro = (settings.wslDistro ?? "").trim();
+    if (configuredDistro && !discovery.distros.includes(configuredDistro)) {
+      return JSON.stringify({
+        command, cwd, shell: "wsl", errorCode: "WSL_DISTRO_NOT_FOUND", availableDistros,
+        exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+        stderr: `[WSL_DISTRO_NOT_FOUND] 设置的默认发行版「${configuredDistro}」不存在。当前可用：${discovery.distros.join("、")}。`, stdout: "",
+      });
+    }
+    // cwd 换算：UNC/相对路径无法映射到 WSL，spawn 前拒绝（不进入执行计划）
+    if (cwd !== undefined && windowsPathToWslPath(cwd) === null) {
+      return JSON.stringify({
+        command, cwd, shell: "wsl", errorCode: "WSL_PATH_UNSUPPORTED", availableDistros,
+        exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+        stderr: "[WSL_PATH_UNSUPPORTED] 该工作目录无法映射到 WSL 路径（网络/UNC 路径不支持）。请改用本地磁盘路径。", stdout: "",
+      });
+    }
+    resolvedShell = { kind: "wsl", executable: discovery.executable, distro: configuredDistro || null };
+  } else {
+    const resolved = await resolveShellExecutable(requestedShell);
+    if (!resolved) {
+      return JSON.stringify({
+        command, cwd, shell: requestedShell, errorCode: "BASH_UNAVAILABLE",
+        exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+        stderr: "[BASH_UNAVAILABLE] 未找到可用的 Bash。请安装 Git Bash，并确保 bash.exe 可执行。", stdout: "",
+      });
+    }
+    resolvedShell = resolved;
   }
 
   const requiresSandbox = effect !== "read";
@@ -536,14 +633,13 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   // 后台任务不做"无输出判卡死"检测，执行上限沿用 timeout_ms（未传则 30 分钟）；
   // 与本轮 agent 调用解耦——取消本轮不杀后台任务，由用户 stop / 执行上限 / 应用退出控制。
   if (args.run_in_background === true || args.run_in_background === "true") {
-    const plan: ExecutionPlan = level === "full"
-      ? { kind: "direct", command, cwd, requestedShell }
-      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox);
+    const plan = await resolveRunPlan(command, cwd, requestedShell, resolvedShell, level, requiresSandbox);
     if (plan.kind === "rejected") {
       // 与前台一致的拒绝协议：spawn 从未被调用，stdout 必然为空
       return JSON.stringify({
         command, cwd, shell: requestedShell,
         exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+        ...(availableDistros ? { availableDistros } : {}),
         stderr: `[拒绝] ${plan.reason}`, stdout: "",
       });
     }
@@ -560,6 +656,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
       status: "running",
       totalTimeoutMs: timeoutPolicy.totalMs,
       sandboxed: spec.ranViaSandbox,
+      ...(availableDistros ? { availableDistros } : {}),
       note: "命令已在后台启动，不阻塞本轮。用 shell_job (action=status, job_id) 查询状态，可传 wait_ms=0-60000 阻塞等待；action=stop 终止。日志持续写入 logFile（stdout+stderr 合计上限 64MB，超限自动终止）。",
     });
   }
@@ -578,6 +675,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
       captureTruncated: result.captureTruncated,
       effect,
       sandboxed: false,
+      ...(availableDistros ? { availableDistros } : {}),
       stderr: result.stderr,
       stdout: result.stdout,
     });
@@ -586,14 +684,16 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   // 非 full 档位：spawn 前通过 ExecutionPlan 完成全部安全决策
   // - read  → 仅当"用户显式无沙箱"（reason: disabled）时允许 direct 降级
   // - write/unknown → 必须 wrap 成功，否则 rejected（fail-closed，不执行）
+  // - WSL → 永不进沙箱：只读直跑，写/未知 rejected（见 resolveRunPlan）
   // （requiresSandbox 已在后台分支前声明，此处复用）
-  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox);
+  const plan = await resolveRunPlan(command, cwd, requestedShell, resolvedShell, level, requiresSandbox);
 
   if (plan.kind === "rejected") {
     // 到达这里时 spawn 从未被调用——命令没有执行过，stdout 必然为空
     return JSON.stringify({
       command, cwd, shell: requestedShell,
       exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
+      ...(availableDistros ? { availableDistros } : {}),
       stderr: `[拒绝] ${plan.reason}`, stdout: "",
     });
   }
@@ -608,6 +708,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     captureTruncated: result.captureTruncated,
     effect,
     sandboxed: result.ranViaSandbox,
+    ...(availableDistros ? { availableDistros } : {}),
     stderr: result.stderr,
     stdout: result.stdout,
   });
@@ -617,7 +718,7 @@ export const runShellTool: ToolDefinition = {
   id: "run_shell",
   name: "执行命令",
   description:
-    "在用户电脑上执行一条 Shell 命令字符串。默认由 cmd.exe 解析；需要类 Unix 语法时可显式选择 bash。返回 exitCode + stdout + stderr。\n\n" +
+    "在用户电脑上执行一条 Shell 命令字符串。默认由 cmd.exe 解析；需要类 Unix 语法时可显式选择 bash，或选择 wsl 在 Windows 的 WSL 发行版内执行。返回 exitCode + stdout + stderr。\n\n" +
     "cmd 模式语义：\n" +
     "- 管道：git status | findstr TODO\n" +
     "- 重定向：npm run build > build.log 或 echo hello >> out.txt\n" +
@@ -627,6 +728,12 @@ export const runShellTool: ToolDefinition = {
     "bash 模式语义：\n" +
     "- 设置 shell=\"bash\"，可使用 pwd / grep / sed / awk、$VAR、POSIX 管道及脚本语法\n" +
     "- 仅在检测到可用 Git Bash 时执行；不可用会明确返回 BASH_UNAVAILABLE，不会改用 cmd\n\n" +
+    "wsl 模式语义：\n" +
+    "- 设置 shell=\"wsl\"，命令在已安装的 WSL 发行版内由 bash 执行；需用户在偏好设置中开启「WSL 命令执行」\n" +
+    "- 未开启返回 WSL_DISABLED，未安装/无发行版返回 WSL_UNAVAILABLE，默认发行版不存在返回 WSL_DISTRO_NOT_FOUND\n" +
+    "- cwd 为 Windows 路径，会自动换算为 /mnt/<盘符>/...；UNC/网络路径不支持（返回 WSL_PATH_UNSUPPORTED）\n" +
+    "- 结果附带 availableDistros（本机已安装发行版列表）；想单独查看发行版可执行一条平凡命令（如 command=\"true\"）\n" +
+    "- 只允许在发行版内执行命令与查看发行版：安装/卸载/删除/关停等 wsl 管理操作一律被拒绝\n\n" +
     "何时用：\n" +
     "- git clone / git status / git log 等版本控制操作\n" +
     "- npm install / npm run / pip install / node xxx.js 等开发操作\n" +
@@ -649,8 +756,10 @@ export const runShellTool: ToolDefinition = {
     "stdout+stderr 合计上限 64MB，超限自动终止），不阻塞本轮对话。执行上限沿用 timeout_ms（未传则 30 分钟）。" +
     "之后用 shell_job 工具查询状态（可带 wait_ms 阻塞等待）或终止任务。\n\n" +
     "安全说明：非完全信任档位下，写副作用的命令会在沙箱中执行（限制文件系统访问范围）。" +
-    "灾难命令（format/shutdown/dd 等）一律拒绝。\n" +
-    "参数：command (完整命令行字符串，如 \"git status\")，cwd (可选工作目录)，shell (cmd 或 bash，默认 cmd)，" +
+    "灾难命令（format/shutdown/dd 等）一律拒绝。" +
+    "WSL 进程在沙箱能力边界之外，故非完全信任档位下仅放行只读命令，写/未知命令需提升到完全信任档位；" +
+    "WSL 发行版的安装/卸载/删除/关停等管理操作一律拒绝。\n" +
+    "参数：command (完整命令行字符串，如 \"git status\")，cwd (可选工作目录)，shell (cmd / bash / wsl，默认 cmd)，" +
     "timeout_ms (可选执行上限毫秒数，1000–1800000，设置后禁用无输出检测)，" +
     "run_in_background (可选 true，后台执行并用 shell_job 管理)。",
   enabled: true,
@@ -664,9 +773,9 @@ export const runShellTool: ToolDefinition = {
       cwd: { type: "string", description: "工作目录绝对路径，可选" },
       shell: {
         type: "string",
-        enum: ["cmd", "bash"],
+        enum: ["cmd", "bash", "wsl"],
         default: "cmd",
-        description: "命令解释器：cmd（默认，兼容旧命令）或 bash（需要用户已安装 Git Bash）",
+        description: "命令解释器：cmd（默认，兼容旧命令）、bash（需要用户已安装 Git Bash）或 wsl（在 WSL 发行版内执行，需在设置中开启）",
       },
       timeout_ms: {
         type: "number",

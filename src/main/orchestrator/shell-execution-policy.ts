@@ -78,6 +78,29 @@ export function isCatastrophicCommand(command: string): boolean {
   return CATASTROPHIC_FIRST_WORDS.has(basename);
 }
 
+// ── WSL 管理命令守卫 ────────────────────────────────────
+// AI 只允许「在发行版内执行命令」与「查看已安装发行版」；安装/卸载/删除/关停/改默认
+// 等发行版管理操作一律拒绝。wsl.exe 的安装/删除操作在 shell:"wsl" 主路径上结构不可达
+// （argv 由主进程构造），但 cmd/bash 模式可以直接调 wsl.exe，故这里做字符串兜底：
+// 只要命令里出现独立的 wsl/wsl.exe token 且带任一管理 flag，就拦截（含 `cmd /c wsl ...` 绕道）。
+const WSL_MANAGEMENT_FLAGS = new Set([
+  "--install", "--uninstall", "--unregister",
+  "--manage", "--delete", "--move", "--resize",
+  "--shutdown", "--terminate", "-t",
+  "--import", "--export", "--mount", "--unmount",
+  "--set-default", "--set-version",
+]);
+
+/** 是否出现 wsl.exe 的发行版管理命令（含经 cmd/bash 调用的绕道）。 */
+export function isWslManagementCommand(command: string): boolean {
+  const lower = command.trim().toLowerCase();
+  if (!lower) return false;
+  // wsl / wsl.exe 必须是独立 token（可带路径前缀），避免误伤 "awslogs" 之类
+  if (!/(^|[\s\\/[(])wsl(\.exe)?\b/.test(lower)) return false;
+  const tokens = lower.split(/[\s|;&()]+/);
+  return tokens.some((token) => WSL_MANAGEMENT_FLAGS.has(token));
+}
+
 // ── 副作用分类器 ────────────────────────────────────────
 
 /**

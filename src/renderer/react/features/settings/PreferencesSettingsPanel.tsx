@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Modal, Radio, Spin } from "antd";
-import { FileText, Hash, Music, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { FileText, Hash, Music, RefreshCw, SlidersHorizontal, Terminal } from "lucide-react";
 import {
   normalizeChatSocialContextEnabled,
   normalizeMobileMessageSegmentationMode,
@@ -19,10 +19,13 @@ import {
 } from "../../../../shared/style-sampling";
 import { isProactiveDeliveryTargetSelectable } from "../../../../shared/proactive-delivery";
 import { useTranslation } from "../../i18n";
-import { SettingsInput, SettingsSegmented, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
+import { SettingsInput, SettingsSegmented, SettingsSelect, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { Card } from "../../components/ui/Card";
 
 type Liveliness = "quiet" | "natural" | "lively";
+
+/** WSL 发行版下拉里「跟随 WSL 默认」的哨兵值（Radix Select 不接受空字符串 item）。 */
+const WSL_DEFAULT_DISTRO = "__default__";
 
 interface PreferencesValues {
   mobileMessageSegmentation: MobileMessageSegmentationMode;
@@ -48,6 +51,10 @@ interface PreferencesValues {
   tokenStatsEnabled: boolean;
   /** tokenizer 下载源偏好（下载管理在 .NET 宿主内完成）。 */
   tokenStatsSource: "modelscope" | "hf-mirror" | "huggingface";
+  /** WSL 命令执行开关（默认关闭）。 */
+  wslEnabled: boolean;
+  /** 默认 WSL 发行版名；空字符串 = 使用 WSL 默认发行版。 */
+  wslDistro: string;
 }
 
 type ChannelStatus = Record<string, { phase?: string }>;
@@ -70,6 +77,8 @@ const defaults: PreferencesValues = {
   musicAgentAccess: "read",
   tokenStatsEnabled: false,
   tokenStatsSource: "modelscope",
+  wslEnabled: false,
+  wslDistro: "",
 };
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -102,6 +111,8 @@ function readPreferences(value: unknown): PreferencesValues {
       input.tokenStatsSource === "hf-mirror" || input.tokenStatsSource === "huggingface"
         ? input.tokenStatsSource
         : "modelscope",
+    wslEnabled: input.wslEnabled === true,
+    wslDistro: typeof input.wslDistro === "string" ? input.wslDistro.trim() : "",
   };
 }
 
@@ -128,6 +139,9 @@ export function PreferencesSettingsPanel() {
   const [styleSaving, setStyleSaving] = useState(false);
   const [pandocDetecting, setPandocDetecting] = useState(false);
   const [pandocStatus, setPandocStatus] = useState("");
+  const [wslExecutable, setWslExecutable] = useState<string | null>(null);
+  const [wslDistros, setWslDistros] = useState<string[]>([]);
+  const [wslDetecting, setWslDetecting] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -145,6 +159,7 @@ export function PreferencesSettingsPanel() {
         setChannels(readChannelStatus(channelStatus));
         setLoading(false);
         void runPandocDetect(loaded.pandocPath);
+        void runWslDetect();
       })
       .catch(() => {
         if (disposed) return;
@@ -175,6 +190,22 @@ export function PreferencesSettingsPanel() {
     }
   }
 
+  async function runWslDetect() {
+    const api = window.settings;
+    if (!api?.detectWsl) return;
+    setWslDetecting(true);
+    try {
+      const result = await api.detectWsl();
+      setWslExecutable(result.executable ?? null);
+      setWslDistros(Array.isArray(result.distros) ? result.distros : []);
+    } catch {
+      setWslExecutable(null);
+      setWslDistros([]);
+    } finally {
+      setWslDetecting(false);
+    }
+  }
+
   async function savePreferences() {
     setSaving(true);
     setStatus(t("settingsPage.preferences.saving"));
@@ -197,6 +228,8 @@ export function PreferencesSettingsPanel() {
         musicAgentAccess,
         tokenStatsEnabled,
         tokenStatsSource,
+        wslEnabled,
+        wslDistro,
       } = values;
       await window.settings.saveGeneral({
         citaEnabled,
@@ -215,6 +248,8 @@ export function PreferencesSettingsPanel() {
         musicAgentAccess,
         tokenStatsEnabled,
         tokenStatsSource,
+        wslEnabled,
+        wslDistro: wslDistro.trim(),
       });
       setStatus(t("settingsPage.preferences.saved"));
     } catch {
@@ -262,6 +297,15 @@ export function PreferencesSettingsPanel() {
 
   const diversity = styleDraft.diversity;
   const selectableTarget = (target: ProactiveDeliveryTarget) => isProactiveDeliveryTargetSelectable(target, channels[target]);
+  const wslOptions = [
+    { label: t("settingsPage.preferences.wslUseDefault"), value: WSL_DEFAULT_DISTRO },
+    ...wslDistros.map((distro) => ({ label: distro, value: distro })),
+  ];
+  const wslStatus = wslExecutable === null
+    ? t("settingsPage.preferences.wslNotDetected")
+    : wslDistros.length === 0
+      ? t("settingsPage.preferences.wslNoDistro")
+      : t("settingsPage.preferences.wslDistroDescription");
 
   return (
     <>
@@ -398,6 +442,31 @@ export function PreferencesSettingsPanel() {
                   onChange={(value) => update("tokenStatsSource", value as PreferencesValues["tokenStatsSource"])}
                 />
               </div>
+            </Card>
+          </section>
+
+          <section className="cy-settings-section">
+            <div className="cy-settings-section__heading"><h2><Terminal size={18} />{t("settingsPage.preferences.wsl")}</h2><p>{t("settingsPage.preferences.wslDescription")}</p></div>
+            <Card>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.wslEnabled")}</strong><span>{t("settingsPage.preferences.wslEnabledDescription")}</span></div>
+                <SettingsSwitch checked={values.wslEnabled} ariaLabel={t("settingsPage.preferences.wslEnabled")} onChange={(checked) => update("wslEnabled", checked)} />
+              </div>
+              {values.wslEnabled && (
+                <div className="cy-settings-row">
+                  <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.wslDistro")}</strong><span>{wslStatus}</span></div>
+                  <div className="cy-settings-row__control cy-settings-button-group">
+                    <SettingsSelect
+                      value={values.wslDistro || WSL_DEFAULT_DISTRO}
+                      options={wslOptions}
+                      onChange={(value) => update("wslDistro", value === WSL_DEFAULT_DISTRO ? "" : value)}
+                      ariaLabel={t("settingsPage.preferences.wslDistro")}
+                      disabled={wslDistros.length === 0}
+                    />
+                    <Button loading={wslDetecting} icon={<RefreshCw size={15} />} onClick={() => void runWslDetect()}>{t("settingsPage.preferences.wslDetect")}</Button>
+                  </div>
+                </div>
+              )}
             </Card>
           </section>
 
