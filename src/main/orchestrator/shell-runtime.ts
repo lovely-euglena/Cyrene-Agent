@@ -41,9 +41,27 @@ export async function resolveShellExecutable(kind: ShellKind): Promise<ResolvedS
 
 function collectBashCandidates(): string[] {
   const candidates: string[] = [];
+  const pathDirectories: string[] = [];
   for (const entry of (process.env.PATH ?? "").split(path.delimiter)) {
     const directory = entry.trim().replace(/^"|"$/g, "");
-    if (directory) candidates.push(path.join(directory, "bash.exe"));
+    if (directory) {
+      pathDirectories.push(directory);
+      candidates.push(path.join(directory, "bash.exe"));
+    }
+  }
+
+  // Git for Windows 默认安装只把 <安装根>\cmd 挂进 PATH（bash 不在 PATH）：
+  // 从 git.exe 所在目录反推安装根，在它旁边找 bash（支持非 C 盘自定义安装）。
+  for (const directory of pathDirectories) {
+    if (!fs.existsSync(path.join(directory, "git.exe"))) continue;
+    const base = path.basename(directory).toLowerCase();
+    if (base === "cmd") {
+      const root = path.dirname(directory);
+      candidates.push(path.join(root, "bin", "bash.exe"));
+      candidates.push(path.join(root, "usr", "bin", "bash.exe"));
+    } else {
+      candidates.push(path.join(directory, "bash.exe"));
+    }
   }
 
   const programFiles = process.env.ProgramFiles;
