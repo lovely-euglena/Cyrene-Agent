@@ -26,6 +26,8 @@ interface SchedulerStreamEvent {
   schedulerTaskId?: string;
   runId?: string;
   threadId?: string;
+  /** 终态运行快照（与主进程 scheduler-runner 落库同款口径）。 */
+  runSnapshot?: ChatMessage["runSnapshot"];
 }
 
 interface SchedulerStartedValue {
@@ -80,8 +82,12 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
     const api = schedulerEventsApi();
     if (!api) return;
 
-    /** 终态收尾：补丁占位消息为终态并落库。 */
-    const finishStream = (state: SchedulerStreamState, finalContent: string): void => {
+    /** 终态收尾：补丁占位消息为终态并落库（runSnapshot 透传主进程终态口径）。 */
+    const finishStream = (
+      state: SchedulerStreamState,
+      finalContent: string,
+      runSnapshot?: ChatMessage["runSnapshot"],
+    ): void => {
       if (!state.sessionId) return;
       const { sessionId, replyId } = state;
       depsRef.current.patchMessage(sessionId, replyId, {
@@ -90,12 +96,14 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         streaming: false,
         waitingForFirstEvent: false,
         responseStarted: true,
+        ...(runSnapshot ? { runSnapshot } : {}),
       });
       depsRef.current.persistMessage?.(sessionId, {
         id: replyId,
         role: "model",
         content: finalContent,
         toolExecutions: state.tools?.length ? state.tools : undefined,
+        ...(runSnapshot ? { runSnapshot } : {}),
         at: Date.now(),
       });
     };
@@ -115,7 +123,7 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         streamsRef.current.set(runKey, { sessionId, replyId, content: "", tools: [] });
         if (!sessionId) return;
         depsRef.current.appendMessages(sessionId, [
-          { id: noticeId, role: "assistant", content: `定时任务「${title}」已触发` },
+          { id: noticeId, role: "user", content: `定时任务「${title}」已触发` },
           {
             id: replyId,
             role: "assistant",
@@ -128,7 +136,7 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         ]);
         depsRef.current.persistMessage?.(sessionId, {
           id: noticeId,
-          role: "model",
+          role: "user",
           content: `定时任务「${title}」已触发`,
           at: Date.now(),
         });
@@ -198,7 +206,7 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
           const finalContent = state.content
             || state.tools?.map((tool) => `${tool.name}：${tool.status === "error" ? "失败" : "完成"}`).join("\n")
             || "任务执行完毕。";
-          finishStream(state, finalContent);
+          finishStream(state, finalContent, event.runSnapshot);
           streamsRef.current.delete(runKey);
           return;
         }
