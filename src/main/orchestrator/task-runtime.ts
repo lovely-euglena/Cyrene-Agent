@@ -3,7 +3,10 @@ import { TaskSessionStore } from "../tasks/task-session-store";
 import { projectTaskTraceEvent } from "./task-events";
 import { getTaskAgentProfile, resolveTaskTools } from "./task-profiles";
 import { runCyreneHarness } from "./harness/cyrene-harness";
-import type { HarnessInput, HarnessResult } from "./harness/types";
+import type { AgentState, HarnessConfig, HarnessEvent, HarnessInput, HarnessResult } from "./harness/types";
+import type { HarnessStepEnvironment } from "./agent-orchestration/step-runner";
+import type { TaskOrchestrationInput, TaskOrchestrationOutcome } from "./agent-orchestration/task-orchestrator-runner";
+import { resolveHostStepTimeoutMs } from "./agent-orchestration/protocol";
 import type { ToolDefinition } from "./tools/registry/tool-registry";
 import type { VendorConfig, ChatMessage } from "./vendors/types";
 import type { ToolContext } from "./tools/registry/tool-context";
@@ -78,6 +81,15 @@ export interface TaskRuntimeParentContext {
   toolOutputStore?: ToolOutputStore;
 }
 
+/**
+ * 注入接口：子 Agent 经 agent-orchestrator 编排执行（接口层，生产未接线）。
+ * 不注入时 Task 走原有 TS Harness 直跑；注入后仅当开关/exe 就绪才走编排，
+ * 首个 step 前故障由 runner 返回 used:false 回退直跑。
+ */
+export type TaskOrchestratedRunner = (
+  input: TaskOrchestrationInput,
+) => Promise<TaskOrchestrationOutcome>;
+
 function taskStatus(result: HarnessResult): { status: Exclude<TaskSessionStatus, "running" | "interrupted">; error?: { code: string; message: string } } {
   const terminal = result.terminal?.status;
   if (terminal === "cancelled" || result.terminateReason === "cancelled") return { status: "cancelled" };
@@ -86,6 +98,23 @@ function taskStatus(result: HarnessResult): { status: Exclude<TaskSessionStatus,
   }
   if (terminal === "runtime_error" || result.terminateReason === "error") {
     return { status: "failed", error: { code: "TASK_RUNTIME_ERROR", message: result.finalAnswer || "子任务运行失败" } };
+  }
+  return { status: "completed" };
+}
+
+/** 编排终态 → 任务结算（与 taskStatus 的直跑语义对齐）。 */
+function taskStatusFromOrchestration(
+  outcome: Extract<TaskOrchestrationOutcome, { used: true }>,
+): { status: Exclude<TaskSessionStatus, "running" | "interrupted">; error?: { code: string; message: string } } {
+  if (outcome.status === "cancelled") return { status: "cancelled" };
+  if (outcome.status === "timeout") {
+    return { status: "failed", error: { code: "TASK_TIMEOUT", message: "子任务超过执行时间上限" } };
+  }
+  if (outcome.status === "failed") {
+    return {
+      status: "failed",
+      error: { code: "TASK_RUNTIME_ERROR", message: outcome.error || outcome.finalAnswer || "子任务运行失败" },
+    };
   }
   return { status: "completed" };
 }
@@ -168,6 +197,8 @@ export function createTaskExecutor(input: {
   runHarness?: typeof runCyreneHarness;
   characterPool?: Pick<TaskCharacterLeasePool, "acquire">;
   onLifecycle?: (event: TaskDelegationPresentation) => void;
+  /** 编排接口（可选）：注入后按开关/回退规则尝试经 agent-orchestrator 执行。 */
+  runOrchestrated?: TaskOrchestratedRunner;
 }): (request: TaskExecuteRequest) => Promise<TaskExecuteResult> {
   const runHarness = input.runHarness ?? runCyreneHarness;
   const characterPool = input.characterPool ?? taskCharacterLeasePool;
@@ -175,29 +206,38 @@ export function createTaskExecutor(input: {
     const profile = getTaskAgentProfile(request.subagentType);
     const lease = characterPool.acquire(input.parent.parentConversationId, request.companionId);
     let session: TaskSession;
+    // 编排 seed：resume 前快照历史（resume 会追加本轮 prompt，进了 seed 会与
+    // worker 组装的 user 消息重复）；新建任务 seed 为空。
+    let seedMessages: ChatMessage[] = [];
+    let seedState: AgentState | undefined;
     try {
       const previous = request.taskId
         ? null
         : input.store.findOpenByCompanion(input.parent.parentConversationId, request.companionId);
       const taskId = request.taskId ?? previous?.id;
-      session = taskId
-        ? input.store.resume(taskId, {
-            parentConversationId: input.parent.parentConversationId,
-            parentRunId: input.parent.parentRunId,
-            subagentType: request.subagentType,
-            prompt: request.prompt,
-            companionId: request.companionId,
-          })
-        : input.store.create({
-            parentConversationId: input.parent.parentConversationId,
-            parentRunId: input.parent.parentRunId,
-            description: request.description,
-            prompt: request.prompt,
-            subagentType: request.subagentType,
-            companionId: request.companionId,
-            mode: input.parent.mode,
-            resolvedWorkspaceRoot: input.parent.resolvedWorkspaceRoot,
-          });
+      if (taskId) {
+        const before = input.store.get(taskId);
+        seedMessages = (before?.messages ?? []) as ChatMessage[];
+        seedState = { todoItems: before?.todoItems ?? [], uncertainEffects: [] };
+        session = input.store.resume(taskId, {
+          parentConversationId: input.parent.parentConversationId,
+          parentRunId: input.parent.parentRunId,
+          subagentType: request.subagentType,
+          prompt: request.prompt,
+          companionId: request.companionId,
+        });
+      } else {
+        session = input.store.create({
+          parentConversationId: input.parent.parentConversationId,
+          parentRunId: input.parent.parentRunId,
+          description: request.description,
+          prompt: request.prompt,
+          subagentType: request.subagentType,
+          companionId: request.companionId,
+          mode: input.parent.mode,
+          resolvedWorkspaceRoot: input.parent.resolvedWorkspaceRoot,
+        });
+      }
     } catch (error) {
       lease.release();
       throw error;
@@ -257,18 +297,86 @@ export function createTaskExecutor(input: {
       const combinedTaskPrompt = buildCharacterTaskPrompt(request.companionId);
       const promptLayers = buildChildPromptLayers(input.parent, combinedTaskPrompt, request.accessMode ?? "write");
       const taskModel = resolveTaskModel(input.parent.vendorConfig);
+      const tools = resolveTaskTools(profile, input.parent.tools, request.accessMode ?? "write");
+      const harnessConfig: Partial<HarnessConfig> = {
+        totalTimeoutMs: profile.timeoutMs,
+        maxParallelToolCalls: request.maxParallelToolCalls ?? DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS,
+        ...(taskModel.contextWindowTokens ? { contextWindowTokens: taskModel.contextWindowTokens } : {}),
+      };
       let activeRoundId: string | undefined;
+      const onHarnessEvent = (event: HarnessEvent) => {
+        if (event.type === "round_start") activeRoundId = event.roundId;
+        const trace = projectTaskTraceEvent(event);
+        if (trace) {
+          if (event.type !== "round_start" && event.type !== "round_end" && activeRoundId) {
+            trace.roundId = activeRoundId;
+          }
+          pendingTaskTrace.push(trace);
+          scheduleTaskTraceFlush();
+        }
+        if (event.type === "round_end") activeRoundId = undefined;
+      };
+      const onHarnessCheckpoint: NonNullable<HarnessInput["onCheckpoint"]> = (checkpoint) => {
+        input.store.checkpoint(session.id, {
+          messages: checkpoint.messages as TaskTranscriptMessage[],
+          todoItems: checkpoint.state.todoItems,
+        });
+      };
+      const resolveStepEnvironment = ({ signal }: { signal: AbortSignal }): HarnessStepEnvironment => ({
+        vendorConfig: taskModel.vendorConfig,
+        tools,
+        promptLayers,
+        systemPrompt: promptLayers.stablePrefix,
+        toolContext: { ...toolContext, signal },
+        checkPermission: input.parent.checkPermission,
+        toolOutputStore: input.parent.toolOutputStore,
+        includeInteractiveTools: input.parent.includeInteractiveTools,
+        config: harnessConfig,
+        onCheckpoint: onHarnessCheckpoint,
+      });
+
+      // 编排路径（接口层，默认未注入）：首个 step 前故障回退直跑；一旦执行过
+      // step（副作用不可假设幂等）则按终态结算，绝不回退。
+      if (input.runOrchestrated) {
+        const sessionId = `${session.id}:${session.childRunId}`;
+        const outcome = await input.runOrchestrated({
+          taskId: session.id,
+          sessionId,
+          groupId: sessionId,
+          role: request.subagentType,
+          message: request.prompt,
+          seed: {
+            messages: seedMessages,
+            ...(seedState ? { state: seedState } : {}),
+          },
+          stepTimeoutMs: resolveHostStepTimeoutMs(profile.timeoutMs),
+          resolveEnvironment: resolveStepEnvironment,
+          onEvent: onHarnessEvent,
+          ...(input.parent.signal ? { signal: input.parent.signal } : {}),
+        });
+        if (outcome.used) {
+          flushTaskTrace();
+          const mapped = taskStatusFromOrchestration(outcome);
+          input.store.checkpoint(session.id, {
+            status: mapped.status,
+            resultText: outcome.finalAnswer ?? "",
+            ...(outcome.finalState ? { todoItems: outcome.finalState.todoItems } : {}),
+            ...(mapped.error ? { error: mapped.error } : {}),
+            completedAt: Date.now(),
+          });
+          input.onLifecycle?.({ ...presentation, status: mapped.status });
+          return { taskId: session.id, status: mapped.status, text: outcome.finalAnswer ?? "" };
+        }
+        console.warn(`[TaskRuntime] 编排执行不可用，回退直跑 Harness：${outcome.reason}`);
+      }
+
       const result = await runHarness({
         systemPrompt: promptLayers.stablePrefix,
         promptLayers,
         messages: session.messages as ChatMessage[],
-        tools: resolveTaskTools(profile, input.parent.tools, request.accessMode ?? "write"),
+        tools,
         vendorConfig: taskModel.vendorConfig,
-        config: {
-          totalTimeoutMs: profile.timeoutMs,
-          maxParallelToolCalls: request.maxParallelToolCalls ?? DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS,
-          ...(taskModel.contextWindowTokens ? { contextWindowTokens: taskModel.contextWindowTokens } : {}),
-        },
+        config: harnessConfig,
         initialState: {
           todoItems: session.todoItems,
           uncertainEffects: [],
@@ -278,24 +386,8 @@ export function createTaskExecutor(input: {
         toolOutputStore: input.parent.toolOutputStore,
         checkPermission: input.parent.checkPermission,
         includeInteractiveTools: input.parent.includeInteractiveTools,
-        onEvent: (event) => {
-          if (event.type === "round_start") activeRoundId = event.roundId;
-          const trace = projectTaskTraceEvent(event);
-          if (trace) {
-            if (event.type !== "round_start" && event.type !== "round_end" && activeRoundId) {
-              trace.roundId = activeRoundId;
-            }
-            pendingTaskTrace.push(trace);
-            scheduleTaskTraceFlush();
-          }
-          if (event.type === "round_end") activeRoundId = undefined;
-        },
-        onCheckpoint: (checkpoint) => {
-          input.store.checkpoint(session.id, {
-            messages: checkpoint.messages as TaskTranscriptMessage[],
-            todoItems: checkpoint.state.todoItems,
-          });
-        },
+        onEvent: onHarnessEvent,
+        onCheckpoint: onHarnessCheckpoint,
       });
       flushTaskTrace();
       const mapped = taskStatus(result);

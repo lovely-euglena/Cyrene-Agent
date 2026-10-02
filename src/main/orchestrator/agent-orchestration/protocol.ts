@@ -36,6 +36,17 @@ export const ORCHESTRATOR_LIMITS = {
   maxQueuedTurnsPerGroup: 8,
 } as const;
 
+/** host step 超时宽限：Harness 自身超时先生效，host 只做兜底。 */
+export const ORCHESTRATOR_STEP_TIMEOUT_GRACE_MS = 15_000;
+/** profile 不限时（0）：host 默认 600s 会改变语义，用近 int.Max 表达「事实不限」。 */
+export const ORCHESTRATOR_UNBOUNDED_STEP_TIMEOUT_MS = 2_000_000_000;
+
+/** 任务/会话 profile 超时 → host step 超时（有限 + 宽限；不限 → 近 int.Max）。 */
+export function resolveHostStepTimeoutMs(profileTimeoutMs: number): number {
+  if (profileTimeoutMs <= 0) return ORCHESTRATOR_UNBOUNDED_STEP_TIMEOUT_MS;
+  return profileTimeoutMs + ORCHESTRATOR_STEP_TIMEOUT_GRACE_MS;
+}
+
 /** Electron → host 请求 op（id 请求/应答式）。 */
 export const ORCHESTRATOR_REQUEST_OPS = {
   GroupCreate: "group.create",

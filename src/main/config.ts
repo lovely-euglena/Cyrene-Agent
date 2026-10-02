@@ -22,11 +22,19 @@ export interface DotnetConfig {
    * 关闭或 native exe 缺失时，AgentOrchestratorClient 全部 API 返回未启用。
    */
   agentOrchestrator: boolean;
+  /**
+   * 子 Agent（Task）是否经 agent-orchestrator 编排执行（接口预埋，默认关）。
+   * 来源：CYRENE_TASK_ORCHESTRATOR 环境变量 / conf `taskOrchestrator`。
+   * 关闭时 Task 全部走原有 TS Harness 直跑；打开后仅当 agentOrchestrator
+   * 启用且 exe 就位时走编排（首个 step 前故障自动回退直跑）。
+   */
+  taskOrchestrator: boolean;
 }
 
 export const DOTNET_CONFIG_DEFAULTS: DotnetConfig = {
   agentHost: true,
   agentOrchestrator: true,
+  taskOrchestrator: false,
 };
 
 /**
@@ -91,6 +99,12 @@ export function resolveDotnetConfig(options?: { configPath?: string }): DotnetCo
       "CYRENE_AGENT_ORCHESTRATOR",
       "agentOrchestrator",
       DOTNET_CONFIG_DEFAULTS.agentOrchestrator,
+    ),
+    taskOrchestrator: resolveSwitch(
+      file,
+      "CYRENE_TASK_ORCHESTRATOR",
+      "taskOrchestrator",
+      DOTNET_CONFIG_DEFAULTS.taskOrchestrator,
     ),
   };
 }
