@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "comment": "cyrene-agent 精确 token 统计：模型 → 官方 tokenizer 下载源（ModelScope / HuggingFace 官方 + hf-mirror 镜像由宿主决定）。文件路径固定为仓库根 tokenizer.json。",
+  "models": {
+    "deepseek-v3.2": { "huggingface": "deepseek-ai/DeepSeek-V3.2", "modelscope": "deepseek-ai/deepseek-v3.2" },
+    "deepseek-v4-flash": { "huggingface": "deepseek-ai/DeepSeek-V4-Flash", "modelscope": "deepseek-ai/deepseek-v4-flash" },
+    "deepseek-v4-pro": { "huggingface": "deepseek-ai/DeepSeek-V4-Pro", "modelscope": "deepseek-ai/deepseek-v4-pro" },
+    "deepseek-v4.1-flash": { "huggingface": "deepseek-ai/DeepSeek-V4.1-Flash", "modelscope": "deepseek-ai/deepseek-v4.1-flash" },
+    "glm-5": { "huggingface": "zai-org/GLM-5", "modelscope": "ZhipuAI/glm-5" },
+    "glm-5.1": { "huggingface": "zai-org/GLM-5.1", "modelscope": "ZhipuAI/glm-5.1" },
+    "glm-5.2": { "huggingface": "zai-org/GLM-5.2", "modelscope": "ZhipuAI/glm-5.2" },
+    "glm-5.3": { "huggingface": "zai-org/GLM-5.3", "modelscope": "ZhipuAI/GLM-5.3" },
+    "glm-5.3-flash": { "huggingface": "zai-org/GLM-5.3-Flash", "modelscope": "ZhipuAI/GLM-5.3-Flash" },
+    "minimax-m2": { "huggingface": "MiniMaxAI/MiniMax-M2", "modelscope": "MiniMax/MiniMax-M2" },
+    "minimax-m2.1": { "huggingface": "MiniMaxAI/MiniMax-M2.1", "modelscope": "MiniMax/MiniMax-M2.1" },
+    "minimax-m2.5": { "huggingface": "MiniMaxAI/MiniMax-M2.5", "modelscope": "MiniMax/MiniMax-M2.5" },
+    "minimax-m3": { "huggingface": "MiniMaxAI/MiniMax-M3", "modelscope": "MiniMax/MiniMax-M3" },
+    "qwen3": { "huggingface": "Qwen/Qwen3-235B-A22B", "modelscope": "Qwen/Qwen3-235B-A22B" },
+    "qwen3.5": { "huggingface": "Qwen/Qwen3.5-397B-A17B", "modelscope": "Qwen/Qwen3.5-397B-A17B" },
+    "qwen3.6-27b": { "huggingface": "Qwen/Qwen3.6-27B", "modelscope": "Qwen/Qwen3.6-27B" },
+    "qwen3.6-35b-a3b": { "huggingface": "Qwen/Qwen3.6-35B-A3B", "modelscope": "Qwen/Qwen3.6-35B-A3B" },
+    "qwen3.8-2.4t-a95b": { "huggingface": "Qwen/Qwen3.8-2.4T-A95B", "modelscope": "Qwen/Qwen3.8-2.4T-A95B" },
+    "qwen3.8-27b": { "huggingface": "Qwen/Qwen3.8-27B", "modelscope": "Qwen/Qwen3.8-27B" },
+    "qwen3.8-flash-next": { "huggingface": "Qwen/Qwen3.8-Flash-Next", "modelscope": "Qwen/Qwen3.8-Flash-Next" }
+  }
+}
