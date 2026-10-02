@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>cyrene-token</AssemblyName>
+    <RootNamespace>CyreneToken</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 原生运行库包按目标平台选择（与 TokenStats 同款做法） -->
+    <TokRuntimeId Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</TokRuntimeId>
+    <TokRuntimeId Condition="'$(TokRuntimeId)' == '' and '$(NETCoreSdkPortableRuntimeIdentifier)' != ''">$(NETCoreSdkPortableRuntimeIdentifier)</TokRuntimeId>
+    <TokRuntimeId Condition="'$(TokRuntimeId)' == ''">win-x64</TokRuntimeId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Tokenizers.DotNet" Version="1.4.1" />
+    <PackageReference Include="Tokenizers.DotNet.runtime.$(TokRuntimeId)" Version="1.4.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- tokenizer 下载清单：模型 → 官方仓库（随输出携带，可独立更新） -->
+    <None Include="tokenizer-sources.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

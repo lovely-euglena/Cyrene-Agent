@@ -74,6 +74,9 @@ extraResources:
   # .NET embedding sidecar（bge-m3 ORT 加速；exe 存在时默认启用，缺失回退 worker）
   - from: dotnet/embedding-sidecar/bin/Release/net10.0/win-x64/publish
     to: embed-sidecar
+  # 精确 token 统计宿主（下载/缓存/加载/计数全在 .NET；设置默认关闭）
+  - from: dotnet/token-stats/bin/Release/net10.0/win-x64/publish
+    to: token-stats
   # 本地 OCR sidecar（Windows.Media.Ocr；缺失时 ocr_image 工具明确报「引擎未安装」）
   - from: dotnet/ocr-sidecar/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish
     to: ocr
