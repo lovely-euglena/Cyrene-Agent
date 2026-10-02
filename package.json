@@ -30,6 +30,7 @@
     "verify:mpv": "node scripts/verify/mpv-helper.mjs resources/bin/mpv/mpv.exe",
     "verify:installer": "node scripts/verify/installer-artifacts.mjs",
     "verify:agent-orchestrator": "node scripts/verify/agent-orchestrator-smoke.mjs",
+    "verify:task-orchestrator-loop": "vitest run src/main/orchestrator/agent-orchestration/task-orchestrator-loop.integration.test.ts",
     "verify:pandoc-sidecar": "node scripts/diagnostics/pandoc-sidecar-smoke.mjs",
     "verify:music-native": "node scripts/diagnostics/music-native-smoke.mjs",
     "verify:token-stats": "node scripts/diagnostics/token-stats-smoke.mjs",
