@@ -6,11 +6,11 @@ describe.runIf(process.platform === "win32")("run_shell shell selection", () => 
     await import("./built-in-tools");
   });
 
-  it("publishes cmd and bash as explicit shell choices while keeping cmd as the default", () => {
+  it("publishes cmd, bash and wsl as explicit shell choices while keeping cmd as the default", () => {
     const tool = toolRegistry.getById("run_shell");
     expect(tool?.inputSchema.properties.shell).toEqual({
       type: "string",
-      enum: ["cmd", "bash"],
+      enum: ["cmd", "bash", "wsl"],
       default: "cmd",
       description: expect.any(String),
     });
