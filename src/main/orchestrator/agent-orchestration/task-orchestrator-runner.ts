@@ -36,6 +36,8 @@ export interface TaskOrchestratorClientPort {
     options?: { signal?: AbortSignal },
   ): Promise<AgentOrchestratorTurnResult>;
   destroyGroup(groupId: string): Promise<{ ok: boolean; error?: string }>;
+  /** 可选：关停宿主进程（真实 client 提供）。 */
+  shutdown?(): Promise<void>;
 }
 
 /** 端口：便于单测注入 fake；HarnessSessionWorker 结构满足。 */
@@ -163,6 +165,8 @@ export interface TaskOrchestratorRunner {
   run(input: TaskOrchestrationInput): Promise<TaskOrchestrationOutcome>;
   readonly registry: TaskStepEnvironmentRegistry;
   enabled(): boolean;
+  /** 关停宿主进程（应用退出/测试清理；下次 run 会重新拉起）。 */
+  shutdown(): Promise<void>;
 }
 
 export function createTaskOrchestratorRunner(
@@ -240,7 +244,14 @@ export function createTaskOrchestratorRunner(
     }
   }
 
-  return { run, registry, enabled: isEnabled };
+  return {
+    run,
+    registry,
+    enabled: isEnabled,
+    shutdown: async () => {
+      await client.shutdown?.();
+    },
+  };
 }
 
 let singleton: TaskOrchestratorRunner | null = null;
