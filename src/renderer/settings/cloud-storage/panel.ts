@@ -4,6 +4,7 @@
 // 档案 CRUD 与状态展示（cloud-storage:* IPC）；秘密字段只写不读。
 
 import type { CloudStorageProfileView } from "../../../shared/cloud-storage";
+import { showConfirm } from "../shared/modal";
 import { t } from "../i18n";
 import {
   cloudStorageAddButton,
@@ -328,7 +329,15 @@ async function saveProfile(testAfter: boolean): Promise<void> {
 }
 
 async function deleteProfile(profile: CloudStorageProfileView): Promise<void> {
-  if (!window.confirm(t("panel.cloudStorage.deleteConfirm", { name: profile.name }))) return;
+  const confirmed = await showConfirm({
+    tone: "warning",
+    title: t("panel.cloudStorage.delete"),
+    message: t("panel.cloudStorage.deleteConfirm", { name: profile.name }),
+    confirmText: t("panel.cloudStorage.delete"),
+    cancelText: "取消",
+    dangerous: true,
+  });
+  if (!confirmed) return;
   try {
     await window.settings?.cloudStorageRemoveProfile?.(profile.id);
     if (editingId === profile.id) closeEditor();

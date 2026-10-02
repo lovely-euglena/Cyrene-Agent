@@ -33,4 +33,3 @@ export const portableDirInput = document.getElementById("portable-dir-input") as
 export const portableDirBrowseBtn = document.getElementById("portable-dir-browse") as HTMLButtonElement;
 export const portableApplyBtn = document.getElementById("portable-apply-btn") as HTMLButtonElement;
 export const portableHint = document.getElementById("portable-hint") as HTMLElement;
-export const clearChatHistoryBtn = document.getElementById("clear-chat-history-btn") as HTMLButtonElement;
