@@ -217,6 +217,14 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   snipastePath: string;
   /** Pandoc.exe 路径；空字符串 = 自动探测 PATH（文档转换：docx/odt/rtf/epub 等） */
   pandocPath: string;
+  /**
+   * 精确 token 统计（默认关闭）：开启后由 .NET cyrene-token 宿主按模型官方
+   * tokenizer 精确计数（含上下文用量环），词表按需从 ModelScope/HF 下载并缓存；
+   * 关闭、模型无词表或下载失败时回退现有启发式估算，不影响对话。
+   */
+  tokenStatsEnabled?: boolean;
+  /** tokenizer 下载源偏好（下载管理在 .NET 宿主内完成，失败自动回退其它源）。 */
+  tokenStatsSource?: "modelscope" | "hf-mirror" | "huggingface";
   /** 本地音乐文件夹（绝对路径；音乐窗管理，Agent 查询/管理共用）。 */
   musicFolders: string[];
   /** Agent 音乐权限档：off=关闭 / read=只读查询 / control=控制播放 / manage=管理曲库。 */

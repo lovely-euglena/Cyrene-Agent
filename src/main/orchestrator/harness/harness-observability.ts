@@ -9,12 +9,16 @@
 
 import { createHash } from "node:crypto";
 import { buildContextUsageSnapshot } from "../context-usage";
+import { buildContextUsageSnapshotExact, isTokenStatsEnabled } from "../../token-stats/client";
 import {
   buildStableSystemPrefix,
   projectCacheRelevantRequest,
   type PromptLayers,
 } from "../prompt-layers";
 import type { HarnessRun } from "./cyrene-harness";
+
+/** 每个 run 的上下文快照发射序号：精确计数异步返回时只允许最新一次落地。 */
+const contextUsageSeqByRun = new WeakMap<HarnessRun, number>();
 
 /**
  * 上下文容量快照（docs/context-usage-viewer-construction-plan.md）：
@@ -27,19 +31,30 @@ export function emitContextUsage(run: HarnessRun, phase: "preRequest" | "termina
   const stablePrefix = input.promptLayers?.stablePrefix ?? input.systemPrompt;
   const usageParts = input.usageParts
     ?? { personaContent: stablePrefix, toolLayerContent: "" };
-  input.onEvent?.({
-    type: "context_usage",
-    snapshot: buildContextUsageSnapshot({
-      phase,
-      ...(input.runId ? { runId: input.runId } : {}),
-      round: run.rounds,
-      contextWindowTokens: run.config.contextWindowTokens,
-      personaContent: usageParts.personaContent,
-      toolLayerContent: usageParts.toolLayerContent,
-      ...(usageParts.skillLayerContent ? { skillLayerContent: usageParts.skillLayerContent } : {}),
-      toolSpecs: run.allToolSpecs,
-      messages: run.messages,
-    }),
+  const snapshotInput = {
+    phase,
+    ...(input.runId ? { runId: input.runId } : {}),
+    round: run.rounds,
+    contextWindowTokens: run.config.contextWindowTokens,
+    personaContent: usageParts.personaContent,
+    toolLayerContent: usageParts.toolLayerContent,
+    ...(usageParts.skillLayerContent ? { skillLayerContent: usageParts.skillLayerContent } : {}),
+    toolSpecs: run.allToolSpecs,
+    messages: run.messages,
+  };
+  const emit = (snapshot: ReturnType<typeof buildContextUsageSnapshot>): void => {
+    input.onEvent?.({ type: "context_usage", snapshot });
+  };
+  if (!isTokenStatsEnabled()) {
+    emit(buildContextUsageSnapshot(snapshotInput));
+    return;
+  }
+  // 精确统计异步计数；每个 run 只允许最新一次发起的快照落地（terminal 覆盖 preRequest）。
+  const seq = (contextUsageSeqByRun.get(run) ?? 0) + 1;
+  contextUsageSeqByRun.set(run, seq);
+  void buildContextUsageSnapshotExact(snapshotInput, input.vendorConfig.model).then((snapshot) => {
+    if (contextUsageSeqByRun.get(run) !== seq) return;
+    emit(snapshot);
   });
 }
 

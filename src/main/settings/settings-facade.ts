@@ -141,6 +141,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   screenshotBackend: "builtin",
   snipastePath: "",
   pandocPath: "",
+  tokenStatsEnabled: false,
+  tokenStatsSource: "modelscope",
   musicFolders: [],
   musicAgentAccess: "read",
   ocrEnabled: true,
@@ -388,6 +390,11 @@ export function normalizeGeneralSettings(
     screenshotBackend: input?.screenshotBackend === "snipaste" ? "snipaste" : "builtin",
     snipastePath: typeof input?.snipastePath === "string" ? input.snipastePath.trim() : "",
     pandocPath: typeof input?.pandocPath === "string" ? input.pandocPath.trim() : "",
+    tokenStatsEnabled: Boolean(input?.tokenStatsEnabled),
+    tokenStatsSource:
+      input?.tokenStatsSource === "hf-mirror" || input?.tokenStatsSource === "huggingface"
+        ? input.tokenStatsSource
+        : "modelscope",
     musicFolders: normalizeMusicFolders(input?.musicFolders),
     musicAgentAccess: input?.musicAgentAccess === "off" || input?.musicAgentAccess === "control" || input?.musicAgentAccess === "manage"
       ? input.musicAgentAccess

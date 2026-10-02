@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Modal, Radio, Spin } from "antd";
-import { FileText, Music, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { FileText, Hash, Music, RefreshCw, SlidersHorizontal } from "lucide-react";
 import {
   normalizeChatSocialContextEnabled,
   normalizeMobileMessageSegmentationMode,
@@ -44,6 +44,10 @@ interface PreferencesValues {
   pandocPath: string;
   /** 本地音乐 Agent 权限档（工具 fail-closed；音乐窗口亦可改）。 */
   musicAgentAccess: "off" | "read" | "control" | "manage";
+  /** 精确 token 统计开关（默认关闭；词表按需下载到本地缓存）。 */
+  tokenStatsEnabled: boolean;
+  /** tokenizer 下载源偏好（下载管理在 .NET 宿主内完成）。 */
+  tokenStatsSource: "modelscope" | "hf-mirror" | "huggingface";
 }
 
 type ChannelStatus = Record<string, { phase?: string }>;
@@ -64,6 +68,8 @@ const defaults: PreferencesValues = {
   snipastePath: "",
   pandocPath: "",
   musicAgentAccess: "read",
+  tokenStatsEnabled: false,
+  tokenStatsSource: "modelscope",
 };
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -91,6 +97,11 @@ function readPreferences(value: unknown): PreferencesValues {
     musicAgentAccess: input.musicAgentAccess === "off" || input.musicAgentAccess === "control" || input.musicAgentAccess === "manage"
       ? input.musicAgentAccess
       : "read",
+    tokenStatsEnabled: input.tokenStatsEnabled === true,
+    tokenStatsSource:
+      input.tokenStatsSource === "hf-mirror" || input.tokenStatsSource === "huggingface"
+        ? input.tokenStatsSource
+        : "modelscope",
   };
 }
 
@@ -184,6 +195,8 @@ export function PreferencesSettingsPanel() {
         snipastePath,
         pandocPath,
         musicAgentAccess,
+        tokenStatsEnabled,
+        tokenStatsSource,
       } = values;
       await window.settings.saveGeneral({
         citaEnabled,
@@ -200,6 +213,8 @@ export function PreferencesSettingsPanel() {
         snipastePath: snipastePath.trim(),
         pandocPath: pandocPath.trim(),
         musicAgentAccess,
+        tokenStatsEnabled,
+        tokenStatsSource,
       });
       setStatus(t("settingsPage.preferences.saved"));
     } catch {
@@ -359,6 +374,28 @@ export function PreferencesSettingsPanel() {
                     { label: t("settingsPage.preferences.musicAccessManage"), value: "manage" },
                   ]}
                   onChange={(value) => update("musicAgentAccess", value as PreferencesValues["musicAgentAccess"])}
+                />
+              </div>
+            </Card>
+          </section>
+
+          <section className="cy-settings-section">
+            <div className="cy-settings-section__heading"><h2><Hash size={18} />{t("settingsPage.preferences.tokenStats")}</h2><p>{t("settingsPage.preferences.tokenStatsDescription")}</p></div>
+            <Card>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.tokenStatsEnabled")}</strong><span>{t("settingsPage.preferences.tokenStatsEnabledDescription")}</span></div>
+                <SettingsSwitch checked={values.tokenStatsEnabled} ariaLabel={t("settingsPage.preferences.tokenStatsEnabled")} onChange={(checked) => update("tokenStatsEnabled", checked)} />
+              </div>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.tokenStatsSource")}</strong><span>{t("settingsPage.preferences.tokenStatsSourceDescription")}</span></div>
+                <SettingsSegmented
+                  value={values.tokenStatsSource}
+                  options={[
+                    { label: "ModelScope", value: "modelscope" },
+                    { label: "HF Mirror", value: "hf-mirror" },
+                    { label: "HuggingFace", value: "huggingface" },
+                  ]}
+                  onChange={(value) => update("tokenStatsSource", value as PreferencesValues["tokenStatsSource"])}
                 />
               </div>
             </Card>
