@@ -95,9 +95,14 @@ public sealed class MusicService : IDisposable
             }
             if (!string.IsNullOrWhiteSpace(mpvPath)) _mpvPath = mpvPath;
             if (volume is > 0 and <= 100) _volume = volume;
-            if (!folders.SequenceEqual(_folders, StringComparer.OrdinalIgnoreCase))
+            var normalizedFolders = folders
+                .Where(folder => !string.IsNullOrWhiteSpace(folder))
+                .Select(NormalizePathOrRaw)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (!normalizedFolders.SequenceEqual(_folders, StringComparer.OrdinalIgnoreCase))
             {
-                _folders = folders;
+                _folders = normalizedFolders;
                 foldersChanged = true;
             }
         }
@@ -267,6 +272,20 @@ public sealed class MusicService : IDisposable
             _lyrics = LrcParser.ParseSidecar(track.Path);
         }
 
+        if (!File.Exists(track.Path))
+        {
+            // 曲目文件可能在扫描后被删除/移动：启动 mpv 前显式检查，避免状态卡在 loading
+            lock (_lock)
+            {
+                _status = "idle";
+                _paused = true;
+                _lyrics = null;
+            }
+            Notice?.Invoke($"曲目文件不存在或已被移动：{track.Path}");
+            StateChanged?.Invoke();
+            return;
+        }
+
         if (!EnsureMpv())
         {
             lock (_lock) _status = "idle";
@@ -281,10 +300,15 @@ public sealed class MusicService : IDisposable
 
     private bool EnsureMpv()
     {
+        MpvController? stale;
         lock (_lock)
         {
             if (_mpv is { IsRunning: true }) return true;
+            // 旧控制器已退出：先摘除并释放，避免重复创建泄漏子进程/管道
+            stale = _mpv;
+            _mpv = null;
         }
+        stale?.Dispose();
         var exe = ResolveMpvPath();
         if (exe is null) return false;
         var controller = new MpvController();
@@ -323,6 +347,17 @@ public sealed class MusicService : IDisposable
             else if (reason is "stop" or "quit")
             {
                 lock (_lock) _status = "idle";
+                StateChanged?.Invoke();
+            }
+            else if (reason == "error")
+            {
+                // 文件损坏 / 格式不支持 / 载入失败：不要卡在 loading
+                lock (_lock)
+                {
+                    _status = "idle";
+                    _paused = true;
+                }
+                Notice?.Invoke("曲目无法播放（文件损坏或格式不受支持）");
                 StateChanged?.Invoke();
             }
         };
@@ -512,7 +547,8 @@ public sealed class MusicService : IDisposable
                     if (!_folders.Contains(normalized, StringComparer.OrdinalIgnoreCase)) _folders.Add(normalized);
                     break;
                 case "remove":
-                    _folders.RemoveAll(folder => string.Equals(folder, path, StringComparison.OrdinalIgnoreCase));
+                    var removeTarget = NormalizePathOrRaw(path);
+                    _folders.RemoveAll(folder => string.Equals(folder, removeTarget, StringComparison.OrdinalIgnoreCase));
                     break;
                 case "list":
                     break;
@@ -556,6 +592,20 @@ public sealed class MusicService : IDisposable
     }
 
     // ── JSON 辅助 ──
+
+    /// <summary>归一化路径；非法路径（含非法字符等）退回原串，避免文件夹操作抛异常。</summary>
+    private static string NormalizePathOrRaw(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch
+        {
+            return path;
+        }
+    }
 
     // ── 窗口直连便捷入口（避免窗口侧构造 JsonElement） ──
 

@@ -94,7 +94,9 @@ public sealed class MusicLibrary
             using var transaction = connection.BeginTransaction();
             var added = 0;
             var updated = 0;
+            var removed = 0;
             var seen = 0;
+            var cancelled = false;
 
             var validFolders = folders
                 .Where(folder => !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
@@ -102,44 +104,76 @@ public sealed class MusicLibrary
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            // 全库先标记为「本轮未见」。扫描结束时仍为 seen=0 的曲目会被删除——
+            // 这样从配置移除、或目录被删除（不在 validFolders 内）的残留曲目也能被清掉。
+            using (var mark = connection.CreateCommand())
+            {
+                mark.Transaction = transaction;
+                mark.CommandText = "UPDATE tracks SET seen = 0";
+                mark.ExecuteNonQuery();
+            }
+
             foreach (var folder in validFolders)
             {
-                if (isCancelled()) break;
-                SetFolderSeen(connection, transaction, folder, 0);
-                foreach (var file in EnumerateAudioFiles(folder))
+                if (isCancelled()) { cancelled = true; break; }
+
+                List<string> files;
+                try
                 {
-                    if (isCancelled()) break;
+                    files = CollectAudioFiles(folder);
+                }
+                catch
+                {
+                    // 根目录瞬时不可读（权限/IO）：把该目录已有记录恢复为「已见」，
+                    // 保留旧记录而不是在 mark-and-sweep 中误删整个目录。
+                    RestoreFolderSeen(connection, transaction, folder);
+                    continue;
+                }
+
+                foreach (var file in files)
+                {
+                    if (isCancelled()) { cancelled = true; break; }
                     var result = UpsertTrack(connection, transaction, folder, file);
                     if (result == 1) added++;
                     else if (result == 2) updated++;
                     seen++;
                     if (seen % 200 == 0) onProgress?.Invoke(seen);
                 }
+                if (cancelled) break;
                 TouchFolder(connection, transaction, folder);
             }
 
-            // mark-and-sweep：本次未扫到的曲目删除（含被移除的目录）
-            int removed;
-            using (var sweep = connection.CreateCommand())
+            if (cancelled)
             {
-                sweep.Transaction = transaction;
-                sweep.CommandText = "DELETE FROM tracks WHERE seen = 0";
-                removed = sweep.ExecuteNonQuery();
+                // 取消扫描：整笔回滚，保证库内容与扫描前一致（不误删、不写入半成品）
+                transaction.Rollback();
+                added = 0;
+                updated = 0;
             }
-
-            // folders 表同步：去掉已不在配置里的根目录
-            using (var sync = connection.CreateCommand())
+            else
             {
-                sync.Transaction = transaction;
-                var parameters = validFolders.Select((_, index) => $"@f{index}").ToList();
-                sync.CommandText = parameters.Count == 0
-                    ? "DELETE FROM folders"
-                    : $"DELETE FROM folders WHERE path NOT IN ({string.Join(",", parameters)})";
-                for (var i = 0; i < validFolders.Count; i++) sync.Parameters.AddWithValue($"@f{i}", validFolders[i]);
-                sync.ExecuteNonQuery();
-            }
+                // mark-and-sweep：本轮未见的曲目删除（含被移除/删除的目录）
+                using (var sweep = connection.CreateCommand())
+                {
+                    sweep.Transaction = transaction;
+                    sweep.CommandText = "DELETE FROM tracks WHERE seen = 0";
+                    removed = sweep.ExecuteNonQuery();
+                }
 
-            transaction.Commit();
+                // folders 表同步：去掉已不在配置里的根目录
+                using (var sync = connection.CreateCommand())
+                {
+                    sync.Transaction = transaction;
+                    var parameters = validFolders.Select((_, index) => $"@f{index}").ToList();
+                    sync.CommandText = parameters.Count == 0
+                        ? "DELETE FROM folders"
+                        : $"DELETE FROM folders WHERE path NOT IN ({string.Join(",", parameters)})";
+                    for (var i = 0; i < validFolders.Count; i++) sync.Parameters.AddWithValue($"@f{i}", validFolders[i]);
+                    sync.ExecuteNonQuery();
+                }
+
+                transaction.Commit();
+            }
 
             int total;
             using (var count = connection.CreateCommand())
@@ -151,12 +185,12 @@ public sealed class MusicLibrary
         }
     }
 
-    private static void SetFolderSeen(SqliteConnection connection, SqliteTransaction transaction, string folder, int value)
+    /// <summary>把某目录已有曲目标记为「本轮已见」（根目录读取失败时保留旧记录）。</summary>
+    private static void RestoreFolderSeen(SqliteConnection connection, SqliteTransaction transaction, string folder)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "UPDATE tracks SET seen = @seen WHERE folder = @folder";
-        command.Parameters.AddWithValue("@seen", value);
+        command.CommandText = "UPDATE tracks SET seen = 1 WHERE folder = @folder";
         command.Parameters.AddWithValue("@folder", folder);
         command.ExecuteNonQuery();
     }
@@ -243,21 +277,39 @@ public sealed class MusicLibrary
         return existingSize < 0 ? 1 : 2;
     }
 
-    private static IEnumerable<string> EnumerateAudioFiles(string root)
+    /// <summary>
+    /// 收集 root 下受支持的音频文件。
+    /// - 根目录读取失败会向上抛：Scan 据此保留该目录旧记录，避免瞬时 IO/权限错误把整库误删空。
+    /// - 子目录读取失败跳过（单个坏目录不应中断整次扫描）。
+    /// - visited 去重防止 junction/symlink 成环导致无限遍历。
+    /// </summary>
+    private static List<string> CollectAudioFiles(string root)
     {
+        var result = new List<string>();
         var pending = new Stack<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         pending.Push(root);
+        visited.Add(NormalizeForVisit(root));
+        var isRoot = true;
         while (pending.Count > 0)
         {
             var current = pending.Pop();
             string[] entries;
-            try
+            if (isRoot)
             {
-                entries = Directory.GetFileSystemEntries(current);
+                entries = Directory.GetFileSystemEntries(current); // 根失败向上抛
+                isRoot = false;
             }
-            catch
+            else
             {
-                continue;
+                try
+                {
+                    entries = Directory.GetFileSystemEntries(current);
+                }
+                catch
+                {
+                    continue;
+                }
             }
             foreach (var entry in entries)
             {
@@ -266,13 +318,28 @@ public sealed class MusicLibrary
                 // 注意：Directory/File.Exists 对正常路径不抛异常；yield 不能放在 try/catch 里
                 if (Directory.Exists(entry))
                 {
-                    pending.Push(entry);
+                    if (visited.Add(NormalizeForVisit(entry))) pending.Push(entry);
                 }
                 else if (File.Exists(entry) && IsSupportedFile(entry))
                 {
-                    yield return entry;
+                    result.Add(entry);
                 }
             }
+        }
+        return result;
+    }
+
+    /// <summary>归一化目录路径用于环检测；非法路径退回原串。</summary>
+    private static string NormalizeForVisit(string directory)
+    {
+        try
+        {
+            return Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return directory;
         }
     }
 
