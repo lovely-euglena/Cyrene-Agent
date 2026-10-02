@@ -26,6 +26,7 @@ import {
 } from "./playwright-page-snapshot";
 
 const BROWSER_PARTITION = "persist:cyrene-right-browser";
+const MAX_LIVE_TAB_VIEWS = 3;
 const EXAM_ID_PATTERN = /^exam-[0-9a-f-]{36}$/i;
 const EMPTY_TAB_STATE = {
   kind: "web",
@@ -40,6 +41,7 @@ const EMPTY_TAB_STATE = {
 interface BrowserTab {
   id: string;
   kind: "web" | "exam";
+  lastActivationOrder: number;
   examConversationId?: string;
   unregisterExamPage?: () => void;
   view: WebContentsView | null;
@@ -75,6 +77,7 @@ function normalizeFaviconUrl(input: string, pageUrl: string): string | undefined
 export class BrowserPanelController {
   private tabs: BrowserTab[] = [];
   private activeTabId = "";
+  private activationSequence = 0;
   private browserSession: Session | null = null;
   private parentWindow: BrowserWindow | null = null;
   private bounds: BrowserPanelBounds | null = null;
@@ -873,6 +876,7 @@ export class BrowserPanelController {
     }
     if (this.elementPickerTabId && this.elementPickerTabId !== tabId) this.cancelElementPicker();
     this.activeTabId = tab.id;
+    tab.lastActivationOrder = ++this.activationSequence;
     if (this.bounds && tab.state.url && !tab.view) {
       try {
         this.ensureView(tab);
@@ -903,7 +907,16 @@ export class BrowserPanelController {
       this.destroyTabView(tab);
       this.tabs.splice(index, 1);
       if (this.activeTabId === tabId) {
-        this.activeTabId = this.tabs[Math.min(index, this.tabs.length - 1)].id;
+        const nextActiveTab = this.tabs[Math.min(index, this.tabs.length - 1)];
+        this.activeTabId = nextActiveTab.id;
+        nextActiveTab.lastActivationOrder = ++this.activationSequence;
+        if (this.bounds && nextActiveTab.state.url && !nextActiveTab.view) {
+          try {
+            this.ensureView(nextActiveTab);
+          } catch {
+            nextActiveTab.state = { ...nextActiveTab.state, loading: false, error: "unavailable" };
+          }
+        }
       }
     }
     this.applyBounds();
@@ -981,6 +994,7 @@ export class BrowserPanelController {
     const tab: BrowserTab = {
       id,
       kind,
+      lastActivationOrder: activate || !this.activeTabId ? ++this.activationSequence : 0,
       ...(options.examConversationId ? { examConversationId: options.examConversationId } : {}),
       view: null,
       state: { id, ...EMPTY_TAB_STATE, kind, ...(options.url ? { url: options.url } : {}) },
@@ -1022,7 +1036,7 @@ export class BrowserPanelController {
       await view.webContents.loadURL(url.href);
       return { ok: true };
     } catch {
-      if (!view.webContents.isDestroyed() && this.tabs.includes(tab)) {
+      if (!view.webContents.isDestroyed() && tab.view === view && this.tabs.includes(tab)) {
         tab.state = { ...tab.state, loading: false, error: "load_failed" };
         this.publish();
       }
@@ -1052,6 +1066,7 @@ export class BrowserPanelController {
           return {
             id,
             kind: isExam ? "exam" as const : "web" as const,
+            lastActivationOrder: 0,
             ...(isExam ? { examConversationId } : {}),
             view: null,
             state: {
@@ -1067,6 +1082,8 @@ export class BrowserPanelController {
           };
         });
         this.activeTabId = snapshot.activeTabId || this.tabs[0].id;
+        const activeTab = this.getActiveTab();
+        if (activeTab) activeTab.lastActivationOrder = ++this.activationSequence;
       }
     } catch {
       // 恢复失败时保留默认空标签页，不影响应用启动。
@@ -1123,7 +1140,11 @@ export class BrowserPanelController {
     if (!win || win.isDestroyed()) return null;
     if (tab.view && !tab.view.webContents.isDestroyed() && this.parentWindow === win) return tab.view;
     if (tab.view) this.destroyTabView(tab);
-    if (this.parentWindow && this.parentWindow !== win) this.destroyViews();
+    if (this.parentWindow && this.parentWindow !== win) {
+      this.destroyViews();
+    } else {
+      this.releaseOldestViewsUntilRoom(tab.id);
+    }
     this.parentWindow = win;
     const isExam = tab.kind === "exam";
     const view = new WebContentsView({
@@ -1144,6 +1165,14 @@ export class BrowserPanelController {
         tab.unregisterExamPage = registerExamPageSource(view.webContents, page.examId, tab.examConversationId);
       }
     }
+    tab.state = {
+      ...tab.state,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      crashed: false,
+      error: undefined,
+    };
     win.contentView.addChildView(view);
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     this.attachEvents(tab, view);
@@ -1158,7 +1187,7 @@ export class BrowserPanelController {
     }
     if (restore && tab.state.url) {
       void view.webContents.loadURL(tab.state.url).catch(() => {
-        if (!view.webContents.isDestroyed() && this.tabs.includes(tab)) {
+        if (!view.webContents.isDestroyed() && tab.view === view && this.tabs.includes(tab)) {
           tab.state = { ...tab.state, loading: false, error: "load_failed" };
           this.publish();
         }
@@ -1257,7 +1286,13 @@ export class BrowserPanelController {
     const parsed = parseHttpUrl(url);
     if (!parsed || this.disposed) return;
     const tab = this.createTab(activate);
-    if (activate) this.applyBounds();
+    if (!activate) {
+      // Background tabs should not create a page process until first selected.
+      tab.state = { ...tab.state, url: parsed.href };
+      this.publish();
+      return;
+    }
+    this.applyBounds();
     this.publish();
     void this.navigateTab(tab, parsed.href);
   }
@@ -1279,6 +1314,28 @@ export class BrowserPanelController {
       const viewBounds = tab.id === this.activeTabId ? { x, y, width, height } : { x: 0, y: 0, width: 0, height: 0 };
       tab.view?.setBounds(viewBounds);
     }
+  }
+
+  private releaseOldestViewsUntilRoom(exceptTabId: string): void {
+    const residentTabs = this.tabs
+      .filter((tab) => tab.id !== exceptTabId && tab.view !== null)
+      .sort((left, right) => left.lastActivationOrder - right.lastActivationOrder);
+    while (residentTabs.length >= MAX_LIVE_TAB_VIEWS) {
+      const oldest = residentTabs.shift();
+      if (oldest) this.discardTabView(oldest);
+    }
+  }
+
+  private discardTabView(tab: BrowserTab): void {
+    this.destroyTabView(tab);
+    tab.state = {
+      ...tab.state,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      crashed: false,
+      error: undefined,
+    };
   }
 
   private destroyTabView(tab: BrowserTab): void {
