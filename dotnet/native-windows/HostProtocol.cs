@@ -117,6 +117,9 @@ public sealed class HostProtocol : IDisposable
     /// <summary>回复请求确认（ok）。</summary>
     public void ReplyOk(int id) => WriteFrame(new { id, ok = true });
 
+    /// <summary>回复请求确认并携带数据（music.* 等查询类请求）。</summary>
+    public void ReplyOk(int id, object? data) => WriteFrame(new { id, ok = true, data });
+
     /// <summary>回复请求失败。</summary>
     public void ReplyError(int id, string error) => WriteFrame(new { id, ok = false, error });
 

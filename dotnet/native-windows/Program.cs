@@ -69,6 +69,7 @@ public static class Program
         if (args.Length > 1 && args[0] == "--selftest")
         {
             if (args[1] == "agents") return Agents.OrchestratorSelfTest.Run();
+            if (args[1] == "music") return Music.MusicSelfTest.Run();
             Console.Error.WriteLine($"未知自测: {args[1]}");
             return 2;
         }
@@ -125,6 +126,7 @@ public static class Program
         // 宿主退出（stdin EOF）：安全关闭全部窗口并结束进程，避免孤儿常驻。
         protocol.InputClosed += () =>
         {
+            Music.MusicService.Shared.Dispose();
             try { app.Dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Normal); }
             catch { /* 已关闭/调度器不可用：进程即将自然退出 */ }
         };
