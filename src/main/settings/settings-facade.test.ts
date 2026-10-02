@@ -259,3 +259,22 @@ describe("general OCR settings", () => {
     expect(normalizeGeneralSettings({ ocrProvider: "off" }).ocrProvider).toBe("off");
   });
 });
+
+describe("general WSL settings", () => {
+  it("defaults to disabled with the WSL default distro", () => {
+    const settings = normalizeGeneralSettings({});
+    expect(settings.wslEnabled).toBe(false);
+    expect(settings.wslDistro).toBe("");
+  });
+
+  it("keeps the enabled switch and trims the distro name", () => {
+    const settings = normalizeGeneralSettings({ wslEnabled: true, wslDistro: "  Ubuntu-22.04  " });
+    expect(settings.wslEnabled).toBe(true);
+    expect(settings.wslDistro).toBe("Ubuntu-22.04");
+  });
+
+  it("coerces non-boolean switches and non-string distros safely", () => {
+    expect(normalizeGeneralSettings({ wslEnabled: "yes" } as never).wslEnabled).toBe(true);
+    expect(normalizeGeneralSettings({ wslDistro: 42 } as never).wslDistro).toBe("");
+  });
+});
