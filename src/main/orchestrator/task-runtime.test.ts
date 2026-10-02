@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSessionStore } from "../tasks/task-session-store";
 import { buildChildPromptLayers, createTaskExecutor } from "./task-runtime";
+import type { TaskOrchestrationInput, TaskOrchestrationOutcome } from "./agent-orchestration/task-orchestrator-runner";
+import { ORCHESTRATOR_UNBOUNDED_STEP_TIMEOUT_MS } from "./agent-orchestration/protocol";
 import type { ToolDefinition } from "./tools/registry/tool-registry";
 import { TaskCharacterLeasePool } from "../tasks/task-character-pool";
 import type { TaskDelegationPresentation } from "../../shared/task-session";
@@ -230,5 +232,141 @@ describe("TaskRuntime", () => {
 
     expect(lifecycle.at(-1)?.status).toBe(expected);
     expect(characterPool.acquire("conversation-1", "风堇").nickname).toBe("风堇");
+  });
+});
+
+describe("TaskRuntime 编排接口（runOrchestrated 注入）", () => {
+  const orchestratedSuccess: TaskOrchestrationOutcome = {
+    used: true,
+    status: "success",
+    finalAnswer: "编排完成",
+    steps: 1,
+    finalState: { todoItems: [{ id: "report", content: "整理结果", status: "completed" }], uncertainEffects: [] },
+  };
+
+  it("编排可用 → 不走直跑 Harness；终态/checkpoint/lifecycle 用编排结果", async () => {
+    const store = createStore();
+    const runHarness = vi.fn();
+    const onLifecycle = vi.fn();
+    const runOrchestrated = vi.fn(
+      async (_input: TaskOrchestrationInput): Promise<TaskOrchestrationOutcome> => orchestratedSuccess,
+    );
+    const execute = createTaskExecutor({ parent, store, runHarness: runHarness as never, runOrchestrated, onLifecycle });
+
+    const result = await execute({
+      description: "检查编排",
+      prompt: "算一下 6*7。",
+      subagentType: "general",
+      companionId: "风堇",
+    });
+
+    expect(result).toEqual({ taskId: "task-1", status: "completed", text: "编排完成" });
+    expect(runHarness).not.toHaveBeenCalled();
+    expect(store.get("task-1")).toMatchObject({
+      status: "completed",
+      resultText: "编排完成",
+      todoItems: [{ id: "report", content: "整理结果", status: "completed" }],
+    });
+    expect(onLifecycle).toHaveBeenLastCalledWith(expect.objectContaining({ status: "completed" }));
+
+    const input = runOrchestrated.mock.calls[0][0];
+    expect(input.taskId).toBe("task-1");
+    expect(input.sessionId).toBe("task-1:child-run-1");
+    expect(input.groupId).toBe("task-1:child-run-1");
+    expect(input.role).toBe("general");
+    expect(input.message).toBe("算一下 6*7。");
+    expect(input.seed).toEqual({ messages: [] });
+    expect(input.stepTimeoutMs).toBe(ORCHESTRATOR_UNBOUNDED_STEP_TIMEOUT_MS);
+
+    // 环境装配：只读工具子集、childRunId、本 step 信号进 toolContext
+    const controller = new AbortController();
+    const env = input.resolveEnvironment({ signal: controller.signal });
+    expect(env.tools.map((tool) => tool.id)).toEqual(["read_file"]);
+    expect(env.systemPrompt).toBe(env.promptLayers.stablePrefix);
+    expect(env.toolContext).toMatchObject({ runId: "child-run-1", resolvedWorkspaceRoot: "E:\\project" });
+    expect(env.toolContext?.signal).toBe(controller.signal);
+  });
+
+  it("编排 used:false → 告警后回退直跑 Harness", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const store = createStore();
+    const runHarness = vi.fn(async () => ({
+      finalAnswer: "直跑完成。",
+      finalState: { todoItems: [], uncertainEffects: [] },
+      terminated: false,
+      rounds: 1,
+      terminal: { status: "success" as const, externalEffectsMayContinue: false },
+    }));
+    const runOrchestrated = vi.fn(
+      async (_input: TaskOrchestrationInput): Promise<TaskOrchestrationOutcome> => ({ used: false, reason: "native exe 缺失" }),
+    );
+    const execute = createTaskExecutor({ parent, store, runHarness, runOrchestrated });
+
+    const result = await execute({ description: "回退", prompt: "执行。", subagentType: "general", companionId: "风堇" });
+
+    expect(result).toEqual({ taskId: "task-1", status: "completed", text: "直跑完成。" });
+    expect(runHarness).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("native exe 缺失"));
+  });
+
+  it("编排 used:true failed → 不回退，按 TASK_RUNTIME_ERROR 结算", async () => {
+    const store = createStore();
+    const runHarness = vi.fn();
+    const runOrchestrated = vi.fn(
+      async (_input: TaskOrchestrationInput): Promise<TaskOrchestrationOutcome> => ({
+        used: true,
+        status: "failed",
+        finalAnswer: "",
+        error: "工具崩了",
+        steps: 1,
+      }),
+    );
+    const execute = createTaskExecutor({ parent, store, runHarness: runHarness as never, runOrchestrated });
+
+    const result = await execute({ description: "失败", prompt: "执行。", subagentType: "general", companionId: "风堇" });
+
+    expect(result).toEqual({ taskId: "task-1", status: "failed", text: "" });
+    expect(runHarness).not.toHaveBeenCalled();
+    expect(store.get("task-1")).toMatchObject({
+      status: "failed",
+      error: { code: "TASK_RUNTIME_ERROR", message: "工具崩了" },
+    });
+  });
+
+  it("resume：seed 为旧历史（不含本轮 prompt），state 带旧 todo", async () => {
+    const store = createStore();
+    const task = store.create({
+      parentConversationId: "conversation-1",
+      parentRunId: "parent-run-0",
+      description: "最初任务",
+      prompt: "最初任务",
+      subagentType: "general",
+      companionId: "风堇",
+      mode: "code",
+    });
+    store.checkpoint(task.id, {
+      status: "completed",
+      todoItems: [{ id: "legacy", content: "旧待办", status: "pending" }],
+    });
+    const runOrchestrated = vi.fn(
+      async (_input: TaskOrchestrationInput): Promise<TaskOrchestrationOutcome> => orchestratedSuccess,
+    );
+    const execute = createTaskExecutor({ parent, store, runHarness: vi.fn() as never, runOrchestrated });
+
+    await execute({
+      description: "继续任务",
+      prompt: "继续。",
+      subagentType: "general",
+      companionId: "风堇",
+      taskId: task.id,
+    });
+
+    const seed = runOrchestrated.mock.calls[0][0].seed;
+    expect(seed.messages).toEqual([{ role: "user", content: "最初任务" }]);
+    expect(seed.state?.todoItems).toEqual([{ id: "legacy", content: "旧待办", status: "pending" }]);
+    expect(store.get(task.id)?.messages).toEqual([
+      { role: "user", content: "最初任务" },
+      { role: "user", content: "继续。" },
+    ]);
   });
 });

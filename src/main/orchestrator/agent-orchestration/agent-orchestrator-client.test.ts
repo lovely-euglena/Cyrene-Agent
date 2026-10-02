@@ -15,7 +15,7 @@ vi.mock("../../windows/native-windows-host", () => ({
 }));
 vi.mock("../../child-processes", () => ({ trackChildProcess: vi.fn() }));
 vi.mock("../../config", () => ({
-  resolveDotnetConfig: vi.fn(() => ({ agentHost: true, agentOrchestrator: true })),
+  resolveDotnetConfig: vi.fn(() => ({ agentHost: true, agentOrchestrator: true, taskOrchestrator: false })),
 }));
 
 import { spawn as mockSpawn } from "node:child_process";

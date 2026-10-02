@@ -6,6 +6,7 @@ import { resetConfigCache, resolveDotnetConfig, toBool } from "./config";
 
 const originalAgentHost = process.env.CYRENE_AGENT_HOST;
 const originalAgentOrchestrator = process.env.CYRENE_AGENT_ORCHESTRATOR;
+const originalTaskOrchestrator = process.env.CYRENE_TASK_ORCHESTRATOR;
 
 afterEach(() => {
   resetConfigCache();
@@ -13,6 +14,8 @@ afterEach(() => {
   else process.env.CYRENE_AGENT_HOST = originalAgentHost;
   if (originalAgentOrchestrator === undefined) delete process.env.CYRENE_AGENT_ORCHESTRATOR;
   else process.env.CYRENE_AGENT_ORCHESTRATOR = originalAgentOrchestrator;
+  if (originalTaskOrchestrator === undefined) delete process.env.CYRENE_TASK_ORCHESTRATOR;
+  else process.env.CYRENE_TASK_ORCHESTRATOR = originalTaskOrchestrator;
 });
 
 describe("toBool", () => {
@@ -89,6 +92,26 @@ describe("resolveDotnetConfig（env > conf > 默认）", () => {
 
     process.env.CYRENE_AGENT_ORCHESTRATOR = "1";
     expect(resolveDotnetConfig({ configPath: confPath }).agentOrchestrator).toBe(true);
+  });
+
+  it("taskOrchestrator 开关：默认关闭；env > conf 显式开启", () => {
+    delete process.env.CYRENE_TASK_ORCHESTRATOR;
+    expect(resolveDotnetConfig({ configPath: "missing.conf" }).taskOrchestrator).toBe(false);
+
+    process.env.CYRENE_TASK_ORCHESTRATOR = "on";
+    expect(resolveDotnetConfig({ configPath: "missing.conf" }).taskOrchestrator).toBe(true);
+
+    process.env.CYRENE_TASK_ORCHESTRATOR = "abc";
+    expect(resolveDotnetConfig({ configPath: "missing.conf" }).taskOrchestrator).toBe(false);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-conf-"));
+    const confPath = path.join(dir, "cyrene.conf");
+    fs.writeFileSync(confPath, "task-orchestrator = 1\n", "utf8");
+    delete process.env.CYRENE_TASK_ORCHESTRATOR;
+    expect(resolveDotnetConfig({ configPath: confPath }).taskOrchestrator).toBe(true);
+
+    process.env.CYRENE_TASK_ORCHESTRATOR = "off";
+    expect(resolveDotnetConfig({ configPath: confPath }).taskOrchestrator).toBe(false);
   });
 
   it("配置缺省键 → 默认；空环境变量视为未设置（回落到文件）", () => {
