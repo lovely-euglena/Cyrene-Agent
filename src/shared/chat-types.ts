@@ -347,6 +347,8 @@ export interface ChatSession {
   pinned?: boolean;
   /** 当前会话选择的已保存模型；缺失时使用默认模型。 */
   modelProfileId?: string;
+  /** 摘要模式的增量缓冲；只记录成功终态的正式回复。 */
+  summaryMemoryProgress?: SummaryMemoryProgress;
   /**
    * 本对话固定的当前模型（从属于 modelProfileId 绑定，Invariant B）。
    * 缺省 = 旧会话：继续跟随绑定档案默认模型的动态解析（兼容性例外，不回填）。
@@ -369,6 +371,18 @@ export interface ChatSession {
   pendingMessages?: PendingChatMessage[];
   /** 待发派发状态：认领后 run 确认接受前存在；残留即恢复入口（向后兼容缺省为无）。 */
   pendingDispatch?: PendingDispatchState;
+}
+
+export interface SummaryMemoryPendingTurn {
+  assistantEntryId: string;
+  userTurnId?: string;
+  userText: string;
+  assistantText: string;
+}
+
+export interface SummaryMemoryProgress {
+  lastProcessedAssistantId?: string;
+  pendingTurns: SummaryMemoryPendingTurn[];
 }
 
 /**

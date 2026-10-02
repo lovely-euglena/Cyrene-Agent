@@ -12,12 +12,15 @@ export { INJECTION_HEADER, INJECTION_PREAMBLE } from "./worldbook-constants";
 import { feedEntityNamesToJieba } from "../memory/entity-graph";
 import { isL2LocallyRecallable } from "../memory/memory-types";
 import { findPromptPath } from "../external-content-paths";
+import { isMemoryEnabled } from "../memory/memory-mode";
 
 // ── Global RAG instances ──
 let store: JsonVectorStore | null = null;
 let retriever: HybridRetriever | null = null;
 let worldbook: WorldbookManager | null = null;
 let provider: EmbeddingProvider | null = null;
+let activeVectorOperations = 0;
+const vectorOperationsDrained = new Set<() => void>();
 // 每轮对话递增，用于 DMAE repeatWindow 统计（worldbook 状态不持久化，重启回 0 可接受）
 let worldbookTurnCounter = 0;
 
@@ -94,6 +97,37 @@ export async function initRAG(
   embeddingModel?: string,
   cloudDimensions?: number,
 ): Promise<void> {
+  if (isMemoryEnabled()) {
+    await initVectorMemory(ragMode, cloudBaseUrl, cloudApiKey, embeddingModel, cloudDimensions);
+  }
+  await initWorldbook();
+}
+
+async function trackVectorOperation<T>(operation: () => Promise<T>): Promise<T> {
+  activeVectorOperations++;
+  try {
+    return await operation();
+  } finally {
+    activeVectorOperations--;
+    if (activeVectorOperations === 0) {
+      for (const resolve of vectorOperationsDrained) resolve();
+      vectorOperationsDrained.clear();
+    }
+  }
+}
+
+async function waitForVectorOperations(): Promise<void> {
+  if (activeVectorOperations === 0) return;
+  await new Promise<void>((resolve) => { vectorOperationsDrained.add(resolve); });
+}
+
+export async function initVectorMemory(
+  ragMode: "auto" | "local" | "cloud" = "auto",
+  cloudBaseUrl?: string,
+  cloudApiKey?: string,
+  embeddingModel?: string,
+  cloudDimensions?: number,
+): Promise<void> {
   const dataDir = getDataDir();
   provider = getEmbeddingProvider(ragMode, cloudBaseUrl, cloudApiKey, embeddingModel, cloudDimensions);
   const removedImportedDocumentVectors = await removeImportedDocumentData(dataDir);
@@ -105,6 +139,17 @@ export async function initRAG(
   if (provider) {
     retriever = new HybridRetriever(store, provider);
   }
+  logger.info(
+    LogTag.RAG,
+    "vector memory initialized. Mode:", ragMode,
+    "Provider:", provider?.name ?? "none",
+    "Dims:", provider?.dims ?? "N/A",
+    "Memories:", store.stats.total,
+    provider ? "" : " [Vector retrieval disabled]"
+  );
+}
+
+export async function initWorldbook(): Promise<void> {
   worldbook = new WorldbookManager(
     findPromptPath("worldbook") ?? path.join(app.getPath("userData"), "empty-worldbook"),
     { stateFile: path.join(app.getPath("userData"), "worldbook-state.json") }
@@ -114,15 +159,17 @@ export async function initRAG(
   // 把实体图谱中的已有实体名灌入 jieba 自定义词典
   // 防止 "昔涟"、"小鹿" 等 AI 伴侣核心名词被错误切分
   await feedEntityNamesToJieba();
+  logger.info(LogTag.RAG, "worldbook initialized");
+}
 
-  logger.info(
-    LogTag.RAG,
-    "initialized. Mode:", ragMode,
-    "Provider:", provider?.name ?? "none",
-    "Dims:", provider?.dims ?? "N/A",
-    "Memories:", store.stats.total,
-    provider ? "" : " [Vector retrieval disabled]"
-  );
+/** 关闭向量记忆并释放当前进程持有的索引和嵌入模型引用；不删除磁盘数据。 */
+export async function disposeVectorMemory(): Promise<void> {
+  await waitForVectorOperations();
+  await store?.flush();
+  store = null;
+  retriever = null;
+  provider = null;
+  resetEmbeddingProvider();
 }
 
 /** 受控退出（before-quit 链路）时调用：把防抖中的记忆数据刷盘。 */
@@ -137,6 +184,7 @@ export function flushRAGStoreSync(): void {
 
 // ── Switch embedding model (hot-swap) ──
 export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: boolean; clearedEntries: number; error?: string }> {
+  if (!isMemoryEnabled()) return { ok: false, clearedEntries: 0, error: "记忆模式已关闭" };
   try {
     // Switch the embedding pipeline first
     switchModel(modelKey);
@@ -222,9 +270,14 @@ export async function addMemory(
   source = "user_memory",
   metadata?: Record<string, unknown>
 ): Promise<string> {
+  if (!isMemoryEnabled()) throw new Error("记忆模式已关闭");
   if (!store || !provider) throw new Error("RAG not initialized");
-  const entry = await store.add(text, source, provider, metadata);
-  return entry.id;
+  const currentStore = store;
+  const currentProvider = provider;
+  return trackVectorOperation(async () => {
+    const entry = await currentStore.add(text, source, currentProvider, metadata);
+    return entry.id;
+  });
 }
 
 export async function addL2MemoryVector(
@@ -232,10 +285,15 @@ export async function addL2MemoryVector(
   l2Id: string,
   metadata?: Record<string, unknown>,
 ): Promise<string> {
+  if (!isMemoryEnabled()) throw new Error("记忆模式已关闭");
   if (!store || !provider) throw new Error("RAG not initialized");
   if (!l2Id.trim()) throw new Error("l2Id is required");
-  const entry = await store.addUnique(text, "user_memory", provider, { ...metadata, l2Id });
-  return entry.id;
+  const currentStore = store;
+  const currentProvider = provider;
+  return trackVectorOperation(async () => {
+    const entry = await currentStore.addUnique(text, "user_memory", currentProvider, { ...metadata, l2Id });
+    return entry.id;
+  });
 }
 
 // ── Memory search ──
@@ -254,6 +312,16 @@ export async function searchMemoryEntries(
   source?: string,
   topK = 5,
   options?: { recordRecall?: boolean }
+): Promise<Array<{ id: string; text: string; createdAt: number; score: number; metadata?: Record<string, unknown> }>> {
+  if (!isMemoryEnabled()) return [];
+  return trackVectorOperation(() => searchMemoryEntriesEnabled(query, source, topK, options));
+}
+
+async function searchMemoryEntriesEnabled(
+  query: string,
+  source?: string,
+  topK = 5,
+  options?: { recordRecall?: boolean },
 ): Promise<Array<{ id: string; text: string; createdAt: number; score: number; metadata?: Record<string, unknown> }>> {
   if (!retriever) return [];
   let allowedEntryIds: string[] | undefined;
@@ -312,14 +380,17 @@ export async function searchHistoryEntries(
   query: string,
   topK = 5
 ): Promise<Array<{ text: string; createdAt: number; score: number; metadata?: Record<string, unknown> }>> {
-  if (!retriever) return [];
-  const results = await retriever.retrieve(query, "chat_history", topK);
-  return results.map((r) => ({
-    text: r.entry.text,
-    createdAt: r.entry.createdAt,
-    score: r.score,
-    metadata: r.entry.metadata,
-  }));
+  if (!isMemoryEnabled()) return [];
+  return trackVectorOperation(async () => {
+    if (!retriever) return [];
+    const results = await retriever.retrieve(query, "chat_history", topK);
+    return results.map((r) => ({
+      text: r.entry.text,
+      createdAt: r.entry.createdAt,
+      score: r.score,
+      metadata: r.entry.metadata,
+    }));
+  });
 }
 
 // ── Worldbook DMAE：每轮打分（本轮用户输入 + 上轮模型回复）──

@@ -69,6 +69,7 @@ import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
 import { estimateMessageTokens } from "./context-manager";
 import { createTranscriptCompactionRequiredError } from "./conversation-transcript-compactor";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
+import { isSummaryMemoryEnabled } from "../memory/memory-mode";
 
 /** index.ts 模块级符号的最小可注入子集。
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
@@ -177,6 +178,11 @@ export interface BuildOptionsDeps {
     conversationId?: string;
     channel?: string;
   }) => Promise<string>;
+  /** Summary memory: fixed paths/rules belong to stable prompt; file bodies belong to runtime tail. */
+  buildSummaryMemoryContext?: (conversationId: string) => Promise<{
+    stablePrompt: string;
+    runtimeContext: string;
+  }>;
 }
 
 /** 所有入口都从 canonical journal 构建上下文；不再接受旁路历史消息。 */
@@ -186,6 +192,13 @@ export type BuildOptionsInput = AguiRunInput;
 export interface OnRunFinishedDeps {
   loadModelSettings: () => ModelSettingsLite;
   scheduleMemoryWrite: (userText: string, reply: string, conversationId?: string) => void;
+  scheduleSummaryTurn?: (input: {
+    conversationId: string;
+    assistantEntryId: string;
+    userTurnId?: string;
+    userText: string;
+    assistantText: string;
+  }) => void;
   scheduleSocialAtomExtraction?: (input: SocialExtractionInput) => void;
   inferRuntimeState: (userText: string, reply: string, flag: boolean) => { status: string };
   runtimeState: {
@@ -236,6 +249,7 @@ export interface ModelSettingsLite {
   contextWindowTokens?: number;
   /** 主模型请求的额外重试次数；旧设置回退到 5。 */
   modelRequestMaxRetries?: number;
+  memoryMode?: "vector" | "summary" | "off";
 }
 
 export interface StyleSettingsLite {
@@ -954,13 +968,22 @@ export async function buildAgentRunOptions(
         + `\n所有本地文件的读取、创建与生成都必须以此目录为根；不得写入桌面、下载目录或其他目录。`
       : "");
 
+  let summaryMemoryContext: Awaited<ReturnType<NonNullable<BuildOptionsDeps["buildSummaryMemoryContext"]>>> | undefined;
+  if (settings.memoryMode === "summary" && deps.buildSummaryMemoryContext) {
+    try {
+      summaryMemoryContext = await deps.buildSummaryMemoryContext(conversationId);
+    } catch (error) {
+      console.warn("[SummaryMemory] prompt context load failed:", conversationId, error);
+    }
+  }
 
   // Soul 的稳定前缀只保留固定人设/渠道。每轮变化的事实在请求尾部注入，
   // 使厂商提示词缓存可以复用同一个前缀。
   // 工具结果以 role:tool 消息写回单循环 transcript。
   const soulSystemWithoutCita =
     (channelSystem ? channelSystem + "\n\n" : "") +
-    baseSoulSystemPrompt;
+    baseSoulSystemPrompt
+    + (summaryMemoryContext?.stablePrompt ? `\n\n${summaryMemoryContext.stablePrompt}` : "");
   const soulSystemBaseContent = soulSystemWithoutCita;
   const soulRuntimeContext = [
     environmentContext,
@@ -975,6 +998,7 @@ export async function buildAgentRunOptions(
     relationshipContext,
     attachmentContext,
     pluginPromptContext,
+    summaryMemoryContext?.runtimeContext,
   ].filter((context): context is string => Boolean(context?.trim())).join("\n\n---\n\n");
 
   // 图片路由统一收口在 image-router：direct 直发 / caption 转述 / reject 拒绝。
@@ -1099,7 +1123,13 @@ export async function onAgentRunFinished(
   deps: OnRunFinishedDeps,
   channel?: ChannelId,
   conversationId?: string,
-  finishedContext?: { runId?: string; source?: "desktop" | "channel"; mode?: string },
+  finishedContext?: {
+    runId?: string;
+    source?: "desktop" | "channel";
+    mode?: string;
+    assistantEntryId?: string;
+    userTurnId?: string;
+  },
 ): Promise<{ sticker: string | null }> {
   const chatContent = result.reply;
   const sideEffectUserText = stripTurnModelContextForSideEffects(latestUserText);
@@ -1123,7 +1153,16 @@ export async function onAgentRunFinished(
       retrievedAtoms: socialContext.retrievedAtoms,
       now: socialContext.now,
     });
-  } else {
+  }
+  if (isSummaryMemoryEnabled() && conversationId && finishedContext?.assistantEntryId) {
+    deps.scheduleSummaryTurn?.({
+      conversationId,
+      assistantEntryId: finishedContext.assistantEntryId,
+      ...(finishedContext.userTurnId ? { userTurnId: finishedContext.userTurnId } : {}),
+      userText: sideEffectUserText,
+      assistantText: chatContent,
+    });
+  } else if (!socialContext) {
     deps.scheduleMemoryWrite(sideEffectUserText, chatContent, conversationId);
   }
 

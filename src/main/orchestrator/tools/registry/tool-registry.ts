@@ -5,6 +5,13 @@ import { searchMemory } from "../../../rag/index";
 import type { ToolRiskLevel } from "../../../permission";
 import type { ToolContext } from "./tool-context";
 import type { ConversationMode } from "../../../../shared/chat-types";
+import { isVectorMemoryEnabled } from "../../../memory/memory-mode";
+
+const MEMORY_TOOL_IDS = new Set(["user_memory", "read_memory", "write_memory", "recall_history"]);
+
+function isToolAvailable(tool: ToolDefinition): boolean {
+  return tool.enabled && !tool.deprecated && (isVectorMemoryEnabled() || !MEMORY_TOOL_IDS.has(tool.id));
+}
 
 /** 工具效果类型：决定工具对系统状态的影响分类。未配置默认 "unknown"。 */
 export type ToolEffectKind =
@@ -133,7 +140,7 @@ export class ToolRegistry {
   }
 
   getEnabledTools(): ToolDefinition[] {
-    return Array.from(this.tools.values()).filter(t => t.enabled && !t.deprecated);
+    return Array.from(this.tools.values()).filter(isToolAvailable);
   }
 
   /** 按会话模式过滤的启用工具列表。
@@ -144,7 +151,7 @@ export class ToolRegistry {
    *  未声明 modes 且无覆盖的工具默认全模式可见——保持现有行为不变。 */
   getEnabledToolsForMode(mode: ConversationMode, overrides?: ToolModeOverrides): ToolDefinition[] {
     return Array.from(this.tools.values()).filter((t) => {
-      if (!t.enabled || t.deprecated) return false;
+      if (!isToolAvailable(t)) return false;
       const override = overrides?.[t.id]?.[mode];
       if (override !== undefined) return override;
       return !t.modes || t.modes.includes(mode);
@@ -222,6 +229,7 @@ toolRegistry.register({
     required: ['query'],
   },
   execute: async (args) => {
+    if (!isVectorMemoryEnabled()) return "[用户记忆] 当前模式不使用向量记忆";
     const results = await searchMemory(String(args.query), 'user_memory', Number(args.topK) || 5);
     return results.map(formatMemoryResult).filter(Boolean).join('\n');
   },
@@ -354,6 +362,7 @@ toolRegistry.register({
     },
   },
   execute: async (args) => {
+    if (!isVectorMemoryEnabled()) return "[通读记忆] 当前模式不使用向量记忆";
     // 懒加载避开注册期副作用（与 fs-tools 的视觉配置懒加载同模式）
     const { memoryStore } = require("../../../memory/memory-store") as
       typeof import("../../../memory/memory-store");
@@ -420,6 +429,7 @@ toolRegistry.register({
     required: ['layer', 'content'],
   },
   execute: async (args, ctx) => {
+    if (!isVectorMemoryEnabled()) return "[更新记忆] 当前模式不使用向量记忆";
     const candidate = buildWriteCandidate({
       layer: String(args.layer || ""),
       content: String(args.content || ""),

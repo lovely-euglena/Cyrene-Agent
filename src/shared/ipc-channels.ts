@@ -296,6 +296,7 @@ export const IPC = {
 
   // memory panel
   MEMORY_PANEL_GET_DATA: "memory-panel:get-data",
+  MEMORY_PANEL_GET_SUMMARY: "memory-panel:get-summary",
   MEMORY_PANEL_SAVE_L0: "memory-panel:save-l0",
   MEMORY_PANEL_SAVE_L1: "memory-panel:save-l1",
   MEMORY_EXPORT_OBSIDIAN_VAULT: "memory:export-obsidian-vault",

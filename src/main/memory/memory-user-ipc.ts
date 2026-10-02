@@ -1,4 +1,4 @@
-import { dialog } from "electron";
+import { app, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
@@ -22,6 +22,10 @@ import { memoryStore } from "./memory-store";
 import { exportMemoryToObsidianVault, syncToBoundVault } from "./obsidian-exporter";
 import { loadObsidianVaultConfig, saveObsidianVaultConfig, unbindVault } from "./obsidian-vault-config";
 import { startVaultWatcher, stopVaultWatcher } from "./obsidian-importer";
+import { activeConversationRegistry } from "../chats/active-conversation-registry";
+import * as chatsStore from "../chats/chats-store";
+import { loadSummaryMemoryContext } from "./summary-memory-context";
+import { isSummaryMemoryEnabled } from "./memory-mode";
 
 export interface MemoryUserToolIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -144,6 +148,17 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
 
   // Memory panel
   ipc.handle(IPC.MEMORY_PANEL_GET_DATA, () => loadMemoryPanelData());
+  ipc.handle(IPC.MEMORY_PANEL_GET_SUMMARY, async () => {
+    if (!isSummaryMemoryEnabled()) return null;
+    const sessionId = activeConversationRegistry.getMostRecent()?.sessionId ?? chatsStore.getLatestSessionId();
+    if (!sessionId) return null;
+    const context = await loadSummaryMemoryContext({
+      conversationId: sessionId,
+      userDataRoot: app.getPath("userData"),
+      getSessionRecord: chatsStore.getSessionRecord,
+    });
+    return { sessionId, ...context };
+  });
 
   ipc.handle(IPC.MEMORY_PANEL_SAVE_L0, async (_event, raw: Record<string, unknown>) => {
     const patch: Partial<{

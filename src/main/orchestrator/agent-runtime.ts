@@ -15,6 +15,7 @@ import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
 import { buildEnvironmentContext } from "./environment";
 import { buildToneInjection } from "./tone-injector";
 import { buildAlwaysOnContext, scheduleMemoryWrite } from "./index";
+import { scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
 import { matchSticker } from "../sticker-text-matcher";
 import type { StickerTextEntry } from "../sticker-text-matcher";
 import { buildRelationshipContext, recordRelationshipTurn } from "../relationship/relationship-log";
@@ -91,6 +92,8 @@ export interface AgentRuntimeDeps {
   socialContextScheduler: { schedule: (input: SocialExtractionInput) => void };
   chatsStore: { getWorkspaceBinding: (conversationId: string) => { workspaceRoot: string; displayName: string; boundAt: number } | undefined };
   socialAtomStore: { listActive: (conversationId: string, now: number) => SocialAtom[] };
+  buildSummaryMemoryContext?: (conversationId: string) => Promise<{ stablePrompt: string; runtimeContext: string }>;
+  scheduleSummaryTurn?: (input: Parameters<typeof scheduleSummaryTurn>[0]) => void;
   buildPluginPromptContext: (input: PluginPromptBuildInput) => Promise<string>;
   publishPluginHostEvent: <T>(event: string, payload: T) => Promise<void>;
   /** 工具完成事件发布入口；缺省不发布（早期装配与测试场景）。 */
@@ -107,6 +110,8 @@ export interface AgentRunFinishedContext {
   conversationId: string;
   channel?: string;
   runId?: string;
+  assistantEntryId?: string;
+  userTurnId?: string;
 }
 
 export interface AgentRuntime {
@@ -242,6 +247,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       getWorkspaceBinding: (conversationId: string) => {
         return rawDeps.chatsStore.getWorkspaceBinding(conversationId);
       },
+      buildSummaryMemoryContext: rawDeps.buildSummaryMemoryContext,
       buildPluginPromptContext: (input) => rawDeps.buildPluginPromptContext(input),
       // 权威轨迹上下文（CTA Phase 1）：桌面端与 bridge 共用同一 userData 根下的单例 store
       buildModelContext: (conversationId, retainTokens) => buildModelContext({
@@ -258,6 +264,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
     return {
       loadModelSettings: () => rawDeps.loadModelSettings(),
       scheduleMemoryWrite,
+      scheduleSummaryTurn: rawDeps.scheduleSummaryTurn ?? ((input) => scheduleSummaryTurn(input)),
       scheduleSocialAtomExtraction: (input) => rawDeps.socialContextScheduler.schedule(input),
       scheduleMomentsTurn: (input) => momentsService.scheduleTurn(input),
       inferRuntimeState: ((userText, reply, flag) =>

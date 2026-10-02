@@ -6,6 +6,7 @@ import { entityGraph } from "../memory/entity-graph";
 import { recordRecentMemoryInjection } from "../memory/recent-injected-memory";
 import { l2DmaeManager } from "../memory/l2-dmae-manager";
 import { toolRegistry } from "./tools/registry/tool-registry";
+import { isMemoryEnabled } from "../memory/memory-mode";
 
 export { ToolCallResult } from "./types";
 
@@ -24,6 +25,7 @@ export { buildToneInjection } from "./tone-injector";
 export async function buildMemoryInjection(
   userInput: string,
 ): Promise<string> {
+  if (!isMemoryEnabled()) return "";
   const parts: string[] = [];
 
   try {
@@ -118,36 +120,38 @@ export async function buildAlwaysOnContext(
     console.warn("[Orchestrator] worldbook dmae failed:", err);
   }
 
-  // ── L0/L1 画像 — 永远跑 ──────────────────────────────
-  try {
-    const l0 = await memoryStore.getL0();
-    const l1 = await memoryStore.getL1();
+  // ── L0/L1 画像 ───────────────────────────────────────
+  if (isMemoryEnabled()) {
+    try {
+      const l0 = await memoryStore.getL0();
+      const l1 = await memoryStore.getL1();
 
-    const l0Lines = [
-      l0.preferredName && `称呼：${l0.preferredName}`,
-      l0.occupation && `职业：${l0.occupation}`,
-      l0.longTermInterests && `长期兴趣：${l0.longTermInterests}`,
-      l0.permanentNote && `备注：${l0.permanentNote}`,
-    ].filter(Boolean);
+      const l0Lines = [
+        l0.preferredName && `称呼：${l0.preferredName}`,
+        l0.occupation && `职业：${l0.occupation}`,
+        l0.longTermInterests && `长期兴趣：${l0.longTermInterests}`,
+        l0.permanentNote && `备注：${l0.permanentNote}`,
+      ].filter(Boolean);
 
-    const l1Lines = [
-      l1.recentGoals && `最近目标：${l1.recentGoals}`,
-      l1.recentPreferences && `近期偏好：${l1.recentPreferences}`,
-      l1.currentProject && `当前项目：${l1.currentProject}`,
-    ].filter(Boolean);
+      const l1Lines = [
+        l1.recentGoals && `最近目标：${l1.recentGoals}`,
+        l1.recentPreferences && `近期偏好：${l1.recentPreferences}`,
+        l1.currentProject && `当前项目：${l1.currentProject}`,
+      ].filter(Boolean);
 
-    if (l0Lines.length > 0 || l1Lines.length > 0) {
-      let memoryContext = "";
-      if (l0Lines.length > 0) {
-        memoryContext += `[用户画像]\n${l0Lines.join("\n")}\n\n`;
+      if (l0Lines.length > 0 || l1Lines.length > 0) {
+        let memoryContext = "";
+        if (l0Lines.length > 0) {
+          memoryContext += `[用户画像]\n${l0Lines.join("\n")}\n\n`;
+        }
+        if (l1Lines.length > 0) {
+          memoryContext += `[近期状态]\n${l1Lines.join("\n")}\n\n`;
+        }
+        parts.push(memoryContext.trim());
       }
-      if (l1Lines.length > 0) {
-        memoryContext += `[近期状态]\n${l1Lines.join("\n")}\n\n`;
-      }
-      parts.push(memoryContext.trim());
+    } catch (err) {
+      console.warn("[Orchestrator] memory load failed:", err);
     }
-  } catch (err) {
-    console.warn("[Orchestrator] memory load failed:", err);
   }
 
   // ── 日志 ──────────────────────────────────────────────
