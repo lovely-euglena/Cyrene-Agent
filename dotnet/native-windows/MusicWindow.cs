@@ -45,7 +45,6 @@ public sealed class MusicWindow : NativeWindow
     private LrcParser.LrcDocument? _lyrics;
     private string? _lyricsPath;
     private int _lyricIndex = -1;
-    private bool _updatingProgress;
     private bool _updatingVolume;
     private bool _rebuildingFolders;
     private List<MusicService.TrackDto> _tracks = new();
@@ -451,10 +450,8 @@ public sealed class MusicWindow : NativeWindow
 
     private void UpdateProgress(double positionSec, double durationSec)
     {
-        _updatingProgress = true;
         _progress.Maximum = Math.Max(1, durationSec);
         _progress.Value = Math.Min(Math.Max(0, positionSec), _progress.Maximum);
-        _updatingProgress = false;
         _positionText.Text = FormatTime(positionSec);
         _durationText.Text = FormatTime(durationSec);
     }
