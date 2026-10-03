@@ -18,6 +18,9 @@ import type { ToolContext } from "./registry/tool-context";
 import type { ToolDiffLine, ToolFileChange } from "../../../shared/chat-types";
 import { buildFullFileDiff, finalizeFileChanges } from "./registry/tool-evidence";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { nativeToolHost } from "./native-tool-host";
+import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 
 const LOG_PREFIX = "[ApplyPatch]";
 
@@ -413,7 +416,68 @@ export function applyPatchHunks(hunks: PatchHunk[], workspaceRoot: string): Appl
 
 // ── 工具执行器 ────────────────────────────────────────────
 
-async function executeApplyPatch(
+/**
+ * apply_patch native 轨（两段式）：
+ *  ① `__dryRun` 预检（解析 + 全量匹配 + 路径沙箱）——失败结果与 TS 输出
+ *     同构，直接透传（无副作用）；
+ *  ② 预检成功 → captureBefore / recordRename 基线 → 正式提交（.NET 落盘 + evidence）。
+ * host 不可用/故障 → 整体回退 TS 实现。
+ */
+async function executeApplyPatchNativeFirst(
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+): Promise<string> {
+  if (!resolveDotnetConfig().toolHost) return executeApplyPatchTs(args, ctx);
+
+  const patch = String(args.patch || "").trim();
+  const workspaceRoot = ctx?.resolvedWorkspaceRoot;
+  // 参数/工作区校验先在 TS 侧给出与人话错误（不触达 host，与 TS 输出同构）
+  if (!patch || !workspaceRoot) return executeApplyPatchTs(args, ctx);
+
+  try {
+    const prep = await nativeToolHost.call("apply_patch", {
+      patch,
+      __cyreneRoot: workspaceRoot,
+      __dryRun: true,
+    }, undefined, ctx?.signal);
+    if (prep === null) return executeApplyPatchTs(args, ctx);
+    const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
+    let prepared = false;
+    let hunks: Array<{ type?: string; path?: string; movePath?: string }> = [];
+    try {
+      const parsed = JSON.parse(prepText) as { prepared?: unknown; hunks?: unknown };
+      prepared = parsed.prepared === true;
+      if (Array.isArray(parsed.hunks)) hunks = parsed.hunks as typeof hunks;
+    } catch { /* 非 JSON 视为预检失败，走透传/回退 */ }
+    if (!prepared) return prepText; // 预检失败：与 TS 失败输出同构
+
+    // 匹配成功：基线必须在正式落盘之前捕获（与 TS 时序一致；captureBefore 幂等）
+    if (ctx?.runId) {
+      const tracker = getRunReviewTracker(app.getPath("userData"));
+      for (const hunk of hunks) {
+        const relPath = typeof hunk.path === "string" ? hunk.path : "";
+        if (!relPath) continue;
+        const absPath = path.resolve(workspaceRoot, relPath);
+        tracker.captureBefore(ctx.runId, absPath, relPath);
+        // update + move：记录 rename 关系
+        if (hunk.type === "update" && typeof hunk.movePath === "string" && hunk.movePath) {
+          const moveAbs = path.resolve(workspaceRoot, hunk.movePath);
+          tracker.recordRename(ctx.runId, absPath, moveAbs, relPath, hunk.movePath);
+        }
+      }
+    }
+
+    const result = await nativeToolHost.call("apply_patch", { patch, __cyreneRoot: workspaceRoot }, undefined, ctx?.signal);
+    if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
+  } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复改文件
+    console.warn(LOG_PREFIX, "apply_patch native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+  }
+  return executeApplyPatchTs(args, ctx);
+}
+
+/** apply_patch 的 TS 实现（native 轨回退路径）。 */
+async function executeApplyPatchTs(
   args: Record<string, unknown>,
   ctx?: ToolContext,
 ): Promise<string> {
@@ -513,7 +577,7 @@ export function registerApplyPatchTool(): void {
       },
       required: ["patch"],
     },
-    execute: executeApplyPatch,
+    execute: executeApplyPatchNativeFirst,
   });
 
   console.log(LOG_PREFIX, "已注册：apply_patch");

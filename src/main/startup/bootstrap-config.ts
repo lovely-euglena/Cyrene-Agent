@@ -18,6 +18,8 @@ import { setChoiceCardSender, setChoiceDismissSender } from "../user-choice";
 import { setAsrConfig } from "../asr/asr-config";
 import { setCallSettings } from "../call/call-manager";
 import { buildCallSystemPrompt } from "../call/call-prompt-builder";
+import { nativeToolHost } from "../orchestrator/tools/native-tool-host";
+import { getDateLocale } from "../locale-context";
 import type { SceneIndex } from "../scene-embedder";
 import { reactChatWindow } from "../windows/window-state";
 
@@ -68,6 +70,12 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
 
   // 注入用户时区 getter：工具侧通过 currentUserTimezone() 统一拿用户时区（缺/非法回退 Asia/Shanghai）
   setUserTimezoneConfig(() => loadUserProfile().timezone);
+  // .NET 工具宿主运行时配置：本地数据根（expense 等宿主侧落盘）+ 日期 locale；
+  // 时区由 now 工具每次调用实时下发（用户改设置无需重启）
+  nativeToolHost.setRuntimeSettings({
+    dataDir: require("electron").app.getPath("userData"),
+    dateLocale: getDateLocale(),
+  });
   // 通用三件套（calculator/now/clipboard）：时区 + Electron clipboard 注入
   setUtilityTimezoneConfig(() => loadUserProfile().timezone);
   setUtilityClipboardConfig(() => require("electron").clipboard);

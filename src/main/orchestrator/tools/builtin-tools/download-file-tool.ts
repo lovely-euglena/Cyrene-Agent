@@ -17,16 +17,25 @@ import * as fs from "fs";
 import * as path from "path";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { nativeFirst } from "../native-tool-host";
 
 const LOG_PREFIX = "[BuiltinTools]";
 
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000; // 空闲超时：连续 30s 无数据则中止
 const DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024; // 单文件上限 64MiB
+/**
+ * native 轨看门狗上限。C# 侧下载无总时长限制（只受 30s 空闲超时约束，
+ * 与 TS 原实现一致），TS 侧必须给足窗口：64MiB 在 ~1Mbps 慢链路上
+ * 约需 9 分钟。低于此值会把合法的慢速大文件误杀成 host 重启 + TS 重下载。
+ */
+const DOWNLOAD_NATIVE_TIMEOUT_MS = 10 * 60_000;
 
-/** 危险后缀黑名单：可执行/脚本文件不落盘，防"下载即执行"攻击面。 */
+/** 危险后缀黑名单：可执行/脚本文件不落盘，防"下载即执行"攻击面。
+ *  .js/.jse/.vbe/.wsf/.wsh 走 Windows Script Host，.hta/.cpl/.pif 双击即执行。 */
 const DANGEROUS_EXTS = new Set([
   ".exe", ".bat", ".cmd", ".com", ".scr", ".msi",
-  ".ps1", ".vbs", ".lnk", ".jar", ".sh",
+  ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+  ".hta", ".cpl", ".pif", ".lnk", ".jar", ".sh",
 ]);
 
 /** Content-Type → 扩展名：filename 缺扩展名时按响应类型补全。 */
@@ -190,6 +199,24 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
   }
 }
 
+/**
+ * download_file native 轨：输出根由包装层注入（工作区/桌面），其余语义（沙箱、
+ * 黑名单、上限、空闲超时、落盘）在 ToolHost；host 故障/缺失整体回退 TS 实现。
+ */
+async function executeDownloadFileNativeFirst(
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+): Promise<string> {
+  const root = ctx?.resolvedWorkspaceRoot
+    ?? (require("electron") as typeof import("electron")).app.getPath("desktop");
+  return nativeFirst(
+    "download_file",
+    { ...args, __cyreneRoot: String(root) },
+    (nativeArgs) => executeDownloadFile(nativeArgs, ctx),
+    { timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS, signal: ctx?.signal },
+  );
+}
+
 export const downloadFileTool: ToolDefinition = {
   id: "download_file",
   name: "下载文件",
@@ -221,5 +248,5 @@ export const downloadFileTool: ToolDefinition = {
     },
     required: ["url"],
   },
-  execute: executeDownloadFile,
+  execute: executeDownloadFileNativeFirst,
 };

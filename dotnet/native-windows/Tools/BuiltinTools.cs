@@ -5,14 +5,12 @@ using System.Text.Json;
 
 namespace CyreneNative.Tools;
 
-/// <summary>now：时区感知当前时间。宿主注入用户时区（connectConfig 帧）。</summary>
+/// <summary>now：时区感知当前时间。宿主 config 帧注入用户时区（ToolHostConfig）。</summary>
 internal static class NowTool
 {
-    internal static string? Timezone { get; set; }
-
     public static object Execute(JsonElement? args)
     {
-        var tz = Timezone;
+        var tz = ToolHostConfig.Timezone;
         if (string.IsNullOrEmpty(tz)) tz = "Asia/Shanghai";
         var format = args?.TryGetProperty("format", out var f) == true ? f.GetString() : "default";
         var now = DateTimeOffset.Now;

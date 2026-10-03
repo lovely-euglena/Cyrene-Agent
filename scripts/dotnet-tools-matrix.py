@@ -8,16 +8,18 @@ fs_list_dir
 import subprocess, json, os, tempfile, sys
 
 NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 results = []
 
 def run(frames, timeout=90):
     env = dict(os.environ)
     dr = os.path.expanduser("~/.dotnet")
-    env["DOTNET_ROOT"] = dr
-    env["PATH"] = dr + os.pathsep + env.get("PATH", "")
+    if os.path.isdir(dr):  # Linux 独立安装常见位置；不存在时（如 Windows）不污染环境
+        env["DOTNET_ROOT"] = dr
+        env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     p = subprocess.run(["dotnet", NATIVE, "--tool-host"], input="\n".join(frames),
                        capture_output=True, text=True, timeout=timeout,
-                       cwd="/home/z/my-project/repos/Cyrene-Agent", env=env)
+                       cwd=ROOT, env=env)
     out = []
     for line in p.stdout.strip().splitlines():
         try: out.append(json.loads(line))
@@ -57,6 +59,11 @@ c_sys1 = req("sysinfo", {})
 c_w1 = req("fs_write_file", {"path": os.path.join(tmp, "w1.txt"), "content": "第一行\n第二行"})
 c_w2 = req("fs_write_file", {"path": os.path.join(tmp, "w2.txt"), "content": "x", "startLine": 5})
 c_w3 = req("fs_write_file", {"content": "no path"})
+# evidence 帧协议 v1：新建/追加/覆盖三态的 changes 证据（append 末尾补换行）
+c_w4 = req("fs_write_file", {"path": os.path.join(tmp, "w3.txt"), "content": "a\nb"})
+c_w5 = req("fs_write_file", {"path": os.path.join(tmp, "w3.txt"), "content": "c", "append": True})
+c_w6 = req("fs_write_file", {"path": os.path.join(tmp, "w4.txt"), "content": "a\nb\nc"})
+c_w7 = req("fs_write_file", {"path": os.path.join(tmp, "w4.txt"), "content": "x"})
 # fs_read_file
 c_r1 = req("fs_read_file", {"path": os.path.join(tmp, "w1.txt")})
 c_r2 = req("fs_read_file", {"path": os.path.join(tmp, "w1.txt"), "startLine": 2, "maxLines": 1})
@@ -65,6 +72,70 @@ c_r4 = req("fs_read_file", {})
 # fs_list_dir
 c_l1 = req("fs_list_dir", {"path": tmp})
 c_l2 = req("fs_list_dir", {"path": "/definitely/not/exist"})
+
+# expense（config 帧注入 dataDir；record 两笔 + 负数拒绝 + 汇总/明细）
+c_exp_dir = os.path.join(tmp, "expenses")
+frames.append(json.dumps({"op": "config", "dataDir": c_exp_dir, "timezone": "Asia/Shanghai", "dateLocale": "zh-CN"}))
+c_ex1 = req("record_expense", {"amount": 12.5, "category": "餐饮", "note": "午饭"})
+c_ex2 = req("record_expense", {"amount": 40.5, "category": "交通", "note": "打车"})
+c_ex3 = req("record_expense", {"amount": -1})
+# 数字字符串：JS Number() 语义双轨等价（模型偶发把金额/天数写成字符串）
+c_ex4 = req("record_expense", {"amount": "7.5", "category": "娱乐", "note": "电影"})
+c_ex5 = req("record_expense", {"amount": "abc"})
+c_eq1 = req("query_expense", {"summary": True})
+c_eq2 = req("query_expense", {})
+c_eq3 = req("query_expense", {"days": "30", "summary": True})
+
+# search_text（内部工作区根注入；忽略 node_modules）
+sws = os.path.join(tmp, "searchws")
+os.makedirs(os.path.join(sws, "src"))
+os.makedirs(os.path.join(sws, "node_modules"))
+open(os.path.join(sws, "src", "a.ts"), "w", encoding="utf-8").write("hello world\nconst x = 1;\nHELLO again\n")
+open(os.path.join(sws, "src", "b.py"), "w", encoding="utf-8").write("hello python\n")
+open(os.path.join(sws, "node_modules", "c.js"), "w", encoding="utf-8").write("hello dep\n")
+c_s1 = req("search_text", {"query": "hello", "contextLines": 1, "__cyreneWorkspaceRoot": sws})
+c_s2 = req("search_text", {"query": "he.*o", "mode": "regex", "caseSensitive": True, "__cyreneWorkspaceRoot": sws})
+c_s3 = req("search_text", {"query": "zzz-not-exist", "__cyreneWorkspaceRoot": sws})
+# 字符串数字：JS Number() 语义（与 c_s1 输出应完全一致）
+c_s4 = req("search_text", {"query": "hello", "contextLines": "1", "maxMatches": "3", "__cyreneWorkspaceRoot": sws})
+
+# str_replace（两段式：__dryRun 预检 → 提交；失败诊断）
+srf = os.path.join(tmp, "sr.txt")
+srf_dry = os.path.join(tmp, "sr_dry.txt")
+open(srf, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
+open(srf_dry, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
+c_sr1 = req("str_replace", {"file_path": srf_dry, "old_string": "beta", "new_string": "BETA", "__dryRun": True})
+c_sr2 = req("str_replace", {"file_path": srf, "old_string": "beta", "new_string": "BETA"})
+c_sr3 = req("str_replace", {"file_path": srf, "old_string": "nope", "new_string": "x"})
+# 空文件播种：old_string="" + 空内容（矩阵补充边界用例）
+srf2 = os.path.join(tmp, "sr_empty.txt")
+open(srf2, "w", encoding="utf-8").write("")
+c_sr4 = req("str_replace", {"file_path": srf2, "old_string": "", "new_string": "seed content\n"})
+
+# apply_patch（Codex 补丁格式：dry-run 预检 → 提交；事务/逃逸/Move/删除）
+ap_ws = os.path.join(tmp, "apws")
+os.makedirs(ap_ws)
+open(os.path.join(ap_ws, "a.txt"), "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
+open(os.path.join(ap_ws, "m.txt"), "w", encoding="utf-8").write("m1\nm2\n")
+open(os.path.join(ap_ws, "dry.txt"), "w", encoding="utf-8").write("d1\nd2\n")
+ap_dry_patch = "*** Begin Patch\n*** Update File: dry.txt\n@@\n-d1\n+D1\n*** End Patch"
+ap_patch1 = ("*** Begin Patch\n*** Update File: a.txt\n@@\n alpha\n-beta\n+BETA\n gamma\n"
+             "*** Add File: sub/new.txt\n+hello\n+world\n*** End Patch")
+c_ap0 = req("apply_patch", {"patch": ap_dry_patch, "__cyreneRoot": ap_ws, "__dryRun": True})
+c_ap1 = req("apply_patch", {"patch": ap_patch1, "__cyreneRoot": ap_ws})
+c_ap2 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch", "__cyreneRoot": ap_ws, "__dryRun": True})
+c_ap3 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch", "__cyreneRoot": ap_ws})
+c_ap4 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: a.txt\n+z\n*** End Patch", "__cyreneRoot": ap_ws})
+c_ap5 = req("apply_patch", {"patch": "*** Begin Patch\n*** Delete File: ghost.txt\n*** End Patch", "__cyreneRoot": ap_ws})
+c_ap6 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch", "__cyreneRoot": ap_ws})
+c_ap7 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** Add File: ../escape2.txt\n+z\n*** End Patch", "__cyreneRoot": ap_ws})
+c_ap8 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: m.txt\n*** Move to: moved/m.txt\n@@\n-m1\n+M1\n*** End Patch", "__cyreneRoot": ap_ws})
+c_ap9 = req("apply_patch", {"patch": "not a patch", "__cyreneRoot": ap_ws})
+
+# download_file 扩展黑名单（联网前拒绝，无需 HTTP；与 TS 两侧同步）
+c_dl1 = req("download_file", {"url": "https://example.com/x.hta", "filename": "x.hta", "__cyreneRoot": ap_ws})
+c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.js", "__cyreneRoot": ap_ws})
+c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf", "__cyreneRoot": ap_ws})
 
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
@@ -94,9 +165,21 @@ d = data_json(c_clip1); check("clipboard（Linux stub 不可用=正常）", by.g
 d = data_json(c_sys1); check("sysinfo 返回", d is not None, d)
 
 print("\n=== fs_write_file ===")
-d = data_json(c_w1); check("写两行文件", d and d.get("bytes", 0) > 0, d)
+d = data_json(c_w1); check("写两行文件", d and d.get("sizeBytes", 0) > 0, d)
 check("文件真实落盘", os.path.exists(os.path.join(tmp, "w1.txt")))
 d = data_json(c_w3); check("写缺 path 报错", isinstance(d, dict) and d.get("errorCode") == "E_FS_PATH", d)
+d = data_json(c_w4); check("写证据 added(insertions=2, diff=2)", d and d.get("changes") and d["changes"][0].get("kind") == "added"
+               and d["changes"][0].get("insertions") == 2 and len(d["changes"][0].get("diff") or []) == 2, d)
+w3 = os.path.join(tmp, "w3.txt")
+d = data_json(c_w5); check("append 补换行 + 证据 added(1)", d and d.get("changes") and d["changes"][0].get("kind") == "added"
+               and d["changes"][0].get("insertions") == 1 and os.path.exists(w3)
+               and open(w3, encoding="utf-8").read() == "a\nb\nc", d)
+d2 = data_json(c_w7)
+diff_types = [l.get("type") for l in (d2.get("changes", [{}])[0].get("diff") or [])] if isinstance(d2, dict) else []
+check("覆盖写证据 modified(1/3) + remove/add diff", d2 and d2.get("success") and d2.get("changes")
+      and d2["changes"][0].get("kind") == "modified"
+      and d2["changes"][0].get("insertions") == 1 and d2["changes"][0].get("deletions") == 3
+      and diff_types == ["remove", "remove", "remove", "add"], d2)
 
 print("\n=== fs_read_file ===")
 d = data_json(c_r1); check("读全文件带行号", d and "第二行" in json.dumps(d, ensure_ascii=False), d)
@@ -105,8 +188,115 @@ d = data_json(c_r3); check("读不存在 E_FS_NOT_FOUND", isinstance(d, dict) an
 d = data_json(c_r4); check("读缺参报错", isinstance(d, dict) and d.get("errorCode") == "E_FS_PATH", d)
 
 print("\n=== fs_list_dir ===")
-d = data_json(c_l1); check("列目录", d and "w1.txt" in json.dumps(d), d)
+l1_text = str(by.get(c_l1, {}).get("data") or "")
+check("列目录", "w1.txt" in l1_text, l1_text[:160])
 d = data_json(c_l2); check("列不存在目录报错", by.get(c_l2, {}).get("ok") is False, by.get(c_l2, d))
+
+print("\n=== expense ===")
+def data_text(cid):
+    d = by.get(cid, {}).get("data")
+    return d if isinstance(d, str) else json.dumps(d, ensure_ascii=False)
+
+check("记账 12.5 餐饮", data_text(c_ex1) == "[record_expense] 已记录：12.5 元 / 餐饮 / 午饭", data_text(c_ex1))
+check("记账 40.5 交通", data_text(c_ex2) == "[record_expense] 已记录：40.5 元 / 交通 / 打车", data_text(c_ex2))
+check("记账负数拒绝", data_text(c_ex3) == "[错误] amount 必须是正数", data_text(c_ex3))
+check("记账字符串金额（Number 语义）", data_text(c_ex4) == "[record_expense] 已记录：7.5 元 / 娱乐 / 电影", data_text(c_ex4))
+check("记账非法字符串拒绝", data_text(c_ex5) == "[错误] amount 必须是正数", data_text(c_ex5))
+eq1 = data_text(c_eq1)
+check("查账汇总（60.50 + 分类键序）",
+      eq1 == "[query_expense] 最近 30 天共 3 笔，合计 60.50 元\n分类：{\"餐饮\":12.5,\"交通\":40.5,\"娱乐\":7.5}", eq1)
+eq2 = data_text(c_eq2)
+check("查账明细三行", eq2.count("\n") == 3 and "12.5元 餐饮 午饭" in eq2 and "40.5元 交通 打车" in eq2 and "7.5元 娱乐 电影" in eq2, eq2)
+check("查账字符串天数（Number 语义）", data_text(c_eq3) == eq1, data_text(c_eq3))
+try:
+    store = json.loads(open(os.path.join(c_exp_dir, "expenses.json"), encoding="utf-8").read())
+    check("账本 JSON 三条且字段顺序可读", len(store) == 3 and store[0]["category"] == "餐饮" and store[1]["amount"] == 40.5 and store[2]["amount"] == 7.5, store)
+except Exception as exc:
+    check("账本 JSON 可解析", False, str(exc))
+
+print("\n=== search_text ===")
+s1 = data_json(c_s1)
+paths = sorted({m.get("path") for m in (s1.get("matches") or [])}) if isinstance(s1, dict) else []
+check("literal 命中 3 处且忽略 node_modules",
+      isinstance(s1, dict) and s1.get("totalMatches") == 3 and paths == ["src/a.ts", "src/b.py"]
+      and all("node_modules" not in str(m.get("path")) for m in s1.get("matches", [])), s1)
+check("命中项带行号与上下文", isinstance(s1, dict) and s1["matches"][0].get("line") == 1
+      and isinstance(s1["matches"][0].get("before"), list), s1.get("matches", [])[:1])
+s2 = data_json(c_s2)
+check("regex 模式大小写敏感命中 2 处", isinstance(s2, dict) and s2.get("totalMatches") == 2, s2)
+s3 = data_json(c_s3)
+check("未命中给 message", isinstance(s3, dict) and s3.get("totalMatches") == 0 and "未找到匹配内容" in str(s3.get("message")), s3)
+s4 = data_json(c_s4)
+check("字符串数值参数（Number 语义）", s4 == s1, s4)
+
+print("\n=== str_replace ===")
+sr1 = data_json(c_sr1)
+check("dryRun 预检成功且不落盘", isinstance(sr1, dict) and sr1.get("prepared") is True
+      and open(srf_dry, encoding="utf-8").read() == "alpha\nbeta\ngamma\n", (sr1, open(srf_dry, encoding="utf-8").read()))
+sr2 = data_json(c_sr2)
+check("提交替换成功 + changes", isinstance(sr2, dict) and sr2.get("success") is True
+      and sr2.get("appliedEdits") == 1 and sr2.get("changes", [{}])[0].get("kind") == "modified"
+      and open(srf, encoding="utf-8").read() == "alpha\nBETA\ngamma\n", sr2)
+sr3 = data_json(c_sr3)
+check("未命中诊断 OLD_STRING_NOT_FOUND", isinstance(sr3, dict) and sr3.get("errorCode") == "OLD_STRING_NOT_FOUND"
+      and (sr3.get("diagnostic") or {}).get("kind") == "not_found", sr3)
+sr4 = data_json(c_sr4)
+check("空文件播种（old_string 空）",
+      isinstance(sr4, dict) and sr4.get("success") is True
+      and open(srf2, encoding="utf-8").read() == "seed content\n",
+      (sr4, open(srf2, encoding="utf-8").read()))
+
+print("\n=== apply_patch ===")
+d0 = data_json(c_ap0)
+check("dry-run prepared + hunks（不落盘）",
+      isinstance(d0, dict) and d0.get("prepared") is True
+      and d0.get("hunks") == [{"type": "update", "path": "dry.txt"}]
+      and open(os.path.join(ap_ws, "dry.txt"), encoding="utf-8").read() == "d1\nd2\n", d0)
+d1 = data_json(c_ap1)
+check("更新+新增事务成功",
+      isinstance(d1, dict) and d1.get("success") is True
+      and d1.get("applied") == ["更新文件: a.txt", "新增文件: sub/new.txt"], d1)
+check("更新内容落盘（保留 LF）",
+      open(os.path.join(ap_ws, "a.txt"), encoding="utf-8").read() == "alpha\nBETA\ngamma\n")
+check("新增文件落盘",
+      open(os.path.join(ap_ws, "sub", "new.txt"), encoding="utf-8").read() == "hello\nworld")
+check("evidence changes（modified/added + diff 行序）",
+      isinstance(d1, dict) and [c.get("kind") for c in d1.get("changes", [])] == ["modified", "added"]
+      and d1["changes"][0].get("insertions") == 1 and d1["changes"][0].get("deletions") == 1
+      and [l.get("type") for l in d1["changes"][0].get("diff", [])] == ["context", "remove", "add", "context"]
+      and d1["changes"][1].get("insertions") == 2, d1.get("changes"))
+d = data_json(c_ap2)
+check("dry-run 预检失败透传", isinstance(d, dict) and d.get("success") is False
+      and d.get("errors") == ["a.txt: 第 1 个编辑块未找到匹配的上下文"], d)
+d = data_json(c_ap3)
+check("正式调用预检失败（同错误）", isinstance(d, dict) and d.get("success") is False
+      and d.get("errors") == ["a.txt: 第 1 个编辑块未找到匹配的上下文"], d)
+d = data_json(c_ap4)
+check("新增已存在拒绝", isinstance(d, dict) and d.get("errors") == ["文件已存在，无法新增: a.txt"], d)
+d = data_json(c_ap5)
+check("删除不存在拒绝", isinstance(d, dict) and d.get("errors") == ["文件不存在，无法删除: ghost.txt"], d)
+d = data_json(c_ap6)
+check("路径逃逸拒绝", isinstance(d, dict) and d.get("errors") == ["路径逃逸: ../escape.txt 在工作区外"], d)
+d = data_json(c_ap7)
+check("事务原子性：任一失败全部不执行",
+      isinstance(d, dict) and d.get("success") is False
+      and not os.path.exists(os.path.join(tmp, "escape2.txt"))
+      and open(os.path.join(ap_ws, "a.txt"), encoding="utf-8").read() == "alpha\nBETA\ngamma\n", d)
+d = data_json(c_ap8)
+check("Move to 更新并移动",
+      isinstance(d, dict) and d.get("success") is True
+      and d.get("applied") == ["更新并移动: m.txt → moved/m.txt"]
+      and os.path.exists(os.path.join(ap_ws, "moved", "m.txt"))
+      and not os.path.exists(os.path.join(ap_ws, "m.txt"))
+      and d.get("changes", [{}])[0].get("file") == "moved/m.txt"
+      and d["changes"][0].get("kind") == "renamed", d)
+d = data_json(c_ap9)
+check("非补丁文本拒绝", isinstance(d, dict) and d.get("errors") == ["patch 必须以 *** Begin Patch 开头"], d)
+
+print("\n=== download_file（黑名单扩展）===")
+check("hta 扩展名拒绝", data_text(c_dl1) == "[错误] 禁止下载可执行/脚本文件: .hta", data_text(c_dl1))
+check("js 扩展名拒绝", data_text(c_dl2) == "[错误] 禁止下载可执行/脚本文件: .js", data_text(c_dl2))
+check("wsf 扩展名拒绝", data_text(c_dl3) == "[错误] 禁止下载可执行/脚本文件: .wsf", data_text(c_dl3))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

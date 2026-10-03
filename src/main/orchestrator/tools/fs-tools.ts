@@ -6,6 +6,7 @@ import * as path from "path";
 import { toolRegistry } from "./registry/tool-registry";
 import { captionImage } from "../vision-captioner";
 import type { ToolContext } from "./registry/tool-context";
+import type { ToolDefinition } from "./registry/tool-registry";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import { buildFullFileDiff, buildReplacedDiff, countLines, finalizeFileChanges } from "./registry/tool-evidence";
 import { checkOverwriteDrop, overwriteDropMessage } from "./overwrite-guard";
@@ -14,6 +15,9 @@ import { logger, LogTag } from "../../logger";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { nativeToolHost, type NativeFirstOptions } from "./native-tool-host";
+import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 
 const LOG_PREFIX = "[FsTools]";
 
@@ -23,6 +27,62 @@ const IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 图片最多 5MB
 
 // 图片扩展名集合，用于 list_dir 标注 [图片] 和汇总计数
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"]);
+
+// ── native 轨（.NET ToolHost）接线 ──────────────────────────
+// 策略：只读三件在宿主可用时优先走 cyrene-native --tool-host，任何故障/
+// 错误载荷回退 TS 原实现（与 calculator/now/clipboard 的 nativeFirst 同）。
+// 写类策略（路径解析/覆盖防骤降/review 基线）留在 TS：语义拒绝绝不落盘、
+// 绝不当故障回退；落盘与 changes 证据由宿主产出（evidence 帧协议 v1，
+// 契约见 dotnet ToolEvidence.cs 头注释）。
+
+/** 判定宿主输出是否为"成功载荷里的业务失败"（C# Err(...) JSON）——是则回退 TS 拿原错误语义。 */
+function isNativeFailurePayload(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text) as { success?: unknown } | null;
+    return parsed !== null && typeof parsed === "object" && parsed.success === false;
+  } catch {
+    return false; // 非 JSON（list_dir 文本输出）按成功处理
+  }
+}
+
+/**
+ * 只读工具 native 优先包装：host 不可用/超时/崩溃/错误载荷 → TS 回退；
+ * 取消（AbortError）原样上抛，不回退重跑。
+ * options.timeoutMs：按件看门狗覆盖（与 nativeFirst 同款接口）。fs 三件入参
+ * 有界（读 10MB / 列 200 项 / 内存缓冲），当前调用点保持默认 5s；接口保留
+ * 覆盖能力，避免未来长耗时文件操作再改签名。
+ */
+async function nativeFirstFs(
+  nativeTool: string,
+  args: Record<string, unknown>,
+  fallback: () => Promise<string>,
+  options: NativeFirstOptions = {},
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!resolveDotnetConfig().toolHost) return fallback();
+  try {
+    const result = await nativeToolHost.call(nativeTool, args, options.timeoutMs, signal);
+    if (result !== null) {
+      const text = typeof result === "string" ? result : JSON.stringify(result);
+      if (!isNativeFailurePayload(text)) return text;
+      console.warn(LOG_PREFIX, nativeTool, "native 返回错误载荷，回退 TS:", text.slice(0, 200));
+    }
+  } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复执行
+    console.warn(LOG_PREFIX, nativeTool, "native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+  }
+  return fallback();
+}
+
+/** 注册前包装：保留工具元数据，只把 execute 换成 native 优先（含取消信号透传）。 */
+function wrapFsForNativeHost(tool: ToolDefinition, nativeTool: string, options: NativeFirstOptions = {}): ToolDefinition {
+  const tsExecute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    execute: (args, ctx) =>
+      nativeFirstFs(nativeTool, args, () => Promise.resolve(tsExecute(args, ctx)), options, ctx?.signal),
+  };
+}
 
 function ensureAbsolute(p: string): string | null {
   if (!p) return null;
@@ -148,7 +208,7 @@ async function executeReadFile(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify(result);
 }
 
-toolRegistry.register({
+toolRegistry.register(wrapFsForNativeHost({
   id: "read_file",
   name: "读取文件",
   description:
@@ -181,7 +241,7 @@ toolRegistry.register({
     required: ["path"],
   },
   execute: executeReadFile,
-});
+}, "fs_read_file"));
 
 // ── 工具 2：list_dir ──────────────────────────────────────
 
@@ -254,7 +314,7 @@ async function executeListDir(args: Record<string, unknown>): Promise<string> {
   return lines.join("\n");
 }
 
-toolRegistry.register({
+toolRegistry.register(wrapFsForNativeHost({
   id: "list_dir",
   name: "列出目录",
   description:
@@ -283,7 +343,7 @@ toolRegistry.register({
     required: ["path"],
   },
   execute: executeListDir,
-});
+}, "fs_list_dir"));
 
 // ── 工具 3：write_file ────────────────────────────────────
 
@@ -305,7 +365,21 @@ function resolveWritePath(rawPath: string, workspaceRoot?: string): string | nul
   return fullPath;
 }
 
-async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+/** 写前预检计划（TS / native 两轨共用）。 */
+interface WritePlan {
+  filePath: string;
+  content: string;
+  append: boolean;
+  createDirs: boolean;
+  existedBefore: boolean;
+  existingContent: string | null;
+}
+
+/**
+ * 写前预检：路径解析 → 写前现读 → 覆盖防骤降。
+ * 语义拒绝在这里抛 ToolExecutionError——native 轨必须把它当终态，不得回退重写。
+ */
+function preflightWriteFile(args: Record<string, unknown>, ctx?: ToolContext): WritePlan {
   const raw = String(args.path || "").trim();
   const filePath = resolveWritePath(raw, ctx?.resolvedWorkspaceRoot);
   if (!filePath) {
@@ -350,6 +424,11 @@ async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext
       }
     }
   }
+  return { filePath, content, append, createDirs, existedBefore, existingContent };
+}
+
+async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+  const { filePath, content, append, createDirs, existedBefore, existingContent } = preflightWriteFile(args, ctx);
 
   console.log(LOG_PREFIX, "write_file:", filePath, "bytes=" + Buffer.byteLength(content, "utf8"), append ? "(append)" : "(overwrite)");
 
@@ -439,6 +518,39 @@ async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext
   });
 }
 
+/**
+ * 写类 native 轨：预检（含防骤降）+ review 基线在 TS 执行，落盘与 changes
+ * 证据交 ToolHost（fs_write_file）。宿主不可用/失败 → 整体回退 TS 原实现；
+ * 预检拒绝直接抛出——语义拒绝不因轨道切换而改变。
+ */
+async function executeWriteFileNativeFirst(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+  if (!resolveDotnetConfig().toolHost) return executeWriteFile(args, ctx);
+
+  const plan = preflightWriteFile(args, ctx);
+  if (ctx?.runId) {
+    const tracker = getRunReviewTracker(app.getPath("userData"));
+    tracker.captureBefore(ctx.runId, plan.filePath);
+  }
+
+  try {
+    const result = await nativeToolHost.call("fs_write_file", {
+      path: plan.filePath,
+      content: plan.content,
+      append: plan.append,
+      createDirs: plan.createDirs,
+    }, undefined, ctx?.signal);
+    if (result !== null) {
+      const text = typeof result === "string" ? result : JSON.stringify(result);
+      if (!isNativeFailurePayload(text)) return text;
+      console.warn(LOG_PREFIX, "write_file native 返回错误载荷，回退 TS:", text.slice(0, 200));
+    }
+  } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复落盘
+    console.warn(LOG_PREFIX, "write_file native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+  }
+  return executeWriteFile(args, ctx);
+}
+
 function resolveWriteFilePolicy(args: Record<string, unknown>): VerificationPolicy {
   const rawPath = String(args.path ?? "");
   const normalizedPath = rawPath.replace(/\\/g, "/").toLowerCase();
@@ -507,7 +619,7 @@ toolRegistry.register({
     },
     required: ["path", "content"],
   },
-  execute: executeWriteFile,
+  execute: executeWriteFileNativeFirst,
 });
 
 // ── 工具 4：read_image ────────────────────────────────────

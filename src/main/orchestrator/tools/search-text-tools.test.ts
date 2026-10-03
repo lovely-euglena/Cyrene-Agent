@@ -155,18 +155,17 @@ describe("search_text tool", () => {
     expect(result).toHaveProperty("matches");
   });
 
-  it("handles AbortSignal", async () => {
+  it("handles AbortSignal：已取消信号直接以 AbortError 中止（不执行搜索、不回退）", async () => {
     registerSearchTextTool();
     const tool = vi.mocked(toolRegistry.register).mock.calls[0][0];
 
     const controller = new AbortController();
     controller.abort(); // 立即取消
 
-    const result = JSON.parse(await tool.execute(
+    await expect(tool.execute(
       { query: "test" },
       { userQuery: "test", signal: controller.signal } as any,
-    ));
-    expect(result).toHaveProperty("matches");
+    )).rejects.toMatchObject({ name: "AbortError" });
   });
 });
 

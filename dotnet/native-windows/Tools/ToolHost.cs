@@ -54,6 +54,19 @@ internal sealed class ToolHostException : Exception
     public ToolHostException(string code, string message) : base(message) => Code = code;
 }
 
+/// <summary>
+/// ToolHost 运行时配置（config 帧注入，TS NativeToolHost.setRuntimeSettings）。
+///   timezone：now/时间格式化用（默认 Asia/Shanghai）
+///   dateLocale：日期展示用 locale（默认 zh-CN）
+///   dataDir：本地数据根（expenses.json 等；null = 宿主侧落盘工具不可用）
+/// </summary>
+internal static class ToolHostConfig
+{
+    internal static string Timezone { get; set; } = "Asia/Shanghai";
+    internal static string DateLocale { get; set; } = "zh-CN";
+    internal static string? DataDir { get; set; }
+}
+
 internal static class ToolHost
 {
     /// <summary>args 缺失时的空对象（避免 Undefined JsonElement 在工具内探属性崩溃）。</summary>
@@ -116,9 +129,34 @@ internal static class ToolHost
                         new { id = "now", name = "当前时间", description = "时区感知的当前时间（epoch/iso/default）" },
                         new { id = "clipboard", name = "剪贴板", description = "读写系统剪贴板文本" },
                         new { id = "sysinfo", name = "系统信息", description = "系统信息快照（CPU/内存/OS/进程运行时长）" },
+                        // fs 三件自 2026-10-03 起由宿主包装器接线（nativeFirst），
+                        // list 广告与真实可调用面保持一致
+                        new { id = "fs_read_file", name = "读取文件(.NET)", description = "带行号/真实总行数/翻页的文本读取（10MB 上限）" },
+                        new { id = "fs_write_file", name = "写入文件(.NET)", description = "覆盖/追加写 + ToolFileChange 证据输出（append/createDirs）" },
+                        new { id = "fs_list_dir", name = "列出目录(.NET)", description = "目录列举（隐藏项开关/图片标注/200 项截断）" },
+                        new { id = "exchange_rate", name = "汇率查询(.NET)", description = "frankfurter.app 免 key 汇率 + 30 分钟 TTL 缓存" },
+                        new { id = "record_expense", name = "记账(.NET)", description = "本地 JSON 记账（dataDir 注入）" },
+                        new { id = "query_expense", name = "查账(.NET)", description = "记账查询/汇总（时区与 locale 随 config 帧）" },
+                        new { id = "search_text", name = "文本搜索(.NET)", description = "工作区文本/正则搜索（忽略目录、上下文、上限对齐 TS）" },
+                        new { id = "str_replace", name = "精确替换(.NET)", description = "三层匹配（精确/EOL/空白归一化）+ evidence；__dryRun 预检两段式" },
+                        new { id = "apply_patch", name = "编辑文件(.NET)", description = "Codex 补丁格式批量编辑（预检事务 + 保留 EOL + evidence；__dryRun 两段式）" },
+                        new { id = "download_file", name = "下载文件(.NET)", description = "URL 二进制落盘（沙箱/黑名单/64MiB/空闲超时；root 注入）" },
                     },
                 });
                 break;
+            case "config":
+            {
+                // 运行时配置（时区/日期 locale/数据根）：可多次下发，立即生效
+                if (root.TryGetProperty("timezone", out var tz) && tz.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(tz.GetString()))
+                    ToolHostConfig.Timezone = tz.GetString()!;
+                if (root.TryGetProperty("dateLocale", out var dl) && dl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(dl.GetString()))
+                    ToolHostConfig.DateLocale = dl.GetString()!;
+                if (root.TryGetProperty("dataDir", out var dd) && dd.ValueKind == JsonValueKind.String)
+                    ToolHostConfig.DataDir = dd.GetString();
+                break;
+            }
             case "call":
             {
                 var callId = root.TryGetProperty("callId", out var c) ? c.GetString() : "";
@@ -140,6 +178,13 @@ internal static class ToolHost
                         "fs_read_file" => FsTools.ReadFile(args ?? EmptyArgs),
                         "fs_write_file" => FsTools.WriteFile(args ?? EmptyArgs),
                         "fs_list_dir" => FsTools.ListDir(args ?? EmptyArgs),
+                        "exchange_rate" => ExchangeRateTool.Execute(args ?? EmptyArgs),
+                        "record_expense" => ExpenseTools.Record(args ?? EmptyArgs),
+                        "query_expense" => ExpenseTools.Query(args ?? EmptyArgs),
+                        "search_text" => SearchTools.Search(args ?? EmptyArgs),
+                        "str_replace" => StrReplaceTool.Execute(args ?? EmptyArgs),
+                        "apply_patch" => ApplyPatchTool.Execute(args ?? EmptyArgs),
+                        "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });
