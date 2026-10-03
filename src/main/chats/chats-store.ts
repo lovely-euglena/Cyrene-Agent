@@ -31,6 +31,7 @@ import {
   type PendingWithdrawalState,
 } from "../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
+import { normalizeBrowserElementSelection } from "../../shared/browser-panel-types";
 
 const ROOT_DIR_NAME = "cyrene-chats";
 const SESSIONS_SUBDIR = "sessions";
@@ -737,8 +738,12 @@ export type PendingChatMessageInput = Omit<PendingChatMessage, "enqueuedAt">;
 function normalizePendingAttachment(value: unknown): PendingChatAttachment | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<PendingChatAttachment>;
-  const kind = raw.kind === "image" || raw.kind === "document" ? raw.kind : null;
+  const kind = raw.kind === "image" || raw.kind === "document" || raw.kind === "web-element" ? raw.kind : null;
   if (!kind || typeof raw.name !== "string" || !raw.name.trim()) return null;
+  if (kind === "web-element") {
+    const element = normalizeBrowserElementSelection(raw.element);
+    return element ? { kind, name: raw.name.trim(), element } : null;
+  }
   if (typeof raw.filePath !== "string" || !raw.filePath.trim()) return null;
   return {
     kind,
@@ -890,10 +895,14 @@ function pendingUserMessageFromSnapshot(snapshot: PendingDispatchUserSnapshot): 
     at: snapshot.at,
     ...(snapshot.sticker ? { sticker: snapshot.sticker } : {}),
     ...(snapshot.attachments && snapshot.attachments.length > 0 ? {
-      attachments: snapshot.attachments.map((attachment) => attachment.kind === "image" ? {
+      attachments: snapshot.attachments.map((attachment) => attachment.kind === "web-element" ? {
+        kind: "web-element" as const,
+        name: attachment.name,
+        element: attachment.element!,
+      } : attachment.kind === "image" ? {
         kind: "image" as const,
         name: attachment.name,
-        filePath: attachment.filePath,
+        filePath: attachment.filePath!,
         mime: attachment.mime ?? "application/octet-stream",
         caption: attachment.caption,
         status: "pending" as const,
@@ -901,7 +910,7 @@ function pendingUserMessageFromSnapshot(snapshot: PendingDispatchUserSnapshot): 
       } : {
         kind: "document" as const,
         name: attachment.name,
-        filePath: attachment.filePath,
+        filePath: attachment.filePath!,
         status: "pending" as const,
       }),
     } : {}),

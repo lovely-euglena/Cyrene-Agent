@@ -144,6 +144,7 @@ interface SettingsWindowApi {
     vision?: { baseUrl: string; apiKey: string; model: string };
     thinkingOverride?: -1 | 0 | 1;
     disableMaxToken?: boolean;
+    modelRequestMaxRetries?: number;
   }>;
   saveConfig: (config: Record<string, unknown>) => Promise<unknown>;
   testConnection: (config: {
@@ -169,6 +170,27 @@ interface SettingsWindowApi {
   saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
 }
 
+interface BrowserPanelApi {
+  getState: () => Promise<import("../shared/browser-panel-types").BrowserPanelState | null>;
+  setBounds: (bounds: import("../shared/browser-panel-types").BrowserPanelBounds | null) => Promise<boolean>;
+  navigate: (url: string) => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  goBack: () => Promise<boolean>;
+  goForward: () => Promise<boolean>;
+  reload: () => Promise<boolean>;
+  stop: () => Promise<boolean>;
+  clearCookies: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  newTab: () => Promise<boolean>;
+  openInNewTab: (url: string) => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  openExam: (examId: string, conversationId: string) => Promise<boolean>;
+  activateTab: (tabId: string) => Promise<boolean>;
+  closeTab: (tabId: string) => Promise<boolean>;
+  startElementPicker: () => Promise<boolean>;
+  cancelElementPicker: () => Promise<boolean>;
+  onStateChanged: (callback: (state: import("../shared/browser-panel-types").BrowserPanelState) => void) => () => void;
+  onElementSelected: (callback: (element: import("../shared/browser-panel-types").BrowserElementSelection) => void) => () => void;
+  onOpenForControl: (callback: () => void) => () => void;
+}
+
 declare global {
   interface Window {
     cyrene?: {
@@ -192,6 +214,8 @@ declare global {
     toast?: ToastRendererApi;
     chat?: ChatWindowApi;
     settings?: SettingsWindowApi;
+    browserPanel?: BrowserPanelApi;
+    learnExamPage: import("../../shared/learn-exam").LearnExamPageApi;
     memoryPanel?: import("./settings/shared/types").MemoryPanelApi;
     tts?: {
       loadSettings: () => Promise<Record<string, unknown>>;

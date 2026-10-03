@@ -1,163 +1,115 @@
-// 桌宠窗口生命周期：隐藏 = 销毁窗口（连带渲染进程），显示 = 按需重建。
-// 历史行为是 hide()（窗口与 Live2D 渲染进程常驻，内存大头）；本测试把
-// 「隐藏杀进程、显示重建并恢复置顶/缩放」锁死。
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { IPC } from "../../shared/ipc-channels";
 
-const { createPetWindowMock } = vi.hoisted(() => ({
-  createPetWindowMock: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  app: { once: vi.fn() },
+  createdWindows: [] as Array<ReturnType<typeof createFakeWindow>>,
+  createPetWindow: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
-  BrowserWindow: class {},
+  app: mocks.app,
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
   screen: { getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })) },
-  nativeImage: {},
 }));
-
 vi.mock("../startup/create-pet-window", () => ({
-  createPetWindow: (...args: unknown[]) => createPetWindowMock(...args),
-  PET_WINDOW_BASE_WIDTH: 400,
+  createPetWindow: mocks.createPetWindow,
   PET_WINDOW_BASE_HEIGHT: 500,
+  PET_WINDOW_BASE_WIDTH: 400,
 }));
-
 vi.mock("./create-aux-windows", () => ({
-  createCallWindow: vi.fn(),
-  createReactChatWindowShell: vi.fn(),
-  createLazyReactChatWindowHandle: vi.fn(),
-  createSettingsWindow: vi.fn(),
-  createSidebarWindow: vi.fn(),
-  createStickerManagerWindow: vi.fn(),
-  createTasksWindow: vi.fn(),
-  loadReactChatWindowPage: vi.fn(),
+  createCallWindow: vi.fn(), createReactChatWindowShell: vi.fn(), createStickerManagerWindow: vi.fn(),
+  createLazyReactChatWindowHandle: vi.fn(), createSettingsWindow: vi.fn(), createSidebarWindow: vi.fn(), createTasksWindow: vi.fn(),
+  loadReactChatWindowPage: vi.fn(), loadOnboardingWindowPage: vi.fn(), createOnboardingBrowserWindow: vi.fn(),
   showReactChatWindow: vi.fn(),
 }));
-
-vi.mock("./startup-window-load", () => ({
-  CHAT_READY_TIMEOUT_MS: 1000,
-  loadWindowForStartup: vi.fn(async () => undefined),
-}));
-
+vi.mock("./startup-window-load", () => ({ CHAT_READY_TIMEOUT_MS: 1, loadWindowForStartup: vi.fn() }));
+vi.mock("./create-music-player-window", () => ({ createMusicPlayerWindow: vi.fn() }));
 vi.mock("./broadcast", () => ({ broadcastToAllWindows: vi.fn() }));
+vi.mock("../pet-window-movement", () => ({ PetWindowMoveController: class { dispose() {} finishDragging() {} moveRelative() {} queueAbsolute() {} } }));
+vi.mock("../../shared/disclaimer", () => ({ CURRENT_DISCLAIMER_VERSION: "current" }));
+
+function createFakeWindow() {
+  const listeners = new Map<string, Array<(...args: any[]) => void>>();
+  let visible = false;
+  let destroyed = false;
+  return {
+    on: vi.fn((event: string, listener: (...args: any[]) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    }),
+    once: vi.fn((event: string, listener: (...args: any[]) => void) => {
+      const wrapped = (...args: any[]) => {
+        listeners.set(event, (listeners.get(event) ?? []).filter((candidate) => candidate !== wrapped));
+        listener(...args);
+      };
+      listeners.set(event, [...(listeners.get(event) ?? []), wrapped]);
+    }),
+    emit(event: string) { for (const listener of [...(listeners.get(event) ?? [])]) listener(); },
+    hide: vi.fn(() => { visible = false; for (const listener of [...(listeners.get("hide") ?? [])]) listener(); }),
+    show: vi.fn(() => { visible = true; for (const listener of [...(listeners.get("show") ?? [])]) listener(); }),
+    destroy: vi.fn(() => { destroyed = true; for (const listener of [...(listeners.get("closed") ?? [])]) listener(); }),
+    isDestroyed: vi.fn(() => destroyed),
+    isVisible: vi.fn(() => visible),
+    setAlwaysOnTop: vi.fn(),
+    getPosition: vi.fn(() => [0, 0]),
+    webContents: { send: vi.fn() },
+  };
+}
 
 import { createWindowManager } from "./window-manager";
 import { createLazyReactChatWindowHandle } from "./create-aux-windows";
 import { reactChatSettingsSection } from "./window-state";
+import { IPC } from "../../shared/ipc-channels";
 
-interface FakeWindow {
-  destroyed: boolean;
-  visible: boolean;
-  webContents: { send: ReturnType<typeof vi.fn> };
-  once: ReturnType<typeof vi.fn>;
-  on: ReturnType<typeof vi.fn>;
-  isDestroyed: () => boolean;
-  isVisible: () => boolean;
-  show: ReturnType<typeof vi.fn>;
-  hide: ReturnType<typeof vi.fn>;
-  destroy: ReturnType<typeof vi.fn>;
-  getPosition: () => [number, number];
-  setAlwaysOnTop: ReturnType<typeof vi.fn>;
-  setSize: ReturnType<typeof vi.fn>;
-  setIgnoreMouseEvents: ReturnType<typeof vi.fn>;
-  setOpacity: ReturnType<typeof vi.fn>;
-  minimize: ReturnType<typeof vi.fn>;
-  capturePage: ReturnType<typeof vi.fn>;
-  fire: (event: string) => void;
-}
-
-function makeFakeWindow(): FakeWindow {
-  const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
-  const win: FakeWindow = {
-    destroyed: false,
-    visible: true,
-    webContents: { send: vi.fn() },
-    once: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-      const list = listeners.get(event) ?? [];
-      list.push(cb);
-      listeners.set(event, list);
-    }),
-    on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-      const list = listeners.get(event) ?? [];
-      list.push(cb);
-      listeners.set(event, list);
-    }),
-    isDestroyed: () => win.destroyed,
-    isVisible: () => win.visible,
-    show: vi.fn(() => { win.visible = true; }),
-    hide: vi.fn(() => { win.visible = false; }),
-    destroy: vi.fn(() => {
-      win.destroyed = true;
-      win.visible = false;
-      for (const cb of listeners.get("closed") ?? []) cb();
-    }),
-    getPosition: () => [10, 20],
-    setAlwaysOnTop: vi.fn(),
-    setSize: vi.fn(),
-    setIgnoreMouseEvents: vi.fn(),
-    setOpacity: vi.fn(),
-    minimize: vi.fn(),
-    capturePage: vi.fn(async () => null),
-    fire: (event: string) => {
-      for (const cb of listeners.get(event) ?? []) cb();
-    },
-  };
-  return win;
-}
-
-function makeManager() {
-  return createWindowManager({
-    getCurrentAppIconPath: () => "icon.png",
-    isDev: false,
-    loadPetWindowSettingsSlice: () => ({ petZoom: 1.2, petAlwaysOnTop: false, petWindowX: 10, petWindowY: 20 }),
-    persistPetWindowPosition: vi.fn(),
-  });
-}
-
-describe("window-manager · 桌宠隐藏回收", () => {
+describe("pet window resource release", () => {
   beforeEach(() => {
-    createPetWindowMock.mockReset();
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mocks.createdWindows = [];
+    mocks.createPetWindow.mockImplementation(() => {
+      const window = createFakeWindow();
+      mocks.createdWindows.push(window);
+      return window;
+    });
   });
 
-  it("hidePetWindow 销毁窗口（不是 hide）；showPetWindow 懒重建并恢复置顶/缩放", () => {
-    const first = makeFakeWindow();
-    const second = makeFakeWindow();
-    createPetWindowMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
-    const manager = makeManager();
-
-    manager.createPetWindow(true);
-    expect(createPetWindowMock).toHaveBeenCalledTimes(1);
-    // 创建时按设置恢复置顶（关闭档 = normal）
-    expect(first.setAlwaysOnTop).toHaveBeenCalledWith(false, "normal");
+  it("destroys a hidden pet window after 30 seconds and recreates it when shown", () => {
+    const manager = createWindowManager({
+      getCurrentAppIconPath: () => "icon",
+      isDev: false,
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: "current", petAlwaysOnTop: true }),
+      persistPetWindowPosition: vi.fn(),
+    });
+    const firstWindow = manager.createPetWindow();
 
     manager.hidePetWindow();
-    expect(first.destroy).toHaveBeenCalledTimes(1);
-    expect(first.hide).not.toHaveBeenCalled();
-    // 已销毁后再次 hide 是 no-op
-    manager.hidePetWindow();
-    expect(first.destroy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(29_999);
+    expect(firstWindow.destroy).not.toHaveBeenCalled();
 
-    // 显示：懒重建（不闪空窗 → showOnReady=true），恢复置顶并在 ready 后发缩放
+    vi.advanceTimersByTime(1);
+    expect(firstWindow.destroy).toHaveBeenCalledOnce();
+
     manager.showPetWindow();
-    expect(createPetWindowMock).toHaveBeenCalledTimes(2);
-    expect(createPetWindowMock.mock.calls[1][1]).toEqual({ showOnReady: true });
-    expect(second.setAlwaysOnTop).toHaveBeenCalledWith(false, "normal");
-    second.fire("ready-to-show");
-    expect(second.webContents.send).toHaveBeenCalledWith(IPC.PET_ZOOM, 1.2);
+    expect(mocks.createdWindows).toHaveLength(2);
+    expect(mocks.createdWindows[1].setAlwaysOnTop).toHaveBeenCalledWith(true, "screen-saver");
   });
 
-  it("togglePetWindow：可见时销毁，隐藏后再次切换重建", () => {
-    const first = makeFakeWindow();
-    const second = makeFakeWindow();
-    createPetWindowMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
-    const manager = makeManager();
+  it("cancels delayed destruction when shown again before the timeout", () => {
+    const manager = createWindowManager({
+      getCurrentAppIconPath: () => "icon",
+      isDev: false,
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: "current" }),
+      persistPetWindowPosition: vi.fn(),
+    });
+    const window = manager.createPetWindow();
 
-    manager.createPetWindow(true);
-    manager.togglePetWindow();
-    expect(first.destroy).toHaveBeenCalledTimes(1);
-
-    manager.togglePetWindow();
-    expect(createPetWindowMock).toHaveBeenCalledTimes(2);
     manager.hidePetWindow();
-    expect(second.destroy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(20_000);
+    manager.showPetWindow();
+    vi.advanceTimersByTime(30_000);
+
+    expect(window.destroy).not.toHaveBeenCalled();
+    expect(mocks.createdWindows).toHaveLength(1);
+    expect(window.show).toHaveBeenCalledOnce();
   });
 });
 
@@ -171,7 +123,7 @@ describe("window-manager · 设置入口冷启动定位", () => {
   });
 
   it("未 ready 时挂起 section，ready 后冲发；ready 时直发", async () => {
-    const fake = makeFakeWindow();
+    const fake = createFakeWindow();
     vi.mocked(createLazyReactChatWindowHandle).mockReturnValue({
       window: fake,
       load: vi.fn(async () => undefined),
@@ -180,7 +132,12 @@ describe("window-manager · 设置入口冷启动定位", () => {
       isLazy: true,
       onMaterialized: vi.fn(),
     } as never);
-    const manager = makeManager();
+    const manager = createWindowManager({
+      getCurrentAppIconPath: () => "icon",
+      isDev: false,
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: "current" }),
+      persistPetWindowPosition: vi.fn(),
+    });
 
     // 模拟 React 未 ready（新窗/加载中）
     reactChatSettingsSection.markLoading();

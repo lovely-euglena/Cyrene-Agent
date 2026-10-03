@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  ChatPresentationCheckpointPatch,
   ChatSession,
   ChatSessionMeta,
   ConversationMode,
@@ -39,6 +40,19 @@ import type {
   PopQuizSettledPayload,
   PopQuizSubmission,
 } from "../../../../../shared/pop-quiz";
+import type { LearnExamAnswerValue, LearnExamChangedEvent, LearnExamCreatedEvent, LearnExamView } from "../../../../../shared/learn-exam";
+
+export interface LearnExamApi {
+  listByConversation: (conversationId: string) => Promise<LearnExamView[]>;
+  getView: (conversationId: string, examId: string) => Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>;
+  saveAnswer: (conversationId: string, examId: string, questionId: string, answer: LearnExamAnswerValue | null) => Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>;
+  saveNavigation: (conversationId: string, examId: string, activeQuestionId: string, flaggedQuestionIds: string[]) => Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>;
+  submit: (conversationId: string, examId: string) => Promise<{ ok: boolean; shouldStartGrading?: boolean; exam?: LearnExamView; error?: string }>;
+  retry: (conversationId: string, examId: string) => Promise<{ ok: boolean; shouldStartGrading?: boolean; exam?: LearnExamView; error?: string }>;
+  markGradingFailed: (conversationId: string, examId: string) => Promise<{ ok: boolean; exam?: LearnExamView; error?: string }>;
+  onCreated: (callback: (event: LearnExamCreatedEvent) => void) => () => void;
+  onChanged: (callback: (event: LearnExamChangedEvent) => void) => () => void;
+}
 
 export interface ChatStoreApi {
   list: (options?: { mode?: ConversationMode }) => Promise<ChatSessionMeta[]>;
@@ -52,7 +66,7 @@ export interface ChatStoreApi {
     sessionId: string,
     messageId: string,
     mutationKey: string,
-    patch: Partial<ChatMessage>,
+    patch: ChatPresentationCheckpointPatch,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   rename: (id: string, title: string) => Promise<ChatSession | null>;
   delete: (id: string) => Promise<boolean>;
@@ -163,7 +177,6 @@ export interface AguiApi {
     styleId?: string;
     sessionId: string;
     imageAttachments?: Array<{ name: string; filePath: string; mime?: string }>;
-    recoveryContext?: string;
     takeoverFromRunId?: string;
     /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传元数据）。 */
     transcriptRewind?: {
@@ -232,4 +245,8 @@ export function choiceApi(): ChoiceApi | undefined {
 
 export function settingsApprovalApi(): SettingsApprovalApi | undefined {
   return (window as typeof window & { settings?: SettingsApprovalApi }).settings;
+}
+
+export function learnExamApi(): LearnExamApi | undefined {
+  return (window as typeof window & { learnExam?: LearnExamApi }).learnExam;
 }

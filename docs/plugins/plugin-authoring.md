@@ -35,7 +35,7 @@ userData/plugins/<plugin-id>/
 打包版 Windows 默认对应：
 
 ```text
-%APPDATA%\live2d-cyrene\plugins\<plugin-id>\
+%APPDATA%\Cyrene\plugins\<plugin-id>\
 ```
 
 运行时始终以 Electron `app.getPath("userData")` 的实际返回值为准；如果开发者或测试显式

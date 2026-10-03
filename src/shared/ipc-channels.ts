@@ -64,6 +64,25 @@ export const IPC = {
   // 推理下拉（chat 窗口：原子读 + providerKey 写）
   CHAT_GET_REASONING_STATE: "chat:get-reasoning-state",
   CHAT_SET_REASONING: "chat:set-reasoning",
+  // 右侧内嵌浏览器：页面由主进程隔离的持久化 Session 加载。
+  BROWSER_PANEL_GET_STATE: "browser-panel:get-state",
+  BROWSER_PANEL_SET_BOUNDS: "browser-panel:set-bounds",
+  BROWSER_PANEL_NAVIGATE: "browser-panel:navigate",
+  BROWSER_PANEL_BACK: "browser-panel:back",
+  BROWSER_PANEL_FORWARD: "browser-panel:forward",
+  BROWSER_PANEL_RELOAD: "browser-panel:reload",
+  BROWSER_PANEL_STOP: "browser-panel:stop",
+  BROWSER_PANEL_CLEAR_COOKIES: "browser-panel:clear-cookies",
+  BROWSER_PANEL_NEW_TAB: "browser-panel:new-tab",
+  BROWSER_PANEL_OPEN_IN_NEW_TAB: "browser-panel:open-in-new-tab",
+  BROWSER_PANEL_OPEN_EXAM: "browser-panel:open-exam",
+  BROWSER_PANEL_ACTIVATE_TAB: "browser-panel:activate-tab",
+  BROWSER_PANEL_CLOSE_TAB: "browser-panel:close-tab",
+  BROWSER_PANEL_STATE_CHANGED: "browser-panel:state-changed",
+  BROWSER_PANEL_START_ELEMENT_PICKER: "browser-panel:start-element-picker",
+  BROWSER_PANEL_CANCEL_ELEMENT_PICKER: "browser-panel:cancel-element-picker",
+  BROWSER_PANEL_ELEMENT_SELECTED: "browser-panel:element-selected",
+  BROWSER_PANEL_OPEN_FOR_CONTROL: "browser-panel:open-for-control",
 
   // AG-UI 事件流
   AGUI_RUN: "agui:run",
@@ -447,6 +466,23 @@ export const IPC = {
   POP_QUIZ_SKIP: "pop-quiz:skip",
   // main → renderer：结算广播（提交/跳过/run 取消），渲染端据此清卡
   POP_QUIZ_SETTLED: "pop-quiz:settled",
+
+  // Learn 正式试卷：短工具创建，用户本地作答，交卷后新一轮批改
+  LEARN_EXAM_CREATED: "learn-exam:created",
+  LEARN_EXAM_CHANGED: "learn-exam:changed",
+  LEARN_EXAM_LIST: "learn-exam:list",
+  LEARN_EXAM_GET: "learn-exam:get",
+  LEARN_EXAM_SAVE_ANSWER: "learn-exam:save-answer",
+  LEARN_EXAM_SAVE_NAVIGATION: "learn-exam:save-navigation",
+  LEARN_EXAM_SUBMIT: "learn-exam:submit",
+  LEARN_EXAM_RETRY: "learn-exam:retry",
+  LEARN_EXAM_MARK_GRADING_FAILED: "learn-exam:mark-grading-failed",
+  LEARN_EXAM_PAGE_GET: "learn-exam-page:get",
+  LEARN_EXAM_PAGE_SAVE_ANSWER: "learn-exam-page:save-answer",
+  LEARN_EXAM_PAGE_SAVE_NAVIGATION: "learn-exam-page:save-navigation",
+  LEARN_EXAM_PAGE_SUBMIT: "learn-exam-page:submit",
+  LEARN_EXAM_PAGE_RETRY: "learn-exam-page:retry",
+  LEARN_EXAM_PAGE_CHANGED: "learn-exam-page:changed",
 
   // call window (voice call)
   CALL_OPEN: "call:open",                 // 角色信息浮层 → main：打开通话窗口

@@ -6,6 +6,7 @@ import { resolveAsset } from "../../../../../shared/renderer-base";
 import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import type { ModelRetryStatus } from "../../../../../shared/model-retry";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
 import workingMoodUrl from "../../../assets/status-moods/工作中.png?url";
@@ -39,8 +40,10 @@ import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
-import { Archive } from "lucide-react";
+import { Archive, ScanLine } from "lucide-react";
+import type { BrowserElementSelection } from "../../../../../shared/browser-panel-types";
 import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
+import { VirtualChatMessageList } from "./VirtualChatMessageList";
 
 export interface ChatMessageItem {
   id: string;
@@ -59,6 +62,8 @@ export interface ChatMessageItem {
   loading?: boolean;
   /** 请求已发出但尚未收到 Think、工具或正文等首个可视事件。 */
   waitingForFirstEvent?: boolean;
+  /** 当前请求重试状态，只作为界面临时状态，不持久化。 */
+  modelRetry?: ModelRetryStatus | null;
   ttsCacheKey?: string;
   ttsCacheVersion?: string;
   sticker?: string | null;
@@ -92,6 +97,7 @@ export interface ChatMessageAttachment {
   status?: string;
   reason?: string;
   imageSendMode?: "direct" | "caption";
+  element?: BrowserElementSelection;
 }
 
 interface ChatMessageListProps {
@@ -121,6 +127,8 @@ interface ChatMessageListProps {
   workspaceRoot?: string;
   /** 点击界内文件链接 → 打开右侧预览标签并定位行号 */
   onOpenFileLink?: (relPath: string, line?: number) => void;
+  /** 点击助手消息网页链接 → 在 Cyrene 右侧浏览器打开，或从右键菜单选择外部浏览器。 */
+  onOpenWebLink?: (url: string, destination: "cyrene" | "external") => void | Promise<void>;
 }
 
 type CharacterMoodRenderContext = {
@@ -361,9 +369,22 @@ function DotSpinner() {
   );
 }
 
-function ModelWaitContent() {
+function retryStatusLabel(status: ModelRetryStatus | null | undefined, t: (key: string, values?: Record<string, unknown>) => string) {
+  if (!status || status.phase === "cleared") return null;
+  if (status.phase === "waiting") {
+    return t("messageList.retryWaiting", {
+      retryNumber: status.retryNumber,
+      maxRetries: status.maxRetries,
+      seconds: Math.ceil((status.delayMs ?? 0) / 1000),
+    });
+  }
+  return t("messageList.retryAttempting", { retryNumber: status.retryNumber, maxRetries: status.maxRetries });
+}
+
+function ModelWaitContent({ modelRetry }: { modelRetry?: ModelRetryStatus | null }) {
   const { t } = useTranslation();
   const connectingArt = useCharacterMoodUrl("连接中");
+  const retryLabel = retryStatusLabel(modelRetry, t);
   return (
     <section className="cy-model-wait" aria-label={t("messageList.modelWaitAria")}>
       <span className="cy-model-wait__art" aria-hidden="true">
@@ -371,8 +392,28 @@ function ModelWaitContent() {
         <DotSpinner />
       </span>
       <span>{t("messageList.modelWaitText")}</span>
+      {retryLabel && <span className="cy-model-wait__retry" role="status">{retryLabel}</span>}
     </section>
   );
+}
+
+function latestReasoningLine(content: string): string {
+  const trimmed = content.trimEnd();
+  const start = Math.max(trimmed.lastIndexOf("\n"), trimmed.lastIndexOf("\r")) + 1;
+  return trimmed.slice(start).trim();
+}
+
+const REASONING_PREVIEW_MAX_CHARS = 80;
+
+function truncateReasoningPreview(line: string): string {
+  let end = 0;
+  let count = 0;
+  for (const character of line) {
+    if (count === REASONING_PREVIEW_MAX_CHARS) return `${line.slice(0, end)}…`;
+    end += character.length;
+    count += 1;
+  }
+  return line;
 }
 
 function ReasoningContent({
@@ -388,22 +429,32 @@ function ReasoningContent({
 }) {
   const { t } = useTranslation();
   const thinkingArt = useCharacterMoodUrl(loading ? "思考中" : "提醒");
+  const title = loading ? t("messageList.thinkingTitle") : t("messageList.thinkingDoneTitle");
+  const previewLine = loading && !expanded
+    ? truncateReasoningPreview(latestReasoningLine(content))
+    : "";
   return (
     <Think
-      rootClassName="cy-message-reasoning"
-      title={loading ? t("messageList.thinkingTitle") : t("messageList.thinkingDoneTitle")}
+      rootClassName={`cy-message-reasoning${previewLine ? " cy-message-reasoning--with-preview" : ""}`}
+      title={previewLine ? (
+        <span className="cy-message-reasoning__title">
+          <span className="cy-message-reasoning__title-label">{title}</span>
+          <span className="cy-message-reasoning__preview-separator" aria-hidden="true">·</span>
+          <span className="cy-message-reasoning__preview">{previewLine}</span>
+        </span>
+      ) : title}
       icon={
         <span className={`cy-reasoning-status-art${loading ? " is-thinking" : " is-complete"}`} aria-hidden="true">
           <img src={thinkingArt} alt="" draggable={false} />
           {loading && <DotSpinner />}
         </span>
       }
-      blink={loading}
+      blink={loading && !previewLine}
       expanded={expanded}
       onExpand={onExpand}
       destroyOnHidden
     >
-      {content && <MarkdownContent content={content} streaming={loading} />}
+      {content && <div className="cy-message-reasoning__plain-text">{content}</div>}
     </Think>
   );
 }
@@ -649,6 +700,7 @@ function RunActivityContent({
   tools,
   stage,
   taskPlan,
+  modelRetry,
   expanded,
   onExpand,
   onOpenTaskInspector,
@@ -662,6 +714,7 @@ function RunActivityContent({
   tools: ToolExecutionRecord[];
   stage?: AgentRunStage;
   taskPlan?: TaskPlanPresentation;
+  modelRetry?: ModelRetryStatus | null;
   expanded: boolean;
   onExpand: (expanded: boolean) => void;
   onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
@@ -681,6 +734,7 @@ function RunActivityContent({
     ? t("messageList.activityProcessingTitle", { elapsed: formatElapsed(snapshot.processingMs) })
     : t("messageList.activityProcessedTitle", { elapsed: formatElapsed(snapshot.processingMs) });
   const image = snapshot.processing ? workingArt : processedArt;
+  const retryLabel = retryStatusLabel(modelRetry, t);
 
   return (
     <section className={`cy-run-activity${snapshot.processing ? " is-processing" : " is-complete"}`}>
@@ -699,6 +753,7 @@ function RunActivityContent({
             <span>{title}</span>
             {stage && <RunStageIndicator stage={stage} />}
         </span>
+        {retryLabel && <span className="cy-run-activity__retry" role="status">{retryLabel}</span>}
         <svg className={`cy-run-activity__chevron${expanded ? " is-expanded" : ""}`} viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
         </svg>
@@ -807,6 +862,17 @@ function UserAttachments({ attachments }: { attachments: ChatMessageAttachment[]
     <div className="cy-message__attachments">
       {attachments.map((attachment, index) => {
         const status = attachmentStatus(attachment);
+        if (attachment.kind === "web-element" && attachment.element) {
+          return (
+            <div className="cy-message__web-element" key={`web-element-${attachment.element.tabId}-${attachment.element.ref ?? index}-${index}`} title={attachment.element.snapshotLine}>
+              <ScanLine size={16} />
+              <span className="cy-message__web-element-copy">
+                <strong>{attachment.element.name}</strong>
+                <small>{attachment.element.pageTitle || attachment.element.pageUrl}</small>
+              </span>
+            </div>
+          );
+        }
         if (attachment.kind === "image" && (attachment.previewUrl || attachment.filePath)) {
           return (
             <figure className="cy-message__image-attachment" key={`${attachment.filePath ?? attachment.name}-${index}`}>
@@ -1070,6 +1136,7 @@ function createRoles(
         tools?: ToolExecutionRecord[];
         runStage?: AgentRunStage;
         taskPlan?: TaskPlanPresentation;
+        modelRetry?: ModelRetryStatus | null;
       };
     }) => {
       const activityId = info.extraInfo?.activityId;
@@ -1086,6 +1153,7 @@ function createRoles(
           tools={info.extraInfo?.tools ?? []}
           stage={info.extraInfo?.runStage}
           taskPlan={info.extraInfo?.taskPlan}
+          modelRetry={info.extraInfo?.modelRetry}
           expanded={resolveRunActivityExpanded(reasoningExpanded, activityId, activity)}
           onExpand={(expanded) => onReasoningExpand(activityId, expanded)}
           onOpenTaskInspector={onOpenTaskInspector}
@@ -1107,7 +1175,7 @@ function createRoles(
     variant: "borderless" as const,
     avatar: null,
     rootClassName: "cy-message cy-message--waiting",
-    contentRender: () => <ModelWaitContent />,
+    contentRender: (_content: string, info: { extraInfo?: { modelRetry?: ModelRetryStatus | null } }) => <ModelWaitContent modelRetry={info.extraInfo?.modelRetry} />,
   },
   weather: {
     placement: "start" as const,
@@ -1183,6 +1251,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
       key: `${message.id}-waiting`,
       role: "waiting",
       content: "",
+      extraInfo: { modelRetry: message.modelRetry },
     });
   }
   const reasoningBlocks = message.reasoningBlocks?.length
@@ -1228,6 +1297,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
           tools,
           runStage: message.runStage,
           taskPlan: message.taskPlan,
+          modelRetry: message.modelRetry,
         },
       });
     }
@@ -1322,6 +1392,8 @@ export function assembleMessageItems(
   return { items, cache: state };
 }
 
+const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
+
 export function ChatMessageList({
   messages,
   conversationId,
@@ -1342,6 +1414,7 @@ export function ChatMessageList({
   onOpenTaskInspector,
   workspaceRoot,
   onOpenFileLink,
+  onOpenWebLink,
 }: ChatMessageListProps) {
   // 性能探针：列表外壳执行次数（A0 实验补 markdownRenders 覆盖不到的 Bubble 外壳/footer 路径）
   reportChatPerfRender("listRenders");
@@ -1472,9 +1545,10 @@ export function ChatMessageList({
       : assembled.items;
   }, [messages, enabledStickers, compacting]);
   const channelConversationLabel = resolveChannelConversationLabel(messages);
+  const shouldVirtualizeMessages = items.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const fileLinkEnv = useMemo<FileLinkEnv>(
-    () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink }),
-    [conversationId, workspaceRoot, onOpenFileLink],
+    () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink, openWebLink: onOpenWebLink }),
+    [conversationId, workspaceRoot, onOpenFileLink, onOpenWebLink],
   );
   const characterMoodContext = useMemo(
     () => ({ moods: characterMoodAssets ?? {}, avatar: assistantAvatar ?? null }),
@@ -1497,7 +1571,18 @@ export function ChatMessageList({
                 <span>{channelConversationLabel}</span>
               </div>
             )}
-            <Bubble.List items={items} role={roles} autoScroll />
+            {shouldVirtualizeMessages ? (
+              <VirtualChatMessageList
+                key={conversationId ?? "default"}
+                items={items}
+                roles={roles}
+                scrollRef={containerRef}
+                nearBottomRef={isNearBottomRef}
+                layoutKey={channelConversationLabel}
+              />
+            ) : (
+              <Bubble.List items={items} role={roles} autoScroll />
+            )}
           </div>
         </LastTurnIdsContext.Provider>
       </FileLinkContext.Provider>

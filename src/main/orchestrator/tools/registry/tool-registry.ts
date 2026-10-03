@@ -78,6 +78,8 @@ export interface ToolDefinition {
    *  显式勾选，默认对 chat 会话可见（用户 override.chat === false 仍可关闭）。
    *  语义是"这是昔涟人格的一部分"——朋友圈等生活能力不应要求用户先翻工具开关。 */
   chatBuiltin?: boolean;
+  /** 浏览器控制工具仅在对应的运行期控制阶段（entry/active）暴露。 */
+  browserControlPhase?: "entry" | "active";
   // MCP 兼容字段：参数 schema，后续接 MCP 时直接复用
   inputSchema: {
     type: "object";
