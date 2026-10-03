@@ -15,7 +15,7 @@ import { logger, LogTag } from "../../logger";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
-import { nativeToolHost } from "./native-tool-host";
+import { nativeToolHost, type NativeFirstOptions } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 
 const LOG_PREFIX = "[FsTools]";
@@ -44,15 +44,21 @@ function isNativeFailurePayload(text: string): boolean {
   }
 }
 
-/** 只读工具 native 优先包装：host 不可用/超时/崩溃/错误载荷 → TS 回退。 */
+/**
+ * 只读工具 native 优先包装：host 不可用/超时/崩溃/错误载荷 → TS 回退。
+ * options.timeoutMs：按件看门狗覆盖（与 nativeFirst 同款接口）。fs 三件入参
+ * 有界（读 10MB / 列 200 项 / 内存缓冲），当前调用点保持默认 5s；接口保留
+ * 覆盖能力，避免未来长耗时文件操作再改签名。
+ */
 async function nativeFirstFs(
   nativeTool: string,
   args: Record<string, unknown>,
   fallback: () => Promise<string>,
+  options: NativeFirstOptions = {},
 ): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return fallback();
   try {
-    const result = await nativeToolHost.call(nativeTool, args);
+    const result = await nativeToolHost.call(nativeTool, args, options.timeoutMs);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;
@@ -65,11 +71,11 @@ async function nativeFirstFs(
 }
 
 /** 注册前包装：保留工具元数据，只把 execute 换成 native 优先。 */
-function wrapFsForNativeHost(tool: ToolDefinition, nativeTool: string): ToolDefinition {
+function wrapFsForNativeHost(tool: ToolDefinition, nativeTool: string, options: NativeFirstOptions = {}): ToolDefinition {
   const tsExecute = tool.execute.bind(tool);
   return {
     ...tool,
-    execute: (args, ctx) => nativeFirstFs(nativeTool, args, () => Promise.resolve(tsExecute(args, ctx))),
+    execute: (args, ctx) => nativeFirstFs(nativeTool, args, () => Promise.resolve(tsExecute(args, ctx)), options),
   };
 }
 

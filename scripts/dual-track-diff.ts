@@ -252,7 +252,8 @@ async function runLifeDualTrack(): Promise<number> {
     const tsFailed = tsThrew || tsOut.includes("汇率查询失败");
     const netFailed = !host.ok || netOut.includes("汇率查询失败");
     if (tsFailed && netFailed) {
-      console.log("[SKIP] life exchange_rate（外网不可达，双侧一致，跳过比对）");
+      // 打印双侧错误便于识别"DNS vs 超时"等非同一原因导致的假一致
+      console.log(`[SKIP] life exchange_rate（双侧失败，TS: ${tsOut.slice(0, 120)} | NET: ${netOut.slice(0, 120)}）`);
     } else if (tsOut === netOut) {
       console.log("[PASS] life exchange_rate 双轨输出一致");
     } else {
@@ -353,6 +354,8 @@ async function runSearchDualTrack(): Promise<number> {
       { name: "glob 过滤 *.ts", args: { query: "hello", fileGlobs: ["*.ts"] } },
       { name: "未命中 message", args: { query: "zzz-not-exist" } },
       { name: "路径逃逸拒绝", args: { query: "hello", paths: ["../outside"] } },
+      // 字符串数字：JS Number() 语义（与第 1 组输出应逐字段一致）
+      { name: "字符串数值参数", args: { query: "hello", contextLines: "1", maxMatches: "3" } },
     ];
     for (const c of cases) {
       const tsOut = JSON.parse(await tsSearch(c.args, { resolvedWorkspaceRoot: tsWorkspace })) as Record<string, unknown>;
