@@ -265,6 +265,20 @@ async function main() {
     }
   }
 
+  // 工具配置页：每个工具一张卡，卡片头部可折叠（文件卡恒可折叠，不依赖设置状态）
+  const toolFold = await chatEval(`(() => {
+    const cards = [...document.querySelectorAll(".cy-settings-tool-card")];
+    const button = cards.map((card) => card.querySelector("button.cy-settings-tool-card__toggle")).find(Boolean);
+    if (!button) return { cards: cards.length };
+    const before = button.getAttribute("aria-expanded");
+    button.click();
+    const body = document.getElementById(button.getAttribute("aria-controls"));
+    return { cards: cards.length, before, after: button.getAttribute("aria-expanded"), bodyHidden: body?.hidden ?? null };
+  })()`);
+  const toolFoldOk = toolFold?.cards >= 5 && toolFold.before === "true" && toolFold.after === "false" && toolFold.bodyHidden === true;
+  log("toolFold", toolFoldOk ? "OK" : `FAILED ${JSON.stringify(toolFold)}`);
+  if (!toolFoldOk) problems.push(`tools fold failed: ${JSON.stringify(toolFold)}`);
+
   // ── 界面字体应用（local-font + @font-face 动态注入）：验完恢复默认 ──
   const fontApplied = await chatEval(`(async () => {
     await window.settings.saveGeneral({ uiFont: { kind: "custom", fileName: "smoke-test-font.ttf", displayName: "Smoke Test" } });

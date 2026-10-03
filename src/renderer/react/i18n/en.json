@@ -1466,7 +1466,9 @@
       "fullAccessCancel": "Think again",
       "extensionPanels": "Plugin tools",
       "extensionPanelsDescription": "Settings from enabled tool plugins appear here.",
-      "extensionPanelsFailed": "Could not load plugin settings panels"
+      "extensionPanelsFailed": "Could not load plugin settings panels",
+      "expand": "Expand",
+      "collapse": "Collapse"
     },
     "memory": {
       "title": "Memory",

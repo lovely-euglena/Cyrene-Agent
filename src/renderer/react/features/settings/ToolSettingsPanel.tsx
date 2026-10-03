@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Modal, Spin } from "antd";
-import { CloudSun, Files, Mail, Puzzle, Search, ShieldAlert } from "lucide-react";
+import { Car, ChevronDown, CloudSun, Files, Mail, Puzzle, Search, ShieldAlert } from "lucide-react";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
@@ -82,6 +82,74 @@ function ExtensionToolPanels() {
   </section>;
 }
 
+/**
+ * 工具配置卡：头部（图标 + 标题 + 说明 + 折叠箭头）常驻，配置区可折叠；
+ * 启停开关停在头部右侧——折叠后仍可开关（对齐 .NET 设置窗工具卡）。
+ * foldable=false（如工具未启用、配置区为空）时不显示折叠箭头。
+ */
+function ToolConfigCard({
+  icon,
+  title,
+  description,
+  foldable,
+  collapsed,
+  onToggle,
+  toggle,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  foldable: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  toggle?: ReactNode;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const bodyId = useId();
+  const head = (
+    <>
+      <span className="cy-settings-tool-card__icon" aria-hidden="true">{icon}</span>
+      <span className="cy-settings-tool-card__copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </span>
+      {foldable && (
+        <ChevronDown
+          className={"cy-settings-tool-card__chevron" + (collapsed ? "" : " is-expanded")}
+          size={16}
+          aria-hidden="true"
+        />
+      )}
+    </>
+  );
+  return (
+    <Card className="cy-settings-tool-card">
+      <div className="cy-settings-tool-card__head">
+        {foldable ? (
+          <button
+            type="button"
+            className="cy-settings-tool-card__toggle"
+            aria-expanded={!collapsed}
+            aria-controls={bodyId}
+            title={collapsed ? t("settingsPage.tools.expand") : t("settingsPage.tools.collapse")}
+            onClick={onToggle}
+          >
+            {head}
+          </button>
+        ) : (
+          <div className="cy-settings-tool-card__toggle is-static">{head}</div>
+        )}
+        {toggle && <div className="cy-settings-tool-card__switch">{toggle}</div>}
+      </div>
+      {foldable && <div className="cy-settings-tool-card__body" id={bodyId} hidden={collapsed}>{children}</div>}
+    </Card>
+  );
+}
+
+type ToolCardKey = "weather" | "travel" | "search" | "email" | "files";
+
 export function ToolSettingsPanel() {
   const { t } = useTranslation();
   const [values, setValues] = useState<ToolValues>(defaults);
@@ -93,6 +161,8 @@ export function ToolSettingsPanel() {
   const [status, setStatus] = useState("");
   const [fullAccessOpen, setFullAccessOpen] = useState(false);
   const [confirmSeconds, setConfirmSeconds] = useState(5);
+  // 工具卡折叠状态（内存态，切走再回来复位；与 .NET 设置窗 _collapsedToolCards 同语义）
+  const [collapsedCards, setCollapsedCards] = useState<Partial<Record<ToolCardKey, boolean>>>({});
 
   useEffect(() => {
     let disposed = false;
@@ -173,53 +243,90 @@ export function ToolSettingsPanel() {
     }
   }
 
+  const toggleCard = (key: ToolCardKey) =>
+    setCollapsedCards((current) => ({ ...current, [key]: !current[key] }));
+
   const activeSearch = values.searchEngine === "off" ? lastSearchEngine : values.searchEngine;
   const searchKey = searchKeyFor[activeSearch];
   const permissionDisplay = permission === "scoped" ? "read-only" : permission;
+  /** 高德 Key 行：天气（高德源）与出行共用同一字段；两卡同时展开时受控同步。 */
+  const amapKeyRow = (
+    <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.amapKey")}</strong><span>{t("settingsPage.tools.amapKeyDescription")}</span></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.amapKey} onChange={(event) => setValues((current) => ({ ...current, amapKey: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ amapKey: values.amapKey })}>{t("settingsPage.tools.save")}</Button></div></div>
+  );
 
   return <>
     <h1>{t("settingsPage.tools.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.tools.description")}</p>
     {loadError && <Alert className="cy-settings-alert" type="error" showIcon message={t("settingsPage.loadFailed")} />}
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>
-      <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><CloudSun size={18} />{t("settingsPage.tools.information")}</h2><p>{t("settingsPage.tools.informationDescription")}</p></div>
-        <Card>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.weather")}</strong><span>{t("settingsPage.tools.weatherDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.weather")} checked={values.weatherEnabled} disabled={saving} onChange={(checked) => void setBoolean("weatherEnabled", checked)} /></div>
+      <div className="cy-settings-tool-cards">
+        <ToolConfigCard
+          icon={<CloudSun size={18} />}
+          title={t("settingsPage.tools.weather")}
+          description={t("settingsPage.tools.weatherDescription")}
+          foldable={values.weatherEnabled}
+          collapsed={collapsedCards.weather === true}
+          onToggle={() => toggleCard("weather")}
+          toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.weather")} checked={values.weatherEnabled} disabled={saving} onChange={(checked) => void setBoolean("weatherEnabled", checked)} />}
+        >
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.weatherSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.weatherSource")} value={values.weatherSource} disabled={saving} options={[{ value: "open-meteo", label: t("settingsPage.tools.openMeteo") }, { value: "amap", label: t("settingsPage.tools.amapWeather") }]} onChange={(weatherSource) => void savePatch({ weatherSource })} /></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.travel")}</strong><span>{t("settingsPage.tools.travelDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.travel")} checked={values.travelEnabled} disabled={saving} onChange={(checked) => void setBoolean("travelEnabled", checked)} /></div>
-          {(values.weatherSource === "amap" || values.travelEnabled) && <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.amapKey")}</strong><span>{t("settingsPage.tools.amapKeyDescription")}</span></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.amapKey} onChange={(event) => setValues((current) => ({ ...current, amapKey: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ amapKey: values.amapKey })}>{t("settingsPage.tools.save")}</Button></div></div>}
-        </Card>
-      </section>
+          {values.weatherSource === "amap" && amapKeyRow}
+        </ToolConfigCard>
 
-      <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Search size={18} />{t("settingsPage.tools.search")}</h2><p>{t("settingsPage.tools.searchDescription")}</p></div>
-        <Card>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.searchEnabled")} checked={values.searchEngine !== "off"} disabled={saving} onChange={(checked) => void setSearchEnabled(checked)} /></div>
-          {values.searchEngine !== "off" && <><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={values.searchEngine} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(values[searchKey])} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div></>}
-        </Card>
-      </section>
+        <ToolConfigCard
+          icon={<Car size={18} />}
+          title={t("settingsPage.tools.travel")}
+          description={t("settingsPage.tools.travelDescription")}
+          foldable={values.travelEnabled}
+          collapsed={collapsedCards.travel === true}
+          onToggle={() => toggleCard("travel")}
+          toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.travel")} checked={values.travelEnabled} disabled={saving} onChange={(checked) => void setBoolean("travelEnabled", checked)} />}
+        >
+          {amapKeyRow}
+        </ToolConfigCard>
 
-      <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Mail size={18} />{t("settingsPage.tools.email")}</h2><p>{t("settingsPage.tools.emailDescription")}</p></div>
-        <Card>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.emailEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.emailEnabled")} checked={values.emailEnabled} disabled={saving} onChange={(checked) => void setBoolean("emailEnabled", checked)} /></div>
-          {values.emailEnabled && <>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpHost")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpHost} onChange={(event) => setValues((current) => ({ ...current, emailSmtpHost: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPort")}</strong></div><SettingsInput className="cy-settings-tools__select" type="number" min={1} max={65535} value={values.emailSmtpPort} onChange={(event) => setValues((current) => ({ ...current, emailSmtpPort: event.target.value === "" ? 465 : Number(event.target.value) }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpSecure")}</strong><span>{t("settingsPage.tools.smtpSecureDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.smtpSecure")} checked={values.emailSmtpSecure} disabled={saving} onChange={(checked) => void setBoolean("emailSmtpSecure", checked)} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpUser")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpUser} onChange={(event) => setValues((current) => ({ ...current, emailSmtpUser: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPass")}</strong></div><SettingsPasswordInput className="cy-settings-tools__select" showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.emailSmtpPass} onChange={(event) => setValues((current) => ({ ...current, emailSmtpPass: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.fromName")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailFromName} onChange={(event) => setValues((current) => ({ ...current, emailFromName: event.target.value }))} /></div>
-            <div className="cy-settings-row cy-settings-tools__actions"><Button type="primary" disabled={saving} onClick={() => void savePatch({ emailSmtpHost: values.emailSmtpHost, emailSmtpPort: values.emailSmtpPort, emailSmtpSecure: values.emailSmtpSecure, emailSmtpUser: values.emailSmtpUser, emailSmtpPass: values.emailSmtpPass, emailFromName: values.emailFromName })}>{t("settingsPage.tools.saveEmail")}</Button></div>
-          </>}
-        </Card>
-      </section>
+        <ToolConfigCard
+          icon={<Search size={18} />}
+          title={t("settingsPage.tools.search")}
+          description={t("settingsPage.tools.searchDescription")}
+          foldable={values.searchEngine !== "off"}
+          collapsed={collapsedCards.search === true}
+          onToggle={() => toggleCard("search")}
+          toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.searchEnabled")} checked={values.searchEngine !== "off"} disabled={saving} onChange={(checked) => void setSearchEnabled(checked)} />}
+        >
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={activeSearch} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(values[searchKey])} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div>
+        </ToolConfigCard>
 
-      <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Files size={18} />{t("settingsPage.tools.files")}</h2><p>{t("settingsPage.tools.filesDescription")}</p></div>
-        <Card><div className="cy-settings-row cy-settings-tools__permission"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.permission")}</strong><span>{t(`settingsPage.tools.permissionDescription.${permission}`)}</span></div><div className="cy-settings-tools__levels" role="group" aria-label={t("settingsPage.tools.permission")}>{(["project-read-only", "read-only", "per-action", "full"] as const).map((level) => <Button key={level} className={permissionDisplay === level ? "is-active" : ""} aria-pressed={permissionDisplay === level} disabled={saving} onClick={() => void setPermissionLevel(level)}>{t(`settingsPage.tools.permissionLevel.${level}`)}</Button>)}</div></div></Card>
-      </section>
+        <ToolConfigCard
+          icon={<Mail size={18} />}
+          title={t("settingsPage.tools.email")}
+          description={t("settingsPage.tools.emailDescription")}
+          foldable={values.emailEnabled}
+          collapsed={collapsedCards.email === true}
+          onToggle={() => toggleCard("email")}
+          toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.emailEnabled")} checked={values.emailEnabled} disabled={saving} onChange={(checked) => void setBoolean("emailEnabled", checked)} />}
+        >
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpHost")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpHost} onChange={(event) => setValues((current) => ({ ...current, emailSmtpHost: event.target.value }))} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPort")}</strong></div><SettingsInput className="cy-settings-tools__select" type="number" min={1} max={65535} value={values.emailSmtpPort} onChange={(event) => setValues((current) => ({ ...current, emailSmtpPort: event.target.value === "" ? 465 : Number(event.target.value) }))} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpSecure")}</strong><span>{t("settingsPage.tools.smtpSecureDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.smtpSecure")} checked={values.emailSmtpSecure} disabled={saving} onChange={(checked) => void setBoolean("emailSmtpSecure", checked)} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpUser")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpUser} onChange={(event) => setValues((current) => ({ ...current, emailSmtpUser: event.target.value }))} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPass")}</strong></div><SettingsPasswordInput className="cy-settings-tools__select" showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.emailSmtpPass} onChange={(event) => setValues((current) => ({ ...current, emailSmtpPass: event.target.value }))} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.fromName")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailFromName} onChange={(event) => setValues((current) => ({ ...current, emailFromName: event.target.value }))} /></div>
+          <div className="cy-settings-row cy-settings-tools__actions"><Button type="primary" disabled={saving} onClick={() => void savePatch({ emailSmtpHost: values.emailSmtpHost, emailSmtpPort: values.emailSmtpPort, emailSmtpSecure: values.emailSmtpSecure, emailSmtpUser: values.emailSmtpUser, emailSmtpPass: values.emailSmtpPass, emailFromName: values.emailFromName })}>{t("settingsPage.tools.saveEmail")}</Button></div>
+        </ToolConfigCard>
+
+        <ToolConfigCard
+          icon={<Files size={18} />}
+          title={t("settingsPage.tools.files")}
+          description={t("settingsPage.tools.filesDescription")}
+          foldable
+          collapsed={collapsedCards.files === true}
+          onToggle={() => toggleCard("files")}
+        >
+          <div className="cy-settings-row cy-settings-tools__permission"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.permission")}</strong><span>{t(`settingsPage.tools.permissionDescription.${permission}`)}</span></div><div className="cy-settings-tools__levels" role="group" aria-label={t("settingsPage.tools.permission")}>{(["project-read-only", "read-only", "per-action", "full"] as const).map((level) => <Button key={level} className={permissionDisplay === level ? "is-active" : ""} aria-pressed={permissionDisplay === level} disabled={saving} onClick={() => void setPermissionLevel(level)}>{t(`settingsPage.tools.permissionLevel.${level}`)}</Button>)}</div></div>
+        </ToolConfigCard>
+      </div>
 
       <ExtensionToolPanels />
       <div className="cy-settings-status" role="status" aria-live="polite">{status}</div>
