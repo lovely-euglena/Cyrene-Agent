@@ -18,6 +18,7 @@
     <Compile Include="../../dotnet/native-windows/Tools/ExchangeRateTool.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/ExpenseTools.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/HostLocale.cs" />
+    <Compile Include="../../dotnet/native-windows/Tools/SearchTools.cs" />
     <Compile Include="BuiltinToolsStub.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="../../dotnet/native-windows/Rag/RagHost.cs" />

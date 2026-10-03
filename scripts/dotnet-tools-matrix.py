@@ -82,6 +82,17 @@ c_ex3 = req("record_expense", {"amount": -1})
 c_eq1 = req("query_expense", {"summary": True})
 c_eq2 = req("query_expense", {})
 
+# search_text（内部工作区根注入；忽略 node_modules）
+sws = os.path.join(tmp, "searchws")
+os.makedirs(os.path.join(sws, "src"))
+os.makedirs(os.path.join(sws, "node_modules"))
+open(os.path.join(sws, "src", "a.ts"), "w", encoding="utf-8").write("hello world\nconst x = 1;\nHELLO again\n")
+open(os.path.join(sws, "src", "b.py"), "w", encoding="utf-8").write("hello python\n")
+open(os.path.join(sws, "node_modules", "c.js"), "w", encoding="utf-8").write("hello dep\n")
+c_s1 = req("search_text", {"query": "hello", "contextLines": 1, "__cyreneWorkspaceRoot": sws})
+c_s2 = req("search_text", {"query": "he.*o", "mode": "regex", "caseSensitive": True, "__cyreneWorkspaceRoot": sws})
+c_s3 = req("search_text", {"query": "zzz-not-exist", "__cyreneWorkspaceRoot": sws})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
@@ -154,6 +165,19 @@ try:
     check("账本 JSON 两条且字段顺序可读", len(store) == 2 and store[0]["category"] == "餐饮" and store[1]["amount"] == 40.5, store)
 except Exception as exc:
     check("账本 JSON 可解析", False, str(exc))
+
+print("\n=== search_text ===")
+s1 = data_json(c_s1)
+paths = sorted({m.get("path") for m in (s1.get("matches") or [])}) if isinstance(s1, dict) else []
+check("literal 命中 3 处且忽略 node_modules",
+      isinstance(s1, dict) and s1.get("totalMatches") == 3 and paths == ["src/a.ts", "src/b.py"]
+      and all("node_modules" not in str(m.get("path")) for m in s1.get("matches", [])), s1)
+check("命中项带行号与上下文", isinstance(s1, dict) and s1["matches"][0].get("line") == 1
+      and isinstance(s1["matches"][0].get("before"), list), s1.get("matches", [])[:1])
+s2 = data_json(c_s2)
+check("regex 模式大小写敏感命中 2 处", isinstance(s2, dict) and s2.get("totalMatches") == 2, s2)
+s3 = data_json(c_s3)
+check("未命中给 message", isinstance(s3, dict) and s3.get("totalMatches") == 0 and "未找到匹配内容" in str(s3.get("message")), s3)
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")
