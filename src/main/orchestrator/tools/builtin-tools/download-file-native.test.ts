@@ -7,13 +7,18 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown> }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: { timeoutMs?: number } }>,
   nativeResult: null as string | null,
 }));
 
 vi.mock("../native-tool-host", () => ({
-  nativeFirst: async (tool: string, args: Record<string, unknown>, fallback: (a: Record<string, unknown>) => unknown) => {
-    nativeMocks.calls.push({ tool, args });
+  nativeFirst: async (
+    tool: string,
+    args: Record<string, unknown>,
+    fallback: (a: Record<string, unknown>) => unknown,
+    options?: { timeoutMs?: number },
+  ) => {
+    nativeMocks.calls.push({ tool, args, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
     return fallback(args);
   },
@@ -31,13 +36,17 @@ beforeEach(() => {
 });
 
 describe("download_file native 轨", () => {
-  it("native 可用：注入输出根并原样返回", async () => {
+  it("native 可用：注入输出根、按件看门狗覆盖默认 5s 并原样返回", async () => {
     nativeMocks.nativeResult = "[download_file] 已保存：C:\\ws\\a.png（1 KiB）";
     const out = await execute({ url: "https://example.com/a.png" }, { resolvedWorkspaceRoot: "C:\\ws" });
 
     expect(out).toContain("已保存");
     expect(nativeMocks.calls).toEqual([
-      { tool: "download_file", args: { url: "https://example.com/a.png", __cyreneRoot: "C:\\ws" } },
+      {
+        tool: "download_file",
+        args: { url: "https://example.com/a.png", __cyreneRoot: "C:\\ws" },
+        options: { timeoutMs: 600_000 },
+      },
     ]);
   });
 

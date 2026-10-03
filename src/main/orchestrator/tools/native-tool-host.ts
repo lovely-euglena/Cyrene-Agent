@@ -8,10 +8,14 @@
  * 容错策略：
  *   - ensureStarted 失败 → 本轮全部走 TS 实现（静默降级，不重试
  *     到下次调用，避免每工具调用付一次探测成本）
- *   - 单次调用超时（默认 5s）→ 杀掉 host 重启（工具无状态，重启
- *     零成本），当次调用回退 TS
+ *   - 单次调用超时（默认 5s；长任务可经 NativeFirstOptions.timeoutMs 按件
+ *     覆盖）→ 杀掉 host 重启（工具无状态，重启零成本），当次调用回退 TS
  *   - host 崩溃 → exited 标记，在途调用立即回退，下次 ensureStarted
  *     重新拉起（进程监督）
+ *
+ * 注意：默认 5s 只适合毫秒级工具；任何会走网络/大文件的工具接线时
+ * 必须传入与 C# 侧内部超时匹配的 timeoutMs，否则 native 轨会被看门狗
+ * 误杀（host 整个重启，利息/在途调用一并受累）。
  */
 import { spawn, type ChildProcess } from "child_process";
 import * as readline from "readline";
@@ -32,6 +36,12 @@ export interface HostRuntimeSettings {
   dateLocale: string;
   /** 本地数据根（expenses.json 等宿主侧落盘位置）；null = 宿主侧不可用。 */
   dataDir: string | null;
+}
+
+/** nativeFirst 按件选项：长耗时工具（大文件下载/外网请求）覆盖默认 5s 看门狗。 */
+export interface NativeFirstOptions {
+  /** 单次调用超时（ms）。缺省 5000；应 ≥ C# 侧内部超时，避免 native 轨被误杀。 */
+  timeoutMs?: number;
 }
 
 export class NativeToolHost {
@@ -196,14 +206,16 @@ export const nativeToolHost = new NativeToolHost();
 /**
  * 通用包装：native 优先执行，任何失败（不可用/超时/进程故障）回退 TS 实现。
  * fallback 参数即原 TS execute 函数——双轨语义对齐由测试保证。
+ * options.timeoutMs：按件看门狗（缺省 5s），长任务必须覆盖。
  */
 export async function nativeFirst(
   tool: string,
   args: Record<string, unknown>,
   fallback: (args: Record<string, unknown>) => Promise<string> | string,
+  options: NativeFirstOptions = {},
 ): Promise<string> {
   try {
-    const result = await nativeToolHost.call(tool, args);
+    const result = await nativeToolHost.call(tool, args, options.timeoutMs);
     if (result !== null) {
       return typeof result === "string" ? result : JSON.stringify(result);
     }

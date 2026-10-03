@@ -76,7 +76,10 @@ internal static class DownloadFileTool
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
             req.Headers.TryAddWithoutValidation("Accept", "*/*");
-            using var resp = Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+            // 首包（连接/响应头）单独兜 30s 空闲上限：HttpClient.Timeout 为
+            // Infinite（大文件不受总时长限制），不能连握手阶段也无限挂起；
+            // 与 TS 包装器 idle 计时口径一致（首块数据到达前同样受 30s 约束）
+            using var resp = SendBounded(req);
             if (!resp.IsSuccessStatusCode)
                 return "[错误] HTTP " + (int)resp.StatusCode + " " + resp.ReasonPhrase;
 
@@ -130,10 +133,22 @@ internal static class DownloadFileTool
                 : (long)Math.Floor((double)total / 1024 + 0.5) + " KiB";
             return $"[download_file] 已保存：{finalPath}（{sizeText}）";
         }
+        catch (OperationCanceledException)
+        {
+            // 仅首包空闲约束会走到这里（body 每块取消已在读取循环内映射为文案）
+            return "[错误] 下载失败: 空闲超时（30s 无数据）";
+        }
         catch (Exception ex)
         {
             return "[错误] 下载失败: " + ex.Message;
         }
+    }
+
+    /// <summary>连接/响应头阶段 30s 空闲约束（取消 → OperationCanceledException 由调用方映射文案）。</summary>
+    private static HttpResponseMessage SendBounded(HttpRequestMessage req)
+    {
+        using var headCts = new CancellationTokenSource(IdleTimeoutMs);
+        return Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, headCts.Token).GetAwaiter().GetResult();
     }
 
     private static bool HasDangerousChars(string filename) => Regex.IsMatch(filename, "[<>:\"|?*]");
