@@ -454,6 +454,12 @@ async function runStrReplaceDualTrack(): Promise<number> {
       args: (d) => ({ file_path: path.join(d, "g.txt") }),
       expectSuccess: false,
     },
+    {
+      name: "空文件播种（old_string 空）",
+      content: "",
+      args: (d) => ({ file_path: path.join(d, "h.txt"), old_string: "", new_string: "种子内容\n" }),
+      expectSuccess: true,
+    },
   ];
 
   try {
@@ -659,6 +665,8 @@ async function runDownloadDualTrack(): Promise<number> {
       { name: "Content-Type 补扩展名", args: { url: `${base}/noext` }, saved: "download.txt" },
       { name: "404 错误文案", args: { url: `${base}/missing` }, saved: null },
       { name: "危险后缀拒绝（不走网络）", args: { url: `${base}/img.png`, filename: "evil.exe" }, saved: null },
+      { name: "脚本类后缀拒绝 .hta", args: { url: `${base}/img.png`, filename: "evil.hta" }, saved: null },
+      { name: "脚本类后缀拒绝 .js", args: { url: `${base}/img.png`, filename: "evil.js" }, saved: null },
       { name: "未知 Content-Type 且无扩展名", args: { url: `${base}/unknown` }, saved: null },
     ];
     for (const c of cases) {

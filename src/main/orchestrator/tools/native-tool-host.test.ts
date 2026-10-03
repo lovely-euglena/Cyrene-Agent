@@ -79,6 +79,38 @@ describe("NativeToolHost.call 看门狗", () => {
     expect(child.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("超时 kill 后：日志列出连带拒绝的在途调用，exit 时全部 reject", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, child } = startHost();
+
+    const first = host.call("download_file", { url: "https://example.com/a.bin" }, 50);
+    const second = host.call("search_text", { query: "x" });
+    const firstErr = first.catch((error: Error) => error);
+    const secondErr = second.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(firstErr).resolves.toBeInstanceOf(Error);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("连带拒绝 1 个在途调用"),
+    );
+
+    // 真实 kill 后进程退出：在途的第二调用被连带拒绝
+    child.emit("exit", 1, null);
+    await expect(secondErr).resolves.toBeInstanceOf(Error);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("host 退出：连带拒绝 1 个在途调用"),
+    );
+
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("结果帧在窗口内返回：清除定时器，不误杀 host", async () => {
     vi.useFakeTimers();
     const { host, child } = startHost();

@@ -28,6 +28,8 @@ interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  /** 工具名：超时/退出日志用于定位被连带拒绝的调用。 */
+  tool: string;
 }
 
 /** 宿主运行时配置（config 帧载荷）。 */
@@ -102,6 +104,10 @@ export class NativeToolHost {
       child.on("exit", () => {
         this.exited = true;
         this.proc = null;
+        if (this.pending.size > 0) {
+          const names = [...this.pending.entries()].map(([id, call]) => `${id}(${call.tool})`);
+          console.warn(LOG_PREFIX, `host 退出：连带拒绝 ${names.length} 个在途调用：${names.join(", ")}`);
+        }
         for (const [, call] of this.pending) {
           clearTimeout(call.timer);
           call.reject(new Error("tool-host 进程退出"));
@@ -172,8 +178,14 @@ export class NativeToolHost {
       const callId = `t${++this.callSeq}`;
       const timer = setTimeout(() => {
         this.pending.delete(callId);
-        // 超时：host 可能卡死——杀掉等监督重启，当次回退
-        console.warn(LOG_PREFIX, `工具 ${tool} 超时（${timeoutMs}ms），重启 host`);
+        // 超时：host 可能卡死——杀掉等监督重启，当次回退；
+        // 其余在途调用会被连带拒绝（这里先记名，便于排查级联影响）
+        const collateral = [...this.pending.entries()].map(([id, call]) => `${id}(${call.tool})`);
+        console.warn(
+          LOG_PREFIX,
+          `工具 ${tool} 超时（${timeoutMs}ms），重启 host` +
+            (collateral.length > 0 ? `；将连带拒绝 ${collateral.length} 个在途调用：${collateral.join(", ")}` : ""),
+        );
         try { child.kill(); } catch { /* ignore */ }
         reject(new Error(`native 工具 ${tool} 超时`));
       }, timeoutMs);
@@ -181,6 +193,7 @@ export class NativeToolHost {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
         timer,
+        tool,
       });
       try {
         child.stdin!.write(`${JSON.stringify({ op: "call", callId, tool, args })}\n`);
