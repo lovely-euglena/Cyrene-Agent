@@ -694,15 +694,6 @@
           "title": "浏览器自动化（Playwright）",
           "desc": "让她能点网页、填表单、截图、跑 UI 流程。使用系统自带 Edge 浏览器，无需额外下载。",
           "descWarn": "默认关闭。"
-        },
-        "music": {
-          "title": "音乐工具",
-          "desc": "本地曲库与播放器。",
-          "localTitle": "本地音乐",
-          "localStatus": "正在读取…",
-          "importFolder": "导入文件夹",
-          "importFiles": "导入文件",
-          "openPlayer": "打开播放器"
         }
       },
       "disclaimer": {
