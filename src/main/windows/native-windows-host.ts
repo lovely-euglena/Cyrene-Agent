@@ -322,7 +322,7 @@ export class NativeWindowsClient {
 
   // ── 公开 API：窗口生命周期 + 状态推送 ──
 
-  async spawnWindow(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music", layout?: unknown): Promise<void> {
+  async spawnWindow(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music" | "model-download", layout?: unknown): Promise<void> {
     await this.ensureStarted();
     await this.request({ op: "win.spawn", kind, layout: layout ?? {} });
   }

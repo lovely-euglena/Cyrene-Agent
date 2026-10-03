@@ -55,6 +55,7 @@ public static class RequestRouter
                             "sidebar" => new SidebarWindow(layout),
                             "tasks" => new TasksWindow(layout),
                             "music" => new MusicWindow(layout),
+                            "model-download" => new ModelDownloadWindow(layout),
                             _ => throw new ArgumentException($"unknown window kind: {kind}"),
                         };
                         window.ClosedEvent += k =>
