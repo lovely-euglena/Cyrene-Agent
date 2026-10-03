@@ -139,6 +139,7 @@ internal static class ToolHost
                         new { id = "query_expense", name = "查账(.NET)", description = "记账查询/汇总（时区与 locale 随 config 帧）" },
                         new { id = "search_text", name = "文本搜索(.NET)", description = "工作区文本/正则搜索（忽略目录、上下文、上限对齐 TS）" },
                         new { id = "str_replace", name = "精确替换(.NET)", description = "三层匹配（精确/EOL/空白归一化）+ evidence；__dryRun 预检两段式" },
+                        new { id = "apply_patch", name = "编辑文件(.NET)", description = "Codex 补丁格式批量编辑（预检事务 + 保留 EOL + evidence；__dryRun 两段式）" },
                         new { id = "download_file", name = "下载文件(.NET)", description = "URL 二进制落盘（沙箱/黑名单/64MiB/空闲超时；root 注入）" },
                     },
                 });
@@ -182,6 +183,7 @@ internal static class ToolHost
                         "query_expense" => ExpenseTools.Query(args ?? EmptyArgs),
                         "search_text" => SearchTools.Search(args ?? EmptyArgs),
                         "str_replace" => StrReplaceTool.Execute(args ?? EmptyArgs),
+                        "apply_patch" => ApplyPatchTool.Execute(args ?? EmptyArgs),
                         "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };

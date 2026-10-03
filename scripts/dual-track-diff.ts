@@ -97,11 +97,13 @@ function loadTsTools(): Promise<Map<string, TsFsTool>> {
     lifeTools.registerLifeTools();
     const searchTools = await import("../src/main/orchestrator/tools/search-text-tools");
     searchTools.registerSearchTextTool();
+    const applyPatchTools = await import("../src/main/orchestrator/tools/apply-patch-tools");
+    applyPatchTools.registerApplyPatchTool();
     const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
     const { downloadFileTool } = await import("../src/main/orchestrator/tools/builtin-tools/download-file-tool");
     if (!toolRegistry.getById("download_file")) toolRegistry.register(downloadFileTool);
     const map = new Map<string, TsFsTool>();
-    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text", "str_replace", "download_file"]) {
+    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text", "str_replace", "apply_patch", "download_file"]) {
       const tool = toolRegistry.getById(id);
       if (tool) map.set(id, (args, ctx) => Promise.resolve(tool.execute(args, ctx as never)));
     }
@@ -485,6 +487,135 @@ async function runStrReplaceDualTrack(): Promise<number> {
   return failed;
 }
 
+/** apply_patch 双轨：镜像工作区 + 相对路径补丁（两侧同文本），输出逐字对比 + 落盘/结构快照对比。 */
+async function runApplyPatchDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] apply_patch ${name}`);
+    else { failed++; console.log(`[FAIL] apply_patch ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "ap-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "ap-dual-net-"));
+  const readIfExists = (p: string): string | null => {
+    try { return readFileSync(p, "utf8"); } catch { return null; }
+  };
+
+  interface ApCase {
+    name: string;
+    setup: (dir: string) => void;
+    patch: string;
+    expectSuccess: boolean;
+    snapshot: (dir: string) => Record<string, string | null>;
+  }
+
+  const cases: ApCase[] = [
+    {
+      name: "更新+新增多 hunk",
+      setup: (d) => writeFileSync(path.join(d, "a.txt"), "alpha\nbeta\ngamma\n"),
+      patch: "*** Begin Patch\n*** Update File: a.txt\n@@\n alpha\n-beta\n+BETA\n gamma\n*** Add File: sub/new.txt\n+hello\n+world\n*** End Patch",
+      expectSuccess: true,
+      snapshot: (d) => ({
+        a: readIfExists(path.join(d, "a.txt")),
+        added: readIfExists(path.join(d, "sub", "new.txt")),
+      }),
+    },
+    {
+      name: "Move to 更新并移动",
+      setup: (d) => writeFileSync(path.join(d, "m.txt"), "m1\nm2\n"),
+      patch: "*** Begin Patch\n*** Update File: m.txt\n*** Move to: moved/m.txt\n@@\n-m1\n+M1\n*** End Patch",
+      expectSuccess: true,
+      snapshot: (d) => ({
+        from: readIfExists(path.join(d, "m.txt")),
+        to: readIfExists(path.join(d, "moved", "m.txt")),
+      }),
+    },
+    {
+      name: "CRLF 文件保留 EOL",
+      setup: (d) => writeFileSync(path.join(d, "w.txt"), "one\r\ntwo\r\nthree\r\n"),
+      patch: "*** Begin Patch\n*** Update File: w.txt\n@@\n one\n-two\n+TWO\n three\n*** End Patch",
+      expectSuccess: true,
+      snapshot: (d) => ({ w: readIfExists(path.join(d, "w.txt")) }),
+    },
+    {
+      name: "删除文件",
+      setup: (d) => writeFileSync(path.join(d, "del.txt"), "x\ny\n"),
+      patch: "*** Begin Patch\n*** Delete File: del.txt\n*** End Patch",
+      expectSuccess: true,
+      snapshot: (d) => ({ del: readIfExists(path.join(d, "del.txt")) }),
+    },
+    {
+      name: "上下文不匹配（全不执行）",
+      setup: (d) => writeFileSync(path.join(d, "a.txt"), "alpha\n"),
+      patch: "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch",
+      expectSuccess: false,
+      snapshot: (d) => ({ a: readIfExists(path.join(d, "a.txt")) }),
+    },
+    {
+      name: "新增已存在拒绝",
+      setup: (d) => writeFileSync(path.join(d, "a.txt"), "alpha\n"),
+      patch: "*** Begin Patch\n*** Add File: a.txt\n+z\n*** End Patch",
+      expectSuccess: false,
+      snapshot: (d) => ({ a: readIfExists(path.join(d, "a.txt")) }),
+    },
+    {
+      name: "路径逃逸拒绝",
+      setup: () => { /* 无文件 */ },
+      patch: "*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch",
+      expectSuccess: false,
+      snapshot: () => ({}),
+    },
+    {
+      name: "事务原子性（含失败 hunk 全不执行）",
+      setup: (d) => writeFileSync(path.join(d, "a.txt"), "alpha\nbeta\n"),
+      patch: "*** Begin Patch\n*** Update File: a.txt\n@@\n beta\n+BETA\n*** Add File: ../escape2.txt\n+z\n*** End Patch",
+      expectSuccess: false,
+      snapshot: (d) => ({ a: readIfExists(path.join(d, "a.txt")) }),
+    },
+    {
+      name: "非补丁文本拒绝",
+      setup: () => { /* 无文件 */ },
+      patch: "not a patch",
+      expectSuccess: false,
+      snapshot: () => ({}),
+    },
+  ];
+
+  try {
+    const tsTools = await loadTsTools();
+    const tsApplyPatch = tsTools.get("apply_patch");
+    if (!tsApplyPatch) { check("TS 轨已注册", false); return failed + 1; }
+
+    for (const [idx, c] of cases.entries()) {
+      const tsCaseDir = path.join(tsHome, String(idx));
+      const netCaseDir = path.join(netHome, String(idx));
+      mkdirSync(tsCaseDir, { recursive: true });
+      mkdirSync(netCaseDir, { recursive: true });
+      c.setup(tsCaseDir);
+      c.setup(netCaseDir);
+
+      const tsOut = await tsApplyPatch({ patch: c.patch }, { resolvedWorkspaceRoot: tsCaseDir });
+      const host = await callSmokeTool("apply_patch", { patch: c.patch, __cyreneRoot: netCaseDir });
+      const netOut = host.ok ? String(host.data ?? "") : "";
+
+      // 相对路径 + relaxed 编码：两轨输出应逐字一致
+      const sameOut = tsOut === netOut;
+      const snapSame = JSON.stringify(c.snapshot(tsCaseDir)) === JSON.stringify(c.snapshot(netCaseDir));
+      const success = (JSON.parse(tsOut) as { success?: boolean }).success === true;
+
+      check(
+        c.name,
+        sameOut && snapSame && success === c.expectSuccess,
+        `outSame=${sameOut} snapSame=${snapSame} ts=${tsOut.slice(0, 200)} net=${netOut.slice(0, 200)}`,
+      );
+    }
+  } finally {
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 /** download_file 双轨：本地 HTTP 服务 + 相同入参，输出文案与落盘字节对比。 */
 async function runDownloadDualTrack(): Promise<number> {
   let failed = 0;
@@ -588,6 +719,9 @@ async function main(): Promise<void> {
     // 精确替换双轨（str_replace）
     if (useSmoke) failures += await runStrReplaceDualTrack();
     else console.log("[SKIP] str_replace 双轨（仅 smoke dll 轨支持）");
+    // 结构化补丁双轨（apply_patch）
+    if (useSmoke) failures += await runApplyPatchDualTrack();
+    else console.log("[SKIP] apply_patch 双轨（仅 smoke dll 轨支持）");
     // 下载双轨（download_file，本地 HTTP 服务）
     if (useSmoke) failures += await runDownloadDualTrack();
     else console.log("[SKIP] download 双轨（仅 smoke dll 轨支持）");
