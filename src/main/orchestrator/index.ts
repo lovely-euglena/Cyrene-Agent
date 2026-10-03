@@ -1,6 +1,6 @@
 // Orchestrator — unified entry point
 // 只负责构建 always-on 上下文（世界书 + L0/L1）；工具的选择和执行由 CyreneHarness 处理
-import { updateWorldbookActivation, getPermanentWorldbookEntries, getActiveWorldbookEntries, getCascadeWorldbookEntries, searchMemory, INJECTION_HEADER, INJECTION_PREAMBLE } from "../rag";
+import { updateWorldbookActivation, getPermanentWorldbookEntries, getActiveWorldbookEntries, getCascadeWorldbookEntries, searchMemory, searchMemoryEntries, INJECTION_HEADER, INJECTION_PREAMBLE } from "../rag";
 import { memoryStore } from "../memory/memory-store";
 import { entityGraph } from "../memory/entity-graph";
 import { recordRecentMemoryInjection } from "../memory/recent-injected-memory";
@@ -18,8 +18,48 @@ export { buildToneInjection } from "./tone-injector";
 // topicState TTL 已移除——由 DMAE Activation 状态机接管（见 rag/worldbook.ts）
 
 /**
+ * 每轮刷新 L2 Working Memory：向量召回 top-4 → 按位次赋 I → 执行 DMAE 状态更新。
+ * 打通「向量召回 = 用户命中」：召回器作为上游提供 I，DMAE 负责生命周期与热层驻留。
+ * 由每个对话轮次的调用方在读取注入前调用（Call / 主聊天链路均调用）。
+ */
+export async function refreshL2WorkingMemory(
+  userInput: string,
+  recentMessages: ReadonlyArray<{ role: string; content?: string }> = [],
+): Promise<void> {
+  const allL2 = await memoryStore.getAllL2();
+  const recalled = await searchMemoryEntries(userInput, "user_memory", 4);
+  const recalledIds = recalled
+    .map((r) => r.metadata?.l2Id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const lastAssistant = [...recentMessages]
+    .reverse()
+    .find((m) => m.role === "assistant")
+    ?.content ?? "";
+  await l2DmaeManager.updateActivation(allL2, userInput, lastAssistant, recalledIds);
+}
+
+/**
+ * 只读：DMAE 热层（activation >= promptThreshold）与置顶 L2 的 【相关记忆】 注入块。
+ * 需先由 refreshL2WorkingMemory 更新本轮状态；无内容返回空串。
+ */
+export async function buildL2WorkingMemoryInjection(): Promise<string> {
+  const allL2 = await memoryStore.getAllL2();
+  const activeL2 = await l2DmaeManager.getActiveL2ForPrompt(allL2, 4);
+  recordRecentMemoryInjection(activeL2.map((l2) => l2.id));
+  if (activeL2.length === 0) return "";
+  const annotated = activeL2.map((l2) => {
+    const sourceQuote = l2.sourceQuote ?? l2.triggerText;
+    const hasConflict = !!(l2.conflictWith && l2.conflictWith.length > 0);
+    const conflictSuffix = hasConflict ? " ⚠️（该信息可能存在矛盾记录）" : "";
+    const quoteSuffix = sourceQuote ? `（原文：${sourceQuote}）` : "";
+    return `· ${l2.content}${conflictSuffix}${quoteSuffix}`;
+  });
+  return "【相关记忆】\n" + annotated.join("\n");
+}
+
+/**
  * 构建相关记忆注入：返回经 V5 DMAE 排序后的 active L2 记忆，以及导入文档/实体关系。
- * L2 DMAE 状态更新由调用方（call-prompt-builder.ts）在调用本函数前完成。
+ * L2 DMAE 状态更新由调用方（call-prompt-builder.ts / 主聊天链路）在调用本函数前完成。
  */
 export async function buildMemoryInjection(
   userInput: string,
@@ -27,20 +67,8 @@ export async function buildMemoryInjection(
   const parts: string[] = [];
 
   try {
-    // V5 L2：直接读取 DMAE 引擎中 activation >= promptThreshold 的条目，按 activation 降序
-    const allL2 = await memoryStore.getAllL2();
-    const activeL2 = await l2DmaeManager.getActiveL2ForPrompt(allL2, 4);
-    recordRecentMemoryInjection(activeL2.map((l2) => l2.id));
-    if (activeL2.length > 0) {
-      const annotated = activeL2.map((l2) => {
-        const sourceQuote = l2.sourceQuote ?? l2.triggerText;
-        const hasConflict = !!(l2.conflictWith && l2.conflictWith.length > 0);
-        const conflictSuffix = hasConflict ? " ⚠️（该信息可能存在矛盾记录）" : "";
-        const quoteSuffix = sourceQuote ? `（原文：${sourceQuote}）` : "";
-        return `· ${l2.content}${conflictSuffix}${quoteSuffix}`;
-      });
-      parts.push("【相关记忆】\n" + annotated.join("\n"));
-    }
+    const l2Block = await buildL2WorkingMemoryInjection();
+    if (l2Block) parts.push(l2Block);
   } catch (err) {
     if (isDimensionMismatchError(err)) {
       console.error("[Orchestrator] user_memory search blocked: embedding dimension mismatch. Index rebuild required.", err);

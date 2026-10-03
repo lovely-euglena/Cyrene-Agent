@@ -159,6 +159,30 @@ describe("build-options", () => {
     expect(result.options.soulRuntimeContext).toContain("[plugin-agent] minecraft");
   });
 
+  it("injects L2 working memory block only in chat mode", async () => {
+    const deps = createBuildDeps();
+    const buildL2 = vi.fn(async () => "L2_MEMORY_BLOCK");
+    deps.buildL2WorkingMemoryContext = buildL2;
+
+    const chat = await buildAgentRunOptions({
+      sessionId: "chat-l2",
+      mode: "chat",
+      executionMode: "chat",
+      messages: [{ role: "user", content: "我喜欢跑步" }],
+    }, deps);
+    expect(chat.options.soulRuntimeContext).toContain("L2_MEMORY_BLOCK");
+    expect(buildL2).toHaveBeenCalledWith("我喜欢跑步", expect.any(Array));
+
+    const work = await buildAgentRunOptions({
+      sessionId: "work-l2",
+      mode: "work",
+      executionMode: "work",
+      messages: [{ role: "user", content: "改代码" }],
+    }, deps);
+    expect(work.options.soulRuntimeContext).not.toContain("L2_MEMORY_BLOCK");
+    expect(buildL2).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps chat tool-free when enhancement switch is off", async () => {
     const deps = createBuildDeps();
     deps.toolRegistry.getEnabled = () => [
