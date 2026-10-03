@@ -21,13 +21,15 @@ Electron + TypeScript 桌面 AI 伴侣（fork 自 Playa-0v0/Cyrene-Agent）。
 
 ```
 dotnet/
-  native-windows/          # cyrene-native：七 host 单 exe
-    Tools/  Rag/  MemoryStore/  Agents/  LoopHost/  Mcp/  voice→独立
+  cyrene-core/             # 跨平台核心库（net10.0）：HostProtocol/Tools/Rag/
+                           # MemoryStore/LoopHost/Agents/Mcp（服务端复用基座）
+  native-windows/          # cyrene-native：窗口宿主 + Windows-only 域
+                           # （剪贴板注入/DPAPI/Ssh/Storage/Music/截图）
     Program.cs             # --tool-host/--rag-host/--memory-host/
                            # --agent-host/--loop-host/--mcp-host/--selftest
   voice/CyreneVoice/       # 语音独立 exe（TTS 四引擎+Silero VAD 三模式）
   plugin-sdk/Cyrene.PluginSdk/  # .NET 插件 SDK（CyrenePluginBase）
-  smoke-host/              # Linux 冒烟壳（同源编译协议类，排除 WinForms）
+  smoke-host/              # Linux 冒烟壳（引用 cyrene-core，协议冒烟）
 src/main/dotnet-backend/   # TS 侧：config.ts（双轨开关唯一解析）、
                            # host-clients.ts（LineHostClient IPC）、native-tool-host
 src/plugins/               # 插件层（含 dotnet-adapter.ts：.NET 插件进程适配）
@@ -83,8 +85,8 @@ docs/build-guide.md        # 构建/发版流程
 | node 单测 | `npx vitest run` | 4329 passed（7 失败=Linux 路径/上游 React 组件，Windows 过） |
 
 前置：`export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH`（脚本已 env 自足）。
-.NET 测试脚本跑 `dotnet/smoke-host`（Linux 冒烟壳）；Windows 实机用 `scripts/dotnet-smoke.ps1`。
-**改 dotnet/ 下 C# 后必须**：`cd dotnet/smoke-host && dotnet build -c Release` 再跑七套。
+.NET 测试脚本跑 `dotnet/smoke-host`（Linux 冒烟壳，引用 cyrene-core）；Windows 实机用 `scripts/dotnet-smoke.ps1`（2026-10-04 已跑通 4/4）。
+**改 dotnet/ 下 C# 后必须**：`dotnet build dotnet/smoke-host -c Release`（连带 core）再跑七套；core 另跑 `python scripts/check-cyrene-core-clean.py`。
 
 ## 6. 发版流程（test.N）
 

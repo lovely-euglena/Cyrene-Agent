@@ -475,11 +475,12 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | 富文本渲染 | Streamdown + Shiki + KaTeX（Markdown / 代码高亮 / 公式）+ DOMPurify |
 | 语音与媒体 | 多引擎 TTS / ASR（MiniMax / GPT-SoVITS / Mossland / Aliyun / MiMo / 自定义云 / 本地 ）+ `silk-wasm` + mpv |
 | 原生截图助手 | Rust + DXGI Desktop Duplication / Direct2D + WIC PNG + NDJSON IPC（`native/cyrene-screenshot`） |
-| .NET 原生窗口宿主 | `cyrene-native`（WPF + WinForms 同进程，net10.0-windows）— 设置 / 任务 / 音乐 / 侧边栏 / 启动屏 / 托盘 / 插件管理 / 模型下载；子域 Agents、LoopHost、Mcp、MemoryStore、Rag、Ssh、Storage、Tools |
+| .NET 原生窗口宿主 | `cyrene-native`（WPF + WinForms 同进程，net10.0-windows）— 设置 / 任务 / 音乐 / 侧边栏 / 启动屏 / 托盘 / 插件管理 / 模型下载；Windows-only 域 Ssh、Storage、Music、截图；核心域引用 `cyrene-core` |
+| .NET 跨平台核心 | `cyrene-core`（net10.0）— HostProtocol / 工具 / Rag / MemoryStore / LoopHost / Agents / Mcp；WPF 剪贴板等 Windows-only 能力经注入留 `cyrene-native`，CI 洁净断言锁定跨平台性 |
 | .NET 检索与智能 Sidecar | `cyrene-embed`（ONNX Runtime Embedding + BM25/Hybrid + Reranker + SQLite RAG Store + Pandoc 转换）、`CyreneOcr`（WinRT `Windows.Media.Ocr`，net10.0-windows10.0.19041.0）、`CyreneToken`（Tokenizers.DotNet） |
 | .NET 语音 Sidecar | `CyreneVoice`（TTS/ASR 音频 IO + Silero VAD ONNX + `System.Numerics.Tensors`；4 字节长度头二进制帧回传） |
 | .NET 进程间协议 | `src/main/dotnet-backend` `LineHostClient` — JSON 行协议（与 native-tool-host 同构），`spawn` 子进程 + readline 消费；各 host 由 `resolveDotnetConfig()` 0/1 开关切流 |
-| .NET 跨平台验证 | `smoke-host`（cyrene-smoke）在 Linux 复用同一套 ToolHost / RagHost / MemoryHost / LoopHost / AgentSessionHost / McpHost 源码做协议冒烟 |
+| .NET 跨平台验证 | `smoke-host`（cyrene-smoke）引用 `cyrene-core`，在 Linux 跑协议冒烟（五套 96+ 项） |
 | 文档与邮件 | ExcelJS、docx、PDFKit、Nodemailer + imapflow / mailparser + Pandoc Sidecar |
 | 外部渠道 | 飞书 / 微信 iLink / QQ OneBot 11（`src/main/channels` 适配器） |
 | 国际化与分发 | i18next + electron-updater + `cyrene` CLI（`src/cli`）+ electron-builder（`package:win:dir`） |
