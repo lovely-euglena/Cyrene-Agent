@@ -42,6 +42,9 @@ vendors（API key）/ toolRegistry / 权限审批 / ToolOutputStore —— 永�
 设计边界（与 `multi-agent-architecture.md` 一致）：
 
 1. **密钥永不落 .NET 进程**：LLM 请求在 TS 侧发起；
+   （⚠️ 2026-10-03：该边界拟分阶段调整——Phase 1 密钥保存迁入 .NET DPAPI 密钥库、
+   Phase 2 请求处理是否下沉待议，见 [2026-10-03-secrets-migration-to-dotnet.md](./2026-10-03-secrets-migration-to-dotnet.md)；
+   切换完成前本边界仍有效）
 2. **权限审批闸门留在 Electron**：工具执行与审批都在 TS 侧；
 3. **.NET 只提供机制不做策略**：pipeline 顺序、角色提示词、工具白名单
    全部由调用方在 `group.create` 时声明；

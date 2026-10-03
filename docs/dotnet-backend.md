@@ -43,6 +43,7 @@ git commit 漏子命令、IPC argv 双传。
 ## 铁律落实位（P 检查）
 
 - B1 密钥不落 .NET：`agent-process-manager.ts` llm_request→streamChatWithSdk 代理
+  - ⚠️ 2026-10-03 起拟迁移：密钥保存下沉 .NET DPAPI 密钥库（分阶段，见 [design/2026-10-03-secrets-migration-to-dotnet.md](./design/2026-10-03-secrets-migration-to-dotnet.md)）；切换前按 B1 执行
 - B2 审批在 Electron：tool_request→setToolExecutor→executeToolCall（含 checkPermission）
 - B8 语音边界：只动 `synthesizeByEngine` 引擎层入口（tts-dispatcher.ts），IPC/播放/转码/状态机零改动
 - B9 VAD 隐私：local/hybrid 仅语音段上云（VadEngine 门控在发送方）
