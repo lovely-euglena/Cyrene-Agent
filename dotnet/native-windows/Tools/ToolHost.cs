@@ -54,6 +54,19 @@ internal sealed class ToolHostException : Exception
     public ToolHostException(string code, string message) : base(message) => Code = code;
 }
 
+/// <summary>
+/// ToolHost 运行时配置（config 帧注入，TS NativeToolHost.setRuntimeSettings）。
+///   timezone：now/时间格式化用（默认 Asia/Shanghai）
+///   dateLocale：日期展示用 locale（默认 zh-CN）
+///   dataDir：本地数据根（expenses.json 等；null = 宿主侧落盘工具不可用）
+/// </summary>
+internal static class ToolHostConfig
+{
+    internal static string Timezone { get; set; } = "Asia/Shanghai";
+    internal static string DateLocale { get; set; } = "zh-CN";
+    internal static string? DataDir { get; set; }
+}
+
 internal static class ToolHost
 {
     /// <summary>args 缺失时的空对象（避免 Undefined JsonElement 在工具内探属性崩溃）。</summary>
@@ -121,9 +134,23 @@ internal static class ToolHost
                         new { id = "fs_read_file", name = "读取文件(.NET)", description = "带行号/真实总行数/翻页的文本读取（10MB 上限）" },
                         new { id = "fs_write_file", name = "写入文件(.NET)", description = "覆盖/追加写 + ToolFileChange 证据输出（append/createDirs）" },
                         new { id = "fs_list_dir", name = "列出目录(.NET)", description = "目录列举（隐藏项开关/图片标注/200 项截断）" },
+                        new { id = "exchange_rate", name = "汇率查询(.NET)", description = "frankfurter.app 免 key 汇率 + 30 分钟 TTL 缓存" },
                     },
                 });
                 break;
+            case "config":
+            {
+                // 运行时配置（时区/日期 locale/数据根）：可多次下发，立即生效
+                if (root.TryGetProperty("timezone", out var tz) && tz.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(tz.GetString()))
+                    ToolHostConfig.Timezone = tz.GetString()!;
+                if (root.TryGetProperty("dateLocale", out var dl) && dl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(dl.GetString()))
+                    ToolHostConfig.DateLocale = dl.GetString()!;
+                if (root.TryGetProperty("dataDir", out var dd) && dd.ValueKind == JsonValueKind.String)
+                    ToolHostConfig.DataDir = dd.GetString();
+                break;
+            }
             case "call":
             {
                 var callId = root.TryGetProperty("callId", out var c) ? c.GetString() : "";
@@ -145,6 +172,7 @@ internal static class ToolHost
                         "fs_read_file" => FsTools.ReadFile(args ?? EmptyArgs),
                         "fs_write_file" => FsTools.WriteFile(args ?? EmptyArgs),
                         "fs_list_dir" => FsTools.ListDir(args ?? EmptyArgs),
+                        "exchange_rate" => ExchangeRateTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });

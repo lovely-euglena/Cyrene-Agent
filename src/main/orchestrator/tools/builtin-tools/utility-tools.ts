@@ -12,7 +12,7 @@
 
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
-import { nativeFirst } from "../native-tool-host";
+import { nativeFirst, nativeToolHost } from "../native-tool-host";
 
 // ── calculator：安全数学表达式求值 ─────────────────────────────
 
@@ -237,6 +237,9 @@ export const nowTool: ToolDefinition = {
     required: [],
   },
   execute: async (args: Record<string, unknown>) => {
+    // 时区实时注入（用户改设置后下次调用即生效；host 未起时存为启动配置）。
+    // 曾漏接线：.NET now 永远按 Asia/Shanghai 返回，与 TS 轨非默认时区不一致。
+    nativeToolHost.setTimezone(timezoneGetter?.() ?? null);
     return nativeFirst("now", args, nowExecute);
   },
 };
