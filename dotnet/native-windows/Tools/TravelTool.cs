@@ -273,9 +273,14 @@ internal static class TravelTool
         }
     }
 
-    /// <summary>JS toFixed 近似（四舍五入到指定小数位，正数口径一致）。</summary>
+    /// <summary>
+    /// JS <c>Number.prototype.toFixed</c> 近似：平局（tie）向 +∞ 取整——JS 规范为「距离相等时取较大 n」，
+    /// 本项目非负的距离/路费场景下与 AwayFromZero 等价；若不指定舍入模式，.NET <c>F</c> 格式默认
+    /// 银行家舍入（ToEven），会出现 2.25 → "2.2" 这类与 JS 相反的平局结果。极端浮点边界仍有 1ulp 级差异。
+    /// </summary>
     private static string Fixed(double value, int digits)
-        => value.ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+        => Math.Round(value, digits, MidpointRounding.ToPositiveInfinity)
+            .ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
 
     /// <summary>`String(args.mode ?? "驾车")` 近似：属性缺失用 fallback；字符串原样（含空串）；其余按显示口径。</summary>
     private static string JsString(JsonElement args, string key, string fallback)
