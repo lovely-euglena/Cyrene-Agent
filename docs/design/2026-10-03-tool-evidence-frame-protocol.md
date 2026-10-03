@@ -77,3 +77,21 @@ fs 三件下沉 ToolHost 时，若宿主只返回 `{path, bytes}`：
   若后续写类工具需要「宿主态语义错误」不回退，需先补 `errorCode` 透传与分类；
 - **其他写类工具**：`str_replace` / `apply_patch` / 文档四件 / `ast_grep_replace` 迁移时直接复用本契约
   （策略层留 TS、证据随 `data` 返回）。
+
+## 6. 宿主事件帧（op:"event"）v1 —— weather_card 首用
+
+对「工具执行中的非结果性通知」（天气卡片等），在既有 result 帧之外新增单向事件帧：
+
+```jsonc
+← {"op":"event","callId":"t12","kind":"weather_card","payload":{ /* 卡片数据 */ }}
+← {"op":"result","callId":"t12","ok":true,"data":"{...}"}
+```
+
+- **发送**：宿主工具执行期间经 `ToolHost.EmitEvent(kind, payload)` 发出，先于 result 帧；
+  `callId` 为当前调用，宿主单线程 + 串行闸门保证归属确定。
+- **路由（TS）**：`NativeToolHost.handleFrame` 按 callId 找到在途调用，
+  回调 `nativeFirst` 的 `options.onEvent(event)`（未注册回调则丢弃，不影响调用结果）。
+- **回退语义**：只有 native 轨会发事件；宿主不可用时整体回退 TS 实现。
+  同一轮调用内 native 事件帧与回退实现共享「一次发卡」去重标记（`cardEmitted`），
+  避免「native 已发卡 → 看门狗边界失败 → 回退重发」双卡。
+- **首用**：`weather`（成功与缓存命中两种情况都发卡片）；后续进度/通知类场景可复用。

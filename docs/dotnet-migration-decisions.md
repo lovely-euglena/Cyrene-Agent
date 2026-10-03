@@ -263,3 +263,26 @@
   （不杀 host、仅摘除 pending）需引入「已放弃在途」状态与兜底计时器，否则串行
   闸门下新调用会被旧调用看门狗误杀——列为 #IKJLP2 后续（当前杀进程语义安全，
   代价仅一次主机重启）。
+
+## 2026-10-03 增量：T1 剩余三件（web_search / weather / plan_trip + 事件帧 v1）
+
+- **web_search**：`WebSearchTool.cs`（bocha/tavily/anySearch 三源 + 30 分钟 TTL
+  固定缓存 + 容量 100 整表清空）；引擎与各源 key 经 config 帧注入（B1：宿主内存
+  驻留、不落盘；每次调用前 TS 包装器实时刷新）；校验失败抛与 TS 同名错误码
+  （E_SEARCH_NOT_ENABLED / _QUERY_EMPTY / _KEY_MISSING /
+  _ENGINE_NOT_SUPPORTED:engine）→ 包装层回退 TS 原实现。
+- **weather**：`WeatherTool.cs`（open-meteo 免 key / 高德双源；城市解析缓存 24h、
+  天气结果 30 分钟；命中照常发卡片并补 cached/cachedAt）；卡片回调以新协议帧
+  回传（见下）；确定性文案（未启用/无城市/未知源/高德缺 key）与 TS 逐字对齐。
+- **plan_trip**：`TravelTool.cs`（高德地理编码 + 驾车/步行/骑行/公交四模式；
+  距离/时长/路费/换乘段文案与 TS 同构；amapKey/enabled 经 config 帧注入）。
+- **宿主事件帧 v1（op:"event"）**：宿主 → TS 的单向旁路帧
+  `{op:"event",callId,kind,payload}`，用于工具执行中的非结果性通知；
+  `NativeToolHost` 按 callId 路由到 `nativeFirst(options.onEvent)`；
+  首用 `weather_card`（TS 包装器转发 `weatherCardCallback`，回退路径仍由 TS 实现
+  直接回调，零重复）。设计稿 §6 已记录。
+- **验证**：matrix 67/67（web_search 4 + weather 4 + plan_trip 3）；dual-track
+  全绿（web_search 4 / weather 4 / plan_trip 3，含真实网络 SKIP 语义）；单测
+  6 项（web-search-native 3 / weather-native 3 / travel-native 3，另含既有回归）；
+  `vitest src/main/orchestrator/tools` 450 passed；tsc 0 错误。真实网络冒烟：
+  open-meteo「北京」返回结构化天气 + weather_card 事件帧。

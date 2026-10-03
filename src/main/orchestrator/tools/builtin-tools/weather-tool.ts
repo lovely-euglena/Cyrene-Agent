@@ -15,6 +15,7 @@ import type { ToolContext } from "../registry/tool-context";
 import { getDateLocale, getWeatherLanguage } from "../../../locale-context";
 import { currentUserTimezone } from "./timezone";
 import { TtlResultCache } from "./ttl-result-cache";
+import { nativeFirst, nativeToolHost } from "../native-tool-host";
 
 // ── 工具 4：weather（天气查询）─────────────────────────────
 // 查指定城市的实时天气。城市参数可选——没传就读用户信息的默认城市。
@@ -24,6 +25,8 @@ import { TtlResultCache } from "./ttl-result-cache";
 // 默认城市/天气源/高德key 通过 setWeatherConfig 注入（避免 import index.ts 造成循环依赖）。
 
 const WEATHER_TIMEOUT_MS = 15_000;
+/** native 轨看门狗：≥ C# 侧地理编码 + 天气查询两跳各 15s。 */
+const WEATHER_NATIVE_TIMEOUT_MS = 40_000;
 
 // ── 天气查询缓存 ─────────────────────────────────────────
 // 模型常被反复问"今天天气怎样"（伙伴场景高频问题），两层缓存：
@@ -83,6 +86,9 @@ export interface WeatherCardData {
   reporttime?: string;
 }
 
+/** 发卡回调（native 事件帧与回退实现共享；配合每轮调用内的去重标记） */
+type WeatherCardEmitter = (card: WeatherCardData, context?: ToolContext) => void;
+
 /**
  * index.ts 启动时调用，注入默认城市/天气源/高德key/卡片回调 的读取器。
  * source: "open-meteo"（免配置默认）| "amap"（高德）
@@ -130,13 +136,14 @@ async function omResolveCity(city: string): Promise<OMCity | null> {
 }
 
 /** Open-Meteo 实时天气查询（免费免 key）。结果缓存 30 分钟。 */
-async function omFetchWeather(city: string, context?: ToolContext): Promise<string> {
+async function omFetchWeather(city: string, context?: ToolContext, emitCard?: WeatherCardEmitter): Promise<string> {
+  const onCard = emitCard ?? weatherCardCallback;
   // 缓存命中：照常发卡片给渲染端，文本补 cached/cachedAt 标注
   const cacheKey = "open-meteo|" + city;
   const hit = weatherCache.get(cacheKey);
   if (hit) {
-    if (hit.value.card && weatherCardCallback) {
-      weatherCardCallback(hit.value.card, context);
+    if (hit.value.card && onCard) {
+      onCard(hit.value.card, context);
     }
     return JSON.stringify({
       ...hit.value.data,
@@ -215,8 +222,8 @@ async function omFetchWeather(city: string, context?: ToolContext): Promise<stri
       pressure: Math.round(c.surface_pressure),
     };
     weatherCache.set(cacheKey, { data: weatherData, card });
-    if (weatherCardCallback) {
-      weatherCardCallback(card, context);
+    if (onCard) {
+      onCard(card, context);
     }
 
     return JSON.stringify(weatherData);
@@ -280,13 +287,14 @@ async function amapResolveAdcode(city: string, key: string): Promise<AmapDistric
 }
 
 /** 高德实时天气查询。结果缓存 30 分钟。 */
-async function amapFetchWeather(city: string, key: string, context?: ToolContext): Promise<string> {
+async function amapFetchWeather(city: string, key: string, context?: ToolContext, emitCard?: WeatherCardEmitter): Promise<string> {
+  const onCard = emitCard ?? weatherCardCallback;
   // 缓存命中：照常发卡片给渲染端，文本补 cached/cachedAt 标注
   const cacheKey = "amap|" + city;
   const hit = weatherCache.get(cacheKey);
   if (hit) {
-    if (hit.value.card && weatherCardCallback) {
-      weatherCardCallback(hit.value.card, context);
+    if (hit.value.card && onCard) {
+      onCard(hit.value.card, context);
     }
     return JSON.stringify({
       ...hit.value.data,
@@ -341,8 +349,8 @@ async function amapFetchWeather(city: string, key: string, context?: ToolContext
       reporttime: w.reporttime,
     };
     weatherCache.set(cacheKey, { data: weatherData, card });
-    if (weatherCardCallback) {
-      weatherCardCallback(card, context);
+    if (onCard) {
+      onCard(card, context);
     }
 
     return JSON.stringify(weatherData);
@@ -354,7 +362,7 @@ async function amapFetchWeather(city: string, key: string, context?: ToolContext
   }
 }
 
-async function executeWeather(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
+async function executeWeather(args: Record<string, unknown>, context?: ToolContext, emitCard?: WeatherCardEmitter): Promise<string> {
   if (weatherEnabledGetter && !weatherEnabledGetter()) {
     return "[错误] 天气查询功能未启用，请在设置里开启";
   }
@@ -384,14 +392,14 @@ async function executeWeather(args: Record<string, unknown>, context?: ToolConte
 
   // 按天气源分支
   if (source === "open-meteo") {
-    return omFetchWeather(city, context);
+    return omFetchWeather(city, context, emitCard);
   }
   if (source === "amap") {
     const amapKey = amapKeyGetter?.() ?? "";
     if (!amapKey) {
       return "[错误] 还没有配置高德天气 Key。请在 设置 → 插件 → 天气查询 填入高德 Key，或切换天气源为 Open-Meteo（免配置）。";
     }
-    return amapFetchWeather(city, amapKey, context);
+    return amapFetchWeather(city, amapKey, context, emitCard);
   }
 
   // 未知天气源
@@ -424,6 +432,35 @@ export const weatherTool: ToolDefinition = {
     },
     required: [],
   },
-  execute: executeWeather,
+  execute: async (args, context) => {
+    // 实时下发天气配置（默认城市/天气源/高德 key/语言；B1：key 仅宿主内存驻留）
+    nativeToolHost.setRuntimeSettings({
+      dateLocale: getDateLocale(),
+      timezone: currentUserTimezone(),
+      weather: {
+        city: weatherCityGetter ? weatherCityGetter() : "",
+        source: weatherSourceGetter ? weatherSourceGetter() : "open-meteo",
+        amapKey: amapKeyGetter ? amapKeyGetter() : "",
+        enabled: weatherEnabledGetter ? weatherEnabledGetter() : true,
+        language: getWeatherLanguage(),
+      },
+    });
+    // 每轮调用一次发卡机会：native 事件帧与回退实现共享去重标记，
+    // 避免「native 已发卡 → 看门狗边界失败 → 回退再发」双卡
+    let cardEmitted = false;
+    const emitCard = (card: WeatherCardData) => {
+      if (cardEmitted || !weatherCardCallback) return;
+      cardEmitted = true;
+      weatherCardCallback(card, context);
+    };
+    return nativeFirst("weather", args, (nativeArgs) => executeWeather(nativeArgs, context, emitCard), {
+      timeoutMs: WEATHER_NATIVE_TIMEOUT_MS,
+      signal: context?.signal,
+      // 卡片经事件帧回传；与回退路径共享同一去重标记
+      onEvent: (event) => {
+        if (event.kind === "weather_card") emitCard(event.payload as WeatherCardData);
+      },
+    });
+  },
 };
 

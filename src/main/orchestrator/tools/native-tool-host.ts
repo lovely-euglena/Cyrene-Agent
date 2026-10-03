@@ -34,6 +34,12 @@ import { resolveDotnetConfig } from "../../dotnet-backend/config";
 
 const LOG_PREFIX = "[ToolHost]";
 
+/** 宿主事件帧（op:"event"）：天气卡片等调用内副作用，随 callId 路由给对应调用。 */
+export interface HostToolEvent {
+  kind: string;
+  payload: unknown;
+}
+
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -42,6 +48,8 @@ interface PendingCall {
   tool: string;
   signal?: AbortSignal;
   onAbort?: () => void;
+  /** 调用内事件回调（event 帧按 callId 路由）。 */
+  onEvent?: (event: HostToolEvent) => void;
 }
 
 interface QueuedCall {
@@ -54,6 +62,8 @@ interface QueuedCall {
   reject: (error: Error) => void;
   /** 排队期间的取消监听（派发时移除）。 */
   onAbort?: () => void;
+  /** 调用内事件回调（event 帧按 callId 路由）。 */
+  onEvent?: (event: HostToolEvent) => void;
 }
 
 /** 宿主运行时配置（config 帧载荷）。 */
@@ -62,6 +72,37 @@ export interface HostRuntimeSettings {
   dateLocale: string;
   /** 本地数据根（expenses.json 等宿主侧落盘位置）；null = 宿主侧不可用。 */
   dataDir: string | null;
+  /** web_search 引擎与各源 key（B1：仅宿主内存驻留，不落盘；调用前刷新）。 */
+  webSearch: WebSearchHostSettings | null;
+  /** 天气查询配置（B1：key 仅宿主内存驻留，不落盘；调用前刷新）。 */
+  weather: WeatherHostSettings | null;
+  /** 出行工具配置（B1：key 仅宿主内存驻留，不落盘；调用前刷新）。 */
+  travel: TravelHostSettings | null;
+}
+
+/** web_search 宿主侧配置。 */
+export interface WebSearchHostSettings {
+  engine: string;
+  bochaKey: string;
+  tavilyKey: string;
+  anySearchKey: string;
+}
+
+/** weather 宿主侧配置。 */
+export interface WeatherHostSettings {
+  city: string;
+  /** "open-meteo" | "amap" */
+  source: string;
+  amapKey: string;
+  enabled: boolean;
+  /** geocoding language（weatherLanguage，如 zh/en/ja）。 */
+  language: string;
+}
+
+/** plan_trip 宿主侧配置。 */
+export interface TravelHostSettings {
+  amapKey: string;
+  enabled: boolean;
 }
 
 /** nativeFirst 按件选项：长耗时工具（大文件下载/外网请求）覆盖默认 5s 看门狗。 */
@@ -70,6 +111,8 @@ export interface NativeFirstOptions {
   timeoutMs?: number;
   /** 父运行取消信号：排队中直接取消，在途杀 host 中止；AbortError 原样上抛不回退。 */
   signal?: AbortSignal;
+  /** 调用内事件回调（如 weather_card）：event 帧按 callId 路由；只有 native 轨会触发。 */
+  onEvent?: (event: HostToolEvent) => void;
 }
 
 export class NativeToolHost {
@@ -87,6 +130,9 @@ export class NativeToolHost {
     timezone: "Asia/Shanghai",
     dateLocale: "zh-CN",
     dataDir: null,
+    webSearch: null,
+    weather: null,
+    travel: null,
   };
 
   /** 兼容旧入口：仅更新时区（now 工具每次调用实时下发）。 */
@@ -102,6 +148,9 @@ export class NativeToolHost {
     if (patch.timezone !== undefined && patch.timezone.trim()) this.settings.timezone = patch.timezone.trim();
     if (patch.dateLocale !== undefined && patch.dateLocale.trim()) this.settings.dateLocale = patch.dateLocale.trim();
     if (patch.dataDir !== undefined) this.settings.dataDir = patch.dataDir;
+    if (patch.webSearch !== undefined) this.settings.webSearch = patch.webSearch;
+    if (patch.weather !== undefined) this.settings.weather = patch.weather;
+    if (patch.travel !== undefined) this.settings.travel = patch.travel;
     if (this.proc && !this.exited) this.send({ op: "config", ...this.settings });
   }
 
@@ -196,6 +245,18 @@ export class NativeToolHost {
       for (const w of this.readyWaiters.splice(0)) w();
       return;
     }
+    if (op === "event") {
+      // 调用内事件（如 weather_card）：按 callId 路由给对应调用的回调；无回调则忽略
+      const callId = typeof frame.callId === "string" ? frame.callId : "";
+      const call = this.pending.get(callId);
+      if (!call?.onEvent) return;
+      try {
+        call.onEvent({ kind: typeof frame.kind === "string" ? frame.kind : "", payload: frame.payload });
+      } catch (error) {
+        console.warn(LOG_PREFIX, "事件回调异常:", error instanceof Error ? error.message : error);
+      }
+      return;
+    }
     if (op === "result") {
       const callId = typeof frame.callId === "string" ? frame.callId : "";
       const call = this.pending.get(callId);
@@ -227,7 +288,7 @@ export class NativeToolHost {
     if (!entry) return;
 
     this.busy = true;
-    const { callId, tool, args, timeoutMs, signal } = entry;
+    const { callId, tool, args, timeoutMs, signal, onEvent } = entry;
     if (entry.onAbort && signal) signal.removeEventListener("abort", entry.onAbort);
 
     let done = false;
@@ -271,6 +332,7 @@ export class NativeToolHost {
       tool,
       signal,
       onAbort,
+      onEvent,
     });
 
     try {
@@ -290,13 +352,14 @@ export class NativeToolHost {
     args: Record<string, unknown>,
     timeoutMs = 5000,
     signal?: AbortSignal,
+    onEvent?: (event: HostToolEvent) => void,
   ): Promise<unknown | null> {
     if (signal?.aborted) throw createAbortError();
     if (!(await this.ensureStarted())) return null;
     if (this.exited || !this.proc) return null;
     return new Promise<unknown>((resolve, reject) => {
       const callId = `t${++this.callSeq}`;
-      const entry: QueuedCall = { callId, tool, args, timeoutMs, signal, resolve, reject };
+      const entry: QueuedCall = { callId, tool, args, timeoutMs, signal, resolve, reject, onEvent };
       // 排队期间取消：直接摘除，不触达 host
       if (signal) {
         entry.onAbort = () => {
@@ -338,7 +401,7 @@ export async function nativeFirst(
   if (!resolveDotnetConfig().toolHost) return fallback(args);
   if (options.signal?.aborted) throw createAbortError();
   try {
-    const result = await nativeToolHost.call(tool, args, options.timeoutMs, options.signal);
+    const result = await nativeToolHost.call(tool, args, options.timeoutMs, options.signal, options.onEvent);
     if (result !== null) {
       return typeof result === "string" ? result : JSON.stringify(result);
     }
