@@ -171,7 +171,7 @@ internal sealed class McpConnection : IDisposable
             foreach (var a in _args) psi.ArgumentList.Add(a);
             foreach (var kv in _env) psi.Environment[kv.Key] = kv.Value ?? "";
             _proc = Process.Start(psi) ?? throw new InvalidOperationException($"无法启动 {_command}");
-            AttachJob(_proc);
+            if (OperatingSystem.IsWindows()) AttachJob(_proc); // Job 对象 Windows-only；Linux 由 stdin EOF 收尾
             _procStdin = _proc.StandardInput;
             _procStdin.AutoFlush = true;
             _proc.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) _owner.Log("warn", $"[{_serverId}] {e.Data}"); };

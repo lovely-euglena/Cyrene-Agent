@@ -6,19 +6,21 @@
 """
 import subprocess, json, os, tempfile, sys
 
-NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NATIVE = os.path.join(REPO_ROOT, "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll")
 results = []
 
 def run_host(args, frames, timeout=60, raw=False):
     inp = frames if raw else "\n".join(frames)
     env = dict(os.environ)
     dr = os.path.expanduser("~/.dotnet")
-    env["DOTNET_ROOT"] = dr
-    env["PATH"] = dr + os.pathsep + env.get("PATH", "")
+    if os.path.isdir(dr):
+        env["DOTNET_ROOT"] = dr
+        env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     try:
         p = subprocess.run(["dotnet", NATIVE] + args, input=inp,
                            capture_output=True, text=True, timeout=timeout,
-                           cwd="/home/z/my-project/repos/Cyrene-Agent", env=env)
+                           cwd=REPO_ROOT, env=env)
     except subprocess.TimeoutExpired:
         return [], -99, "TIMEOUT"
     out = []
@@ -70,7 +72,20 @@ check("相对穿越 ../../etc/passwd 被读出或拒", "root:" in p1 or "E_FS" i
 p2 = str(by.get("p2", {}).get("data", ""))
 check("绝对路径 /etc/passwd（工具语义=受信 fs，读不崩溃即可）", "root:" in p2 or "E_FS" in p2, p2[:100])
 p4 = by.get("p4", {})
-check("写 /etc 受拒或失败", os.path.exists("/etc/cyrene-pwned") is False, json.dumps(p4)[:120])
+if os.name == "nt":
+    # Windows：/etc 解析为当前盘符根（如 D:\etc），fs 工具按受信绝对路径放行属预期；
+    # POSIX 越权断言仅在 Linux 执行（CI 即 Linux）。清理本测试写入的残留。
+    side = os.path.abspath("/etc/cyrene-pwned")
+    if os.path.exists(side):
+        try: os.remove(side)
+        except OSError: pass
+    parent = os.path.dirname(side)
+    if os.path.isdir(parent):
+        try: os.rmdir(parent)  # 仅空目录可删
+        except OSError: pass
+    check("写 /etc（Windows 跳过 POSIX 断言，已清理）", True)
+else:
+    check("写 /etc 受拒或失败", os.path.exists("/etc/cyrene-pwned") is False, json.dumps(p4)[:120])
 
 # ── 3. RAG 恶意输入 ────────────────────────────
 print("\n=== 3. RAG 边缘（注入/越界）===")

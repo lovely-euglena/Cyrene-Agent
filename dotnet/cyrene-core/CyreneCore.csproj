@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- cyrene-core：跨平台（net10.0）核心库——七 host 协议 / 内置工具 / RAG / 记忆 /
+       对话循环 / Agents / MCP。铁律（CI 断言锁定）：不引入 net10.0-windows /
+       WPF / WinForms / System.Windows 依赖；剪贴板等 Windows-only 能力经
+       Tools/ClipboardTool.PlatformImpl 由宿主注入（cyrene-native）。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>cyrene-core</AssemblyName>
+    <RootNamespace>CyreneNative</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Jieba.NET" Version="0.42.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 同源拆分：内部实现经 IVT 供宿主（cyrene-native）与 Linux 冒烟壳（cyrene-smoke）使用，
+         非公共 API 承诺；后续服务端（cloud-server）同样以 IVT 接入。 -->
+    <InternalsVisibleTo Include="cyrene-native" />
+    <InternalsVisibleTo Include="cyrene-smoke" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Jieba.NET 老式 content 包：SDK 项目不自动拷 Resources（词典）——
+         不拷则 JiebaSegmenter 静态构造抛异常，rag-host open 即失败。
+         工程引用的消费方会随 CopyToOutputDirectory 传递到各自输出目录。 -->
+    <None Include="$(NuGetPackageRoot)jieba.net/0.42.2/Resources/**/*"
+          CopyToOutputDirectory="PreserveNewest" LinkBase="Resources" />
+  </ItemGroup>
+</Project>
