@@ -30,7 +30,7 @@
 - 🛠️ **辅助工作（Work）** — 通用任务会话，支持联网搜索、右侧浏览器操作、文件处理、文档生成与生活服务等工具的串联调用
 - 💻 **代码协作（Code）** — 绑定可信代码目录，提供 LSP 语义查询与受限的读写改命令执行，安全边界由权限审批统一把关
 - 📚 **学习陪伴（Learn）** — 绑定 Obsidian Vault，陪伴用户理解材料、整理笔记、生成练习与维护进度
-- 🧠 **个性化记忆** — L0 / L1 / L2 分层记忆，结合 DMAE Worldbook 与条目生命周期管理，沉淀长期互动
+- 🧠 **个性化记忆** — 用户wiki/summary/embedding三种记忆模式，结合 DMAE Worldbook 与条目生命周期管理，沉淀长期互动
 - 🔊 **语音交互** — 集成 TTS、ASR 与语音通话，让昔涟能够听见并回应用户
 - 🧰 **丰富工具生态** — 覆盖联网搜索、文件处理、文档生成、生活服务、音乐与 MCP 扩展
 - 🔌 **多模型厂商适配** — 针对不同厂商提供分级 Structured Output 与 Function Calling 兼容方案
@@ -144,9 +144,9 @@ pnpm run dev
 pnpm run package:win:dir
 ```
 
-### 3. 安装 BGE-M3（推荐）
+### 3. 安装 BGE-M3
 
-Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 Embedding 模型**（用于贴纸语义匹配、Worldbook 语义检索与 RAG 检索）：
+Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 Embedding 模型**：
 
 [前往 Releases 下载 BGE-M3](https://github.com/Playa-Cyrene/Cyrene-Agent/releases)
 
