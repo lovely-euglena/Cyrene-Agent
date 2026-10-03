@@ -17,6 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { nativeFirst } from "../native-tool-host";
 
 const LOG_PREFIX = "[BuiltinTools]";
 
@@ -190,6 +191,23 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
   }
 }
 
+/**
+ * download_file native 轨：输出根由包装层注入（工作区/桌面），其余语义（沙箱、
+ * 黑名单、上限、空闲超时、落盘）在 ToolHost；host 故障/缺失整体回退 TS 实现。
+ */
+async function executeDownloadFileNativeFirst(
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+): Promise<string> {
+  const root = ctx?.resolvedWorkspaceRoot
+    ?? (require("electron") as typeof import("electron")).app.getPath("desktop");
+  return nativeFirst(
+    "download_file",
+    { ...args, __cyreneRoot: String(root) },
+    (nativeArgs) => executeDownloadFile(nativeArgs, ctx),
+  );
+}
+
 export const downloadFileTool: ToolDefinition = {
   id: "download_file",
   name: "下载文件",
@@ -221,5 +239,5 @@ export const downloadFileTool: ToolDefinition = {
     },
     required: ["url"],
   },
-  execute: executeDownloadFile,
+  execute: executeDownloadFileNativeFirst,
 };

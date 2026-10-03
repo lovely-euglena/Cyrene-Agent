@@ -118,6 +118,15 @@
   （含诊断与 CRLF）；`dotnet-tools-matrix.py` 35/35。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
 
+## 2026-10-03 增量：T1 续——download_file 下沉
+
+- **download_file（.NET）**：输出根由 TS 包装器经内部参数 `__cyreneRoot` 注入；
+  危险字符 / 目录穿越 / 危险后缀黑名单 / 64MiB 上限 / 30s 空闲超时 / Content-Type
+  补扩展名 / 先缓冲后一次性落盘，全部与 TS 同口径；失败文案字符串逐字对齐。
+- **验证**：`download-file-native.test.ts` 3 项；`dual-track-diff` download 段 5 组
+  （本地 HTTP 服务：显式 filename/补扩展名/404/黑名单/未知类型，落盘字节级对比）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
+
 ## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）
 
 - **决策**：密钥等敏感信息分阶段迁移 .NET 保存处理。**Phase 1** 在 `cyrene-native` 新增
