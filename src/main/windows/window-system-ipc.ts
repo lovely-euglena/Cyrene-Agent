@@ -18,6 +18,8 @@ export interface WindowSystemIpcDependencies {
    * 缺省回退：直接创建 Electron 设置窗（兼容旧装配/测试桩）。
    */
   openSettings?(section?: string): void;
+  /** 打开本地音乐窗（设置页「打开音乐窗口」）；未注入时返回 false。 */
+  openMusicWindow?(): Promise<boolean> | boolean;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
   /**
@@ -132,6 +134,16 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   ipc.handle(IPC.SETTINGS_REQUEST_SWITCH_SECTION, (_event, section?: string) => {
     openSettingsFromEntry(typeof section === "string" ? section : "appearance");
     return true;
+  });
+
+  // 设置页「打开音乐窗口」：走 native music 窗；未启用时回 false 由 UI 提示
+  ipc.handle(IPC.MUSIC_OPEN_WINDOW, async () => {
+    if (!deps.openMusicWindow) return false;
+    try {
+      return Boolean(await deps.openMusicWindow());
+    } catch {
+      return false;
+    }
   });
 
   ipc.on(IPC.TASKS_MINIMIZE, () => {

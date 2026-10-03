@@ -102,7 +102,6 @@ export interface AppearanceSettingsPageProps {
   section: SettingsSection;
   onSelectSection: (section: SettingsSection) => void;
   onBackToWorkspace: () => void;
-  musicSettingsNavigation?: number;
 }
 
 interface SettingsNavItemProps {
@@ -128,7 +127,7 @@ function SettingsNavItem({ section, currentSection, icon, label, onSelect }: Set
   );
 }
 
-export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorkspace, musicSettingsNavigation = 0 }: AppearanceSettingsPageProps) {
+export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorkspace }: AppearanceSettingsPageProps) {
   const { t } = useTranslation();
   const [values, setValues] = useState(defaults);
   const [loading, setLoading] = useState(true);
@@ -332,7 +331,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
 
       <main className="cy-workspace is-empty cy-settings-content">
         <div className="cy-settings-content__inner">
-          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
+          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 

@@ -22,7 +22,7 @@ describe("resolveSettingsDestination", () => {
   });
 
   it("opens migrated music settings from the music player entry", () => {
-    expect(resolveSettingsDestination("music")).toEqual({ kind: "settings", section: "tools", openMusicModal: true });
+    expect(resolveSettingsDestination("music")).toEqual({ kind: "settings", section: "preferences" });
   });
 
   it("defaults unknown legacy sections to appearance", () => {

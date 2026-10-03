@@ -51,18 +51,6 @@ function readTools(value: unknown): ToolValues {
   return result;
 }
 
-interface MusicResult<T> { ok: boolean; data?: T; error?: string }
-interface MusicApi {
-  getCachedTracks: () => Promise<MusicResult<unknown[]>>;
-  importLocalFolder: () => Promise<MusicResult<{ imported: number; skipped: number; cancelled?: boolean; truncated?: boolean }>>;
-  importLocalTracks: () => Promise<MusicResult<{ imported: number; skipped: number; cancelled?: boolean; truncated?: boolean }>>;
-  openPlayer: () => Promise<unknown>;
-}
-
-function musicApi(): MusicApi | undefined {
-  return (window as Window & { music?: MusicApi }).music;
-}
-
 function ExtensionToolPanels() {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -94,7 +82,7 @@ function ExtensionToolPanels() {
   </section>;
 }
 
-export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettingsNavigation?: number }) {
+export function ToolSettingsPanel() {
   const { t } = useTranslation();
   const [values, setValues] = useState<ToolValues>(defaults);
   const [permission, setPermission] = useState<PermissionLevel>("read-only");
@@ -104,14 +92,7 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
   const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState("");
   const [fullAccessOpen, setFullAccessOpen] = useState(false);
-  const [musicSettingsOpen, setMusicSettingsOpen] = useState(false);
   const [confirmSeconds, setConfirmSeconds] = useState(5);
-  const [musicCount, setMusicCount] = useState<number | null>(null);
-  const [musicStatus, setMusicStatus] = useState("");
-
-  useEffect(() => {
-    if (musicSettingsNavigation > 0) setMusicSettingsOpen(true);
-  }, [musicSettingsNavigation]);
 
   useEffect(() => {
     let disposed = false;
@@ -126,10 +107,6 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
         setLoading(false);
       })
       .catch(() => { if (!disposed) { setLoadError(true); setLoading(false); } });
-    const api = musicApi();
-    if (api) void api.getCachedTracks().then((result) => {
-      if (!disposed && result.ok) setMusicCount(result.data?.length ?? 0);
-    }).catch(() => {});
     return () => { disposed = true; };
   }, []);
 
@@ -193,22 +170,6 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
     } finally {
       setSaving(false);
       setFullAccessOpen(false);
-    }
-  }
-
-  async function importMusic(kind: "folder" | "files") {
-    const api = musicApi();
-    if (!api) return;
-    setMusicStatus(t("settingsPage.tools.musicImporting"));
-    try {
-      const result = await (kind === "folder" ? api.importLocalFolder() : api.importLocalTracks());
-      if (!result.ok) throw new Error(result.error);
-      if (result.data?.cancelled) { setMusicStatus(t("settingsPage.tools.musicCancelled")); return; }
-      setMusicStatus(t("settingsPage.tools.musicImported", { count: result.data?.imported ?? 0, skipped: result.data?.skipped ?? 0 }));
-      const tracks = await api.getCachedTracks();
-      if (tracks.ok) setMusicCount(tracks.data?.length ?? 0);
-    } catch {
-      setMusicStatus(t("settingsPage.tools.musicImportFailed"));
     }
   }
 

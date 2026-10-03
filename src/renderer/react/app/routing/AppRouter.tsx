@@ -8,7 +8,6 @@ export function AppRouter() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [scheduledTasksNavigation, setScheduledTasksNavigation] = useState(0);
-  const [musicSettingsNavigation, setMusicSettingsNavigation] = useState(0);
 
   useEffect(() => window.settings?.onSwitchSection?.((requestedSection) => {
     const destination = resolveSettingsDestination(requestedSection);
@@ -18,7 +17,6 @@ export function AppRouter() {
       return;
     }
     setSettingsSection(destination.section);
-    setMusicSettingsNavigation((revision) => revision + (destination.openMusicModal ? 1 : 0));
     setSettingsOpen(true);
   }), []);
 
@@ -42,7 +40,6 @@ export function AppRouter() {
             section={settingsSection}
             onSelectSection={setSettingsSection}
             onBackToWorkspace={() => setSettingsOpen(false)}
-            musicSettingsNavigation={musicSettingsNavigation}
           />
         </div>
       )}

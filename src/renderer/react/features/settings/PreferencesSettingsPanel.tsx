@@ -277,6 +277,16 @@ export function PreferencesSettingsPanel() {
     }
   }
 
+  async function openMusicWindow() {
+    setStatus(t("settingsPage.preferences.musicOpening"));
+    try {
+      const ok = await window.settings?.openMusicWindow?.();
+      setStatus(ok ? t("settingsPage.preferences.musicOpened") : t("settingsPage.preferences.musicOpenFailed"));
+    } catch {
+      setStatus(t("settingsPage.preferences.musicOpenFailed"));
+    }
+  }
+
   async function saveCustomStyle() {
     setStyleSaving(true);
     try {
@@ -437,6 +447,12 @@ export function PreferencesSettingsPanel() {
                   ]}
                   onChange={(value) => update("musicAgentAccess", value as PreferencesValues["musicAgentAccess"])}
                 />
+              </div>
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.musicOpenWindow")}</strong><span>{t("settingsPage.preferences.musicOpenWindowDescription")}</span></div>
+                <div className="cy-settings-row__control cy-settings-button-group">
+                  <Button onClick={() => void openMusicWindow()}>{t("settingsPage.preferences.musicOpenWindow")}</Button>
+                </div>
               </div>
             </Card>
           </section>
