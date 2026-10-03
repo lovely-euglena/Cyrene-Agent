@@ -73,6 +73,15 @@ c_r4 = req("fs_read_file", {})
 c_l1 = req("fs_list_dir", {"path": tmp})
 c_l2 = req("fs_list_dir", {"path": "/definitely/not/exist"})
 
+# expense（config 帧注入 dataDir；record 两笔 + 负数拒绝 + 汇总/明细）
+c_exp_dir = os.path.join(tmp, "expenses")
+frames.append(json.dumps({"op": "config", "dataDir": c_exp_dir, "timezone": "Asia/Shanghai", "dateLocale": "zh-CN"}))
+c_ex1 = req("record_expense", {"amount": 12.5, "category": "餐饮", "note": "午饭"})
+c_ex2 = req("record_expense", {"amount": 40.5, "category": "交通", "note": "打车"})
+c_ex3 = req("record_expense", {"amount": -1})
+c_eq1 = req("query_expense", {"summary": True})
+c_eq2 = req("query_expense", {})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
@@ -126,6 +135,25 @@ d = data_json(c_r4); check("读缺参报错", isinstance(d, dict) and d.get("err
 print("\n=== fs_list_dir ===")
 d = data_json(c_l1); check("列目录", d and "w1.txt" in json.dumps(d), d)
 d = data_json(c_l2); check("列不存在目录报错", by.get(c_l2, {}).get("ok") is False, by.get(c_l2, d))
+
+print("\n=== expense ===")
+def data_text(cid):
+    d = by.get(cid, {}).get("data")
+    return d if isinstance(d, str) else json.dumps(d, ensure_ascii=False)
+
+check("记账 12.5 餐饮", data_text(c_ex1) == "[record_expense] 已记录：12.5 元 / 餐饮 / 午饭", data_text(c_ex1))
+check("记账 40.5 交通", data_text(c_ex2) == "[record_expense] 已记录：40.5 元 / 交通 / 打车", data_text(c_ex2))
+check("记账负数拒绝", data_text(c_ex3) == "[错误] amount 必须是正数", data_text(c_ex3))
+eq1 = data_text(c_eq1)
+check("查账汇总（53.00 + 分类键序）",
+      eq1 == "[query_expense] 最近 30 天共 2 笔，合计 53.00 元\n分类：{\"餐饮\":12.5,\"交通\":40.5}", eq1)
+eq2 = data_text(c_eq2)
+check("查账明细两行", eq2.count("\n") == 2 and "12.5元 餐饮 午饭" in eq2 and "40.5元 交通 打车" in eq2, eq2)
+try:
+    store = json.loads(open(os.path.join(c_exp_dir, "expenses.json"), encoding="utf-8").read())
+    check("账本 JSON 两条且字段顺序可读", len(store) == 2 and store[0]["category"] == "餐饮" and store[1]["amount"] == 40.5, store)
+except Exception as exc:
+    check("账本 JSON 可解析", False, str(exc))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

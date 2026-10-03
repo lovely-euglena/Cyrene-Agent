@@ -83,8 +83,17 @@
   日期展示走 config 帧的 timezone/dateLocale；网络异常抛错误帧 → TS 包装层回退原实现。
   接线在 `life-tools.ts`（调用前实时下发 locale/时区）。
 - **bootstrap**：启动时注入 `dataDir`（userData）+ `dateLocale`，为宿主侧落盘工具（expense 等）铺路。
-- **验证**：`life-tools-native.test.ts` 2 项；`dual-track-diff.ts` 新增 life 段
-  （exchange_rate 输出逐字对比，外网双侧失败自动 SKIP）。
+## 2026-10-03 增量：T1 续——expense 三件下沉（record/query）
+
+- **record_expense / query_expense（.NET）**：本地 JSON 账本 `{dataDir}/expenses.json`
+  （dataDir 随 config 帧注入，bootstrap 已接）；record 正数校验 + 追加，query
+  天数/分类过滤、汇总 `toFixed(2)` 与分类键序、明细按 config 时区+locale 格式化。
+  dataDir 未注入 / IO 异常 → 错误帧 → TS 包装层回退。
+- **口径对齐助手**：新增 `HostLocale.cs`（`Fmt` / `FormatDate` / `FormatDateTimeLocal` /
+  `Truthy`），exchange_rate 一并改用，JS 数字/日期输出逐字对齐有唯一来源。
+- **验证**：`dotnet-tools-matrix.py` 28/28（+6 expense 断言，含账本 JSON 校验）；
+  `dual-track-diff` life 段扩为 exchange 1 + expense 6（record/query 输出逐字 +
+  账本结构），TS 基线经 `scripts/dual-track-env.ts` 注入隔离 userData。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
 
 ## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）

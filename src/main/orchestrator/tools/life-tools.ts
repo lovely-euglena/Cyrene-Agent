@@ -63,6 +63,25 @@ function saveExpenses(records: ExpenseRecord[]): void {
   fs.writeFileSync(expenseFile(), JSON.stringify(records, null, 2), "utf8");
 }
 
+/** record_expense 的 TS 实现（native 轨回退路径）。 */
+async function recordExpenseExecute(args: Record<string, unknown>): Promise<string> {
+  const amount = Number(args.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return "[错误] amount 必须是正数";
+  }
+  const records = loadExpenses();
+  const rec: ExpenseRecord = {
+    ts: Date.now(),
+    amount,
+    category: String(args.category || "其他"),
+    note: String(args.note || ""),
+  };
+  records.push(rec);
+  saveExpenses(records);
+  console.log(LOG_PREFIX, "记账:", rec);
+  return `[record_expense] 已记录：${amount} 元 / ${rec.category} / ${rec.note}`;
+}
+
 function registerExpenseTools(): void {
   toolRegistry.register({
     id: "record_expense",
@@ -90,21 +109,7 @@ function registerExpenseTools(): void {
       required: ["amount"],
     },
     execute: async (args) => {
-      const amount = Number(args.amount);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return "[错误] amount 必须是正数";
-      }
-      const records = loadExpenses();
-      const rec: ExpenseRecord = {
-        ts: Date.now(),
-        amount,
-        category: String(args.category || "其他"),
-        note: String(args.note || ""),
-      };
-      records.push(rec);
-      saveExpenses(records);
-      console.log(LOG_PREFIX, "记账:", rec);
-      return `[record_expense] 已记录：${amount} 元 / ${rec.category} / ${rec.note}`;
+      return nativeFirst("record_expense", args, recordExpenseExecute);
     },
   });
 
@@ -133,30 +138,40 @@ function registerExpenseTools(): void {
       },
     },
     execute: async (args) => {
-      const days = Number(args.days) || 30;
-      const cutoff = Date.now() - days * 86400_000;
-      let records = loadExpenses().filter(r => r.ts >= cutoff);
-      if (args.category) {
-        records = records.filter(r => r.category === args.category);
-      }
-      if (records.length === 0) {
-        return `[query_expense] 最近 ${days} 天没有记账记录`;
-      }
-      if (args.summary) {
-        const total = records.reduce((s, r) => s + r.amount, 0);
-        const byCat: Record<string, number> = {};
-        for (const r of records) {
-          byCat[r.category] = (byCat[r.category] || 0) + r.amount;
-        }
-        return `[query_expense] 最近 ${days} 天共 ${records.length} 笔，合计 ${total.toFixed(2)} 元\n分类：${JSON.stringify(byCat)}`;
-      }
-      const lines = records.map(r => {
-        const d = new Date(r.ts).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() });
-        return `${d} ${r.amount}元 ${r.category} ${r.note}`;
+      // 实时下发日期 locale/时区（明细行按用户时区展示）
+      nativeToolHost.setRuntimeSettings({
+        dateLocale: getDateLocale(),
+        timezone: currentUserTimezone(),
       });
-      return `[query_expense] 最近 ${days} 天 ${records.length} 笔：\n${lines.join("\n")}`;
+      return nativeFirst("query_expense", args, queryExpenseExecute);
     },
   });
+}
+
+/** query_expense 的 TS 实现（native 轨回退路径）。 */
+async function queryExpenseExecute(args: Record<string, unknown>): Promise<string> {
+  const days = Number(args.days) || 30;
+  const cutoff = Date.now() - days * 86400_000;
+  let records = loadExpenses().filter(r => r.ts >= cutoff);
+  if (args.category) {
+    records = records.filter(r => r.category === args.category);
+  }
+  if (records.length === 0) {
+    return `[query_expense] 最近 ${days} 天没有记账记录`;
+  }
+  if (args.summary) {
+    const total = records.reduce((s, r) => s + r.amount, 0);
+    const byCat: Record<string, number> = {};
+    for (const r of records) {
+      byCat[r.category] = (byCat[r.category] || 0) + r.amount;
+    }
+    return `[query_expense] 最近 ${days} 天共 ${records.length} 笔，合计 ${total.toFixed(2)} 元\n分类：${JSON.stringify(byCat)}`;
+  }
+  const lines = records.map(r => {
+    const d = new Date(r.ts).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() });
+    return `${d} ${r.amount}元 ${r.category} ${r.note}`;
+  });
+  return `[query_expense] 最近 ${days} 天 ${records.length} 笔：\n${lines.join("\n")}`;
 }
 
 // ══════════════════════════════════════════════════════════

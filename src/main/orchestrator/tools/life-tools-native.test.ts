@@ -86,3 +86,29 @@ describe("exchange_rate native 轨", () => {
     expect(out).toContain("汇率 7.12");
   });
 });
+
+describe("expense native 轨", () => {
+  it("record_expense：native 可用时透传参数", async () => {
+    nativeMocks.nativeResult = "[record_expense] 已记录：12.5 元 / 餐饮 / 午饭";
+    const out = await getTool("record_expense").execute({ amount: 12.5, category: "餐饮", note: "午饭" });
+
+    expect(out).toBe("[record_expense] 已记录：12.5 元 / 餐饮 / 午饭");
+    expect(nativeMocks.calls).toEqual([
+      { tool: "record_expense", args: { amount: 12.5, category: "餐饮", note: "午饭" } },
+    ]);
+  });
+
+  it("query_expense：native 可用时透传参数并实时下发 locale/时区", async () => {
+    nativeMocks.nativeResult = "[query_expense] 最近 30 天共 2 笔，合计 53.00 元";
+    const out = await getTool("query_expense").execute({ days: 30, summary: true });
+
+    expect(out).toContain("合计 53.00 元");
+    expect(nativeMocks.calls).toEqual([
+      { tool: "query_expense", args: { days: 30, summary: true } },
+    ]);
+    expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
+      dateLocale: "zh-CN",
+      timezone: "Asia/Shanghai",
+    });
+  });
+});

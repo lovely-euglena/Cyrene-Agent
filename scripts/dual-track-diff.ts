@@ -8,6 +8,7 @@
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
+import { DUAL_TRACK_USER_DATA } from "./dual-track-env";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
@@ -94,7 +95,7 @@ function loadTsTools(): Promise<Map<string, TsFsTool>> {
     lifeTools.registerLifeTools();
     const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
     const map = new Map<string, TsFsTool>();
-    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate"]) {
+    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense"]) {
       const tool = toolRegistry.getById(id);
       if (tool) map.set(id, (args) => Promise.resolve(tool.execute(args)));
     }
@@ -216,40 +217,97 @@ async function runFsDualTrack(): Promise<number> {
   return failed;
 }
 
-/** 生活类工具双轨（exchange_rate）。外网不可达且双侧一致时按 SKIP，避免网络抖动误报。 */
+/** 生活类工具双轨（exchange_rate + expense）。外网不可达且双侧一致时按 SKIP，避免网络抖动误报。 */
 async function runLifeDualTrack(): Promise<number> {
+  let failed = 0;
   const tsTools = await loadTsTools();
+
+  // ── exchange_rate ──────────────────────────────────────
   const tsExchange = tsTools.get("exchange_rate");
   if (!tsExchange) {
     console.log("[FAIL] life exchange_rate：TS 轨未注册");
-    return 1;
-  }
-  const args = { from: "USD", to: "CNY", amount: 100 };
-  const configFrames = [{ op: "config", timezone: "Asia/Shanghai", dateLocale: "zh-CN" }];
+    failed++;
+  } else {
+    const args = { from: "USD", to: "CNY", amount: 100 };
+    const configFrames = [{ op: "config", timezone: "Asia/Shanghai", dateLocale: "zh-CN" }];
+    let tsOut = "";
+    let tsThrew = false;
+    try {
+      tsOut = await tsExchange(args);
+    } catch (error) {
+      tsThrew = true;
+      tsOut = "[错误] " + (error instanceof Error ? error.message : String(error));
+    }
+    const host = await callSmokeTool("exchange_rate", args, configFrames);
+    const netOut = host.ok ? String(host.data ?? "") : "";
 
-  let tsOut = "";
-  let tsThrew = false;
+    const tsFailed = tsThrew || tsOut.includes("汇率查询失败");
+    const netFailed = !host.ok || netOut.includes("汇率查询失败");
+    if (tsFailed && netFailed) {
+      console.log("[SKIP] life exchange_rate（外网不可达，双侧一致，跳过比对）");
+    } else if (tsOut === netOut) {
+      console.log("[PASS] life exchange_rate 双轨输出一致");
+    } else {
+      failed++;
+      console.log(`[FAIL] life exchange_rate:\n  TS =${tsOut}\n  NET=${netOut}`);
+    }
+  }
+
+  // ── expense（record/query）：TS userData 由 dual-track-env 隔离 ──
+  const tsRecord = tsTools.get("record_expense");
+  const tsQuery = tsTools.get("query_expense");
+  if (!tsRecord || !tsQuery) {
+    console.log("[FAIL] life expense：TS 轨未注册");
+    return failed + 1;
+  }
+  const netDataDir = mkdtempSync(path.join(os.tmpdir(), "dual-track-expense-"));
+  const configFrames = [
+    { op: "config", dataDir: netDataDir, timezone: "Asia/Shanghai", dateLocale: "zh-CN" },
+  ];
   try {
-    tsOut = await tsExchange(args);
-  } catch (error) {
-    tsThrew = true;
-    tsOut = "[错误] " + (error instanceof Error ? error.message : String(error));
+    const recordCases: Array<{ name: string; args: Record<string, unknown>; netArgs: Record<string, unknown> }> = [
+      { name: "record 餐饮", args: { amount: 12.5, category: "餐饮", note: "午饭" }, netArgs: { amount: 12.5, category: "餐饮", note: "午饭" } },
+      { name: "record 交通", args: { amount: 40.5, category: "交通", note: "打车" }, netArgs: { amount: 40.5, category: "交通", note: "打车" } },
+      { name: "record 负数拒绝", args: { amount: -1 }, netArgs: { amount: -1 } },
+    ];
+    for (const c of recordCases) {
+      const tsOut = await tsRecord(c.args);
+      const host = await callSmokeTool("record_expense", c.netArgs, configFrames);
+      const netOut = host.ok ? String(host.data ?? "") : "";
+      if (tsOut === netOut) console.log(`[PASS] life ${c.name}`);
+      else {
+        failed++;
+        console.log(`[FAIL] life ${c.name}:\n  TS =${tsOut}\n  NET=${netOut}`);
+      }
+    }
+    for (const q of [
+      { name: "query 汇总", args: { days: 30, summary: true } },
+      { name: "query 明细", args: {} },
+    ]) {
+      const tsOut = await tsQuery(q.args);
+      const host = await callSmokeTool("query_expense", q.args, configFrames);
+      const netOut = host.ok ? String(host.data ?? "") : "";
+      if (tsOut === netOut) console.log(`[PASS] life ${q.name}`);
+      else {
+        failed++;
+        console.log(`[FAIL] life ${q.name}:\n  TS =${tsOut}\n  NET=${netOut}`);
+      }
+    }
+    // 账本结构对比（ts 为各自的写入时刻，必然不同；其余逐字段一致）
+    const stripTs = (raw: string): unknown =>
+      (JSON.parse(raw) as Array<Record<string, unknown>>).map(({ ts: _ts, ...rest }) => rest);
+    const tsStore = stripTs(readFileSync(path.join(DUAL_TRACK_USER_DATA, "expenses.json"), "utf8"));
+    const netStore = stripTs(readFileSync(path.join(netDataDir, "expenses.json"), "utf8"));
+    if (JSON.stringify(tsStore) === JSON.stringify(netStore)) {
+      console.log("[PASS] life expense 账本结构一致");
+    } else {
+      failed++;
+      console.log(`[FAIL] life expense 账本结构不一致:\n  TS =${JSON.stringify(tsStore)}\n  NET=${JSON.stringify(netStore)}`);
+    }
+  } finally {
+    rmSync(netDataDir, { recursive: true, force: true });
   }
-  const host = await callSmokeTool("exchange_rate", args, configFrames);
-  const netOut = host.ok ? String(host.data ?? "") : "";
-
-  const tsFailed = tsThrew || tsOut.includes("汇率查询失败");
-  const netFailed = !host.ok || netOut.includes("汇率查询失败");
-  if (tsFailed && netFailed) {
-    console.log("[SKIP] life exchange_rate（外网不可达，双侧一致，跳过比对）");
-    return 0;
-  }
-  if (tsOut === netOut) {
-    console.log("[PASS] life exchange_rate 双轨输出一致");
-    return 0;
-  }
-  console.log(`[FAIL] life exchange_rate:\n  TS =${tsOut}\n  NET=${netOut}`);
-  return 1;
+  return failed;
 }
 
 async function main(): Promise<void> {
