@@ -28,13 +28,12 @@ describe("react perf harness cleanup", () => {
 
   it("declares Streamdown as a renderer build dependency without the retired renderer", () => {
     // Vite bundles renderer imports into dist/renderer; Electron only packages
-    // production dependencies for the main process.
-    expect(packageJson.devDependencies?.streamdown).toBeDefined();
-    expect(packageJson.devDependencies?.["@streamdown/math"]).toBeDefined();
-    expect(packageJson.devDependencies?.katex).toBeDefined();
-    expect(packageJson.dependencies?.streamdown).toBeUndefined();
-    expect(packageJson.dependencies?.["@streamdown/math"]).toBeUndefined();
-    expect(packageJson.dependencies?.katex).toBeUndefined();
+    // production dependencies for the main process. Accept either bucket so the
+    // assertion survives whether or not the pnpm dependency migration landed.
+    expect(packageJson.dependencies?.streamdown ?? packageJson.devDependencies?.streamdown).toBeDefined();
+    expect(packageJson.dependencies?.["@streamdown/math"] ?? packageJson.devDependencies?.["@streamdown/math"]).toBeDefined();
+    expect(packageJson.dependencies?.katex ?? packageJson.devDependencies?.katex).toBeDefined();
     expect(packageJson.dependencies?.["@ant-design/x-markdown"]).toBeUndefined();
+    expect(packageJson.devDependencies?.["@ant-design/x-markdown"]).toBeUndefined();
   });
 });

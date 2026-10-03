@@ -12,7 +12,8 @@ const calls: string[] = [];
 const liveWindows: Array<{ destroy(): void; isDestroyed(): boolean }> = [];
 
 vi.mock("electron", () => ({
-  app: { getAppPath: () => "/app", isPackaged: false },
+  app: { getAppPath: () => "/app", getPath: () => "/tmp", isPackaged: false },
+  nativeTheme: { shouldUseDarkColors: false },
   BrowserWindow: class {
     destroyed = false;
     webContents = { on: () => undefined, send: () => undefined, isDestroyed: () => false, setWindowOpenHandler: () => undefined };
