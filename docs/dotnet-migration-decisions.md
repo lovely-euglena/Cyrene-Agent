@@ -106,6 +106,18 @@
   （literal/regex/glob/未命中/逃逸）；`dotnet-tools-matrix.py` 32/32。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
 
+## 2026-10-03 增量：T1 续——str_replace 下沉（两段式保 review 时序）
+
+- **str_replace（.NET）**：三层匹配全量移植（精确 → EOL 归一化 → 空白归一化 + 缩进
+  对齐），批量 edits 原子性、not_found / multiple_matches 诊断（nearestMatch 相似度与
+  上下文）逐字对齐；evidence/diff 走 ToolEvidence。
+- **两段式协议（保副作用时序）**：`__dryRun=true` 只匹配返回 `{success,prepared}`；
+  TS 包装器预检成功后才 `captureBefore`，再发正式调用落盘。失败无任何副作用，
+  review 基线时序与 TS 完全一致；host 故障整体回退 TS。
+- **验证**：`str-replace-native.test.ts` 3 项；`dual-track-diff` srepl 段 7 组
+  （含诊断与 CRLF）；`dotnet-tools-matrix.py` 35/35。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
+
 ## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）
 
 - **决策**：密钥等敏感信息分阶段迁移 .NET 保存处理。**Phase 1** 在 `cyrene-native` 新增

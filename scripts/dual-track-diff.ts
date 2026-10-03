@@ -97,7 +97,7 @@ function loadTsTools(): Promise<Map<string, TsFsTool>> {
     searchTools.registerSearchTextTool();
     const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
     const map = new Map<string, TsFsTool>();
-    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text"]) {
+    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text", "str_replace"]) {
       const tool = toolRegistry.getById(id);
       if (tool) map.set(id, (args, ctx) => Promise.resolve(tool.execute(args, ctx as never)));
     }
@@ -364,6 +364,118 @@ async function runSearchDualTrack(): Promise<number> {
   return failed;
 }
 
+/** str_replace 双轨：相同文件镜像 + 相同入参，输出（路径归一化）+ 文件字节对比。 */
+async function runStrReplaceDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] str_replace ${name}`);
+    else { failed++; console.log(`[FAIL] str_replace ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "srepl-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "srepl-dual-net-"));
+  /** 把 TS 结果里出现的 TS 目录替换成 NET 目录（结构级），使两侧可直接比对。 */
+  const replacePaths = (value: unknown, fromDir: string, toDir: string): unknown => {
+    if (typeof value === "string") return value.split(fromDir).join(toDir);
+    if (Array.isArray(value)) return value.map((v) => replacePaths(v, fromDir, toDir));
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = replacePaths(v, fromDir, toDir);
+      return out;
+    }
+    return value;
+  };
+
+  const cases: Array<{
+    name: string;
+    content: string;
+    args: (dir: string) => Record<string, unknown>;
+    expectSuccess: boolean;
+  }> = [
+    {
+      name: "精确单处替换",
+      content: "# 标题\n\n正文段落。\n",
+      args: (d) => ({ file_path: path.join(d, "a.md"), old_string: "正文段落。", new_string: "修改后的正文。" }),
+      expectSuccess: true,
+    },
+    {
+      name: "空白归一化 + 缩进对齐",
+      content: "function f() {\n    const x = 1;\n    return x;\n}\n",
+      args: (d) => ({ file_path: path.join(d, "b.ts"), old_string: "const x = 1;\nreturn x;", new_string: "const x = 2;\nreturn x * 2;" }),
+      expectSuccess: true,
+    },
+    {
+      name: "批量 edits 顺序应用",
+      content: "alpha\nbeta\ngamma\n",
+      args: (d) => ({
+        file_path: path.join(d, "c.txt"),
+        edits: [
+          { old_string: "alpha", new_string: "ALPHA" },
+          { old_string: "gamma", new_string: "GAMMA" },
+        ],
+      }),
+      expectSuccess: true,
+    },
+    {
+      name: "CRLF 文件 EOL 归一化",
+      content: "line1\r\nline2\r\nline3\r\n",
+      args: (d) => ({ file_path: path.join(d, "d.txt"), old_string: "line2\nline3", new_string: "line2\nLINE3" }),
+      expectSuccess: true,
+    },
+    {
+      name: "多处匹配 diagnostic",
+      content: "dup\ndup\ndup\n",
+      args: (d) => ({ file_path: path.join(d, "e.txt"), old_string: "dup", new_string: "x" }),
+      expectSuccess: false,
+    },
+    {
+      name: "未找到 nearestMatch 诊断",
+      content: "close enough text\nother\n",
+      args: (d) => ({ file_path: path.join(d, "f.txt"), old_string: "close enouqh text", new_string: "x" }),
+      expectSuccess: false,
+    },
+    {
+      name: "参数缺失 INVALID_INPUT",
+      content: "x\n",
+      args: (d) => ({ file_path: path.join(d, "g.txt") }),
+      expectSuccess: false,
+    },
+  ];
+
+  try {
+    const tsTools = await loadTsTools();
+    const tsStrReplace = tsTools.get("str_replace");
+    if (!tsStrReplace) { check("TS 轨已注册", false); return failed + 1; }
+
+    for (const c of cases) {
+      const tsFile = String(c.args(tsHome).file_path);
+      const netFile = String(c.args(netHome).file_path);
+      writeFileSync(tsFile, c.content);
+      writeFileSync(netFile, c.content);
+
+      const tsOut = await tsStrReplace(c.args(tsHome));
+      const host = await callSmokeTool("str_replace", c.args(netHome));
+      const netOut = host.ok ? String(host.data ?? "") : "";
+      const tsParsed = replacePaths(JSON.parse(tsOut), tsHome, netHome);
+      const same = JSON.stringify(tsParsed) === JSON.stringify(JSON.parse(netOut));
+
+      const tsBytes = readFileSync(tsFile);
+      const netBytes = readFileSync(netFile);
+      const bytesSame = Buffer.compare(tsBytes, netBytes) === 0;
+      const wrote = (JSON.parse(netOut) as { success?: boolean }).success === true;
+      check(
+        c.name,
+        same && bytesSame && (c.expectSuccess ? wrote : !wrote),
+        `outSame=${same} bytesSame=${bytesSame} ts=${tsOut.slice(0, 200)} net=${netOut.slice(0, 200)}`,
+      );
+    }
+  } finally {
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -399,6 +511,9 @@ async function main(): Promise<void> {
     // 搜索工具双轨（search_text）
     if (useSmoke) failures += await runSearchDualTrack();
     else console.log("[SKIP] search 双轨（仅 smoke dll 轨支持）");
+    // 精确替换双轨（str_replace）
+    if (useSmoke) failures += await runStrReplaceDualTrack();
+    else console.log("[SKIP] str_replace 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);

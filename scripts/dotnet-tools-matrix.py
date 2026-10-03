@@ -93,6 +93,15 @@ c_s1 = req("search_text", {"query": "hello", "contextLines": 1, "__cyreneWorkspa
 c_s2 = req("search_text", {"query": "he.*o", "mode": "regex", "caseSensitive": True, "__cyreneWorkspaceRoot": sws})
 c_s3 = req("search_text", {"query": "zzz-not-exist", "__cyreneWorkspaceRoot": sws})
 
+# str_replace（两段式：__dryRun 预检 → 提交；失败诊断）
+srf = os.path.join(tmp, "sr.txt")
+srf_dry = os.path.join(tmp, "sr_dry.txt")
+open(srf, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
+open(srf_dry, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
+c_sr1 = req("str_replace", {"file_path": srf_dry, "old_string": "beta", "new_string": "BETA", "__dryRun": True})
+c_sr2 = req("str_replace", {"file_path": srf, "old_string": "beta", "new_string": "BETA"})
+c_sr3 = req("str_replace", {"file_path": srf, "old_string": "nope", "new_string": "x"})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
@@ -144,7 +153,8 @@ d = data_json(c_r3); check("读不存在 E_FS_NOT_FOUND", isinstance(d, dict) an
 d = data_json(c_r4); check("读缺参报错", isinstance(d, dict) and d.get("errorCode") == "E_FS_PATH", d)
 
 print("\n=== fs_list_dir ===")
-d = data_json(c_l1); check("列目录", d and "w1.txt" in json.dumps(d), d)
+l1_text = str(by.get(c_l1, {}).get("data") or "")
+check("列目录", "w1.txt" in l1_text, l1_text[:160])
 d = data_json(c_l2); check("列不存在目录报错", by.get(c_l2, {}).get("ok") is False, by.get(c_l2, d))
 
 print("\n=== expense ===")
@@ -178,6 +188,18 @@ s2 = data_json(c_s2)
 check("regex 模式大小写敏感命中 2 处", isinstance(s2, dict) and s2.get("totalMatches") == 2, s2)
 s3 = data_json(c_s3)
 check("未命中给 message", isinstance(s3, dict) and s3.get("totalMatches") == 0 and "未找到匹配内容" in str(s3.get("message")), s3)
+
+print("\n=== str_replace ===")
+sr1 = data_json(c_sr1)
+check("dryRun 预检成功且不落盘", isinstance(sr1, dict) and sr1.get("prepared") is True
+      and open(srf_dry, encoding="utf-8").read() == "alpha\nbeta\ngamma\n", (sr1, open(srf_dry, encoding="utf-8").read()))
+sr2 = data_json(c_sr2)
+check("提交替换成功 + changes", isinstance(sr2, dict) and sr2.get("success") is True
+      and sr2.get("appliedEdits") == 1 and sr2.get("changes", [{}])[0].get("kind") == "modified"
+      and open(srf, encoding="utf-8").read() == "alpha\nBETA\ngamma\n", sr2)
+sr3 = data_json(c_sr3)
+check("未命中诊断 OLD_STRING_NOT_FOUND", isinstance(sr3, dict) and sr3.get("errorCode") == "OLD_STRING_NOT_FOUND"
+      and (sr3.get("diagnostic") or {}).get("kind") == "not_found", sr3)
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

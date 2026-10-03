@@ -20,6 +20,7 @@ import { getDateLocale } from "../../locale-context";
 import { logger, LogTag } from "../../logger";
 import { getRunReviewTracker } from "../review/run-review-tracker";
 import { nativeFirst, nativeToolHost } from "./native-tool-host";
+import { resolveDotnetConfig } from "../../dotnet-backend/config";
 import { TtlResultCache } from "./builtin-tools/ttl-result-cache";
 
 const LOG_PREFIX = "[LifeTools]";
@@ -385,89 +386,131 @@ function registerStrReplaceTool(): void {
       },
       required: ["file_path"],
     },
-    execute: async (args, ctx?) => {
-      const filePath = String(args.file_path || "");
-      if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });
-      if (!fs.existsSync(filePath)) {
-        return JSON.stringify({
-          success: false,
-          errorCode: "FILE_NOT_FOUND",
-          error: `文件不存在：${filePath}。不要重复相同路径，请先用 Read 或 Grep 确认文件存在。`,
-          retryable: true,
-        });
-      }
+    execute: executeStrReplaceNativeFirst,
+  });
+}
 
-      // 参数形态：edits 非空数组走批量；否则要求单发 old/new 齐备
-      const rawEdits = Array.isArray(args.edits) ? args.edits : [];
-      const edits = rawEdits
-        .filter((e): e is { old_string: string; new_string: string } =>
-          typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).old_string === "string" && typeof (e as Record<string, unknown>).new_string === "string")
-        .map((e) => ({ old_string: e.old_string, new_string: e.new_string }));
-      const singleMode = edits.length === 0;
-      if (singleMode) {
-        const oldStr = String(args.old_string ?? "");
-        const newStr = String(args.new_string ?? "");
-        if (!oldStr && !newStr) {
-          return JSON.stringify({
-            success: false,
-            errorCode: "INVALID_INPUT",
-            error: "需要提供 old_string/new_string（单处替换）或 edits 数组（多处替换），本次收到的参数键：" + Object.keys(args).join(", "),
-            retryable: false,
-          });
-        }
-        edits.push({ old_string: oldStr, new_string: newStr });
-      }
+/**
+ * str_replace native 轨（两段式）：
+ *  ① `__dryRun` 预检匹配——失败结果与 TS 输出同构，直接透传（无副作用）；
+ *  ② 匹配成功 → captureBefore 基线 → 正式提交（.NET 落盘 + evidence）。
+ * host 不可用/故障 → 整体回退 TS 实现；预检与提交之间捕获的基线由
+ * captureBefore 幂等兜底（回退重跑不会重复快照）。
+ */
+async function executeStrReplaceNativeFirst(
+  args: Record<string, unknown>,
+  ctx?: { runId?: string },
+): Promise<string> {
+  if (!resolveDotnetConfig().toolHost) return executeStrReplaceTs(args, ctx);
+  try {
+    const prep = await nativeToolHost.call("str_replace", { ...args, __dryRun: true });
+    if (prep === null) return executeStrReplaceTs(args, ctx);
+    const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
+    let prepared = false;
+    try {
+      prepared = (JSON.parse(prepText) as { prepared?: unknown }).prepared === true;
+    } catch { /* 非 JSON 视为预检失败，走透传/回退 */ }
+    if (!prepared) return prepText; // 与 TS 失败输出同构（含 diagnostic）
 
-      const content = fs.readFileSync(filePath, "utf8");
-      console.log(LOG_PREFIX, "str_replace:", filePath, "edits=" + edits.length);
+    // 匹配成功：基线必须在正式落盘之前捕获（与 TS 时序一致）
+    const filePath = String(args.file_path || "");
+    if (ctx?.runId && filePath) {
+      const tracker = getRunReviewTracker(app.getPath("userData"));
+      tracker.captureBefore(ctx.runId, filePath);
+    }
+    const result = await nativeToolHost.call("str_replace", args);
+    if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
+  } catch (error) {
+    console.warn(LOG_PREFIX, "str_replace native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+  }
+  return executeStrReplaceTs(args, ctx);
+}
 
-      const result = applyStrReplaceEdits(content, edits);
-      if (!result.ok) {
-        // 失败不落盘：诊断信息原样透传给模型
-        return JSON.stringify({
-          success: false,
-          errorCode: result.errorCode,
-          error: result.error,
-          retryable: false,
-          diagnostic: result.diagnostic,
-        });
-      }
+/** str_replace 的 TS 实现（native 轨回退路径）。 */
+async function executeStrReplaceTs(
+  args: Record<string, unknown>,
+  ctx?: { runId?: string },
+): Promise<string> {
+  const filePath = String(args.file_path || "");
+  if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });
+  if (!fs.existsSync(filePath)) {
+    return JSON.stringify({
+      success: false,
+      errorCode: "FILE_NOT_FOUND",
+      error: `文件不存在：${filePath}。不要重复相同路径，请先用 Read 或 Grep 确认文件存在。`,
+      retryable: true,
+    });
+  }
 
-      // Review 基线捕获：在写文件之前保存 pre-mutation baseline
-      if (ctx?.runId) {
-        const tracker = getRunReviewTracker(app.getPath("userData"));
-        tracker.captureBefore(ctx.runId, filePath);
-      }
-
-      fs.writeFileSync(filePath, result.newContent, "utf8");
-      const size = fs.statSync(filePath).size;
-      console.log(
-        LOG_PREFIX,
-        "str_replace:", filePath, "size=" + size,
-        result.eolNormalized ? "eolNormalized=true" : "",
-        result.whitespaceNormalized ? "whitespaceNormalized=true" : "",
-      );
-
-      // diff 展示统一按 LF 拆行，避免 CRLF 残留到卡片渲染
-      const changes = result.segments.map((seg) => ({
-        file: filePath,
-        kind: "modified" as const,
-        insertions: countLines(seg.afterLines.join("\n")),
-        deletions: countLines(seg.beforeLines.join("\n")),
-        diff: buildReplacedDiff(seg.beforeLines, seg.afterLines),
-      }));
+  // 参数形态：edits 非空数组走批量；否则要求单发 old/new 齐备
+  const rawEdits = Array.isArray(args.edits) ? args.edits : [];
+  const edits = rawEdits
+    .filter((e): e is { old_string: string; new_string: string } =>
+      typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).old_string === "string" && typeof (e as Record<string, unknown>).new_string === "string")
+    .map((e) => ({ old_string: e.old_string, new_string: e.new_string }));
+  const singleMode = edits.length === 0;
+  if (singleMode) {
+    const oldStr = String(args.old_string ?? "");
+    const newStr = String(args.new_string ?? "");
+    if (!oldStr && !newStr) {
       return JSON.stringify({
-        tool: "str_replace",
-        filePath,
-        action: "modified",
-        sizeBytes: size,
-        success: true,
-        eolNormalized: result.eolNormalized,
-        whitespaceNormalized: result.whitespaceNormalized,
-        appliedEdits: result.appliedEdits,
-        changes: finalizeFileChanges(changes),
+        success: false,
+        errorCode: "INVALID_INPUT",
+        error: "需要提供 old_string/new_string（单处替换）或 edits 数组（多处替换），本次收到的参数键：" + Object.keys(args).join(", "),
+        retryable: false,
       });
-    },
+    }
+    edits.push({ old_string: oldStr, new_string: newStr });
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+  console.log(LOG_PREFIX, "str_replace:", filePath, "edits=" + edits.length);
+
+  const result = applyStrReplaceEdits(content, edits);
+  if (!result.ok) {
+    // 失败不落盘：诊断信息原样透传给模型
+    return JSON.stringify({
+      success: false,
+      errorCode: result.errorCode,
+      error: result.error,
+      retryable: false,
+      diagnostic: result.diagnostic,
+    });
+  }
+
+  // Review 基线捕获：在写文件之前保存 pre-mutation baseline
+  if (ctx?.runId) {
+    const tracker = getRunReviewTracker(app.getPath("userData"));
+    tracker.captureBefore(ctx.runId, filePath);
+  }
+
+  fs.writeFileSync(filePath, result.newContent, "utf8");
+  const size = fs.statSync(filePath).size;
+  console.log(
+    LOG_PREFIX,
+    "str_replace:", filePath, "size=" + size,
+    result.eolNormalized ? "eolNormalized=true" : "",
+    result.whitespaceNormalized ? "whitespaceNormalized=true" : "",
+  );
+
+  // diff 展示统一按 LF 拆行，避免 CRLF 残留到卡片渲染
+  const changes = result.segments.map((seg) => ({
+    file: filePath,
+    kind: "modified" as const,
+    insertions: countLines(seg.afterLines.join("\n")),
+    deletions: countLines(seg.beforeLines.join("\n")),
+    diff: buildReplacedDiff(seg.beforeLines, seg.afterLines),
+  }));
+  return JSON.stringify({
+    tool: "str_replace",
+    filePath,
+    action: "modified",
+    sizeBytes: size,
+    success: true,
+    eolNormalized: result.eolNormalized,
+    whitespaceNormalized: result.whitespaceNormalized,
+    appliedEdits: result.appliedEdits,
+    changes: finalizeFileChanges(changes),
   });
 }
 
