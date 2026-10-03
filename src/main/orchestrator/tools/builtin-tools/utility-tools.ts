@@ -198,8 +198,8 @@ export const calculatorTool: ToolDefinition = {
     },
     required: ["expression"],
   },
-  execute: async (args: Record<string, unknown>) => {
-    return nativeFirst("calculator", args, calcExecute);
+  execute: async (args: Record<string, unknown>, ctx) => {
+    return nativeFirst("calculator", args, calcExecute, { signal: ctx?.signal });
   },
 };
 
@@ -236,11 +236,11 @@ export const nowTool: ToolDefinition = {
     },
     required: [],
   },
-  execute: async (args: Record<string, unknown>) => {
+  execute: async (args: Record<string, unknown>, ctx) => {
     // 时区实时注入（用户改设置后下次调用即生效；host 未起时存为启动配置）。
     // 曾漏接线：.NET now 永远按 Asia/Shanghai 返回，与 TS 轨非默认时区不一致。
     nativeToolHost.setTimezone(timezoneGetter?.() ?? null);
-    return nativeFirst("now", args, nowExecute);
+    return nativeFirst("now", args, nowExecute, { signal: ctx?.signal });
   },
 };
 
@@ -293,8 +293,8 @@ export const clipboardTool: ToolDefinition = {
     },
     required: ["action"],
   },
-  execute: async (args: Record<string, unknown>) => {
-    return nativeFirst("clipboard", args, clipboardExecute);
+  execute: async (args: Record<string, unknown>, ctx) => {
+    return nativeFirst("clipboard", args, clipboardExecute, { signal: ctx?.signal });
   },
 };
 

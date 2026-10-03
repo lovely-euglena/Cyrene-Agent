@@ -20,7 +20,9 @@ import { getDateLocale } from "../../locale-context";
 import { logger, LogTag } from "../../logger";
 import { getRunReviewTracker } from "../review/run-review-tracker";
 import { nativeFirst, nativeToolHost } from "./native-tool-host";
+import type { ToolContext } from "./registry/tool-context";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 import { TtlResultCache } from "./builtin-tools/ttl-result-cache";
 
 const LOG_PREFIX = "[LifeTools]";
@@ -115,8 +117,8 @@ function registerExpenseTools(): void {
       },
       required: ["amount"],
     },
-    execute: async (args) => {
-      return nativeFirst("record_expense", args, recordExpenseExecute);
+    execute: async (args, ctx) => {
+      return nativeFirst("record_expense", args, recordExpenseExecute, { signal: ctx?.signal });
     },
   });
 
@@ -144,13 +146,13 @@ function registerExpenseTools(): void {
         summary:  { type: "boolean", description: "可选，true 只返回汇总" },
       },
     },
-    execute: async (args) => {
+    execute: async (args, ctx) => {
       // 实时下发日期 locale/时区（明细行按用户时区展示）
       nativeToolHost.setRuntimeSettings({
         dateLocale: getDateLocale(),
         timezone: currentUserTimezone(),
       });
-      return nativeFirst("query_expense", args, queryExpenseExecute);
+      return nativeFirst("query_expense", args, queryExpenseExecute, { signal: ctx?.signal });
     },
   });
 }
@@ -211,13 +213,16 @@ function registerExchangeRateTool(): void {
       },
       required: ["from", "to"],
     },
-    execute: async (args) => {
+    execute: async (args, ctx) => {
       // 实时下发日期 locale/时区（用户改设置后下一次调用生效）
       nativeToolHost.setRuntimeSettings({
         dateLocale: getDateLocale(),
         timezone: currentUserTimezone(),
       });
-      return nativeFirst("exchange_rate", args, exchangeRateExecute, { timeoutMs: EXCHANGE_NATIVE_TIMEOUT_MS });
+      return nativeFirst("exchange_rate", args, exchangeRateExecute, {
+        timeoutMs: EXCHANGE_NATIVE_TIMEOUT_MS,
+        signal: ctx?.signal,
+      });
     },
   });
 }
@@ -402,14 +407,15 @@ function registerStrReplaceTool(): void {
  *  ② 匹配成功 → captureBefore 基线 → 正式提交（.NET 落盘 + evidence）。
  * host 不可用/故障 → 整体回退 TS 实现；预检与提交之间捕获的基线由
  * captureBefore 幂等兜底（回退重跑不会重复快照）。
+ * 取消（AbortError）原样上抛：两段式任一阶段被取消都不得回退重跑。
  */
 async function executeStrReplaceNativeFirst(
   args: Record<string, unknown>,
-  ctx?: { runId?: string },
+  ctx?: ToolContext,
 ): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return executeStrReplaceTs(args, ctx);
   try {
-    const prep = await nativeToolHost.call("str_replace", { ...args, __dryRun: true });
+    const prep = await nativeToolHost.call("str_replace", { ...args, __dryRun: true }, undefined, ctx?.signal);
     if (prep === null) return executeStrReplaceTs(args, ctx);
     const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
     let prepared = false;
@@ -428,9 +434,10 @@ async function executeStrReplaceNativeFirst(
     // 检查——两段之间文件若被外部改动（TOCTOU），把失败载荷原样透传给模型
     // 比静默回退更安全：透传让模型感知"文件已变"后重新决策，而回退 TS 会
     // 基于已变更的内容二次匹配重跑，可能产生非预期编辑。
-    const result = await nativeToolHost.call("str_replace", args);
+    const result = await nativeToolHost.call("str_replace", args, undefined, ctx?.signal);
     if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
   } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复改文件
     console.warn(LOG_PREFIX, "str_replace native 轨失败回退 TS:", error instanceof Error ? error.message : error);
   }
   return executeStrReplaceTs(args, ctx);
@@ -439,7 +446,7 @@ async function executeStrReplaceNativeFirst(
 /** str_replace 的 TS 实现（native 轨回退路径）。 */
 async function executeStrReplaceTs(
   args: Record<string, unknown>,
-  ctx?: { runId?: string },
+  ctx?: ToolContext,
 ): Promise<string> {
   const filePath = String(args.file_path || "");
   if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });

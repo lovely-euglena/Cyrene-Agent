@@ -211,3 +211,24 @@
   `Module._load` 兼容性演进与 exchange_rate 超时命中率观察不单独立项。
 - **验证**：matrix 56/56；dual-track 全绿（srepl 8 / download 7）；
   `vitest src/main/orchestrator/tools` 435 passed；tsc 0 错误。
+
+## 2026-10-03 增量：PR #1 复审阻断修复（取消链路 + 串行闸门）
+
+- **阻断 1（取消语义）**：`NativeToolHost.call` 增加 `signal` 参数——排队中直接
+  摘除；在途立即杀 host 中止（download 先缓冲后一次性落盘，杀进程保证取消后
+  不落盘），以 AbortError 拒绝。全链路透传 `ctx.signal`（fs 三件/写、expense、
+  exchange、search_text、download、calculator/now/clipboard、
+  str_replace/apply_patch 两段式）；`nativeFirst` 与各包装层遇 AbortError
+  原样上抛，绝不回退 TS 重跑。search_text 旧「已取消返回空结果」测试按新契约
+  改为 AbortError。
+- **阻断 2（队头阻塞 + 看门狗误杀）**：`NativeToolHost` 增加串行闸门——同一
+  时刻只写一个 call 帧，看门狗从实际派发起算；排队调用暂存 TS 侧、不触达
+  stdin，长任务在途时不再发生短调用看门狗误杀 host 的级联。`ensureStarted`
+  启动期统一等同一 barrier（修复后进先出）；超时/取消/退出日志列在途+排队清单。
+- **改进（开关一致性）**：`nativeFirst` 入口统一 `CYRENE_TOOL_HOST` 短路，
+  裸接线工具（exchange/expense/search/download/calculator 等）同样零触达。
+- **保留未做**：下载回退"重复下载"幂等短路（影响分析改进项）——缓冲式落盘下
+  重复写内容一致、仅浪费带宽，纳入后续观察；#IKJLP2 的 per-call 隔离已由
+  串行闸门 + 取消杀进程覆盖主要场景。
+- **验证**：`vitest src/main/orchestrator/tools` 441 passed；tsc 0 错误；
+  dual-track 全绿；native-tool-host.test 7 项（串行/两类取消/默认看门狗）。

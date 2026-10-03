@@ -17,6 +17,7 @@ import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
 import { nativeToolHost, type NativeFirstOptions } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 
 const LOG_PREFIX = "[FsTools]";
 
@@ -45,7 +46,8 @@ function isNativeFailurePayload(text: string): boolean {
 }
 
 /**
- * 只读工具 native 优先包装：host 不可用/超时/崩溃/错误载荷 → TS 回退。
+ * 只读工具 native 优先包装：host 不可用/超时/崩溃/错误载荷 → TS 回退；
+ * 取消（AbortError）原样上抛，不回退重跑。
  * options.timeoutMs：按件看门狗覆盖（与 nativeFirst 同款接口）。fs 三件入参
  * 有界（读 10MB / 列 200 项 / 内存缓冲），当前调用点保持默认 5s；接口保留
  * 覆盖能力，避免未来长耗时文件操作再改签名。
@@ -55,27 +57,30 @@ async function nativeFirstFs(
   args: Record<string, unknown>,
   fallback: () => Promise<string>,
   options: NativeFirstOptions = {},
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return fallback();
   try {
-    const result = await nativeToolHost.call(nativeTool, args, options.timeoutMs);
+    const result = await nativeToolHost.call(nativeTool, args, options.timeoutMs, signal);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;
       console.warn(LOG_PREFIX, nativeTool, "native 返回错误载荷，回退 TS:", text.slice(0, 200));
     }
   } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复执行
     console.warn(LOG_PREFIX, nativeTool, "native 轨失败回退 TS:", error instanceof Error ? error.message : error);
   }
   return fallback();
 }
 
-/** 注册前包装：保留工具元数据，只把 execute 换成 native 优先。 */
+/** 注册前包装：保留工具元数据，只把 execute 换成 native 优先（含取消信号透传）。 */
 function wrapFsForNativeHost(tool: ToolDefinition, nativeTool: string, options: NativeFirstOptions = {}): ToolDefinition {
   const tsExecute = tool.execute.bind(tool);
   return {
     ...tool,
-    execute: (args, ctx) => nativeFirstFs(nativeTool, args, () => Promise.resolve(tsExecute(args, ctx)), options),
+    execute: (args, ctx) =>
+      nativeFirstFs(nativeTool, args, () => Promise.resolve(tsExecute(args, ctx)), options, ctx?.signal),
   };
 }
 
@@ -533,13 +538,14 @@ async function executeWriteFileNativeFirst(args: Record<string, unknown>, ctx?: 
       content: plan.content,
       append: plan.append,
       createDirs: plan.createDirs,
-    });
+    }, undefined, ctx?.signal);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;
       console.warn(LOG_PREFIX, "write_file native 返回错误载荷，回退 TS:", text.slice(0, 200));
     }
   } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复落盘
     console.warn(LOG_PREFIX, "write_file native 轨失败回退 TS:", error instanceof Error ? error.message : error);
   }
   return executeWriteFile(args, ctx);

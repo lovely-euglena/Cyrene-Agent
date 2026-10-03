@@ -77,7 +77,7 @@ describe("fs native 轨 · 只读三件", () => {
     nativeMocks.call.mockResolvedValue('{"path":"C:\\\\x.txt","content":"native 12"}');
     const out = await registeredTools.get("read_file")!.execute({ path: "C:\\x.txt" });
     expect(out).toBe('{"path":"C:\\\\x.txt","content":"native 12"}');
-    expect(nativeMocks.call).toHaveBeenCalledWith("fs_read_file", { path: "C:\\x.txt" }, undefined);
+    expect(nativeMocks.call).toHaveBeenCalledWith("fs_read_file", { path: "C:\\x.txt" }, undefined, undefined);
   });
 
   it("read_file：host 故障时回退 TS（真实读盘）", async () => {
@@ -103,7 +103,7 @@ describe("fs native 轨 · 只读三件", () => {
     nativeMocks.call.mockResolvedValue("dir: C:\\x\ncount: 0\n");
     const out = await registeredTools.get("list_dir")!.execute({ path: "C:\\x" });
     expect(out).toContain("count: 0");
-    expect(nativeMocks.call).toHaveBeenCalledWith("fs_list_dir", { path: "C:\\x" }, undefined);
+    expect(nativeMocks.call).toHaveBeenCalledWith("fs_list_dir", { path: "C:\\x" }, undefined, undefined);
   });
 
   it("toolHost 开关=0 时不触达 host", async () => {
@@ -144,7 +144,7 @@ describe("fs native 轨 · write_file", () => {
       content: "x",
       append: false,
       createDirs: true,
-    });
+    }, undefined, undefined);
     // native 轨职责已转移：TS 侧不落盘（由 host 完成）
     expect(fs.existsSync(target)).toBe(false);
   });
