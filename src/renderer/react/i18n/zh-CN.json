@@ -1466,7 +1466,9 @@
       "fullAccessCancel": "再想想",
       "extensionPanels": "插件工具",
       "extensionPanelsDescription": "已启用插件提供的工具设置会显示在这里。",
-      "extensionPanelsFailed": "插件设置面板加载失败"
+      "extensionPanelsFailed": "插件设置面板加载失败",
+      "expand": "展开",
+      "collapse": "收起"
     },
     "memory": {
       "title": "记忆",
