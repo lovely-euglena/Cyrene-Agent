@@ -424,6 +424,10 @@ async function executeStrReplaceNativeFirst(
       const tracker = getRunReviewTracker(app.getPath("userData"));
       tracker.captureBefore(ctx.runId, filePath);
     }
+    // 第二段正式提交：预检已确认匹配可行，这里刻意不做 isNativeFailurePayload
+    // 检查——两段之间文件若被外部改动（TOCTOU），把失败载荷原样透传给模型
+    // 比静默回退更安全：透传让模型感知"文件已变"后重新决策，而回退 TS 会
+    // 基于已变更的内容二次匹配重跑，可能产生非预期编辑。
     const result = await nativeToolHost.call("str_replace", args);
     if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
   } catch (error) {
