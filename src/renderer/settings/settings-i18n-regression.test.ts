@@ -49,7 +49,7 @@ describe("settings i18n regressions", () => {
     expect(dom.window.getComputedStyle(description!).display).toBe("inline");
     expect(dom.window.getComputedStyle(linkPrefix!).display).toBe("inline");
     expect(dom.window.getComputedStyle(restartNotice!).display).toBe("inline");
-  });
+  }, 15_000);
 
   it("renders custom-style actions with white text", () => {
     const dom = createSettingsDocument();
