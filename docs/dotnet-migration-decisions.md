@@ -65,5 +65,7 @@
 - **B1 过渡**：铁律「密钥不落 .NET」在切换完成前仍然有效；`handover.md` / `dotnet-backend.md` /
   `multi-agent-architecture.md` / `plan-b` 设计稿均已加「拟迁移」标注。
 - **设计文档**：`docs/design/2026-10-03-secrets-migration-to-dotnet.md`（现状盘点、宿主协议、
-  迁移清痕、失败回退、验收用例与开放问题）；关联 Issue：Ygwill/cyrene-agent#IKJLB2。
+  迁移清痕、失败回退、验收用例与开放问题）；Phase 2 细化方案见
+  `docs/design/2026-10-03-llm-service-dotnet-job-polling.md`（.NET 厂商服务 + TS 轮询）；
+  关联 Issue：Ygwill/cyrene-agent#IKJLB2。
 - **实施状态**：本批仅文档与决策，未开工。
