@@ -7,7 +7,8 @@ namespace CyreneNative.Tools;
 /// <summary>
 /// plan_trip：高德路线规划（驾车/步行/骑行/公交），与 travel-tools.ts 同语义。
 ///   - amapKey 经 config 帧注入（B1：仅宿主内存驻留，不落盘）
-///   - HTTP 15s 超时；网络异常/未找到路线按 TS 同文案返回（结果字符串，非错误帧）
+///   - HTTP 15s 超时；网络层失败上抛错误帧（E_TRAVEL_NETWORK → TS 回退），
+///     解析失败/未找到路线按 TS 同文案返回（结果字符串）
 /// </summary>
 internal static class TravelTool
 {
@@ -63,7 +64,7 @@ internal static class TravelTool
     /// <summary>驾车路径规划。</summary>
     private static string PlanDriving(string origin, string destination, string key)
     {
-        var url = $"https://restapi.amap.com/v3/direction/driving?origin={origin}&destination={destination}&extensions=base&strategy=0&key={key}";
+        var url = $"https://restapi.amap.com/v3/direction/driving?origin={Uri.EscapeDataString(origin)}&destination={Uri.EscapeDataString(destination)}&extensions=base&strategy=0&key={Uri.EscapeDataString(key)}";
         try
         {
             var (status, body) = Get(url);
@@ -84,6 +85,11 @@ internal static class TravelTool
             };
             return string.Join("\n", lines);
         }
+        catch (ToolHostException)
+        {
+            // 网络层失败上抛错误帧 → TS 包装层回退原实现（与 weather/web_search 同策略）
+            throw;
+        }
         catch (Exception ex)
         {
             return "[错误] 驾车路线查询失败：" + ex.Message;
@@ -93,7 +99,7 @@ internal static class TravelTool
     /// <summary>步行路径规划（最长 100km）。</summary>
     private static string PlanWalking(string origin, string destination, string key)
     {
-        var url = $"https://restapi.amap.com/v3/direction/walking?origin={origin}&destination={destination}&key={key}";
+        var url = $"https://restapi.amap.com/v3/direction/walking?origin={Uri.EscapeDataString(origin)}&destination={Uri.EscapeDataString(destination)}&key={Uri.EscapeDataString(key)}";
         try
         {
             var (status, body) = Get(url);
@@ -105,6 +111,11 @@ internal static class TravelTool
             var distStr = distM >= 1000 ? Fixed(distM / 1000, 1) + " 公里" : Fixed(distM, 0) + " 米";
             return string.Join("\n", new[] { "🚶 步行路线", $"距离：{distStr}", $"预计用时：{durMin} 分钟" });
         }
+        catch (ToolHostException)
+        {
+            // 网络层失败上抛错误帧 → TS 包装层回退原实现（与 weather/web_search 同策略）
+            throw;
+        }
         catch (Exception ex)
         {
             return "[错误] 步行路线查询失败：" + ex.Message;
@@ -114,7 +125,7 @@ internal static class TravelTool
     /// <summary>骑行路径规划（最长 500km）。</summary>
     private static string PlanCycling(string origin, string destination, string key)
     {
-        var url = $"https://restapi.amap.com/v4/direction/bicycling?origin={origin}&destination={destination}&key={key}";
+        var url = $"https://restapi.amap.com/v4/direction/bicycling?origin={Uri.EscapeDataString(origin)}&destination={Uri.EscapeDataString(destination)}&key={Uri.EscapeDataString(key)}";
         try
         {
             var (status, body) = Get(url);
@@ -129,6 +140,11 @@ internal static class TravelTool
             var durMin = HostLocale.JsRound(Num(path, "duration") / 60);
             return string.Join("\n", new[] { "🚲 骑行路线", $"距离：{distKm} 公里", $"预计用时：{durMin} 分钟" });
         }
+        catch (ToolHostException)
+        {
+            // 网络层失败上抛错误帧 → TS 包装层回退原实现（与 weather/web_search 同策略）
+            throw;
+        }
         catch (Exception ex)
         {
             return "[错误] 骑行路线查询失败：" + ex.Message;
@@ -139,7 +155,7 @@ internal static class TravelTool
     private static string PlanTransit(string origin, string destination, string city, string key)
     {
         var url = "https://restapi.amap.com/v3/direction/transit/integrated"
-            + $"?origin={origin}&destination={destination}&city={Uri.EscapeDataString(city)}&strategy=0&extensions=base&key={key}";
+            + $"?origin={Uri.EscapeDataString(origin)}&destination={Uri.EscapeDataString(destination)}&city={Uri.EscapeDataString(city)}&strategy=0&extensions=base&key={Uri.EscapeDataString(key)}";
         try
         {
             var (status, body) = Get(url);
@@ -194,6 +210,11 @@ internal static class TravelTool
             }
             return string.Join("\n", lines);
         }
+        catch (ToolHostException)
+        {
+            // 网络层失败上抛错误帧 → TS 包装层回退原实现（与 weather/web_search 同策略）
+            throw;
+        }
         catch (Exception ex)
         {
             return "[错误] 公交路线查询失败：" + ex.Message;
@@ -205,7 +226,7 @@ internal static class TravelTool
     /// <summary>高德地理编码：地名 → "经度,纬度"；失败/解析异常 → null（TS 同）。</summary>
     private static string? Geocode(string address, string key)
     {
-        var url = $"https://restapi.amap.com/v3/geocode/geo?address={Uri.EscapeDataString(address)}&output=JSON&key={key}";
+        var url = $"https://restapi.amap.com/v3/geocode/geo?address={Uri.EscapeDataString(address)}&output=JSON&key={Uri.EscapeDataString(key)}";
         try
         {
             var (status, body) = Get(url);
@@ -216,6 +237,11 @@ internal static class TravelTool
                 || geos.ValueKind != JsonValueKind.Array || geos.GetArrayLength() == 0)
                 return null;
             return Str(geos[0], "location");
+        }
+        catch (ToolHostException)
+        {
+            // 网络层失败上抛错误帧 → TS 包装层回退原实现（与 weather/web_search 同策略）
+            throw;
         }
         catch
         {

@@ -2,16 +2,18 @@
  * weather native 轨接线测试（IKJK3V T1 剩余）：
  *  - native 可用：调用前实时下发 weather 配置（默认城市/源/key/语言），透传结果
  *  - 卡片事件：onEvent(weather_card) → weatherCardCallback(payload, context)
+ *  - 卡片去重：native 已发卡后回退，共享标记不二次发卡（防看门狗边界双卡）
  *  - native 不可用：回退 TS 实现（未启用/无城市等确定性文案）
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolContext } from "../registry/tool-context";
 
 const nativeMocks = vi.hoisted(() => ({
   calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: Record<string, unknown> }>,
   setRuntimeSettings: vi.fn(),
   nativeResult: null as string | null,
+  nativeEmit: null as { kind: string; payload: unknown } | null,
 }));
 
 vi.mock("../native-tool-host", () => ({
@@ -24,6 +26,9 @@ vi.mock("../native-tool-host", () => ({
   ) => {
     nativeMocks.calls.push({ tool, args, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
+    if (nativeMocks.nativeEmit) {
+      (options?.onEvent as ((e: { kind: string; payload: unknown }) => void) | undefined)?.(nativeMocks.nativeEmit);
+    }
     return fallback(args);
   },
 }));
@@ -34,11 +39,21 @@ function context(): ToolContext {
   return { userQuery: "今天天气", conversationId: "s1", mode: "work" };
 }
 
+/** 构造 fetch Response 形状的桩（与 weather-tool.test.ts 同） */
+function makeResp(json: unknown): Response {
+  return { ok: true, status: 200, statusText: "OK", json: async () => json } as unknown as Response;
+}
+
 beforeEach(() => {
   nativeMocks.calls.length = 0;
   nativeMocks.nativeResult = null;
+  nativeMocks.nativeEmit = null;
   nativeMocks.setRuntimeSettings.mockClear();
   clearWeatherCaches();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("weather native 轨", () => {
@@ -82,5 +97,36 @@ describe("weather native 轨", () => {
     setWeatherConfig(() => "", () => "open-meteo", () => "");
     const out = await weatherTool.execute({}, context());
     expect(out).toContain("没有指定城市");
+  });
+
+  it("native 已发卡后回退：共享去重标记，卡片只发一次", async () => {
+    const cardCb = vi.fn();
+    setWeatherConfig(() => "上海", () => "open-meteo", () => "", cardCb, () => true);
+    // native 轨先经事件帧发卡，随后调用失败回退；回退成功拉到数据也不得二次发卡
+    const nativePayload = { source: "open-meteo", location: { province: "上海市", city: "上海" }, temp: 20 };
+    nativeMocks.nativeEmit = { kind: "weather_card", payload: nativePayload };
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("geocoding-api")) {
+        return makeResp({ results: [{ name: "上海", latitude: 31.23, longitude: 121.47, country: "中国", admin1: "上海市" }] });
+      }
+      return makeResp({
+        current: {
+          temperature_2m: 22.5, relative_humidity_2m: 60, apparent_temperature: 21.8,
+          precipitation: 0, weather_code: 1, wind_speed_10m: 12, wind_direction_10m: 135,
+          surface_pressure: 1013, uv_index: 3, visibility: 10000,
+        },
+        daily: {
+          time: ["2026-10-04"], temperature_2m_max: [26], temperature_2m_min: [18],
+          weather_code: [1], wind_speed_10m_max: [15], wind_direction_10m_dominant: [135],
+        },
+      });
+    }));
+
+    const out = await weatherTool.execute({}, context());
+
+    expect(JSON.parse(out)).toMatchObject({ city: "上海" });
+    expect(cardCb).toHaveBeenCalledTimes(1);
+    expect(cardCb).toHaveBeenCalledWith(nativePayload, expect.objectContaining({ conversationId: "s1" }));
   });
 });

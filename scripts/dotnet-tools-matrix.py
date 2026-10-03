@@ -13,10 +13,6 @@ try:
 except Exception:
     pass
 
-# Windows 控制台默认 GBK：emoji（如 🚗）会导致 print 崩溃；统一 UTF-8（Linux CI 无影响）
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
 NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 results = []

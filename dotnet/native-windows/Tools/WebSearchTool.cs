@@ -204,6 +204,8 @@ internal static class WebSearchTool
     private static string AppendCached(string outputJson, long at)
     {
         var trimmed = outputJson.TrimEnd();
+        if (trimmed == "{}") // 空对象特判：避免拼出 {,"cached":...} 非法 JSON
+            return "{\"cached\":true,\"cachedAt\":\"" + IsoFromMs(at) + "\"}";
         if (!trimmed.EndsWith('}')) return outputJson;
         return trimmed[..^1] + ",\"cached\":true,\"cachedAt\":\"" + IsoFromMs(at) + "\"}";
     }

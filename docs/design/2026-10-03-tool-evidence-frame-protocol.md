@@ -91,6 +91,7 @@ fs 三件下沉 ToolHost 时，若宿主只返回 `{path, bytes}`：
   `callId` 为当前调用，宿主单线程 + 串行闸门保证归属确定。
 - **路由（TS）**：`NativeToolHost.handleFrame` 按 callId 找到在途调用，
   回调 `nativeFirst` 的 `options.onEvent(event)`（未注册回调则丢弃，不影响调用结果）。
-- **回退语义**：只有 native 轨会发事件；宿主不可用时整体回退 TS 实现，
-  卡片回调仍由 TS 原路径直接触发（不会重复）。
+- **回退语义**：只有 native 轨会发事件；宿主不可用时整体回退 TS 实现。
+  同一轮调用内 native 事件帧与回退实现共享「一次发卡」去重标记（`cardEmitted`），
+  避免「native 已发卡 → 看门狗边界失败 → 回退重发」双卡。
 - **首用**：`weather`（成功与缓存命中两种情况都发卡片）；后续进度/通知类场景可复用。
