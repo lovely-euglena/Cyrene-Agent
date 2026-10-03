@@ -188,6 +188,7 @@ declare global {
     browserPanel?: BrowserPanelApi;
     learnExamPage: import("../../shared/learn-exam").LearnExamPageApi;
     memoryPanel?: import("./settings/shared/types").MemoryPanelApi;
+    knowledgeBase?: import("../shared/knowledge-base-types").KnowledgeBaseApi;
     tts?: {
       loadSettings: () => Promise<Record<string, unknown>>;
       saveSettings: (patch: Record<string, unknown>) => Promise<unknown>;

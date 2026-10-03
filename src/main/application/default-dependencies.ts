@@ -44,6 +44,8 @@ import {
 } from "../settings/general-settings-lifecycle";
 import { registerMemoryUserToolIpc } from "../memory/memory-user-ipc";
 import { registerWikiMemoryIpc } from "../memory/wiki-memory-ipc";
+import { registerKnowledgeBaseIpc } from "../knowledge-base/knowledge-base-ipc";
+import { initializeKnowledgeBase } from "../knowledge-base/knowledge-base-service";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { momentsService } from "../moments/moments-service";
@@ -518,6 +520,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
       initRag: async () => {
         const modelSettings = loadModelSettings();
+        const knowledgeBase = initializeKnowledgeBase(app.getPath("userData"));
         setMemoryMode(modelSettings.memoryMode);
         initializeSummaryMemoryScheduler({
           userDataRoot: app.getPath("userData"),
@@ -559,6 +562,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           id: "wiki-memory",
           phase: "flushPersistence",
           dispose: async () => { await enableWikiMemoryScheduler(false); },
+        });
+        shutdown.register({
+          id: "knowledge-base",
+          phase: "flushPersistence",
+          dispose: async () => { await knowledgeBase.close(); },
         });
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
@@ -675,6 +683,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           windowManager: shell.windowManager,
         });
         registerWikiMemoryIpc(ipc);
+        registerKnowledgeBaseIpc(ipc);
 
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });

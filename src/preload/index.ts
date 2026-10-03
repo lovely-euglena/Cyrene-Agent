@@ -641,6 +641,23 @@ const cyreneAvatarApi = {
 contextBridge.exposeInMainWorld("cyreneAvatar", cyreneAvatarApi);
 
 contextBridge.exposeInMainWorld("memoryPanel", memoryPanelApi);
+
+const knowledgeBaseApi: import("../shared/knowledge-base-types").KnowledgeBaseApi = {
+  getState: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GET_STATE),
+  setEnabled: (enabled) => ipcRenderer.invoke(IPC.KNOWLEDGE_SET_ENABLED, enabled),
+  createCollection: (input) => ipcRenderer.invoke(IPC.KNOWLEDGE_CREATE_COLLECTION, input),
+  deleteCollection: (id) => ipcRenderer.invoke(IPC.KNOWLEDGE_DELETE_COLLECTION, id),
+  setCollectionEnabled: (id, enabled) => ipcRenderer.invoke(IPC.KNOWLEDGE_SET_COLLECTION_ENABLED, id, enabled),
+  listWorkspaces: () => ipcRenderer.invoke(IPC.KNOWLEDGE_LIST_WORKSPACES),
+  pickPaths: (kind) => ipcRenderer.invoke(IPC.KNOWLEDGE_PICK_PATHS, kind),
+  addPaths: (id, paths) => ipcRenderer.invoke(IPC.KNOWLEDGE_ADD_PATHS, id, paths),
+  removePath: (id, sourcePath) => ipcRenderer.invoke(IPC.KNOWLEDGE_REMOVE_PATH, id, sourcePath),
+  refreshCollection: (id) => ipcRenderer.invoke(IPC.KNOWLEDGE_REFRESH_COLLECTION, id),
+  listDocuments: (id) => ipcRenderer.invoke(IPC.KNOWLEDGE_LIST_DOCUMENTS, id),
+  search: (query, id) => ipcRenderer.invoke(IPC.KNOWLEDGE_SEARCH, query, id),
+  openSource: (id) => ipcRenderer.invoke(IPC.KNOWLEDGE_OPEN_SOURCE, id),
+};
+contextBridge.exposeInMainWorld("knowledgeBase", knowledgeBaseApi);
 contextBridge.exposeInMainWorld("runtimeState", runtimeStateApi);
 
 const live2dSpeechApi = {
