@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net.Http;
 using System.Text.Json;
 
 namespace CyreneNative.Tools;
