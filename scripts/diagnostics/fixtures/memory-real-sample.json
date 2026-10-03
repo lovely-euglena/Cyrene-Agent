@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 4,
+  "version": 1,
+  "l0": {
+    "nickname": "小林",
+    "preferredName": "林林",
+    "occupation": "后端工程师",
+    "longTermInterests": "跑步、手冲咖啡、机械键盘、科幻小说",
+    "language": "zh-CN",
+    "permanentNote": "住在上海，养了一只叫豆豆的橘猫",
+    "isPinned": false,
+    "updatedAt": 1790000000000
+  },
+  "l1": {
+    "recentGoals": "备战 11 月上海半程马拉松",
+    "recentPreferences": "最近迷上浅烘手冲，正在戒夜宵",
+    "currentProject": "Cyrene-Agent 记忆模块开发",
+    "generatedAt": 1790100000000,
+    "roundCount": 128
+  },
+  "l2": [
+    {
+      "id": "l2_run_halfmarathon",
+      "content": "用户正在备战 11 月的上海半程马拉松，每周跑三次，周末拉长距离",
+      "triggerText": "我报名了上海半马，最近在堆跑量",
+      "slug": "半马备战",
+      "sourceQuote": "我每周跑三次，周末会拉个长距离，目标是 11 月上海半马破二",
+      "sourceConversationId": "conv-run-001",
+      "createdAt": 1789000000000,
+      "lastAccessedAt": 1790090000000,
+      "accessCount": 12,
+      "weight": 2.4,
+      "isPinned": false,
+      "status": "active",
+      "syncStatus": "synced",
+      "ragId": "rag_run_halfmarathon",
+      "keywords": ["半马", "马拉松", "跑步", "训练", "长距离"],
+      "evidenceIds": ["ev_run_1"]
+    },
+    {
+      "id": "l2_coffee",
+      "content": "用户偏爱浅烘手冲咖啡，反感速溶；早上必须来一杯",
+      "triggerText": "我早上一定要手冲一杯浅烘",
+      "slug": "咖啡偏好",
+      "sourceQuote": "浅烘的果酸我才喝得下去，速溶真的不行",
+      "sourceConversationId": "conv-coffee-001",
+      "createdAt": 1788000000000,
+      "lastAccessedAt": 1790085000000,
+      "accessCount": 9,
+      "weight": 1.8,
+      "isPinned": false,
+      "status": "active",
+      "syncStatus": "synced",
+      "ragId": "rag_coffee",
+      "keywords": ["咖啡", "手冲", "浅烘", "速溶"],
+      "evidenceIds": ["ev_coffee_1"]
+    },
+    {
+      "id": "l2_cat_doudou",
+      "content": "用户养了一只叫豆豆的橘猫，2023 年领养，很黏人",
+      "triggerText": "我家的橘子叫豆豆",
+      "slug": "橘猫豆豆",
+      "sourceConversationId": "conv-cat-001",
+      "createdAt": 1787000000000,
+      "lastAccessedAt": 1790050000000,
+      "accessCount": 15,
+      "weight": 1.6,
+      "isPinned": true,
+      "status": "active",
+      "syncStatus": "synced",
+      "ragId": "rag_cat_doudou",
+      "keywords": ["猫", "豆豆", "橘猫"]
+    },
+    {
+      "id": "l2_job_backend",
+      "content": "用户是后端工程师，主力 Go 和 TypeScript，讨厌无意义加班",
+      "triggerText": "我是写 Go 的后端",
+      "slug": "职业后端",
+      "sourceConversationId": "conv-job-001",
+      "createdAt": 1786000000000,
+      "lastAccessedAt": 1790020000000,
+      "accessCount": 7,
+      "weight": 1.4,
+      "isPinned": false,
+      "status": "active",
+      "syncStatus": "synced",
+      "ragId": "rag_job_backend",
+      "keywords": ["工作", "后端", "Go", "TypeScript", "加班"]
+    },
+    {
+      "id": "l2_sleep_late",
+      "content": "用户长期熬夜到 1 点后，最近想调整作息早睡",
+      "triggerText": "我总是熬到一两点才睡",
+      "slug": "作息熬夜",
+      "sourceConversationId": "conv-sleep-001",
+      "createdAt": 1786500000000,
+      "lastAccessedAt": 1790040000000,
+      "accessCount": 4,
+      "weight": 1.3,
+      "isPinned": false,
+      "status": "active",
+      "syncStatus": "synced",
+      "ragId": "rag_sleep_late",
+      "keywords": ["熬夜", "作息", "早睡", "睡眠"]
+    },
+    {
+      "id": "l2_keyboard_hhkb",
+      "content": "用户用 HHKB Pro 2 静电容键盘，偏爱无刻键帽",
+      "triggerText": "我在用 HHKB",
+      "slug": "机械键盘",
+      "sourceConversationId": "conv-kb-001",
+      "createdAt": 1785000000000,
+      "lastAccessedAt": 1789500000000,
+      "accessCount": 3,
+      "weight": 1.2,
+      "isPinned": false,
+      "status": "aging",
+      "syncStatus": "synced",
+      "ragId": "rag_keyboard_hhkb",
+      "keywords": ["键盘", "HHKB", "静电容"]
+    },
+    {
+      "id": "l2_scifi",
+      "content": "用户喜欢科幻，最爱《三体》和《基地》，最近在补《沙丘》",
+      "triggerText": "我很喜欢三体",
+      "slug": "科幻偏好",
+      "sourceConversationId": "conv-scifi-001",
+      "createdAt": 1784000000000,
+      "lastAccessedAt": 1789000000000,
+      "accessCount": 5,
+      "weight": 1.0,
+      "isPinned": false,
+      "status": "aging",
+      "syncStatus": "synced",
+      "ragId": "rag_scifi",
+      "keywords": ["科幻", "三体", "基地", "沙丘", "小说"]
+    },
+    {
+      "id": "l2_travel_old",
+      "content": "用户喜欢一个人旅行，去过京都和大理，偏爱安静的小城",
+      "triggerText": "我喜欢一个人去旅行",
+      "slug": "独自旅行",
+      "sourceConversationId": "conv-travel-001",
+      "createdAt": 1783000000000,
+      "lastAccessedAt": 1786000000000,
+      "accessCount": 2,
+      "weight": 0.9,
+      "isPinned": false,
+      "status": "archived",
+      "syncStatus": "synced",
+      "ragId": "rag_travel_old",
+      "keywords": ["旅行", "京都", "大理", "小城"]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev_run_1",
+      "memoryId": "l2_run_halfmarathon",
+      "quoteSnippet": "目标是 11 月上海半马破二",
+      "conversationId": "conv-run-001",
+      "createdAt": 1789000000000,
+      "sourceStatus": "active"
+    },
+    {
+      "id": "ev_coffee_1",
+      "memoryId": "l2_coffee",
+      "quoteSnippet": "浅烘的果酸我才喝得下去",
+      "conversationId": "conv-coffee-001",
+      "createdAt": 1788000000000,
+      "sourceStatus": "active"
+    }
+  ],
+  "reflectionLogs": [
+    {
+      "id": "rf_compress_1",
+      "createdAt": 1789500000000,
+      "type": "compression",
+      "summary": "把 3 条跑步相关记忆压缩为「半马备战」",
+      "details": "subEntryIds=2"
+    }
+  ],
+  "conflictLogs": [
+    {
+      "id": "cf_coffee_1",
+      "createdAt": 1788200000000,
+      "status": "resolved",
+      "sourceL2Id": "l2_coffee",
+      "targetL2Id": "l2_coffee_old_dark",
+      "reason": "用户对烘焙度的偏好发生变化",
+      "confidence": 0.86,
+      "detector": "llm",
+      "resolutionType": "preference_evolution",
+      "resolutionReason": "偏好演进而非矛盾，保留最新浅烘偏好",
+      "resolutionConfidence": 0.9
+    }
+  ],
+  "l2DmaeStates": [
+    {
+      "l2Id": "l2_run_halfmarathon",
+      "activation": 62.4,
+      "intrinsicValue": 36,
+      "userSilence": 0,
+      "modelSilence": 1,
+      "recentUserHits": [122, 126],
+      "state": "active"
+    },
+    {
+      "l2Id": "l2_coffee",
+      "activation": 41.2,
+      "intrinsicValue": 8,
+      "userSilence": 1,
+      "modelSilence": 0,
+      "recentUserHits": [125],
+      "state": "active"
+    },
+    {
+      "l2Id": "l2_cat_doudou",
+      "activation": 30.0,
+      "intrinsicValue": 8,
+      "userSilence": 2,
+      "modelSilence": 1,
+      "recentUserHits": [124],
+      "state": "dormant"
+    },
+    {
+      "l2Id": "l2_job_backend",
+      "activation": 12.5,
+      "intrinsicValue": 1,
+      "userSilence": 3,
+      "modelSilence": 2,
+      "recentUserHits": [],
+      "state": "dormant"
+    },
+    {
+      "l2Id": "l2_sleep_late",
+      "activation": 6.1,
+      "intrinsicValue": 1,
+      "userSilence": 4,
+      "modelSilence": 2,
+      "recentUserHits": [],
+      "state": "dormant"
+    },
+    {
+      "l2Id": "l2_keyboard_hhkb",
+      "activation": 0,
+      "intrinsicValue": 0,
+      "userSilence": 9,
+      "modelSilence": 6,
+      "recentUserHits": [],
+      "state": "archived"
+    },
+    {
+      "l2Id": "l2_scifi",
+      "activation": 0,
+      "intrinsicValue": 0,
+      "userSilence": 12,
+      "modelSilence": 7,
+      "recentUserHits": [],
+      "state": "archived"
+    },
+    {
+      "l2Id": "l2_travel_old",
+      "activation": 0,
+      "intrinsicValue": 0,
+      "userSilence": 20,
+      "modelSilence": 11,
+      "recentUserHits": [],
+      "state": "archived"
+    }
+  ]
+}

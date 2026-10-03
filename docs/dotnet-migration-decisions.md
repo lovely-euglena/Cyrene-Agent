@@ -43,3 +43,14 @@
 | CYRENE_VAD | hybrid | VAD 模式 local\|hybrid\|cloud |
 | CYRENE_PORTABLE | 0 | 便携模式 |
 | CYRENE_MCP_HTTP | 0 | Streamable HTTP MCP |
+
+## 2026-10-03 增量：记忆系统 .NET 双轨接线（A7 落地）
+
+- **A7 更新**：L2 DMAE **存储层**不再暂缓——`MemoryHost` 七表（`l0_working` / `l1_longterm` /
+  `l2_dmae` / `evidence` / `conflicts` / `reflections` / `dmae_state`）全部可读写；
+  **DMAE 算法本身仍在 TS**（`l2-dmae-manager.ts`），.NET 只做 SQLite 持久化。
+- `CYRENE_MEMORY_HOST=1` 时 `memory-store` 的 `load/save` 直切 `--memory-host`（SQLite 为真值，
+  成功后镜像一份 `memory.json` 供回退）；开关关 / exe 缺失 / 超时 / 崩溃自动回退 TS 原路。
+- 首次 open 时导入对象形 `memory.json`（l0/l1/l2/evidence/conflictLogs/reflectionLogs/l2DmaeStates）；
+  之后不再重复导入，避免旧快照覆盖 host 真值。
+- 冒烟：`node scripts/diagnostics/memory-host-smoke.mjs`（8 项，对象导入 + replace/query/get/delete/clear/stats）。
