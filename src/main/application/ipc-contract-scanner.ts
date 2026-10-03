@@ -186,7 +186,15 @@ export function findIpcChannelUses(file: string, source: string): IpcChannelUse[
   };
 
   visit(tree);
-  return uses;
+  // 去重：同一 (kind, channel, file, line) 可能同时经「按方法名分类」与
+  // 「包装函数转发」两条路径命中（如 publish(IPC.I)），只保留一条。
+  const seen = new Set<string>();
+  return uses.filter((use) => {
+    const key = `${use.kind}:${use.channel}:${use.file}:${use.line}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 const RESOLVE_SUFFIXES = [".ts", ".tsx", ".js", ".jsx", `${path.sep}index.ts`];
