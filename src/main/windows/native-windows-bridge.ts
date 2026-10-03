@@ -405,7 +405,7 @@ function activeClient(): NativeWindowsClient | null {
 }
 
 /** 是否走 native 路径（调用方据此跳过对应 BrowserWindow 创建）。 */
-export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music"): boolean {
+export function isNativeWindowActive(kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music" | "model-download"): boolean {
   const c = activeClient();
   return c !== null;
 }
@@ -442,7 +442,7 @@ export function pushWindowRadiusToNative(radius: number): void {
 // ── 窗口生命周期（替代 BrowserWindow 创建） ──
 
 export async function spawnNativeWindow(
-  kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music",
+  kind: "splash" | "sidebar" | "tasks" | "settings" | "plugins" | "music" | "model-download",
   layout?: unknown,
 ): Promise<boolean> {
   const c = activeClient();
@@ -457,10 +457,10 @@ export async function spawnNativeWindow(
       void c.pushWindowRadius(radius).catch(() => undefined);
     }
     // 显窗时机（对齐 showWindowWhenStartupReady 语义）：
-    // splash 无门控（本来就是启动期首帧）；music 是按需打开的独立窗口，
-    // spawn 即显；sidebar/tasks 在 startup 阶段先 pending，
+    // splash 无门控（本来就是启动期首帧）；music / model-download 是按需打开的
+    // 独立窗口，spawn 即显；sidebar/tasks 在 startup 阶段先 pending，
     // markStartupPhaseReady 后统一 win.show
-    if (kind === "splash" || kind === "music") {
+    if (kind === "splash" || kind === "music" || kind === "model-download") {
       await c.showWindow(kind);
       // 关闭请求早于本次 spawn 落地（冷启动竞态）→ 补发关闭，避免启动屏常驻
       if (splashDismissed) {
