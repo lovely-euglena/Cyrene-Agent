@@ -10,6 +10,8 @@
  */
 import { DUAL_TRACK_USER_DATA } from "./dual-track-env";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -96,8 +98,10 @@ function loadTsTools(): Promise<Map<string, TsFsTool>> {
     const searchTools = await import("../src/main/orchestrator/tools/search-text-tools");
     searchTools.registerSearchTextTool();
     const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const { downloadFileTool } = await import("../src/main/orchestrator/tools/builtin-tools/download-file-tool");
+    if (!toolRegistry.getById("download_file")) toolRegistry.register(downloadFileTool);
     const map = new Map<string, TsFsTool>();
-    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text", "str_replace"]) {
+    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text", "str_replace", "download_file"]) {
       const tool = toolRegistry.getById(id);
       if (tool) map.set(id, (args, ctx) => Promise.resolve(tool.execute(args, ctx as never)));
     }
@@ -476,6 +480,71 @@ async function runStrReplaceDualTrack(): Promise<number> {
   return failed;
 }
 
+/** download_file 双轨：本地 HTTP 服务 + 相同入参，输出文案与落盘字节对比。 */
+async function runDownloadDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] download ${name}`);
+    else { failed++; console.log(`[FAIL] download ${name} —— ${detail}`); }
+  };
+
+  const payload = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0xff]);
+  const server = createServer((req, res) => {
+    const url = req.url ?? "/";
+    if (url === "/img.png") {
+      res.setHeader("Content-Type", "image/png");
+      res.end(payload);
+    } else if (url === "/noext") {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("plain text body");
+    } else if (url === "/unknown") {
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.end("data");
+    } else {
+      res.statusCode = 404;
+      res.end("nope");
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "dl-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "dl-dual-net-"));
+  try {
+    const tsTools = await loadTsTools();
+    const tsDownload = tsTools.get("download_file");
+    if (!tsDownload) { check("TS 轨已注册", false); return failed + 1; }
+
+    const cases: Array<{ name: string; args: Record<string, unknown>; saved: string | null }> = [
+      { name: "显式 filename 图片落盘", args: { url: `${base}/img.png`, filename: "img.png" }, saved: "img.png" },
+      { name: "Content-Type 补扩展名", args: { url: `${base}/noext` }, saved: "download.txt" },
+      { name: "404 错误文案", args: { url: `${base}/missing` }, saved: null },
+      { name: "危险后缀拒绝（不走网络）", args: { url: `${base}/img.png`, filename: "evil.exe" }, saved: null },
+      { name: "未知 Content-Type 且无扩展名", args: { url: `${base}/unknown` }, saved: null },
+    ];
+    for (const c of cases) {
+      const tsOut = await tsDownload(c.args, { resolvedWorkspaceRoot: tsHome });
+      const host = await callSmokeTool("download_file", { ...c.args, __cyreneRoot: netHome });
+      const netOut = host.ok ? String(host.data ?? "") : "";
+      const tsNorm = tsOut.split(tsHome).join(netHome);
+      let bytesSame = true;
+      if (c.saved) {
+        try {
+          bytesSame = Buffer.compare(readFileSync(path.join(tsHome, c.saved)), readFileSync(path.join(netHome, c.saved))) === 0;
+        } catch (error) {
+          bytesSame = false;
+        }
+      }
+      check(c.name, tsNorm === netOut && bytesSame, `ts=${tsNorm} net=${netOut} bytesSame=${bytesSame}`);
+    }
+  } finally {
+    server.close();
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -514,6 +583,9 @@ async function main(): Promise<void> {
     // 精确替换双轨（str_replace）
     if (useSmoke) failures += await runStrReplaceDualTrack();
     else console.log("[SKIP] str_replace 双轨（仅 smoke dll 轨支持）");
+    // 下载双轨（download_file，本地 HTTP 服务）
+    if (useSmoke) failures += await runDownloadDualTrack();
+    else console.log("[SKIP] download 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);
