@@ -6,6 +6,8 @@ namespace CyreneNative.Tools;
 /// <summary>
 /// sysinfo：系统信息快照（native API，无 PowerShell 子进程）。
 /// Windows 走 GlobalMemoryStatusEx；Linux 读 /proc/meminfo；其余平台内存字段为 0。
+/// P/Invoke 策略：core 内白名单调用（只读查询 + OperatingSystem.IsWindows() 守卫），
+/// 新增须登记到 scripts/check-cyrene-core-clean.py 的 PINVOKE_ALLOW。
 /// </summary>
 internal static class SysInfo
 {

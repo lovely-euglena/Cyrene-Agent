@@ -22,14 +22,21 @@ function Invoke-HostFrames([string]$target, [string[]]$frames) {
     $psi.CreateNoWindow = $true
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $p = [System.Diagnostics.Process]::Start($psi)
+    # 先异步读两路再限时等待：ReadToEnd 同步在前会让超时保护失效
+    # （子进程挂起不关 stdout 时永久阻塞）；stderr 也必须被观察，否则崩溃堆栈丢失。
+    $outTask = $p.StandardOutput.ReadToEndAsync()
     $errTask = $p.StandardError.ReadToEndAsync()
     # PS 5.1（.NET Framework）无 StandardInputEncoding：自带 UTF-8 StreamWriter 写 stdin
     $sw = New-Object System.IO.StreamWriter($p.StandardInput.BaseStream, (New-Object System.Text.UTF8Encoding $false))
     $sw.Write(($frames -join "`n") + "`n")
     $sw.Close()
-    $out = $p.StandardOutput.ReadToEnd()
-    if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch {} }
-    return ($out -split "`r?`n" | Where-Object { $_ -ne "" })
+    if (-not $p.WaitForExit(60000)) {
+        try { $p.Kill() } catch {}
+        try { $null = $p.WaitForExit(5000) } catch {}
+        $errTail = (($errTask.Result -split "`r?`n") | Select-Object -Last 3) -join " | "
+        Write-Warning ("[Invoke-HostFrames] " + $target + " 超时未退出（已强杀）；stderr 末尾: " + $errTail)
+    }
+    return ($outTask.Result -split "`r?`n" | Where-Object { $_ -ne "" })
 }
 
 $pass = 0; $fail = 0
