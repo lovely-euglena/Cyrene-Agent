@@ -16,6 +16,7 @@ import {
   History,
   Images,
   Languages,
+  Music,
   Regex,
   Replace,
   Search,
@@ -23,7 +24,7 @@ import {
   Wallet,
   Wrench,
 } from "lucide-react";
-import { siGit, siNeteasecloudmusic, type SimpleIcon } from "simple-icons";
+import { siGit, type SimpleIcon } from "simple-icons";
 import { useTranslation } from "../../i18n";
 import "./ToolToggleSettingsPanel.css";
 
@@ -54,19 +55,11 @@ const BASE_TABS: Array<{ key: TabKey; label: string }> = [
  *  播放类是闲聊刚需故全放（input-control 级仍受权限档位门控）；
  *  只读类无副作用。写入后完全由用户接管，后续开关不再覆盖。 */
 const CHAT_TOOL_WHITELIST = [
-  // 音乐工具（全量）
-  "music_search",
-  "music_get_daily_recommendations",
-  "music_get_playback_status",
-  "music_my_playlists",
-  "music_playlist_detail",
-  "music_play_track",
-  "music_play_playlist",
-  "music_stop_playback",
-  "music_create_playlist",
-  "music_add_to_playlist",
-  "music_toggle_favorite",
-  "music_remove_from_playlist",
+  // 音乐工具（全量：曲库 / 状态 / 播放控制 / 管理）
+  "music_library",
+  "music_now_playing",
+  "music_play",
+  "music_manage",
   // 幂等只读
   "weather",
   "web_search",
@@ -95,7 +88,7 @@ type ToolIconSpec = { brand: SimpleIcon } | { lucide: LucideIcon };
  *  以后新增工具只要 id 含已知关键词即可自动命中，无需改代码。 */
 const TOOL_ICON_RULES: Array<{ keywords: string[]; spec: ToolIconSpec }> = [
   { keywords: ["git"], spec: { brand: siGit } },
-  { keywords: ["music"], spec: { brand: siNeteasecloudmusic } },
+  { keywords: ["music"], spec: { lucide: Music } },
   { keywords: ["moments"], spec: { lucide: Images } },
   { keywords: ["ast_grep"], spec: { lucide: Regex } },
   { keywords: ["shell"], spec: { lucide: Terminal } },

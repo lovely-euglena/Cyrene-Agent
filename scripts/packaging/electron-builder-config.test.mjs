@@ -5,13 +5,11 @@ import test from "node:test";
 const source = await readFile(new URL("../../electron-builder.yml", import.meta.url), "utf8");
 const installerInclude = await readFile(new URL("../../build/installer/installer.nsh", import.meta.url), "utf8");
 
-test("the core package excludes optional model and music components", () => {
-  assert.match(source, /-\s+"!dist\/components\/\*\*\/\*"/);
+test("the core package excludes optional model components", () => {
   assert.match(source, /-\s+"!models\/\*\*\/\*"/);
-  assert.match(source, /-\s+"!vendor\/cloud-music-mcp\/\*\*\/\*"/);
   assert.doesNotMatch(source, /-\s+models\/\*\*\/\*/);
-  assert.match(source, /-\s+from: resources\/components/);
-  assert.match(source, /to: components/);
+  assert.doesNotMatch(source, /cloud-music-mcp/);
+  assert.doesNotMatch(source, /resources\/components/);
   assert.match(source, /artifactName:\s+Cyrene-Setup-\$\{version\}\.\$\{ext\}/);
 });
 

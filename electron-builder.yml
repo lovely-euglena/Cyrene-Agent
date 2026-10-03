@@ -27,11 +27,9 @@ asarUnpack:
 electronDist: node_modules/electron/dist
 files:
   - dist/**/*
-  - "!dist/components/**/*"
   - package.json
   - assets/**/*
   - vendor/**/*
-  - "!vendor/cloud-music-mcp/**/*"
   - "!vendor/cyrene-skills/**/*"
   - "!models/**/*"
   # 平台裁剪（Linux 构建机交叉打 win 包：node_modules 装的是 linux 变体，
@@ -59,8 +57,6 @@ extraResources:
     to: bin/mpv
   - from: resources/mingit
     to: mingit
-  - from: resources/components
-    to: components
   # .NET 10 原生三件套窗口进程（framework-dependent：用户需安装
   # .NET 10 Desktop Runtime；文件缺失/未装运行时时 CYRENE_NATIVE_WINDOWS
   # 开关不生效，走 BrowserWindow 路径）

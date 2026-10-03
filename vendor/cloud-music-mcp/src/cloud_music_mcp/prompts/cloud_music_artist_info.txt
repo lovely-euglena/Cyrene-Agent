@@ -1,3 +1,0 @@
-获取歌手详情和热门歌曲 Top 10
-args:
-    artist_id: 歌手 ID

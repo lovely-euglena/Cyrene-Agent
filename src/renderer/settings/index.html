@@ -1575,16 +1575,12 @@
                 <div class="plugin-card__icon"><svg width="22" height="22" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M24 4C12.9543 4 4 12.9543 4 24C4 35.0457 12.9543 44 24 44C35.0457 44 44 35.0457 44 24C44 21.2883 43.4603 18.7026 42.4825 16.3446C42.2308 15.7376 41.9501 15.1457 41.6421 14.5707" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M35 10C37.2091 10 39 8.65685 39 7C39 5.34315 37.2091 4 35 4C32.7909 4 31 5.34315 31 7C31 8.65685 32.7909 10 35 10Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M24 31C27.866 31 31 27.866 31 24C31 20.134 27.866 17 24 17C20.134 17 17 20.134 17 24C17 27.866 20.134 31 24 31Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M31 6.5V24" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
                 <div class="plugin-card__body">
                   <h2><span data-i18n="panel.plugins.music.title">音乐工具</span></h2>
-                  <p><span data-i18n="panel.plugins.music.desc">网易云音乐与本地音乐。</span></p>
+                  <p><span data-i18n="panel.plugins.music.desc">本地曲库与播放器。</span></p>
                 </div>
                 <button type="button" class="accordion-toggle" id="plugin-music-toggle" aria-label="展开音乐工具" aria-expanded="false">▾</button>
               </div>
               <div class="plugin-accordion-body is-collapsed" id="plugin-music-body">
                 <div class="music-platform-grid" id="music-platform-list">
-                  <button type="button" class="plugin-card plugin-card--sub music-platform" id="music-platform-netease" data-platform="netease">
-                    <div class="plugin-card__icon"><img data-music-logo alt="网易云音乐" /></div>
-                    <div class="plugin-card__body"><h2><span data-i18n="panel.plugins.music.neteaseTitle">网易云音乐</span></h2><p><span data-i18n="panel.plugins.music.neteaseDesc">扫码登录后搜索并播放歌曲。</span></p></div>
-                  </button>
                   <article class="plugin-card plugin-card--sub" id="music-platform-local" data-platform="local">
                     <div class="plugin-card__icon" aria-hidden="true">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6a2 2 0 0 1 2-2h3.6l1.7 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 15v-4l3-.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11" cy="15" r="1.4" fill="currentColor"/></svg>
@@ -1611,35 +1607,6 @@
         <section class="settings-panel is-hidden" id="music-panel" data-panel="music">
           <div id="music-home-view">
             <div id="music-home-platforms"></div>
-          </div>
-          <div id="netease-detail-view" class="is-hidden">
-            <button type="button" class="music-return-btn" id="music-return-btn"><span data-i18n="panel.music.returnButton">← 返回音乐平台</span></button>
-            <header class="music-detail-header"><img data-music-logo alt="网易云音乐" data-i18n-alt="panel.music.neteaseLogoAlt" /><div><h1><span data-i18n="panel.music.neteaseTitle">网易云音乐</span></h1><p><span data-i18n="panel.music.neteaseSubtitle">扫码登录后搜索歌曲，通过内置 mpv 播放器播放。</span></p></div></header>
-            <div class="music-card music-openapi-card" id="music-openapi-card">
-              <div class="music-card__header"><h2><span data-i18n="panel.music.openapi.title">OpenAPI 配置</span></h2></div>
-              <div class="music-card__body">
-                <p class="panel-hint"><span data-i18n="panel.music.openapi.hint">填写网易云音乐开放平台分配的 appId 与 privateKey，用于调用 OpenAPI 接口。</span></p>
-                <label class="form-label" for="music-openapi-appid"><span data-i18n="panel.music.openapi.appId">App ID</span></label>
-                <input type="text" id="music-openapi-appid" class="form-input form-input--wide" placeholder="例如 b3010d00000000009b4d0c1cfda9accd" data-i18n-placeholder="panel.music.openapi.appIdPlaceholder" autocomplete="off" />
-                <label class="form-label" for="music-openapi-private-key"><span data-i18n="panel.music.openapi.privateKey">Private Key（PKCS#8 base64 或 PEM）</span></label>
-                <textarea id="music-openapi-private-key" class="form-textarea form-input--wide" rows="4" placeholder="粘贴平台分配的 RSA 私钥（base64 或 -----BEGIN PRIVATE KEY-----... 格式）" data-i18n-placeholder="panel.music.openapi.privateKeyPlaceholder" autocomplete="off"></textarea>
-                <div class="music-actions"><button type="button" class="btn-primary" id="music-save-openapi-config"><span data-i18n="panel.music.openapi.saveButton">保存配置</span></button></div>
-              </div>
-            </div>
-            <div class="music-card music-status-card">
-              <div class="music-status-main"><span class="music-status-dot" id="music-status-dot"></span><strong id="music-account-status-text"><span data-i18n="panel.music.statusNotConnected">尚未连接</span></strong><span id="music-status-description"></span></div>
-              <div class="music-actions" id="music-actions"><button type="button" class="btn-primary" id="music-login-btn"><span data-i18n="panel.music.connectButton">连接网易云</span></button></div>
-            </div>
-            <div class="music-card music-player-entry-card">
-              <div class="music-player-entry__main">
-                <strong><span data-i18n="panel.music.playerTitle">独立播放器窗口</span></strong>
-                <span class="panel-hint"><span data-i18n="panel.music.playerHint">卡片式播放界面，支持歌单切换、搜索、歌词显示。</span></span>
-              </div>
-              <div class="music-actions"><button type="button" class="btn-secondary" id="music-open-player-btn"><span data-i18n="panel.music.openPlayerButton">打开播放器</span></button></div>
-            </div>
-            <div class="music-qr is-hidden" id="music-qr"><img class="music-qr__img" id="music-qr-img" alt="网易云登录二维码" data-i18n-alt="panel.music.qrAlt" /><div><strong><span data-i18n="panel.music.qrScan">网易云音乐 App 扫码</span></strong><p id="music-qr-tip"><span data-i18n="panel.music.qrTip">请用网易云音乐 App 扫描二维码完成登录</span></p><p id="music-qr-status"><span data-i18n="panel.music.qrStatus">当前状态：等待扫码</span></p></div></div>
-            <div class="music-search-card music-card" id="music-search-card"><div class="music-card__header"><h2><span data-i18n="panel.music.searchTitle">搜索歌曲</span></h2></div><div class="music-card__body"><p id="music-search-hint" class="panel-hint"><span data-i18n="panel.music.searchHint">连接网易云后即可搜索歌曲和获取每日推荐。</span></p><div id="music-search-form" class="form-input-with-action is-hidden"><input type="text" id="music-search-input" class="form-input form-input--wide" placeholder="输入歌名或歌手" data-i18n-placeholder="panel.music.searchInputPlaceholder" autocomplete="off" /><button type="button" class="btn-secondary" id="music-search-btn"><span data-i18n="panel.music.searchButton">搜索</span></button></div><div class="music-search-results" id="music-search-results"><p class="empty-hint"><span data-i18n="panel.music.searchEmpty">连接网易云后即可搜索歌曲和获取每日推荐。</span></p></div></div></div>
-            <div class="music-feedback" id="music-feedback"></div>
           </div>
         </section>
 
