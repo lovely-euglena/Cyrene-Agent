@@ -18,6 +18,7 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   music: "preferences",
   toolToggle: "toolToggle",
   memory: "memory",
+  knowledge: "knowledge",
   cyrene: "cyrene",
   skill: "skill",
   subagents: "subagents",
