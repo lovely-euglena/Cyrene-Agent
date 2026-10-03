@@ -313,7 +313,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   let lastPluginArgs: Parameters<CoreDependencies["startPlugins"]> | null = null;
   // ipc holder：startCore 装配时填充（shell.ipc 生命周期跟随应用）
   let shellIpc: IpcScope | null = null;
-  const shellIpcRef = (): IpcScope => shellIpc ?? createIpcScope();
+  // 未绑定即抛错。历史实现回退到 createIpcScope()，会让「插件列表回退」与
+  // 「PluginManager 正式注册」落在不同 IpcScope 上：removeHandler 命不中残留的
+  // plugins:list，二次 handle 时 Electron 抛 "Attempted to register a second
+  // handler"。绑定由 startCore 包装器在装配前完成。
+  const shellIpcRef = (): IpcScope => {
+    if (!shellIpc) throw new Error("shell IpcScope 尚未绑定：startCore 装配前不可注册插件 IPC");
+    return shellIpc;
+  };
 
   // 插件运行时启动实现（startPlugins 装配与运行期动态启用共用；幂等）
   const startPluginsImpl = async (
@@ -1504,7 +1511,12 @@ createTray: (input) => {
       flushTokenUsage,
     }),
 
-    startCore: (shell) => startCore({
+    startCore: (shell) => {
+      // 插件管理壳/运行时与核心 IPC 共用应用级 scope：运行期动态启用时
+      // removeHandler / 二次 handle 才能命中同一注册表（否则 plugins:list
+      // 回退残留，PluginManager.start() 注册正式实现时抛 second handler）。
+      shellIpc = shell.ipc;
+      return startCore({
       shell,
       readiness,
       activation,
@@ -2045,7 +2057,8 @@ createTray: (input) => {
         });
       },
       revealStartupWindows,
-    }),
+      });
+    },
 
     startBackground: (core) => startBackground({
       core,
