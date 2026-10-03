@@ -56,6 +56,23 @@
   之后不再重复导入，避免旧快照覆盖 host 真值。
 - 冒烟：`node scripts/diagnostics/memory-host-smoke.mjs`（8 项，对象导入 + replace/query/get/delete/clear/stats）。
 
+## 2026-10-03 增量：D 阶段收口——fs 三件接线 + evidence 帧协议 v1（T0）
+
+- **fs 三件自本日起由 TS 宿主包装器接线（nativeFirst）**：`read_file` / `write_file` /
+  `list_dir` 在 `fs-tools.ts` 注册时包装——host 可用走 `--tool-host`，任何故障/错误载荷
+  整体回退 TS 原实现；`CYRENE_TOOL_HOST=0` 时零触达。
+- **分工**：路径解析 / 覆盖防骤降（`checkOverwriteDrop`）/ review 基线（`captureBefore`）
+  留在 TS 包装器（语义拒绝不因轨道切换改变）；落盘与 `changes` 证据由 .NET 产出
+  （`ToolEvidence.cs`，上限 60/200/200 与 `tool-evidence.ts` 对齐）。
+- **协议**：`docs/design/2026-10-03-tool-evidence-frame-protocol.md`（不新增帧类型，
+  写类工具 result `data` 必须携带 `changes`）。
+- **对齐修复**：C# `list_dir` 截断 500→200、`read_file` 仅绝对路径、`humanBytes` 精度与 TS 对齐。
+- **死代码清理**：`native-tool-router.ts` 白名单（fs 三件）从未被任何注册点触达，
+  随接线删除；`built-in-tools.ts` 去包装（各工具在自身 execute 内接 native）。
+- **验证**：`dotnet-tools-matrix.py` 22/22（含 write 三态证据）；
+  `dual-track-diff.ts` fs 段（输出投影+字节级）；`fs-tools-native.test.ts` 9 项。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T0 完成；T1/T2 续排）。
+
 ## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）
 
 - **决策**：密钥等敏感信息分阶段迁移 .NET 保存处理。**Phase 1** 在 `cyrene-native` 新增

@@ -3,11 +3,14 @@
  *
  * calculator：同一表达式集，TS evaluateExpression vs cyrene-smoke
  * （同源编译的 .NET Calculator），数值差 >1e-9 即 FAIL。
+ * fs 三件：write_file（新建/覆盖/追加/空内容）输出 JSON 与落盘字节级对齐、
+ * read_file 窗口语义对齐、list_dir 文本对齐（evidence 帧协议 v1）。
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { evaluateExpression } from "../src/main/orchestrator/tools/builtin-tools/utility-tools";
 
@@ -72,6 +75,135 @@ function parseCalcResult(data: unknown): number | null {
   return null;
 }
 
+// ── fs 三件双轨（evidence 帧协议 v1）─────────────────────────
+
+type TsFsTool = (args: Record<string, unknown>) => Promise<string>;
+
+/** 加载 TS 轨 fs 工具（注册副作用在模块加载时完成）。host 不可用时 execute 自动回退 TS。 */
+async function loadTsFsTools(): Promise<Map<string, TsFsTool>> {
+  await import("../src/main/orchestrator/tools/fs-tools");
+  const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+  const map = new Map<string, TsFsTool>();
+  for (const id of ["read_file", "write_file", "list_dir"]) {
+    const tool = toolRegistry.getById(id);
+    if (tool) map.set(id, (args) => Promise.resolve(tool.execute(args)));
+  }
+  return map;
+}
+
+function looseJson(text: string): unknown {
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+/** write_file 可比投影：去掉两轨不同的绝对路径（临时目录），保留统计与证据。 */
+function comparableWrite(parsed: unknown): unknown {
+  const j = (parsed ?? {}) as Record<string, unknown> & {
+    changes?: Array<Record<string, unknown>>;
+  };
+  return {
+    success: j.success,
+    tool: j.tool,
+    append: j.append,
+    exists: j.exists,
+    sizeBytes: j.sizeBytes,
+    writtenBytes: j.writtenBytes,
+    changes: (j.changes ?? []).map((c) => ({
+      kind: c.kind,
+      insertions: c.insertions,
+      deletions: c.deletions,
+      truncated: c.truncated,
+      diff: c.diff,
+    })),
+  };
+}
+
+/** read_file 可比投影（路径同理剔除）。 */
+function comparableRead(parsed: unknown): unknown {
+  const j = (parsed ?? {}) as Record<string, unknown>;
+  return {
+    startLine: j.startLine,
+    endLine: j.endLine,
+    totalLines: j.totalLines,
+    content: j.content,
+    truncated: j.truncated,
+  };
+}
+
+/** fs 三件 TS↔.NET 双轨对比；返回失败数。仅在 smoke host 可用时调用。 */
+async function runFsDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] fs ${name}`);
+    else { failed++; console.log(`[FAIL] fs ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "fs-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "fs-dual-net-"));
+  try {
+    const tsTools = await loadTsFsTools();
+    const tsWrite = tsTools.get("write_file");
+    if (!tsWrite) { check("TS 轨 write_file 已注册", false); return failed; }
+
+    const writeCases: Array<{ name: string; pre?: string; args: (dir: string) => Record<string, unknown> }> = [
+      { name: "write 新建文件", args: (d) => ({ path: path.join(d, "new.txt"), content: "第一行\n第二行" }) },
+      { name: "write 覆盖写 modified+diff", pre: "旧一\n旧二", args: (d) => ({ path: path.join(d, "over.txt"), content: "新一\n新二\n新三" }) },
+      { name: "write 追加写补换行", pre: "首行\n次行", args: (d) => ({ path: path.join(d, "app.txt"), content: "追加", append: true }) },
+      { name: "write 空内容", args: (d) => ({ path: path.join(d, "empty.txt"), content: "" }) },
+      { name: "write 子目录自动创建", args: (d) => ({ path: path.join(d, "a", "b", "c.txt"), content: "x" }) },
+    ];
+
+    for (const c of writeCases) {
+      const tsArgs = c.args(tsHome);
+      const netArgs = c.args(netHome);
+      const tsFile = String(tsArgs.path);
+      const netFile = String(netArgs.path);
+      if (c.pre !== undefined) {
+        mkdirSync(path.dirname(tsFile), { recursive: true });
+        mkdirSync(path.dirname(netFile), { recursive: true });
+        writeFileSync(tsFile, c.pre);
+        writeFileSync(netFile, c.pre);
+      }
+      const tsOut = looseJson(await tsWrite(tsArgs));
+      const host = await callSmokeTool("fs_write_file", netArgs);
+      if (!host.ok) { check(c.name, false, `host error: ${host.error}`); continue; }
+      const netOut = looseJson(String(host.data ?? ""));
+      const outSame = JSON.stringify(comparableWrite(tsOut)) === JSON.stringify(comparableWrite(netOut));
+      const tsBytes = existsSync(tsFile) ? readFileSync(tsFile) : null;
+      const netBytes = existsSync(netFile) ? readFileSync(netFile) : null;
+      const bytesSame = !!tsBytes && !!netBytes && Buffer.compare(tsBytes, netBytes) === 0;
+      check(
+        c.name,
+        outSame && bytesSame,
+        `outSame=${outSame} bytesSame=${bytesSame} ts=${JSON.stringify(comparableWrite(tsOut))} net=${JSON.stringify(comparableWrite(netOut))}`,
+      );
+    }
+
+    const tsRead = tsTools.get("read_file");
+    if (tsRead) {
+      const tsReadOut = looseJson(await tsRead({ path: path.join(tsHome, "new.txt"), startLine: 2, maxLines: 1 }));
+      const host = await callSmokeTool("fs_read_file", { path: path.join(netHome, "new.txt"), startLine: 2, maxLines: 1 });
+      const netReadOut = host.ok ? looseJson(String(host.data ?? "")) : null;
+      check(
+        "read 分页窗口",
+        JSON.stringify(comparableRead(tsReadOut)) === JSON.stringify(comparableRead(netReadOut)),
+        `ts=${JSON.stringify(comparableRead(tsReadOut))} net=${JSON.stringify(comparableRead(netReadOut))}`,
+      );
+    }
+
+    const tsList = tsTools.get("list_dir");
+    if (tsList) {
+      const tsListOut = await tsList({ path: tsHome });
+      const host = await callSmokeTool("fs_list_dir", { path: netHome });
+      const netListOut = host.ok ? String(host.data ?? "").split(netHome).join(tsHome) : null;
+      check("list_dir 文本对齐", tsListOut === netListOut, `ts=${JSON.stringify(tsListOut)} net=${JSON.stringify(netListOut)}`);
+    }
+  } finally {
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -98,6 +230,9 @@ async function main(): Promise<void> {
     if (parseCalcResult(r.data) !== null) console.log("[PASS] tool-host call 帧序");
     else if (useWin) console.log("[SKIP] smoke 帧序（win 轨）");
     else { failures++; console.log("[FAIL] tool-host call 帧序"); }
+    // fs 三件双轨（evidence 帧协议 v1）
+    if (useSmoke) failures += await runFsDualTrack();
+    else console.log("[SKIP] fs 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);
