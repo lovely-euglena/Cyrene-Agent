@@ -125,10 +125,13 @@ cyrene-native --secrets-host（.NET）
 | DPAPI 解密失败（换机器 / 用户变化） | 明确错误 + 引导重新录入；`.bak` 只恢复文件不恢复明文 |
 | 设置页保存失败 | IPC 返回错误，界面提示；不静默丢弃用户输入 |
 
-## 5. Phase 2（待议，不在本批实施）
+## 5. Phase 2（细化方案已出，见 LLM 服务化设计）
 
 把厂商请求处理下沉 .NET（vendors 适配器 / 流式解析 / 重试），届时密钥不出 .NET 进程，
-B1 正式废止。触发条件与代价：
+B1 正式废止。**细化设计已独立成文**：
+[2026-10-03-llm-service-dotnet-job-polling.md](./2026-10-03-llm-service-dotnet-job-polling.md)
+（`--llm-host` 作业式服务：submit/poll/cancel + 优先级通道 + 高吞吐合并 + 服务器版预留）。
+触发条件与代价：
 
 - 触发条件：Phase 1 稳定运行；出现「密钥绝不能进 TS 内存」的硬需求（如合规/多用户服务化）；
 - 代价：vendors 3,453 行 + 流式协议逐调用桥 + 行为一致性回归，参考 Plan B 对 Harness 的评估口径；
