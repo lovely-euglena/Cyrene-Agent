@@ -109,11 +109,13 @@ internal static class FsTools
             return Err("E_FS_PATH", "path 必须是非空字符串", false);
         var rawPath = pathEl.GetString();
         if (string.IsNullOrWhiteSpace(rawPath)) return Err("E_FS_PATH", "path 不能为空", false);
-        var content = args.TryGetProperty("content", out var c)
-            ? (c.ValueKind == JsonValueKind.String ? c.GetString() : null)
-            : null;
-        if (args.TryGetProperty("content", out _) && c.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
-            return Err("E_FS_PATH", $"content 必须是字符串（收到 {c.ValueKind}）", false);
+        string? content = null;
+        if (args.TryGetProperty("content", out var c))
+        {
+            if (c.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                return Err("E_FS_PATH", $"content 必须是字符串（收到 {c.ValueKind}）", false);
+            content = c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+        }
         // 布尔参数与 TS 判定同口径：append === true；createDirs !== false（缺省 true）
         var append = args.TryGetProperty("append", out var ap) && ap.ValueKind == JsonValueKind.True;
         var createDirs = !(args.TryGetProperty("createDirs", out var cd) && cd.ValueKind == JsonValueKind.False);

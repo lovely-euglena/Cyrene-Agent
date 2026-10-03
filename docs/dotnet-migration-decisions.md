@@ -232,3 +232,8 @@
   串行闸门 + 取消杀进程覆盖主要场景。
 - **验证**：`vitest src/main/orchestrator/tools` 441 passed；tsc 0 错误；
   dual-track 全绿；native-tool-host.test 7 项（串行/两类取消/默认看门狗）。
+- **第 4 轮复审（无阻断，2 条可选优化）**：`FsTools.WriteFile` 双重
+  `TryGetProperty("content")` 合并为单个判断块（本批）；只读工具「轻量取消」
+  （不杀 host、仅摘除 pending）需引入「已放弃在途」状态与兜底计时器，否则串行
+  闸门下新调用会被旧调用看门狗误杀——列为 #IKJLP2 后续（当前杀进程语义安全，
+  代价仅一次主机重启）。
