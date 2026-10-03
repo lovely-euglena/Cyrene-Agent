@@ -7,19 +7,21 @@ Windows API 只在调用时才触发——协议层 op 全部可用；fs 工具�
 """
 import subprocess, json, os, tempfile, sys
 
-NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NATIVE = os.path.join(REPO_ROOT, "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll")
 results = []
 
 def run_host(args, frames, timeout=60):
     """spawn host → 逐行喂帧 → 收全部输出行（dict 化）。env 自足。"""
     env = dict(os.environ)
     dr = os.path.expanduser("~/.dotnet")
-    env["DOTNET_ROOT"] = dr
-    env["PATH"] = dr + os.pathsep + env.get("PATH", "")
+    if os.path.isdir(dr):
+        env["DOTNET_ROOT"] = dr
+        env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     p = subprocess.run(
         ["dotnet", NATIVE] + args,
         input="\n".join(frames), capture_output=True, text=True, timeout=timeout,
-        cwd="/home/z/my-project/repos/Cyrene-Agent", env=env)
+        cwd=REPO_ROOT, env=env)
     out = []
     for line in p.stdout.strip().splitlines():
         try:
