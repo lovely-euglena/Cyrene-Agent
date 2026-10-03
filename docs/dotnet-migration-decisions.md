@@ -140,3 +140,25 @@
   `docs/design/2026-10-03-llm-service-dotnet-job-polling.md`（.NET 厂商服务 + TS 轮询）；
   关联 Issue：Ygwill/cyrene-agent#IKJLB2。
 - **实施状态**：本批仅文档与决策，未开工。
+
+## 2026-10-03 增量：PR #1 审查修复（按件超时 + Number 语义）
+
+- **背景**：Gitee AI 队友「PR 审查助手」对 PR #1 给出 1 阻断 + 2 改进；
+  经代码核实全部成立，逐条修复（bot 意见与修复一一对应）。
+- **按件超时（阻断）**：`nativeFirst` 增加 `NativeFirstOptions.timeoutMs`
+  （默认仍 5s）；`download_file` 传 10min（覆盖 64MiB 慢链路，约 1Mbps 需
+  9 分钟）、`exchange_rate` 传 65s（C# HttpClient 60s + 余量）。此前默认
+  5s 看门狗会把长任务的 native 轨误杀并强杀 host（在途调用一并拒绝），
+  native 轨形同虚设。C# `DownloadFileTool` 另补首包（连接/响应头）30s
+  空闲约束——`HttpClient.Timeout=Infinite`，握手阶段不得无限挂起。
+- **Number 语义（改进）**：`HostLocale.Num` 统一 JS `Number(value)` 近似
+  （字符串数字可解析、失败 NaN、true/false/null → 1/0/0）；`ExchangeRateTool
+  .amount` / `ExpenseTools.amount|days` 接入，消除「模型把数字写成字符串」
+  时的双轨分叉。
+- **str_replace 设计注释（改进）**：两段式正式提交段不做 failure payload
+  检查是有意为之（TOCTOU 失败透传模型 > 静默回退重跑），已在
+  `life-tools.ts` 补注释说明。
+- **测试盲区**：dual-track 直连 smoke-host，覆盖不到 `NativeToolHost` 客户端
+  层——新增 `native-tool-host.test.ts` 直接校验按件超时/正常返回/默认 5s。
+- **验证**：`dotnet-tools-matrix.py` 38/38；`dual-track-diff.ts` 全绿
+  （expense +3 用例）；`vitest src/main/orchestrator/tools` 430 passed。
