@@ -298,9 +298,10 @@ internal static class SearchTools
 
     private static double NumOr(JsonElement args, string key, double fallback)
     {
-        if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.Number)
+        if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty(key, out var el))
         {
-            var v = el.GetDouble();
+            // JS Number(value) 语义：字符串数字可解析、失败 NaN、true/false/null → 1/0/0
+            var v = HostLocale.Num(el);
             if (v != 0 && !double.IsNaN(v)) return v; // JS Number(x) || fallback
         }
         return fallback;

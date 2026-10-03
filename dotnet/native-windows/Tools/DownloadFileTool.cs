@@ -11,6 +11,9 @@ namespace CyreneNative.Tools;
 ///   - 危险字符 / 目录穿越 / 危险后缀黑名单 / 64MiB 上限 / 30s 空闲超时
 ///   - 先完整缓冲校验再一次性落盘：中断不留半截文件
 ///   - 失败以与 TS 相同的文案字符串返回；基础设施缺失（root 未注入）抛错误帧回退
+///   - 注意：ToolHost 单线程顺序处理 stdio 帧，本工具网络 I/O 为同步阻塞
+///     （GetAwaiter().GetResult()）——大文件下载期间后续调用帧排队等待，超时由
+///     宿主看门狗兜底；设计并发工具调度时需考虑该瓶颈
 /// </summary>
 internal static class DownloadFileTool
 {

@@ -96,6 +96,8 @@ open(os.path.join(sws, "node_modules", "c.js"), "w", encoding="utf-8").write("he
 c_s1 = req("search_text", {"query": "hello", "contextLines": 1, "__cyreneWorkspaceRoot": sws})
 c_s2 = req("search_text", {"query": "he.*o", "mode": "regex", "caseSensitive": True, "__cyreneWorkspaceRoot": sws})
 c_s3 = req("search_text", {"query": "zzz-not-exist", "__cyreneWorkspaceRoot": sws})
+# 字符串数字：JS Number() 语义（与 c_s1 输出应完全一致）
+c_s4 = req("search_text", {"query": "hello", "contextLines": "1", "maxMatches": "3", "__cyreneWorkspaceRoot": sws})
 
 # str_replace（两段式：__dryRun 预检 → 提交；失败诊断）
 srf = os.path.join(tmp, "sr.txt")
@@ -215,6 +217,8 @@ s2 = data_json(c_s2)
 check("regex 模式大小写敏感命中 2 处", isinstance(s2, dict) and s2.get("totalMatches") == 2, s2)
 s3 = data_json(c_s3)
 check("未命中给 message", isinstance(s3, dict) and s3.get("totalMatches") == 0 and "未找到匹配内容" in str(s3.get("message")), s3)
+s4 = data_json(c_s4)
+check("字符串数值参数（Number 语义）", s4 == s1, s4)
 
 print("\n=== str_replace ===")
 sr1 = data_json(c_sr1)
