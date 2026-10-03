@@ -9,11 +9,11 @@ import { Card } from "../../components/ui/Card";
 
 type RuntimeSync = "off" | "local" | "llm";
 type StickerSize = "small" | "standard" | "large";
-type Values = { runtimeSync: RuntimeSync; stickerEnabled: boolean; stickerSize: StickerSize; stickerSimilarityThreshold: number; embeddingDimensions?: number };
+type Values = { runtimeSync: RuntimeSync; stickerEnabled: boolean; stickerSize: StickerSize; stickerMatchMode: "embedding" | "text"; stickerSimilarityThreshold: number; embeddingDimensions?: number };
 type Notice = { type: "success" | "error" | "info"; text: string };
 type ExtendedSettingsApi = SettingsApi & { getRerankerStatus?: () => Promise<{ light: boolean; standard: boolean }> };
 
-const defaults: Values = { runtimeSync: "off", stickerEnabled: true, stickerSize: "standard", stickerSimilarityThreshold: 0.55 };
+const defaults: Values = { runtimeSync: "off", stickerEnabled: true, stickerSize: "standard", stickerMatchMode: "embedding", stickerSimilarityThreshold: 0.55 };
 
 function settingsApi(): ExtendedSettingsApi | undefined {
   return window.settings as unknown as ExtendedSettingsApi | undefined;
@@ -24,6 +24,7 @@ function readValues(config: Partial<Values>): Values {
     runtimeSync: config.runtimeSync === "local" || config.runtimeSync === "llm" ? config.runtimeSync : "off",
     stickerEnabled: config.stickerEnabled !== false,
     stickerSize: config.stickerSize === "small" || config.stickerSize === "large" ? config.stickerSize : "standard",
+    stickerMatchMode: config.stickerMatchMode === "text" ? "text" : "embedding",
     stickerSimilarityThreshold: typeof config.stickerSimilarityThreshold === "number" ? config.stickerSimilarityThreshold : 0.55,
     embeddingDimensions: typeof config.embeddingDimensions === "number" ? config.embeddingDimensions : undefined,
   };
@@ -224,6 +225,7 @@ export function CyreneSettingsPanel() {
       <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><Images size={18} />{t("settingsPage.cyrene.stickerTitle")}</h2><p>{t("settingsPage.cyrene.stickerDescription")}</p></div>
         <Card><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.stickerEnabled")}</strong><span>{t("settingsPage.cyrene.stickerEnabledHint")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.cyrene.stickerEnabled")} checked={values.stickerEnabled} onChange={(checked) => update("stickerEnabled", checked)} /></div>
           <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.stickerSize")}</strong></div><Radio.Group value={values.stickerSize} optionType="button" buttonStyle="solid" onChange={(event) => update("stickerSize", event.target.value as StickerSize)}><Radio.Button value="small">{t("settingsPage.cyrene.small")}</Radio.Button><Radio.Button value="standard">{t("settingsPage.cyrene.standard")}</Radio.Button><Radio.Button value="large">{t("settingsPage.cyrene.large")}</Radio.Button></Radio.Group></div>
+          <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.stickerMatchMode")}</strong><span>{t("settingsPage.cyrene.stickerMatchModeHint")}</span></div><Radio.Group value={values.stickerMatchMode} optionType="button" buttonStyle="solid" onChange={(event) => update("stickerMatchMode", event.target.value as "embedding" | "text")}><Radio.Button value="embedding">{t("settingsPage.cyrene.stickerMatchEmbedding")}</Radio.Button><Radio.Button value="text">{t("settingsPage.cyrene.stickerMatchText")}</Radio.Button></Radio.Group></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.threshold")}</strong><span>{t("settingsPage.cyrene.thresholdHint")}</span></div><div className="cy-settings-row__control cy-settings-slider"><SettingsSlider min={0.3} max={0.9} step={0.05} value={values.stickerSimilarityThreshold} ariaLabel={t("settingsPage.cyrene.threshold")} onChange={(value) => update("stickerSimilarityThreshold", value)} /><span>{values.stickerSimilarityThreshold.toFixed(2)}</span></div></div>
           <div className="cy-settings-row cy-cyrene-actions"><Button onClick={() => void openStickerManager()}>{t("settingsPage.cyrene.manageStickers")}</Button><Button onClick={openStickerDialog}>{t("settingsPage.cyrene.addSticker")}</Button></div>
         </Card>

@@ -156,6 +156,8 @@ export interface ModelSettings {
   stickerEnabled: boolean;
   stickerSize: StickerSize;
   stickerSimilarityThreshold: number;
+  /** 贴纸匹配方式：embedding=向量语义匹配；text=jieba BM25 文本匹配（无需模型）。 */
+  stickerMatchMode: "embedding" | "text";
   /** 整个聊天请求的总超时（秒）。30-1800，默认 300。 */
   chatRequestTimeoutSec: number;
   /** 主模型请求的额外重试次数；0–10，默认 5。 */
@@ -204,6 +206,7 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   stickerEnabled: true,
   stickerSize: "standard",
   stickerSimilarityThreshold: 0.55,
+  stickerMatchMode: "embedding",
   chatRequestTimeoutSec: 300,
   modelRequestMaxRetries: 5,
   citaRepairBudgetSec: 8,
@@ -432,6 +435,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
     stickerSimilarityThreshold: typeof input?.stickerSimilarityThreshold === "number"
       ? Math.max(0.3, Math.min(0.9, input.stickerSimilarityThreshold))
       : 0.55,
+    stickerMatchMode: input?.stickerMatchMode === "text" ? "text" : "embedding",
     chatRequestTimeoutSec: typeof input?.chatRequestTimeoutSec === "number"
       && Number.isFinite(input.chatRequestTimeoutSec)
       ? Math.max(30, Math.min(1800, Math.round(input.chatRequestTimeoutSec)))
