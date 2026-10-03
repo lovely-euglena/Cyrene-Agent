@@ -176,7 +176,8 @@ npm run package:win:dir
 
 Cyrene can chat normally without running a local large language model. However, installing the **BGE-M3 Embedding model** is recommended (used for semantic sticker matching, Worldbook semantic retrieval, and RAG retrieval):
 
-[Download BGE-M3 from Releases](https://github.com/Playa-Cyrene/Cyrene-Agent/releases)
+- **One-click download in the app (recommended)**: Settings → "Cyrene Settings" → Model Actions → "Download models" (official / hf-mirror mirrors, resumable downloads, cancel supported).
+- **Manual install / offline**: see [docs/local-models.md](./docs/local-models.md), or get it from [Releases](https://github.com/Playa-Cyrene/Cyrene-Agent/releases).
 
 > [!IMPORTANT]
 >
