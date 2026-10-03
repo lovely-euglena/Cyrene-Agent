@@ -20,6 +20,8 @@ namespace CyreneNative.Tools;
 /// </summary>
 internal static class GitTools
 {
+    // 内部 IPC 载荷：仅经帧协议回传 TS/模型，不直接注入 DOM；与
+    // ExpenseTools/ApplyPatchTool 同约定（中文不转 \uXXXX，原始 JSON 与 TS 侧对齐）
     private static readonly JsonSerializerOptions Json = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -605,6 +607,8 @@ internal static class GitTools
         var stderrTask = proc.StandardError.ReadToEndAsync();
         if (!proc.WaitForExit(CommandTimeoutMs))
         {
+            // TODO(后续): 宿主被杀（取消/崩溃）时 git 子进程可能孤儿化——entireProcessTree
+            // 只覆盖本进程主动超时路径；如需彻底清理可引入 Windows Job Object（设计稿 §2 已记）
             try { proc.Kill(entireProcessTree: true); } catch { /* ignore */ }
             throw new ToolHostException("E_GIT_TIMEOUT", "git 命令超时（120s）");
         }
