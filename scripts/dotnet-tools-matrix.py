@@ -7,6 +7,16 @@ fs_list_dir
 """
 import subprocess, json, os, tempfile, sys
 
+# Windows 控制台默认 GBK：错误 detail 含 emoji（如 🚗）会撑爆 print；强制 UTF-8 输出
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+# Windows 控制台默认 GBK：emoji（如 🚗）会导致 print 崩溃；统一 UTF-8（Linux CI 无影响）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 results = []
@@ -148,6 +158,24 @@ c_ws3 = req("web_search", {"query": "   "})
 frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
                           "webSearch": {"engine": "no-such", "bochaKey": "", "tavilyKey": "", "anySearchKey": ""}}))
 c_ws4 = req("web_search", {"query": "test"})
+
+# weather：config 帧注入（确定性路径，不联网）
+frames.append(json.dumps({"op": "config", "weather": {"city": "北京", "source": "open-meteo", "amapKey": "", "enabled": False, "language": "zh"}}))
+c_wt1 = req("weather", {})
+frames.append(json.dumps({"op": "config", "weather": {"city": "", "source": "open-meteo", "amapKey": "", "enabled": True, "language": "zh"}}))
+c_wt2 = req("weather", {})
+frames.append(json.dumps({"op": "config", "weather": {"city": "", "source": "bogus", "amapKey": "", "enabled": True, "language": "zh"}}))
+c_wt3 = req("weather", {"city": "上海"})
+frames.append(json.dumps({"op": "config", "weather": {"city": "", "source": "amap", "amapKey": "", "enabled": True, "language": "zh"}}))
+c_wt4 = req("weather", {"city": "上海"})
+
+# plan_trip：config 帧注入（确定性路径，不联网）
+frames.append(json.dumps({"op": "config", "travel": {"amapKey": "", "enabled": False}}))
+c_pt1 = req("plan_trip", {"origin": "A", "destination": "B"})
+frames.append(json.dumps({"op": "config", "travel": {"amapKey": "", "enabled": True}}))
+c_pt2 = req("plan_trip", {"origin": "A", "destination": "B"})
+frames.append(json.dumps({"op": "config", "travel": {"amapKey": "k", "enabled": True}}))
+c_pt3 = req("plan_trip", {"destination": "B"})
 
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
@@ -319,6 +347,21 @@ check("ws 未启用拒绝", ws_error(c_ws1) == "E_SEARCH_NOT_ENABLED", by.get(c_
 check("ws 缺 key 拒绝", ws_error(c_ws2) == "E_SEARCH_KEY_MISSING", by.get(c_ws2))
 check("ws 空 query 拒绝（先于 key 校验）", ws_error(c_ws3) == "E_SEARCH_QUERY_EMPTY", by.get(c_ws3))
 check("ws 未知引擎拒绝", ws_error(c_ws4) == "E_SEARCH_ENGINE_NOT_SUPPORTED:no-such", by.get(c_ws4))
+
+print("\n=== weather / plan_trip（config 帧 + 确定性路径）===")
+check("weather 未启用", data_text(c_wt1) == "[错误] 天气查询功能未启用，请在设置里开启", data_text(c_wt1))
+check("weather 无城市提示",
+      data_text(c_wt2) == "[提示] 没有指定城市，也没设置默认城市。请告诉用户：在 设置 → 我的信息 填默认城市，或直接说出要查的城市名。",
+      data_text(c_wt2))
+check("weather 未知源", data_text(c_wt3) == "[错误] 未知的天气源\"bogus\"。请在 设置 → 插件 → 天气查询 选择 Open-Meteo 或 高德天气。", data_text(c_wt3))
+check("weather 高德缺 key",
+      data_text(c_wt4) == "[错误] 还没有配置高德天气 Key。请在 设置 → 插件 → 天气查询 填入高德 Key，或切换天气源为 Open-Meteo（免配置）。",
+      data_text(c_wt4))
+check("plan_trip 未启用", data_text(c_pt1) == "[错误] 出行工具未启用，请在设置里开启", data_text(c_pt1))
+check("plan_trip 缺 key",
+      data_text(c_pt2) == "[提示] 高德 API Key 未配置。可在 设置→插件 中找到 🚗出行工具，填入高德 Web 服务 API Key（注册地址：https://lbs.amap.com）。",
+      data_text(c_pt2))
+check("plan_trip 缺起点", data_text(c_pt3) == "[错误] 请提供起点和终点", data_text(c_pt3))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

@@ -31,6 +31,29 @@ internal static class HostLocale
         => DateTimeOffset.FromUnixTimeMilliseconds(epochMs).ToLocalTime()
             .ToString("yyyy/M/d HH:mm:ss", CultureInfo.InvariantCulture);
 
+    /// <summary>JS Math.round 语义（.5 向上取整，与 TS 显示口径一致）。</summary>
+    public static long JsRound(double value) => (long)Math.Floor(value + 0.5);
+
+    /// <summary>TS toLocaleString(dateLocale, { hour:"2-digit", minute:"2-digit", timeZone }) 近似
+    /// （小时:分钟；24 小时制 locale 输出 HH:mm，12 小时制输出 h:mm tt）。</summary>
+    public static string FormatTimeShort(DateTimeOffset time)
+    {
+        DateTimeOffset local;
+        try { local = TimeZoneInfo.ConvertTime(time, TimeZoneInfo.FindSystemTimeZoneById(ToolHostConfig.Timezone)); }
+        catch { local = time; }
+        try
+        {
+            var culture = CultureInfo.GetCultureInfo(ToolHostConfig.DateLocale);
+            return culture.DateTimeFormat.ShortTimePattern.Contains("tt", StringComparison.OrdinalIgnoreCase)
+                ? local.ToString("h:mm tt", culture)
+                : local.ToString("HH:mm", culture);
+        }
+        catch
+        {
+            return local.ToString("HH:mm", CultureInfo.InvariantCulture);
+        }
+    }
+
     /// <summary>JS Number(value) 语义近似：number 原样；string 按不变文化解析
     /// （失败 NaN）；true/false/null → 1/0/0；其余 NaN。
     /// 调用方按 TS `||` / Number.isFinite 口径兜底（模型偶发把数字写成字符串）。</summary>

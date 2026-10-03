@@ -8,9 +8,12 @@
 
 import { toolRegistry } from "./registry/tool-registry";
 import { logger, LogTag } from "../../logger";
+import { nativeFirst, nativeToolHost } from "./native-tool-host";
 
 const LOG_PREFIX = "[TravelTools]";
 const TRAVEL_TIMEOUT_MS = 15000;
+/** native 轨看门狗：≥ C# 侧 2 次地理编码 + 1 次路线查询（各 15s）。 */
+const TRAVEL_NATIVE_TIMEOUT_MS = 40_000;
 
 // ══════════════════════════════════════════════════════════
 // 配置注入
@@ -295,7 +298,19 @@ export function registerTravelTools(): void {
       },
       required: ["origin", "destination"],
     },
-    execute: executePlanTrip,
+    execute: async (args, context) => {
+      // 实时下发出行配置（高德 key；B1：key 仅宿主内存驻留）
+      nativeToolHost.setRuntimeSettings({
+        travel: {
+          amapKey: amapKeyGetter ? amapKeyGetter() : "",
+          enabled: travelEnabledGetter ? travelEnabledGetter() : true,
+        },
+      });
+      return nativeFirst("plan_trip", args, (nativeArgs) => executePlanTrip(nativeArgs), {
+        timeoutMs: TRAVEL_NATIVE_TIMEOUT_MS,
+        signal: context?.signal,
+      });
+    },
   });
 
   logger.info(LogTag.TravelTools, "registered: plan_trip");
