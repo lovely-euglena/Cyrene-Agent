@@ -83,7 +83,7 @@ function parseCalcResult(data: unknown): number | null {
 
 // ── fs 三件双轨（evidence 帧协议 v1）─────────────────────────
 
-type TsFsTool = (args: Record<string, unknown>) => Promise<string>;
+type TsFsTool = (args: Record<string, unknown>, ctx?: Record<string, unknown>) => Promise<string>;
 
 let tsToolsCache: Promise<Map<string, TsFsTool>> | null = null;
 
@@ -93,11 +93,13 @@ function loadTsTools(): Promise<Map<string, TsFsTool>> {
     await import("../src/main/orchestrator/tools/fs-tools");
     const lifeTools = await import("../src/main/orchestrator/tools/life-tools");
     lifeTools.registerLifeTools();
+    const searchTools = await import("../src/main/orchestrator/tools/search-text-tools");
+    searchTools.registerSearchTextTool();
     const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
     const map = new Map<string, TsFsTool>();
-    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense"]) {
+    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate", "record_expense", "query_expense", "search_text"]) {
       const tool = toolRegistry.getById(id);
-      if (tool) map.set(id, (args) => Promise.resolve(tool.execute(args)));
+      if (tool) map.set(id, (args, ctx) => Promise.resolve(tool.execute(args, ctx as never)));
     }
     return map;
   })();
@@ -310,6 +312,58 @@ async function runLifeDualTrack(): Promise<number> {
   return failed;
 }
 
+/** search_text 双轨：镜像工作区 + 相同入参，输出逐字段对比（matches 排序后比）。 */
+async function runSearchDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] search ${name}`);
+    else { failed++; console.log(`[FAIL] search ${name} —— ${detail}`); }
+  };
+
+  const tsWorkspace = mkdtempSync(path.join(os.tmpdir(), "search-dual-ts-"));
+  const netWorkspace = mkdtempSync(path.join(os.tmpdir(), "search-dual-net-"));
+  const seed = (root: string): void => {
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    writeFileSync(path.join(root, "src", "a.ts"), "hello world\nconst x = 1;\nHELLO again\n");
+    writeFileSync(path.join(root, "src", "b.py"), "hello python\n");
+    writeFileSync(path.join(root, "node_modules", "c.js"), "hello dependency\n");
+  };
+  try {
+    seed(tsWorkspace);
+    seed(netWorkspace);
+    const tsTools = await loadTsTools();
+    const tsSearch = tsTools.get("search_text");
+    if (!tsSearch) { check("TS 轨已注册", false); return failed; }
+
+    const cases: Array<{ name: string; args: Record<string, unknown> }> = [
+      { name: "literal 大小写不敏感 + 上下文", args: { query: "hello", contextLines: 1 } },
+      { name: "regex 模式", args: { query: "he.*o", mode: "regex", caseSensitive: true } },
+      { name: "glob 过滤 *.ts", args: { query: "hello", fileGlobs: ["*.ts"] } },
+      { name: "未命中 message", args: { query: "zzz-not-exist" } },
+      { name: "路径逃逸拒绝", args: { query: "hello", paths: ["../outside"] } },
+    ];
+    for (const c of cases) {
+      const tsOut = JSON.parse(await tsSearch(c.args, { resolvedWorkspaceRoot: tsWorkspace })) as Record<string, unknown>;
+      const host = await callSmokeTool("search_text", { ...c.args, __cyreneWorkspaceRoot: netWorkspace });
+      const netOut = host.ok ? (JSON.parse(String(host.data ?? "")) as Record<string, unknown>) : {};
+      const sortMatches = (v: unknown): unknown =>
+        (v as Array<Record<string, unknown>>).slice().sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      const tsCmp = { ...tsOut, matches: sortMatches(tsOut.matches ?? []) };
+      const netCmp = { ...netOut, matches: sortMatches(netOut.matches ?? []) };
+      check(
+        c.name,
+        JSON.stringify(tsCmp) === JSON.stringify(netCmp),
+        `ts=${JSON.stringify(tsCmp)} net=${JSON.stringify(netCmp)}`,
+      );
+    }
+  } finally {
+    rmSync(tsWorkspace, { recursive: true, force: true });
+    rmSync(netWorkspace, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -339,9 +393,12 @@ async function main(): Promise<void> {
     // fs 三件双轨（evidence 帧协议 v1）
     if (useSmoke) failures += await runFsDualTrack();
     else console.log("[SKIP] fs 双轨（仅 smoke dll 轨支持）");
-    // 生活类工具双轨（exchange_rate）
+    // 生活类工具双轨（exchange_rate + expense）
     if (useSmoke) failures += await runLifeDualTrack();
     else console.log("[SKIP] life 双轨（仅 smoke dll 轨支持）");
+    // 搜索工具双轨（search_text）
+    if (useSmoke) failures += await runSearchDualTrack();
+    else console.log("[SKIP] search 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);

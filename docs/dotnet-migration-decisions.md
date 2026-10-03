@@ -94,6 +94,16 @@
 - **验证**：`dotnet-tools-matrix.py` 28/28（+6 expense 断言，含账本 JSON 校验）；
   `dual-track-diff` life 段扩为 exchange 1 + expense 6（record/query 输出逐字 +
   账本结构），TS 基线经 `scripts/dual-track-env.ts` 注入隔离 userData。
+
+## 2026-10-03 增量：T1 续——search_text 下沉（Glob/Grep 别名共用）
+
+- **search_text（.NET）**：工作区文本/正则搜索全量对齐 TS——忽略目录/扩展名清单、
+  1MB 文件上限、单行 500 字符、匹配上限 100、上下文上限 5、路径逃逸拒绝、
+  message / rejectedPaths / skippedDirs 输出；regex 用 `ECMAScript` 选项贴近 JS；
+  无效正则按无匹配处理。工作区根由 TS 包装器经内部参数 `__cyreneWorkspaceRoot`
+  注入（模型不可见）；zcode 的 Glob/Grep 别名随底层工具一并走 .NET。
+- **验证**：`search-text-native.test.ts` 3 项；`dual-track-diff` search 段 5 组
+  （literal/regex/glob/未命中/逃逸）；`dotnet-tools-matrix.py` 32/32。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
 
 ## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）
