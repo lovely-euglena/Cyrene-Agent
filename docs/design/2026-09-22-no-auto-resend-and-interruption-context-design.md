@@ -172,26 +172,26 @@ claimed（认领即落轨迹：reconcile 在 claim IPC 返回前完成）
 
 ### 第一层：删除自动续派（v3 已实施：三处改动 + 测试）
 
-1. **[pending-queue-flow.ts](e:\Cyrene-Agent\src\renderer\react\features\chat\pages\pending-queue-flow.ts)**——`resumePendingDispatch`：`dispatched` 与 `needs-dispatch` 分支统一为"清派发簿记 + 继续消费队列"；删除 needs-dispatch 的自动 `startClaimedRun`（即自动补发）与占位补插。claim-message-missing（数据损坏）保持暂停报错
-2. **[conversation-session-migration.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-session-migration.ts)**——`claimPendingMessage` 残留认领分支：reconcile 落轨迹 + 清残留账 + 照常认领下一条；删除 `buildRecoveredClaim`（把旧消息当新认领返回 = 另一条自动补发路径）及 chats-store 的孤儿包装 `pendingDispatchUserMessage`
+1. **[pending-queue-flow.ts](../../src/renderer/react/features/chat/pages/pending-queue-flow.ts)**——`resumePendingDispatch`：`dispatched` 与 `needs-dispatch` 分支统一为"清派发簿记 + 继续消费队列"；删除 needs-dispatch 的自动 `startClaimedRun`（即自动补发）与占位补插。claim-message-missing（数据损坏）保持暂停报错
+2. **[conversation-session-migration.ts](../../src/main/orchestrator/conversation-session-migration.ts)**——`claimPendingMessage` 残留认领分支：reconcile 落轨迹 + 清残留账 + 照常认领下一条；删除 `buildRecoveredClaim`（把旧消息当新认领返回 = 另一条自动补发路径）及 chats-store 的孤儿包装 `pendingDispatchUserMessage`
 3. **注释同步**：`startClaimedRun`、`AgentRunController` 的 claimedPendingMessageId 字段与确认处注释（"保留供恢复续派"→"保留给恢复逻辑清账"）
 4. **测试**：渲染端翻转"未派发恢复/关联性"两用例 + 新增"残留+下一条只派发下一条""清账写盘失败保留入口"；主进程更新"v2 claim 轨迹写失败重试"（重试不再返回旧消息）+ 新增"残留认领再认领返回下一条且轨迹保留两者"
 
 ### 第二层：中断状态进上下文（v3 已实施）
 
-6. **[conversation-transcript-types.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-types.ts)** + **[conversation-transcript-store.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-store.ts)**：`interruption` 的 `reason` 扩为 `"user_cancel" | "runtime_error"`，store 值域校验同步
-7. **[transcript-sink.ts](e:\Cyrene-Agent\src\main\orchestrator\transcript-sink.ts)**：`closeInterruption` 按 reason 参数化——工具闭合文案区分取消（"工具执行中被取消，结果未知"/"取消时未开始执行"）与系统错误（"上一轮系统错误，工具已启动但结果未知"/"上一轮系统错误时未开始执行"）；interruption 边界 id 保持 `${runId}:interruption:${reason}` 确定性幂等
+6. **[conversation-transcript-types.ts](../../src/main/orchestrator/conversation-transcript-types.ts)** + **[conversation-transcript-store.ts](../../src/main/orchestrator/conversation-transcript-store.ts)**：`interruption` 的 `reason` 扩为 `"user_cancel" | "runtime_error"`，store 值域校验同步
+7. **[transcript-sink.ts](../../src/main/orchestrator/transcript-sink.ts)**：`closeInterruption` 按 reason 参数化——工具闭合文案区分取消（"工具执行中被取消，结果未知"/"取消时未开始执行"）与系统错误（"上一轮系统错误，工具已启动但结果未知"/"上一轮系统错误时未开始执行"）；interruption 边界 id 保持 `${runId}:interruption:${reason}` 确定性幂等
 8. **调用点补齐**：
-   - [harness-adapter.ts](e:\Cyrene-Agent\src\main\orchestrator\harness-adapter.ts)：取消闭合后新增 else-if 分支——`timeout` / `runtime_error` 终态同样调 `closeInterruption(runtime_error)`（带 runSession，为 started/planned 工具补合成闭合）；闭合失败只记日志（终态本身就是失败）；else-if 结构保证取消闭合失败转出的 runtime_error 不会二次写入不同 reason
-   - [cyrene-agent.ts](e:\Cyrene-Agent\src\main\orchestrator\cyrene-agent.ts)：正常路径 `terminal.status === "timeout"` 时幂等补写（Harness 已在 adapter 闭合，ChatLoop 在此闭合）；catch 路径（ChatLoop 抛错等）非取消错误统一 `closeInterruption(runtime_error)` 后再 `subscriber.error`
-9. **[conversation-transcript-projection.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-projection.ts)**：新增 `interruptionNotesWithSources`（同构 delivery note 算法，见 2.4）+ 插入机制泛化为 `insertInternalNotes`（同一 beforeSeq 多条提示按来源 seq 排序成组插入，中断提示与送达失败提示不互相覆盖）；接入 `buildFullModelContextWithSources` / `buildCompactionSourceView` / `buildModelContextFromCompactedView` 三个模型上下文出口；**UI 投影不接入**（提示只进模型上下文）
+   - [harness-adapter.ts](../../src/main/orchestrator/harness-adapter.ts)：取消闭合后新增 else-if 分支——`timeout` / `runtime_error` 终态同样调 `closeInterruption(runtime_error)`（带 runSession，为 started/planned 工具补合成闭合）；闭合失败只记日志（终态本身就是失败）；else-if 结构保证取消闭合失败转出的 runtime_error 不会二次写入不同 reason
+   - [cyrene-agent.ts](../../src/main/orchestrator/cyrene-agent.ts)：正常路径 `terminal.status === "timeout"` 时幂等补写（Harness 已在 adapter 闭合，ChatLoop 在此闭合）；catch 路径（ChatLoop 抛错等）非取消错误统一 `closeInterruption(runtime_error)` 后再 `subscriber.error`
+9. **[conversation-transcript-projection.ts](../../src/main/orchestrator/conversation-transcript-projection.ts)**：新增 `interruptionNotesWithSources`（同构 delivery note 算法，见 2.4）+ 插入机制泛化为 `insertInternalNotes`（同一 beforeSeq 多条提示按来源 seq 排序成组插入，中断提示与送达失败提示不互相覆盖）；接入 `buildFullModelContextWithSources` / `buildCompactionSourceView` / `buildModelContextFromCompactedView` 三个模型上下文出口；**UI 投影不接入**（提示只进模型上下文）
 10. **测试**：sink 层 runtime_error 闭合（类别/文案/幂等）；投影层 5 用例（注入位置与文案、runtime_error 语义、闭合判定、工具调用 assistant 不误判闭合、尾部暂不注入）
 
 ### 第三层：崩溃对账（v3.1 已实施，正式方案）
 
 **崩溃信号（与终态路径天然区分）**：
 
-正常终态（completed / cancelled / failed）在 [harness-adapter.ts](e:\Cyrene-Agent\src\main\orchestrator\harness-adapter.ts#L171) 都会 `markTerminal` 写 run-store 终态，且写 `interruption` 边界。只有进程崩溃会让 run 在 run-store 里滞留 `running`（closeInterruption 从未执行、transcript 无该 runId 的 interruption 边界）。启动时 [run-store initialize](e:\Cyrene-Agent\src\main\orchestrator\harness\run-store.ts#L239) 把 `running→interrupted` 并记 `run_interrupted` 事件——**重启后 status=="interrupted" 的集合即崩溃独有集合**（resume 已删，没有任何路径会主动留下 interrupted 记录）。
+正常终态（completed / cancelled / failed）在 [harness-adapter.ts](../../src/main/orchestrator/harness-adapter.ts#L171) 都会 `markTerminal` 写 run-store 终态，且写 `interruption` 边界。只有进程崩溃会让 run 在 run-store 里滞留 `running`（closeInterruption 从未执行、transcript 无该 runId 的 interruption 边界）。启动时 [run-store initialize](../../src/main/orchestrator/harness/run-store.ts#L239) 把 `running→interrupted` 并记 `run_interrupted` 事件——**重启后 status=="interrupted" 的集合即崩溃独有集合**（resume 已删，没有任何路径会主动留下 interrupted 记录）。
 
 **对账逻辑（一次启动跑一次，异步、失败仅日志不阻塞）**：
 
@@ -206,10 +206,10 @@ claimed（认领即落轨迹：reconcile 在 claim IPC 返回前完成）
 
 **改动清单（第三层）**：
 
-11. **[run-store.ts](e:\Cyrene-Agent\src\main\orchestrator\harness\run-store.ts)**：新增 `listInterruptedRuns()`（返回 interrupted sessions）
-12. **[conversation-transcript-types.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-types.ts)**：`interruption.payload.reason` 扩为 `"user_cancel" | "runtime_error" | "crashed"`
-13. **[conversation-transcript-store.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-store.ts)**：interruption 值域校验同步加入 `"crashed"`
-14. **[conversation-transcript-projection.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-projection.ts)**：`interruptionNotesWithSources` 的文案选择增加 crashed 分支；digest `interruption:crashed`
+11. **[run-store.ts](../../src/main/orchestrator/harness/run-store.ts)**：新增 `listInterruptedRuns()`（返回 interrupted sessions）
+12. **[conversation-transcript-types.ts](../../src/main/orchestrator/conversation-transcript-types.ts)**：`interruption.payload.reason` 扩为 `"user_cancel" | "runtime_error" | "crashed"`
+13. **[conversation-transcript-store.ts](../../src/main/orchestrator/conversation-transcript-store.ts)**：interruption 值域校验同步加入 `"crashed"`
+14. **[conversation-transcript-projection.ts](../../src/main/orchestrator/conversation-transcript-projection.ts)**：`interruptionNotesWithSources` 的文案选择增加 crashed 分支；digest `interruption:crashed`
 15. **新增对账模块**：`runInterruptionReconciliation` 纯函数（注入 runStore + transcriptStore，便于单测），接线函数在 composition root（app ready 后异步调一次、失败仅日志）
 16. **测试**：对账模块（补写/已存在跳过/幂等/多 run）；投影 crashed 文案；store 校验接受 crashed
 

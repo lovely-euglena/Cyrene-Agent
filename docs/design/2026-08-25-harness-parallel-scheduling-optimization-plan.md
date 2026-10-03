@@ -1,6 +1,6 @@
 # Harness 并行调度与运行存储优化施工方案
 
-> **关联文档**：[2026-08-25-harness-parallel-scheduling-known-issues.md](./2026-08-25-harness-parallel-scheduling-known-issues.md)（问题 1–5 的调研与复现结论）
+> **关联文档**：[2026-08-25-harness-parallel-scheduling-known-issues.md](../internal-issue/2026-08-25-harness-parallel-scheduling-known-issues.md)（问题 1–5 的调研与复现结论）
 > **施工方式**：按批次执行，每批独立 Git 提交、可单独回滚；每项先写失败测试，再写最小实现，再跑定向验证 + 全量回归。
 > **修订记录**：v2（2026-08-25）——按外部 review 收紧 5 处并发边界：①终态统一 settlement（cancelled 复用 settleRun，补发 terminal 快照）；②execute 出错槽位由"接受缺口"升级为合成失败结果（transcript 闭合）；③takeover await 后重新竞争 guard + compare-and-delete 释放 + 防御上限；④commit 抛错也必须 drain 在飞调用（finally 兜底）；⑤测试断言确定性锁死发射进度 + 补并发 takeover 用例；另补 writeIndexNow 取消 pending lazy write、删除 IPC 时序正确性论证。
 
