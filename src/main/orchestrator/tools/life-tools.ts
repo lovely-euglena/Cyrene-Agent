@@ -19,6 +19,10 @@ import { resolveTimeoutPolicy } from "../../runtime-policy";
 import { getDateLocale } from "../../locale-context";
 import { logger, LogTag } from "../../logger";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { nativeFirst, nativeToolHost } from "./native-tool-host";
+import type { ToolContext } from "./registry/tool-context";
+import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 import { TtlResultCache } from "./builtin-tools/ttl-result-cache";
 
 const LOG_PREFIX = "[LifeTools]";
@@ -29,6 +33,12 @@ const LOG_PREFIX = "[LifeTools]";
 // 同币种对不同金额命中时用当前 amount 重算。
 const EXCHANGE_CACHE_TTL_MS = 30 * 60_000;
 const exchangeCache = new TtlResultCache<number>(EXCHANGE_CACHE_TTL_MS);
+
+/**
+ * exchange_rate native 轨看门狗：C# HttpClient.Timeout = 60s（整请求含读 body），
+ * 默认 5s 必然误杀，这里给 65s 留 5s 余量；超时才回退 TS 原实现。
+ */
+const EXCHANGE_NATIVE_TIMEOUT_MS = 65_000;
 
 /** 清空汇率缓存（测试隔离用） */
 export function clearExchangeRateCache(): void {
@@ -62,6 +72,25 @@ function saveExpenses(records: ExpenseRecord[]): void {
   fs.writeFileSync(expenseFile(), JSON.stringify(records, null, 2), "utf8");
 }
 
+/** record_expense 的 TS 实现（native 轨回退路径）。 */
+async function recordExpenseExecute(args: Record<string, unknown>): Promise<string> {
+  const amount = Number(args.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return "[错误] amount 必须是正数";
+  }
+  const records = loadExpenses();
+  const rec: ExpenseRecord = {
+    ts: Date.now(),
+    amount,
+    category: String(args.category || "其他"),
+    note: String(args.note || ""),
+  };
+  records.push(rec);
+  saveExpenses(records);
+  console.log(LOG_PREFIX, "记账:", rec);
+  return `[record_expense] 已记录：${amount} 元 / ${rec.category} / ${rec.note}`;
+}
+
 function registerExpenseTools(): void {
   toolRegistry.register({
     id: "record_expense",
@@ -88,22 +117,8 @@ function registerExpenseTools(): void {
       },
       required: ["amount"],
     },
-    execute: async (args) => {
-      const amount = Number(args.amount);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return "[错误] amount 必须是正数";
-      }
-      const records = loadExpenses();
-      const rec: ExpenseRecord = {
-        ts: Date.now(),
-        amount,
-        category: String(args.category || "其他"),
-        note: String(args.note || ""),
-      };
-      records.push(rec);
-      saveExpenses(records);
-      console.log(LOG_PREFIX, "记账:", rec);
-      return `[record_expense] 已记录：${amount} 元 / ${rec.category} / ${rec.note}`;
+    execute: async (args, ctx) => {
+      return nativeFirst("record_expense", args, recordExpenseExecute, { signal: ctx?.signal });
     },
   });
 
@@ -131,31 +146,41 @@ function registerExpenseTools(): void {
         summary:  { type: "boolean", description: "可选，true 只返回汇总" },
       },
     },
-    execute: async (args) => {
-      const days = Number(args.days) || 30;
-      const cutoff = Date.now() - days * 86400_000;
-      let records = loadExpenses().filter(r => r.ts >= cutoff);
-      if (args.category) {
-        records = records.filter(r => r.category === args.category);
-      }
-      if (records.length === 0) {
-        return `[query_expense] 最近 ${days} 天没有记账记录`;
-      }
-      if (args.summary) {
-        const total = records.reduce((s, r) => s + r.amount, 0);
-        const byCat: Record<string, number> = {};
-        for (const r of records) {
-          byCat[r.category] = (byCat[r.category] || 0) + r.amount;
-        }
-        return `[query_expense] 最近 ${days} 天共 ${records.length} 笔，合计 ${total.toFixed(2)} 元\n分类：${JSON.stringify(byCat)}`;
-      }
-      const lines = records.map(r => {
-        const d = new Date(r.ts).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() });
-        return `${d} ${r.amount}元 ${r.category} ${r.note}`;
+    execute: async (args, ctx) => {
+      // 实时下发日期 locale/时区（明细行按用户时区展示）
+      nativeToolHost.setRuntimeSettings({
+        dateLocale: getDateLocale(),
+        timezone: currentUserTimezone(),
       });
-      return `[query_expense] 最近 ${days} 天 ${records.length} 笔：\n${lines.join("\n")}`;
+      return nativeFirst("query_expense", args, queryExpenseExecute, { signal: ctx?.signal });
     },
   });
+}
+
+/** query_expense 的 TS 实现（native 轨回退路径）。 */
+async function queryExpenseExecute(args: Record<string, unknown>): Promise<string> {
+  const days = Number(args.days) || 30;
+  const cutoff = Date.now() - days * 86400_000;
+  let records = loadExpenses().filter(r => r.ts >= cutoff);
+  if (args.category) {
+    records = records.filter(r => r.category === args.category);
+  }
+  if (records.length === 0) {
+    return `[query_expense] 最近 ${days} 天没有记账记录`;
+  }
+  if (args.summary) {
+    const total = records.reduce((s, r) => s + r.amount, 0);
+    const byCat: Record<string, number> = {};
+    for (const r of records) {
+      byCat[r.category] = (byCat[r.category] || 0) + r.amount;
+    }
+    return `[query_expense] 最近 ${days} 天共 ${records.length} 笔，合计 ${total.toFixed(2)} 元\n分类：${JSON.stringify(byCat)}`;
+  }
+  const lines = records.map(r => {
+    const d = new Date(r.ts).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() });
+    return `${d} ${r.amount}元 ${r.category} ${r.note}`;
+  });
+  return `[query_expense] 最近 ${days} 天 ${records.length} 笔：\n${lines.join("\n")}`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -188,38 +213,51 @@ function registerExchangeRateTool(): void {
       },
       required: ["from", "to"],
     },
-    execute: async (args) => {
-      const from = String(args.from || "USD").toUpperCase();
-      const to = String(args.to || "CNY").toUpperCase();
-      const amount = Number(args.amount) || 1;
-      if (from === to) {
-        return `[exchange_rate] ${amount} ${from} = ${amount} ${to}（同币种）`;
-      }
-      // 缓存命中：用当前 amount 重算，并标注汇率获取时间
-      const cacheKey = from + "|" + to;
-      const hit = exchangeCache.get(cacheKey);
-      if (hit) {
-        const fetchedAt = new Date(hit.at).toLocaleString("zh-CN", { hour12: false });
-        const hitResult = (amount * hit.value).toFixed(2);
-        return `[缓存] 汇率获取于 ${fetchedAt}，30 分钟内复用\n[exchange_rate] ${amount} ${from} = ${hitResult} ${to}（汇率 ${hit.value}，更新于 ${new Date(hit.at).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
-      }
-      // frankfurter.app 免费、无 key、支持主要货币
-      const url = `https://api.frankfurter.app/latest?from=${from}&to=${to}`;
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        return `[错误] 汇率查询失败：HTTP ${resp.status}`;
-      }
-      const data = await resp.json() as { rates?: Record<string, number> };
-      const rate = data.rates?.[to];
-      if (!rate) {
-        return `[exchange_rate] 查不到 ${from} → ${to}，可能是不支持的币种`;
-      }
-      const result = (amount * rate).toFixed(2);
-      // 只有成功拿到汇率才写缓存；错误/不支持的币种不缓存
-      exchangeCache.set(cacheKey, rate);
-      return `[exchange_rate] ${amount} ${from} = ${result} ${to}（汇率 ${rate}，更新于 ${new Date().toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
+    execute: async (args, ctx) => {
+      // 实时下发日期 locale/时区（用户改设置后下一次调用生效）
+      nativeToolHost.setRuntimeSettings({
+        dateLocale: getDateLocale(),
+        timezone: currentUserTimezone(),
+      });
+      return nativeFirst("exchange_rate", args, exchangeRateExecute, {
+        timeoutMs: EXCHANGE_NATIVE_TIMEOUT_MS,
+        signal: ctx?.signal,
+      });
     },
   });
+}
+
+/** exchange_rate 的 TS 实现（native 轨回退路径）。 */
+async function exchangeRateExecute(args: Record<string, unknown>): Promise<string> {
+  const from = String(args.from || "USD").toUpperCase();
+  const to = String(args.to || "CNY").toUpperCase();
+  const amount = Number(args.amount) || 1;
+  if (from === to) {
+    return `[exchange_rate] ${amount} ${from} = ${amount} ${to}（同币种）`;
+  }
+  // 缓存命中：用当前 amount 重算，并标注汇率获取时间
+  const cacheKey = from + "|" + to;
+  const hit = exchangeCache.get(cacheKey);
+  if (hit) {
+    const fetchedAt = new Date(hit.at).toLocaleString("zh-CN", { hour12: false });
+    const hitResult = (amount * hit.value).toFixed(2);
+    return `[缓存] 汇率获取于 ${fetchedAt}，30 分钟内复用\n[exchange_rate] ${amount} ${from} = ${hitResult} ${to}（汇率 ${hit.value}，更新于 ${new Date(hit.at).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
+  }
+  // frankfurter.app 免费、无 key、支持主要货币
+  const url = `https://api.frankfurter.app/latest?from=${from}&to=${to}`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    return `[错误] 汇率查询失败：HTTP ${resp.status}`;
+  }
+  const data = await resp.json() as { rates?: Record<string, number> };
+  const rate = data.rates?.[to];
+  if (!rate) {
+    return `[exchange_rate] 查不到 ${from} → ${to}，可能是不支持的币种`;
+  }
+  const result = (amount * rate).toFixed(2);
+  // 只有成功拿到汇率才写缓存；错误/不支持的币种不缓存
+  exchangeCache.set(cacheKey, rate);
+  return `[exchange_rate] ${amount} ${from} = ${result} ${to}（汇率 ${rate}，更新于 ${new Date().toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -359,89 +397,137 @@ function registerStrReplaceTool(): void {
       },
       required: ["file_path"],
     },
-    execute: async (args, ctx?) => {
-      const filePath = String(args.file_path || "");
-      if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });
-      if (!fs.existsSync(filePath)) {
-        return JSON.stringify({
-          success: false,
-          errorCode: "FILE_NOT_FOUND",
-          error: `文件不存在：${filePath}。不要重复相同路径，请先用 Read 或 Grep 确认文件存在。`,
-          retryable: true,
-        });
-      }
+    execute: executeStrReplaceNativeFirst,
+  });
+}
 
-      // 参数形态：edits 非空数组走批量；否则要求单发 old/new 齐备
-      const rawEdits = Array.isArray(args.edits) ? args.edits : [];
-      const edits = rawEdits
-        .filter((e): e is { old_string: string; new_string: string } =>
-          typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).old_string === "string" && typeof (e as Record<string, unknown>).new_string === "string")
-        .map((e) => ({ old_string: e.old_string, new_string: e.new_string }));
-      const singleMode = edits.length === 0;
-      if (singleMode) {
-        const oldStr = String(args.old_string ?? "");
-        const newStr = String(args.new_string ?? "");
-        if (!oldStr && !newStr) {
-          return JSON.stringify({
-            success: false,
-            errorCode: "INVALID_INPUT",
-            error: "需要提供 old_string/new_string（单处替换）或 edits 数组（多处替换），本次收到的参数键：" + Object.keys(args).join(", "),
-            retryable: false,
-          });
-        }
-        edits.push({ old_string: oldStr, new_string: newStr });
-      }
+/**
+ * str_replace native 轨（两段式）：
+ *  ① `__dryRun` 预检匹配——失败结果与 TS 输出同构，直接透传（无副作用）；
+ *  ② 匹配成功 → captureBefore 基线 → 正式提交（.NET 落盘 + evidence）。
+ * host 不可用/故障 → 整体回退 TS 实现；预检与提交之间捕获的基线由
+ * captureBefore 幂等兜底（回退重跑不会重复快照）。
+ * 取消（AbortError）原样上抛：两段式任一阶段被取消都不得回退重跑。
+ */
+async function executeStrReplaceNativeFirst(
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+): Promise<string> {
+  if (!resolveDotnetConfig().toolHost) return executeStrReplaceTs(args, ctx);
+  try {
+    const prep = await nativeToolHost.call("str_replace", { ...args, __dryRun: true }, undefined, ctx?.signal);
+    if (prep === null) return executeStrReplaceTs(args, ctx);
+    const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
+    let prepared = false;
+    try {
+      prepared = (JSON.parse(prepText) as { prepared?: unknown }).prepared === true;
+    } catch { /* 非 JSON 视为预检失败，走透传/回退 */ }
+    if (!prepared) return prepText; // 与 TS 失败输出同构（含 diagnostic）
 
-      const content = fs.readFileSync(filePath, "utf8");
-      console.log(LOG_PREFIX, "str_replace:", filePath, "edits=" + edits.length);
+    // 匹配成功：基线必须在正式落盘之前捕获（与 TS 时序一致）
+    const filePath = String(args.file_path || "");
+    if (ctx?.runId && filePath) {
+      const tracker = getRunReviewTracker(app.getPath("userData"));
+      tracker.captureBefore(ctx.runId, filePath);
+    }
+    // 第二段正式提交：预检已确认匹配可行，这里刻意不做 isNativeFailurePayload
+    // 检查——两段之间文件若被外部改动（TOCTOU），把失败载荷原样透传给模型
+    // 比静默回退更安全：透传让模型感知"文件已变"后重新决策，而回退 TS 会
+    // 基于已变更的内容二次匹配重跑，可能产生非预期编辑。
+    const result = await nativeToolHost.call("str_replace", args, undefined, ctx?.signal);
+    if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
+  } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复改文件
+    console.warn(LOG_PREFIX, "str_replace native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+  }
+  return executeStrReplaceTs(args, ctx);
+}
 
-      const result = applyStrReplaceEdits(content, edits);
-      if (!result.ok) {
-        // 失败不落盘：诊断信息原样透传给模型
-        return JSON.stringify({
-          success: false,
-          errorCode: result.errorCode,
-          error: result.error,
-          retryable: false,
-          diagnostic: result.diagnostic,
-        });
-      }
+/** str_replace 的 TS 实现（native 轨回退路径）。 */
+async function executeStrReplaceTs(
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+): Promise<string> {
+  const filePath = String(args.file_path || "");
+  if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });
+  if (!fs.existsSync(filePath)) {
+    return JSON.stringify({
+      success: false,
+      errorCode: "FILE_NOT_FOUND",
+      error: `文件不存在：${filePath}。不要重复相同路径，请先用 Read 或 Grep 确认文件存在。`,
+      retryable: true,
+    });
+  }
 
-      // Review 基线捕获：在写文件之前保存 pre-mutation baseline
-      if (ctx?.runId) {
-        const tracker = getRunReviewTracker(app.getPath("userData"));
-        tracker.captureBefore(ctx.runId, filePath);
-      }
-
-      fs.writeFileSync(filePath, result.newContent, "utf8");
-      const size = fs.statSync(filePath).size;
-      console.log(
-        LOG_PREFIX,
-        "str_replace:", filePath, "size=" + size,
-        result.eolNormalized ? "eolNormalized=true" : "",
-        result.whitespaceNormalized ? "whitespaceNormalized=true" : "",
-      );
-
-      // diff 展示统一按 LF 拆行，避免 CRLF 残留到卡片渲染
-      const changes = result.segments.map((seg) => ({
-        file: filePath,
-        kind: "modified" as const,
-        insertions: countLines(seg.afterLines.join("\n")),
-        deletions: countLines(seg.beforeLines.join("\n")),
-        diff: buildReplacedDiff(seg.beforeLines, seg.afterLines),
-      }));
+  // 参数形态：edits 非空数组走批量；否则要求单发 old/new 齐备
+  const rawEdits = Array.isArray(args.edits) ? args.edits : [];
+  const edits = rawEdits
+    .filter((e): e is { old_string: string; new_string: string } =>
+      typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).old_string === "string" && typeof (e as Record<string, unknown>).new_string === "string")
+    .map((e) => ({ old_string: e.old_string, new_string: e.new_string }));
+  const singleMode = edits.length === 0;
+  if (singleMode) {
+    const oldStr = String(args.old_string ?? "");
+    const newStr = String(args.new_string ?? "");
+    if (!oldStr && !newStr) {
       return JSON.stringify({
-        tool: "str_replace",
-        filePath,
-        action: "modified",
-        sizeBytes: size,
-        success: true,
-        eolNormalized: result.eolNormalized,
-        whitespaceNormalized: result.whitespaceNormalized,
-        appliedEdits: result.appliedEdits,
-        changes: finalizeFileChanges(changes),
+        success: false,
+        errorCode: "INVALID_INPUT",
+        error: "需要提供 old_string/new_string（单处替换）或 edits 数组（多处替换），本次收到的参数键：" + Object.keys(args).join(", "),
+        retryable: false,
       });
-    },
+    }
+    edits.push({ old_string: oldStr, new_string: newStr });
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+  console.log(LOG_PREFIX, "str_replace:", filePath, "edits=" + edits.length);
+
+  const result = applyStrReplaceEdits(content, edits);
+  if (!result.ok) {
+    // 失败不落盘：诊断信息原样透传给模型
+    return JSON.stringify({
+      success: false,
+      errorCode: result.errorCode,
+      error: result.error,
+      retryable: false,
+      diagnostic: result.diagnostic,
+    });
+  }
+
+  // Review 基线捕获：在写文件之前保存 pre-mutation baseline
+  if (ctx?.runId) {
+    const tracker = getRunReviewTracker(app.getPath("userData"));
+    tracker.captureBefore(ctx.runId, filePath);
+  }
+
+  fs.writeFileSync(filePath, result.newContent, "utf8");
+  const size = fs.statSync(filePath).size;
+  console.log(
+    LOG_PREFIX,
+    "str_replace:", filePath, "size=" + size,
+    result.eolNormalized ? "eolNormalized=true" : "",
+    result.whitespaceNormalized ? "whitespaceNormalized=true" : "",
+  );
+
+  // diff 展示统一按 LF 拆行，避免 CRLF 残留到卡片渲染
+  const changes = result.segments.map((seg) => ({
+    file: filePath,
+    kind: "modified" as const,
+    insertions: countLines(seg.afterLines.join("\n")),
+    deletions: countLines(seg.beforeLines.join("\n")),
+    diff: buildReplacedDiff(seg.beforeLines, seg.afterLines),
+  }));
+  return JSON.stringify({
+    tool: "str_replace",
+    filePath,
+    action: "modified",
+    sizeBytes: size,
+    success: true,
+    eolNormalized: result.eolNormalized,
+    whitespaceNormalized: result.whitespaceNormalized,
+    appliedEdits: result.appliedEdits,
+    changes: finalizeFileChanges(changes),
   });
 }
 

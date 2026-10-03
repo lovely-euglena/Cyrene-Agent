@@ -13,7 +13,6 @@ export { setUtilityTimezoneConfig, setUtilityClipboardConfig } from "./builtin-t
 export { setSearchConfig } from "./builtin-tools/web-search-tool";
 
 import { toolRegistry } from "./registry/tool-registry";
-import { wrapToolForNativeHost } from "./native-tool-router";
 import { logger, LogTag } from "../../logger";
 import { createPlayLive2DActionTool } from "./builtin-tools/play-live2d-action";
 import { weatherTool } from "./builtin-tools/weather-tool";
@@ -36,24 +35,27 @@ export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
 }
 
 // ── 注册（顺序 = 原 built-in-tools.ts 的字面顺序，勿重排）─────────────
-toolRegistry.register(wrapToolForNativeHost(calculatorTool));
-toolRegistry.register(wrapToolForNativeHost(nowTool));
-toolRegistry.register(wrapToolForNativeHost(clipboardTool));
-toolRegistry.register(wrapToolForNativeHost(fetchUrlTool));
-toolRegistry.register(wrapToolForNativeHost(downloadFileTool));
-toolRegistry.register(wrapToolForNativeHost(readImageUrlTool));
-toolRegistry.register(wrapToolForNativeHost(runShellTool));
+// 注：.NET 轨接线在各工具自己的 execute 内完成（calculator/now/clipboard 的
+// nativeFirst、fs 三件的 nativeFirstFs）；原 native-tool-router 白名单是死代码，
+// 2026-10-03 随 fs 接线清理删除。
+toolRegistry.register(calculatorTool);
+toolRegistry.register(nowTool);
+toolRegistry.register(clipboardTool);
+toolRegistry.register(fetchUrlTool);
+toolRegistry.register(downloadFileTool);
+toolRegistry.register(readImageUrlTool);
+toolRegistry.register(runShellTool);
 // run_shell 的后台配套工具：紧跟其后注册，工具目录里相邻展示
-toolRegistry.register(wrapToolForNativeHost(shellJobTool));
+toolRegistry.register(shellJobTool);
 // SSH 托管工具：会话在 cyrene-native --ssh-host，与本地 shell 相邻展示
 for (const tool of sshTools) toolRegistry.register(tool);
 // 云存储托管工具：连接在 cyrene-native --storage-host，紧随 SSH 展示
 for (const tool of storageTools) toolRegistry.register(tool);
-toolRegistry.register(wrapToolForNativeHost(runVerificationTool));
-toolRegistry.register(wrapToolForNativeHost(installMcpServerTool));
+toolRegistry.register(runVerificationTool);
+toolRegistry.register(installMcpServerTool);
 logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_shell / install_mcp_server");
-toolRegistry.register(wrapToolForNativeHost(weatherTool));
-toolRegistry.register(wrapToolForNativeHost(webSearchTool));
-toolRegistry.register(wrapToolForNativeHost(createPlayLive2DActionTool({ sendToLive2DWindow })));
+toolRegistry.register(weatherTool);
+toolRegistry.register(webSearchTool);
+toolRegistry.register(createPlayLive2DActionTool({ sendToLive2DWindow }));
 // 本地音乐工具：播放器在 cyrene-native（MusicService），权限档 musicAgentAccess
 for (const tool of musicTools) toolRegistry.register(tool);

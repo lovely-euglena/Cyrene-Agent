@@ -15,6 +15,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { toolRegistry, type ToolEffectKind, type VerificationPolicy } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
+import { nativeFirst } from "./native-tool-host";
 
 const LOG_PREFIX = "[SearchText]";
 
@@ -256,6 +257,10 @@ function safeStat(p: string): fs.Stats | null {
 
 // ── 工具执行器 ────────────────────────────────────────────
 
+/**
+ * TS 实现（native 轨回退路径）。native 轨经 nativeFirst 调 ToolHost，
+ * 工作区根以内部参数 `__cyreneWorkspaceRoot` 注入（模型不可见）。
+ */
 async function executeSearchText(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const query = String(args.query || "").trim();
   if (!query) return JSON.stringify({ success: false, errorCode: "INVALID_QUERY", error: "query 不能为空", retryable: false, matches: [], totalMatches: 0, returnedMatches: 0, truncated: false });
@@ -411,7 +416,16 @@ export function registerSearchTextTool(): void {
       },
       required: ["query"],
     },
-    execute: executeSearchText,
+    execute: async (args, ctx) => {
+      // native 轨：工作区根由包装层注入（模型参数里不可见）；失败整体回退 TS
+      const workspaceRoot = ctx?.resolvedWorkspaceRoot ?? path.resolve(process.cwd());
+      return nativeFirst(
+        "search_text",
+        { ...args, __cyreneWorkspaceRoot: workspaceRoot },
+        (nativeArgs) => executeSearchText(nativeArgs, ctx),
+        { signal: ctx?.signal },
+      );
+    },
   });
 
   console.log(LOG_PREFIX, "已注册：search_text");
