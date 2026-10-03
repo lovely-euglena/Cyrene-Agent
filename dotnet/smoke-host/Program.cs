@@ -1,5 +1,5 @@
 // 冒烟壳入口：同主 Program 的 host 分发，但排除窗口/托盘（Linux 无 WinForms）。
-// ClipboardTool 在 ToolHost 分发中被引用——以 #if 方式由 BuiltinTools 替代实现。
+// 剪贴板实现在 cyrene-native（WPF）注入 cyrene-core；冒烟壳不注入 = 不可用（正常）。
 using CyreneNative.Tools;
 using CyreneNative.Rag;
 using CyreneNative.MemoryStore;
