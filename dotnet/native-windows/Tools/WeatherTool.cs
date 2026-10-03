@@ -24,6 +24,7 @@ internal static class WeatherTool
     private static readonly JsonSerializerOptions Json = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new SafeDoubleJsonConverter() }, // NaN/±Infinity → null（与 TS JSON.stringify 口径对齐）
     };
     private static readonly ConcurrentDictionary<string, (string Json, long At)> OmCityCache = new();
     private static readonly ConcurrentDictionary<string, (string Json, long At)> AmapDistrictCache = new();
@@ -89,15 +90,17 @@ internal static class WeatherTool
             if (!root.TryGetProperty("current", out var c) || c.ValueKind != JsonValueKind.Object)
                 return "[错误] 天气查询失败：Open-Meteo 未返回数据";
 
-            var code = (int)Num(c, "weather_code");
-            var pressure = HostLocale.JsRound(Num(c, "surface_pressure"));
+            var code = Num(c, "weather_code");
+            var pressureRaw = Num(c, "surface_pressure");
+            var pressure = double.IsFinite(pressureRaw) ? HostLocale.JsRound(pressureRaw) : double.NaN;
             var temperature = Num(c, "temperature_2m");
             var feelsLike = Num(c, "apparent_temperature");
             var humidity = Num(c, "relative_humidity_2m");
             var windDeg = Num(c, "wind_direction_10m");
             var windSpeed = Num(c, "wind_speed_10m");
             var precipitation = Num(c, "precipitation");
-            var visibility = HostLocale.JsRound(Num(c, "visibility") / 1000);
+            var visibilityRaw = Num(c, "visibility");
+            var visibility = double.IsFinite(visibilityRaw) ? HostLocale.JsRound(visibilityRaw / 1000) : double.NaN;
 
             var data = new Dictionary<string, object?>
             {
@@ -214,7 +217,7 @@ internal static class WeatherTool
         var adcode = AmapResolveAdcode(city, key);
         if (adcode is null) return $"[错误] 找不到城市\"{city}\"，请确认城市名（支持中文，如\"无锡\"）。";
 
-        var url = $"https://restapi.amap.com/v3/weather/weatherInfo?city={adcode}&key={key}&extensions=base";
+        var url = $"https://restapi.amap.com/v3/weather/weatherInfo?city={Uri.EscapeDataString(adcode)}&key={Uri.EscapeDataString(key)}&extensions=base";
         var (status, body) = Get(url);
         if (status != 200) return $"[错误] 天气查询失败：HTTP {status}";
 
@@ -276,7 +279,7 @@ internal static class WeatherTool
             return Str(ParseElement(hit.Json), "adcode");
 
         var url = "https://restapi.amap.com/v3/config/district?keywords=" + Uri.EscapeDataString(city)
-            + "&subdistrict=0&key=" + key;
+            + "&subdistrict=0&key=" + Uri.EscapeDataString(key);
         int status;
         string body;
         try
@@ -337,6 +340,8 @@ internal static class WeatherTool
     private static string AppendCached(string dataJson, long at)
     {
         var trimmed = dataJson.TrimEnd();
+        if (trimmed == "{}") // 空对象特判：避免拼出 {,"cached":...} 非法 JSON
+            return "{\"cached\":true,\"cachedAt\":\"" + IsoFromMs(at) + "\"}";
         if (!trimmed.EndsWith('}')) return dataJson;
         return trimmed[..^1] + ",\"cached\":true,\"cachedAt\":\"" + IsoFromMs(at) + "\"}";
     }
@@ -360,7 +365,15 @@ internal static class WeatherTool
         => el.ValueKind == JsonValueKind.Object && el.TryGetProperty(key, out var v) ? HostLocale.Num(v) : double.NaN;
 
     private static string OmWindDir(double deg)
-        => WindDirs[HostLocale.JsRound(deg / 22.5) % 16];
+    {
+        if (!double.IsFinite(deg)) return "未知";
+        var idx = (int)(HostLocale.JsRound(deg / 22.5) % 16);
+        return WindDirs[idx < 0 ? idx + 16 : idx];
+    }
+
+    /// <summary>缺失（NaN）时的宽松兜底：避免 (int)NaN 的未定义值。</summary>
+    private static string WmoText(double code)
+        => double.IsFinite(code) ? WmoText((int)code) : "未知（代码NaN）";
 
     private static string WmoText(int code) => code switch
     {
