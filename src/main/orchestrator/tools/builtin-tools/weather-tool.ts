@@ -15,6 +15,7 @@ import type { ToolContext } from "../registry/tool-context";
 import { getDateLocale, getWeatherLanguage } from "../../../locale-context";
 import { currentUserTimezone } from "./timezone";
 import { TtlResultCache } from "./ttl-result-cache";
+import { nativeFirst, nativeToolHost } from "../native-tool-host";
 
 // ── 工具 4：weather（天气查询）─────────────────────────────
 // 查指定城市的实时天气。城市参数可选——没传就读用户信息的默认城市。
@@ -24,6 +25,8 @@ import { TtlResultCache } from "./ttl-result-cache";
 // 默认城市/天气源/高德key 通过 setWeatherConfig 注入（避免 import index.ts 造成循环依赖）。
 
 const WEATHER_TIMEOUT_MS = 15_000;
+/** native 轨看门狗：≥ C# 侧地理编码 + 天气查询两跳各 15s。 */
+const WEATHER_NATIVE_TIMEOUT_MS = 40_000;
 
 // ── 天气查询缓存 ─────────────────────────────────────────
 // 模型常被反复问"今天天气怎样"（伙伴场景高频问题），两层缓存：
@@ -424,6 +427,29 @@ export const weatherTool: ToolDefinition = {
     },
     required: [],
   },
-  execute: executeWeather,
+  execute: async (args, context) => {
+    // 实时下发天气配置（默认城市/天气源/高德 key/语言；B1：key 仅宿主内存驻留）
+    nativeToolHost.setRuntimeSettings({
+      dateLocale: getDateLocale(),
+      timezone: currentUserTimezone(),
+      weather: {
+        city: weatherCityGetter ? weatherCityGetter() : "",
+        source: weatherSourceGetter ? weatherSourceGetter() : "open-meteo",
+        amapKey: amapKeyGetter ? amapKeyGetter() : "",
+        enabled: weatherEnabledGetter ? weatherEnabledGetter() : true,
+        language: getWeatherLanguage(),
+      },
+    });
+    return nativeFirst("weather", args, (nativeArgs) => executeWeather(nativeArgs, context), {
+      timeoutMs: WEATHER_NATIVE_TIMEOUT_MS,
+      signal: context?.signal,
+      // 卡片经事件帧回传（只有 native 轨触发；回退路径由 TS 实现直接回调）
+      onEvent: (event) => {
+        if (event.kind === "weather_card" && weatherCardCallback) {
+          weatherCardCallback(event.payload as WeatherCardData, context);
+        }
+      },
+    });
+  },
 };
 

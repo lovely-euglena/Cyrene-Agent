@@ -70,6 +70,15 @@ internal static class ToolHostConfig
     internal static string WebSearchBochaKey { get; set; } = "";
     internal static string WebSearchTavilyKey { get; set; } = "";
     internal static string WebSearchAnySearchKey { get; set; } = "";
+    // weather（B1：key 仅内存驻留）
+    internal static string WeatherCity { get; set; } = "";
+    internal static string WeatherSource { get; set; } = "open-meteo";
+    internal static string WeatherAmapKey { get; set; } = "";
+    internal static bool WeatherEnabled { get; set; } = true;
+    internal static string WeatherLanguage { get; set; } = "zh";
+    // plan_trip（B1：key 仅内存驻留）
+    internal static string TravelAmapKey { get; set; } = "";
+    internal static bool TravelEnabled { get; set; } = true;
 }
 
 internal static class ToolHost
@@ -82,6 +91,18 @@ internal static class ToolHost
         => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()!
             : "";
+
+    // 工具执行期间的事件通道（宿主主动性旁路帧，如 weather_card）。
+    private static Stream? activeStdout;
+    private static SemaphoreSlim? activeIoLock;
+    private static string? activeCallId;
+
+    /// <summary>工具执行期间发送主动事件帧：{op:"event", callId, kind, payload}。</summary>
+    internal static void EmitEvent(string kind, object payload)
+    {
+        if (activeStdout is null || activeIoLock is null || activeCallId is null) return;
+        WriteFrame(activeStdout, activeIoLock, new { op = "event", callId = activeCallId, kind, payload });
+    }
 
     /// <summary>协议帧序列化：NaN/±Infinity → null（见 <see cref="SafeDoubleJsonConverter"/>）。</summary>
     private static readonly JsonSerializerOptions SafeJsonOptions = new()
@@ -152,6 +173,8 @@ internal static class ToolHost
                         new { id = "str_replace", name = "精确替换(.NET)", description = "三层匹配（精确/EOL/空白归一化）+ evidence；__dryRun 预检两段式" },
                         new { id = "apply_patch", name = "编辑文件(.NET)", description = "Codex 补丁格式批量编辑（预检事务 + 保留 EOL + evidence；__dryRun 两段式）" },
                         new { id = "web_search", name = "联网搜索(.NET)", description = "bocha/tavily/anySearch 多源搜索（config 帧注入 key；30 分钟 TTL）" },
+                        new { id = "weather", name = "查天气(.NET)", description = "Open-Meteo/高德双源 + 缓存 + weather_card 事件帧（config 帧注入）" },
+                        new { id = "plan_trip", name = "路线规划(.NET)", description = "高德驾车/步行/骑行/公交路线（config 帧注入 key）" },
                         new { id = "download_file", name = "下载文件(.NET)", description = "URL 二进制落盘（沙箱/黑名单/64MiB/空闲超时；root 注入）" },
                     },
                 });
@@ -186,6 +209,42 @@ internal static class ToolHost
                         ToolHostConfig.WebSearchAnySearchKey = "";
                     }
                 }
+                if (root.TryGetProperty("weather", out var wt))
+                {
+                    if (wt.ValueKind == JsonValueKind.Object)
+                    {
+                        ToolHostConfig.WeatherCity = JsonStr(wt, "city");
+                        var wsource = JsonStr(wt, "source");
+                        ToolHostConfig.WeatherSource = wsource.Length > 0 ? wsource : "open-meteo";
+                        ToolHostConfig.WeatherAmapKey = JsonStr(wt, "amapKey");
+                        if (wt.TryGetProperty("enabled", out var wen) && wen.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            ToolHostConfig.WeatherEnabled = wen.GetBoolean();
+                        var wlang = JsonStr(wt, "language");
+                        ToolHostConfig.WeatherLanguage = wlang.Length > 0 ? wlang : "zh";
+                    }
+                    else if (wt.ValueKind == JsonValueKind.Null)
+                    {
+                        ToolHostConfig.WeatherCity = "";
+                        ToolHostConfig.WeatherSource = "open-meteo";
+                        ToolHostConfig.WeatherAmapKey = "";
+                        ToolHostConfig.WeatherEnabled = true;
+                        ToolHostConfig.WeatherLanguage = "zh";
+                    }
+                }
+                if (root.TryGetProperty("travel", out var tv))
+                {
+                    if (tv.ValueKind == JsonValueKind.Object)
+                    {
+                        ToolHostConfig.TravelAmapKey = JsonStr(tv, "amapKey");
+                        if (tv.TryGetProperty("enabled", out var ten) && ten.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            ToolHostConfig.TravelEnabled = ten.GetBoolean();
+                    }
+                    else if (tv.ValueKind == JsonValueKind.Null)
+                    {
+                        ToolHostConfig.TravelAmapKey = "";
+                        ToolHostConfig.TravelEnabled = true;
+                    }
+                }
                 break;
             }
             case "call":
@@ -196,6 +255,9 @@ internal static class ToolHost
                     ? a.Clone() : (JsonElement?)null;
                 try
                 {
+                    activeStdout = stdout;
+                    activeIoLock = ioLock;
+                    activeCallId = callId;
                     var data = tool switch
                     {
                         "calculator" => Calculator.Evaluate(args),
@@ -216,6 +278,8 @@ internal static class ToolHost
                         "str_replace" => StrReplaceTool.Execute(args ?? EmptyArgs),
                         "apply_patch" => ApplyPatchTool.Execute(args ?? EmptyArgs),
                         "web_search" => WebSearchTool.Execute(args ?? EmptyArgs),
+                        "weather" => WeatherTool.Execute(args ?? EmptyArgs),
+                        "plan_trip" => TravelTool.Execute(args ?? EmptyArgs),
                         "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
@@ -228,6 +292,12 @@ internal static class ToolHost
                 catch (Exception ex)
                 {
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = false, error = ex.Message, errorCode = "E_TOOL_FAILED" });
+                }
+                finally
+                {
+                    activeStdout = null;
+                    activeIoLock = null;
+                    activeCallId = null;
                 }
                 break;
             }
