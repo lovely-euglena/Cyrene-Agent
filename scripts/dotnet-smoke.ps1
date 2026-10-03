@@ -1,4 +1,4 @@
-# Cyrene .NET 后端实机冒烟脚本（C3）——Windows PowerShell 运行
+﻿# Cyrene .NET 后端实机冒烟脚本（C3）——Windows PowerShell 运行
 # 用法：发布 cyrene-native 后，在本仓库根：powershell -File scripts\dotnet-smoke.ps1
 # 前置：dotnet publish dotnet/native-windows -c Release；exe 路径按需改 $exe
 
@@ -7,13 +7,33 @@ $exe = Resolve-Path ".\dotnet\native-windows\bin\Release\net10.0-windows\cyrene-
 if (-not $exe) { $exe = Join-Path $env:APPDATA "cyrene\resources\native-windows\cyrene-native.exe" }
 if (-not (Test-Path $exe)) { Write-Host "[SMOKE] 找不到 cyrene-native.exe，先 dotnet publish" -f Red; exit 1 }
 
-function Invoke-HostFrames([string]$mode, [string[]]$frames) {
-    $input_text = ($frames -join "`n")
-    return ($input_text | & $exe $mode) 2>$null
+function Invoke-HostFrames([string]$target, [string[]]$frames) {
+    # $target：native 模式（如 --tool-host）或 sidecar 可执行路径（如 CyreneVoice.exe）。
+    # 不能走 PowerShell 管道喂 stdin：cyrene-native 是 WinExe（GUI 子系统），
+    # PS 管道下 stdin 不达、进程不等，直接 0 输出——用 .NET Process 显式重定向。
+    $isExe = $target -like "*.exe"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $(if ($isExe) { $target } else { $exe })
+    $psi.Arguments = $(if ($isExe) { "" } else { $target })
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync()
+    # PS 5.1（.NET Framework）无 StandardInputEncoding：自带 UTF-8 StreamWriter 写 stdin
+    $sw = New-Object System.IO.StreamWriter($p.StandardInput.BaseStream, (New-Object System.Text.UTF8Encoding $false))
+    $sw.Write(($frames -join "`n") + "`n")
+    $sw.Close()
+    $out = $p.StandardOutput.ReadToEnd()
+    if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch {} }
+    return ($out -split "`r?`n" | Where-Object { $_ -ne "" })
 }
 
 $pass = 0; $fail = 0
-function Check([string]$name, [bool]$ok) {
+function Check([string]$name, $ok) {   # 兼容 ($out -match ...) 返回数组：非空=真
     if ($ok) { $script:pass++; Write-Host "[PASS] $name" -f Green }
     else { $script:fail++; Write-Host "[FAIL] $name" -f Red }
 }

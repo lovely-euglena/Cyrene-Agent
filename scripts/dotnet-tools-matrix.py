@@ -192,12 +192,12 @@ d4 = by.get(c_calc4, {}); check("calc 缺参帧 ok", "ok" in d4, d4)
 check("calc 非法表达式有错", by.get(c_calc5, {}).get("ok") is False, by.get(c_calc5, None))
 
 print("\n=== now ===")
-d = data_json(c_now1); check("now iso", isinstance(d, dict) and "now" in json.dumps(d), d)
+raw_iso = by.get(c_now1, {}).get("data"); check("now iso（真实实现：裸 ISO 8601 串）", isinstance(raw_iso, str) and re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", raw_iso) is not None, raw_iso)
 d = data_json(c_now2); check("now epoch", d is not None, d)
 d = data_json(c_now3); check("now 非法 format 容错", by.get(c_now3, {}).get("ok") is True or d is not None, d)
 
 print("\n=== clipboard / sysinfo ===")
-d = data_json(c_clip1); check("clipboard（Linux stub 不可用=正常）", by.get(c_clip1, {}).get("ok") is True, d)
+d = data_json(c_clip1); check("clipboard（无注入平台不可用=正常）", by.get(c_clip1, {}).get("ok") is True, d)
 d = data_json(c_sys1); check("sysinfo 返回", d is not None, d)
 
 print("\n=== fs_write_file ===")
