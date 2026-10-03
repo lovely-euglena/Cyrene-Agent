@@ -423,6 +423,7 @@ export function registerSearchTextTool(): void {
         "search_text",
         { ...args, __cyreneWorkspaceRoot: workspaceRoot },
         (nativeArgs) => executeSearchText(nativeArgs, ctx),
+        { signal: ctx?.signal },
       );
     },
   });

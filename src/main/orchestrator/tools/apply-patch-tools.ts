@@ -20,6 +20,7 @@ import { buildFullFileDiff, finalizeFileChanges } from "./registry/tool-evidence
 import { getRunReviewTracker } from "../review/run-review-tracker";
 import { nativeToolHost } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 
 const LOG_PREFIX = "[ApplyPatch]";
 
@@ -438,7 +439,7 @@ async function executeApplyPatchNativeFirst(
       patch,
       __cyreneRoot: workspaceRoot,
       __dryRun: true,
-    });
+    }, undefined, ctx?.signal);
     if (prep === null) return executeApplyPatchTs(args, ctx);
     const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
     let prepared = false;
@@ -466,9 +467,10 @@ async function executeApplyPatchNativeFirst(
       }
     }
 
-    const result = await nativeToolHost.call("apply_patch", { patch, __cyreneRoot: workspaceRoot });
+    const result = await nativeToolHost.call("apply_patch", { patch, __cyreneRoot: workspaceRoot }, undefined, ctx?.signal);
     if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
   } catch (error) {
+    if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复改文件
     console.warn(LOG_PREFIX, "apply_patch native 轨失败回退 TS:", error instanceof Error ? error.message : error);
   }
   return executeApplyPatchTs(args, ctx);

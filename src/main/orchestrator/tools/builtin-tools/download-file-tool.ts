@@ -213,7 +213,7 @@ async function executeDownloadFileNativeFirst(
     "download_file",
     { ...args, __cyreneRoot: String(root) },
     (nativeArgs) => executeDownloadFile(nativeArgs, ctx),
-    { timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS },
+    { timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS, signal: ctx?.signal },
   );
 }
 

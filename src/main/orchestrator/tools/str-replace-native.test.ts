@@ -131,4 +131,20 @@ describe("str_replace native 两段式", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("alpha\nBETA\n");
     expect(nativeMocks.captureBefore).toHaveBeenCalledWith("run-3", file);
   });
+
+  it("取消（AbortError）：原样上抛、不回退 TS、不写基线", async () => {
+    const file = path.join(tmpDir, "d.txt");
+    fs.writeFileSync(file, "alpha\nbeta\n");
+    nativeMocks.nextResults.push(Object.assign(new Error("Operation aborted"), { name: "AbortError" }));
+
+    await expect(
+      strReplaceTool().execute(
+        { file_path: file, old_string: "beta", new_string: "BETA" },
+        { runId: "run-abort" },
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(nativeMocks.captureBefore).not.toHaveBeenCalled();
+    expect(fs.readFileSync(file, "utf8")).toBe("alpha\nbeta\n");
+  });
 });

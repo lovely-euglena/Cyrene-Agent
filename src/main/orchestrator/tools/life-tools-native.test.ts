@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: { timeoutMs?: number } }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: { timeoutMs?: number; signal?: AbortSignal } }>,
   setRuntimeSettings: vi.fn(),
   nativeResult: null as string | null,
 }));
@@ -18,7 +18,7 @@ vi.mock("./native-tool-host", () => ({
     tool: string,
     args: Record<string, unknown>,
     fallback: (a: Record<string, unknown>) => unknown,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; signal?: AbortSignal },
   ) => {
     nativeMocks.calls.push({ tool, args, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
@@ -72,7 +72,7 @@ describe("exchange_rate native 轨", () => {
       {
         tool: "exchange_rate",
         args: { from: "USD", to: "CNY", amount: 100 },
-        options: { timeoutMs: 65_000 },
+        options: { timeoutMs: 65_000, signal: undefined },
       },
     ]);
     expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
@@ -103,7 +103,7 @@ describe("expense native 轨", () => {
 
     expect(out).toBe("[record_expense] 已记录：12.5 元 / 餐饮 / 午饭");
     expect(nativeMocks.calls).toEqual([
-      { tool: "record_expense", args: { amount: 12.5, category: "餐饮", note: "午饭" } },
+      { tool: "record_expense", args: { amount: 12.5, category: "餐饮", note: "午饭" }, options: { signal: undefined } },
     ]);
   });
 
@@ -113,7 +113,7 @@ describe("expense native 轨", () => {
 
     expect(out).toContain("合计 53.00 元");
     expect(nativeMocks.calls).toEqual([
-      { tool: "query_expense", args: { days: 30, summary: true } },
+      { tool: "query_expense", args: { days: 30, summary: true }, options: { signal: undefined } },
     ]);
     expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
       dateLocale: "zh-CN",
