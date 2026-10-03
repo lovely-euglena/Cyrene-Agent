@@ -300,11 +300,14 @@
 - **依赖统一**：Microsoft.Data.Sqlite 9.0.0 → 10.0.12（core/native，MusicLibrary 同版）；
   Jieba.NET 与词典 Resources 拷贝收敛到 core（随工程引用传递到消费方输出）。
 - **CI 断言**：新增 `scripts/check-cyrene-core-clean.py`（TargetFramework=net10.0、
-  无 WPF/WinForms/System.Windows 引用）；`.github/workflows/dotnet-backend.yml` 增
-  core 构建 + 洁净断言 + smoke-host 构建 + 四个 Python 套件（脚本去除硬编码路径）。
+  无 WPF/WinForms/System.Windows 引用、P/Invoke 白名单 + `OperatingSystem.IsWindows()`
+  守卫校验）；`.github/workflows/dotnet-backend.yml` 增 core 构建 + 洁净断言 +
+  smoke-host 构建 + 四个 Python 套件（脚本去除硬编码路径）。
 - **验证（2026-10-04，Windows 本地）**：core/smoke/native 三构建 0 错误；matrix 90/90；
   dual-track PASS（Windows 走 cyrene-native.exe 真身）；smoke-linux 23/23；edge 13/13；
   agent-loop 13/13；`dotnet-smoke.ps1` 4/4；native 实机探针确认真实剪贴板往返；vitest
   456 passed；tsc 0。修复 `dotnet-smoke.ps1` 三处既有 bug：UTF-8 无 BOM（PS 5.1 语法错）、
   `Check` 参数强转数组、GUI 子系统（WinExe）管道喂帧零输出（改 .NET Process 显式重定向）。
+- **PR #4 复审（第 1 轮，无阻断 2 改进）当批修复**：`dotnet-smoke.ps1` 读流改先后异步再
+  限时等待（超时保护生效 + stderr 观察）；P/Invoke 白名单校验进洁净断言。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2G（服务端复用的前置）。
