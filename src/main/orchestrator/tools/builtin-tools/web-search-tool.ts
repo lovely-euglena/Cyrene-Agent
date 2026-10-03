@@ -10,12 +10,15 @@
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
 import { TtlResultCache } from "./ttl-result-cache";
+import { nativeFirst, nativeToolHost } from "../native-tool-host";
 
 // ── 工具 5：web_search（博查搜索）─────────────────────────
 // 联网搜索：给关键词，返回搜索结果（标题/链接/摘要）。博查 API 返回 AI 友好的结构化数据。
 // key 通过 setSearchConfig 注入（避免 import index.ts 造成循环依赖）。
 
 const SEARCH_TIMEOUT_MS = 20_000;
+/** native 轨看门狗：≥ C# 单请求超时（20s），避免长请求被误杀。 */
+const WEB_SEARCH_NATIVE_TIMEOUT_MS = 25_000;
 
 /** 注入的搜索配置获取器。 */
 let searchEngineGetter: (() => string) | null = null;
@@ -300,6 +303,20 @@ export const webSearchTool: ToolDefinition = {
     },
     required: ["query"],
   },
-  execute: executeWebSearch,
+  execute: async (args, ctx) => {
+    // 实时下发搜索配置（引擎/各源 key；B1：仅宿主内存驻留，改设置后下一次调用生效）
+    nativeToolHost.setRuntimeSettings({
+      webSearch: {
+        engine: searchEngineGetter?.() ?? "off",
+        bochaKey: searchBochaKeyGetter?.() ?? "",
+        tavilyKey: searchTavilyKeyGetter?.() ?? "",
+        anySearchKey: searchAnySearchKeyGetter?.() ?? "",
+      },
+    });
+    return nativeFirst("web_search", args, (nativeArgs) => executeWebSearch(nativeArgs, ctx), {
+      timeoutMs: WEB_SEARCH_NATIVE_TIMEOUT_MS,
+      signal: ctx?.signal,
+    });
+  },
 };
 

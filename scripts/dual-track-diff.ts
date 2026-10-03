@@ -6,6 +6,8 @@
  * fs 三件：write_file（新建/覆盖/追加/空内容）输出 JSON 与落盘字节级对齐、
  * read_file 窗口语义对齐、list_dir 文本对齐（evidence 帧协议 v1）。
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
+ * web_search：确定性校验路径双轨（引擎/key 经 config 帧注入，无网络）。
+ * weather / plan_trip：确定性路径双轨（配置/缺参/未启用，无网络）。
  * git 八件：镜像仓库 + 本地 bare 远程（TS 纯回退实现 ↔ smoke host；commit/log/revert hash 归一）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
@@ -693,6 +695,183 @@ async function runDownloadDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── web_search 双轨（确定性校验路径：off / 缺 key / 空 query / 未知引擎）──
+
+async function runWebSearchDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] web_search ${name}`);
+    else { failed++; console.log(`[FAIL] web_search ${name} —— ${detail}`); }
+  };
+
+  const { clearWebSearchCache, setSearchConfig, webSearchTool } = await import(
+    "../src/main/orchestrator/tools/builtin-tools/web-search-tool"
+  );
+  const cases: Array<{
+    name: string;
+    engine: string;
+    keys?: { bocha?: string; tavily?: string; anySearch?: string };
+    query: string;
+    expected: string;
+  }> = [
+    { name: "未启用", engine: "off", query: "test", expected: "E_SEARCH_NOT_ENABLED" },
+    { name: "缺 key", engine: "bocha", query: "test", expected: "E_SEARCH_KEY_MISSING" },
+    { name: "空 query", engine: "bocha", keys: { bocha: "k" }, query: "   ", expected: "E_SEARCH_QUERY_EMPTY" },
+    { name: "未知引擎", engine: "no-such", query: "test", expected: "E_SEARCH_ENGINE_NOT_SUPPORTED:no-such" },
+  ];
+
+  for (const c of cases) {
+    clearWebSearchCache();
+    setSearchConfig(
+      () => c.engine,
+      () => c.keys?.bocha ?? "",
+      () => c.keys?.tavily ?? "",
+      () => c.keys?.anySearch ?? "",
+    );
+    let tsError = "";
+    try {
+      await webSearchTool.execute({ query: c.query }, undefined);
+    } catch (error) {
+      tsError = error instanceof Error ? error.message : String(error);
+    }
+    const configFrame = {
+      op: "config",
+      webSearch: {
+        engine: c.engine,
+        bochaKey: c.keys?.bocha ?? "",
+        tavilyKey: c.keys?.tavily ?? "",
+        anySearchKey: c.keys?.anySearch ?? "",
+      },
+    };
+    const host = await callSmokeTool("web_search", { query: c.query }, [configFrame]);
+    const netError = host.ok ? "" : String(host.error ?? "");
+    check(c.name, tsError === c.expected && netError === c.expected, `ts=${tsError} net=${netError}`);
+  }
+  return failed;
+}
+
+// ── weather / plan_trip 双轨（确定性路径：配置/缺参/未启用，无网络）──
+
+async function runWeatherTravelDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] ${name}`);
+    else { failed++; console.log(`[FAIL] ${name} —— ${detail}`); }
+  };
+
+  const { clearWeatherCaches, setWeatherConfig, weatherTool } = await import(
+    "../src/main/orchestrator/tools/builtin-tools/weather-tool"
+  );
+  const travelTools = await import("../src/main/orchestrator/tools/travel-tools");
+  travelTools.registerTravelTools();
+  const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+  const planTrip = toolRegistry.getById("plan_trip") as
+    | { execute: (args: Record<string, unknown>, ctx?: unknown) => Promise<string> }
+    | undefined;
+
+  // weather：TS 经 setWeatherConfig 注入读取器；NET 经 config 帧
+  const weatherCases: Array<{
+    name: string;
+    ts: () => void;
+    host: Record<string, unknown>;
+    args: Record<string, unknown>;
+    expected: string;
+  }> = [
+    {
+      name: "weather 未启用",
+      ts: () => setWeatherConfig(() => "北京", () => "open-meteo", () => "", undefined, () => false),
+      host: { city: "北京", source: "open-meteo", amapKey: "", enabled: false, language: "zh" },
+      args: {},
+      expected: "[错误] 天气查询功能未启用，请在设置里开启",
+    },
+    {
+      name: "weather 无城市",
+      ts: () => setWeatherConfig(() => "", () => "open-meteo", () => ""),
+      host: { city: "", source: "open-meteo", amapKey: "", enabled: true, language: "zh" },
+      args: {},
+      expected: "[提示] 没有指定城市，也没设置默认城市。请告诉用户：在 设置 → 我的信息 填默认城市，或直接说出要查的城市名。",
+    },
+    {
+      name: "weather 未知源",
+      ts: () => setWeatherConfig(() => "", () => "bogus", () => ""),
+      host: { city: "", source: "bogus", amapKey: "", enabled: true, language: "zh" },
+      args: { city: "上海" },
+      expected: "[错误] 未知的天气源\"bogus\"。请在 设置 → 插件 → 天气查询 选择 Open-Meteo 或 高德天气。",
+    },
+    {
+      name: "weather 高德缺 key",
+      ts: () => setWeatherConfig(() => "", () => "amap", () => ""),
+      host: { city: "", source: "amap", amapKey: "", enabled: true, language: "zh" },
+      args: { city: "上海" },
+      expected: "[错误] 还没有配置高德天气 Key。请在 设置 → 插件 → 天气查询 填入高德 Key，或切换天气源为 Open-Meteo（免配置）。",
+    },
+  ];
+
+  for (const c of weatherCases) {
+    clearWeatherCaches();
+    c.ts();
+    let tsOut = "";
+    try {
+      tsOut = await weatherTool.execute(c.args, undefined);
+    } catch (error) {
+      tsOut = `ERR:${error instanceof Error ? error.message : String(error)}`;
+    }
+    const host = await callSmokeTool("weather", c.args, [{ op: "config", weather: c.host }]);
+    const netOut = host.ok ? String(host.data ?? "") : `ERR:${host.error}`;
+    check(c.name, tsOut === c.expected && netOut === c.expected, `ts=${tsOut} net=${netOut}`);
+  }
+
+  // plan_trip：TS 经 setTravelConfig 注入；NET 经 config 帧
+  if (!planTrip) {
+    check("plan_trip 已注册", false);
+    return failed;
+  }
+  const { setTravelConfig } = travelTools;
+  const travelCases: Array<{
+    name: string;
+    ts: () => void;
+    host: Record<string, unknown>;
+    args: Record<string, unknown>;
+    expected: string;
+  }> = [
+    {
+      name: "plan_trip 未启用",
+      ts: () => setTravelConfig(() => "k", () => false),
+      host: { amapKey: "k", enabled: false },
+      args: { origin: "A", destination: "B" },
+      expected: "[错误] 出行工具未启用，请在设置里开启",
+    },
+    {
+      name: "plan_trip 缺 key",
+      ts: () => setTravelConfig(() => ""),
+      host: { amapKey: "", enabled: true },
+      args: { origin: "A", destination: "B" },
+      expected: "[提示] 高德 API Key 未配置。可在 设置→插件 中找到 🚗出行工具，填入高德 Web 服务 API Key（注册地址：https://lbs.amap.com）。",
+    },
+    {
+      name: "plan_trip 缺起点",
+      ts: () => setTravelConfig(() => "k"),
+      host: { amapKey: "k", enabled: true },
+      args: { destination: "B" },
+      expected: "[错误] 请提供起点和终点",
+    },
+  ];
+
+  for (const c of travelCases) {
+    c.ts();
+    let tsOut = "";
+    try {
+      tsOut = await planTrip.execute(c.args, undefined);
+    } catch (error) {
+      tsOut = `ERR:${error instanceof Error ? error.message : String(error)}`;
+    }
+    const host = await callSmokeTool("plan_trip", c.args, [{ op: "config", travel: c.host }]);
+    const netOut = host.ok ? String(host.data ?? "") : `ERR:${host.error}`;
+    check(c.name, tsOut === c.expected && netOut === c.expected, `ts=${tsOut} net=${netOut}`);
+  }
+  return failed;
+}
+
 // ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
 
 /** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
@@ -946,6 +1125,12 @@ async function main(): Promise<void> {
     // 下载双轨（download_file，本地 HTTP 服务）
     if (useSmoke) failures += await runDownloadDualTrack();
     else console.log("[SKIP] download 双轨（仅 smoke dll 轨支持）");
+    // web_search 双轨（config 帧注入的确定性校验路径）
+    if (useSmoke) failures += await runWebSearchDualTrack();
+    else console.log("[SKIP] web_search 双轨（仅 smoke dll 轨支持）");
+    // weather / plan_trip 双轨（确定性路径）
+    if (useSmoke) failures += await runWeatherTravelDualTrack();
+    else console.log("[SKIP] weather/plan_trip 双轨（仅 smoke dll 轨支持）");
     // git 八件双轨（镜像仓库 + 本地 bare 远程）
     if (useSmoke) failures += await runGitDualTrack();
     else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");
