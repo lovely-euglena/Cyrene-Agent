@@ -91,7 +91,7 @@ internal static class ToolHost
             doc.Dispose();
             // 同步顺序处理（Bug 修复：原 Task.Run fire-and-forget 在 stdin EOF
             // 时进程先退，在途帧丢失——批量帧+立即关闭必复现；顺序性也是
-            // 帧协议 B5 的硬约束。工具执行最重为 git spawn（秒级），可接受）
+            // 帧协议 B5 的硬约束。工具执行最重为 fs 读取（10MB 上限），可接受）
             try { Handle(root, stdout, ioLock); }
             catch (Exception ex)
             {
@@ -134,13 +134,12 @@ internal static class ToolHost
                         "clipboard" => ClipboardTool.Execute(args),
                         "sysinfo" => SysInfo.Execute(),
                         // args 缺失时传空对象而非 Undefined JsonElement——
-                        // 否则 fs/git 工具里 TryGetProperty 直接抛
+                        // 否则 fs 工具里 TryGetProperty 直接抛
                         // InvalidOperationException（.NET 内部英文串），
                         // 模型拿到的是不可读错误（冒烟 P2）
                         "fs_read_file" => FsTools.ReadFile(args ?? EmptyArgs),
                         "fs_write_file" => FsTools.WriteFile(args ?? EmptyArgs),
                         "fs_list_dir" => FsTools.ListDir(args ?? EmptyArgs),
-                        "git" => GitTools.Run(args ?? EmptyArgs).GetAwaiter().GetResult(),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });
