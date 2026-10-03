@@ -8,16 +8,18 @@ fs_list_dir
 import subprocess, json, os, tempfile, sys
 
 NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 results = []
 
 def run(frames, timeout=90):
     env = dict(os.environ)
     dr = os.path.expanduser("~/.dotnet")
-    env["DOTNET_ROOT"] = dr
-    env["PATH"] = dr + os.pathsep + env.get("PATH", "")
+    if os.path.isdir(dr):  # Linux 独立安装常见位置；不存在时（如 Windows）不污染环境
+        env["DOTNET_ROOT"] = dr
+        env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     p = subprocess.run(["dotnet", NATIVE, "--tool-host"], input="\n".join(frames),
                        capture_output=True, text=True, timeout=timeout,
-                       cwd="/home/z/my-project/repos/Cyrene-Agent", env=env)
+                       cwd=ROOT, env=env)
     out = []
     for line in p.stdout.strip().splitlines():
         try: out.append(json.loads(line))
@@ -57,6 +59,11 @@ c_sys1 = req("sysinfo", {})
 c_w1 = req("fs_write_file", {"path": os.path.join(tmp, "w1.txt"), "content": "第一行\n第二行"})
 c_w2 = req("fs_write_file", {"path": os.path.join(tmp, "w2.txt"), "content": "x", "startLine": 5})
 c_w3 = req("fs_write_file", {"content": "no path"})
+# evidence 帧协议 v1：新建/追加/覆盖三态的 changes 证据（append 末尾补换行）
+c_w4 = req("fs_write_file", {"path": os.path.join(tmp, "w3.txt"), "content": "a\nb"})
+c_w5 = req("fs_write_file", {"path": os.path.join(tmp, "w3.txt"), "content": "c", "append": True})
+c_w6 = req("fs_write_file", {"path": os.path.join(tmp, "w4.txt"), "content": "a\nb\nc"})
+c_w7 = req("fs_write_file", {"path": os.path.join(tmp, "w4.txt"), "content": "x"})
 # fs_read_file
 c_r1 = req("fs_read_file", {"path": os.path.join(tmp, "w1.txt")})
 c_r2 = req("fs_read_file", {"path": os.path.join(tmp, "w1.txt"), "startLine": 2, "maxLines": 1})
@@ -94,9 +101,21 @@ d = data_json(c_clip1); check("clipboard（Linux stub 不可用=正常）", by.g
 d = data_json(c_sys1); check("sysinfo 返回", d is not None, d)
 
 print("\n=== fs_write_file ===")
-d = data_json(c_w1); check("写两行文件", d and d.get("bytes", 0) > 0, d)
+d = data_json(c_w1); check("写两行文件", d and d.get("sizeBytes", 0) > 0, d)
 check("文件真实落盘", os.path.exists(os.path.join(tmp, "w1.txt")))
 d = data_json(c_w3); check("写缺 path 报错", isinstance(d, dict) and d.get("errorCode") == "E_FS_PATH", d)
+d = data_json(c_w4); check("写证据 added(insertions=2, diff=2)", d and d.get("changes") and d["changes"][0].get("kind") == "added"
+               and d["changes"][0].get("insertions") == 2 and len(d["changes"][0].get("diff") or []) == 2, d)
+w3 = os.path.join(tmp, "w3.txt")
+d = data_json(c_w5); check("append 补换行 + 证据 added(1)", d and d.get("changes") and d["changes"][0].get("kind") == "added"
+               and d["changes"][0].get("insertions") == 1 and os.path.exists(w3)
+               and open(w3, encoding="utf-8").read() == "a\nb\nc", d)
+d2 = data_json(c_w7)
+diff_types = [l.get("type") for l in (d2.get("changes", [{}])[0].get("diff") or [])] if isinstance(d2, dict) else []
+check("覆盖写证据 modified(1/3) + remove/add diff", d2 and d2.get("success") and d2.get("changes")
+      and d2["changes"][0].get("kind") == "modified"
+      and d2["changes"][0].get("insertions") == 1 and d2["changes"][0].get("deletions") == 3
+      and diff_types == ["remove", "remove", "remove", "add"], d2)
 
 print("\n=== fs_read_file ===")
 d = data_json(c_r1); check("读全文件带行号", d and "第二行" in json.dumps(d, ensure_ascii=False), d)

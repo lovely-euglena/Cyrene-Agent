@@ -116,6 +116,11 @@ internal static class ToolHost
                         new { id = "now", name = "当前时间", description = "时区感知的当前时间（epoch/iso/default）" },
                         new { id = "clipboard", name = "剪贴板", description = "读写系统剪贴板文本" },
                         new { id = "sysinfo", name = "系统信息", description = "系统信息快照（CPU/内存/OS/进程运行时长）" },
+                        // fs 三件自 2026-10-03 起由宿主包装器接线（nativeFirst），
+                        // list 广告与真实可调用面保持一致
+                        new { id = "fs_read_file", name = "读取文件(.NET)", description = "带行号/真实总行数/翻页的文本读取（10MB 上限）" },
+                        new { id = "fs_write_file", name = "写入文件(.NET)", description = "覆盖/追加写 + ToolFileChange 证据输出（append/createDirs）" },
+                        new { id = "fs_list_dir", name = "列出目录(.NET)", description = "目录列举（隐藏项开关/图片标注/200 项截断）" },
                     },
                 });
                 break;

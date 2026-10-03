@@ -7,17 +7,21 @@ namespace CyreneNative.Tools;
 /// <summary>
 /// fs 工具的 .NET 实现（D2）——与 fs-tools.ts 语义对齐：
 ///   read_file：带行号 JSON 结构化输出 / 10MB 上限 / 二进制启发 /
-///              startLine/maxLines 精确翻页 / totalLines 真实计数
-///   write_file：父目录自动创建 / 写后回显字节数
+///              startLine/maxLines 精确翻页 / totalLines 真实计数 / 仅绝对路径
+///   write_file：父目录自动创建 / 覆盖或追加（末尾缺换行补 \n）/
+///              ToolFileChange 证据（changes/diff，见 ToolEvidence.cs）
 ///   list_dir：文件夹在前文件在后 / 隐藏文件开关 / 图片计数标注 /
-///              LIST_MAX_ENTRIES 截断 / [D][F][L][?] 行格式
+///              LIST_MAX_ENTRIES 截断（200，与 TS 对齐）/ [D][F][L][?] 行格式
+/// 策略层不在本类：覆盖防骤降（checkOverwriteDrop）与 review 基线
+/// （captureBefore）由 TS 宿主包装器在调用前执行。
 /// 错误码（B5 契约）：E_FS_PATH / E_FS_NOT_FOUND / E_FS_TOO_LARGE /
 ///   E_FS_BINARY / E_FS_IO（与 TS 侧 retryable 语义同源）。
 /// </summary>
 internal static class FsTools
 {
     private const int ReadMaxBytes = 10 * 1024 * 1024;
-    private const int ListMaxEntries = 500;
+    // 截断上限与 TS LIST_MAX_ENTRIES 对齐（曾漂移为 500，双轨 diff 会不一致）
+    private const int ListMaxEntries = 200;
     private static readonly HashSet<string> ImageExts =
         new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg" };
 
@@ -34,6 +38,10 @@ internal static class FsTools
         var path = pathEl.GetString();
         if (string.IsNullOrWhiteSpace(path))
             return Err("E_FS_PATH", "path 不能为空", false);
+        // 与 TS ensureAbsolute 对齐：read_file 只接受绝对路径（相对路径不得按
+        // 宿主 CWD 解析，否则同一入参两轨读到不同文件）
+        if (!Path.IsPathRooted(path))
+            return Err("E_FS_PATH", "path 必须是绝对路径: " + path, false);
         path = Path.GetFullPath(path);
         if (!File.Exists(path))
             return Err("E_FS_NOT_FOUND", $"文件不存在或无法访问: {path}。不要重复读取相同路径，请先用 search_text 或 list_dir 重新定位文件。", true);
@@ -99,24 +107,103 @@ internal static class FsTools
             return Err("E_FS_PATH", "参数必须是 JSON 对象（含 path/content）", false);
         if (!args.TryGetProperty("path", out var pathEl) || pathEl.ValueKind != JsonValueKind.String)
             return Err("E_FS_PATH", "path 必须是非空字符串", false);
-        var path = pathEl.GetString();
-        if (string.IsNullOrWhiteSpace(path)) return Err("E_FS_PATH", "path 不能为空", false);
+        var rawPath = pathEl.GetString();
+        if (string.IsNullOrWhiteSpace(rawPath)) return Err("E_FS_PATH", "path 不能为空", false);
         var content = args.TryGetProperty("content", out var c)
             ? (c.ValueKind == JsonValueKind.String ? c.GetString() : null)
             : null;
         if (args.TryGetProperty("content", out _) && c.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
             return Err("E_FS_PATH", $"content 必须是字符串（收到 {c.ValueKind}）", false);
-        path = Path.GetFullPath(path);
+        // 布尔参数与 TS 判定同口径：append === true；createDirs !== false（缺省 true）
+        var append = args.TryGetProperty("append", out var ap) && ap.ValueKind == JsonValueKind.True;
+        var createDirs = !(args.TryGetProperty("createDirs", out var cd) && cd.ValueKind == JsonValueKind.False);
+        var text = content ?? "";
+
+        string path;
+        try { path = Path.GetFullPath(rawPath); }
+        catch (Exception ex) { return Err("E_FS_PATH", "path 非法: " + ex.Message, false); }
+
+        var existedBefore = File.Exists(path);
+        string? existingContent = null;
+        if (existedBefore)
+        {
+            try { existingContent = File.ReadAllText(path); }
+            catch (Exception ex) { return Err("E_FS_IO", "写前读取原文件失败: " + ex.Message, false); }
+        }
+
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, content ?? "");
-            return JsonSerializer.Serialize(new { path, bytes = Encoding.UTF8.GetByteCount(content ?? "") });
+            if (createDirs)
+            {
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            }
+            if (append)
+            {
+                // 追加写：原文件末尾缺换行时补一个，避免两段内容粘在同一行（TS 同）
+                var needsNewline = existingContent is { Length: > 0 } && !existingContent.EndsWith('\n');
+                File.AppendAllText(path, (needsNewline ? "\n" : "") + text);
+            }
+            else
+            {
+                File.WriteAllText(path, text);
+            }
         }
         catch (Exception ex)
         {
             return Err("E_FS_IO", "写入失败: " + ex.Message, true);
         }
+
+        long sizeBytes;
+        try { sizeBytes = new FileInfo(path).Length; }
+        catch (Exception ex) { return Err("E_FS_IO", "写入完成但无法确认文件状态: " + ex.Message, false); }
+
+        // Diff Review 证据：新文件/追加=added，覆盖已有=modified（与 fs-tools.ts 同结构、
+        // 同上限）；覆盖防骤降/review 基线由 TS 宿主包装器在调用前完成。
+        var insertions = ToolEvidence.CountLines(text);
+        List<object> diff;
+        string kind;
+        int deletions;
+        if (append || !existedBefore)
+        {
+            kind = "added";
+            deletions = 0;
+            diff = insertions == 0
+                ? new List<object>()
+                : ToolEvidence.BuildFullFileDiff(text.Split('\n').Take(insertions), "add");
+        }
+        else
+        {
+            kind = "modified";
+            deletions = ToolEvidence.CountLines(existingContent);
+            // 覆盖写 = 整文件替换：旧全文 remove + 新全文 add，行级上限由 Finalize 控制
+            diff = ToolEvidence.BuildReplacedDiff(
+                (existingContent ?? "").Replace("\r\n", "\n").Split('\n'),
+                text.Replace("\r\n", "\n").Split('\n'));
+        }
+
+        var change = new Dictionary<string, object?>
+        {
+            ["file"] = path,
+            ["kind"] = kind,
+            ["insertions"] = insertions,
+            ["deletions"] = deletions,
+            ["diff"] = diff,
+        };
+        var changes = new List<Dictionary<string, object?>> { change };
+        ToolEvidence.Finalize(changes);
+
+        return JsonSerializer.Serialize(new
+        {
+            success = true,
+            tool = "write_file",
+            path,
+            append,
+            exists = File.Exists(path),
+            sizeBytes,
+            writtenBytes = Encoding.UTF8.GetByteCount(text),
+            changes,
+        });
     }
 
     public static string ListDir(JsonElement args)
@@ -187,7 +274,13 @@ internal static class FsTools
         double v = bytes;
         var u = 0;
         while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
-        return u == 0 ? $"{v:0}B" : $"{v:0.#}{units[u]}";
+        // 与 TS humanBytes 对齐：B 无小数；KB/MB 1 位；GB 2 位（toFixed 同口径）
+        return u switch
+        {
+            0 => $"{v:0}B",
+            3 => v.ToString("0.00") + "GB",
+            _ => v.ToString("0.0") + units[u],
+        };
     }
 
     internal static string Err(string code, string message, bool retryable) =>

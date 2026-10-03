@@ -9,7 +9,7 @@
 |---|---|---|
 | `scripts/dotnet-smoke-linux.py` | 六 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测） | 23/23 |
 | `scripts/dotnet-edge-test.py` | 畸形帧/路径穿越/SQL 注入/1e308 权重/5MB payload/幽灵会话 | 13/13 |
-| `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件，正常+缺参+类型错） | 19/19 |
+| `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件；含 write 三态 changes 证据），正常+缺参+类型错 | 22/22 |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
 | `scripts/ipc-stress-test.ts` | 并发 20 call 路由/2MB payload/超时恢复/shutdown 清 pending | ALL PASS |
 | `scripts/dual-track-diff.ts` | calculator TS↔.NET 逐表达式数值等价（1e-9 容差） | 12/12 |
@@ -27,7 +27,7 @@ git commit 漏子命令、IPC argv 双传。
 | 原生窗口 | `cyrene-native serve`（默认） | 前置 | 生产 |
 | 分离托盘 | `cyrene-native --tray` | 前置 | 生产 |
 | MCP 连接 | `cyrene-native --mcp-host` | M4 前置 | 生产骨架（stdio/SSE + 重连/超时/进程树清理） |
-| 内置工具 | `cyrene-native --tool-host` | D | fs/calculator/now/clipboard/sysinfo + ErrorCodes + 超时回退（30 项矩阵实测） |
+| 内置工具 | `cyrene-native --tool-host` | D | calculator/now/clipboard/sysinfo + fs 三件 native 轨接线（evidence 帧协议 v1，22 项矩阵实测） |
 | Agent 会话 | `cyrene-native --agent-host` | H/J | LLM 回调闭环 + 多轮工具环 + orchestrate/mailbox/白名单**主路径拦截**（13 项实测） |
 | RAG | `cyrene-native --rag-host` | E | SQLite/WAL + jieba BM25（CutForSearch+标点过滤）+ 混合检索（余弦修正）+ JSON 迁移 |
 | 记忆 | `cyrene-native --memory-host` | I | L0/L1/冲突/反思表 + get/append op（L2/DMAE 建表暂缓驱动 A7） |
@@ -66,6 +66,8 @@ git commit 漏子命令、IPC argv 双传。
 ## 契约文档
 
 - 帧协议（B5）：各 host C# 源文件头注释即规范（errorCode 字段统一）
+- 写类工具 evidence 帧协议 v1：`docs/design/2026-10-03-tool-evidence-frame-protocol.md`
+  （`changes: ToolFileChange[]` 随 result `data` 返回；策略层留 TS，见下）
 - 多 Agent：docs/multi-agent-architecture.md
 - 语音/VAD：dotnet/voice/CyreneVoice/ 源头注释
 - 构建/发版：docs/build-guide.md
