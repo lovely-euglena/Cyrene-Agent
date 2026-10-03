@@ -212,6 +212,32 @@
 - **验证**：matrix 56/56；dual-track 全绿（srepl 8 / download 7）；
   `vitest src/main/orchestrator/tools` 435 passed；tsc 0 错误。
 
+## 2026-10-03 增量：git 八件下沉 .NET（IKJLIL）
+
+- **决策（子进程 vs libgit2sharp）**：采纳系统 git 子进程，与 GitService
+  （simple-git 3.36）同命令同解析；libgit2sharp 的语义差异 / 凭证边界 / 打包
+  体积均不合算（详见 docs/design/2026-10-03-git-tools-dotnet-migration.md）。
+- **外围归属**：可执行探测仍由 TS `resolveGitExecutable`（装配层缓存）负责，
+  native 调用时注入 `__gitCommand/__gitSource/__gitVersion`（bundled 附
+  `__gitIsolated`，C# 侧设 NOSYSTEM/NUL 隔离）；会话绑定由 ToolContext 解析后
+  注入；提交身份经 `GitService.getCommitIdentity()` 注入（仅 commit 的
+  `-c user.name/email` 使用）；并发由 ToolHost 串行 + NativeToolHost 串行闸门保证。
+- **实现**：C# `GitTools.cs`（GitRunner + simple-git 同构解析：status
+  `--porcelain -b -u --null`、`diff --stat=4096`、`branch -v`、
+  `-c core.abbrev=40 commit`、`push --verbose --porcelain`）；git_diff 产出
+  evidence v1（changes 与 parseUnifiedPatch 同构，截断时证据只含截断部分）；
+  取消=杀 host（git 子进程可能短暂孤儿化，记为已知限制）。
+- **凭证边界（B1）**：过渡期完全沿用系统 git 凭据链（helper/环境），不向 .NET
+  传任何凭证；A20 密钥库落地后再评托管注入通道（设计稿 §3）。
+- **验证**：matrix 79/79（git +23：init/status/diff/commit/log/switch/revert/
+  push（本地 bare：建立跟踪 + 已跟踪）/非仓库/6 类校验拒绝）；dual-track git +29
+  （镜像仓库 + 本地 bare 远程，hash 归一；含 staged/路径限定/截断/混合变更）；
+  `git-tools-native.test.ts` 5 项（注入/回退/取消/隔离/模式）；
+  `vitest src/main/orchestrator/tools` 446 passed；tsc 0 错误。
+- **未做/后续**：冲突拒提交与空仓库 push 失败路径的 dual-track 用例、无凭据
+  远端场景（T2 凭证复核）随后续批次补；Git 面板 UI 仍走原 GitService
+  （native 只承接工具执行，UI 时效依赖既有 workspace watcher）。
+
 ## 2026-10-03 增量：PR #1 复审阻断修复（取消链路 + 串行闸门）
 
 - **阻断 1（取消语义）**：`NativeToolHost.call` 增加 `signal` 参数——排队中直接
