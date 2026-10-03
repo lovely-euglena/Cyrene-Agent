@@ -106,6 +106,11 @@ export interface BuildOptionsDeps {
     userText: string,
     messages: ReadonlyArray<{ role: string; content?: string }>,
   ) => Promise<string>;
+  /** 每轮 L2 Working Memory：向量召回 → DMAE 更新 → 热层驻留注入（仅聊天模式注入）。 */
+  buildL2WorkingMemoryContext?: (
+    userText: string,
+    messages: ReadonlyArray<{ role: string; content?: string }>,
+  ) => Promise<string>;
   buildRelationshipContext: () => Promise<string>;
   /** 明确按模式构建基础人设，不再通过 style 文件名猜模式。 */
   buildModePrompt?: (mode: ConversationMode) => string;
@@ -636,6 +641,20 @@ export async function buildAgentRunOptions(
     console.warn("[Cyrene] always-on context build failed:", err);
   }
 
+  // L2 Working Memory：每轮召回 top-4 → 按位次赋 I → DMAE 更新 → 热层驻留注入。
+  // 仅聊天模式注入（code/work 为任务模式，不引入个人记忆驻留）。
+  let memoryContext = "";
+  if (isChatMode && deps.buildL2WorkingMemoryContext) {
+    try {
+      memoryContext = await perf.track(
+        "build_l2_working_memory_context",
+        () => deps.buildL2WorkingMemoryContext!(latestUserText, slimMessages),
+      );
+    } catch (err) {
+      console.warn("[Cyrene] L2 working memory context build failed:", err);
+    }
+  }
+
   let relationshipContext = "";
   try {
     relationshipContext = await perf.track("build_relationship_context", () => deps.buildRelationshipContext());
@@ -937,6 +956,7 @@ export async function buildAgentRunOptions(
     skillActivation,
     toneInjection,
     alwaysOnContext,
+    memoryContext,
     relationshipContext,
     attachmentContext,
     pluginPromptContext,

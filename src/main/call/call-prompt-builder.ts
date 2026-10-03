@@ -1,5 +1,5 @@
 import type { SceneIndex } from "../scene-embedder";
-import { buildAlwaysOnContext, buildMemoryInjection } from "../orchestrator";
+import { buildAlwaysOnContext, buildMemoryInjection, refreshL2WorkingMemory } from "../orchestrator";
 import { getSceneEmbeddingProvider } from "../rag/embedding";
 import { buildToneInjection } from "../orchestrator/tone-injector";
 import { buildSkillCatalog, skillRegistry } from "../skills";
@@ -9,9 +9,6 @@ import { getDateLocale } from "../locale-context";
 import { loadPromptFile } from "../prompts/prompt-loader";
 import { loadUserProfile } from "../settings-store";
 import { loadGeneralSettings } from "../settings/settings-facade";
-import { searchMemoryEntries } from "../rag";
-import { memoryStore } from "../memory/memory-store";
-import { l2DmaeManager } from "../memory/l2-dmae-manager";
 
 export interface CallPromptBuilderContext {
   /** 场景嵌入索引，由主进程在后台刷新，可能为 null。 */
@@ -39,16 +36,7 @@ export async function buildCallSystemPrompt(
 
   // ③ V5 L2 DMAE：先向量召回 top-4，再执行 DMAE 状态更新
   try {
-    const allL2 = await memoryStore.getAllL2();
-    const recalled = await searchMemoryEntries(userText, "user_memory", 4);
-    const recalledIds = recalled
-      .map((r) => r.metadata?.l2Id)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((m) => m.role === "assistant")
-      ?.content ?? "";
-    await l2DmaeManager.updateActivation(allL2, userText, lastAssistant, recalledIds);
+    await refreshL2WorkingMemory(userText, messages);
   } catch (err) {
     console.warn("[CallPromptBuilder] L2 DMAE update failed:", err);
   }

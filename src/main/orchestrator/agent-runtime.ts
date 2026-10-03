@@ -14,7 +14,7 @@ import { parseObserverFeeling } from "../chat-stream-utils";
 import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
 import { buildEnvironmentContext } from "./environment";
 import { buildToneInjection } from "./tone-injector";
-import { buildAlwaysOnContext, scheduleMemoryWrite } from "./index";
+import { buildAlwaysOnContext, buildL2WorkingMemoryInjection, refreshL2WorkingMemory, scheduleMemoryWrite } from "./index";
 import { matchSticker } from "../sticker-embedder";
 import { buildRelationshipContext, recordRelationshipTurn } from "../relationship/relationship-log";
 import { compileSocialContextBlock } from "../social-context/context";
@@ -203,6 +203,10 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         buildToneInjection(userText, messages as any, provider as any, index as any)) as BuildOptionsDeps["buildToneInjection"],
       buildAlwaysOnContext: ((userText, messages) =>
         buildAlwaysOnContext(userText, messages as any)) as BuildOptionsDeps["buildAlwaysOnContext"],
+      buildL2WorkingMemoryContext: async (userText, messages) => {
+        await refreshL2WorkingMemory(userText, messages as Array<{ role: string; content?: string }>);
+        return buildL2WorkingMemoryInjection();
+      },
       buildRelationshipContext,
       buildModePrompt,
       buildToolSystemPrompt: ((mode, enabledTools) =>

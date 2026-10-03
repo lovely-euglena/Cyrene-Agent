@@ -24,6 +24,7 @@ const entityGraphMock = vi.hoisted(() => ({
 
 const l2DmaeManagerMock = vi.hoisted(() => ({
   getActiveL2ForPrompt: vi.fn(),
+  updateActivation: vi.fn(),
 }))
 
 vi.mock("../rag", () => ragMock)
@@ -91,6 +92,63 @@ describe("buildMemoryInjection", () => {
 
     expect(context).toBe("")
     expect(wasRecentlyInjectedMemory("l2_run")).toBe(false)
+  })
+})
+
+describe("refreshL2WorkingMemory / buildL2WorkingMemoryInjection", () => {
+  beforeEach(() => {
+    clearRecentMemoryInjections()
+    ragMock.searchMemoryEntries.mockReset()
+    ragMock.searchMemoryEntries.mockResolvedValue([])
+    memoryStoreMock.getAllL2.mockReset()
+    memoryStoreMock.getAllL2.mockResolvedValue([])
+    l2DmaeManagerMock.getActiveL2ForPrompt.mockReset()
+    l2DmaeManagerMock.getActiveL2ForPrompt.mockResolvedValue([])
+    l2DmaeManagerMock.updateActivation.mockReset()
+    l2DmaeManagerMock.updateActivation.mockResolvedValue(undefined)
+  })
+
+  it("按召回位次赋 I 并把用户输入/上轮模型回复交给 DMAE", async () => {
+    memoryStoreMock.getAllL2.mockResolvedValue([{ id: "l2_run" }])
+    ragMock.searchMemoryEntries.mockResolvedValue([
+      { metadata: { l2Id: "l2_run" } },
+      { metadata: { l2Id: "l2_react" } },
+      { metadata: {} },
+    ])
+    const { refreshL2WorkingMemory } = await import("./index")
+
+    await refreshL2WorkingMemory("跑步", [
+      { role: "user", content: "跑步" },
+      { role: "assistant", content: "你很喜欢跑步" },
+    ])
+
+    expect(ragMock.searchMemoryEntries).toHaveBeenCalledWith("跑步", "user_memory", 4)
+    expect(l2DmaeManagerMock.updateActivation).toHaveBeenCalledWith(
+      [{ id: "l2_run" }],
+      "跑步",
+      "你很喜欢跑步",
+      ["l2_run", "l2_react"],
+    )
+  })
+
+  it("buildL2WorkingMemoryInjection 只读热层并记录注入", async () => {
+    memoryStoreMock.getAllL2.mockResolvedValue([
+      { id: "l2_run", content: "用户喜欢跑步", triggerText: "我喜欢跑步" },
+    ])
+    l2DmaeManagerMock.getActiveL2ForPrompt.mockResolvedValue([
+      { id: "l2_run", content: "用户喜欢跑步", triggerText: "我喜欢跑步" },
+    ])
+    const { buildL2WorkingMemoryInjection } = await import("./index")
+
+    const block = await buildL2WorkingMemoryInjection()
+    expect(block).toContain("【相关记忆】")
+    expect(block).toContain("用户喜欢跑步")
+    expect(wasRecentlyInjectedMemory("l2_run")).toBe(true)
+  })
+
+  it("无热层条目返回空串", async () => {
+    const { buildL2WorkingMemoryInjection } = await import("./index")
+    expect(await buildL2WorkingMemoryInjection()).toBe("")
   })
 })
 

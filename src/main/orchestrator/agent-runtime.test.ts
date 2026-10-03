@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   onAgentRunFinished: vi.fn(),
   buildAlwaysOnContext: vi.fn(),
   scheduleMemoryWrite: vi.fn(),
+  refreshL2WorkingMemory: vi.fn(),
+  buildL2WorkingMemoryInjection: vi.fn(async () => ""),
 }));
 
 // electron 模块 mock：agent-runtime 装配的轨迹 store 根目录指向可控临时目录
@@ -33,6 +35,8 @@ vi.mock("./index", async (importOriginal) => {
     ...actual,
     buildAlwaysOnContext: mocks.buildAlwaysOnContext,
     scheduleMemoryWrite: mocks.scheduleMemoryWrite,
+    refreshL2WorkingMemory: mocks.refreshL2WorkingMemory,
+    buildL2WorkingMemoryInjection: mocks.buildL2WorkingMemoryInjection,
   };
 });
 
