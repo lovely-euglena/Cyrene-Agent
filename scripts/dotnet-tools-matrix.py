@@ -137,6 +137,18 @@ c_dl1 = req("download_file", {"url": "https://example.com/x.hta", "filename": "x
 c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.js", "__cyreneRoot": ap_ws})
 c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf", "__cyreneRoot": ap_ws})
 
+# web_search：config 帧注入（引擎/key），覆盖确定性校验路径（不联网）
+frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
+                          "webSearch": {"engine": "off", "bochaKey": "", "tavilyKey": "", "anySearchKey": ""}}))
+c_ws1 = req("web_search", {"query": "test"})
+frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
+                          "webSearch": {"engine": "bocha", "bochaKey": "", "tavilyKey": "", "anySearchKey": ""}}))
+c_ws2 = req("web_search", {"query": "test"})
+c_ws3 = req("web_search", {"query": "   "})
+frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
+                          "webSearch": {"engine": "no-such", "bochaKey": "", "tavilyKey": "", "anySearchKey": ""}}))
+c_ws4 = req("web_search", {"query": "test"})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
@@ -297,6 +309,16 @@ print("\n=== download_file（黑名单扩展）===")
 check("hta 扩展名拒绝", data_text(c_dl1) == "[错误] 禁止下载可执行/脚本文件: .hta", data_text(c_dl1))
 check("js 扩展名拒绝", data_text(c_dl2) == "[错误] 禁止下载可执行/脚本文件: .js", data_text(c_dl2))
 check("wsf 扩展名拒绝", data_text(c_dl3) == "[错误] 禁止下载可执行/脚本文件: .wsf", data_text(c_dl3))
+
+print("\n=== web_search（config 帧 + 校验路径）===")
+def ws_error(cid):
+    f = by.get(cid, {})
+    return f.get("error") if isinstance(f, dict) and f.get("ok") is False else None
+
+check("ws 未启用拒绝", ws_error(c_ws1) == "E_SEARCH_NOT_ENABLED", by.get(c_ws1))
+check("ws 缺 key 拒绝", ws_error(c_ws2) == "E_SEARCH_KEY_MISSING", by.get(c_ws2))
+check("ws 空 query 拒绝（先于 key 校验）", ws_error(c_ws3) == "E_SEARCH_QUERY_EMPTY", by.get(c_ws3))
+check("ws 未知引擎拒绝", ws_error(c_ws4) == "E_SEARCH_ENGINE_NOT_SUPPORTED:no-such", by.get(c_ws4))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

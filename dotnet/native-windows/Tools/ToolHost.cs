@@ -65,12 +65,23 @@ internal static class ToolHostConfig
     internal static string Timezone { get; set; } = "Asia/Shanghai";
     internal static string DateLocale { get; set; } = "zh-CN";
     internal static string? DataDir { get; set; }
+    // web_search（B1：仅宿主内存驻留，config 帧注入，不落盘）
+    internal static string WebSearchEngine { get; set; } = "off";
+    internal static string WebSearchBochaKey { get; set; } = "";
+    internal static string WebSearchTavilyKey { get; set; } = "";
+    internal static string WebSearchAnySearchKey { get; set; } = "";
 }
 
 internal static class ToolHost
 {
     /// <summary>args 缺失时的空对象（避免 Undefined JsonElement 在工具内探属性崩溃）。</summary>
     private static readonly JsonElement EmptyArgs = JsonDocument.Parse("{}").RootElement.Clone();
+
+    /// <summary>读取对象属性中的字符串（非字符串/缺失 → 空串）。</summary>
+    private static string JsonStr(JsonElement obj, string key)
+        => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()!
+            : "";
 
     /// <summary>协议帧序列化：NaN/±Infinity → null（见 <see cref="SafeDoubleJsonConverter"/>）。</summary>
     private static readonly JsonSerializerOptions SafeJsonOptions = new()
@@ -140,6 +151,7 @@ internal static class ToolHost
                         new { id = "search_text", name = "文本搜索(.NET)", description = "工作区文本/正则搜索（忽略目录、上下文、上限对齐 TS）" },
                         new { id = "str_replace", name = "精确替换(.NET)", description = "三层匹配（精确/EOL/空白归一化）+ evidence；__dryRun 预检两段式" },
                         new { id = "apply_patch", name = "编辑文件(.NET)", description = "Codex 补丁格式批量编辑（预检事务 + 保留 EOL + evidence；__dryRun 两段式）" },
+                        new { id = "web_search", name = "联网搜索(.NET)", description = "bocha/tavily/anySearch 多源搜索（config 帧注入 key；30 分钟 TTL）" },
                         new { id = "download_file", name = "下载文件(.NET)", description = "URL 二进制落盘（沙箱/黑名单/64MiB/空闲超时；root 注入）" },
                     },
                 });
@@ -155,6 +167,25 @@ internal static class ToolHost
                     ToolHostConfig.DateLocale = dl.GetString()!;
                 if (root.TryGetProperty("dataDir", out var dd) && dd.ValueKind == JsonValueKind.String)
                     ToolHostConfig.DataDir = dd.GetString();
+                if (root.TryGetProperty("webSearch", out var ws))
+                {
+                    // 整体替换语义（与 TS setRuntimeSettings 对齐）；null 重置为未配置
+                    if (ws.ValueKind == JsonValueKind.Object)
+                    {
+                        var engine = JsonStr(ws, "engine");
+                        ToolHostConfig.WebSearchEngine = engine.Length > 0 ? engine : "off";
+                        ToolHostConfig.WebSearchBochaKey = JsonStr(ws, "bochaKey");
+                        ToolHostConfig.WebSearchTavilyKey = JsonStr(ws, "tavilyKey");
+                        ToolHostConfig.WebSearchAnySearchKey = JsonStr(ws, "anySearchKey");
+                    }
+                    else if (ws.ValueKind == JsonValueKind.Null)
+                    {
+                        ToolHostConfig.WebSearchEngine = "off";
+                        ToolHostConfig.WebSearchBochaKey = "";
+                        ToolHostConfig.WebSearchTavilyKey = "";
+                        ToolHostConfig.WebSearchAnySearchKey = "";
+                    }
+                }
                 break;
             }
             case "call":
@@ -184,6 +215,7 @@ internal static class ToolHost
                         "search_text" => SearchTools.Search(args ?? EmptyArgs),
                         "str_replace" => StrReplaceTool.Execute(args ?? EmptyArgs),
                         "apply_patch" => ApplyPatchTool.Execute(args ?? EmptyArgs),
+                        "web_search" => WebSearchTool.Execute(args ?? EmptyArgs),
                         "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };

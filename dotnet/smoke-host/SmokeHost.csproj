@@ -21,6 +21,7 @@
     <Compile Include="../../dotnet/native-windows/Tools/SearchTools.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/StrReplaceTool.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/ApplyPatchTool.cs" />
+    <Compile Include="../../dotnet/native-windows/Tools/WebSearchTool.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/DownloadFileTool.cs" />
     <Compile Include="BuiltinToolsStub.cs" />
     <Compile Include="Program.cs" />
