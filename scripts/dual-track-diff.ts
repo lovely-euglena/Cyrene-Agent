@@ -6,10 +6,11 @@
  * fs 三件：write_file（新建/覆盖/追加/空内容）输出 JSON 与落盘字节级对齐、
  * read_file 窗口语义对齐、list_dir 文本对齐（evidence 帧协议 v1）。
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
+ * git 八件：镜像仓库 + 本地 bare 远程（TS 纯回退实现 ↔ smoke host；commit/log/revert hash 归一）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
 import { DUAL_TRACK_USER_DATA } from "./dual-track-env";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -692,6 +693,215 @@ async function runDownloadDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
+
+/** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, sortJson(record[key])]));
+  }
+  return value;
+}
+
+/** hash 归一：镜像仓库的 commit hash 不同，仅比较形态与其余字段。 */
+function normalizeGitHashes(value: unknown): unknown {
+  return sortJson(JSON.parse(JSON.stringify(value).replace(/[0-9a-f]{7,40}/g, "<hash>")));
+}
+
+async function runGitDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] git ${name}`);
+    else { failed++; console.log(`[FAIL] git ${name} —— ${detail}`); }
+  };
+  const clip = (value: unknown): string => (JSON.stringify(value) ?? "undefined").slice(0, 240);
+  const same = (name: string, tsValue: unknown, netValue: unknown): void => {
+    check(name, stableJson(tsValue) === stableJson(netValue), `ts=${clip(tsValue)} net=${clip(netValue)}`);
+  };
+
+  const { probeGitExecutable } = await import("../src/main/code-git/git-executable");
+  const version = await probeGitExecutable("git");
+  if (!version) { console.log("[SKIP] git 双轨（未检测到系统 git）"); return 0; }
+
+  const { createGitService } = await import("../src/main/code-git/git-service");
+  const { createCodeGitTools } = await import("../src/main/orchestrator/tools/git-tools");
+
+  const sessionId = "git-dual-session";
+  const plainSession = "git-dual-plain";
+  const identity = { name: "Dual", email: "dual@cyrene.test" };
+  const sessions = new Map<string, string>();
+  const roots: string[] = [];
+  const mkHome = (prefix: string): string => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+    roots.push(dir);
+    return dir;
+  };
+  const tsHome = mkHome("git-dual-ts-");
+  const netHome = mkHome("git-dual-net-");
+  const tsPlain = mkHome("git-dual-ts-plain-");
+  const netPlain = mkHome("git-dual-net-plain-");
+  sessions.set(sessionId, tsHome);
+  sessions.set(plainSession, tsPlain);
+
+  try {
+    const service = createGitService({
+      getSession: (id) => {
+        const workspaceRoot = sessions.get(id);
+        return workspaceRoot
+          ? { mode: "code" as const, workspaceBinding: { workspaceRoot, displayName: "dual", boundAt: 0 } }
+          : null;
+      },
+      resolveExecutable: async () => ({ command: "git", source: "system" as const, version }),
+      getCommitIdentity: () => identity,
+    });
+    const tools = new Map(createCodeGitTools(service).map((tool) => [tool.id, tool] as const));
+    const tsRunIn = async (session: string, id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = tools.get(id);
+      if (!tool) throw new Error(`TS 轨缺少工具：${id}`);
+      return tool.execute(args, {
+        userQuery: "dual",
+        conversationId: session,
+        resolvedWorkspaceRoot: sessions.get(session),
+        mode: "code",
+      } as never);
+    };
+    const tsRun = (id: string, args: Record<string, unknown>): Promise<string> => tsRunIn(sessionId, id, args);
+
+    const netRunIn = (home: string, id: string, args: Record<string, unknown>, session = sessionId) => callSmokeTool(id, {
+      ...args,
+      __cyreneRoot: home,
+      __sessionId: session,
+      __gitCommand: "git",
+      __gitSource: "system",
+      __gitVersion: version,
+      __gitIdentity: identity,
+    });
+    const netRun = (id: string, args: Record<string, unknown>) => netRunIn(netHome, id, args);
+    const netData = (host: HostResult): unknown => {
+      if (!host.ok) throw new Error(`host error: ${host.error}`);
+      return typeof host.data === "string" ? looseJson(host.data) : host.data;
+    };
+    const gitCli = (dir: string, args: string[]): void => {
+      const result = spawnSync("git", args, { cwd: dir, encoding: "utf-8" });
+      if (result.status !== 0) throw new Error(`git ${args.join(" ")} 失败：${String(result.stderr).trim()}`);
+    };
+    const seed = (home: string): void => {
+      writeFileSync(path.join(home, "a.txt"), "alpha\nbeta\ngamma\n");
+      mkdirSync(path.join(home, "sub"), { recursive: true });
+      writeFileSync(path.join(home, "sub", "b.txt"), "one\ntwo\n");
+    };
+
+    // init + 本地提交身份（revert 需要；两侧同值保证确定性）
+    same("git_init（空目录）", await tsRun("git_init", {}), netData(await netRun("git_init", {})));
+    for (const home of [tsHome, netHome]) {
+      gitCli(home, ["config", "user.name", identity.name]);
+      gitCli(home, ["config", "user.email", identity.email]);
+    }
+
+    seed(tsHome); seed(netHome);
+    same("git_status 未提交（untracked + 空分支列表）", looseJson(await tsRun("git_status", {})), netData(await netRun("git_status", {})));
+    same("git_diff 无 HEAD 视为空", looseJson(await tsRun("git_diff", {})), netData(await netRun("git_diff", {})));
+
+    const tsCommit1 = await tsRun("git_commit", { message: "initial commit", paths: ["a.txt", "sub/b.txt"] });
+    const netCommit1 = netData(await netRun("git_commit", { message: "initial commit", paths: ["a.txt", "sub/b.txt"] }));
+    check(
+      "git_commit #1 形态（40 位 hash）",
+      /^已创建提交 [0-9a-f]{40}$/.test(tsCommit1) && /^已创建提交 [0-9a-f]{40}$/.test(String(netCommit1)),
+      `${tsCommit1} | ${String(netCommit1)}`,
+    );
+    check("git_commit #1 输出等价（hash 归一）",
+      stableJson(normalizeGitHashes(tsCommit1)) === stableJson(normalizeGitHashes(String(netCommit1))));
+
+    same("git_status 提交后（干净 + branches）", looseJson(await tsRun("git_status", {})), netData(await netRun("git_status", {})));
+    same("git_log #1（hash 归一）", normalizeGitHashes(looseJson(await tsRun("git_log", {}))), normalizeGitHashes(netData(await netRun("git_log", {}))));
+
+    // 工作区变更：staged rename + unstaged modify + untracked 新文件
+    for (const home of [tsHome, netHome]) {
+      gitCli(home, ["mv", "sub/b.txt", "sub/r.txt"]);
+      writeFileSync(path.join(home, "a.txt"), "alpha\nBETA\ngamma\n");
+      writeFileSync(path.join(home, "c.txt"), "new file\nline2\n");
+    }
+    same("git_status 混合变更（renamed/modified/added）", looseJson(await tsRun("git_status", {})), netData(await netRun("git_status", {})));
+    same("git_diff 工作区（patch/perFile/changes）", looseJson(await tsRun("git_diff", {})), netData(await netRun("git_diff", {})));
+    same("git_diff --staged（rename 已暂存）", looseJson(await tsRun("git_diff", { staged: true })), netData(await netRun("git_diff", { staged: true })));
+    same("git_diff paths 限定", looseJson(await tsRun("git_diff", { paths: ["a.txt"] })), netData(await netRun("git_diff", { paths: ["a.txt"] })));
+    same("git_diff maxPatchLines=1（截断）", looseJson(await tsRun("git_diff", { maxPatchLines: 1 })), netData(await netRun("git_diff", { maxPatchLines: 1 })));
+
+    const tsCommit2 = await tsRun("git_commit", { message: "second commit", paths: ["a.txt", "sub/r.txt"] });
+    const netCommit2 = netData(await netRun("git_commit", { message: "second commit", paths: ["a.txt", "sub/r.txt"] }));
+    check("git_commit #2 输出等价（hash 归一）",
+      stableJson(normalizeGitHashes(tsCommit2)) === stableJson(normalizeGitHashes(String(netCommit2))));
+    const tsHash2 = tsCommit2.split(" ").pop() ?? "";
+    const netHash2 = String(netCommit2).split(" ").pop() ?? "";
+    same("git_log #2（全量 + maxCount=1 + path 过滤）",
+      [normalizeGitHashes(looseJson(await tsRun("git_log", {}))),
+        normalizeGitHashes(looseJson(await tsRun("git_log", { maxCount: 1 }))),
+        normalizeGitHashes(looseJson(await tsRun("git_log", { path: "a.txt" })))],
+      [normalizeGitHashes(netData(await netRun("git_log", {}))),
+        normalizeGitHashes(netData(await netRun("git_log", { maxCount: 1 }))),
+        normalizeGitHashes(netData(await netRun("git_log", { path: "a.txt" })))]);
+
+    // 分支
+    same("git_switch_branch 创建 feat", await tsRun("git_switch_branch", { branch: "feat", create: true }), netData(await netRun("git_switch_branch", { branch: "feat", create: true })));
+    same("git_status feat 分支（列表排序）", looseJson(await tsRun("git_status", {})), netData(await netRun("git_status", {})));
+    same("git_switch_branch 切回 main", await tsRun("git_switch_branch", { branch: "main" }), netData(await netRun("git_switch_branch", { branch: "main" })));
+
+    // revert（对 HEAD/second commit 反向；各自 hash 前缀；输出 hash 归一等价）
+    same("git_revert（hash 归一）",
+      normalizeGitHashes(await tsRun("git_revert", { commit: tsHash2.slice(0, 12) })),
+      normalizeGitHashes(netData(await netRun("git_revert", { commit: netHash2.slice(0, 12) }))));
+    same("git_log revert 后", normalizeGitHashes(looseJson(await tsRun("git_log", {}))), normalizeGitHashes(netData(await netRun("git_log", {}))));
+
+    // push（各自 bare 远程；建立跟踪 + 已跟踪两条路径）
+    const tsRemote = path.join(mkHome("git-dual-rts-"), "remote.git");
+    const netRemote = path.join(mkHome("git-dual-rnet-"), "remote.git");
+    for (const bare of [tsRemote, netRemote]) {
+      const init = spawnSync("git", ["init", "--bare", bare], { encoding: "utf-8" });
+      if (init.status !== 0) throw new Error(`git init --bare 失败：${String(init.stderr).trim()}`);
+    }
+    gitCli(tsHome, ["remote", "add", "origin", tsRemote]);
+    gitCli(netHome, ["remote", "add", "origin", netRemote]);
+    same("git_push 建立跟踪", await tsRun("git_push", {}), netData(await netRun("git_push", {})));
+    same("git_status 跟踪 origin/main", looseJson(await tsRun("git_status", {})), netData(await netRun("git_status", {})));
+    for (const home of [tsHome, netHome]) writeFileSync(path.join(home, "d.txt"), "push me\n");
+    await tsRun("git_commit", { message: "third commit", paths: ["d.txt"] });
+    await netData(await netRun("git_commit", { message: "third commit", paths: ["d.txt"] }));
+    same("git_status ahead=1（未推送）", looseJson(await tsRun("git_status", {})), netData(await netRun("git_status", {})));
+    same("git_push 已跟踪", await tsRun("git_push", {}), netData(await netRun("git_push", {})));
+
+    // 非仓库
+    same("git_status 非仓库（not_repository）",
+      looseJson(await tsRunIn(plainSession, "git_status", {})),
+      netData(await netRunIn(netPlain, "git_status", {}, plainSession)));
+
+    // 错误路径：双侧都必须失败
+    const expectBothFail = async (name: string, id: string, args: Record<string, unknown>): Promise<void> => {
+      let tsFailed = false;
+      try { await tsRun(id, args); } catch { tsFailed = true; }
+      const host = await netRun(id, args);
+      check(name, tsFailed && !host.ok, `tsFailed=${tsFailed} net=${JSON.stringify(host).slice(0, 160)}`);
+    };
+    await expectBothFail("非法分支名双侧拒绝", "git_switch_branch", { branch: "bad..name" });
+    await expectBothFail("空 ref 双侧拒绝", "git_diff", { ref: "" });
+    await expectBothFail("非法 revert hash 双侧拒绝", "git_revert", { commit: "xyz" });
+    await expectBothFail("非法 paths 类型双侧拒绝", "git_commit", { message: "x", paths: "a.txt" });
+    const noIdentity = await callSmokeTool("git_commit", {
+      message: "x", paths: ["a.txt"], __cyreneRoot: netHome, __sessionId: sessionId,
+      __gitCommand: "git", __gitSource: "system", __gitVersion: version,
+    });
+    check("git_commit 无身份 → E_GIT_IDENTITY", noIdentity.ok === false, JSON.stringify(noIdentity).slice(0, 160));
+  } finally {
+    for (const dir of roots) rmSync(dir, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -736,6 +946,9 @@ async function main(): Promise<void> {
     // 下载双轨（download_file，本地 HTTP 服务）
     if (useSmoke) failures += await runDownloadDualTrack();
     else console.log("[SKIP] download 双轨（仅 smoke dll 轨支持）");
+    // git 八件双轨（镜像仓库 + 本地 bare 远程）
+    if (useSmoke) failures += await runGitDualTrack();
+    else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);
