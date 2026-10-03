@@ -25,6 +25,7 @@
 | A17 | 便携配置 | `./config` 优先，命令行可覆盖 |
 | A18 | MCP HTTP | 仅 127.0.0.1，无认证；远程+token 另立项（N7） |
 | A19 | MCP HTTP/stdio | 并存，同一工具注册表；`CYRENE_MCP_HTTP` 控制 |
+| A20 | 密钥保存 | 分阶段迁移 .NET：Phase 1 统一 DPAPI 密钥库（模型/视觉/TTS/ASR），TS 按需取用不落盘；Phase 2 请求处理是否下沉待议；过渡期 B1 保留 |
 
 ## 统一双轨开关解析（B4/L17 共用）
 
@@ -54,3 +55,15 @@
 - 首次 open 时导入对象形 `memory.json`（l0/l1/l2/evidence/conflictLogs/reflectionLogs/l2DmaeStates）；
   之后不再重复导入，避免旧快照覆盖 host 真值。
 - 冒烟：`node scripts/diagnostics/memory-host-smoke.mjs`（8 项，对象导入 + replace/query/get/delete/clear/stats）。
+
+## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）
+
+- **决策**：密钥等敏感信息分阶段迁移 .NET 保存处理。**Phase 1** 在 `cyrene-native` 新增
+  DPAPI（CurrentUser）统一密钥库宿主，模型 / 视觉 / TTS / ASR 密钥全部迁入；TS 仅在组装
+  请求时经本地帧协议取用，不再持久化明文；渲染进程只拿掩码。**Phase 2**（LLM 请求处理
+  是否下沉）待 Issue 讨论后另定。
+- **B1 过渡**：铁律「密钥不落 .NET」在切换完成前仍然有效；`handover.md` / `dotnet-backend.md` /
+  `multi-agent-architecture.md` / `plan-b` 设计稿均已加「拟迁移」标注。
+- **设计文档**：`docs/design/2026-10-03-secrets-migration-to-dotnet.md`（现状盘点、宿主协议、
+  迁移清痕、失败回退、验收用例与开放问题）；关联 Issue：Ygwill/cyrene-agent#IKJLB2。
+- **实施状态**：本批仅文档与决策，未开工。
