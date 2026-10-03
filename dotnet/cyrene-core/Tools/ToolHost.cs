@@ -32,7 +32,7 @@ internal sealed class SafeDoubleJsonConverter : JsonConverter<double>
 /// 把计算密集/系统交互型内置工具从 Electron 主进程下沉到 .NET：
 ///   - calculator：递归下降求值器（与 TS 版同语义，白名单函数表，零动态执行）
 ///   - now：时区感知时间
-///   - clipboard：WPF 剪贴板（STA marshal）
+///   - clipboard：平台桥（Windows WPF 实现由 cyrene-native 注入；未注入=不可用）
 ///   - sysinfo：系统信息快照（CPU/内存/OS/运行时长）
 ///
 /// 协议（宿主 Electron ↔ 本进程，stdio JSON 行）：
