@@ -23,7 +23,7 @@ internal static class ExchangeRateTool
         var from = Str(args, "from", "USD").ToUpperInvariant();
         var to = Str(args, "to", "CNY").ToUpperInvariant();
         var amount = Num(args, "amount");
-        if (amount == 0) amount = 1; // TS: Number(args.amount) || 1
+        if (double.IsNaN(amount) || amount == 0) amount = 1; // TS: Number(args.amount) || 1
         if (from == to)
             return $"[exchange_rate] {HostLocale.Fmt(amount)} {from} = {HostLocale.Fmt(amount)} {to}（同币种）";
 
@@ -81,7 +81,7 @@ internal static class ExchangeRateTool
             : fallback;
 
     private static double Num(JsonElement args, string key)
-        => args.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.Number ? el.GetDouble() : 0;
+        => args.TryGetProperty(key, out var el) ? HostLocale.Num(el) : double.NaN;
 
     private static (double Value, long At)? GetCached(string key)
     {

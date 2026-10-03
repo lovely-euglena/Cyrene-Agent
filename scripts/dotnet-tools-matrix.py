@@ -79,8 +79,12 @@ frames.append(json.dumps({"op": "config", "dataDir": c_exp_dir, "timezone": "Asi
 c_ex1 = req("record_expense", {"amount": 12.5, "category": "餐饮", "note": "午饭"})
 c_ex2 = req("record_expense", {"amount": 40.5, "category": "交通", "note": "打车"})
 c_ex3 = req("record_expense", {"amount": -1})
+# 数字字符串：JS Number() 语义双轨等价（模型偶发把金额/天数写成字符串）
+c_ex4 = req("record_expense", {"amount": "7.5", "category": "娱乐", "note": "电影"})
+c_ex5 = req("record_expense", {"amount": "abc"})
 c_eq1 = req("query_expense", {"summary": True})
 c_eq2 = req("query_expense", {})
+c_eq3 = req("query_expense", {"days": "30", "summary": True})
 
 # search_text（内部工作区根注入；忽略 node_modules）
 sws = os.path.join(tmp, "searchws")
@@ -165,14 +169,17 @@ def data_text(cid):
 check("记账 12.5 餐饮", data_text(c_ex1) == "[record_expense] 已记录：12.5 元 / 餐饮 / 午饭", data_text(c_ex1))
 check("记账 40.5 交通", data_text(c_ex2) == "[record_expense] 已记录：40.5 元 / 交通 / 打车", data_text(c_ex2))
 check("记账负数拒绝", data_text(c_ex3) == "[错误] amount 必须是正数", data_text(c_ex3))
+check("记账字符串金额（Number 语义）", data_text(c_ex4) == "[record_expense] 已记录：7.5 元 / 娱乐 / 电影", data_text(c_ex4))
+check("记账非法字符串拒绝", data_text(c_ex5) == "[错误] amount 必须是正数", data_text(c_ex5))
 eq1 = data_text(c_eq1)
-check("查账汇总（53.00 + 分类键序）",
-      eq1 == "[query_expense] 最近 30 天共 2 笔，合计 53.00 元\n分类：{\"餐饮\":12.5,\"交通\":40.5}", eq1)
+check("查账汇总（60.50 + 分类键序）",
+      eq1 == "[query_expense] 最近 30 天共 3 笔，合计 60.50 元\n分类：{\"餐饮\":12.5,\"交通\":40.5,\"娱乐\":7.5}", eq1)
 eq2 = data_text(c_eq2)
-check("查账明细两行", eq2.count("\n") == 2 and "12.5元 餐饮 午饭" in eq2 and "40.5元 交通 打车" in eq2, eq2)
+check("查账明细三行", eq2.count("\n") == 3 and "12.5元 餐饮 午饭" in eq2 and "40.5元 交通 打车" in eq2 and "7.5元 娱乐 电影" in eq2, eq2)
+check("查账字符串天数（Number 语义）", data_text(c_eq3) == eq1, data_text(c_eq3))
 try:
     store = json.loads(open(os.path.join(c_exp_dir, "expenses.json"), encoding="utf-8").read())
-    check("账本 JSON 两条且字段顺序可读", len(store) == 2 and store[0]["category"] == "餐饮" and store[1]["amount"] == 40.5, store)
+    check("账本 JSON 三条且字段顺序可读", len(store) == 3 and store[0]["category"] == "餐饮" and store[1]["amount"] == 40.5 and store[2]["amount"] == 7.5, store)
 except Exception as exc:
     check("账本 JSON 可解析", False, str(exc))
 

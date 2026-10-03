@@ -71,7 +71,7 @@ internal static class ExpenseTools
     {
         if (args.ValueKind != JsonValueKind.Object)
             return "[错误] amount 必须是正数";
-        var amount = args.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDouble() : double.NaN;
+        var amount = args.TryGetProperty("amount", out var a) ? HostLocale.Num(a) : double.NaN;
         if (double.IsNaN(amount) || amount <= 0) return "[错误] amount 必须是正数";
 
         var rec = new ExpenseRecord
@@ -90,8 +90,8 @@ internal static class ExpenseTools
     public static string Query(JsonElement args)
     {
         if (args.ValueKind != JsonValueKind.Object) args = EmptyObject();
-        var days = args.TryGetProperty("days", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetDouble() : 30;
-        if (days == 0) days = 30; // TS: Number(args.days) || 30
+        var days = args.TryGetProperty("days", out var d) ? HostLocale.Num(d) : double.NaN;
+        if (double.IsNaN(days) || days == 0) days = 30; // TS: Number(args.days) || 30
         var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)(days * 86_400_000);
 
         var records = Load().Where(r => r.ts >= cutoff).ToList();

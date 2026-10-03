@@ -274,6 +274,9 @@ async function runLifeDualTrack(): Promise<number> {
     const recordCases: Array<{ name: string; args: Record<string, unknown>; netArgs: Record<string, unknown> }> = [
       { name: "record 餐饮", args: { amount: 12.5, category: "餐饮", note: "午饭" }, netArgs: { amount: 12.5, category: "餐饮", note: "午饭" } },
       { name: "record 交通", args: { amount: 40.5, category: "交通", note: "打车" }, netArgs: { amount: 40.5, category: "交通", note: "打车" } },
+      // 数字字符串：JS Number() 语义双轨等价（模型偶发把金额写成字符串）
+      { name: "record 字符串金额", args: { amount: "7.5", category: "娱乐", note: "电影" }, netArgs: { amount: "7.5", category: "娱乐", note: "电影" } },
+      { name: "record 非法字符串金额", args: { amount: "abc" }, netArgs: { amount: "abc" } },
       { name: "record 负数拒绝", args: { amount: -1 }, netArgs: { amount: -1 } },
     ];
     for (const c of recordCases) {
@@ -289,6 +292,8 @@ async function runLifeDualTrack(): Promise<number> {
     for (const q of [
       { name: "query 汇总", args: { days: 30, summary: true } },
       { name: "query 明细", args: {} },
+      // 字符串天数：JS Number() 语义双轨等价
+      { name: "query 字符串天数", args: { days: "30", summary: true } },
     ]) {
       const tsOut = await tsQuery(q.args);
       const host = await callSmokeTool("query_expense", q.args, configFrames);
