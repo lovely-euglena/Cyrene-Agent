@@ -145,7 +145,7 @@ import { showNotice, showAlert, showConfirm } from "../shared/modal";
     // ⚠️ 与 main 侧 default-dependencies.ts 的 LOCAL_MODELS_DOC_URL 保持一致
     //（Gitee 主仓；GitHub 镜像在本机网络不可达，勿改回）
     await window.system?.openExternal(
-      "https://gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md"
+      "https://gitee.com/ygwill/cyrene-agent/blob/main/docs/local-models.md"
     );
   });
 

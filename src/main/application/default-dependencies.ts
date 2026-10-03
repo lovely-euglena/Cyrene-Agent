@@ -430,7 +430,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
   /** 本地模型安装说明（native 昔涟设置「模型安装说明」与渲染页同一文档）。 */
   // 模型安装说明文档（Gitee 主仓；GitHub 在本机网络不可达，勿换回）
-  const LOCAL_MODELS_DOC_URL = "https://gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md";
+  const LOCAL_MODELS_DOC_URL = "https://gitee.com/ygwill/cyrene-agent/blob/main/docs/local-models.md";
 
   /**
    * 「昔涟设置」RAG 模型操作（native cyreneAction 与渲染端 IPC 共用）：
