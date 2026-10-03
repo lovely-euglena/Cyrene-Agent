@@ -12,8 +12,8 @@ import { nativeFirst, nativeToolHost } from "./native-tool-host";
 
 const LOG_PREFIX = "[TravelTools]";
 const TRAVEL_TIMEOUT_MS = 15000;
-/** native 轨看门狗：≥ C# 侧 2 次地理编码 + 1 次路线查询（各 15s）。 */
-const TRAVEL_NATIVE_TIMEOUT_MS = 40_000;
+/** native 轨看门狗：≥ C# 侧 2 次地理编码 + 1 次路线查询（各 15s）= 45s，留余量取 50s。 */
+const TRAVEL_NATIVE_TIMEOUT_MS = 50_000;
 
 // ══════════════════════════════════════════════════════════
 // 配置注入

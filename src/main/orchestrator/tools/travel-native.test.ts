@@ -57,7 +57,7 @@ beforeEach(() => {
 });
 
 describe("plan_trip native 轨", () => {
-  it("native 可用：下发 travel 配置 + 看门狗 40s", async () => {
+  it("native 可用：下发 travel 配置 + 看门狗 50s", async () => {
     setTravelConfig(() => "amap-key-1", () => true);
     nativeMocks.nativeResult = "🚗 驾车路线";
 
@@ -71,7 +71,7 @@ describe("plan_trip native 轨", () => {
       {
         tool: "plan_trip",
         args: { origin: "故宫", destination: "天安门" },
-        options: { timeoutMs: 40_000, signal: undefined },
+        options: { timeoutMs: 50_000, signal: undefined },
       },
     ]);
   });
