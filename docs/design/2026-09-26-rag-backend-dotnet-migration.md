@@ -1,6 +1,6 @@
-# RAG 后端迁移 .NET（Phase A：reranker 下沉 + 帧协议加固）
+# RAG 后端迁移 .NET（Phase A–D 已落地）
 
-> 日期：2026-09-26 · 状态：**Phase A 已落地**（rerank op + 协议加固 + 数值对账 0 误差）
+> 日期：2026-09-26（2026-10-03 收尾更新） · 状态：**Phase A–D 已落地**（reranker / 向量库+混合检索 / 文档导入下沉 / 打包接线；细节以各节 + §12 为准）
 > 关联：`docs/design/2026-09-26-agent-orchestration-plan-b.md`（同类"机制下沉、边界保留"模式）
 > 代码：`dotnet/embedding-sidecar/`（RAG Host 雏形）、`src/main/rag/`
 
@@ -21,7 +21,7 @@ RAG 后端（嵌入推理 / 重排 / 向量库 / 混合检索 / 记忆操作 / �
 | **A** | reranker 下沉（原生 logits）+ 帧协议加固（修 P0 失步 + C# 合并写） | `verify-rerank` 0 误差；协议冒烟全绿；启动 0 次 `protocol failure` | ✅ 本提交 |
 | **B** | 向量库（JSON schema 兼容 + IVF）+ 混合检索（BM25 + 融合 0.7/0.3），`search` op + TS 委托 | 生产接入冒烟全绿；分词差异质量基线：top1 6/6、topK 重叠 100%、顺序 5/6 | ✅ 本提交 |
 | **C** | 文档导入管线下沉（分块/embedding/落盘/缓存）+ 跨进程读一致性；记忆写入评估为"embedding 已在下沉路径，暂不迁移" | 导入端到端冒烟全绿（进度/缓存互认/零重复）；vitest 330/330 | ✅ 本提交（文档导入部分） |
-| D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 死代码删除；打包版 sidecar 正常加载模型 | 待开始 |
+| D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 场景/贴纸随 provider 下沉；打包接线（electron-builder → `embed-sidecar`）；模型按设计手动安装 | ✅ 见 §12（2026-10-03 核对） |
 
 ## 3. Phase A 协议扩展（Program.cs ↔ embedding-sidecar.ts）
 
@@ -209,3 +209,27 @@ jieba-rs 移植评估照旧（Phase D 前）。
 性能/质量增强另行评估；`document-cache.json` 未入库；BM25 token 缓存仍是
 待办（SQLite 入库后实现成本更低）；跨存储模式（sqlite ↔ json）混跑仅保证
 单向软合并（JSON 新增条目可被合并，删除不同步）。
+
+## 12. Phase D 收尾核对（2026-10-03）
+
+**核对结论**：Phase D 三项均已被既有提交覆盖，本次补记录并修复一处文档链接 404：
+
+1. **打包接线（已完成）**：`electron-builder.yml` 已含 .NET embedding sidecar
+   （`dotnet/embedding-sidecar/bin/Release/net10.0/win-x64/publish` → `resources/embed-sidecar`），
+   `package:win:dir` 链路包含 `build:embed-sidecar`；模型文件按设计**不打进安装包**
+   （CI 无 `models/`），用户按 `docs/local-models.md` 手动安装；`resources/embed-models`
+   仅用于自定义内嵌构建（配置内注释保留可选映射），运行时探测顺序见
+   `src/main/rag/model-status.ts`。
+2. **场景/贴纸 embedding（已完成）**：贴纸与场景索引分别经 `getEmbeddingProvider()` /
+   `getSceneEmbeddingProvider()` 取向量（`src/main/services/embedding/embedding-index-service.ts`）；
+   主进程在 sidecar 可用时（默认启用，exe 存在）走 .NET sidecar，不可用回退 embedding worker。
+3. **TS 实现清理（按设计保留回退路径）**：`embedding-worker`（sidecar 禁用/缺失时）、
+   `JsonStoreBackend`（SQLite 不可用时）、transformers.js reranker（sidecar 缺失时）
+   均为运行时降级所需，不是死代码；如需彻底移除需另行评估。
+4. **文档链接修复**：设置页「模型安装说明」原链接指向
+   `gitee.com/ygwill/cyrene-agent/blob/master/docs/local-models.md`，而仓库默认分支为
+   `main`，导致 404；已改为主分支链接（`src/renderer/settings/rag/panel.ts`、
+   `src/main/application/default-dependencies.ts` 两处保持一致）。
+
+**遗留（未阻塞收尾，后续可选）**：BM25 entry 级 token 缓存；`document-cache.json` 入库；
+sqlite-vec / FTS5 评估（见 §8 / §11 遗留）。
