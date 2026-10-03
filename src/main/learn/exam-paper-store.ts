@@ -154,7 +154,6 @@ export function createExamPaperStore(userDataDir: string, options: ExamPaperStor
     },
     async saveNavigation(examId, activeQuestionId, flaggedQuestionIds) {
       return update(examId, (record) => {
-        if (record.status !== "draft") return null;
         if (!record.questions.some((question) => question.id === activeQuestionId)) return null;
         const validQuestionIds = new Set(record.questions.map((question) => question.id));
         record.activeQuestionId = activeQuestionId;
