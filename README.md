@@ -175,7 +175,8 @@ npm run package:win:dir
 
 Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 Embedding 模型**（用于贴纸语义匹配、Worldbook 语义检索与 RAG 检索）：
 
-[前往 Releases 下载 BGE-M3](https://github.com/Playa-Cyrene/Cyrene-Agent/releases)
+- **应用内一键下载（推荐）**：设置 →「昔涟设置」→ 模型操作 →「⬇ 下载模型」，支持官方源 / hf-mirror、断点续传与取消；
+- **手动安装 / 离线部署**：见 [docs/local-models.md](./docs/local-models.md)，或从 [Releases](https://github.com/Playa-Cyrene/Cyrene-Agent/releases) 获取。
 
 > [!IMPORTANT]
 >

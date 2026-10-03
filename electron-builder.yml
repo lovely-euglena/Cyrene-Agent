@@ -76,7 +76,7 @@ extraResources:
   # 本地 OCR sidecar（Windows.Media.Ocr；缺失时 ocr_image 工具明确报「引擎未安装」）
   - from: dotnet/ocr-sidecar/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish
     to: ocr
-  # 模型不打进安装包（CI 无 models/；用户按 docs/local-models.md 手动安装）。
+  # 模型不打进安装包（CI 无 models/；用户可在应用内一键下载或按 docs/local-models.md 手动安装）。
   # 运行时探测顺序见 src/main/rag/model-status.ts：
   #   打包态 = exe 同级 models/ → resources/embed-models → resources/models → …
   # 自定义内嵌构建可在本地追加（CI 缺目录会构建失败，勿无条件启用）：

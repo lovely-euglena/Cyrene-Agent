@@ -30,7 +30,7 @@
 | [dotnet-backend.md](./dotnet-backend.md) | 现行 | .NET 七 host 进程地图、实测矩阵、安全加固 |
 | [dotnet-migration-decisions.md](./dotnet-migration-decisions.md) | 现行 | .NET 迁移 A1–A19 决策记录 |
 | [multi-agent-architecture.md](./multi-agent-architecture.md) | 现行 | 多 Agent 编排（Plan B：编排下沉 .NET，循环复用 TS CyreneHarness） |
-| [local-models.md](./local-models.md) | 现行 | 本地模型（BGE-M3 等）的放置与许可 |
+| [local-models.md](./local-models.md) | 现行 | 本地模型（BGE-M3 等）的一键下载 / 放置与许可 |
 | [cloud-storage.md](./cloud-storage.md) | 设计 | 云存储工具设计文档 |
 | [bug-report-20260926.md](./bug-report-20260926.md) | 记录 | 2026-09-26 问题报告 |
 | [CONTRIBUTORS.md](./CONTRIBUTORS.md) | 现行 | 贡献者名单 |
@@ -56,10 +56,10 @@
 > [2026-09-26-agent-orchestration-plan-b.md](./design/2026-09-26-agent-orchestration-plan-b.md)（多 Agent 编排机制 v1；子 Agent 接入接口已就绪、生产未接线）・
 > [2026-09-21-cta-conversation-transcript-architecture-design.md](./design/2026-09-21-cta-conversation-transcript-architecture-design.md)（CTA 会话轨迹）・
 > [2026-09-22-no-auto-resend-and-interruption-context-design.md](./design/2026-09-22-no-auto-resend-and-interruption-context-design.md)（取消自动续跑与中断进上下文）・
-> 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）。
+> 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗。
 
 <details>
-<summary>全部 50 篇 + 2 个子目录（按时间序）</summary>
+<summary>全部 51 篇 + 2 个子目录（按时间序）</summary>
 
 - [2026-08-08-cyreneHarnessloopdesign.md](./design/2026-08-08-cyreneHarnessloopdesign.md)
 - [2026-08-09-cyreneHarness-construction-plan.md](./design/2026-08-09-cyreneHarness-construction-plan.md)
@@ -106,6 +106,7 @@
 - [2026-10-02-pandoc-document-integration-plan.md](./design/2026-10-02-pandoc-document-integration-plan.md)
 - [2026-10-02-shell-command-guard.md](./design/2026-10-02-shell-command-guard.md)
 - [2026-10-02-token-stats-integration.md](./design/2026-10-02-token-stats-integration.md)
+- [2026-10-03-model-download-window.md](./design/2026-10-03-model-download-window.md)
 - [gamebot-Honkai-Star-Rail.md](./design/gamebot-Honkai-Star-Rail.md)
 - [plugin-marketplace.md](./design/plugin-marketplace.md)
 - [react-frontend-visual-guidelines.md](./design/react-frontend-visual-guidelines.md)

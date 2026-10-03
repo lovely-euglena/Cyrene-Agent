@@ -204,7 +204,7 @@ async function main() {
     { section: "general", expect: ["常规", "数据与存储", "便携模式", "缓存目录", "聊天记录", "Git 提交身份"] },
     { section: "appearance", expect: ["外观", "界面字体", "导入字体", "消息行距", "昔涟回复气泡"] },
     { section: "preferences", expect: ["偏好设置", "截图", "Snipaste"] },
-    { section: "cyrene", expect: ["昔涟设置", "模型下载镜像", "打开模型目录", "安装说明"] },
+    { section: "cyrene", expect: ["昔涟设置", "模型下载镜像", "打开模型目录", "安装说明", "下载模型"] },
     { section: "models", expect: ["模型设置"] },
     { section: "tools", expect: ["工具配置"] },
   ];

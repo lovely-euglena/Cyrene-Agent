@@ -21,7 +21,7 @@ RAG 后端（嵌入推理 / 重排 / 向量库 / 混合检索 / 记忆操作 / �
 | **A** | reranker 下沉（原生 logits）+ 帧协议加固（修 P0 失步 + C# 合并写） | `verify-rerank` 0 误差；协议冒烟全绿；启动 0 次 `protocol failure` | ✅ 本提交 |
 | **B** | 向量库（JSON schema 兼容 + IVF）+ 混合检索（BM25 + 融合 0.7/0.3），`search` op + TS 委托 | 生产接入冒烟全绿；分词差异质量基线：top1 6/6、topK 重叠 100%、顺序 5/6 | ✅ 本提交 |
 | **C** | 文档导入管线下沉（分块/embedding/落盘/缓存）+ 跨进程读一致性；记忆写入评估为"embedding 已在下沉路径，暂不迁移" | 导入端到端冒烟全绿（进度/缓存互认/零重复）；vitest 330/330 | ✅ 本提交（文档导入部分） |
-| D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 场景/贴纸随 provider 下沉；打包接线（electron-builder → `embed-sidecar`）；模型按设计手动安装 | ✅ 见 §12（2026-10-03 核对） |
+| D | 场景/贴纸 embedding、TS 实现清理、打包接线（`resources/embed-models`、sidecar 路径） | 场景/贴纸随 provider 下沉；打包接线（electron-builder → `embed-sidecar`）；模型不进安装包（应用内一键下载 / 手动安装） | ✅ 见 §12（2026-10-03 核对） |
 
 ## 3. Phase A 协议扩展（Program.cs ↔ embedding-sidecar.ts）
 
@@ -217,7 +217,7 @@ jieba-rs 移植评估照旧（Phase D 前）。
 1. **打包接线（已完成）**：`electron-builder.yml` 已含 .NET embedding sidecar
    （`dotnet/embedding-sidecar/bin/Release/net10.0/win-x64/publish` → `resources/embed-sidecar`），
    `package:win:dir` 链路包含 `build:embed-sidecar`；模型文件按设计**不打进安装包**
-   （CI 无 `models/`），用户按 `docs/local-models.md` 手动安装；`resources/embed-models`
+   （CI 无 `models/`），用户可在应用内一键下载或按 `docs/local-models.md` 手动安装；`resources/embed-models`
    仅用于自定义内嵌构建（配置内注释保留可选映射），运行时探测顺序见
    `src/main/rag/model-status.ts`。
 2. **场景/贴纸 embedding（已完成）**：贴纸与场景索引分别经 `getEmbeddingProvider()` /
