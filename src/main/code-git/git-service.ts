@@ -151,6 +151,10 @@ export interface GitService {
   switchBranchForSession(sessionId: string, branch: string, create: boolean): Promise<string>;
   commitForSession(sessionId: string, message: string, paths: string[]): Promise<string>;
   pushForSession(sessionId: string): Promise<string>;
+  /** git 可执行信息（native 轨内部参数注入；探测结果由装配层缓存）。 */
+  getExecutableInfo(): Promise<ResolvedGitExecutable | null>;
+  /** 提交身份设置（native 轨注入；与 commit 校验同源）。 */
+  getCommitIdentity(): GitCommitIdentity | null;
 }
 
 export interface TrustedGitContext {
@@ -213,6 +217,9 @@ export function createGitService(deps: GitServiceDeps): GitService {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+
+    getExecutableInfo: () => deps.resolveExecutable(),
+    getCommitIdentity: () => deps.getCommitIdentity?.() ?? null,
 
     async watchSession(sessionId) {
       const resolved = await resolveCodeSession(sessionId);
