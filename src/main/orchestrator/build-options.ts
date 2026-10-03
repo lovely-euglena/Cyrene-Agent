@@ -68,7 +68,7 @@ import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
 import { estimateMessageTokens } from "./context-manager";
 import { createTranscriptCompactionRequiredError } from "./conversation-transcript-compactor";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
-import { isSummaryMemoryEnabled } from "../memory/memory-mode";
+import { normalizeMemoryMode } from "../memory/memory-mode";
 
 /** index.ts 模块级符号的最小可注入子集。
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
@@ -1132,6 +1132,7 @@ export async function onAgentRunFinished(
   const chatContent = result.reply;
   const sideEffectUserText = stripTurnModelContextForSideEffects(latestUserText);
   const settings = deps.loadModelSettings();
+  const memoryMode = normalizeMemoryMode(settings.memoryMode);
   const socialContext = result.executionMode === "chat" && result.socialContext?.enabled === true
     ? result.socialContext
     : undefined;
@@ -1153,9 +1154,9 @@ export async function onAgentRunFinished(
       now: socialContext.now,
     });
   }
-  if (settings.memoryMode === "wiki" && conversationId) {
+  if (memoryMode === "wiki" && conversationId) {
     deps.scheduleWikiTurn?.({ conversationId, userText: sideEffectUserText });
-  } else if (isSummaryMemoryEnabled() && conversationId && finishedContext?.assistantEntryId) {
+  } else if (memoryMode === "summary" && conversationId && finishedContext?.assistantEntryId) {
     deps.scheduleSummaryTurn?.({
       conversationId,
       assistantEntryId: finishedContext.assistantEntryId,
@@ -1163,7 +1164,7 @@ export async function onAgentRunFinished(
       userText: sideEffectUserText,
       assistantText: chatContent,
     });
-  } else if (settings.memoryMode === "vector" && !socialContext) {
+  } else if (memoryMode === "vector" && !socialContext) {
     deps.scheduleMemoryWrite(sideEffectUserText, chatContent, conversationId);
   }
 
