@@ -183,12 +183,31 @@ export class RagHostClient extends LineHostClient {
   stats() { return this.call("stats", {}); }
 }
 
-/** 记忆 host 客户端（I7 开关）。 */
+/** 记忆 host 行（id/key + 内容 JSON + 时间戳）。content 发送为任意 JSON；读回为原始 JSON 文本。 */
+export interface MemoryHostRow {
+  id: string;
+  content: unknown;
+  salience?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+/** 记忆 host 客户端（I7 开关：resolveDotnetConfig().memoryHost）。 */
 export class MemoryHostClient extends LineHostClient {
   enabled(): boolean { return resolveDotnetConfig().memoryHost; }
   open(dbPath: string, jsonImportPath?: string) { return this.call("open", { dbPath, jsonImportPath }); }
-  put(level: string, id: string, content: unknown) { return this.call("put", { level, id, content }); }
-  query(level: string, filter?: unknown) { return this.call("query", { level, filter }); }
+  put(level: string, id: string, content: unknown, opts?: { salience?: number; createdAt?: number; updatedAt?: number }) {
+    return this.call("put", { level, id, content, ...opts });
+  }
+  /** 整层替换：clear + 批量写入（一次事务）。 */
+  replace(level: string, rows: MemoryHostRow[]) { return this.call("replace", { level, rows }); }
+  clear(level: string) { return this.call("clear", { level }); }
+  delete(level: string, id: string) { return this.call("delete", { level, id }); }
+  get(level: string, id?: string) { return this.call("get", { level, ...(id ? { id } : {}) }); }
+  query(level: string, limit = 50) { return this.call("query", { level, limit }); }
+  append(level: string, content: unknown, key?: string) { return this.call("append", { level, content, ...(key ? { key } : {}) }); }
+  recordConflict(oldContent: string | null, newContent: string) { return this.call("record_conflict", { old: oldContent, new: newContent }); }
+  recordReflection(content: string, sourceIds?: string) { return this.call("record_reflection", { content, sourceIds }); }
   stats() { return this.call("stats", {}); }
 }
 

@@ -8,6 +8,7 @@ import {
   extractMemoryKeywords,
 } from "./memory-store-defaults"
 import { repairMigrations } from "./memory-store-migrations"
+import { memoryHostBackend } from "./memory-host-backend"
 import {
   backupMemoryFile,
   memoryFileExists,
@@ -35,6 +36,24 @@ class MemoryStoreManager {
 
   async load(): Promise<MemoryStore> {
     if (this.cache) return this.cache
+    // .NET 双轨（CYRENE_MEMORY_HOST=1）：SQLite 为真值；不可用则回退下方 TS（memory.json）路径。
+    if (memoryHostBackend.isEnabled()) {
+      const loaded = await memoryHostBackend.loadStore()
+      if (loaded) {
+        const needsMigration = loaded.schemaVersion !== CURRENT_MEMORY_SCHEMA_VERSION
+        this.cache = repairMigrations(loaded)
+        if (needsMigration) {
+          await this.save(this.cache)
+          appendMemoryTrace({
+            op: "memory.host.load",
+            layer: "store",
+            status: "ok",
+            details: { backend: "dotnet", schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION },
+          })
+        }
+        return this.cache
+      }
+    }
     const filePath = resolveMemoryPath()
     if (!filePath) {
       this.cache = createDefaultMemoryStore()
@@ -85,6 +104,21 @@ class MemoryStoreManager {
 
   async save(store: MemoryStore): Promise<void> {
     const filePath = resolveMemoryPath()
+    // .NET 双轨：SQLite 为主；成功后镜像一份 memory.json，保证开关回退/崩溃时 TS 路径不丢数据。
+    if (filePath && memoryHostBackend.isEnabled()) {
+      const ok = await memoryHostBackend.saveStore(store)
+      if (ok) {
+        try {
+          writeMemoryFile(filePath, store)
+        } catch {
+          // 镜像失败不阻塞：SQLite 已是真值
+        }
+        this.cache = store
+        if (isImportingMemory()) return
+        import("./obsidian-exporter").then(({ notifyMemoryChanged }) => notifyMemoryChanged()).catch(() => {})
+        return
+      }
+    }
     if (!filePath) {
       this.cache = store
       return
