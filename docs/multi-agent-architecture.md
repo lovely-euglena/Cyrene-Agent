@@ -37,6 +37,9 @@ Electron 主进程（前端宿主）                cyrene-native --agent-host
 **核心设计决策**：LLM 推理不在 agent-host——step 产生 `llm_request` 帧
 回传 Electron，应答经 `llm_response` 回注。密钥永不落 .NET 进程，权限
 审批闸门保持在 Electron 侧（用户看到的是同一套审批 UI）。
+> ⚠️ 2026-10-03：密钥保存策略拟分阶段迁移至 .NET（DPAPI 密钥库，Phase 1 存储、
+> Phase 2 处理待议），见 [design/2026-10-03-secrets-migration-to-dotnet.md](./2026-10-03-secrets-migration-to-dotnet.md)。
+> 本边界在切换完成前仍然有效。
 
 ### 总开关与配置解析（2026-09-26）
 

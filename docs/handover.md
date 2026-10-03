@@ -48,6 +48,7 @@ docs/build-guide.md        # 构建/发版流程
 
 ### 铁律（P 阶段定死，动前必读）
 - **B1 密钥不落 .NET**：vendor key 绑 TS 侧，llm_request 帧只含 messages/config
+  - ⚠️ 2026-10-03 起进入过渡：拟分阶段迁移至 .NET DPAPI 密钥库保存（Phase 1 存储、Phase 2 处理待议），见 [design/2026-10-03-secrets-migration-to-dotnet.md](./design/2026-10-03-secrets-migration-to-dotnet.md)；**切换完成前本条仍有效**
 - **B2 审批在 Electron**：tool_request → setToolExecutor → checkPermission
 - **B8 语音边界**：只动 synthesizeByEngine 引擎层，IPC/播放/状态机零改动
 - **B9 VAD 隐私**：local/hybrid 仅语音段上云（asr-dispatcher 的 createVadGate）
