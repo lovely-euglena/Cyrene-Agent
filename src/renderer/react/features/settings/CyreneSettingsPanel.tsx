@@ -172,7 +172,7 @@ export function CyreneSettingsPanel() {
   }
 
   /** RAG 模型操作入口：删除缓存先 antd Modal 二次确认（渲染端禁用浏览器 confirm）。 */
-  function runModelAction(verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding"): void {
+  function runModelAction(verb: "open-docs" | "open-dir" | "open-site" | "open-model-downloader" | "check-model-update" | "delete-embedding"): void {
     if (modelActionBusy) return;
     if (verb === "delete-embedding") {
       Modal.confirm({
@@ -189,7 +189,7 @@ export function CyreneSettingsPanel() {
   }
 
   /** RAG 模型操作执行：打开目录/说明/下载站、体检、删除缓存（宿主 settings:cyrene-model-action）。 */
-  async function executeModelAction(verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding"): Promise<void> {
+  async function executeModelAction(verb: "open-docs" | "open-dir" | "open-site" | "open-model-downloader" | "check-model-update" | "delete-embedding"): Promise<void> {
     const api = window.settings;
     if (!api?.cyreneModelAction || modelActionBusy) return;
     setModelActionBusy(verb);
@@ -227,6 +227,7 @@ export function CyreneSettingsPanel() {
           <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.reranker")}</strong><span>{rerankerInstalled === null ? t("settingsPage.cyrene.unknown") : rerankerInstalled ? t("settingsPage.cyrene.installed") : t("settingsPage.cyrene.notInstalled")}</span></div><Radio.Group value={rerankerMode} optionType="button" buttonStyle="solid" onChange={(event) => void selectReranker(event.target.value as "standard" | "none")}><Radio.Button value="standard">bge-reranker-base</Radio.Button><Radio.Button value="none">{t("settingsPage.cyrene.off")}</Radio.Button></Radio.Group></div>
           <div className="cy-settings-row cy-cyrene-radio-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cyrene.downloadMirror")}</strong><span>{t("settingsPage.cyrene.downloadMirrorHint")}</span></div><Radio.Group value={mirror} optionType="button" buttonStyle="solid" onChange={(event) => void selectMirror(event.target.value as "official" | "hf-mirror")}><Radio.Button value="official">{t("settingsPage.cyrene.mirrorOfficial")}</Radio.Button><Radio.Button value="hf-mirror">hf-mirror</Radio.Button></Radio.Group></div>
           <div className="cy-settings-row cy-cyrene-actions">
+            <Button type="primary" loading={modelActionBusy === "open-model-downloader"} onClick={() => void runModelAction("open-model-downloader")}>{t("settingsPage.cyrene.downloadModel")}</Button>
             <Button loading={modelActionBusy === "open-dir"} onClick={() => void runModelAction("open-dir")}>{t("settingsPage.cyrene.openModelDir")}</Button>
             <Button loading={modelActionBusy === "open-docs"} onClick={() => void runModelAction("open-docs")}>{t("settingsPage.cyrene.openModelDocs")}</Button>
             <Button loading={modelActionBusy === "open-site"} onClick={() => void runModelAction("open-site")}>{t("settingsPage.cyrene.openModelSite")}</Button>

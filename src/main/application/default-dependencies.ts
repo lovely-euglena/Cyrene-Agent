@@ -463,6 +463,15 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           await electronShell.openExternal(url);
           return { ok: true, message: `已打开模型下载站（${mirror === "hf-mirror" ? "hf-mirror" : "官方"}）` };
         }
+        case "open-model-downloader": {
+          const opened = await spawnNativeWindow("model-download", {
+            modelsDir: getProjectModelsDir(),
+            mirror: loadGeneralSettings().ragDownloadMirror === "hf-mirror" ? "hf-mirror" : "official",
+          });
+          return opened
+            ? { ok: true, message: "已打开模型下载窗口" }
+            : { ok: false, error: "原生窗口不可用（未启用 .NET 组件）" };
+        }
         case "check-model-update": {
           pushSettingsSnapshotToNative();
           const embedding = getModelInstallStatusDetail("embedding", "bgem3");
@@ -1312,6 +1321,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               modelAction === "open-docs" ||
               modelAction === "open-dir" ||
               modelAction === "open-site" ||
+              modelAction === "open-model-downloader" ||
               modelAction === "check-model-update" ||
               modelAction === "delete-embedding"
             ) {

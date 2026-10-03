@@ -149,6 +149,7 @@ export const NATIVE_SECTION_ACTIONS = {
     "open-model-docs",
     "open-model-dir",
     "open-model-site",
+    "open-model-downloader",
     "delete-embedding",
     "check-model-update",
   ],

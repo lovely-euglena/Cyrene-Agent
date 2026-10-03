@@ -197,6 +197,8 @@ public sealed partial class SettingsWindow
             // 右侧留出滚动条余量，避免最后一个按钮被裁切
             Margin = new Thickness(0, 0, 10, 0),
         };
+        ragActions.Children.Add(MakeActionButton("⬇ 下载模型",
+            () => RequestRouter.SendSettingsAction("cyrene", "open-model-downloader"), primary: true, minWidth: 104));
         ragActions.Children.Add(MakeActionButton("📖 安装说明",
             OpenModelDocsDialog, minWidth: 104));
         ragActions.Children.Add(MakeActionButton("🔄 刷新状态",
@@ -205,7 +207,7 @@ public sealed partial class SettingsWindow
             () => RequestRouter.SendSettingsAction("cyrene", "open-model-dir"), minWidth: 128));
         ragActions.Children.Add(MakeActionButton("删除模型", ConfirmDeleteEmbeddingCache, minWidth: 90));
         panel.Children.Add(MakeDescribedRow("模型操作",
-            "模型为手动安装；按「安装说明」放好文件后点「刷新状态」重新检测。",
+            "点「下载模型」打开下载窗（支持 hf-mirror 与断点续传）；也可按「安装说明」手动放置后点「刷新状态」。",
             ragActions));
 
         panel.Children.Add(MakeDescribedRow("下载镜像源",
@@ -214,7 +216,7 @@ public sealed partial class SettingsWindow
                 new[] { ("official", "官方源", true), ("hf-mirror", "hf-mirror", true) },
                 GetString("ragDownloadMirror", "official"),
                 v => SetSetting("ragDownloadMirror", v))));
-        panel.Children.Add(MakeHint("模型状态随设置快照刷新；安装步骤见「安装说明」。"));
+        panel.Children.Add(MakeHint("模型状态随设置快照刷新；点「下载模型」可一键下载（断点续传）。"));
         CardifySubBlocks(panel);
 
         return panel;
