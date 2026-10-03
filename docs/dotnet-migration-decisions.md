@@ -162,3 +162,33 @@
   层——新增 `native-tool-host.test.ts` 直接校验按件超时/正常返回/默认 5s。
 - **验证**：`dotnet-tools-matrix.py` 38/38；`dual-track-diff.ts` 全绿
   （expense +3 用例）；`vitest src/main/orchestrator/tools` 430 passed。
+
+## 2026-10-03 增量：T1 续——apply_patch 下沉（Codex 补丁事务 + 两段式）
+
+- **apply_patch（.NET）**：Codex 补丁格式（Update/Move/Add/Delete + @@ 分块），
+  解析/匹配/事务预检/落盘/evidence 全部与 apply-patch-tools.ts 逐字对齐；
+  预验证事务（路径沙箱、存在性、全量匹配）任一失败全部不执行；保留原文件
+  EOL，按 \r?\n 拆行；`__dryRun` 两段式供 TS 捕获 review 基线（含 recordRename），
+  预检失败对象原样透传。
+- **接线**：`apply-patch-tools.ts` 增加 executeApplyPatchNativeFirst；参数/工作区
+  前置校验留在 TS，host 故障整体回退 executeApplyPatchTs。
+- **顺带修复**：native-windows（WPF 工程）隐式 using 不含 System.IO/System.Net.Http，
+  T0/T1 新增文件此前只在 smoke-host 下编译通过——补显式 using 后
+  CyreneNative.csproj 0 错误（"冒烟壳掩盖真编译问题"的教训，后续新增文件
+  须跑一次 native-windows 全量编译）。
+- **验证**：`dotnet-tools-matrix.py` 51/51（+13：dry-run/Move/事务/逃逸/证据行序）；
+  `dual-track-diff.ts` apply_patch 段 9 组（相对路径补丁，输出逐字 + 镜像落盘快照）；
+  `apply-patch-native.test.ts` 4 项。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
+
+## 2026-10-03 增量：PR #1 复审修复（SearchTools NumOr + fs 超时接口）
+
+- **阻断项**：`SearchTools.NumOr` 复用 `HostLocale.Num`（字符串数字可解析、失败
+  NaN、true/false/null → 1/0/0），消除 search_text 数值参数（contextLines /
+  maxMatches）与 JS `Number()` 的双轨分叉。
+- **改进项**：`nativeFirstFs` / `wrapFsForNativeHost` 支持 `NativeFirstOptions.timeoutMs`
+  透传（fs 三件入参有界，调用点保持默认 5s；接口与 nativeFirst 对齐）。
+- **改进项**：`DownloadFileTool` 类头注明同步阻塞对 ToolHost 单线程帧处理的影响；
+  dual-track exchange_rate SKIP 分支打印双侧错误文本（防"假一致"漏诊）。
+- **验证**：`dotnet-tools-matrix.py` 52/52；`dual-track-diff.ts` 全绿（search +1）；
+  `vitest src/main/orchestrator/tools` 434 passed；`tsc` 0 错误。
