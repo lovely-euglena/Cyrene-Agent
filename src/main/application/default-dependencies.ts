@@ -58,6 +58,8 @@ import { runDocumentIndexJob } from "../rag/document-index-worker";
 import { runDocumentImportJobViaSidecar } from "../rag/document-import-sidecar";
 import { isSidecarEnabled } from "../rag/embedding-sidecar";
 import { registerWikiMemoryIpc } from "../memory/wiki-memory-ipc";
+import { registerKnowledgeBaseIpc } from "../knowledge-base/knowledge-base-ipc";
+import { initializeKnowledgeBase } from "../knowledge-base/knowledge-base-service";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
 import { createEmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -1755,6 +1757,7 @@ createTray: (input) => {
 
       initRag: async () => {
         const modelSettings = loadModelSettings();
+        const knowledgeBase = initializeKnowledgeBase(app.getPath("userData"));
         setMemoryMode(modelSettings.memoryMode);
         initializeSummaryMemoryScheduler({
           userDataRoot: app.getPath("userData"),
@@ -1796,6 +1799,11 @@ createTray: (input) => {
           id: "wiki-memory",
           phase: "flushPersistence",
           dispose: async () => { await enableWikiMemoryScheduler(false); },
+        });
+        shutdown.register({
+          id: "knowledge-base",
+          phase: "flushPersistence",
+          dispose: async () => { await knowledgeBase.close(); },
         });
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
@@ -2005,6 +2013,7 @@ createTray: (input) => {
           embeddingIndexService: services.embedding,
         });
         registerWikiMemoryIpc(ipc);
+        registerKnowledgeBaseIpc(ipc);
 
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
