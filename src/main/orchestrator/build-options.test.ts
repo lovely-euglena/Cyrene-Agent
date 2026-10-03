@@ -902,6 +902,48 @@ describe("build-options", () => {
     )
   })
 
+  it("does not schedule memory writes when memory mode is off", async () => {
+    const scheduleMemoryWrite = vi.fn()
+    const scheduleSummaryTurn = vi.fn()
+    const scheduleWikiTurn = vi.fn()
+    const deps: OnRunFinishedDeps = {
+      loadModelSettings: () => ({
+        provider: "test",
+        baseUrl: "",
+        model: "",
+        apiKey: "",
+        runtimeSync: "off",
+        memoryMode: "off",
+      }),
+      scheduleMemoryWrite,
+      scheduleSummaryTurn,
+      scheduleWikiTurn,
+      inferRuntimeState: () => ({ status: "陪伴中" }),
+      runtimeState: { status: "陪伴中", feeling: "温柔", expression: 0, updatedAt: 0 },
+      feelingToExpression: { "温柔": 0 },
+      setRuntimeState: () => {},
+      stickerTextIndex: [],
+      matchSticker: () => null,
+      loadStickerSettings: () => ({}),
+      broadcastRuntimeStateChanged: () => {},
+      observeRuntimeState: async () => {},
+      recordRelationshipTurn: async () => {},
+    }
+
+    await onAgentRunFinished(
+      { reply: "记住了", toolResults: [] },
+      "记住这个信息",
+      deps,
+      undefined,
+      "conversation-a",
+      { assistantEntryId: "assistant-a", userTurnId: "user-a" },
+    )
+
+    expect(scheduleMemoryWrite).not.toHaveBeenCalled()
+    expect(scheduleSummaryTurn).not.toHaveBeenCalled()
+    expect(scheduleWikiTurn).not.toHaveBeenCalled()
+  })
+
   it("skips sticker matching when reply and user content contain only code or math", async () => {
     const matchSticker = vi.fn(() => ({ id: "hugtight" }))
     const deps: OnRunFinishedDeps = {
