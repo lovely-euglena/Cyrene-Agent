@@ -18,7 +18,7 @@ function Check([string]$name, [bool]$ok) {
     else { $script:fail++; Write-Host "[FAIL] $name" -f Red }
 }
 
-# ── 1. tool-host：六工具 + 双轨 diff（D4 语义等价）──
+# ── 1. tool-host：五工具 + 双轨 diff（D4 语义等价）──
 $out = Invoke-HostFrames "--tool-host" @(
     '{"op":"call","callId":"c1","tool":"calculator","args":{"expression":"2^10"}}',
     '{"op":"call","callId":"c2","tool":"fs_list_dir","args":{"path":"."}}',

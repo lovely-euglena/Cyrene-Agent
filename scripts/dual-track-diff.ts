@@ -3,7 +3,7 @@
  *
  * calculator：同一表达式集，TS evaluateExpression vs cyrene-smoke
  * （同源编译的 .NET Calculator），数值差 >1e-9 即 FAIL。
- * tool-host：list/call 帧序握手（fs 三件+git/calculator roundtrip）。
+ * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
 import { spawn } from "node:child_process";
