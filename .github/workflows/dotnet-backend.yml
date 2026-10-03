@@ -3,9 +3,9 @@ name: dotnet-backend
 on:
   push:
     branches: [feature/dotnet-backend, main]
-    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'scripts/dual-track-diff.ts']
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/check-cyrene-core-clean.py']
   pull_request:
-    paths: ['dotnet/**']
+    paths: ['dotnet/**', 'scripts/dotnet-*.py', 'scripts/check-cyrene-core-clean.py']
 
 jobs:
   build:
@@ -15,12 +15,25 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Build cyrene-core（跨平台核心）
+        run: dotnet build dotnet/cyrene-core -c Release
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      - name: cyrene-core 洁净断言（无 net10.0-windows / WPF / WinForms）
+        run: python3 scripts/check-cyrene-core-clean.py
       - name: Build cyrene-native
         run: dotnet build dotnet/native-windows -c Release
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
       - name: Build CyreneVoice
         run: dotnet build dotnet/voice/CyreneVoice -c Release
+      - name: Build smoke-host + Linux 协议套件（冒烟/边缘/矩阵/循环）
+        run: |
+          dotnet build dotnet/smoke-host -c Release
+          python3 scripts/dotnet-smoke-linux.py
+          python3 scripts/dotnet-edge-test.py
+          python3 scripts/dotnet-tools-matrix.py
+          python3 scripts/dotnet-agent-loop-test.py
       - uses: actions/setup-node@v4
         with:
           node-version: 24

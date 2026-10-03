@@ -286,3 +286,28 @@
   6 项（web-search-native 3 / weather-native 3 / travel-native 3，另含既有回归）；
   `vitest src/main/orchestrator/tools` 450 passed；tsc 0 错误。真实网络冒烟：
   open-meteo「北京」返回结构化天气 + weather_card 事件帧。
+
+## 2026-10-04 增量：IKJK2G——cyrene-core 跨平台核心库抽取（云端昔涟前置）
+
+- **结构**：新建 `dotnet/cyrene-core`（net10.0 类库，`cyrene-core.dll`）：HostProtocol +
+  Tools（15 件）+ Rag / MemoryStore / LoopHost / Agents（含 AgentLoop/AgentOrchestrator）/
+  Mcp 共 28 文件由 native-windows 迁入；smoke-host 删除 Compile Include 与冒烟 stub、
+  改工程引用；native-windows 改工程引用（跨平台域经 IVT 使用）。
+- **Windows-only 缝（核心库保持 net10.0 干净）**：clipboard 核心留桥
+  （`ClipboardTool.PlatformImpl`，native `WpfClipboardTool` 启动时注入，未注入 = E_CLIPBOARD
+  不可用，与旧冒烟 stub 同形）；SysInfo 分平台（Windows GlobalMemoryStatusEx / Linux
+  /proc/meminfo）；McpConnection Job 对象调用加 `OperatingSystem.IsWindows()` 守卫。
+- **依赖统一**：Microsoft.Data.Sqlite 9.0.0 → 10.0.12（core/native，MusicLibrary 同版）；
+  Jieba.NET 与词典 Resources 拷贝收敛到 core（随工程引用传递到消费方输出）。
+- **CI 断言**：新增 `scripts/check-cyrene-core-clean.py`（TargetFramework=net10.0、
+  无 WPF/WinForms/System.Windows 引用、P/Invoke 白名单 + `OperatingSystem.IsWindows()`
+  守卫校验）；`.github/workflows/dotnet-backend.yml` 增 core 构建 + 洁净断言 +
+  smoke-host 构建 + 四个 Python 套件（脚本去除硬编码路径）。
+- **验证（2026-10-04，Windows 本地）**：core/smoke/native 三构建 0 错误；matrix 90/90；
+  dual-track PASS（Windows 走 cyrene-native.exe 真身）；smoke-linux 23/23；edge 13/13；
+  agent-loop 13/13；`dotnet-smoke.ps1` 4/4；native 实机探针确认真实剪贴板往返；vitest
+  456 passed；tsc 0。修复 `dotnet-smoke.ps1` 三处既有 bug：UTF-8 无 BOM（PS 5.1 语法错）、
+  `Check` 参数强转数组、GUI 子系统（WinExe）管道喂帧零输出（改 .NET Process 显式重定向）。
+- **PR #4 复审（第 1 轮，无阻断 2 改进）当批修复**：`dotnet-smoke.ps1` 读流改先后异步再
+  限时等待（超时保护生效 + stderr 观察）；P/Invoke 白名单校验进洁净断言。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2G（服务端复用的前置）。

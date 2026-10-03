@@ -21,6 +21,10 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Windows-only 能力注入 cyrene-core：剪贴板（核心库只留桥；
+        // Linux / 冒烟壳 / 服务端不注入 = 工具返回 E_CLIPBOARD 不可用）
+        Tools.ClipboardTool.PlatformImpl = Tools.WpfClipboardTool.Execute;
+
         if (args.Length > 0 && args[0] == "--tray")
         {
             TrayHost.Run(TrayHost.ResolveElectronExe());

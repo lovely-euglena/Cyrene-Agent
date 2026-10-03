@@ -12,17 +12,19 @@
 """
 import subprocess, json, os, sys
 
-NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NATIVE = os.path.join(REPO_ROOT, "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll")
 results = []
 
 def run(frames, timeout=90):
     env = dict(os.environ)
     dr = os.path.expanduser("~/.dotnet")
-    env["DOTNET_ROOT"] = dr
-    env["PATH"] = dr + os.pathsep + env.get("PATH", "")
+    if os.path.isdir(dr):
+        env["DOTNET_ROOT"] = dr
+        env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     p = subprocess.run(["dotnet", NATIVE, "--agent-host"], input="\n".join(frames),
                        capture_output=True, text=True, timeout=timeout,
-                       cwd="/home/z/my-project/repos/Cyrene-Agent", env=env)
+                       cwd=REPO_ROOT, env=env)
     out = []
     for line in p.stdout.strip().splitlines():
         try: out.append(json.loads(line))

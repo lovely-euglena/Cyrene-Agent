@@ -1,9 +1,9 @@
 # Cyrene .NET 后端总览（dotnet-backend）
 
-> 状态：功能级完成 + **Linux 侧五套实测全绿**（96+ 项，见下「测试矩阵」）；Windows 实机冒烟待跑（scripts/dotnet-smoke.ps1）。
+> 状态：功能级完成 + Linux 侧五套实测（96+ 项，见下「测试矩阵」）；2026-10-04 跨平台协议类抽入 `dotnet/cyrene-core`（IKJK2G），本地（Windows）全量复跑全绿，Linux 复跑由 CI 工作流承接（脚本已去硬编码路径）；Windows 实机冒烟已跑通（`scripts/dotnet-smoke.ps1` 4/4）。
 > 决策记录：docs/dotnet-migration-decisions.md（A1-A19）
 
-## 测试矩阵（Linux 冒烟壳 dotnet/smoke-host，同源编译协议类）
+## 测试矩阵（Linux 冒烟壳 dotnet/smoke-host，引用 dotnet/cyrene-core 跨平台核心）
 
 | 套件 | 覆盖 | 结果 |
 |---|---|---|
