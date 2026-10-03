@@ -121,6 +121,8 @@ export const IPC = {
   SETTINGS_SWITCH_SECTION: "settings:switch-section",
   // renderer → main：请求打开设置页并定位到指定标签（main 回推上面的 switch-section）
   SETTINGS_REQUEST_SWITCH_SECTION: "settings:request-switch-section",
+  /** 打开本地音乐窗口（原生 music 窗；native 未启用时返回 false）。 */
+  MUSIC_OPEN_WINDOW: "music:open-window",
   SETTINGS_MINIMIZE: "settings:minimize",
   SETTINGS_CLOSE: "settings:close",
   SETTINGS_GET_CONFIG: "settings:get-config",

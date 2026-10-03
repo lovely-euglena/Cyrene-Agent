@@ -56,6 +56,8 @@ interface SettingsWindowApi {
   onSwitchSection?: (callback: (section: string) => void) => (() => void) | void;
   /** 请求主进程打开设置页并定位到指定标签（main 回推 onSwitchSection） */
   openSection?: (section?: string) => Promise<unknown>;
+  /** 打开本地音乐窗口；原生窗口未启用时返回 false */
+  openMusicWindow?: () => Promise<boolean>;
   getSkillCatalog: () => Promise<unknown>;
   getSkillModeOverrides: () => Promise<unknown>;
   /** 重新扫描技能目录；失败返回 ok=false + error */

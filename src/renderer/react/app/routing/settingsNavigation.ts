@@ -1,7 +1,7 @@
 import type { SettingsSection } from "../../features/settings/AppearanceSettingsPage";
 
 export type SettingsDestination =
-  | { kind: "settings"; section: SettingsSection; openMusicModal?: boolean }
+  | { kind: "settings"; section: SettingsSection }
   | { kind: "scheduledTasks" };
 
 const SECTION_MAP: Record<string, SettingsSection> = {
@@ -15,7 +15,7 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   general: "general",
   plugins: "tools",
   tools: "tools",
-  music: "tools",
+  music: "preferences",
   toolToggle: "toolToggle",
   memory: "memory",
   cyrene: "cyrene",
@@ -38,5 +38,5 @@ const SECTION_MAP: Record<string, SettingsSection> = {
 export function resolveSettingsDestination(section?: string): SettingsDestination {
   if (section === "tasks") return { kind: "scheduledTasks" };
   const destinationSection = SECTION_MAP[section ?? ""] ?? "appearance";
-  return { kind: "settings", section: destinationSection, ...(section === "music" ? { openMusicModal: true } : {}) };
+  return { kind: "settings", section: destinationSection };
 }

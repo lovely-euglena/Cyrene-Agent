@@ -1098,7 +1098,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
         // quit 由组合根注入（上游 2026-09-24 语义）：窗口系统 IPC 不直接依赖 electron app
         // openSettings 为回退路由：窗口 IPC 默认走聊天窗内设置页（见 window-system-ipc）
-        registerWindowSystemIpc({ ipc, windowManager, openSettings: openSettingsWindow, quit: () => app.quit() });
+        registerWindowSystemIpc({ ipc, windowManager, openSettings: openSettingsWindow, openMusicWindow: () => openMusicWindow(), quit: () => app.quit() });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
       // 托盘/协议激活的设置入口：默认聊天窗内设置页（shell-bootstrap 内实现）；

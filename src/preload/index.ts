@@ -398,6 +398,8 @@ const settingsApi = {
   },
   // renderer → main：请求打开设置页并定位到指定标签（如头像菜单跳"常规"）
   openSection: (section?: string) => ipcRenderer.invoke(IPC.SETTINGS_REQUEST_SWITCH_SECTION, section),
+  // renderer → main：打开本地音乐窗口（native music 窗；未启用返回 false）
+  openMusicWindow: () => ipcRenderer.invoke(IPC.MUSIC_OPEN_WINDOW) as Promise<boolean>,
   getGeneral: () => ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL),
   saveGeneral: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_GENERAL, config),
   // 便携模式：数据目录状态 / 选择目录 / 应用变更（主进程弹迁移确认后重启）
