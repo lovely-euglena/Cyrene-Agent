@@ -70,6 +70,7 @@ public static class Program
         {
             if (args[1] == "agents") return Agents.OrchestratorSelfTest.Run();
             if (args[1] == "music") return Music.MusicSelfTest.Run();
+            if (args[1] == "model-download") return ModelDownload.ModelDownloadSelfTest.Run();
             Console.Error.WriteLine($"未知自测: {args[1]}");
             return 2;
         }
