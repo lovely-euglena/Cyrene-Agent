@@ -192,3 +192,22 @@
   dual-track exchange_rate SKIP 分支打印双侧错误文本（防"假一致"漏诊）。
 - **验证**：`dotnet-tools-matrix.py` 52/52；`dual-track-diff.ts` 全绿（search +1）；
   `vitest src/main/orchestrator/tools` 434 passed；`tsc` 0 错误。
+
+## 2026-10-03 增量：PR #1 影响分析修复（黑名单扩展 + 超时连带日志 + 边界加固）
+
+- **背景**：Gitee AI 队友 `/impact` 详细影响分析（PR #1）：1 条执行级安全建议、
+  若干可观测性/边界建议；核实后按如下范围修复（未全盘照搬）。
+- **下载黑名单扩展（安全）**：TS/C# 两侧同步补 `.vbe/.js/.jse/.wsf/.wsh/.hta/
+  .cpl/.pif`（Windows 双击即执行 / 脚本宿主类扩展名），文案与判定逐字一致；
+  dual-track +2 用例、matrix +3 用例（均在联网前拒绝）。
+- **超时连带影响可观测性**：`NativeToolHost` 在超时 kill 与 host 退出时记录被
+  连带拒绝的 `callId(tool)` 列表；per-call 隔离属于架构演进项（影响分析"重要"），
+  本轮先以日志兜底，后续单独评估。
+- **边界加固**：`SearchTools.MatchesGlob` 的 `**` 占位符改 NUL 哨兵（输入先剔除
+  NUL，杜绝伪造展开）；`HostLocale.Fmt` 注明适用域（0.0001～1e17 与 JS 一致，
+  范围外 E 记法风格不同）；str_replace 空文件播种补 matrix/dual-track 用例。
+- **暂缓（已立项登记）**：超时级联与 per-call 隔离 → #IKJLP2；C# xUnit 独立回归
+  测试 → #IKJLP3；内部参数改 protocol 字段 → #IKJLP4。dual-track 的
+  `Module._load` 兼容性演进与 exchange_rate 超时命中率观察不单独立项。
+- **验证**：matrix 56/56；dual-track 全绿（srepl 8 / download 7）；
+  `vitest src/main/orchestrator/tools` 435 passed；tsc 0 错误。
