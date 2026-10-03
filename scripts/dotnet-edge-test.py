@@ -72,23 +72,8 @@ check("绝对路径 /etc/passwd（工具语义=受信 fs，读不崩溃即可）
 p4 = by.get("p4", {})
 check("写 /etc 受拒或失败", os.path.exists("/etc/cyrene-pwned") is False, json.dumps(p4)[:120])
 
-# ── 3. git 参数注入 ─────────────────────────────
-print("\n=== 3. git 注入 ===")
-out, code, err = run_host(["--tool-host"], [
-    json.dumps({"op": "call", "callId": "g1", "tool": "git",
-                "args": {"cwd": tmpdir, "sub": "commit", "message": 'x"; touch /tmp/GIT_PWNED; "'}}),
-    json.dumps({"op": "call", "callId": "g2", "tool": "git",
-                "args": {"cwd": tmpdir, "sub": "switch", "branch": "main $(touch /tmp/GIT_PWNED2)"}}),
-    json.dumps({"op": "call", "callId": "g3", "tool": "git",
-                "args": {"cwd": tmpdir, "sub": "status", "extra": "--upload-pack=touch /tmp/GIT_PWNED3"}}),
-    json.dumps({"op": "shutdown"}),
-])
-check("commit message 注入未执行", not os.path.exists("/tmp/GIT_PWNED"))
-check("branch $(...) 注入未执行", not os.path.exists("/tmp/GIT_PWNED2"))
-check("git 进程执行完（不崩）", code == 0, f"exit={code}")
-
-# ── 4. RAG 恶意输入 ────────────────────────────
-print("\n=== 4. RAG 边缘（注入/越界）===")
+# ── 3. RAG 恶意输入 ────────────────────────────
+print("\n=== 3. RAG 边缘（注入/越界）===")
 ragdb = os.path.join(tmpdir, "rag.sqlite")
 frames = [
     json.dumps({"op": "open", "callId": "o", "dbPath": ragdb}),
@@ -119,8 +104,8 @@ check("RAG 恶意输入全链 exit=0", code == 0, f"exit={code} err={err}")
 check("SQL 注入后表仍在", s.get("entries", -1) >= 1, json.dumps(s)[:150])
 check("mark 权重 1e308 不崩", by.get("m1", {}).get("ok") is not False, json.dumps(by.get("m1"))[:100])
 
-# ── 5. agent 会话边缘 ──────────────────────────
-print("\n=== 5. agent 边缘 ===")
+# ── 4. agent 会话边缘 ──────────────────────────
+print("\n=== 4. agent 边缘 ===")
 frames = [
     json.dumps({"op": "step", "callId": "s1", "sessionId": "ghost", "message": "x"}),   # 不存在会话
     json.dumps({"op": "create", "callId": "c1", "sessionId": "s1", "config": {"allowedTools": ["read_file"]}}),
@@ -134,8 +119,8 @@ out, code, err = run_host(["--agent-host"], frames, timeout=120)
 check("agent 边缘全链 exit=0", code == 0, f"exit={code} err={err}")
 check("幽灵会话 step 被拒", any(f.get("callId") == "s1" and f.get("ok") is False for f in out if isinstance(f, dict)), json.dumps([f for f in out if isinstance(f, dict) and f.get('callId')=='s1'])[:150])
 
-# ── 6. memory 边缘 ─────────────────────────────
-print("\n=== 6. memory 边缘 ===")
+# ── 5. memory 边缘 ─────────────────────────────
+print("\n=== 5. memory 边缘 ===")
 memdb = os.path.join(tmpdir, "mem.sqlite")
 frames = [
     json.dumps({"op": "open", "callId": "o", "dbPath": memdb}),

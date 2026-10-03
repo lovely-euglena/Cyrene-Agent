@@ -2,7 +2,7 @@
 """tool-host 全工具逐项调用矩阵（真实调用验证）。
 
 calculator / now / clipboard / sysinfo / fs_read_file / fs_write_file /
-fs_list_dir / git(status/log/diff/init/add/commit/switch/push/revert)
+fs_list_dir
 每个工具多组输入：正常 + 参数缺失 + 参数类型错。验响应形状与错误语义。
 """
 import subprocess, json, os, tempfile, sys
@@ -29,10 +29,6 @@ def check(name, ok, detail=""):
     print(f"{'[PASS]' if ok else '[FAIL]'} {name}" + (f" —— {str(detail)[:160]}" if not ok else (f" —— {str(detail)[:80]}" if detail else "")))
 
 tmp = tempfile.mkdtemp(prefix="tools-matrix-")
-# git 仓库临时目录
-gitdir = os.path.join(tmp, "repo")
-os.makedirs(gitdir)
-os.system(f"cd {gitdir} && git init -q && git config user.email t@t && git config user.name t && echo hello > a.txt")
 
 frames = []
 n = 0
@@ -69,18 +65,6 @@ c_r4 = req("fs_read_file", {})
 # fs_list_dir
 c_l1 = req("fs_list_dir", {"path": tmp})
 c_l2 = req("fs_list_dir", {"path": "/definitely/not/exist"})
-# git
-c_g1 = req("git", {"cwd": gitdir, "sub": "status"})
-c_g2 = req("git", {"cwd": gitdir, "sub": "log"})
-c_g3 = req("git", {"cwd": gitdir, "sub": "diff"})
-c_g4 = req("git", {"cwd": gitdir, "sub": "add"})
-c_g5 = req("git", {"cwd": gitdir, "sub": "commit", "message": "matrix 测试提交"})
-c_g6 = req("git", {"cwd": gitdir, "sub": "log"})
-c_g7 = req("git", {"cwd": gitdir, "sub": "switch", "branch": "main"})
-c_g8 = req("git", {"cwd": gitdir, "sub": "revert"})
-c_g9 = req("git", {"cwd": gitdir, "sub": "push"})
-c_g10 = req("git", {"cwd": "/no/repo", "sub": "status"})
-c_g11 = req("git", {})
 
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
@@ -123,19 +107,6 @@ d = data_json(c_r4); check("读缺参报错", isinstance(d, dict) and d.get("err
 print("\n=== fs_list_dir ===")
 d = data_json(c_l1); check("列目录", d and "w1.txt" in json.dumps(d), d)
 d = data_json(c_l2); check("列不存在目录报错", by.get(c_l2, {}).get("ok") is False, by.get(c_l2, d))
-
-print("\n=== git（11 组）===")
-check("status", by.get(c_g1, {}).get("ok") is True)
-d = data_json(c_g2); check("log（空仓库容错 ok:false 有码）", by.get(c_g2, {}).get("ok") is False, str(d)[:80])
-check("diff", by.get(c_g3, {}).get("ok") is True)
-check("add -A", by.get(c_g4, {}).get("ok") is True)
-d = data_json(c_g5); check("commit 提交成功", by.get(c_g5, {}).get("ok") is True, str(d)[:80])
-d = data_json(c_g6); check("log 有提交记录", "matrix" in json.dumps(d, ensure_ascii=False) or by.get(c_g6, {}).get("ok") is True, str(d)[:80])
-check("switch main（master 仓切 main 失败=预期 ok:false）", by.get(c_g7, {}).get("ok") is False)
-check("revert（无 HEAD 或可回滚均可，帧不炸）", by.get(c_g8, {}).get("ok") is True)
-check("push（无 remote → ok:false 有码）", by.get(c_g9, {}).get("ok") is False)
-check("git 无 repo 目录容错（ok:false 有码）", by.get(c_g10, {}).get("ok") is False)
-d = data_json(c_g11); check("git 缺 cwd 报错", by.get(c_g11, {}).get("ok") is False, by.get(c_g11, d))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

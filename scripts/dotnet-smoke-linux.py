@@ -32,7 +32,7 @@ def check(name, ok, detail=""):
     results.append((name, ok, detail))
     print(f"{'[PASS]' if ok else '[FAIL]'} {name}" + (f" —— {detail}" if detail and not ok else ""))
 
-# ── 1. tool-host：list 握手 + 六工具调用 ──
+# ── 1. tool-host：list 握手 + 五工具调用 ──
 print("\n=== 1. tool-host ===")
 tmpdir = tempfile.mkdtemp(prefix="cyrene-smoke-")
 test_file = os.path.join(tmpdir, "hello.txt")
@@ -49,8 +49,6 @@ frames = [
                 "args": {"path": tmpdir}}),
     json.dumps({"op": "call", "callId": "c4", "tool": "fs_read_file",
                 "args": {"path": "/nonexistent/xx.txt"}}),
-    json.dumps({"op": "call", "callId": "c5", "tool": "git",
-                "args": {"cwd": "/home/z/my-project/repos/Cyrene-Agent", "sub": "status"}}),
     json.dumps({"op": "call", "callId": "c6", "tool": "calculator",
                 "args": {"expression": "1+2*3"}}),
     json.dumps({"op": "shutdown"}),
@@ -68,7 +66,6 @@ c3 = by_id.get("c3"); check("fs_list_dir", c3 and c3.get("ok") and "hello.txt" i
 c4 = by_id.get("c4")
 c4ok = c4 and c4.get("ok") and "E_FS_NOT_FOUND" in str(c4.get("data", ""))
 check("read 不存在文件 → E_FS_NOT_FOUND", bool(c4ok), json.dumps(c4)[:100] if c4 else "no result")
-c5 = by_id.get("c5"); check("git status", c5 and c5.get("ok"))
 c6 = by_id.get("c6"); check("calculator", c6 and c6.get("ok") and "7" in str(c6.get("data")))
 
 # ── 2. rag-host：迁移→upsert→query→mark_recalled→stats ──

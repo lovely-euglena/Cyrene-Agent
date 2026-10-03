@@ -68,7 +68,7 @@ async function main(): Promise<void> {
     // calculator 不存在 sleep——用超短 timeoutMs 对 list 前的启动竞态造超时：
     // 直接调一个不回 result 的 op（list 不带 callId 不进 pending——用 call 造）
     await (slow as unknown as { call: (op: string, args: Record<string, unknown>) => Promise<unknown> })
-      .call("call", { tool: "git", args: { cwd: "/tmp", sub: "log" } });  // git log 在 /tmp 无仓库 → 报错回帧
+      .call("call", { tool: "fs_read_file", args: { path: "/nonexistent/ipc-stress.txt" } });  // 读不存在文件 → 报错回帧
     // 若这里 fulfilled 也 OK（错误回帧也算 IPC 正常）——重点在下一 call
     timedOut = true;
   } catch { timedOut = true; }

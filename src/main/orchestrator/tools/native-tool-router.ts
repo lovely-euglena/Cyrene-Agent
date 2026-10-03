@@ -1,18 +1,18 @@
 /**
- * 内置工具 .NET 轨路由（阶段 1 D：fs/git 下沉接线）。
+ * 内置工具 .NET 轨路由（阶段 1 D：fs 下沉接线）。
  *
  * 包装策略（A2：同进程直接调用的宿主版，经 native-tool-host 帧协议）：
  *   register 时把白名单工具的 execute 包一层——
- *     CYRENE_TOOL_HOST=1 且 host 可用 → 发 fs_ 与 git 工具 调用给 ToolHost；
+ *     CYRENE_TOOL_HOST=1 且 host 可用 → 发 fs_ 工具调用给 ToolHost；
  *     任何失败（超时/崩溃/E_*）→ 回调原 TS execute（零行为差异）。
- *   白名单只收「已在 C# 侧完成语义对齐移植」的工具（FsGitTools.cs），
+ *   白名单只收「已在 C# 侧完成语义对齐移植」的工具（FsTools.cs），
  *   白名单外工具不经包装——避免未移植工具走了半吊子路径。
  */
 import type { ToolDefinition } from "./registry/tool-registry";
 import { nativeToolHost } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 
-/** C# 侧已完成语义移植的工具（FsGitTools.cs 对照表）。 */
+/** C# 侧已完成语义移植的工具（FsTools.cs 对照表）。 */
 const NATIVE_TOOL_MAP: Record<string, string> = {
   read_file: "fs_read_file",
   write_file: "fs_write_file",
