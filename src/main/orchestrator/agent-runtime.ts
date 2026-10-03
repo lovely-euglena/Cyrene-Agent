@@ -18,6 +18,7 @@ import { buildAlwaysOnContext, buildL2WorkingMemoryInjection, refreshL2WorkingMe
 import { scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
 import { scheduleWikiTurn } from "../memory/wiki-memory-scheduler";
 import { matchSticker } from "../sticker-embedder";
+import { matchStickerText, loadStickerTextIndex } from "../sticker-text-matcher";
 import { buildRelationshipContext, recordRelationshipTurn } from "../relationship/relationship-log";
 import { compileSocialContextBlock } from "../social-context/context";
 import * as momentsStore from "../moments/moments-store";
@@ -89,6 +90,7 @@ export interface AgentRuntimeDeps {
   };
   skillRegistry: typeof skillRegistry;
   getStickerEmbeddingIndex: () => unknown;
+  getStickerTextIndex?: () => unknown;
   getEmbeddingProvider: () => unknown;
   broadcastRuntimeStateChanged: () => void;
   citaService: CitaService;
@@ -287,6 +289,9 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       setRuntimeState: ((next) =>
         runtimeStateService.setStateWithoutNotify(next as any)) as OnRunFinishedDeps["setRuntimeState"],
       stickerEmbeddingIndex: rawDeps.getStickerEmbeddingIndex(),
+      stickerTextIndex: (rawDeps.getStickerTextIndex?.() ?? loadStickerTextIndex()) as OnRunFinishedDeps["stickerTextIndex"],
+      matchStickerText: ((text, index, threshold) =>
+        matchStickerText(text, index, threshold)) as OnRunFinishedDeps["matchStickerText"],
       getEmbeddingProvider: (() => rawDeps.getEmbeddingProvider() as unknown) as OnRunFinishedDeps["getEmbeddingProvider"],
       matchSticker: ((text, provider, index, threshold) =>
         matchSticker(text, provider as any, index as any, threshold) as Promise<{

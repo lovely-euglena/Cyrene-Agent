@@ -886,6 +886,44 @@ describe("build-options", () => {
     expect(effects).toEqual({ sticker: "hugtight" })
   })
 
+  it("uses text matching when sticker match mode is text (no embedding provider needed)", async () => {
+    const matchSticker = vi.fn(async () => null)
+    const matchStickerText = vi.fn(() => ({ id: "playful" }))
+    const textIndex = [{ id: "playful", text: "你看人家嘛" }]
+    const deps: OnRunFinishedDeps = {
+      loadModelSettings: () => ({
+        provider: "test",
+        baseUrl: "",
+        model: "",
+        apiKey: "",
+        runtimeSync: "off",
+        stickerEnabled: true,
+        stickerMatchMode: "text",
+        stickerSimilarityThreshold: 0.55,
+      }),
+      scheduleMemoryWrite: () => {},
+      inferRuntimeState: () => ({ status: "陪伴中" }),
+      runtimeState: { status: "陪伴中", feeling: "温柔", expression: 0, updatedAt: 0 },
+      feelingToExpression: { "温柔": 0 },
+      setRuntimeState: () => {},
+      stickerEmbeddingIndex: null,
+      getEmbeddingProvider: () => null,
+      matchSticker,
+      stickerTextIndex: textIndex,
+      matchStickerText,
+      loadStickerSettings: () => ({}),
+      broadcastRuntimeStateChanged: () => {},
+      observeRuntimeState: async () => {},
+      recordRelationshipTurn: async () => {},
+    }
+
+    const effects = await onAgentRunFinished({ reply: "你看人家嘛", toolResults: [] }, "哄哄我", deps)
+
+    expect(matchStickerText).toHaveBeenCalledWith(expect.any(String), textIndex, 0.55)
+    expect(matchSticker).not.toHaveBeenCalled()
+    expect(effects).toEqual({ sticker: "playful" })
+  })
+
   it("does not send document model context into memory or sticker embedding side effects", async () => {
     const scheduleMemoryWrite = vi.fn()
     const matchSticker = vi.fn(async () => null)

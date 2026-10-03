@@ -229,6 +229,15 @@ export interface OnRunFinishedDeps {
     index: unknown,
     threshold: number,
   ) => Promise<{ id: string } | null | undefined>;
+  /** 文本匹配索引（无模型路径）；缺省时文本模式不匹配。 */
+  stickerTextIndex?: readonly import("../sticker-text-matcher").StickerTextEntry[];
+  getStickerTextIndex?: () => readonly import("../sticker-text-matcher").StickerTextEntry[];
+  /** jieba + BM25 文本匹配（同步）；缺省时文本模式不匹配。 */
+  matchStickerText?: (
+    text: string,
+    index: readonly import("../sticker-text-matcher").StickerTextEntry[],
+    threshold: number,
+  ) => { id: string } | null | undefined;
   loadStickerSettings: () => Record<string, boolean>;
   broadcastRuntimeStateChanged: () => void;
   observeRuntimeState: (
@@ -254,6 +263,7 @@ export interface ModelSettingsLite {
   runtimeSync?: string;
   stickerEnabled?: boolean;
   stickerSimilarityThreshold?: number;
+  stickerMatchMode?: "embedding" | "text";
   /** 默认为 true；用户显式关闭时，图片先交给独立视觉模型转成文字。 */
   multimodal?: boolean;
   /** 独立视觉模型配置（可选）。image-router 路由判定用。 */
@@ -1196,23 +1206,33 @@ export async function onAgentRunFinished(
     });
   });
 
-  const stickerIndex = deps.getStickerEmbeddingIndex?.() ?? deps.stickerEmbeddingIndex;
-  const stickerQuery = buildStickerEmbeddingQuery(chatContent, sideEffectUserText);
-  let stickerCandidate: string | null = null;
-  // 只有代码/公式时 stickerQuery 为空：不请求 embedding，避免技术内容误触发表情。
-  if (settings.stickerEnabled && stickerIndex && stickerQuery) {
-    const matched = await perf.track("match_sticker", () =>
-      deps.matchSticker(
-        stickerQuery,
-        deps.getEmbeddingProvider(),
-        stickerIndex,
-        settings.stickerSimilarityThreshold ?? 0.55,
-      ),
-    );
-    stickerCandidate = matched?.id ?? null;
-  }
   const stickerSettings = deps.loadStickerSettings();
-  const sticker = stickerCandidate && stickerSettings[stickerCandidate] !== false ? stickerCandidate : null;
+  const stickerQuery = buildStickerEmbeddingQuery(chatContent, sideEffectUserText);
+  let sticker: string | null = null;
+  // 只有代码/公式时 stickerQuery 为空，直接跳过，避免技术内容误触发表情。
+  if (settings.stickerEnabled && stickerQuery) {
+    if (settings.stickerMatchMode === "text") {
+      // 文本匹配：无需 embedding 模型；先按开关过滤掉被禁用的贴纸再匹配。
+      const textIndex = (deps.getStickerTextIndex?.() ?? deps.stickerTextIndex ?? [])
+        .filter((entry) => stickerSettings[entry.id] !== false);
+      if (textIndex.length > 0 && deps.matchStickerText) {
+        const matched = await perf.track("match_sticker_text", () =>
+          Promise.resolve(deps.matchStickerText!(stickerQuery, textIndex, settings.stickerSimilarityThreshold ?? 0.55)),
+        );
+        sticker = matched?.id ?? null;
+      }
+    } else {
+      const stickerIndex = deps.getStickerEmbeddingIndex?.() ?? deps.stickerEmbeddingIndex;
+      if (stickerIndex) {
+        const matcher = deps.matchSticker;
+        const matched = await perf.track("match_sticker", () =>
+          matcher(stickerQuery, deps.getEmbeddingProvider(), stickerIndex, settings.stickerSimilarityThreshold ?? 0.55),
+        );
+        const candidate = matched?.id ?? null;
+        sticker = candidate && stickerSettings[candidate] !== false ? candidate : null;
+      }
+    }
+  }
 
   if (settings.runtimeSync === "local") {
     deps.broadcastRuntimeStateChanged();
