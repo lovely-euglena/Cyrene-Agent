@@ -176,8 +176,8 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       loadModelSettings: (modelProfileId?: string) => resolveModelSettingsProfile(rawDeps.loadModelSettings(), modelProfileId),
       loadGeneralSettings: () => rawDeps.loadGeneralSettings(),
       loadUserProfile: () => rawDeps.loadUserProfile(),
-      buildEnvironmentContext: ((model, profile) =>
-        buildEnvironmentContext(model, profile as any)) as BuildOptionsDeps["buildEnvironmentContext"],
+      buildEnvironmentContext: ((profile) =>
+        buildEnvironmentContext(profile as any)) as BuildOptionsDeps["buildEnvironmentContext"],
       buildSkillCatalog: ((skills) =>
         buildSkillCatalog(skills as any)) as BuildOptionsDeps["buildSkillCatalog"],
       buildAutoInjectedSkillContext: ((skills) =>
@@ -345,7 +345,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         : rawDeps.skillRegistry.getEnabledForMode(mode, generalSettings.skillModeOverrides);
       const systemContent = [
         buildModePrompt(mode),
-        buildEnvironmentContext({ provider: settings.provider, model: settings.model }, profile),
+        buildEnvironmentContext(profile),
         buildSkillCatalog(scheduledSkills),
         await buildAlwaysOnContext(task.prompt, messages),
         await rawDeps.buildPluginPromptContext({
@@ -365,6 +365,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
           reasoning: settings.reasoning,
           manualReasoning: settings.manualReasoning,
           contextWindowTokens: settings.contextWindowTokens,
+          modelRequestMaxRetries: settings.modelRequestMaxRetries ?? 5,
         },
         messages: [{ role: "system" as const, content: systemContent }, ...messages],
         // 定时任务也不因整轮耗时被中断；仍保留单次模型/工具自身的超时。

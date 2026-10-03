@@ -119,6 +119,11 @@ function migrateProviderRenames(
 
 export interface ModelSettings {
   mode: "auto" | "manual";
+  /**
+   * 配置文件 schema 版本。2：multimodal 旧判定迁移；3：MiniMax Responses 端点迁移；4：兼容旧 MiniMax 厂商名。
+   * 旧文件（无此字段）首次加载时执行一次性迁移并写回，之后走干净路径。
+   */
+  schemaVersion?: number;
   provider: string;
   // 用户给模型起的自定义昵称，留空时状态栏用厂商 shortName。
   displayName?: string;
@@ -151,6 +156,8 @@ export interface ModelSettings {
   stickerSimilarityThreshold: number;
   /** 整个聊天请求的总超时（秒）。30-1800，默认 300。 */
   chatRequestTimeoutSec: number;
+  /** 主模型请求的额外重试次数；0–10，默认 5。 */
+  modelRequestMaxRetries: number;
   /** CITA 结构化输出重试总预算（秒）。4-30，默认 8。 */
   citaRepairBudgetSec: number;
   rerankerMode: "standard" | "none";
@@ -177,8 +184,12 @@ export interface VisionModelConfig {
   model: string;
 }
 
+/** 当前配置文件 schema：2 = multimodal 迁移，3 = MiniMax Responses 端点迁移，4 = 兼容旧 MiniMax 厂商名。 */
+const MODEL_SETTINGS_SCHEMA_VERSION = 4;
+
 const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   mode: "auto",
+  schemaVersion: MODEL_SETTINGS_SCHEMA_VERSION,
   // 默认厂商改为 MiniMax（v1 vendor adapter 第一个落地的），DeepSeek 已从 v1 清单移除。
   provider: "MiniMax（稀宇科技）",
   baseUrl: "https://api.minimaxi.com/anthropic",
@@ -191,6 +202,7 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   stickerSize: "standard",
   stickerSimilarityThreshold: 0.55,
   chatRequestTimeoutSec: 300,
+  modelRequestMaxRetries: 5,
   citaRepairBudgetSec: 8,
   rerankerMode: "standard",
   embeddingModel: "bgem3",
@@ -224,8 +236,15 @@ function normalizeProviderProfile(
   input: Partial<ProviderProfile> | null | undefined,
   provider = DEFAULT_MODEL_SETTINGS.provider,
 ): ProviderProfile {
+  const normalizedProvider = PROVIDER_RENAMES[provider] ?? provider;
   const explicitTransport: ProviderProfile["explicitTransport"] =
-    migrateLegacyExplicitTransport(input, provider);
+    migrateLegacyExplicitTransport(input, normalizedProvider);
+  const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
+  const normalizedBaseUrl = normalizedProvider === "MiniMax（稀宇科技）"
+    && explicitTransport === "responses"
+    && baseUrl === "https://api.minimaxi.com/v1"
+    ? "https://api.minimax.cn/v1"
+    : baseUrl;
   const rawContextWindow = (input as { contextWindowTokens?: unknown })?.contextWindowTokens;
   const model = typeof input?.model === "string" ? input.model.trim() : "";
   // 模型清单六步契约（顺序是业务数据，删除当前模型后的顺位 fallback 依赖它）：
@@ -271,7 +290,7 @@ function normalizeProviderProfile(
     }
   }
   return {
-    baseUrl: typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "",
+    baseUrl: normalizedBaseUrl,
     model: effectiveModel,
     ...(models ? { models } : {}),
     ...(Object.keys(modelOptions).length > 0 ? { modelOptions } : {}),
@@ -345,23 +364,28 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
   // 而默认 false 会让多模态模型的用户发图莫名降级/看不了图（比发错更迷惑）。
   let multimodal = input?.multimodal !== false;
   const rawVision = input?.vision as Partial<VisionModelConfig> & { syncWithMain?: boolean } | undefined;
-  if (rawVision && rawVision.syncWithMain === true) {
-    multimodal = true;
-  } else if (
-    // 旧版配置没有 multimodal 字段（那时只有独立视觉模型，没有直发开关）：
-    // 已配好独立视觉模型且未声明与主模型同步的用户，升级后继续走独立视觉模型，
-    // 不被默认 true 静默旁路；一旦字段持久化过就不再进这条迁移
-    typeof input?.multimodal !== "boolean"
-    && rawVision
-    && rawVision.baseUrl && rawVision.apiKey && rawVision.model
-  ) {
-    multimodal = false;
+  if ((input?.schemaVersion ?? 1) < 2) {
+    if (rawVision && rawVision.syncWithMain === true) {
+      multimodal = true;
+    } else if (
+      // 旧版配置没有 multimodal 字段（那时只有独立视觉模型，没有直发开关）：
+      // 已配好独立视觉模型且未声明与主模型同步的用户，升级后继续走独立视觉模型，
+      // 不被默认 true 静默旁路
+      typeof input?.multimodal !== "boolean"
+      && rawVision
+      && rawVision.baseUrl && rawVision.apiKey && rawVision.model
+    ) {
+      multimodal = false;
+    }
   }
 
   const hasPersistedProfiles = Array.isArray(input?.modelProfiles);
   const modelProfiles: SavedModelProfile[] = hasPersistedProfiles
     ? input!.modelProfiles!.filter((item): item is SavedModelProfile => Boolean(item && typeof item === "object" && typeof item.id === "string" && typeof item.provider === "string"))
-      .map((item) => ({ ...normalizeProviderProfile(item, item.provider), id: item.id, provider: item.provider }))
+      .map((item) => {
+        const normalizedProvider = PROVIDER_RENAMES[item.provider] ?? item.provider;
+        return { ...normalizeProviderProfile(item, normalizedProvider), id: item.id, provider: normalizedProvider };
+      })
     : [];
 
   // 迁移补全：仅当 modelProfiles 字段从未持久化过（老版本配置首次升级）时执行。
@@ -387,6 +411,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
 
   return {
     mode,
+    schemaVersion: MODEL_SETTINGS_SCHEMA_VERSION,
     provider,
     displayName: profile.displayName,
     baseUrl: profile.baseUrl,
@@ -407,6 +432,10 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
       && Number.isFinite(input.chatRequestTimeoutSec)
       ? Math.max(30, Math.min(1800, Math.round(input.chatRequestTimeoutSec)))
       : 300,
+    modelRequestMaxRetries: typeof input?.modelRequestMaxRetries === "number"
+      && Number.isFinite(input.modelRequestMaxRetries)
+      ? Math.max(0, Math.min(10, Math.round(input.modelRequestMaxRetries)))
+      : 5,
     citaRepairBudgetSec: typeof input?.citaRepairBudgetSec === "number" && Number.isFinite(input.citaRepairBudgetSec)
       ? Math.max(4, Math.min(30, Math.round(input.citaRepairBudgetSec)))
       : 8,
@@ -529,7 +558,19 @@ function loadModelSettings0(): ModelSettings {
     const filePath = getSettingsPath();
     if (!fs.existsSync(filePath)) return { ...DEFAULT_MODEL_SETTINGS };
     const raw = fs.readFileSync(filePath, "utf8");
-    return normalizeModelSettings(JSON.parse(raw) as Partial<ModelSettings>);
+    const parsed = JSON.parse(raw) as Partial<ModelSettings>;
+    const normalized = normalizeModelSettings(parsed);
+    // 一次性迁移落盘：旧文件迁移后立即写回 + 备份原文件；schemaVersion 记录最新迁移批次。
+    if ((parsed?.schemaVersion ?? 1) < MODEL_SETTINGS_SCHEMA_VERSION) {
+      try {
+        fs.copyFileSync(filePath, `${filePath}.bak`);
+        fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), "utf8");
+      } catch (writeErr) {
+        // 写盘失败不阻塞启动：内存里已是迁移后的配置，下次启动会再试一次
+        console.error("[Cyrene] model settings migration persist failed:", writeErr);
+      }
+    }
+    return normalized;
   } catch (err) {
     console.error("[Cyrene] load settings failed:", err);
     return { ...DEFAULT_MODEL_SETTINGS };

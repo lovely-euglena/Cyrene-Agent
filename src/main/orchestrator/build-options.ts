@@ -76,7 +76,7 @@ export interface BuildOptionsDeps {
   loadModelSettings: (modelProfileId?: string) => ModelSettingsLite;
   loadGeneralSettings: () => StyleSettingsLite;
   loadUserProfile: () => UserProfileLite;
-  buildEnvironmentContext: (model: { provider: string; model: string }, profile: unknown) => string;
+  buildEnvironmentContext: (profile: unknown) => string;
   /** @deprecated 仅保留旧测试/调用方结构兼容；生产不再使用。 */
   buildSystemPrompt?: (styleFile: string) => string;
   buildSkillCatalog: (skills: ReadonlyArray<unknown>) => string;
@@ -241,6 +241,8 @@ export interface ModelSettingsLite {
   vision?: { baseUrl: string; apiKey: string; model: string };
   /** 上下文窗口大小（Token）。来自 ModelSettings.contextWindowTokens。 */
   contextWindowTokens?: number;
+  /** 主模型请求的额外重试次数；旧设置回退到 5。 */
+  modelRequestMaxRetries?: number;
 }
 
 export interface StyleSettingsLite {
@@ -267,6 +269,7 @@ export interface UserProfileLite {
   defaultCity?: string;
   timezone?: string;
   gender?: string;
+  replyLanguage?: string;
 }
 
 export function buildChannelSystem(channel?: RelationshipChannel): string {
@@ -643,17 +646,15 @@ export async function buildAgentRunOptions(
   let environmentContext = "";
   const envTimer = perf.begin("build_environment_context");
   try {
-    environmentContext = deps.buildEnvironmentContext(
-      { provider: settings.provider, model: settings.model },
-      {
-        nickname: profile.nickname,
-        callPreference: profile.callPreference,
-        birthday: profile.birthday,
-        defaultCity: profile.defaultCity,
-        timezone: profile.timezone,
-        gender: profile.gender,
-      },
-    );
+    environmentContext = deps.buildEnvironmentContext({
+      nickname: profile.nickname,
+      callPreference: profile.callPreference,
+      birthday: profile.birthday,
+      defaultCity: profile.defaultCity,
+      timezone: profile.timezone,
+      gender: profile.gender,
+      replyLanguage: profile.replyLanguage,
+    });
   } catch (err) {
     console.warn("[Cyrene] environment context build failed:", err);
   }
@@ -983,6 +984,7 @@ export async function buildAgentRunOptions(
   const transcriptRecoveryContext = transcriptContext?.uncertainEffects.length
     ? formatTranscriptUncertainEffects(transcriptContext.uncertainEffects)
     : undefined;
+  const initialTodoItems = transcriptContext?.todoItems;
 
   return {
     options: {
@@ -995,6 +997,7 @@ export async function buildAgentRunOptions(
         reasoning: settings.reasoning,
         manualReasoning: settings.manualReasoning,
         contextWindowTokens: settings.contextWindowTokens ?? 256000,
+        modelRequestMaxRetries: settings.modelRequestMaxRetries ?? 5,
       },
       maxParallelToolCalls: typeof generalSettings.maxParallelToolCalls === "number"
         ? Math.max(1, Math.min(MAX_PARALLEL_TOOL_CALLS, Math.trunc(generalSettings.maxParallelToolCalls)))
@@ -1009,6 +1012,12 @@ export async function buildAgentRunOptions(
       trustedRefs,
       responseContext,
       runtimeEnvironmentContext: environmentContext,
+      ...(transcriptContext || initialTodoItems ? {
+        initialHarnessState: {
+          todoItems: initialTodoItems ?? [],
+          uncertainEffects: transcriptContext?.uncertainEffects ?? [],
+        },
+      } : {}),
       // 不设整轮任务期限；用户取消才停止整个 Agent Run。
       timeoutMs: 0,
       toolSystemContent,

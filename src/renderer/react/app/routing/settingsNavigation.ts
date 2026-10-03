@@ -26,6 +26,7 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   mcp: "mcp",
   channels: "channels",
   disclaimer: "disclaimer",
+  browser: "browser",
   // fork 旧 section 名 → 聊天窗设置页落点（2026-10 入口统一后，
   // 主进程可能带着这些历史 section 进来；不能落错页）
   user: "general", // 个人资料在头像菜单的用户资料弹窗维护

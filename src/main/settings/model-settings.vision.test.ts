@@ -1,6 +1,8 @@
 // loadVisionConfig 与旧配置迁移的回归测试：
 // 主模型走 Anthropic 协议时视觉链路拼 /chat/completions 必然 404，
 // 必须改用独立视觉模型；老配置里已配好的独立视觉模型不能被 multimodal 默认值静默旁路。
+// multimodal 旧配置一次性迁移：旧文件（无 schemaVersion）首次 normalize 时执行三层判定；
+// 已迁移文件（schemaVersion >= 2）不再进该迁移分支，multimodal 只认显式字段。
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ app: { getPath: () => "/tmp/cyrene-test" } }));
@@ -68,10 +70,11 @@ describe("loadVisionConfig 主模型 Anthropic 协议降级", () => {
   });
 });
 
-describe("normalizeModelSettings 旧配置迁移", () => {
-  it("旧配置无 multimodal 字段 + 独立视觉模型齐全 → multimodal 落 false（不静默旁路）", () => {
+describe("normalizeModelSettings 旧配置一次性迁移（schemaVersion 1 → 4）", () => {
+  it("旧配置无 multimodal 字段 + 独立视觉模型齐全 → multimodal 落 false（不静默旁路），并升级 schema", () => {
     const s = normalizeModelSettings({ ...MINIMAX_BASE, vision: COMPLETE_VISION });
     expect(s.multimodal).toBe(false);
+    expect(s.schemaVersion).toBe(4);
     expect(loadVisionConfig(s)?.baseUrl).toBe("https://api.minimaxi.com/v1");
   });
 
@@ -81,6 +84,7 @@ describe("normalizeModelSettings 旧配置迁移", () => {
       vision: { ...COMPLETE_VISION, syncWithMain: true },
     });
     expect(s.multimodal).toBe(true);
+    expect(s.schemaVersion).toBe(4);
   });
 
   it("旧配置无视觉模型 → multimodal 维持默认 true", () => {
@@ -98,6 +102,28 @@ describe("normalizeModelSettings 旧配置迁移", () => {
       ...MINIMAX_BASE,
       vision: { baseUrl: "https://api.minimaxi.com/v1", apiKey: "", model: "MiniMax-M3" },
     });
+    expect(s.multimodal).toBe(true);
+  });
+
+  it("迁移落盘后（schemaVersion: 2）重启 → 不再进迁移分支，syncWithMain 被忽略", () => {
+    // 模拟第二轮启动：上一轮迁移结果（multimodal: false）已持久化，vision 里残留的
+    // syncWithMain 标记不再有任何效果
+    const s = normalizeModelSettings({
+      ...MINIMAX_BASE,
+      schemaVersion: 2,
+      multimodal: false,
+      vision: { ...COMPLETE_VISION, syncWithMain: true },
+    } as Partial<ModelSettings>);
+    expect(s.multimodal).toBe(false);
+    expect(s.schemaVersion).toBe(4);
+  });
+
+  it("schemaVersion: 2 且无 multimodal 字段 → 缺省 true，不被视觉模型配置旁路", () => {
+    const s = normalizeModelSettings({
+      ...MINIMAX_BASE,
+      schemaVersion: 2,
+      vision: COMPLETE_VISION,
+    } as Partial<ModelSettings>);
     expect(s.multimodal).toBe(true);
   });
 });

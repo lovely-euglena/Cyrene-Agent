@@ -57,6 +57,8 @@ export interface ModelSettings {
   stickerSimilarityThreshold: number;
   /** 整个聊天请求的超时（秒）。30-1800，默认 300。 */
   chatRequestTimeoutSec: number;
+  /** 主模型请求的额外重试次数；0–10，默认 5。 */
+  modelRequestMaxRetries: number;
   /** CITA 结构化输出重试总预算（秒）。4-30，默认 8。 */
   citaRepairBudgetSec: number;
   vision?: {
@@ -123,7 +125,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
 }
 
 export interface UserApi {
-  getProfile: () => Promise<{ nickname: string; callPreference: string; birthday: string; timezone: string; avatarPath: string; defaultCity: string; gender: string }>;
+  getProfile: () => Promise<{ nickname: string; callPreference: string; birthday: string; timezone: string; avatarPath: string; defaultCity: string; gender: string; replyLanguage: string }>;
   saveProfile: (profile: Record<string, unknown>) => Promise<unknown>;
   uploadAvatar: () => Promise<{ avatarPath: string } | null>;
   getAvatar: () => Promise<string | null>;

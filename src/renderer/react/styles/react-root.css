@@ -13,9 +13,7 @@ html, body {
 }
 
 /* @mantine/core/styles.css 会给 body 铺一层不透明底色（--mantine-color-body）。
-   本窗口的实色来自 .cy-page，body 若被铺实，圆角之外就会露出一圈方块底、
-   看起来像"底下还有一层"。这里用 html 前缀提高权重，避免 Mantine 的样式
-   在运行时后注入而盖掉本规则。 */
+   页面实色由 .cy-page 承担，body 保持不铺色，避免双层底色不同步。 */
 html body {
   background-color: transparent;
 }
@@ -37,8 +35,8 @@ html body {
   display: flex;
   gap: 10px;
   /* 不给 padding 加过渡：layout 属性动画每帧强制整窗 reflow，连点侧栏开关时主线程饱和、鼠标事件排队 */
+  /* 窗口圆角交给系统处理（Win11 原生小圆角），页面不再自绘圆角 */
   border: 1px solid var(--rb-border-default);
-  border-radius: var(--cy-window-radius, 24px);
   overflow: hidden;
   app-region: drag;
   -webkit-app-region: drag;
@@ -83,7 +81,7 @@ html body {
   display: grid;
   place-items: center;
   border: 2px dashed var(--rb-accent);
-  border-radius: max(8px, calc(var(--cy-window-radius, 12px) - 2px));
+  border-radius: 10px;
   background: rgb(255 255 255 / 88%);
   color: var(--rb-accent);
   font: 600 15px/1.4 var(--rb-font-sans, sans-serif);
@@ -201,6 +199,25 @@ html body {
   height: 16px;
   flex-shrink: 0;
   background: var(--rb-border-default, #f0ebee);
+}
+
+.cy-inspector-browser-toggle {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rb-border-default, #f0ebee);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--rb-bg-1, #fff) 88%, transparent);
+  color: var(--rb-text-secondary, #80777e);
+  cursor: pointer;
+  transition: color .12s ease, background .12s ease, border-color .12s ease;
+}
+.cy-inspector-browser-toggle:hover {
+  border-color: color-mix(in srgb, var(--rb-accent, #e75d87) 45%, transparent);
+  background: var(--rb-surface-hover, #fff1f6);
+  color: var(--rb-accent, #e75d87);
 }
 
 /* 全局文字选中：用应用粉色强调色替代浏览器默认蓝 */

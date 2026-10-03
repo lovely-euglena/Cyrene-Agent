@@ -106,6 +106,7 @@ import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
 import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
+import { registerBrowserPanelIpc } from "../browser/browser-panel-ipc";
 import { registerMomentsIpc } from "../moments/moments-ipc";
 import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
 import { createToastWindowController } from "../toast/toast-window";
@@ -217,6 +218,11 @@ import {
   synthesizeNativeTest,
 } from "../settings/native-voice-actions";
 import { pickAndSaveUserAvatar } from "../memory/user-avatar";
+import { createExamPaperStore } from "../learn/exam-paper-store";
+import { createExamDraftStore } from "../learn/exam-draft";
+import { registerExamPaperIpc } from "../learn/exam-paper-ipc";
+import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
+import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
 
 import { createIpcScope, type IpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -1936,6 +1942,17 @@ createTray: (input) => {
         registerWorkspaceFilesIpc(ipc);
         // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
         registerOpenInAppIpc(ipc);
+        const examPaperStore = createExamPaperStore(app.getPath("userData"));
+        const browserPanel = registerBrowserPanelIpc({
+          ipc,
+          getWindow: () => reactChatWindow,
+          getExamRecord: (examId) => examPaperStore.get(examId),
+        });
+        shutdown.register({
+          id: "browser-panel-session",
+          phase: "flushPersistence",
+          dispose: async () => { await browserPanel.persistSessionForShutdown(); },
+        });
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传
         registerAgUiIpc(
@@ -1991,6 +2008,17 @@ createTray: (input) => {
         // pop_quiz 抽查工具：IPC（提交/跳过）与工具注册（learn 模式可见）
         registerPopQuizIpc(ipc);
         registerPopQuizTool();
+        // 正式试卷：答案与评分资料仅由主进程存储；Learn 工具负责出卷、取卷批改与保存结果。
+        const examDraftStore = createExamDraftStore(app.getPath("userData"), examPaperStore);
+        void examDraftStore.deleteExpired().catch((error) => {
+          console.warn("[LearnExam] 清理过期出卷草稿失败:", error);
+        });
+        void examPaperStore.recoverInterruptedGrading().catch((error) => {
+          console.warn("[LearnExam] 恢复中断批改状态失败:", error);
+        });
+        registerExamPaperIpc(examPaperStore, ipc);
+        registerLearnExamPageIpc(examPaperStore, ipc);
+        registerLearnExamTools(examPaperStore, examDraftStore);
         registerCallIpc(ipc);
       },
 

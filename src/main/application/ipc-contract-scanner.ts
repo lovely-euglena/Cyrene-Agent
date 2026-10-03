@@ -46,7 +46,7 @@ const RENDERER_RECEIVE_METHODS = new Set([
   "removeListener",
   "removeAllListeners",
 ]);
-const OUTBOUND_METHOD = /(?:send|broadcast|emit|post)/i;
+const OUTBOUND_METHOD = /(?:send|broadcast|emit|post|publish)/i;
 
 /**
  * 判定调用表达式的方向。

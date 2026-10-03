@@ -45,7 +45,7 @@ exports[`mode prompt assembly snapshot > assembles the chat persona prompt from 
 
 exports[`mode prompt assembly snapshot > assembles the code persona prompt from stable sources 1`] = `
 {
-  "chars": 4641,
+  "chars": 4792,
   "headings": [
     "# Code 模式核心规则",
     "## 模式定义",

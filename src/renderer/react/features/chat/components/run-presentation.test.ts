@@ -125,6 +125,7 @@ describe("work run presentation", () => {
       runId: "run-7",
       revision: 2,
       cardMode: "semantic_clarification",
+      allowAdditionalContext: false,
       intro: "还需要确认两个细节。",
       responseKind: "submission",
       question: "希望生成哪种格式？",

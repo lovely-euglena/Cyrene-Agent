@@ -142,7 +142,6 @@ export async function buildAlwaysOnContext(
       l0.preferredName && `称呼：${l0.preferredName}`,
       l0.occupation && `职业：${l0.occupation}`,
       l0.longTermInterests && `长期兴趣：${l0.longTermInterests}`,
-      l0.language && `常用语言：${l0.language}`,
       l0.permanentNote && `备注：${l0.permanentNote}`,
     ].filter(Boolean);
 

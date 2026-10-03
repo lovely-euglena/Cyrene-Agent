@@ -21,6 +21,9 @@ import { reactChatSettingsSection } from "./window-state";
 import { PetWindowMoveController } from "../pet-window-movement";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 
+/** 桌宠窗口隐藏后延迟释放（销毁）的时长：避免来回切显示造成重建抖动。 */
+const PET_WINDOW_RESOURCE_RELEASE_DELAY_MS = 30_000;
+
 export interface WindowManagerOptions {
   getCurrentAppIconPath: () => string;
   isDev: boolean;
@@ -79,6 +82,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
   let chatLoadPromise: Promise<void> | null = null;
   // chatLoadPromise 归属的窗口实例：重建窗口后旧 Promise 不可复用（P0 白屏修复）
   let chatLoadedWindow: BrowserWindow | null = null;
+  let petWindowReleaseTimer: ReturnType<typeof setTimeout> | null = null;
   const readyHandlers: Array<(win: BrowserWindow) => void> = [];
   const closedHandlers: Array<() => void> = [];
   const movedHandlers: Array<(position: { x: number; y: number }) => void> = [];
@@ -93,6 +97,23 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
   function getUsablePetWindow(): BrowserWindow | null {
     if (!petWindow || petWindow.isDestroyed()) return null;
     return petWindow;
+  }
+
+  function cancelPetWindowResourceRelease(): void {
+    if (petWindowReleaseTimer === null) return;
+    clearTimeout(petWindowReleaseTimer);
+    petWindowReleaseTimer = null;
+  }
+
+  /** 隐藏后延迟销毁桌宠窗口（释放 Live2D 渲染进程）；期间重新显示则取消。 */
+  function schedulePetWindowResourceRelease(window: BrowserWindow): void {
+    cancelPetWindowResourceRelease();
+    if (window.isDestroyed() || window.isVisible()) return;
+    petWindowReleaseTimer = setTimeout(() => {
+      petWindowReleaseTimer = null;
+      if (petWindow !== window || window.isDestroyed() || window.isVisible()) return;
+      window.destroy();
+    }, PET_WINDOW_RESOURCE_RELEASE_DELAY_MS);
   }
 
   function hasCurrentDisclaimerConsent(): boolean {
@@ -142,17 +163,24 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
   function setPetWindow(window: BrowserWindow, showOnReady = true): void {
     petWindow = window;
     window.once("ready-to-show", () => {
-      if (!petWindow || petWindow.isDestroyed()) return;
+      if (petWindow !== window || window.isDestroyed()) return;
       if (showOnReady) {
-        petWindow.show();
+        window.show();
+      } else {
+        schedulePetWindowResourceRelease(window);
       }
       for (const handler of readyHandlers) {
-        try { handler(petWindow); } catch (err) { console.error("[WindowManager] ready handler failed:", err); }
+        try { handler(window); } catch (err) { console.error("[WindowManager] ready handler failed:", err); }
       }
     });
+    window.on("hide", () => schedulePetWindowResourceRelease(window));
+    window.on("show", cancelPetWindowResourceRelease);
     window.on("closed", () => {
+      cancelPetWindowResourceRelease();
       petWindowMoveController.dispose();
-      petWindow = null;
+      const wasCurrentPetWindow = petWindow === window;
+      if (wasCurrentPetWindow) petWindow = null;
+      if (!wasCurrentPetWindow) return;
       for (const handler of closedHandlers) {
         try { handler(); } catch (err) { console.error("[WindowManager] closed handler failed:", err); }
       }
@@ -288,9 +316,9 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     hidePetWindow(): void {
       const win = getUsablePetWindow();
       if (!win) return;
-      // 销毁而非 hide：把桌宠渲染进程一起结束（Live2D 常驻内存大头）；
-      // closed 回调清 petWindow + live2d 生命周期，显示时重建
-      win.destroy();
+      // hide 触发 setPetWindow 的延迟回收：30s 内再次显示则取消，否则销毁窗口
+      // （连同桌宠渲染进程，Live2D 常驻内存大头），显示时按需重建
+      win.hide();
     },
     togglePetWindow(): void {
       if (!hasCurrentDisclaimerConsent()) {
@@ -302,7 +330,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         ensurePetWindow(true);
         return;
       }
-      if (win.isVisible()) win.destroy();
+      if (win.isVisible()) win.hide();
       else win.show();
     },
     minimizePetWindow(): void {
@@ -405,6 +433,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     },
 
     dispose(): void {
+      cancelPetWindowResourceRelease();
       petWindowMoveController.dispose();
     },
   };

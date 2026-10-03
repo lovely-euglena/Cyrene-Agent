@@ -60,7 +60,7 @@ export interface AgentLoopEvent {
   stepName?: string;
   totalUsage?: unknown;
   content?: string;
-  status?: string;
+  status?: string | import("../../shared/model-retry").ModelRetryStatus;
   snapshot?: unknown;
   taskPlan?: unknown;
   /** 上下文容量快照（chat-loop 发射；type 为 "context_usage"）。 */
@@ -89,6 +89,8 @@ export interface AgentLoopSettings {
   manualReasoning?: import("../../shared/manual-reasoning").ManualReasoningConfig;
   /** 用户设置的模型上下文窗口（Token）。用于非 code 模式的对话压缩触发阈值。 */
   contextWindowTokens: number;
+  /** 主模型请求的额外重试次数；旧调用回退到 5。 */
+  modelRequestMaxRetries?: number;
 }
 
 export type AgentExecutionMode = "work" | "chat";
@@ -154,6 +156,8 @@ export interface CyreneRunOptions {
   runtimeEnvironmentContext?: string;
   /** 上一次异常中断 Run 的只读 Todo/执行检查点；只用于帮助模型恢复方向。 */
   recoveryContext?: string;
+  /** 会话轨迹投影出的待办与未决副作用，作为新 Harness 的执行状态恢复。 */
+  initialHarnessState?: Pick<import("./harness/types").AgentState, "todoItems" | "uncertainEffects">;
   /** 由 AG-UI bridge 注入，确保 Ask 卡片回到实际发起本轮的渲染窗口。 */
   requestUserClarification?: (
     card: import("../../shared/ask-clarification").AskClarificationCard,
@@ -323,6 +327,12 @@ export function toAguiEvent(event: AgentLoopEvent): BaseEvent {
         type: EventType.CUSTOM,
         name: "cyrene.context.usage",
         value: event.contextUsage,
+      } as BaseEvent;
+    case "model_retry":
+      return {
+        type: EventType.CUSTOM,
+        name: "cyrene.model.retry",
+        value: event.status,
       } as BaseEvent;
     default:
       // v3: 未知事件类型转为 CUSTOM 占位，不再抛错

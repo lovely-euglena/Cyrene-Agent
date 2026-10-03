@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquareText } from "lucide-react";
+import { Globe, MessageSquareText } from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
@@ -44,6 +44,7 @@ import {
   aguiApi,
   chatStore,
   choiceApi,
+  learnExamApi,
   settingsApprovalApi,
   sidebarApi,
   type ModelConfigApi,
@@ -167,6 +168,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 侧栏收起不进 React 状态：直接翻转根节点 class，避免整棵页面树为一次点击重渲染
   // （ZCode 同思路：布局类状态走 DOM，React 只负责内容）
   const pageRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLElement | null>(null);
   const [activePanel, setActivePanel] = useState<ChatPagePanel | null>(null);
   useEffect(() => {
     if (scheduledTasksNavigation > 0) setActivePanel("scheduledTasks");
@@ -181,8 +183,12 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const [fileTabs, setFileTabs] = useState<{ id: string; relPath: string; line?: number; lineSeq?: number }[]>([]);
   /** 工作区文件树标签是否打开（ID 固定为 files） */
   const [filesTabOpen, setFilesTabOpen] = useState(false);
+  const [browserTabOpen, setBrowserTabOpen] = useState(() => localStorage.getItem("cyrene.browser-panel.open") === "1");
   /** 右侧面板当前激活的标签 ID（files / file:... / diff:... / plan:...），null 时面板取第一个标签 */
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  useEffect(() => {
+    localStorage.setItem("cyrene.browser-panel.open", browserTabOpen ? "1" : "0");
+  }, [browserTabOpen]);
   // 右栏拖宽布局：聊天区 + 右侧面板套 Group/Panel，宽度持久化到 localStorage。
   // onlySaveAfterUserInteractions 保证只记用户拖动结果，不在挂载/程序化布局时写盘。
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -413,6 +419,22 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const draft = drafts[scopeKey] ?? "";
   const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
   const activeInteraction = sessionInteraction(interactionsBySession, activeSessionId);
+  useEffect(() => {
+    if (!activeSessionId || mode !== "learn") return;
+    const api = learnExamApi();
+    if (!api) return;
+    const onCreated = (event: { conversationId: string; examId: string }) => {
+      if (event.conversationId !== activeSessionId) return;
+      void window.browserPanel?.openExam(event.examId, event.conversationId);
+    };
+    const onChanged = (event: { conversationId: string; examId: string; gradingRequested?: boolean }) => {
+      if (event.conversationId !== activeSessionId) return;
+      if (event.gradingRequested) void queueLearnExamGrading(event.conversationId, event.examId);
+    };
+    const offCreated = api.onCreated(onCreated);
+    const offChanged = api.onChanged(onChanged);
+    return () => { offCreated(); offChanged(); };
+  }, [activeSessionId, mode]);
   const composerInteraction = activeInteraction?.interaction;
   const interactionBusy = activeInteraction?.busy ?? false;
   const hasMessages = messages.length > 0;
@@ -996,8 +1018,23 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           finish: finishEarlyTtsQueue,
         },
         onRunFinished: ({ mode, sessionId, queuePaused }) => {
-          // 刷新列表与队列投影；queuePaused 时暂停消费（先恢复认领再说），否则消费下一条
-          queueFlow.handleRunFinished({ mode, sessionId, queuePaused });
+          void (async () => {
+            try {
+              // 先修复本轮未完成的批改状态，再消费下一条队列，避免把下一轮的 grading 状态误判为本轮失败。
+              if (mode === "learn") {
+                const api = learnExamApi();
+                if (api) {
+                  const exams = await api.listByConversation(sessionId).catch(() => []);
+                  for (const exam of exams) {
+                    if (exam.status === "grading") await api.markGradingFailed(sessionId, exam.examId).catch(() => undefined);
+                  }
+                }
+              }
+            } finally {
+              // 刷新列表与队列投影；queuePaused 时暂停消费（先恢复认领再说），否则消费下一条。
+              queueFlow.handleRunFinished({ mode, sessionId, queuePaused });
+            }
+          })();
         },
       },
       registries: {
@@ -1504,6 +1541,15 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     return { ok: true };
   }
 
+  async function queueLearnExamGrading(conversationId: string, examId: string) {
+    const result = await submitTextToSession({
+      sessionId: conversationId,
+      mode: "learn",
+      text: `请批改我刚刚提交的试卷（试卷编号：${examId}）。先调用 learn_exam_get_submission 获取冻结的试卷与作答，再按试卷中的评分标准逐题批改，最后调用 learn_exam_save_grading 保存评分结果。`,
+    });
+    if (!result.ok) console.warn("[LearnExam] 批改请求入队失败:", result.error.message);
+  }
+
   async function cancelCurrentRun() {
     const sessionId = activeSessionId;
     if (!sessionId) return;
@@ -1635,9 +1681,32 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     setActiveTabId("files");
   };
 
+  const openBrowserTab = () => {
+    setBrowserTabOpen(true);
+    setActiveTabId("browser");
+  };
+
+  useEffect(() => window.browserPanel?.onOpenForControl(() => {
+    setBrowserTabOpen(true);
+    setActiveTabId("browser");
+  }), []);
+
+  const openWebLink = useCallback(async (url: string, destination: "cyrene" | "external") => {
+    if (destination === "external") {
+      await window.system?.openExternal(url);
+      return;
+    }
+    setBrowserTabOpen(true);
+    setActiveTabId("browser");
+    const browser = window.browserPanel;
+    if (!browser) return;
+    await browser.openInNewTab(url);
+  }, []);
+
   /** 收起右侧面板：关闭全部标签（再次点击开关可重新展开文件树） */
   const collapseInspector = () => {
     setFilesTabOpen(false);
+    setBrowserTabOpen(false);
     setFileTabs([]);
     setDiffTabs([]);
     setTaskTabs([]);
@@ -1672,8 +1741,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   /** 计划标签 ID：会话内唯一（计划内容始终跟随当前会话） */
   const planTabId = `plan:${activeSessionId ?? "session"}`;
 
-  /** 右侧面板标签的固定顺序：文件树 → 文件预览 → Diff → 计划 */
+  /** 右侧面板标签固定顺序：浏览器 → 文件树 → 文件预览 → Diff → 子任务 → 计划 */
   const inspectorTabIds = [
+    ...(browserTabOpen ? ["browser"] : []),
     ...(filesTabOpen ? ["files"] : []),
     ...fileTabs.map((tab) => tab.id),
     ...diffTabs.map((tab) => tab.id),
@@ -1701,6 +1771,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const remaining = inspectorTabIds.filter((tabId) => tabId !== id);
     if (id === "files") {
       setFilesTabOpen(false);
+    } else if (id === "browser") {
+      setBrowserTabOpen(false);
     } else if (id.startsWith("file:")) {
       setFileTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     } else if (id.startsWith("plan:")) {
@@ -1821,6 +1893,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       >
         <Panel id="chat" minSize={480} className="cy-dock-body">
       <main
+        ref={workspaceRef}
         className={`cy-page-main cy-workspace ${hasMessages ? "has-messages" : "is-empty"} ${isDraggingFiles ? "is-dragging-files" : ""}`}
         onDragEnter={dragHandlers.onDragEnter}
         onDragOver={dragHandlers.onDragOver}
@@ -1838,9 +1911,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             </>
           )}
         </header>
-        {/* 白色工作区右上角：打开菜单 + 分割线 + 右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画）。
-            仅在会话对话视图显示：产生过消息、且当前不在工具/技能/动态等面板页时才挂载 */}
-        {(hasMessages && !activePanel && (activeSession?.workspaceBinding || inspectorTabIds.length > 0)) && (
+        {/* 白色工作区右上角：浏览器入口与右侧面板开关；工具/技能等面板页不显示。 */}
+        {!activePanel && (
           <span className="cy-inspector-toggle-float">
             {activeSession?.workspaceBinding && activeSessionId && (
               <>
@@ -1848,9 +1920,20 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 <span className="cy-inspector-toggle-divider" aria-hidden="true" />
               </>
             )}
+            <button
+              type="button"
+              className="cy-inspector-browser-toggle"
+              title={t("browserPanel.open")}
+              aria-label={t("browserPanel.open")}
+              onClick={openBrowserTab}
+            >
+              <Globe size={17} strokeWidth={1.8} />
+            </button>
             <InspectorToggle
               open={inspectorTabIds.length > 0}
-              onToggle={() => (inspectorTabIds.length > 0 ? collapseInspector() : openFilesTab())}
+              onToggle={() => (inspectorTabIds.length > 0
+                ? collapseInspector()
+                : activeSession?.workspaceBinding ? openFilesTab() : openBrowserTab())}
             />
           </span>
         )}
@@ -1872,6 +1955,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           <TodoPanel
             state={activeSessionId ? todoStateBySession[activeSessionId] : null}
             mode={mode}
+            containerRef={workspaceRef}
           />
         )}
         {mode === "code" && activeSessionId && (
@@ -1879,6 +1963,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             sessionId={activeSessionId}
             projectName={workspaceNames.code}
             todoState={todoStateBySession[activeSessionId] ?? null}
+            containerRef={workspaceRef}
             planPhase={planReviewBySession[activeSessionId]?.phase}
             onOpenPlan={() => {
               setPlanDrawerOpen(true);
@@ -1915,9 +2000,10 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onOpenTaskInspector={openTaskInspector}
             workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
             onOpenFileLink={openFileTab}
+            onOpenWebLink={openWebLink}
           />
         )}
-        <div className="cy-workspace-composer">
+        <div className={`cy-workspace-composer${composerInteraction ? " has-interaction" : ""}`}>
           {scrollToBottomVisible && (
             <button
               type="button"
@@ -2060,6 +2146,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 sessionId={activeSessionId}
                 workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
                 filesTabOpen={filesTabOpen}
+                browserTabOpen={browserTabOpen}
                 filesTabPinned={filesTabPinned}
                 fileTabs={fileTabs}
                 diffTabs={diffTabs}

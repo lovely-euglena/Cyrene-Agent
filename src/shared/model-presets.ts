@@ -24,6 +24,8 @@ export interface ModelPreset {
   baseUrl: string;
   /** 已由厂商官方确认的 Anthropic 兼容 Base URL；没有就不猜。 */
   anthropicBaseUrl?: string;
+  /** 已由厂商官方确认的 Responses API Base URL。 */
+  responsesBaseUrl?: string;
   /** 预设首次使用时选中的明确协议；用户之后可以手动修改。 */
   transport: ApiTransport;
   mainModels: string[];
@@ -53,6 +55,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     shortName: "MiniMax",
     baseUrl: "https://api.minimaxi.com/v1",
     anthropicBaseUrl: "https://api.minimaxi.com/anthropic",
+    responsesBaseUrl: "https://api.minimax.cn/v1",
     transport: "anthropic",
     mainModels: ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5"],
     iconUrl: "../icons/providers/minimax.svg",
@@ -212,4 +215,11 @@ export const MODEL_PRESETS: ModelPreset[] = [
 /** 按厂商名找预设（不存在返回 null）。 */
 export function findModelPreset(providerName: string): ModelPreset | null {
   return MODEL_PRESETS.find((preset) => preset.providerName === providerName) ?? null;
+}
+
+/** 按协议取预设的有效 Base URL：优先协议专用地址，回退通用 Base URL。 */
+export function presetTransportUrl(preset: ModelPreset, transport: ApiTransport): string {
+  if (transport === "anthropic" && preset.anthropicBaseUrl) return preset.anthropicBaseUrl;
+  if (transport === "responses" && preset.responsesBaseUrl) return preset.responsesBaseUrl;
+  return preset.baseUrl;
 }

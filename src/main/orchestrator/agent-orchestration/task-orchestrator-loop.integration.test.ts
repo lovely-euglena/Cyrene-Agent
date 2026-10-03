@@ -27,7 +27,17 @@ const { vendorQueue, streamChatWithSdkMock } = vi.hoisted(() => {
 });
 
 vi.mock("../vendors", () => ({
-  getAdapterForConfig: vi.fn(() => ({ id: "mock" })),
+  getAdapterForConfig: vi.fn(() => ({
+    id: "mock",
+    buildRequest: vi.fn(() => ({ url: "http://mock.local/v1/chat/completions", headers: {}, body: "{}" })),
+    parseResponse: vi.fn(() => ({
+      assistantMessage: { role: "assistant", content: "" },
+      text: "",
+      toolCalls: [],
+      finishReason: "stop",
+      raw: {},
+    })),
+  })),
   streamChatWithSdk: streamChatWithSdkMock,
   resolveTransport: vi.fn(() => "openai"),
 }));
