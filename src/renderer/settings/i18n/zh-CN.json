@@ -697,39 +697,13 @@
         },
         "music": {
           "title": "音乐工具",
-          "desc": "网易云音乐与本地音乐。",
-          "neteaseTitle": "网易云音乐",
-          "neteaseDesc": "扫码登录后搜索并播放歌曲。",
+          "desc": "本地曲库与播放器。",
           "localTitle": "本地音乐",
           "localStatus": "正在读取…",
           "importFolder": "导入文件夹",
           "importFiles": "导入文件",
           "openPlayer": "打开播放器"
         }
-      },
-      "music": {
-        "returnButton": "← 返回音乐平台",
-        "neteaseTitle": "网易云音乐",
-        "neteaseSubtitle": "扫码登录后搜索歌曲，通过内置 mpv 播放器播放。",
-        "openapi": {
-          "title": "OpenAPI 配置",
-          "hint": "填写网易云音乐开放平台分配的 appId 与 privateKey，用于调用 OpenAPI 接口。",
-          "appId": "App ID",
-          "privateKey": "Private Key（PKCS#8 base64 或 PEM）",
-          "saveButton": "保存配置"
-        },
-        "statusNotConnected": "尚未连接",
-        "connectButton": "连接网易云",
-        "playerTitle": "独立播放器窗口",
-        "playerHint": "卡片式播放界面，支持歌单切换、搜索、歌词显示。",
-        "openPlayerButton": "打开播放器",
-        "qrScan": "网易云音乐 App 扫码",
-        "qrTip": "请用网易云音乐 App 扫描二维码完成登录",
-        "qrStatus": "当前状态：等待扫码",
-        "searchTitle": "搜索歌曲",
-        "searchHint": "连接网易云后即可搜索歌曲和获取每日推荐。",
-        "searchButton": "搜索",
-        "searchEmpty": "连接网易云后即可搜索歌曲和获取每日推荐。"
       },
       "disclaimer": {
         "heading": "免责声明与使用条款",

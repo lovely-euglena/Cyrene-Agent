@@ -1,4 +1,0 @@
-创建新歌单
-args:
-    name: 歌单名称
-    privacy: 是否设为隐私歌单，默认为 False

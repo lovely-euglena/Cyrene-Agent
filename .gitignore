@@ -76,8 +76,6 @@ build/installer/ui/dev*.log
 # 额外兜底：未跟踪的 context-usage 预览图与时间戳备份目录
 dist/renderer/context-usage/
 dist/renderer-old-*/
-# music 播放器是本地构建产物（hash 文件名每次构建变化），不进 git
-dist/renderer/music/
 # toast 提醒窗口的 index.html 是 Vite 构建产物（引用 hash 文件名，每次构建变化），不进 git。
 # 注：该窗口曾是唯一漏掉 ignore 的空窗，其他窗口的 index.html 均已在上方忽略。
 dist/renderer/toast/index.html
@@ -95,8 +93,6 @@ src/renderer/react/assets/succeed.png
 resources/opencode/
 resources/mingit/
 .cache/mingit/
-.cache/music-component/
-dist/components/
 
 # === 显式产品资源白名单 ===
 # 上方 lines 4-23 + 64-86 忽略了 dist/ 下的 Vite 构建产物；
