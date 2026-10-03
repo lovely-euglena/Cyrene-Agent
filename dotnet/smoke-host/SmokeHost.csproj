@@ -13,7 +13,7 @@
   <ItemGroup>
     <Compile Include="../../dotnet/native-windows/Tools/ToolHost.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/Calculator.cs" />
-    <Compile Include="../../dotnet/native-windows/Tools/FsGitTools.cs" />
+    <Compile Include="../../dotnet/native-windows/Tools/FsTools.cs" />
     <Compile Include="BuiltinToolsStub.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="../../dotnet/native-windows/Rag/RagHost.cs" />
