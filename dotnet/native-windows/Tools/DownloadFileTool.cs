@@ -26,7 +26,8 @@ internal static class DownloadFileTool
     private static readonly HashSet<string> DangerousExts = new(StringComparer.OrdinalIgnoreCase)
     {
         ".exe", ".bat", ".cmd", ".com", ".scr", ".msi",
-        ".ps1", ".vbs", ".lnk", ".jar", ".sh",
+        ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".hta", ".cpl", ".pif", ".lnk", ".jar", ".sh",
     };
 
     private static readonly Dictionary<string, string> ContentTypeExt = new(StringComparer.OrdinalIgnoreCase)

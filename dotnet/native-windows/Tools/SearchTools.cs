@@ -256,11 +256,14 @@ internal static class SearchTools
         var normalized = pattern.Contains('/') || pattern.StartsWith("**/", StringComparison.Ordinal)
             ? pattern
             : "**/" + pattern;
+        // ** 占位用 NUL 哨兵：Windows 路径不允许 NUL，且输入中的 NUL 先剔除，
+        // 用户无法伪造哨兵触发 `.*` 展开（此前用可见 Unicode 占位符，可被构造成字面量）
+        normalized = normalized.Replace("\0", "");
         var regexStr = normalized
             .Replace(".", "\\.")
-            .Replace("**", "⟨GLOBSTAR⟩")
+            .Replace("**", "\0")
             .Replace("*", "[^/]*")
-            .Replace("⟨GLOBSTAR⟩", ".*")
+            .Replace("\0", ".*")
             .Replace("?", "[^/]");
         try { return Regex.IsMatch(filePath, "^" + regexStr + "$", RegexOptions.ECMAScript); }
         catch { return false; }

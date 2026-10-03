@@ -10,7 +10,10 @@ namespace CyreneNative.Tools;
 /// </summary>
 internal static class HostLocale
 {
-    /// <summary>TS `${number}` 语义的近似：不变文化最短往返表示。</summary>
+    /// <summary>TS `${number}` 语义的近似：不变文化最短往返表示。
+    /// 适用域：0.0001 ≤ |v| &lt; 1e17 的常规金额/天数范围与 JS 一致；范围外 .NET 默认
+    /// "G" 格式比 JS 更早进入 E 记法且风格不同（1e-5 → 1E-05 vs 0.00001；
+    /// 1e17 → 1E+17 vs 100000000000000000），业务入参不会触及。</summary>
     public static string Fmt(double value) => value.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>TS toLocaleDateString(dateLocale, { timeZone }) 近似（短日期）。</summary>

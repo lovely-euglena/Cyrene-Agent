@@ -107,6 +107,10 @@ open(srf_dry, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
 c_sr1 = req("str_replace", {"file_path": srf_dry, "old_string": "beta", "new_string": "BETA", "__dryRun": True})
 c_sr2 = req("str_replace", {"file_path": srf, "old_string": "beta", "new_string": "BETA"})
 c_sr3 = req("str_replace", {"file_path": srf, "old_string": "nope", "new_string": "x"})
+# 空文件播种：old_string="" + 空内容（矩阵补充边界用例）
+srf2 = os.path.join(tmp, "sr_empty.txt")
+open(srf2, "w", encoding="utf-8").write("")
+c_sr4 = req("str_replace", {"file_path": srf2, "old_string": "", "new_string": "seed content\n"})
 
 # apply_patch（Codex 补丁格式：dry-run 预检 → 提交；事务/逃逸/Move/删除）
 ap_ws = os.path.join(tmp, "apws")
@@ -127,6 +131,11 @@ c_ap6 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: ../escape.t
 c_ap7 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** Add File: ../escape2.txt\n+z\n*** End Patch", "__cyreneRoot": ap_ws})
 c_ap8 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: m.txt\n*** Move to: moved/m.txt\n@@\n-m1\n+M1\n*** End Patch", "__cyreneRoot": ap_ws})
 c_ap9 = req("apply_patch", {"patch": "not a patch", "__cyreneRoot": ap_ws})
+
+# download_file 扩展黑名单（联网前拒绝，无需 HTTP；与 TS 两侧同步）
+c_dl1 = req("download_file", {"url": "https://example.com/x.hta", "filename": "x.hta", "__cyreneRoot": ap_ws})
+c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.js", "__cyreneRoot": ap_ws})
+c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf", "__cyreneRoot": ap_ws})
 
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
@@ -231,6 +240,11 @@ check("提交替换成功 + changes", isinstance(sr2, dict) and sr2.get("success
 sr3 = data_json(c_sr3)
 check("未命中诊断 OLD_STRING_NOT_FOUND", isinstance(sr3, dict) and sr3.get("errorCode") == "OLD_STRING_NOT_FOUND"
       and (sr3.get("diagnostic") or {}).get("kind") == "not_found", sr3)
+sr4 = data_json(c_sr4)
+check("空文件播种（old_string 空）",
+      isinstance(sr4, dict) and sr4.get("success") is True
+      and open(srf2, encoding="utf-8").read() == "seed content\n",
+      (sr4, open(srf2, encoding="utf-8").read()))
 
 print("\n=== apply_patch ===")
 d0 = data_json(c_ap0)
@@ -278,6 +292,11 @@ check("Move to 更新并移动",
       and d["changes"][0].get("kind") == "renamed", d)
 d = data_json(c_ap9)
 check("非补丁文本拒绝", isinstance(d, dict) and d.get("errors") == ["patch 必须以 *** Begin Patch 开头"], d)
+
+print("\n=== download_file（黑名单扩展）===")
+check("hta 扩展名拒绝", data_text(c_dl1) == "[错误] 禁止下载可执行/脚本文件: .hta", data_text(c_dl1))
+check("js 扩展名拒绝", data_text(c_dl2) == "[错误] 禁止下载可执行/脚本文件: .js", data_text(c_dl2))
+check("wsf 扩展名拒绝", data_text(c_dl3) == "[错误] 禁止下载可执行/脚本文件: .wsf", data_text(c_dl3))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

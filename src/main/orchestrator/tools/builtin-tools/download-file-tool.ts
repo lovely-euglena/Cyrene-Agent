@@ -30,10 +30,12 @@ const DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024; // 单文件上限 64MiB
  */
 const DOWNLOAD_NATIVE_TIMEOUT_MS = 10 * 60_000;
 
-/** 危险后缀黑名单：可执行/脚本文件不落盘，防"下载即执行"攻击面。 */
+/** 危险后缀黑名单：可执行/脚本文件不落盘，防"下载即执行"攻击面。
+ *  .js/.jse/.vbe/.wsf/.wsh 走 Windows Script Host，.hta/.cpl/.pif 双击即执行。 */
 const DANGEROUS_EXTS = new Set([
   ".exe", ".bat", ".cmd", ".com", ".scr", ".msi",
-  ".ps1", ".vbs", ".lnk", ".jar", ".sh",
+  ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+  ".hta", ".cpl", ".pif", ".lnk", ".jar", ".sh",
 ]);
 
 /** Content-Type → 扩展名：filename 缺扩展名时按响应类型补全。 */
