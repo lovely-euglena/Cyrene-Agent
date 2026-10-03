@@ -135,6 +135,8 @@ internal static class ToolHost
                         new { id = "fs_write_file", name = "写入文件(.NET)", description = "覆盖/追加写 + ToolFileChange 证据输出（append/createDirs）" },
                         new { id = "fs_list_dir", name = "列出目录(.NET)", description = "目录列举（隐藏项开关/图片标注/200 项截断）" },
                         new { id = "exchange_rate", name = "汇率查询(.NET)", description = "frankfurter.app 免 key 汇率 + 30 分钟 TTL 缓存" },
+                        new { id = "record_expense", name = "记账(.NET)", description = "本地 JSON 记账（dataDir 注入）" },
+                        new { id = "query_expense", name = "查账(.NET)", description = "记账查询/汇总（时区与 locale 随 config 帧）" },
                     },
                 });
                 break;
@@ -173,6 +175,8 @@ internal static class ToolHost
                         "fs_write_file" => FsTools.WriteFile(args ?? EmptyArgs),
                         "fs_list_dir" => FsTools.ListDir(args ?? EmptyArgs),
                         "exchange_rate" => ExchangeRateTool.Execute(args ?? EmptyArgs),
+                        "record_expense" => ExpenseTools.Record(args ?? EmptyArgs),
+                        "query_expense" => ExpenseTools.Query(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });

@@ -25,18 +25,17 @@ internal static class ExchangeRateTool
         var amount = Num(args, "amount");
         if (amount == 0) amount = 1; // TS: Number(args.amount) || 1
         if (from == to)
-            return $"[exchange_rate] {Fmt(amount)} {from} = {Fmt(amount)} {to}（同币种）";
+            return $"[exchange_rate] {HostLocale.Fmt(amount)} {from} = {HostLocale.Fmt(amount)} {to}（同币种）";
 
         var cacheKey = from + "|" + to;
         var hit = GetCached(cacheKey);
         if (hit is not null)
         {
             // 缓存命中：用当前 amount 重算，并标注汇率获取时间（TS 同）
-            var fetchedAt = DateTimeOffset.FromUnixTimeMilliseconds(hit.Value.At).ToLocalTime()
-                .ToString("yyyy/M/d HH:mm:ss", CultureInfo.InvariantCulture);
+            var fetchedAt = HostLocale.FormatDateTimeLocal(hit.Value.At);
             var hitResult = (amount * hit.Value.Value).ToString("0.00", CultureInfo.InvariantCulture);
             return $"[缓存] 汇率获取于 {fetchedAt}，30 分钟内复用\n"
-                 + $"[exchange_rate] {Fmt(amount)} {from} = {hitResult} {to}（汇率 {Fmt(hit.Value.Value)}，更新于 {FormatDate(DateTimeOffset.Now)}）";
+                 + $"[exchange_rate] {HostLocale.Fmt(amount)} {from} = {hitResult} {to}（汇率 {HostLocale.Fmt(hit.Value.Value)}，更新于 {HostLocale.FormatDate(DateTimeOffset.Now)}）";
         }
 
         var url = $"https://api.frankfurter.app/latest?from={from}&to={to}";
@@ -73,11 +72,8 @@ internal static class ExchangeRateTool
 
         var result = (amount * rate).ToString("0.00", CultureInfo.InvariantCulture);
         SetCached(cacheKey, rate); // 只有成功拿到汇率才写缓存；错误/不支持的币种不缓存
-        return $"[exchange_rate] {Fmt(amount)} {from} = {result} {to}（汇率 {Fmt(rate)}，更新于 {FormatDate(DateTimeOffset.Now)}）";
+        return $"[exchange_rate] {HostLocale.Fmt(amount)} {from} = {result} {to}（汇率 {HostLocale.Fmt(rate)}，更新于 {HostLocale.FormatDate(DateTimeOffset.Now)}）";
     }
-
-    /// <summary>TS `${number}` 语义的近似：不变文化最短往返表示。</summary>
-    private static string Fmt(double value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static string Str(JsonElement args, string key, string fallback)
         => args.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(el.GetString())
@@ -102,15 +98,5 @@ internal static class ExchangeRateTool
     {
         if (Cache.Count >= CacheMaxEntries) Cache.Clear(); // TS：超过容量整体清空，不搞 LRU
         Cache[key] = (value, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-    }
-
-    /// <summary>按 ToolHostConfig 的时区 + locale 输出短日期（TS toLocaleDateString 同口径）。</summary>
-    private static string FormatDate(DateTimeOffset time)
-    {
-        DateTimeOffset local;
-        try { local = TimeZoneInfo.ConvertTime(time, TimeZoneInfo.FindSystemTimeZoneById(ToolHostConfig.Timezone)); }
-        catch { local = time; }
-        try { return local.ToString("d", CultureInfo.GetCultureInfo(ToolHostConfig.DateLocale)); }
-        catch { return local.ToString("d", CultureInfo.GetCultureInfo("zh-CN")); }
     }
 }
