@@ -3,6 +3,45 @@ import type { ToolContext } from "./registry/tool-context";
 import type { ToolDefinition } from "./registry/tool-registry";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges, parseUnifiedPatch } from "./registry/tool-evidence";
+import { nativeFirst } from "./native-tool-host";
+import { isAbortError } from "../../abort-utils";
+
+/**
+ * git native 轨包装（IKJLIL）：
+ *  - 可信上下文（工作区 / 会话 / git 可执行 / 提交身份）由 ToolContext 与 GitService
+ *    注入内部参数（`__cyreneRoot` / `__sessionId` / `__gitCommand` / ...），模型参数不参与；
+ *  - host 不可用 / 命令失败 → 回退 GitService 原实现（错误语义一致）；
+ *  - AbortError 原样上抛：取消必须中止，不回退重跑副作用。
+ */
+function nativeFirstGit(
+  gitService: GitService,
+  toolId: string,
+  executeTs: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>,
+): (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string> {
+  return async (args, ctx) => {
+    const fallback = (): Promise<string> => Promise.resolve(executeTs(args, ctx));
+    try {
+      const tctx = requireCodeContext(ctx);
+      const executable = await gitService.getExecutableInfo();
+      if (!executable) return fallback();
+      const identity = gitService.getCommitIdentity();
+      const nativeArgs: Record<string, unknown> = {
+        ...args,
+        __cyreneRoot: tctx.workspaceRoot,
+        __sessionId: tctx.sessionId,
+        __gitCommand: executable.command,
+        __gitSource: executable.source,
+        __gitVersion: executable.version,
+        ...(executable.source === "bundled" ? { __gitIsolated: true } : {}),
+        ...(identity ? { __gitIdentity: identity } : {}),
+      };
+      return await nativeFirst(toolId, nativeArgs, () => fallback(), { signal: ctx?.signal });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return fallback();
+    }
+  };
+}
 
 export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
   return [
@@ -17,7 +56,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       verificationPolicy: "none",
       needsContext: true,
       inputSchema: { type: "object", properties: {} },
-      execute: async (_args, ctx) => JSON.stringify(await gitService.getStatusForSession(requireCodeContext(ctx).sessionId)),
+      execute: nativeFirstGit(gitService, "git_status", async (_args, ctx) =>
+        JSON.stringify(await gitService.getStatusForSession(requireCodeContext(ctx).sessionId))),
     },
     {
       id: "git_init",
@@ -30,7 +70,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       verificationPolicy: "artifact",
       needsContext: true,
       inputSchema: { type: "object", properties: {} },
-      execute: async (_args, ctx) => gitService.initRepository(requireCodeContext(ctx)),
+      execute: nativeFirstGit(gitService, "git_init", async (_args, ctx) =>
+        gitService.initRepository(requireCodeContext(ctx))),
     },
     {
       id: "git_commit",
@@ -50,11 +91,11 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         },
         required: ["message", "paths"],
       },
-      execute: async (args, ctx) => gitService.commit(
+      execute: nativeFirstGit(gitService, "git_commit", async (args, ctx) => gitService.commit(
         requireCodeContext(ctx),
         stringArg(args, "message"),
         stringArrayArg(args, "paths"),
-      ),
+      )),
     },
     {
       id: "git_switch_branch",
@@ -74,11 +115,11 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         },
         required: ["branch"],
       },
-      execute: async (args, ctx) => gitService.switchBranch(
+      execute: nativeFirstGit(gitService, "git_switch_branch", async (args, ctx) => gitService.switchBranch(
         requireCodeContext(ctx),
         stringArg(args, "branch"),
         args.create === true || args.create === "true",
-      ),
+      )),
     },
     {
       id: "git_push",
@@ -94,7 +135,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         type: "object",
         properties: { remote: { type: "string", description: "远端名称，默认 origin", default: "origin" } },
       },
-      execute: async (args, ctx) => gitService.push(requireCodeContext(ctx), optionalStringArg(args, "remote")),
+      execute: nativeFirstGit(gitService, "git_push", async (args, ctx) =>
+        gitService.push(requireCodeContext(ctx), optionalStringArg(args, "remote"))),
     },
     {
       id: "git_revert",
@@ -111,7 +153,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         properties: { commit: { type: "string", description: "要回退的提交 hash" } },
         required: ["commit"],
       },
-      execute: async (args, ctx) => gitService.revert(requireCodeContext(ctx), stringArg(args, "commit")),
+      execute: nativeFirstGit(gitService, "git_revert", async (args, ctx) =>
+        gitService.revert(requireCodeContext(ctx), stringArg(args, "commit"))),
     },
     {
       id: "git_diff",
@@ -134,7 +177,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
           maxPatchLines: { type: "number", description: "patch 最多返回行数，默认 400，超出截断" },
         },
       },
-      execute: async (args, ctx) => {
+      execute: nativeFirstGit(gitService, "git_diff", async (args, ctx) => {
         const options: GitDiffQuery = {};
         if (args.ref !== undefined) options.ref = stringArg(args, "ref");
         if (args.staged !== undefined) options.staged = args.staged === true || args.staged === "true";
@@ -158,7 +201,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         }));
 
         return JSON.stringify({ ...result, changes: finalizeFileChanges(changes) });
-      },
+      }),
     },
     {
       id: "git_log",
@@ -180,13 +223,13 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
           maxCount: { type: "number", description: "最多返回条数（1-200），默认 20" },
         },
       },
-      execute: async (args, ctx) => {
+      execute: nativeFirstGit(gitService, "git_log", async (args, ctx) => {
         const options: GitLogQuery = {};
         if (args.ref !== undefined) options.ref = stringArg(args, "ref");
         if (args.path !== undefined) options.path = stringArg(args, "path");
         if (args.maxCount !== undefined) options.maxCount = Number(args.maxCount);
         return JSON.stringify(await gitService.log(requireCodeContext(ctx), options));
-      },
+      }),
     },
   ];
 }

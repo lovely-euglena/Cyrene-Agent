@@ -29,6 +29,8 @@ function service(): GitService {
     revert: vi.fn(async () => "reverted"),
     diff: vi.fn(async () => ({ base: "HEAD", staged: false, files: [], insertions: 0, deletions: 0, truncated: false, patch: "", perFile: [] })),
     log: vi.fn(async () => []),
+    getExecutableInfo: vi.fn(async () => null),
+    getCommitIdentity: vi.fn(() => null),
   };
 }
 
