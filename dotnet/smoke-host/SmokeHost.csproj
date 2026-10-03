@@ -15,6 +15,7 @@
     <Compile Include="../../dotnet/native-windows/Tools/Calculator.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/FsTools.cs" />
     <Compile Include="../../dotnet/native-windows/Tools/ToolEvidence.cs" />
+    <Compile Include="../../dotnet/native-windows/Tools/ExchangeRateTool.cs" />
     <Compile Include="BuiltinToolsStub.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="../../dotnet/native-windows/Rag/RagHost.cs" />

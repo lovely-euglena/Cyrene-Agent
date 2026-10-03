@@ -71,7 +71,21 @@
   随接线删除；`built-in-tools.ts` 去包装（各工具在自身 execute 内接 native）。
 - **验证**：`dotnet-tools-matrix.py` 22/22（含 write 三态证据）；
   `dual-track-diff.ts` fs 段（输出投影+字节级）；`fs-tools-native.test.ts` 9 项。
-- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T0 完成；T1/T2 续排）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T0 完成；T1 启动）。
+
+## 2026-10-03 增量：T1 首件——exchange_rate 下沉 + ToolHost config 帧
+
+- **ToolHost config 帧**：`{op:"config", timezone, dateLocale, dataDir}` 运行时注入
+  （TS `NativeToolHost.setRuntimeSettings`；host 未启动存为启动配置）。
+  `now` 工具每次调用实时下发时区——修复此前 `setTimezone` 是死接口、.NET `now`
+  永远按 Asia/Shanghai 返回的双轨偏差。
+- **exchange_rate（.NET）**：frankfurter.app 免 key HTTP + 30 分钟 TTL 缓存，
+  日期展示走 config 帧的 timezone/dateLocale；网络异常抛错误帧 → TS 包装层回退原实现。
+  接线在 `life-tools.ts`（调用前实时下发 locale/时区）。
+- **bootstrap**：启动时注入 `dataDir`（userData）+ `dateLocale`，为宿主侧落盘工具（expense 等）铺路。
+- **验证**：`life-tools-native.test.ts` 2 项；`dual-track-diff.ts` 新增 life 段
+  （exchange_rate 输出逐字对比，外网双侧失败自动 SKIP）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T1 进行中）。
 
 ## 2026-10-03 增量：密钥保存下沉 .NET（A20，分阶段）
 

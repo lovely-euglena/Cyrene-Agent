@@ -25,9 +25,14 @@ const EXPRESSIONS = [
 
 interface HostResult { ok: boolean; data?: unknown; error?: string }
 
-function callSmokeTool(tool: string, args: Record<string, unknown>): Promise<HostResult> {
+function callSmokeTool(
+  tool: string,
+  args: Record<string, unknown>,
+  extraFrames: Array<Record<string, unknown>> = [],
+): Promise<HostResult> {
   return new Promise((resolve) => {
     const frames = [
+      ...extraFrames.map((f) => JSON.stringify(f)),
       JSON.stringify({ op: "call", callId: "c1", tool, args }),
       JSON.stringify({ op: "shutdown" }),
     ].join("\n");
@@ -79,16 +84,23 @@ function parseCalcResult(data: unknown): number | null {
 
 type TsFsTool = (args: Record<string, unknown>) => Promise<string>;
 
-/** 加载 TS 轨 fs 工具（注册副作用在模块加载时完成）。host 不可用时 execute 自动回退 TS。 */
-async function loadTsFsTools(): Promise<Map<string, TsFsTool>> {
-  await import("../src/main/orchestrator/tools/fs-tools");
-  const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
-  const map = new Map<string, TsFsTool>();
-  for (const id of ["read_file", "write_file", "list_dir"]) {
-    const tool = toolRegistry.getById(id);
-    if (tool) map.set(id, (args) => Promise.resolve(tool.execute(args)));
-  }
-  return map;
+let tsToolsCache: Promise<Map<string, TsFsTool>> | null = null;
+
+/** 加载 TS 轨工具（注册副作用在模块加载时完成；缓存避免重复注册）。host 不可用时 execute 自动回退 TS。 */
+function loadTsTools(): Promise<Map<string, TsFsTool>> {
+  tsToolsCache ??= (async () => {
+    await import("../src/main/orchestrator/tools/fs-tools");
+    const lifeTools = await import("../src/main/orchestrator/tools/life-tools");
+    lifeTools.registerLifeTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const map = new Map<string, TsFsTool>();
+    for (const id of ["read_file", "write_file", "list_dir", "exchange_rate"]) {
+      const tool = toolRegistry.getById(id);
+      if (tool) map.set(id, (args) => Promise.resolve(tool.execute(args)));
+    }
+    return map;
+  })();
+  return tsToolsCache;
 }
 
 function looseJson(text: string): unknown {
@@ -140,7 +152,7 @@ async function runFsDualTrack(): Promise<number> {
   const tsHome = mkdtempSync(path.join(os.tmpdir(), "fs-dual-ts-"));
   const netHome = mkdtempSync(path.join(os.tmpdir(), "fs-dual-net-"));
   try {
-    const tsTools = await loadTsFsTools();
+    const tsTools = await loadTsTools();
     const tsWrite = tsTools.get("write_file");
     if (!tsWrite) { check("TS 轨 write_file 已注册", false); return failed; }
 
@@ -204,6 +216,42 @@ async function runFsDualTrack(): Promise<number> {
   return failed;
 }
 
+/** 生活类工具双轨（exchange_rate）。外网不可达且双侧一致时按 SKIP，避免网络抖动误报。 */
+async function runLifeDualTrack(): Promise<number> {
+  const tsTools = await loadTsTools();
+  const tsExchange = tsTools.get("exchange_rate");
+  if (!tsExchange) {
+    console.log("[FAIL] life exchange_rate：TS 轨未注册");
+    return 1;
+  }
+  const args = { from: "USD", to: "CNY", amount: 100 };
+  const configFrames = [{ op: "config", timezone: "Asia/Shanghai", dateLocale: "zh-CN" }];
+
+  let tsOut = "";
+  let tsThrew = false;
+  try {
+    tsOut = await tsExchange(args);
+  } catch (error) {
+    tsThrew = true;
+    tsOut = "[错误] " + (error instanceof Error ? error.message : String(error));
+  }
+  const host = await callSmokeTool("exchange_rate", args, configFrames);
+  const netOut = host.ok ? String(host.data ?? "") : "";
+
+  const tsFailed = tsThrew || tsOut.includes("汇率查询失败");
+  const netFailed = !host.ok || netOut.includes("汇率查询失败");
+  if (tsFailed && netFailed) {
+    console.log("[SKIP] life exchange_rate（外网不可达，双侧一致，跳过比对）");
+    return 0;
+  }
+  if (tsOut === netOut) {
+    console.log("[PASS] life exchange_rate 双轨输出一致");
+    return 0;
+  }
+  console.log(`[FAIL] life exchange_rate:\n  TS =${tsOut}\n  NET=${netOut}`);
+  return 1;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -233,6 +281,9 @@ async function main(): Promise<void> {
     // fs 三件双轨（evidence 帧协议 v1）
     if (useSmoke) failures += await runFsDualTrack();
     else console.log("[SKIP] fs 双轨（仅 smoke dll 轨支持）");
+    // 生活类工具双轨（exchange_rate）
+    if (useSmoke) failures += await runLifeDualTrack();
+    else console.log("[SKIP] life 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);

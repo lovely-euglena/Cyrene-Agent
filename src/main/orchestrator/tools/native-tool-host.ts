@@ -26,20 +26,45 @@ interface PendingCall {
   timer: NodeJS.Timeout;
 }
 
+/** 宿主运行时配置（config 帧载荷）。 */
+export interface HostRuntimeSettings {
+  timezone: string;
+  dateLocale: string;
+  /** 本地数据根（expenses.json 等宿主侧落盘位置）；null = 宿主侧不可用。 */
+  dataDir: string | null;
+}
+
 export class NativeToolHost {
   private proc: ChildProcess | null = null;
   private exited = false;
   private starting: Promise<boolean> | null = null;
   private pending = new Map<string, PendingCall>();
   private callSeq = 0;
-  private timezone: string | null = null;
+  private settings: HostRuntimeSettings = {
+    timezone: "Asia/Shanghai",
+    dateLocale: "zh-CN",
+    dataDir: null,
+  };
 
-  /** 宿主侧注入用户时区（now 工具用；host 启动时随 init 帧下发）。 */
+  /** 兼容旧入口：仅更新时区（now 工具每次调用实时下发）。 */
   setTimezone(tz: string | null): void {
-    this.timezone = tz;
-    if (this.proc && !this.exited) {
-      this.send({ op: "config", timezone: tz ?? "Asia/Shanghai" });
-    }
+    this.setRuntimeSettings({ timezone: tz ?? "Asia/Shanghai" });
+  }
+
+  /**
+   * 注入/更新宿主运行时配置：host 已启动立即下发 config 帧；
+   * 未启动则存为启动配置（start 时下发），不需要重启 host。
+   */
+  setRuntimeSettings(patch: Partial<HostRuntimeSettings>): void {
+    if (patch.timezone !== undefined && patch.timezone.trim()) this.settings.timezone = patch.timezone.trim();
+    if (patch.dateLocale !== undefined && patch.dateLocale.trim()) this.settings.dateLocale = patch.dateLocale.trim();
+    if (patch.dataDir !== undefined) this.settings.dataDir = patch.dataDir;
+    if (this.proc && !this.exited) this.send({ op: "config", ...this.settings });
+  }
+
+  /** 当前配置快照（测试/诊断用）。 */
+  getRuntimeSettings(): Readonly<HostRuntimeSettings> {
+    return { ...this.settings };
   }
 
   async ensureStarted(): Promise<boolean> {
@@ -97,7 +122,7 @@ export class NativeToolHost {
         this.readyWaiters.push(onReady);
         child.once("exit", onExit);
       });
-      this.send({ op: "config", timezone: this.timezone ?? "Asia/Shanghai" });
+      this.send({ op: "config", ...this.settings });
       return true;
     } catch (error) {
       console.warn(LOG_PREFIX, "启动失败，工具走 TS 实现:", error instanceof Error ? error.message : error);

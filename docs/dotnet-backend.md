@@ -12,7 +12,7 @@
 | `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件；含 write 三态 changes 证据），正常+缺参+类型错 | 22/22 |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
 | `scripts/ipc-stress-test.ts` | 并发 20 call 路由/2MB payload/超时恢复/shutdown 清 pending | ALL PASS |
-| `scripts/dual-track-diff.ts` | calculator TS↔.NET 逐表达式数值等价（1e-9 容差） | 12/12 |
+| `scripts/dual-track-diff.ts` | calculator TS↔.NET 逐表达式数值等价（1e-9 容差）+ fs 三件（输出/字节）+ exchange_rate | 12/12 计算器 + fs 8 + life 1 |
 | `scripts/plugin-security-test.ts` | .NET 插件 risk 闸门（未声明拒注册/透传/invoke 闭环/优雅关停） | ALL PASS |
 
 实测修复的代表性缺陷：RagHost 建表 SQL 丢括号、Jieba 词典 Resources 不拷贝
@@ -65,7 +65,9 @@ git commit 漏子命令、IPC argv 双传。
 
 ## 契约文档
 
-- 帧协议（B5）：各 host C# 源文件头注释即规范（errorCode 字段统一）
+- 帧协议（B5）：各 host C# 源文件头注释即规范（errorCode 字段统一）；
+  ToolHost `config` 帧（timezone/dateLocale/dataDir 运行时注入）见 `ToolHostConfig`（C#）与
+  `NativeToolHost.setRuntimeSettings`（TS）
 - 写类工具 evidence 帧协议 v1：`docs/design/2026-10-03-tool-evidence-frame-protocol.md`
   （`changes: ToolFileChange[]` 随 result `data` 返回；策略层留 TS，见下）
 - 多 Agent：docs/multi-agent-architecture.md

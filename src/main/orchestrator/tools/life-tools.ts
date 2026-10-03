@@ -19,6 +19,7 @@ import { resolveTimeoutPolicy } from "../../runtime-policy";
 import { getDateLocale } from "../../locale-context";
 import { logger, LogTag } from "../../logger";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { nativeFirst, nativeToolHost } from "./native-tool-host";
 import { TtlResultCache } from "./builtin-tools/ttl-result-cache";
 
 const LOG_PREFIX = "[LifeTools]";
@@ -189,37 +190,47 @@ function registerExchangeRateTool(): void {
       required: ["from", "to"],
     },
     execute: async (args) => {
-      const from = String(args.from || "USD").toUpperCase();
-      const to = String(args.to || "CNY").toUpperCase();
-      const amount = Number(args.amount) || 1;
-      if (from === to) {
-        return `[exchange_rate] ${amount} ${from} = ${amount} ${to}（同币种）`;
-      }
-      // 缓存命中：用当前 amount 重算，并标注汇率获取时间
-      const cacheKey = from + "|" + to;
-      const hit = exchangeCache.get(cacheKey);
-      if (hit) {
-        const fetchedAt = new Date(hit.at).toLocaleString("zh-CN", { hour12: false });
-        const hitResult = (amount * hit.value).toFixed(2);
-        return `[缓存] 汇率获取于 ${fetchedAt}，30 分钟内复用\n[exchange_rate] ${amount} ${from} = ${hitResult} ${to}（汇率 ${hit.value}，更新于 ${new Date(hit.at).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
-      }
-      // frankfurter.app 免费、无 key、支持主要货币
-      const url = `https://api.frankfurter.app/latest?from=${from}&to=${to}`;
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        return `[错误] 汇率查询失败：HTTP ${resp.status}`;
-      }
-      const data = await resp.json() as { rates?: Record<string, number> };
-      const rate = data.rates?.[to];
-      if (!rate) {
-        return `[exchange_rate] 查不到 ${from} → ${to}，可能是不支持的币种`;
-      }
-      const result = (amount * rate).toFixed(2);
-      // 只有成功拿到汇率才写缓存；错误/不支持的币种不缓存
-      exchangeCache.set(cacheKey, rate);
-      return `[exchange_rate] ${amount} ${from} = ${result} ${to}（汇率 ${rate}，更新于 ${new Date().toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
+      // 实时下发日期 locale/时区（用户改设置后下一次调用生效）
+      nativeToolHost.setRuntimeSettings({
+        dateLocale: getDateLocale(),
+        timezone: currentUserTimezone(),
+      });
+      return nativeFirst("exchange_rate", args, exchangeRateExecute);
     },
   });
+}
+
+/** exchange_rate 的 TS 实现（native 轨回退路径）。 */
+async function exchangeRateExecute(args: Record<string, unknown>): Promise<string> {
+  const from = String(args.from || "USD").toUpperCase();
+  const to = String(args.to || "CNY").toUpperCase();
+  const amount = Number(args.amount) || 1;
+  if (from === to) {
+    return `[exchange_rate] ${amount} ${from} = ${amount} ${to}（同币种）`;
+  }
+  // 缓存命中：用当前 amount 重算，并标注汇率获取时间
+  const cacheKey = from + "|" + to;
+  const hit = exchangeCache.get(cacheKey);
+  if (hit) {
+    const fetchedAt = new Date(hit.at).toLocaleString("zh-CN", { hour12: false });
+    const hitResult = (amount * hit.value).toFixed(2);
+    return `[缓存] 汇率获取于 ${fetchedAt}，30 分钟内复用\n[exchange_rate] ${amount} ${from} = ${hitResult} ${to}（汇率 ${hit.value}，更新于 ${new Date(hit.at).toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
+  }
+  // frankfurter.app 免费、无 key、支持主要货币
+  const url = `https://api.frankfurter.app/latest?from=${from}&to=${to}`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    return `[错误] 汇率查询失败：HTTP ${resp.status}`;
+  }
+  const data = await resp.json() as { rates?: Record<string, number> };
+  const rate = data.rates?.[to];
+  if (!rate) {
+    return `[exchange_rate] 查不到 ${from} → ${to}，可能是不支持的币种`;
+  }
+  const result = (amount * rate).toFixed(2);
+  // 只有成功拿到汇率才写缓存；错误/不支持的币种不缓存
+  exchangeCache.set(cacheKey, rate);
+  return `[exchange_rate] ${amount} ${from} = ${result} ${to}（汇率 ${rate}，更新于 ${new Date().toLocaleDateString(getDateLocale(), { timeZone: currentUserTimezone() })}）`;
 }
 
 // ══════════════════════════════════════════════════════════
