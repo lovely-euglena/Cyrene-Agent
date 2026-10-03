@@ -1698,6 +1698,7 @@
       "openModelDir": "モデルフォルダを開く",
       "openModelDocs": "インストール説明",
       "openModelSite": "配布サイト",
+      "downloadModel": "モデルをダウンロード",
       "checkModelUpdate": "状態を更新",
       "deleteEmbedding": "キャッシュ削除",
       "deleteEmbeddingConfirm": "BGE-M3 のモデルファイルを削除しますか？（models と HF キャッシュを消去、再インストールが必要）",

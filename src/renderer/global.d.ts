@@ -107,7 +107,7 @@ interface SettingsWindowApi {
   importUiFont?: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;
   resetUiFont?: () => Promise<import("../shared/ui-font").UiFont>;
   // 昔涟设置：RAG 模型操作（打开目录/安装说明/下载站/体检/删除缓存）
-  cyreneModelAction?: (verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") =>
+  cyreneModelAction?: (verb: "open-docs" | "open-dir" | "open-site" | "open-model-downloader" | "check-model-update" | "delete-embedding") =>
     Promise<{ ok: boolean; message?: string; dir?: string; error?: string }>;
   listModelProfiles: () => Promise<{ profiles: Array<{
     id: string;

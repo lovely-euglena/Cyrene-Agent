@@ -1665,6 +1665,7 @@
       "openModelDir": "Open model folder",
       "openModelDocs": "Install guide",
       "openModelSite": "Download site",
+      "downloadModel": "Download models",
       "checkModelUpdate": "Refresh status",
       "deleteEmbedding": "Delete cache",
       "deleteEmbeddingConfirm": "Delete the BGE-M3 model files? This clears the project models folder and HF cache; reinstall needed.",

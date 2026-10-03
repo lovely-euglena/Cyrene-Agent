@@ -1665,6 +1665,7 @@
       "openModelDir": "打开模型目录",
       "openModelDocs": "安装说明",
       "openModelSite": "下载站",
+      "downloadModel": "下载模型",
       "checkModelUpdate": "刷新状态",
       "deleteEmbedding": "删除缓存",
       "deleteEmbeddingConfirm": "删除 BGE-M3 模型文件？将清理项目 models 目录与 HF 缓存，下次使用需重新安装。",

@@ -427,7 +427,7 @@ const settingsApi = {
   cloudStorageTestProfile: (id: string) =>
     ipcRenderer.invoke(IPC.CLOUD_STORAGE_PROFILE_TEST, id) as Promise<{ ok: boolean; latencyMs?: number }>,
   // 昔涟设置：RAG 模型操作（与 native 昔涟 section 同一实现）
-  cyreneModelAction: (verb: "open-docs" | "open-dir" | "open-site" | "check-model-update" | "delete-embedding") =>
+  cyreneModelAction: (verb: "open-docs" | "open-dir" | "open-site" | "open-model-downloader" | "check-model-update" | "delete-embedding") =>
     ipcRenderer.invoke(IPC.SETTINGS_CYRENE_MODEL_ACTION, verb),
   getTimeoutSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_TIMEOUT_SETTINGS),
   saveTimeoutSettings: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_TIMEOUT_SETTINGS, config),
