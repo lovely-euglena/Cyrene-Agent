@@ -180,6 +180,7 @@ internal static class WeatherTool
                 Str(first, "country"),
                 Str(first, "admin1"));
             if (OmCityCache.Count >= CacheMaxEntries) OmCityCache.Clear();
+            // 契约：与 DeserializeCity 配对——序列化不启用 PropertyNamingPolicy，属性名保持 PascalCase
             OmCityCache[cacheKey] = (JsonSerializer.Serialize(resolved, Json), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             return resolved;
         }
@@ -189,6 +190,7 @@ internal static class WeatherTool
         }
     }
 
+    /// <summary>契约：与 OmResolveCity 的缓存序列化配对，均不使用 PropertyNamingPolicy（PascalCase 属性名），改契约须两侧同步。</summary>
     private static OmCity? DeserializeCity(string json)
     {
         try
