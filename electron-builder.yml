@@ -32,6 +32,13 @@ files:
   - vendor/**/*
   - "!vendor/cyrene-skills/**/*"
   - "!models/**/*"
+  # 包体优化（对齐上游 3087b90b）：排除本地性能测试/模拟器产物与源码映射
+  - "!dist/perf-normal{,/**/*}"
+  - "!dist/perf-profiling{,/**/*}"
+  - "!dist/renderer-old-*{,/**/*}"
+  - "!dist/sim{,/**/*}"
+  - "!dist/virtualization-*-build.log"
+  - "!**/*.map"
   # 平台裁剪（Linux 构建机交叉打 win 包：node_modules 装的是 linux 变体，
   # win 变体经 npm install --no-save 显式补装；两套并存故必须显式排除）
   - "!**/node_modules/@node-rs/jieba-linux-*/**"
@@ -42,6 +49,7 @@ files:
   - "!**/node_modules/@ast-grep/napi-darwin*/**"
   - "!**/node_modules/onnxruntime-node/bin/napi-v3/darwin/**"
   - "!**/node_modules/onnxruntime-node/bin/napi-v3/linux/**"
+  - "!**/node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**"
   - "!**/node_modules/sharp/build/**"
   - "!**/node_modules/@img/**"
   # prompts / skills 作为安装目录根下的独立文件夹，方便用户修改
@@ -87,6 +95,10 @@ extraResources:
     to: cyrene-skills
 win:
   icon: assets/tray-icon.ico
+  electronLanguages:
+    - en-US
+    - zh-CN
+    - zh-TW
   target:
     - nsis
 nsis:
