@@ -32,6 +32,12 @@ const LOG_PREFIX = "[LifeTools]";
 const EXCHANGE_CACHE_TTL_MS = 30 * 60_000;
 const exchangeCache = new TtlResultCache<number>(EXCHANGE_CACHE_TTL_MS);
 
+/**
+ * exchange_rate native 轨看门狗：C# HttpClient.Timeout = 60s（整请求含读 body），
+ * 默认 5s 必然误杀，这里给 65s 留 5s 余量；超时才回退 TS 原实现。
+ */
+const EXCHANGE_NATIVE_TIMEOUT_MS = 65_000;
+
 /** 清空汇率缓存（测试隔离用） */
 export function clearExchangeRateCache(): void {
   exchangeCache.clear();
@@ -211,7 +217,7 @@ function registerExchangeRateTool(): void {
         dateLocale: getDateLocale(),
         timezone: currentUserTimezone(),
       });
-      return nativeFirst("exchange_rate", args, exchangeRateExecute);
+      return nativeFirst("exchange_rate", args, exchangeRateExecute, { timeoutMs: EXCHANGE_NATIVE_TIMEOUT_MS });
     },
   });
 }

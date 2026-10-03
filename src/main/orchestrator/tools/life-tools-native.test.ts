@@ -7,15 +7,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown> }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: { timeoutMs?: number } }>,
   setRuntimeSettings: vi.fn(),
   nativeResult: null as string | null,
 }));
 
 vi.mock("./native-tool-host", () => ({
   nativeToolHost: { setRuntimeSettings: nativeMocks.setRuntimeSettings },
-  nativeFirst: async (tool: string, args: Record<string, unknown>, fallback: (a: Record<string, unknown>) => unknown) => {
-    nativeMocks.calls.push({ tool, args });
+  nativeFirst: async (
+    tool: string,
+    args: Record<string, unknown>,
+    fallback: (a: Record<string, unknown>) => unknown,
+    options?: { timeoutMs?: number },
+  ) => {
+    nativeMocks.calls.push({ tool, args, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
     // 模拟真实 nativeFirst 的故障回退语义
     return fallback(args);
@@ -58,13 +63,17 @@ afterEach(() => {
 });
 
 describe("exchange_rate native 轨", () => {
-  it("native 可用时透传参数并实时下发 locale/时区", async () => {
+  it("native 可用时透传参数、按件看门狗覆盖默认 5s 并实时下发 locale/时区", async () => {
     nativeMocks.nativeResult = "[exchange_rate] native 结果";
     const out = await getTool("exchange_rate").execute({ from: "USD", to: "CNY", amount: 100 });
 
     expect(out).toBe("[exchange_rate] native 结果");
     expect(nativeMocks.calls).toEqual([
-      { tool: "exchange_rate", args: { from: "USD", to: "CNY", amount: 100 } },
+      {
+        tool: "exchange_rate",
+        args: { from: "USD", to: "CNY", amount: 100 },
+        options: { timeoutMs: 65_000 },
+      },
     ]);
     expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
       dateLocale: "zh-CN",

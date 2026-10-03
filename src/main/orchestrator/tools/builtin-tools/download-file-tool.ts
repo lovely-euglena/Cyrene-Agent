@@ -23,6 +23,12 @@ const LOG_PREFIX = "[BuiltinTools]";
 
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000; // 空闲超时：连续 30s 无数据则中止
 const DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024; // 单文件上限 64MiB
+/**
+ * native 轨看门狗上限。C# 侧下载无总时长限制（只受 30s 空闲超时约束，
+ * 与 TS 原实现一致），TS 侧必须给足窗口：64MiB 在 ~1Mbps 慢链路上
+ * 约需 9 分钟。低于此值会把合法的慢速大文件误杀成 host 重启 + TS 重下载。
+ */
+const DOWNLOAD_NATIVE_TIMEOUT_MS = 10 * 60_000;
 
 /** 危险后缀黑名单：可执行/脚本文件不落盘，防"下载即执行"攻击面。 */
 const DANGEROUS_EXTS = new Set([
@@ -205,6 +211,7 @@ async function executeDownloadFileNativeFirst(
     "download_file",
     { ...args, __cyreneRoot: String(root) },
     (nativeArgs) => executeDownloadFile(nativeArgs, ctx),
+    { timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS },
   );
 }
 
