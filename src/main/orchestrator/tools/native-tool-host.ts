@@ -62,6 +62,16 @@ export interface HostRuntimeSettings {
   dateLocale: string;
   /** 本地数据根（expenses.json 等宿主侧落盘位置）；null = 宿主侧不可用。 */
   dataDir: string | null;
+  /** web_search 引擎与各源 key（B1：仅宿主内存驻留，不落盘；调用前刷新）。 */
+  webSearch: WebSearchHostSettings | null;
+}
+
+/** web_search 宿主侧配置。 */
+export interface WebSearchHostSettings {
+  engine: string;
+  bochaKey: string;
+  tavilyKey: string;
+  anySearchKey: string;
 }
 
 /** nativeFirst 按件选项：长耗时工具（大文件下载/外网请求）覆盖默认 5s 看门狗。 */
@@ -87,6 +97,7 @@ export class NativeToolHost {
     timezone: "Asia/Shanghai",
     dateLocale: "zh-CN",
     dataDir: null,
+    webSearch: null,
   };
 
   /** 兼容旧入口：仅更新时区（now 工具每次调用实时下发）。 */
@@ -102,6 +113,7 @@ export class NativeToolHost {
     if (patch.timezone !== undefined && patch.timezone.trim()) this.settings.timezone = patch.timezone.trim();
     if (patch.dateLocale !== undefined && patch.dateLocale.trim()) this.settings.dateLocale = patch.dateLocale.trim();
     if (patch.dataDir !== undefined) this.settings.dataDir = patch.dataDir;
+    if (patch.webSearch !== undefined) this.settings.webSearch = patch.webSearch;
     if (this.proc && !this.exited) this.send({ op: "config", ...this.settings });
   }
 

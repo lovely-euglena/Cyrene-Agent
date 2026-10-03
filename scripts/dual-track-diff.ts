@@ -6,6 +6,7 @@
  * fs 三件：write_file（新建/覆盖/追加/空内容）输出 JSON 与落盘字节级对齐、
  * read_file 窗口语义对齐、list_dir 文本对齐（evidence 帧协议 v1）。
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
+ * web_search：确定性校验路径双轨（引擎/key 经 config 帧注入，无网络）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
 import { DUAL_TRACK_USER_DATA } from "./dual-track-env";
@@ -692,6 +693,61 @@ async function runDownloadDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── web_search 双轨（确定性校验路径：off / 缺 key / 空 query / 未知引擎）──
+
+async function runWebSearchDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] web_search ${name}`);
+    else { failed++; console.log(`[FAIL] web_search ${name} —— ${detail}`); }
+  };
+
+  const { clearWebSearchCache, setSearchConfig, webSearchTool } = await import(
+    "../src/main/orchestrator/tools/builtin-tools/web-search-tool"
+  );
+  const cases: Array<{
+    name: string;
+    engine: string;
+    keys?: { bocha?: string; tavily?: string; anySearch?: string };
+    query: string;
+    expected: string;
+  }> = [
+    { name: "未启用", engine: "off", query: "test", expected: "E_SEARCH_NOT_ENABLED" },
+    { name: "缺 key", engine: "bocha", query: "test", expected: "E_SEARCH_KEY_MISSING" },
+    { name: "空 query", engine: "bocha", keys: { bocha: "k" }, query: "   ", expected: "E_SEARCH_QUERY_EMPTY" },
+    { name: "未知引擎", engine: "no-such", query: "test", expected: "E_SEARCH_ENGINE_NOT_SUPPORTED:no-such" },
+  ];
+
+  for (const c of cases) {
+    clearWebSearchCache();
+    setSearchConfig(
+      () => c.engine,
+      () => c.keys?.bocha ?? "",
+      () => c.keys?.tavily ?? "",
+      () => c.keys?.anySearch ?? "",
+    );
+    let tsError = "";
+    try {
+      await webSearchTool.execute({ query: c.query }, undefined);
+    } catch (error) {
+      tsError = error instanceof Error ? error.message : String(error);
+    }
+    const configFrame = {
+      op: "config",
+      webSearch: {
+        engine: c.engine,
+        bochaKey: c.keys?.bocha ?? "",
+        tavilyKey: c.keys?.tavily ?? "",
+        anySearchKey: c.keys?.anySearch ?? "",
+      },
+    };
+    const host = await callSmokeTool("web_search", { query: c.query }, [configFrame]);
+    const netError = host.ok ? "" : String(host.error ?? "");
+    check(c.name, tsError === c.expected && netError === c.expected, `ts=${tsError} net=${netError}`);
+  }
+  return failed;
+}
+
 async function main(): Promise<void> {
   let failures = 0;
   const useSmoke = existsSync(SMOKE_DLL);
@@ -736,6 +792,9 @@ async function main(): Promise<void> {
     // 下载双轨（download_file，本地 HTTP 服务）
     if (useSmoke) failures += await runDownloadDualTrack();
     else console.log("[SKIP] download 双轨（仅 smoke dll 轨支持）");
+    // web_search 双轨（config 帧注入的确定性校验路径）
+    if (useSmoke) failures += await runWebSearchDualTrack();
+    else console.log("[SKIP] web_search 双轨（仅 smoke dll 轨支持）");
   }
 
   console.log(failures === 0 ? "dual-track-diff: PASS" : `dual-track-diff: ${failures} FAILURES`);
