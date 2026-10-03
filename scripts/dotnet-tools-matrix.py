@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """tool-host 全工具逐项调用矩阵（真实调用验证）。
 
-calculator / now / clipboard / sysinfo / fs_read_file / fs_write_file /
-fs_list_dir
+calculator / now / clipboard / sysinfo / fs / expense / search_text /
+str_replace / apply_patch / download_file / git 八件（真实仓库 + 本地 bare 远程）
 每个工具多组输入：正常 + 参数缺失 + 参数类型错。验响应形状与错误语义。
 """
-import subprocess, json, os, tempfile, sys
+import subprocess, json, os, tempfile, sys, re, shutil
 
 NATIVE = "dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -297,6 +297,153 @@ print("\n=== download_file（黑名单扩展）===")
 check("hta 扩展名拒绝", data_text(c_dl1) == "[错误] 禁止下载可执行/脚本文件: .hta", data_text(c_dl1))
 check("js 扩展名拒绝", data_text(c_dl2) == "[错误] 禁止下载可执行/脚本文件: .js", data_text(c_dl2))
 check("wsf 扩展名拒绝", data_text(c_dl3) == "[错误] 禁止下载可执行/脚本文件: .wsf", data_text(c_dl3))
+
+print("\n=== git ===")
+if not shutil.which("git"):
+    print("[SKIP] git 段（未检测到系统 git）")
+else:
+    gbase = tempfile.mkdtemp(prefix="tools-git-")
+    grepo = os.path.join(gbase, "repo")
+    os.makedirs(grepo)
+    gplain = os.path.join(gbase, "plain")
+    os.makedirs(gplain)
+    GITC = {"__gitCommand": "git", "__gitSource": "system", "__gitVersion": "matrix"}
+    GIDENT = {"name": "Matrix", "email": "matrix@test.local"}
+
+    def grun(calls):
+        frames = [json.dumps({"op": "call", "callId": cid, "tool": tool, "args": args}) for cid, tool, args in calls]
+        frames.append(json.dumps({"op": "shutdown"}))
+        out = run(frames)
+        return {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
+
+    def gdata(by, cid):
+        d = by.get(cid, {}).get("data")
+        if isinstance(d, str):
+            try: return json.loads(d)
+            except Exception: return {"_raw": d[:100]}
+        return d
+
+    # 批 1：init + 播种文件（真实仓库）
+    g = grun([("g_init", "git_init", {"__cyreneRoot": grepo, **GITC})])
+    check("git init 输出", g.get("g_init", {}).get("ok") is True
+          and g["g_init"].get("data") == "已初始化 Git 仓库", g.get("g_init"))
+    open(os.path.join(grepo, "a.txt"), "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
+    os.makedirs(os.path.join(grepo, "sub"))
+    open(os.path.join(grepo, "sub", "b.txt"), "w", encoding="utf-8").write("one\ntwo\n")
+
+    # 批 2：未提交 status / 无 HEAD diff / commit（40 位 hash）
+    g = grun([
+        ("g_status1", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_diff0", "git_diff", {"__cyreneRoot": grepo, **GITC}),
+        ("g_commit1", "git_commit", {"message": "initial commit", "paths": ["a.txt", "sub/b.txt"],
+                                      "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
+    ])
+    d = gdata(g, "g_status1")
+    check("git status 未提交（untracked/行数/空分支）",
+          isinstance(d, dict) and d.get("state") == "ready" and d["branch"]["current"] == "main"
+          and d["branch"]["branches"] == [] and [f["path"] for f in d["files"]] == ["a.txt", "sub/b.txt"]
+          and [f["kind"] for f in d["files"]] == ["added", "added"] and d["files"][0]["insertions"] == 3
+          and d["lines"]["insertions"] == 5 and d["lines"]["deletions"] == 0
+          and d["summary"] == {"added": 2, "modified": 0, "deleted": 0, "renamed": 0, "conflicted": 0}, d)
+    check("git status 未提交 staged/unstaged=false",
+          isinstance(d, dict) and all(f["staged"] is False and f["unstaged"] is False for f in d["files"]), d)
+    d = gdata(g, "g_diff0")
+    check("git diff 无 HEAD 视为空",
+          isinstance(d, dict) and d.get("patch") == "" and d.get("changes") == [] and d.get("perFile") == [], d)
+    commit_text = g.get("g_commit1", {}).get("data")
+    check("git commit 输出 40 位 hash",
+          isinstance(commit_text, str) and re.match(r"^已创建提交 [0-9a-f]{40}$", commit_text), commit_text)
+    g_hash = commit_text.split(" ")[-1] if isinstance(commit_text, str) else ""
+
+    # 批 3：提交后修改/新增的 status + diff + log
+    open(os.path.join(grepo, "a.txt"), "w", encoding="utf-8").write("alpha\nBETA\ngamma\n")
+    open(os.path.join(grepo, "c.txt"), "w", encoding="utf-8").write("new file\nline2\n")
+    g = grun([
+        ("g_status2", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_diff1", "git_diff", {"__cyreneRoot": grepo, **GITC}),
+        ("g_log1", "git_log", {"__cyreneRoot": grepo, **GITC}),
+    ])
+    d = gdata(g, "g_status2")
+    check("git status 混合变更（modified/added + 行数）",
+          isinstance(d, dict) and {f["path"]: (f["kind"], f["staged"], f["unstaged"]) for f in d["files"]}
+          == {"a.txt": ("modified", False, True), "c.txt": ("added", False, False)}
+          and d["lines"]["insertions"] == 3 and d["lines"]["deletions"] == 1
+          and d["summary"] == {"added": 1, "modified": 1, "deleted": 0, "renamed": 0, "conflicted": 0}, d)
+    d = gdata(g, "g_diff1")
+    g_types = [l.get("type") for l in (d.get("changes", [{}])[0].get("diff") or [])] if isinstance(d, dict) else []
+    check("git diff 工作区（patch/perFile/changes 行序）",
+          isinstance(d, dict) and d.get("perFile") == [{"file": "a.txt", "insertions": 1, "deletions": 1}]
+          and "-beta" in d.get("patch", "") and "+BETA" in d.get("patch", "")
+          and [c.get("kind") for c in d.get("changes", [])] == ["modified"]
+          and g_types == ["hunk", "context", "remove", "add", "context", "context"], d)
+    d = gdata(g, "g_log1")
+    check("git log 单条（hash/日期/作者/信息）",
+          isinstance(d, list) and len(d) == 1 and d[0]["message"] == "initial commit"
+          and re.match(r"^[0-9a-f]{40}$", d[0]["hash"]) and re.match(r"^\d{4}-\d{2}-\d{2}$", d[0]["date"])
+          and d[0]["author"] == "Matrix", d)
+
+    # 批 4：分支切换 + 提交 + revert（HEAD 反向）
+    g = grun([("g_switch", "git_switch_branch", {"branch": "feat", "create": "true", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC})])
+    check("git switch 创建 feat", g.get("g_switch", {}).get("data") == "已切换到分支 feat", g.get("g_switch"))
+    g = grun([
+        ("g_status3", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_commit2", "git_commit", {"message": "feat changes", "paths": ["a.txt"],
+                                      "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
+    ])
+    d = gdata(g, "g_status3")
+    check("git status feat 分支列表（feat/main 排序）",
+          isinstance(d, dict) and d["branch"]["current"] == "feat" and d["branch"]["branches"] == ["feat", "main"], d)
+    commit2_text = g.get("g_commit2", {}).get("data")
+    check("git commit #2 输出", isinstance(commit2_text, str) and re.match(r"^已创建提交 [0-9a-f]{40}$", commit2_text), commit2_text)
+    g_hash2 = commit2_text.split(" ")[-1] if isinstance(commit2_text, str) else ""
+    g = grun([("g_revert", "git_revert", {"commit": g_hash2[:12], "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC})])
+    check("git revert 消息", g.get("g_revert", {}).get("data") == f"已创建回退提交 {g_hash2[:12]}"
+          and g.get("g_revert", {}).get("ok") is True, g.get("g_revert"))
+
+    # 批 5：push（本地 bare 远程：建立跟踪 → 已跟踪）+ log 复核
+    subprocess.run(["git", "init", "--bare", os.path.join(gbase, "remote.git")], capture_output=True, text=True)
+    subprocess.run(["git", "-C", grepo, "remote", "add", "origin", os.path.join(gbase, "remote.git")], capture_output=True, text=True)
+    g = grun([
+        ("g_push1", "git_push", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_status4", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_log2", "git_log", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+    ])
+    check("git push 建立跟踪（origin/feat）",
+          g.get("g_push1", {}).get("data") == "已推送到 origin/feat 并建立跟踪关系", g.get("g_push1"))
+    d = gdata(g, "g_status4")
+    check("git status 跟踪 origin/feat（ahead=0）",
+          isinstance(d, dict) and d["branch"]["tracking"] == "origin/feat" and d["ahead"] == 0 and d["behind"] == 0, d)
+    d = gdata(g, "g_log2")
+    check("git log revert 后（3 条，首条为 Revert）",
+          isinstance(d, list) and len(d) == 3 and d[0]["message"] == 'Revert "feat changes"', d)
+
+    # 批 6：已跟踪的二次 push
+    open(os.path.join(grepo, "d.txt"), "w", encoding="utf-8").write("push me\n")
+    g = grun([
+        ("g_commit3", "git_commit", {"message": "third commit", "paths": ["d.txt"],
+                                      "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
+        ("g_push2", "git_push", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+    ])
+    check("git push 已跟踪（不带 --set-upstream）",
+          g.get("g_push2", {}).get("data") == "已推送到 origin", g.get("g_push2"))
+
+    # 批 7：非仓库 + 错误路径（校验先于命令，不产生副作用）
+    g = grun([
+        ("g_norepo", "git_status", {"__cyreneRoot": gplain, "__sessionId": "gs2", **GITC}),
+        ("g_bad_ident", "git_commit", {"message": "x", "paths": ["a.txt"], "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_bad_ref", "git_diff", {"ref": "", "__cyreneRoot": grepo, **GITC}),
+        ("g_bad_branch", "git_switch_branch", {"branch": "bad..name", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_bad_path", "git_commit", {"message": "x", "paths": ["../escape.txt"], "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
+        ("g_bad_count", "git_log", {"maxCount": 0, "__cyreneRoot": grepo, **GITC}),
+        ("g_bad_revert", "git_revert", {"commit": "zzz", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+    ])
+    d = gdata(g, "g_norepo")
+    check("git status 非仓库（not_repository 形状）",
+          isinstance(d, dict) and d.get("state") == "not_repository" and d.get("message") == "这个目录还不是 Git 仓库"
+          and d.get("executable") is None and d.get("branch") is None and d.get("files") == [], d)
+    for cid, name in [("g_bad_ident", "无身份拒绝"), ("g_bad_ref", "空 ref 拒绝"), ("g_bad_branch", "非法分支名拒绝"),
+                      ("g_bad_path", "路径逃逸拒绝"), ("g_bad_count", "maxCount 0 拒绝"), ("g_bad_revert", "非法 hash 拒绝")]:
+        check(f"git 校验（{name}）", g.get(cid, {}).get("ok") is False, g.get(cid))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")
