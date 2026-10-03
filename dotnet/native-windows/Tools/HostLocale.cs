@@ -28,6 +28,21 @@ internal static class HostLocale
         => DateTimeOffset.FromUnixTimeMilliseconds(epochMs).ToLocalTime()
             .ToString("yyyy/M/d HH:mm:ss", CultureInfo.InvariantCulture);
 
+    /// <summary>JS Number(value) 语义近似：number 原样；string 按不变文化解析
+    /// （失败 NaN）；true/false/null → 1/0/0；其余 NaN。
+    /// 调用方按 TS `||` / Number.isFinite 口径兜底（模型偶发把数字写成字符串）。</summary>
+    public static double Num(JsonElement el) => el.ValueKind switch
+    {
+        JsonValueKind.Number => el.GetDouble(),
+        JsonValueKind.String => double.TryParse(el.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : double.NaN,
+        JsonValueKind.True => 1,
+        JsonValueKind.False => 0,
+        JsonValueKind.Null => 0,
+        _ => double.NaN,
+    };
+
     /// <summary>JS truthy 判定（true / 非 0 数字 / 非空字符串）。</summary>
     public static bool Truthy(JsonElement el) => el.ValueKind switch
     {
