@@ -10,14 +10,14 @@
 
 <p align="center">
   <strong>本仓库（社区接力 fork）</strong>：<a href="https://gitee.com/ygwill/cyrene-agent">Gitee</a> ・
-  <strong>上游</strong>：<a href="https://gitee.com/playa0/cyrene-agent">Gitee</a> / <a href="https://github.com/Playa-0v0/Cyrene-Agent">GitHub</a>
+  <strong>上游</strong>：<a href="https://gitee.com/playa0/cyrene-agent">Gitee</a> / <a href="https://github.com/Playa-Cyrene/Cyrene-Agent">GitHub</a>
 </p>
 
-> 🔀 **Fork 说明**：本仓库基于上游 Cyrene-Agent 社区接力开发，聚焦**性能优化（原生窗口 / 内存治理 / 流式节流）与 .NET 桌面架构探索**，定期合并上游功能更新。测试版发布在 [Releases](https://gitee.com/ygwill/cyrene-agent/releases)（2.0.0 预览版进行中，未经实机验证请看发行说明）。
+> 🔀 **Fork 说明**：本仓库基于上游 Cyrene-Agent 社区分叉开发，聚焦**性能优化（原生窗口 / 内存减负 / 流式节流 ）、 .NET 桌面架构探索 与 更多功能集成**，定期合并上游功能更新。测试版发布在 [Releases](https://gitee.com/ygwill/cyrene-agent/releases)（2.0.0 预览版进行中）。
 
 **Cyrene-Agent 是一个以《崩坏：星穹铁道》昔涟为核心角色的 Windows Live2D AI 桌面伴侣。**
 
-> 基于 Electron + TypeScript 开发的桌面端 Live2D 智能对话 Agent。  
+> 基于 Electron + TypeScript + .NET 开发的桌面端 Live2D 智能对话 Agent。  
 > 项目围绕昔涟（Cyrene）的角色设定，结合自研 CyreneHarness 引擎与 DMAE 记忆引擎，  
 > 将角色化聊天、个性化记忆、语音交互、工具调用与多平台接入整合在同一个桌面 Agent 中，  
 > 支持日常聊天（Chat）、辅助工作（Work）、代码协作（Code）、学习陪伴（Learn）四种对话模式。
@@ -44,16 +44,16 @@
 - 🪟 **.NET 原生窗口** — splash / 侧栏 / 日程 / 设置窗由 `cyrene-native`（WPF + WinForms，.NET 10）渲染，替代对应 Chromium 渲染进程，显著降低常驻内存；Electron 路径保留为回退
 - 🧱 **分离托盘** — `cyrene-native --tray` 独立托盘进程常驻（~20MB），Electron 主程序按需启动；全窗关闭后仅托盘驻留，随时拉起
 - ⚙️ **七 host .NET 后端**（feature/dotnet-backend）— 内置工具 / RAG（SQLite WAL + jieba BM25 混合检索）/ 记忆六表 / Agent 会话（多轮工具环）/ 对话循环 / MCP 连接 / 语音（CyreneVoice 独立 exe）下沉为 `cyrene-native` 子进程宿主，stdio JSON 行协议，双轨开关可整体回退 TS 原路（详见 [docs/dotnet-backend.md](./docs/dotnet-backend.md)）
-- 🧪 **实测驱动的质量链** — Linux 冒烟壳五套 96+ 项测试全绿（协议帧序 / 边缘注入 / 工具矩阵 / Agent 循环 / IPC 压力）+ calculator 双轨数值等价 diff；详见 dotnet-backend.md「测试矩阵」
-- 🛡️ **纵深安全** — MCP HTTP Host 头白名单（DNS rebinding 防护）、.NET 插件 risk 声明闸门（未声明拒注册，closed world）、工具白名单主路径拦截、截图 helper 600s 空闲自杀 + prewarm 懒启动
+- 🛡️ **纵深安全** — MCP HTTP Host 头白名单（DNS rebinding 防护）、.NET 插件 risk 声明闸门（未声明拒注册，closed world）和资源限制（内存、磁盘）、工具白名单主路径拦截、截图 helper 600s 空闲自杀 + prewarm 懒启动
 - ⚡ **流式 100ms 批量吐 token** — AGUI 流事件按 messageId 攒批，窗口不可见时暂停推送（后台不烧渲染），聊天流畅度大幅改善
 - 🐈 **聊天窗按需启动** — 启动不预载聊天页，首次激活秒开加载
 - 🐹 **桌宠内存治理** — Live2D 空闲三档降频（60→24→12fps），拖动坐标自适应校准（DPI 无关，修复对角抖动）
-- 🎯 **DeepSeek V4.1 Flash 适配** — `deepseek-flash` 新 id + 旧 id 兼容（按官方定价页校正）
-- 🎵 **本地音乐播放器** — 原生音乐窗（`cyrene-native`，内置 mpv）：本地曲库 / 歌单 / 搜索、输出设备切换；Agent 经 `music_*` 工具按权限档操作，无需网易云账号
-- 🖼️ **本地 OCR** — 内置 `CyreneOcr` 侧车（Windows.Media.Ocr），图片文字离线识别，支持语言标签与坐标返回
-- 🧮 **精确 Token 统计** — 内置 .NET tokenizer 模块，对 DeepSeek / GLM / MiniMax / Qwen 等按官方分词精确计数（其余模型回退估算），驱动上下文用量环
-- 📤 **聊天导出** — 侧栏会话右键导出（搜索 / 多选，HTML + Markdown）
+- 🎵 **本地音乐播放器** — 原生音乐窗（`cyrene-native`，内置 mpv）：本地曲库 / 歌单 / 搜索、输出设备切换；Agent 经 `music_*` 工具按权限档操作
+- 🖼️ **本地 OCR** — 内置 `CyreneOcr` 侧车（Windows.Media.Ocr），无需 OCR API密钥，图片文字离线识别，支持语言标签与坐标返回
+- 📸 **接入Snipaste** — 通过命令行接入 Snipaste ，直接获得强大的截图、贴图能力
+- 🧮 **精确 Token 统计** — 内置 .NET tokenizer 模块，对 DeepSeek / GLM / MiniMax / Qwen （后续会添加更多）等按官方分词精确计数（其余模型回退估算），驱动上下文用量环
+- 📤 **聊天导出** — 无需插件，侧栏会话右键导出（搜索 / 多选，HTML + Markdown）
+- 🧰 **便携模式** — 支持便携模式和自定义数据储存路径，切换自动迁移，可选覆盖
 
 ### 📚 文档导航
 
@@ -125,7 +125,8 @@ CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、
 - **Windows 10 / 11 64 位**
 - **Node.js 24 LTS**（npm 10+）
 - **[Rust stable](https://www.rust-lang.org/tools/install)** + **[Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)**（源码构建截图功能必需；Build Tools 勾选「使用 C++ 的桌面开发」工作负载即可）
-- **（本 fork 增强）[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** — 原生窗口与 .NET 后端增强的运行前提，缺失时自动回退 Electron / TS 原路；从源码打包（`npm run package:win:dir`）另需 **.NET 10 SDK**
+- **（本 fork 另需）[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** — 原生窗口与 .NET 后端增强的运行前提，缺失时自动回退 Electron / TS 原路
+    - 从源码打包（`npm run package:win:dir`）另需 **.NET 10 SDK**
 
 > 飞书、微信 iLink、`nut-js` 键鼠自动化及原生截图功能依赖 Windows 环境。
 >
@@ -134,9 +135,8 @@ CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、
 ### 1. 克隆并安装依赖
 
 ```bash
-git clone https://github.com/Playa-Cyrene/Cyrene-Agent.git
-# 或 Gitee（国内镜像）：git clone https://gitee.com/playa0/cyrene-agent.git
-cd Cyrene-Agent
+git clone https://gitee.com/ygwill/cyrene-agent.git
+cd cyrene-agent
 npm ci
 ```
 
@@ -157,6 +157,9 @@ npm start
 > 原生截图助手不会以 `.exe` 形式提交到 Git 仓库，因此首次克隆后必须执行一次 `npm run build:screenshot-helper`。
 >
 > **Windows 用户**也可以直接双击项目根目录的 `setup.bat` 完成依赖安装、构建和 `npm link`，之后双击 `start.bat` 即可启动。
+> 
+> fork版本提醒
+> 若不想编译原生截图助手，可以在设置中设置并接入 Snipaste 代替截图助手
 
 开发模式：
 
@@ -176,7 +179,7 @@ npm run package:win:dir
 Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 Embedding 模型**：
 
 - **应用内一键下载（推荐）**：设置 →「昔涟设置」→ 模型操作 →「⬇ 下载模型」，支持官方源 / hf-mirror、断点续传与取消；
-- **手动安装 / 离线部署**：见 [docs/local-models.md](./docs/local-models.md)，或从 [Releases](https://github.com/Playa-Cyrene/Cyrene-Agent/releases) 获取。
+- **手动安装 / 离线部署**：见 [docs/local-models.md](./docs/local-models.md)，或从 [Releases](https://github.com/Playa-Cyrene/Cyrene-Agent) 获取。
 
 > [!IMPORTANT]
 >
@@ -199,7 +202,7 @@ Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 
 
 2. **🎙️ TTS 设置**（可选）：选择 Mossland、MiniMax、MiMo、GPT-SoVITS 或自定义云端语音合成服务。
 
-3. **🎧 ASR 设置**（可选）：如需使用语音通话，可配置阿里云实时 ASR 的 AppKey 与 AccessKey，或填写 Mossland 共用 API Key、MiniMax ASR API Key。
+3. **🎧 ASR 设置**（可选）：如需使用语音通话，可配置阿里云实时 ASR 的 AppKey 与 AccessKey，或填写 Mossland 共用 API Key、MiniMax ASR API Key。也可以使用内置模型代替云端ASR.
 
 4. **📱 外部渠道**（可选）：根据需要连接飞书或微信 iLink，在手机端与 Cyrene 对话。
 
@@ -338,7 +341,7 @@ Cyrene 提供亮 / 暗两套界面主题，覆盖聊天、设置等主要界面�
 #### 🔊 语音交互
 
 - **多 TTS 引擎** — 支持 Mossland、MiniMax、MiMo、GPT-SoVITS 与自定义云端语音服务。
-- **ASR** — 支持阿里云实时语音识别，以及 Mossland、MiniMax 在每轮说话结束后的完整音频转写。
+- **ASR** — 支持阿里云实时语音识别，以及 Mossland、MiniMax、本地模型 在每轮说话结束后的完整音频转写。
 - **完整语音通话** — 通过 `LISTENING → THINKING → SPEAKING` 状态流完成连续语音交流。
 - **VAD 静默检测** — 自动判断用户是否结束说话并触发回复。
 
@@ -352,6 +355,7 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 - **生活服务** — 天气、地图、翻译、汇率、记账和行程规划等。
 - **音乐能力** — 浏览本地曲库、播放控制与输出设备切换（Agent 侧经权限分档的 `music_*` 工具）。
 - **任务协作** — 任务清单、用户选择卡片、任务委派与子任务处理。
+- **开发人员** — SSH托管、云储存。
 - **MCP 扩展** — 通过 Model Context Protocol 接入额外的外部工具与服务。
 
 <details>
@@ -394,7 +398,7 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 - **信任边界** — 用户插件首次发现一律停用，需在设置页手动启用；插件创建的定时任务必须用户核对配置后才生效；语音输入通过独占租约避免双输入源冲突。
 - **开发者工具链** — npm 包 [`@playa0v0/cyrene-plugin-sdk`](https://www.npmjs.com/package/@playa0v0/cyrene-plugin-sdk) 提供全部公开类型、Manifest 校验与 Mock Context 测试工具，运行时仅依赖 `ajv`；配套《[插件开发指南](docs/plugins/plugin-dev-guide.md)》与 `cyrene-plugin-dev` Skill，无需阅读宿主源码即可完成开发。
 - **官方示例** — 仓库 [`examples/`](./examples) 提供天气查询、长期记忆、定时自动化、系统状态与本地 ASR 契约五个示例，均可直接作为开发起点。
-- **插件收录仓库** — [Cyrene-Plugins](https://github.com/Playa-0v0/Cyrene-Plugins)（[Gitee 镜像](https://gitee.com/playa0/cyrene-plugins)）收录经安全审核的社区插件，用户可直接下载 ZIP 导入；想让你的插件被更多人看到，欢迎提 PR 收录。
+- **插件收录仓库** — [Cyrene-Plugins](https://github.com/Playa-Cyrene/Cyrene-Plugins)（[Gitee 镜像](https://gitee.com/playa0/cyrene-plugins)、[fork版本专用](https://gitee.com/ygwill/cyrene-plugins)）收录经安全审核的社区插件，用户可直接下载 ZIP 导入；想让你的插件被更多人看到，欢迎提 PR 收录。.NET 插件和 Node.js 插件没有好坏之分，请根据自身情况选择并使用。
 
 #### 🌙 主动聊天
 
@@ -428,6 +432,8 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 
 ## 🧱 技术栈
 
+### 原版
+
 | 层级 | 技术 |
 |---|---|
 | 运行环境 | Node.js 24 LTS + Electron 44 |
@@ -448,6 +454,36 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | 原生截图助手 | Rust + DXGI Desktop Duplication / Direct2D + WIC PNG + NDJSON IPC |
 | 文档与邮件 | ExcelJS、docx、PDFKit、Nodemailer |
 | 测试 | Vitest 5 |
+
+### fork版
+
+| 层级 | 技术 |
+|---|---|
+| 运行环境 | Node.js 24 LTS（`engines: >=24 <25`）+ Electron 43 + .NET 10 |
+| 开发语言 | TypeScript 6.0 + C# 14 |
+| 构建工具 | Vite 8 + esbuild（主进程 / preload / CLI）+ electron-builder 26 + `dotnet publish`（.NET 侧）+ Cargo（Rust 侧） |
+| 界面渲染 | HTML / CSS + React 19 + Tailwind CSS 4 + Pixi.js 7 + Ant Design X / Mantine / antd 6 + Chart.js |
+| Live2D | `pixi-live2d-display` 0.5.0-beta + Cubism Core |
+| Agent 核心 | [CyreneHarness](./src/main/orchestrator/harness/cyrene-harness.ts) 主循环 + CTA 会话轨迹 + Structured Output / Native Function Calling （另有.NET版） |
+| Agent 事件协议 | AG-UI（`@ag-ui/core`、`@ag-ui/client`）— 通过 `RUN_STARTED / STEP_* / TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED` 等事件与渲染进程解耦 |
+| 工具与沙箱 | 自研工具调度 + 副作用记账 + 重试策略 + 权限审批；Windows 命令沙箱 `@anthropic-ai/sandbox-runtime` |
+| 代码协作 | 自研 `LspManager` + `vscode-jsonrpc`（LSP 客户端）、`@ast-grep/napi`（结构化代码搜索）、`simple-git`（git 集成） |
+| 工具扩展 | `@modelcontextprotocol/sdk`（stdio / SSE / HTTP Transport） |
+| 插件系统 | [`@playa0v0/cyrene-plugin-sdk`](https://www.npmjs.com/package/@playa0v0/cyrene-plugin-sdk)（公开类型 + Manifest Schema 校验 + Mock Context 测试工具）+ `Cyrene.PluginSdk`（.NET 插件：`CyrenePluginBase` / `[CyreneTool]`，stdio JSON 协议对接 `src/plugins/dotnet-adapter.ts`） |
+| 记忆与检索 | Embedding（`@xenova/transformers`）+ BM25 + 自研 Cross-Encoder Reranker + DMAE V5.1（关键词命中召回 + 激活度衰减 + 三态可逆）+ `@node-rs/jieba` |
+| 浏览器与桌面自动化 | Playwright + `@playwright/mcp` + `@nut-tree-fork/nut-js` |
+| 富文本渲染 | Streamdown + Shiki + KaTeX（Markdown / 代码高亮 / 公式）+ DOMPurify |
+| 语音与媒体 | 多引擎 TTS / ASR（MiniMax / GPT-SoVITS / Mossland / Aliyun / MiMo / 自定义云 / 本地 ）+ `silk-wasm` + mpv |
+| 原生截图助手 | Rust + DXGI Desktop Duplication / Direct2D + WIC PNG + NDJSON IPC（`native/cyrene-screenshot`） |
+| .NET 原生窗口宿主 | `cyrene-native`（WPF + WinForms 同进程，net10.0-windows）— 设置 / 任务 / 音乐 / 侧边栏 / 启动屏 / 托盘 / 插件管理 / 模型下载；子域 Agents、LoopHost、Mcp、MemoryStore、Rag、Ssh、Storage、Tools |
+| .NET 检索与智能 Sidecar | `cyrene-embed`（ONNX Runtime Embedding + BM25/Hybrid + Reranker + SQLite RAG Store + Pandoc 转换）、`CyreneOcr`（WinRT `Windows.Media.Ocr`，net10.0-windows10.0.19041.0）、`CyreneToken`（Tokenizers.DotNet） |
+| .NET 语音 Sidecar | `CyreneVoice`（TTS/ASR 音频 IO + Silero VAD ONNX + `System.Numerics.Tensors`；4 字节长度头二进制帧回传） |
+| .NET 进程间协议 | `src/main/dotnet-backend` `LineHostClient` — JSON 行协议（与 native-tool-host 同构），`spawn` 子进程 + readline 消费；各 host 由 `resolveDotnetConfig()` 0/1 开关切流 |
+| .NET 跨平台验证 | `smoke-host`（cyrene-smoke）在 Linux 复用同一套 ToolHost / RagHost / MemoryHost / LoopHost / AgentSessionHost / McpHost 源码做协议冒烟 |
+| 文档与邮件 | ExcelJS、docx、PDFKit、Nodemailer + imapflow / mailparser + Pandoc Sidecar |
+| 外部渠道 | 飞书 / 微信 iLink / QQ OneBot 11（`src/main/channels` 适配器） |
+| 国际化与分发 | i18next + electron-updater + `cyrene` CLI（`src/cli`）+ electron-builder（`package:win:dir`） |
+| 测试 | Vitest 5 + jsdom + `@vitest/coverage-v8`；.NET 侧 smoke（`test:dotnet-plugin-sdk`）+ 各 `verify:*` 脚本 |
 
 ---
 
@@ -539,7 +575,12 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 - **Live2D 模型**：由 [@是依七哒](https://space.bilibili.com/457683484) 制作 —
   详见 [MODEL_LICENSE.md](./MODEL_LICENSE.md)
 - **Live2D Cubism SDK**：© Live2D Cubism
-- **贡献者名单**：详见 [docs/CONTRIBUTORS.md](./docs/CONTRIBUTORS.md)
+- **原作者**：[Playa](https://gitee.com/playa0)（Github：[Playa-0v0](https://github.com/Playa-0v0)）
+- **原项目贡献者名单**：详见 [docs/CONTRIBUTORS.md](./docs/CONTRIBUTORS.md)
+
+> [!IMPORTANT]
+> 
+> 原项目的贡献者名单仅会在合并上游更新时同步更新，名单仅对应最新合并的版本，更新可能不及时，请见谅
 
 <!-- 贡献者头像列表由 .github/workflows/contributors.yml 自动维护，请勿手动修改这对标记之间的内容 -->
 <!-- readme: contributors -start -->
@@ -633,7 +674,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                 </a>
             </td>
 		</tr>
-	<tbody>
+	</tbody>
 </table>
 <!-- readme: contributors -end -->
 
@@ -643,7 +684,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 
 ## 💌 联系
 
-欢迎通过 GitHub Issues / PR 交流。请保持讨论的礼貌与主题相关性。
+欢迎通过 GitHub / Gitee 的 Issues / PR 交流。请保持讨论的礼貌与主题相关性。
 
 ---
 
@@ -655,7 +696,11 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 
 你的支持会帮助我承担项目开发和维护中的一些开销（模型 API、测试、社群维护等），让 Cyrene 能够持续迭代。
 
-不方便扫码也没关系 —— 随手点一个 Star ⭐，或者把 Cyrene 分享给同样喜欢音游的朋友，就已经是很好的支持了。
+不方便扫码也没关系 —— 随手点一个 Star ⭐，或者把 Cyrene 分享给同样喜欢的朋友，就已经是很好的支持了。
+
+> [!IMPORTANT]
+> 
+> 这是原作者的捐赠二维码，本fork项目志愿维护，暂时不接受捐赠
 
 <table>
   <tr>
