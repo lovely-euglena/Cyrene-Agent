@@ -25,7 +25,7 @@
 ### 1.1 问题
 
 当前 L2 记忆召回是无状态每轮独立检索：
-- `buildMemoryInjection(userText)` 每轮重新向量检索 top-5（[orchestrator/index.ts:33](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/orchestrator/index.ts#L33)）
+- `buildMemoryInjection(userText)` 每轮重新向量检索 top-5（[orchestrator/index.ts:33](../../src/main/orchestrator/index.ts#L33)）
 - 上一轮召回的记忆不会自动保留到下一轮
 - 话题一转，旧记忆立即从 prompt 消失
 - **没有跨轮驻留能力（working memory buffer 不存在）**
@@ -54,16 +54,16 @@
 
 ## 3. 现状分析
 
-### 3.1 DMAE V4 工程实现（[worldbook.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts)）
+### 3.1 DMAE V4 工程实现（[worldbook.ts](../../src/main/rag/worldbook.ts)）
 
 **已实现**：
-- `EntryState`：activation / userSilence / modelSilence（[L21-26](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L21-L26)）
-- `DmaeParams`：8 个参数（maxScore/promptThreshold/userRewardBase/wakeGamma/modelRewardBase/wakeLambda/decayAlpha/decayBeta）（[L36-51](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L36-L51)）
-- `DefaultRewardStrategy`：Ru = Bu×(1+γ·ln(1+U_old))，Rm = Bm×e^(-λ·U_old)（[L101-110](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L101-L110)）
-- `QuadraticResistanceDecay`：D = (α·U²+β·M²)/√I（[L116-125](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L116-L125)）
-- `updateActivation`：两阶段（snapshot old → update silence → reward → decay → commit）（[L349-473](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L349-L473)）
-- Wake-Up（Archived 复活 Floor）：`aNew = max(aNew, entry.intrinsicValue)`（[L414-416](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L414-L416)）
-- One-Shot cascade（1 层封顶，不入状态表）（[L446-478](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L446-L478)）
+- `EntryState`：activation / userSilence / modelSilence（[L21-26](../../src/main/rag/worldbook.ts#L21-L26)）
+- `DmaeParams`：8 个参数（maxScore/promptThreshold/userRewardBase/wakeGamma/modelRewardBase/wakeLambda/decayAlpha/decayBeta）（[L36-51](../../src/main/rag/worldbook.ts#L36-L51)）
+- `DefaultRewardStrategy`：Ru = Bu×(1+γ·ln(1+U_old))，Rm = Bm×e^(-λ·U_old)（[L101-110](../../src/main/rag/worldbook.ts#L101-L110)）
+- `QuadraticResistanceDecay`：D = (α·U²+β·M²)/√I（[L116-125](../../src/main/rag/worldbook.ts#L116-L125)）
+- `updateActivation`：两阶段（snapshot old → update silence → reward → decay → commit）（[L349-473](../../src/main/rag/worldbook.ts#L349-L473)）
+- Wake-Up（Archived 复活 Floor）：`aNew = max(aNew, entry.intrinsicValue)`（[L414-416](../../src/main/rag/worldbook.ts#L414-L416)）
+- One-Shot cascade（1 层封顶，不入状态表）（[L446-478](../../src/main/rag/worldbook.ts#L446-L478)）
 
 **V5.1 待落地（白皮书 L20）**：
 - ✗ 饱和抑制 `G_sat(A) = (1 - A/A_max)^p`（V5 §5.4）
@@ -90,8 +90,8 @@
 ```
 
 **关键缺口**：
-- 向量层有 recency 衰减（`decayFactor = 0.95^(h/24)`，[vectorstore.ts:480-503](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/vectorstore.ts#L480-L503)），但只降召回分，不提供驻留
-- BM25 分支无时间衰减（[retriever.ts:350](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/retriever.ts#L350)）
+- 向量层有 recency 衰减（`decayFactor = 0.95^(h/24)`，[vectorstore.ts:480-503](../../src/main/rag/vectorstore.ts#L480-L503)），但只降召回分，不提供驻留
+- BM25 分支无时间衰减（[retriever.ts:350](../../src/main/rag/retriever.ts#L350)）
 - L2 无 working memory buffer——每轮独立检索，无跨轮驻留
 
 ### 3.3 L2 与 Worldbook 的数据模型差异
@@ -113,7 +113,7 @@
 
 按白皮书附录对照，V4→V5.1 需要落地的改动（按依赖顺序）：
 
-### 4.1 DmaeParams 扩展（[worldbook.ts:36-51](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L36-L51)）
+### 4.1 DmaeParams 扩展（[worldbook.ts:36-51](../../src/main/rag/worldbook.ts#L36-L51)）
 
 新增 4 个参数（对齐 V5 附录 B 默认值）：
 
@@ -129,7 +129,7 @@ export interface DmaeParams {
 
 `DEFAULT_DMAE_PARAMS` 补齐默认值。
 
-### 4.2 EntryState 扩展（[worldbook.ts:21-26](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L21-L26)）
+### 4.2 EntryState 扩展（[worldbook.ts:21-26](../../src/main/rag/worldbook.ts#L21-L26)）
 
 新增 `recentUserHits: number[]`（V5 §5.5 窗口命中记录）：
 
@@ -181,7 +181,7 @@ userReward(ctx: RewardContext): number {
 
 ### 4.6 Wake-Up 重构（V5 §7.4）
 
-**V4 行为**（[worldbook.ts:414-416](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L414-L416)）：
+**V4 行为**（[worldbook.ts:414-416](../../src/main/rag/worldbook.ts#L414-L416)）：
 ```ts
 if (userHit && deriveState(aOld, th) === ARCHIVED) {
   aNew = Math.max(aNew, entry.intrinsicValue);  // Floor = I
@@ -216,7 +216,7 @@ if (deriveState(aOld, th) === ARCHIVED && !userHit && !modelHit) {
 
 ### 4.8 不变量 clamp 调整
 
-V4 的 `Rm = min(Rm, D - ε)` clamp 逻辑保留（[worldbook.ts:407](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts#L407)），但 V5 的 `G_sat` 已经天然限制了饱和，clamp 仍作为数值安全网。
+V4 的 `Rm = min(Rm, D - ε)` clamp 逻辑保留（[worldbook.ts:407](../../src/main/rag/worldbook.ts#L407)），但 V5 的 `G_sat` 已经天然限制了饱和，clamp 仍作为数值安全网。
 
 ### 4.9 不升级的部分
 
@@ -301,7 +301,7 @@ interface L2DmaeState {
 
 ### 5.5 注入格式调整
 
-当前（[orchestrator/index.ts:38-49](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/orchestrator/index.ts#L38-L49)）：
+当前（[orchestrator/index.ts:38-49](../../src/main/orchestrator/index.ts#L38-L49)）：
 ```
 【相关记忆】
 · {content}（原文：{sourceQuote}）
@@ -318,7 +318,7 @@ interface L2DmaeState {
 
 ### 5.6 与现有 L2 status 状态机的关系
 
-L2 已有 `status: "active" | "aging" | "archived"`（[memory-store.ts:686](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/memory/memory-store.ts#L686) `decayL2Weights`）。
+L2 已有 `status: "active" | "aging" | "archived"`（[memory-store.ts:686](../../src/main/memory/memory-store.ts#L686) `decayL2Weights`）。
 
 **建议：DMAE state 与 L2 status 正交，不合并**：
 - L2 status：业务层状态（基于固定 delta 衰减，每 50 轮触发），控制 `isL2LocallyRecallable`（是否进 RAG 候选池）
@@ -495,7 +495,7 @@ D_l2 = baseDecay / √I;  // baseDecay 固定，I 决定速率
 
 | # | 文件 | 改动 |
 |---|---|---|
-| 1.1 | [worldbook.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts) | `DmaeParams` 加 `repeatRho/satPower/repeatWindow/wakeBonus` |
+| 1.1 | [worldbook.ts](../../src/main/rag/worldbook.ts) | `DmaeParams` 加 `repeatRho/satPower/repeatWindow/wakeBonus` |
 | 1.2 | 同上 | `EntryState` 加 `recentUserHits: number[]` |
 | 1.3 | 同上 | `RewardContext` 加 `recentHitCount?: number` |
 | 1.4 | 同上 | `DefaultRewardStrategy.userReward` 加 G_sat × G_repeat |
@@ -503,7 +503,7 @@ D_l2 = baseDecay / √I;  // baseDecay 固定，I 决定速率
 | 1.6 | 同上 | Wake-Up 从 `max(aNew, I)` 改为 `A_init = T_active + B_w`（初值改写） |
 | 1.7 | 同上 | Archived skip update（未命中的 Archived 跳过） |
 | 1.8 | 同上 | `recentUserHits` 窗口维护 + push |
-| 1.9 | [worldbook-constants.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook-constants.ts) | 确认/新增 V5 相关常量 |
+| 1.9 | [worldbook-constants.ts](../../src/main/rag/worldbook-constants.ts) | 确认/新增 V5 相关常量 |
 | 1.10 | worldbook 测试 | 更新 V5 行为断言 |
 | 1.11 | `src/main/sim/` | Simulator 跑 `coffee-lifecycle` / `four-tier-mix` / `dormant-rescue` 验证 |
 
@@ -512,21 +512,21 @@ D_l2 = baseDecay / √I;  // baseDecay 固定，I 决定速率
 | # | 文件 | 改动 |
 |---|---|---|
 | 2.1 | 新建 `dmae-types.ts` 或并入 worldbook.ts | `DmaeEntry` 接口 |
-| 2.2 | [worldbook.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/worldbook.ts) | `WorldbookEntry implements DmaeEntry`（已有字段，只需声明 implements） |
+| 2.2 | [worldbook.ts](../../src/main/rag/worldbook.ts) | `WorldbookEntry implements DmaeEntry`（已有字段，只需声明 implements） |
 | 2.3 | `WorldbookManager` | 泛型化为 `DmaeManager<T extends DmaeEntry>` 或保持原名 |
-| 2.4 | [rag/index.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/rag/index.ts) | 导出调整 |
+| 2.4 | [rag/index.ts](../../src/main/rag/index.ts) | 导出调整 |
 
 ### Phase 3：L2 DMAE 接入
 
 | # | 文件 | 改动 |
 |---|---|---|
-| 3.1 | [orchestrator/index.ts:33](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/orchestrator/index.ts#L33) | topK 5 → 4 |
-| 3.2 | [orchestrator/index.ts:33](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/orchestrator/index.ts#L33) | 修正过时注释 "top-3" → "top-4" |
+| 3.1 | [orchestrator/index.ts:33](../../src/main/orchestrator/index.ts#L33) | topK 5 → 4 |
+| 3.2 | [orchestrator/index.ts:33](../../src/main/orchestrator/index.ts#L33) | 修正过时注释 "top-3" → "top-4" |
 | 3.3 | 新建 `l2-dmae-manager.ts` 或扩展 `DmaeManager` | L2 DMAE 状态管理（独立 DmaeParams 实例，decayAlpha≈3.2） |
-| 3.4 | [memory-store.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/memory/memory-store.ts) | L2 DMAE state 持久化（`l2DmaeStates` Map + JSON 同步） |
-| 3.5 | [memory-types.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/memory/memory-types.ts) | `L2Memory` 加 DMAE 相关字段（或独立 state 表） |
-| 3.6 | [orchestrator/index.ts](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/orchestrator/index.ts) | `buildMemoryInjection`：top-4 召回后赋 I 值 + markRecalled；DMAE 热层驻留 L2 注入 |
-| 3.7 | [call-prompt-builder.ts:38](file:///c:/Users/13575/Documents/live2D-Cyrene/src/main/call/call-prompt-builder.ts#L38) | 每轮调用 `l2DmaeManager.updateActivation(userText, modelText)` |
+| 3.4 | [memory-store.ts](../../src/main/memory/memory-store.ts) | L2 DMAE state 持久化（`l2DmaeStates` Map + JSON 同步） |
+| 3.5 | [memory-types.ts](../../src/main/memory/memory-types.ts) | `L2Memory` 加 DMAE 相关字段（或独立 state 表） |
+| 3.6 | [orchestrator/index.ts](../../src/main/orchestrator/index.ts) | `buildMemoryInjection`：top-4 召回后赋 I 值 + markRecalled；DMAE 热层驻留 L2 注入 |
+| 3.7 | [call-prompt-builder.ts:38](../../src/main/call/call-prompt-builder.ts#L38) | 每轮调用 `l2DmaeManager.updateActivation(userText, modelText)` |
 | 3.8 | L2 keywords 提取 | L2 content 分词 或 evidence entities 提取为 keywords（用于 H_m 检测） |
 
 ### Phase 4：参数校准

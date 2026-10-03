@@ -141,7 +141,7 @@ return captionImageSafe(filePath, vision);
 
 ### 5.2 一次性迁移
 
-在 `normalizeModelSettings()`（[model-settings.ts](file:///e:/Cyrene-Agent/src/main/settings/model-settings.ts#L277-L296)）里，把现有三层判定（`syncWithMain` / 无字段推断 / 默认 true）执行后**立即持久化**结果到 settings 文件，并在文件里写入迁移完成标记（如 `schemaVersion: 2`）。
+在 `normalizeModelSettings()`（[model-settings.ts](../../src/main/settings/model-settings.ts#L277-L296)）里，把现有三层判定（`syncWithMain` / 无字段推断 / 默认 true）执行后**立即持久化**结果到 settings 文件，并在文件里写入迁移完成标记（如 `schemaVersion: 2`）。
 
 下次加载时看到 `schemaVersion >= 2` 就跳过全部迁移判定，三层 if 删除。老用户第一次启动应用时自动迁移，之后走干净路径。
 

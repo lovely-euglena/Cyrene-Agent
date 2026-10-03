@@ -14,29 +14,29 @@
 
 `risk` 回答的是"这个工具危不危险、要不要问用户"；Plan Mode 需要回答的是"这个工具会不会改变世界"。这是两个维度。按 `risk` 判断的后果：
 
-- `write_memory`（[tool-registry.ts L421-L448](../../../src/main/orchestrator/tools/registry/tool-registry.ts)）声明了 `effectKind: "mutation"` 但未声明 `risk`（默认 `safe`），于是 **Plan Mode 下调用 `write_memory` 修改用户核心记忆是被当前守卫放行的**。这不是假设——今天就存在。
+- `write_memory`（[tool-registry.ts L421-L448](../../src/main/orchestrator/tools/registry/tool-registry.ts)）声明了 `effectKind: "mutation"` 但未声明 `risk`（默认 `safe`），于是 **Plan Mode 下调用 `write_memory` 修改用户核心记忆是被当前守卫放行的**。这不是假设——今天就存在。
 - 未来任何 MCP/插件工具只要声明 `risk: "safe"`，无论副作用如何，都会被 Plan Mode 放行。
 
 打个比方：门禁只看"这个人平时脾气好不好"（risk），却没看"他手里有没有拿着油漆刷"（effectKind）。
 
 ### 问题 2：`allow_all` 跳过 Plan 守卫
 
-[tool-runtime.ts L41](../../../src/main/orchestrator/harness/adapter/tool-runtime.ts) 的 `allow_all` 判断在 Plan 只读检查**之前**返回。用户开着 allow_all 权限进入计划模式时，"只规划不执行"的承诺直接失效。
+[tool-runtime.ts L41](../../src/main/orchestrator/harness/adapter/tool-runtime.ts) 的 `allow_all` 判断在 Plan 只读检查**之前**返回。用户开着 allow_all 权限进入计划模式时，"只规划不执行"的承诺直接失效。
 
 "先规划不要动"是用户对这一轮对话的**契约**，不是权限档位。契约应该压过任何权限设置——ZCode 同语义：YOLO 可以绕普通权限，不能绕 Plan Mode。
 
 ### 问题 3：`write_plan` 隐式修改项目 `.gitignore`
 
-[plan-tools.ts L148-L151](../../../src/main/orchestrator/harness/plan-tools.ts) 在写计划文件时顺手调用 `ensureCyreneIgnored`（L73-L92），把 `.cyrene/` 追加进项目 `.gitignore`。用户说"进入计划模式，不要改项目"，Cyrene 却改了项目的 `.gitignore`——与 Plan Mode 承诺直接矛盾。
+[plan-tools.ts L148-L151](../../src/main/orchestrator/harness/plan-tools.ts) 在写计划文件时顺手调用 `ensureCyreneIgnored`（L73-L92），把 `.cyrene/` 追加进项目 `.gitignore`。用户说"进入计划模式，不要改项目"，Cyrene 却改了项目的 `.gitignore`——与 Plan Mode 承诺直接矛盾。
 
 ### 附带发现的第 4 个问题（P2 处理）
 
-[side-effect-resolver.ts L12-L18](../../../src/main/orchestrator/harness/side-effect-resolver.ts) 的映射表存在两处语义债：
+[side-effect-resolver.ts L12-L18](../../src/main/orchestrator/harness/side-effect-resolver.ts) 的映射表存在两处语义债：
 
 | 映射 | 问题 |
 |---|---|
 | `verification → read_only` | 验证工具会跑 build/test/lint，产生 `dist/`、coverage、snapshot，甚至执行项目自己的 package script（`run_verification` 的 build 分支 trust 是 `workspace_script`）。"验证意图"不等于"无副作用"——质检员试机器，机器转起来照样产废料 |
-| `unknown → read_only` | 与 [tool-registry.ts L91](../../../src/main/orchestrator/tools/registry/tool-registry.ts) 注释"未配置默认 unknown，**不静默放行**"直接矛盾。一边门禁说没登记不让进，一边保安把没登记的当自己人。MCP 工具接入后所有未声明 `effectKind` 的都会被当作只读 |
+| `unknown → read_only` | 与 [tool-registry.ts L91](../../src/main/orchestrator/tools/registry/tool-registry.ts) 注释"未配置默认 unknown，**不静默放行**"直接矛盾。一边门禁说没登记不让进，一边保安把没登记的当自己人。MCP 工具接入后所有未声明 `effectKind` 的都会被当作只读 |
 
 ---
 
@@ -99,12 +99,12 @@ if (options.permissionMode === "allow_all") return true;
 - **通过 Plan 检查的 read 工具继续走原有权限链**（不提前 return true），保持"per-action 档位下 read 工具仍会询问"的现有语义，diff 最小。
 - `policyFor`、`ToolRiskLevel` 的相关导入若仅此处使用则同步删除。
 
-**为什么 `write_plan` 自己不会被拦**：`enter_plan_mode / write_plan / ask_user` 是 harness builtin，在 `checkPermission` 之前 dispatch、不走权限链（[plan-tools.ts L4-L6](../../../src/main/orchestrator/harness/plan-tools.ts) 头部注释已写明）。所以本改造无需为它们开白名单。
+**为什么 `write_plan` 自己不会被拦**：`enter_plan_mode / write_plan / ask_user` 是 harness builtin，在 `checkPermission` 之前 dispatch、不走权限链（[plan-tools.ts L4-L6](../../src/main/orchestrator/harness/plan-tools.ts) 头部注释已写明）。所以本改造无需为它们开白名单。
 
 ### 3.2 删除 `ensureCyreneIgnored` 及其调用
 
-- 删除 [plan-tools.ts](../../../src/main/orchestrator/harness/plan-tools.ts) 中 `ensureCyreneIgnored` 函数（L72-L92）及 `write_plan` 内的调用点（L148-L151，含"顺带确保 .cyrene/ 不进 git"注释）。
-- 同步修正 [plan-mode.ts L8](../../../src/main/orchestrator/plan-mode.ts) 头部注释：删去"且 .cyrene 由 write_plan 自动加 .gitignore"表述。
+- 删除 [plan-tools.ts](../../src/main/orchestrator/harness/plan-tools.ts) 中 `ensureCyreneIgnored` 函数（L72-L92）及 `write_plan` 内的调用点（L148-L151，含"顺带确保 .cyrene/ 不进 git"注释）。
+- 同步修正 [plan-mode.ts L8](../../src/main/orchestrator/plan-mode.ts) 头部注释：删去"且 .cyrene 由 write_plan 自动加 .gitignore"表述。
 
 **不做任何替代机制**。`.cyrene/` 要不要进 `.gitignore` 由用户决定：
 
@@ -117,7 +117,7 @@ if (options.permissionMode === "allow_all") return true;
 改造会让"计划阶段可用工具"收紧，需确认现有读取类工具都正确声明了 `effectKind: "read"`：
 
 1. `grep effectKind` 全量盘点内置工具声明情况，缺声明的读取类工具（若有）补上；
-2. **`run_shell` 在 Plan Mode 下有意禁用**。当前注册是 `risk: "shell"` + `effectKind: "unknown"`（[run-shell-tool.ts L569-L571](../../../src/main/orchestrator/tools/builtin-tools/run-shell-tool.ts)），且没有挂 `effectResolver`（tool-registry 类型注释里的"如 run_shell 根据 purpose 判断"只是字段说明愿景，不是实现）。按 `effect !== "read"` 判断后 `run_shell` 自然被拒——这是**有意行为**，不为保留它临时写 command classifier（`shell-execution-policy.ts` 自己就写明 classifier 不是安全边界）。计划阶段的 Git / 文件 / 搜索事实一律走专用 read-only 工具；若盘点发现确有 `git status` 类刚需，后续补一个声明 `effectKind: "read"` 的专用工具，不走 `run_shell` 放行；
+2. **`run_shell` 在 Plan Mode 下有意禁用**。当前注册是 `risk: "shell"` + `effectKind: "unknown"`（[run-shell-tool.ts L569-L571](../../src/main/orchestrator/tools/builtin-tools/run-shell-tool.ts)），且没有挂 `effectResolver`（tool-registry 类型注释里的"如 run_shell 根据 purpose 判断"只是字段说明愿景，不是实现）。按 `effect !== "read"` 判断后 `run_shell` 自然被拒——这是**有意行为**，不为保留它临时写 command classifier（`shell-execution-policy.ts` 自己就写明 classifier 不是安全边界）。计划阶段的 Git / 文件 / 搜索事实一律走专用 read-only 工具；若盘点发现确有 `git status` 类刚需，后续补一个声明 `effectKind: "read"` 的专用工具，不走 `run_shell` 放行；
 3. 确认计划阶段模型高频使用的工具（read_file / glob / grep / web_search 类）全部 `effectKind: "read"`。
 
 ---
@@ -160,7 +160,7 @@ if (options.permissionMode === "allow_all") return true;
 
 **核心原则**：crash recovery 首先恢复事实，不恢复执行权。这与 `cyrene-plan-mode` skill 的 `Workspace Ground Truth > Plan Assumption` 一脉相承。
 
-**为什么 `EXECUTING` 不能原样恢复**：`ExecutionLedger` 是纯内存短生命周期的（[execution-ledger.ts L34-L35](../../../src/main/orchestrator/execution-ledger.ts)，两个 `Map`，无任何落盘），重启即失忆，崩溃瞬间的执行进度**未知**。`EXECUTING` 真正表达的是"持久状态停止时执行正在进行"，不是"可以安全继续"。若原样恢复，模型看到完整 Approved Plan，可能把已完成步骤再执行一遍——外部副作用（如发邮件）会被重复触发：
+**为什么 `EXECUTING` 不能原样恢复**：`ExecutionLedger` 是纯内存短生命周期的（[execution-ledger.ts L34-L35](../../src/main/orchestrator/execution-ledger.ts)，两个 `Map`，无任何落盘），重启即失忆，崩溃瞬间的执行进度**未知**。`EXECUTING` 真正表达的是"持久状态停止时执行正在进行"，不是"可以安全继续"。若原样恢复，模型看到完整 Approved Plan，可能把已完成步骤再执行一遍——外部副作用（如发邮件）会被重复触发：
 
 ```text
 批准 → EXECUTING → write_file A ✓ → send_email ✓ → write_file B ← 此刻 crash
@@ -186,7 +186,7 @@ persist state → restart → 全部降级 DISCUSSING（附中断事实注入）
 
 ### 4.4 恢复注入块 `[PLAN_RECOVERY]`：补齐"从磁盘读回"的实现入口
 
-当前 `preparePlanRunContext()`（[plan-lifecycle.ts L32-L48](../../../src/main/orchestrator/harness/adapter/plan-lifecycle.ts)）**只在 `EXECUTING` 读计划文件**，`PLAN_DISCUSSING` 直接返回——"从磁盘读回旧计划"目前没有任何实现路径，必须补这块：
+当前 `preparePlanRunContext()`（[plan-lifecycle.ts L32-L48](../../src/main/orchestrator/harness/adapter/plan-lifecycle.ts)）**只在 `EXECUTING` 读计划文件**，`PLAN_DISCUSSING` 直接返回——"从磁盘读回旧计划"目前没有任何实现路径，必须补这块：
 
 - reconcile 恢复 session 时标记 `recoveredFrom: "PLAN_REVIEW" | "EXECUTING"`；
 - `preparePlanRunContext()` 扩展：`PLAN_DISCUSSING` 且 session 带 `recoveredFrom` 且 `planPath` 文件存在 → 读盘注入 `[PLAN_RECOVERY]` 块；注入后清除 marker（一次性消费，后续消息不重复注入）；
@@ -218,14 +218,14 @@ persist state → restart → 全部降级 DISCUSSING（附中断事实注入）
 
 ## 五、P2：清理副作用映射表（第三批实施）
 
-[side-effect-resolver.ts](../../../src/main/orchestrator/harness/side-effect-resolver.ts) 的 `EFFECT_KIND_MAP` 两行一起改：
+[side-effect-resolver.ts](../../src/main/orchestrator/harness/side-effect-resolver.ts) 的 `EFFECT_KIND_MAP` 两行一起改：
 
 | effectKind | 现映射 | 改为 |
 |---|---|---|
 | `verification` | `read_only` | `idempotent_mutation` |
 | `unknown` | `read_only`（注释还写着"保守默认"） | `non_idempotent_side_effect` |
 
-**为什么 `verification` 不是 `non_idempotent_side_effect`**：这个映射不只影响并发，还影响重试——[retry-policy.ts L34](../../../src/main/orchestrator/harness/retry-policy.ts) 规定 `non_idempotent_side_effect` 任何 category 都不自动重试。verification 落进去，一次普通 typecheck/test 因 timeout 或 transient 临时故障就会被赋予"绝不能重试的外部副作用"语义，过重。`verification` 的准确定位是：**不是只读**（有产物、会执行项目脚本，必须退出并发 read pool），**但通常可安全重跑**（`idempotent_mutation` 允许 transient / timeout / rate_limited 重试）。
+**为什么 `verification` 不是 `non_idempotent_side_effect`**：这个映射不只影响并发，还影响重试——[retry-policy.ts L34](../../src/main/orchestrator/harness/retry-policy.ts) 规定 `non_idempotent_side_effect` 任何 category 都不自动重试。verification 落进去，一次普通 typecheck/test 因 timeout 或 transient 临时故障就会被赋予"绝不能重试的外部副作用"语义，过重。`verification` 的准确定位是：**不是只读**（有产物、会执行项目脚本，必须退出并发 read pool），**但通常可安全重跑**（`idempotent_mutation` 允许 transient / timeout / rate_limited 重试）。
 
 **为什么 `unknown` 是 `non_idempotent_side_effect`**：fail-closed——不知道它干什么，就按最危险的对待。
 

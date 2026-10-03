@@ -27,10 +27,10 @@
 
 关键代码位置：
 
-- 审批流编排：[agui-bridge.ts L267-L359](../../../src/main/agui-bridge.ts)（startPlanReviewFlow，run 收尾后异步触发）
-- 两段式卡片：[plan-tools.ts L146-L186](../../../src/main/orchestrator/harness/plan-tools.ts)（buildPlanReviewCard / buildPlanSupplementCard）
-- 渲染端代发消息与持久监听：[ChatPage.tsx L571-L623](../../../src/renderer/react/features/chat/pages/ChatPage.tsx)
-- run 收尾触发：[agui-bridge.ts L1105-L1108](../../../src/main/agui-bridge.ts)
+- 审批流编排：[agui-bridge.ts L267-L359](../../src/main/agui-bridge.ts)（startPlanReviewFlow，run 收尾后异步触发）
+- 两段式卡片：[plan-tools.ts L146-L186](../../src/main/orchestrator/harness/plan-tools.ts)（buildPlanReviewCard / buildPlanSupplementCard）
+- 渲染端代发消息与持久监听：[ChatPage.tsx L571-L623](../../src/renderer/react/features/chat/pages/ChatPage.tsx)
+- run 收尾触发：[agui-bridge.ts L1105-L1108](../../src/main/agui-bridge.ts)
 
 ### 1.2 三个问题
 
@@ -61,7 +61,7 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
 
 - 讨论期间反复 write_plan 不会反复弹审批卡；
 - 语义与 ZCode 对齐：write_plan ≈ 写计划文件，submit_plan ≈ ExitPlanMode（提请审批 + 等待 + 带回执退出讨论态）；
-- 状态机衔接干净：PLAN_DISCUSSING → PLAN_REVIEW 的迁移点从"run 结束时（agui-bridge 编排）"迁回"工具执行时（状态机自身）"，[plan-mode.ts](../../../src/main/orchestrator/plan-mode.ts) 的 moveToReview 从此由 harness 内部调用，agui-bridge 不再触碰状态机。
+- 状态机衔接干净：PLAN_DISCUSSING → PLAN_REVIEW 的迁移点从"run 结束时（agui-bridge 编排）"迁回"工具执行时（状态机自身）"，[plan-mode.ts](../../src/main/orchestrator/plan-mode.ts) 的 moveToReview 从此由 harness 内部调用，agui-bridge 不再触碰状态机。
 
 ### 3.2 工具定义
 
@@ -77,7 +77,7 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
   其余状态一律 failure（runtime_safety），与 ZCode 的 InvalidStateTransition 同语义。
 ```
 
-执行流程（[plan-tools.ts](../../../src/main/orchestrator/harness/plan-tools.ts) 新增 executeSubmitPlan）：
+执行流程（[plan-tools.ts](../../src/main/orchestrator/harness/plan-tools.ts) 新增 executeSubmitPlan）：
 
 ```text
 校验状态（PLAN_DISCUSSING + planWrittenThisRun；失败即 failure 返回）
@@ -106,7 +106,7 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
 
 ### 3.4 排他与双时钟：完全复用 ask_user 机制
 
-- [tool-round.ts L68-L70](../../../src/main/orchestrator/harness/tool-round.ts) 的排他集合加入 submit_plan：`new Set(["ask_user", "confirm_uncertain_effect", "submit_plan"])`。与 ask_user 同轮出现的其他工具调用统一 not_executed，模型基于回执重新决策。
+- [tool-round.ts L68-L70](../../src/main/orchestrator/harness/tool-round.ts) 的排他集合加入 submit_plan：`new Set(["ask_user", "confirm_uncertain_effect", "submit_plan"])`。与 ask_user 同轮出现的其他工具调用统一 not_executed，模型基于回执重新决策。
 - 排他轮内现有逻辑原样生效：`clock.startUserWait()` / `stopUserWait()`（等待不计执行超时）、tool_start / tool_end 事件（运行流中出现"提交审批"卡片，等待与结果可见）、raceWithSignal（用户点停止 → abort → 等待即取消）。
 - dispatch 走 `run.askDispatchContext`（已注入 requestUserClarification），不需要新的注入通道。
 
@@ -114,9 +114,9 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
 
 现状审批卡沿用 userChoiceTimeout（默认 60s，设置页"询问等待时间"）。审批是重决策——用户要通读整份计划，60s 连阅读都不够，超时即静默拉回讨论，体验是断的。
 
-新增 `planApprovalTimeout`（[timeout-types.ts](../../../src/shared/timeout-types.ts) 默认 600_000 即 10 分钟，设置页可调）。submit_plan 等待用它；ask_user 等快问快答维持 userChoiceTimeout 不动。超时语义见 3.3 第四行：**宁可拉回讨论态等用户回来，绝不默认批准，也不默认否决**。
+新增 `planApprovalTimeout`（[timeout-types.ts](../../src/shared/timeout-types.ts) 默认 600_000 即 10 分钟，设置页可调）。submit_plan 等待用它；ask_user 等快问快答维持 userChoiceTimeout 不动。超时语义见 3.3 第四行：**宁可拉回讨论态等用户回来，绝不默认批准，也不默认否决**。
 
-### 3.6 状态机改动清单（[plan-mode.ts](../../../src/main/orchestrator/plan-mode.ts)）
+### 3.6 状态机改动清单（[plan-mode.ts](../../src/main/orchestrator/plan-mode.ts)）
 
 | 函数 | 改动 |
 |---|---|
@@ -159,7 +159,7 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
 
 复用 ask 卡通道（requestUserClarification → cyrene.choice / cyrene.choice.dismiss → CHOICE_RESOLVE IPC），不新建事件体系：
 
-- [AskClarificationCard](../../../src/shared/ask-clarification.ts) 新增 `mode: "plan_approval"`（现有 mode 旁新增枚举值）+ `planPath`；
+- [AskClarificationCard](../../src/shared/ask-clarification.ts) 新增 `mode: "plan_approval"`（现有 mode 旁新增枚举值）+ `planPath`；
 - 渲染端交互卡组件按 mode 识别，渲染上述三按钮布局（**过渡期兼容**：第一批施工先以现有 single_select 三选项渲染跑通语义，专属卡片 UI 第二批替换，见实施批次）；
 - 回传答案沿用 AskUserAnswer：`{ field: "plan_decision", selectedValues: ["approve" | "revise" | "reject"] }` + `customText`（修改意见，revise 时必填）；
 - 三档**全部不删计划文件**——计划文档是项目资产（P0 设计原则第 3 条），不批准也保留在工作区供用户回看。
@@ -168,7 +168,7 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
 
 | 位置 | 改动 |
 |---|---|
-| [ChatPage.tsx L571-L623](../../../src/renderer/react/features/chat/pages/ChatPage.tsx) 持久监听 | **退役**：cyrene.plan.approved 代发执行消息、cyrene.plan.supplement 代发用户消息两个分支删除；审批卡改走 run 订阅（与 ask_user 卡同路径） |
+| [ChatPage.tsx L571-L623](../../src/renderer/react/features/chat/pages/ChatPage.tsx) 持久监听 | **退役**：cyrene.plan.approved 代发执行消息、cyrene.plan.supplement 代发用户消息两个分支删除；审批卡改走 run 订阅（与 ask_user 卡同路径） |
 | 交互卡组件 | 新增 plan_approval 模式分支（三按钮 + 展开输入框 + Ctrl+Enter） |
 | i18n（zh-CN / en） | 三档按钮与回执文案 key；删除 planApprovedAutoMessage |
 
@@ -211,7 +211,7 @@ write_plan 承担"落盘计划草稿"职责，讨论期间模型可能多次调�
 
 批准后模型同 run 开工，与 P0 的 Plan 只读守卫如何衔接？**无需任何改动**，推演如下：
 
-- P0 守卫（[tool-runtime.ts](../../../src/main/orchestrator/harness/adapter/tool-runtime.ts)）按 `isPlanReadOnly` 拦截，其定义为 `state === "PLAN_DISCUSSING" || "PLAN_REVIEW"`。批准瞬间状态已切 EXECUTING，**不在守卫集合内**，修改类工具自然放行——"先规划不要动"的契约在 REVIEW 阶段仍然压过一切权限档位，批准后契约履行完毕。
+- P0 守卫（[tool-runtime.ts](../../src/main/orchestrator/harness/adapter/tool-runtime.ts)）按 `isPlanReadOnly` 拦截，其定义为 `state === "PLAN_DISCUSSING" || "PLAN_REVIEW"`。批准瞬间状态已切 EXECUTING，**不在守卫集合内**，修改类工具自然放行——"先规划不要动"的契约在 REVIEW 阶段仍然压过一切权限档位，批准后契约履行完毕。
 - 工具清单是 run 级固定的：DISCUSSING 时注入的 submit_plan 在批准后仍在清单里。若模型执行中再次误调 submit_plan，状态守卫（仅 PLAN_DISCUSSING 可用）以 failure 回执拦下，无死循环风险。update_todo 本就在清单中，开工指引直接可用。
 - run 结束时 completePlanRun 照旧：completeExecution → NORMAL → cyrene.plan.completed。**同 run 开工不改变执行收尾的任何语义。**
 
