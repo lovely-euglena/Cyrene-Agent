@@ -51,8 +51,9 @@ npm run deploy                           # 构建资产 + wrangler deploy
 - 自定义域在 `wrangler.toml` 的 `routes` 配置（默认 `cyrene-cloud.ygwill.asia`），部署自动创建 DNS 与证书。
   **证书覆盖**：3 级子域（`*.ygwill.asia`）走通用证书；4 级子域不在覆盖内，TLS 握手 alert 40
   （IKJN3W 实测）——需独立子 zone / ACM / 已覆盖域名。
-- **Bot Fight Mode**：开启时会拦脚本 UA（403/1010）。脚本客户端（核心档套件 / e2e 种子）需要浏览器 UA，
-  或在 CF 面板关闭 BFM（Free 计划无法按路径豁免）。
+- **Bot Fight Mode**：开启时会拦脚本 UA（403/1010）。脚本客户端需用 `--user-agent` 传浏览器 UA
+  （核心档套件 / e2e 均支持），或关闭 BFM（Free 计划无法按路径豁免）；生产使用建议关闭 BFM 或独立 zone
+  ——桌面端同步客户端同为非浏览器 UA。
 - 部署实例验收：
 
 ```bash

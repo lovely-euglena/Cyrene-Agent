@@ -453,3 +453,22 @@
 - **验证（Windows 本地）**：本地 full 云冒烟 **54/54**（含 3 项能力声明）；核心档 **35/35**；
   PWA 单测 **39/39**（含能力解析/降级 6 项）；e2e **11/11**（Edge 通道）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN70 / #IKJN78。
+
+## 2026-10-04 增量：CF 版服务端（IKJN79）
+
+- **实现**：`cloudflare/cloud-server/`（Workers + Durable Objects SQLite，单租户单 DO `global`）；TS 复用
+  `src/main/sync/sync-protocol.ts` 校验器；端点与 .NET 版逐项对齐（healthz / capabilities(impl=cf-workers) /
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)），鉴权、限流（DO 固定窗口）、链/序号校验、
+  整批原子性由核心档套件锁定。
+- **生成**：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 回声 mock（测试部署）；
+  `CLOUD_LLM_API_KEY` 走 OpenAI 兼容接口（与 .NET ModelClient 同口径）。
+- **静态资产**：Workers 静态资产（构建 PWA → `assets/`）；Worker 统一缓存头 / CSP（与 .NET 静态托管一致）。
+- **部署**：`wrangler deploy`；自定义域 `cyrene-cloud.ygwill.asia`（3 级子域，通用证书即时覆盖——规避
+  IKJN3W 的 4 级子域 alert 40 证书问题）；测试部署 `--var CLOUD_LLM_MODE:echo`。
+- **Bot Fight Mode**：拦脚本 UA（403/1010）——套件 / e2e 新增 `--user-agent` 覆盖；生产建议关闭 BFM 或独立
+  zone（桌面端同步客户端同为非浏览器 UA）。
+- **套件鲁棒化**：核心档对启用服务端生成的实例鲁棒——计数 / 集合断言收敛到 run 前缀事件（生成事件 id
+  前缀 `gen-`）；clone 改快照单调夹逼 + run 集合 + 游标边界。
+- **验证（Windows 本地）**：CF 单测 **18/18**；本地 wrangler dev（回声 mock）核心档 **35/35**、e2e **11/11**；
+  .NET full 回归 **54/54**；部署实例（HTTPS）核心档 **35/35**、e2e **11/11**。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN79。
