@@ -55,6 +55,8 @@ curl http://127.0.0.1:7789/healthz
 
 `mem_limit 512m` + healthcheck + `restart: unless-stopped` + 日志上限（json-file 10m×3）；
 同样仅绑 `127.0.0.1`，反代见 `deploy/Caddyfile.example`。
+镜像内以非 root（`cyrene`，uid 10001）运行；命名卷 `cloud-data` 首次初始化会继承 `/data` 属主，
+若改 bind mount 需自行 `chown 10001`。
 
 ## API（camelCase JSON）
 
@@ -62,11 +64,14 @@ curl http://127.0.0.1:7789/healthz
 - `POST /v1/sync/push` — body 为 JSONL 事件批（协议 v0 读取语义）；整批原子：
   - `400 E_SYNC_BATCH_INVALID`：JSON 坏行 / 半截尾行 / 字段级校验失败（`errors:[{index,code}]`）
   - `400 E_SYNC_BATCH_REJECTED`：链/序号校验失败（`E_SYNC_CHAIN` / `E_SYNC_SEQ`）
+  - `413 E_SYNC_BATCH_TOO_LARGE`：请求体超上限（10MB；客户端应切小批重推）
   - `200 {accepted, duplicates, cursor}`：重复 eventId 幂等跳过
 - `GET /v1/sync/fetch?since=<cursor>&limit=<1..1000>&sessionId=<可选>` →
   `{events, cursor, hasMore}`（插入序；`cursor` 不透明，客户端原样回传）
 - `GET /v1/sync/clone?sessionId=<可选>` — 全量 JSONL 流（每行一个事件），游标在
-  `X-Sync-Cursor` 响应头；新设备 clone 后从该游标走 fetch 增量
+  `X-Sync-Cursor` 响应头；新设备 clone 后从该游标走 fetch 增量。
+  注意：游标是**全局插入序**——带了 `sessionId` 的 clone，后续 fetch 必须带同一 `sessionId`，
+  否则会跳过其他会话中 id 更小的事件
 
 客户端收敛：拉取后按 `(lamport, deviceId, seq)` 重排（协议 v0 读取语义），
 离线分叉两端最终收敛到同一全序。

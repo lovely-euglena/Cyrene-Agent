@@ -97,10 +97,10 @@ public sealed class EventStore
         return (long)command.ExecuteScalar()!;
     }
 
-    /// <summary>整批校验 + 幂等插入（原子）。链/序号错误进 Errors（此时本批未写入任何事件）。</summary>
-    public PushOutcome PushBatch(IReadOnlyList<SyncEventV0> events)
+    /// <summary>整批校验 + 幂等插入（原子；写锁异步/可取消等待）。链/序号错误进 Errors（此时本批未写入任何事件）。</summary>
+    public async Task<PushOutcome> PushBatchAsync(IReadOnlyList<SyncEventV0> events, CancellationToken cancellationToken = default)
     {
-        _writeLock.Wait();
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             using var connection = Open();

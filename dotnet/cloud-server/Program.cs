@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -22,6 +23,8 @@ var urls = builder.Configuration["urls"]
     ?? Environment.GetEnvironmentVariable("ASPNETCORE_URLS")
     ?? "http://127.0.0.1:7789";
 builder.WebHost.UseUrls(urls);
+// push 请求体硬上限（超出 → 413 E_SYNC_BATCH_TOO_LARGE；handler 另有 Content-Length 快检）
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = SyncHttp.MaxPushBodyBytes);
 
 var dataDir = Environment.GetEnvironmentVariable("CYRENE_CLOUD_DATA")
     ?? Path.Combine(AppContext.BaseDirectory, "data");
@@ -32,6 +35,7 @@ var app = builder.Build();
 var bearer = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
 if (!string.IsNullOrEmpty(bearer))
 {
+    var expected = Encoding.UTF8.GetBytes("Bearer " + bearer);
     app.Use(async (context, next) =>
     {
         if (!context.Request.Path.StartsWithSegments("/v1"))
@@ -39,10 +43,11 @@ if (!string.IsNullOrEmpty(bearer))
             await next();
             return;
         }
-        if (context.Request.Headers.Authorization.ToString() != "Bearer " + bearer)
+        var provided = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
+        if (!CryptographicOperations.FixedTimeEquals(provided, expected))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsJsonAsync(new { code = "E_UNAUTHORIZED" });
+            await context.Response.WriteAsJsonAsync(new { code = SyncHttp.Unauthorized });
             return;
         }
         await next();
@@ -64,24 +69,28 @@ var sync = app.MapGroup("/v1/sync");
 
 // POST /v1/sync/push：body = JSONL 事件批（协议 v0 读取语义）→ 整批校验（含链/序号）→
 // 幂等插入（event_id 首见生效）→ 原子提交；任一错误整批回滚（400）。
-sync.MapPost("/push", async (HttpRequest request, EventStore store) =>
+sync.MapPost("/push", async (HttpContext context, EventStore store) =>
 {
-    using var reader = new StreamReader(request.Body, Encoding.UTF8);
-    var text = await reader.ReadToEndAsync();
+    if (context.Request.ContentLength is > SyncHttp.MaxPushBodyBytes)
+    {
+        return Results.Json(new { code = SyncHttp.BatchTooLarge }, statusCode: StatusCodes.Status413PayloadTooLarge);
+    }
+    using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
+    var text = await reader.ReadToEndAsync(context.RequestAborted);
     var batch = SyncProtocolV0.ReadBatch(text);
     if (batch.TruncatedTail || batch.Errors.Count > 0)
     {
         return Results.BadRequest(new
         {
-            code = "E_SYNC_BATCH_INVALID",
+            code = SyncHttp.BatchInvalid,
             truncatedTail = batch.TruncatedTail,
             errors = batch.Errors,
         });
     }
-    var outcome = store.PushBatch(batch.Events);
+    var outcome = await store.PushBatchAsync(batch.Events, context.RequestAborted);
     if (outcome.Errors.Count > 0)
     {
-        return Results.BadRequest(new { code = "E_SYNC_BATCH_REJECTED", errors = outcome.Errors });
+        return Results.BadRequest(new { code = SyncHttp.BatchRejected, errors = outcome.Errors });
     }
     return Results.Json(new
     {
@@ -96,7 +105,7 @@ sync.MapGet("/fetch", (EventStore store, string? since, int? limit, string? sess
 {
     if (!long.TryParse(since ?? "0", out var sinceId) || sinceId < 0)
     {
-        return Results.BadRequest(new { code = "E_SYNC_CURSOR" });
+        return Results.BadRequest(new { code = SyncHttp.Cursor });
     }
     var outcome = store.Fetch(sinceId, Math.Clamp(limit ?? 200, 1, 1000), sessionId);
     return Results.Json(new
@@ -115,11 +124,35 @@ sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sess
     context.Response.Headers["X-Sync-Cursor"] = store.CurrentCursor().ToString();
     var options = new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     var newline = "\n"u8.ToArray();
-    foreach (var syncEvent in store.StreamAll(sessionId))
+    try
     {
-        await JsonSerializer.SerializeAsync(context.Response.Body, syncEvent, options);
-        await context.Response.Body.WriteAsync(newline);
+        foreach (var syncEvent in store.StreamAll(sessionId))
+        {
+            await JsonSerializer.SerializeAsync(context.Response.Body, syncEvent, options, context.RequestAborted);
+            await context.Response.Body.WriteAsync(newline, context.RequestAborted);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // 客户端断开：正常终止流（X-Sync-Cursor 已发出，客户端可凭已收数据续 fetch）
+    }
+    catch (IOException)
+    {
+        // 连接中断（写失败）：同上
     }
 });
 
 app.Run();
+
+/// <summary>同步 HTTP 层的错误码与请求约束（集中定义，避免裸字面量）。</summary>
+internal static class SyncHttp
+{
+    /// <summary>push 请求体上限（10MB）；超出 → 413 E_SYNC_BATCH_TOO_LARGE（客户端应切小批重推）。</summary>
+    public const long MaxPushBodyBytes = 10 * 1024 * 1024;
+
+    public const string Unauthorized = "E_UNAUTHORIZED";
+    public const string BatchInvalid = "E_SYNC_BATCH_INVALID";
+    public const string BatchTooLarge = "E_SYNC_BATCH_TOO_LARGE";
+    public const string BatchRejected = "E_SYNC_BATCH_REJECTED";
+    public const string Cursor = "E_SYNC_CURSOR";
+}
