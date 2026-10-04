@@ -76,14 +76,6 @@ public sealed class EventStore
         command.ExecuteNonQuery();
     }
 
-    public long Count()
-    {
-        using var connection = Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM events";
-        return (long)command.ExecuteScalar()!;
-    }
-
     public long CurrentCursor()
     {
         using var connection = Open();
@@ -97,8 +89,14 @@ public sealed class EventStore
         return (long)command.ExecuteScalar()!;
     }
 
-    /// <summary>整批校验 + 幂等插入（原子；写锁异步/可取消等待）。链/序号错误进 Errors（此时本批未写入任何事件）。</summary>
-    public async Task<PushOutcome> PushBatchAsync(IReadOnlyList<SyncEventV0> events, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// 整批校验 + 幂等插入（原子；写锁异步/可取消等待）。链/序号错误进 Errors（此时本批未写入任何事件）。
+    /// lineByEventId：eventId → 输入 JSONL 0 基物理行号（与 SyncProtocolV0 错误索引同一空间；缺省回退排序后下标）。
+    /// </summary>
+    public async Task<PushOutcome> PushBatchAsync(
+        IReadOnlyList<SyncEventV0> events,
+        IReadOnlyDictionary<string, int>? lineByEventId = null,
+        CancellationToken cancellationToken = default)
     {
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -120,7 +118,10 @@ public sealed class EventStore
                 var error = CheckChain(connection, transaction, syncEvent);
                 if (error is not null)
                 {
-                    errors.Add(new SyncReadError(index, error));
+                    var errorIndex = lineByEventId is not null && lineByEventId.TryGetValue(syncEvent.EventId, out var sourceLine)
+                        ? sourceLine
+                        : index;
+                    errors.Add(new SyncReadError(errorIndex, error));
                     hasError = true;
                     continue;
                 }
@@ -218,8 +219,8 @@ public sealed class EventStore
         command.ExecuteNonQuery();
     }
 
-    /// <summary>插入序增量读取。</summary>
-    public FetchOutcome Fetch(long since, int limit, string? sessionId)
+    /// <summary>插入序增量读取（异步形态 + 逐行响应取消：客户端断开后不再继续整页读取）。</summary>
+    public async Task<FetchOutcome> FetchAsync(long since, int limit, string? sessionId, CancellationToken cancellationToken = default)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
@@ -233,18 +234,17 @@ public sealed class EventStore
         var events = new List<SyncEventV0>();
         var cursor = since;
         var hasMore = false;
-        using (var reader = command.ExecuteReader())
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            while (reader.Read())
+            cancellationToken.ThrowIfCancellationRequested();
+            if (events.Count == limit)
             {
-                if (events.Count == limit)
-                {
-                    hasMore = true;
-                    break;
-                }
-                events.Add(Map(reader));
-                cursor = reader.GetInt64(10);
+                hasMore = true;
+                break;
             }
+            events.Add(Map(reader));
+            cursor = reader.GetInt64(10);
         }
         return new FetchOutcome(events, cursor, hasMore);
     }
@@ -273,10 +273,17 @@ public sealed class EventStore
         DeviceId = reader.GetString(4),
         Seq = reader.GetInt64(5),
         Ts = reader.GetString(6),
-        Payload = JsonSerializer.Deserialize<JsonElement>(reader.GetString(7)),
+        Payload = ParsePayload(reader.GetString(7)),
         PrevHash = reader.IsDBNull(8) ? null : reader.GetString(8),
         Hash = reader.IsDBNull(9) ? null : reader.GetString(9),
     };
+
+    /// <summary>JsonDocument 用后即弃、Clone() 脱离文档：避免不可释放文档在 clone 全量流下累积堆压力。</summary>
+    private static JsonElement ParsePayload(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
 }
 
 /// <summary>push 结果（Errors 非空 = 整批回滚，Accepted/Duplicates 无意义）。</summary>

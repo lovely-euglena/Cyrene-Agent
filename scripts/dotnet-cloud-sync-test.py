@@ -2,7 +2,7 @@
 """cloud-server 同步收敛冒烟（IKJK2J 验收）：真实起服务 + 两客户端并发 push/fetch。
 
 覆盖：
-  1. /healthz 就绪 + RSS 观测（D5 预算证据）；
+  1. /healthz 就绪 + RSS 观测（信息输出，不作 CI 门禁）；
   2. push 幂等（重复批：duplicates、不重复入库）；
   3. 乱序批 + 分页游标（limit 步进，不重不漏；服务端按协议 v0 规范序入库）；
   4. 两客户端并发 push → 双方全量 fetch 后按 (lamport, deviceId, seq) 收敛一致；
@@ -12,7 +12,11 @@
   8. 请求体上限（Content-Length 快检 + chunked 触顶均 → 413 E_SYNC_BATCH_TOO_LARGE，不落库）；
   9. fetch?sessionId= 会话过滤；
   10. 链过渡混用（同设备 未上链/已上链）；
-  11. CLOUD_TOKEN 门闩（独立实例 401/200）。
+  11. CLOUD_TOKEN 门闩（独立实例：/v1 无/错 401、正确 200）；
+  12. 批内重复 eventId（读取器丢弃重复 → accepted=2/duplicates=0）；
+  13. 半截尾行 truncatedTail → 400；
+  14. 分页步进序 == 单次全量序（不重不漏）；
+  15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -199,9 +203,10 @@ def main():
             print("[FAIL] 服务未就绪（服务日志见下方）")
             return 1
         check("healthz 就绪 + RSS 观测", isinstance(health.get("rssMB"), (int, float)), json.dumps(health)[:120])
-        print(f"  healthz: events={health.get('events')} rssMB={health.get('rssMB')}")
-        check("RSS 预算（基准 <300MB；空载 ≤150MB 以 Linux 容器复测）",
-              health.get("rssMB", 999) < 300, f"rssMB={health.get('rssMB')}")
+        rss = health.get("rssMB")
+        print(f"  healthz: cursor={health.get('cursor')} rssMB={rss}")
+        if isinstance(rss, (int, float)) and rss >= 300:
+            print("  [WARN] RSS 超过参考阈值 300MB（不计入 failed；口径：进程硬上限 512M / VPS 总预算 2G，见 README）")
 
         # 1. 幂等
         batch = [
@@ -228,11 +233,24 @@ def main():
         check("乱序批 accepted=3（服务端按协议 v0 规范序入库）",
               status == 200 and json.loads(body).get("accepted") == 3, body[:200])
         events, _ = fetch_all(base, limit=2)
-        check("分页游标不重不漏（limit=2 步进）",
-              len(events) == 6 and len({item["eventId"] for item in events}) == 6, f"n={len(events)}")
+        whole, _ = fetch_all(base, limit=1000)
+        check("分页游标不重不漏（步进序 == 单次全量序）",
+              canonical_ids(events) == canonical_ids(whole) and len(events) == 6,
+              f"paged={len(events)} whole={len(whole)}")
         check("首批插入序 a1,a2,a3",
               [item["eventId"] for item in events[:3]] == ["a1", "a2", "a3"],
               str([item["eventId"] for item in events])[:120])
+
+        # 2b. 批内重复 eventId（读取器丢弃重复；首见入库 → accepted=2 / duplicates=0）
+        dup_batch = [
+            ev("d1", session_id="s6", device="dev-d", lamport=1, seq=1),
+            ev("d1", session_id="s6", device="dev-d", lamport=1, seq=1),
+            ev("d2", session_id="s6", device="dev-d", lamport=2, seq=2),
+        ]
+        status, body, _ = push(base, dup_batch)
+        data = json.loads(body)
+        check("批内重复 eventId（丢弃重复 → accepted=2 / duplicates=0）",
+              status == 200 and data.get("accepted") == 2 and data.get("duplicates") == 0, body[:200])
 
         # 3. 两客户端并发
         errors = []
@@ -284,11 +302,32 @@ def main():
         check("失败批整批回滚（总数不变）", len(events) == baseline + 2,
               f"n={len(events)} baseline={baseline}")
 
+        # 4b. 链拒绝 errors[].index = 物理行号（构造排序错位：坏行在 line0、按 lamport 排到最后）
+        bad_first = [
+            ev("lb1", session_id="s9", device="dev-e", lamport=9, seq=9, prev=h3, hashed=h3),
+            ev("lg1", session_id="s9", device="dev-e", lamport=1, seq=1),
+            ev("lg2", session_id="s9", device="dev-e", lamport=5, seq=5),
+        ]
+        status, body, _ = push(base, bad_first)
+        data = json.loads(body)
+        check("链拒绝 errors[].index 指向物理行号（排序错位场景）",
+              status == 400 and data.get("code") == "E_SYNC_BATCH_REJECTED"
+              and [e.get("index") for e in data.get("errors", [])] == [0], body[:200])
+
         # 5. 畸形批
         status, body, _ = push(base, [ev("ok1"), "这不是 JSON", ev("ok2")])
         data = json.loads(body)
         check("畸形批 → 400 E_SYNC_BATCH_INVALID",
               status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID", body[:160])
+
+        # 5b. 半截尾行（truncatedTail）→ 400 E_SYNC_BATCH_INVALID
+        half = ('{"eventId":"t1","sessionId":"s7","type":"message.append","lamport":1,'
+                '"deviceId":"dev-t","seq":1,"ts":"2026-10-04T03:00:00.000Z","payl')
+        status, body, _ = http("POST", base + "/v1/sync/push", half)
+        data = json.loads(body)
+        check("半截尾行 → 400 E_SYNC_BATCH_INVALID（truncatedTail）",
+              status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID" and data.get("truncatedTail") is True,
+              body[:160])
 
         # 6. 请求体上限（>10MB → 413，不落库；裸 socket 只发头不发体，验证读取前即拒绝）
         response = oversized_push_probe(port)
