@@ -89,5 +89,6 @@ rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关�
   内容哈希重算待 Q3 定稿；默认绑 127.0.0.1，`CLOUD_TOKEN` 为 K 之前的最小门闩。
 - 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/两客户端并发收敛/
   链拒绝整批回滚/clone 游标）。
-- 部署：`dotnet/cloud-server/docker-compose.yml`（mem_limit 512m、healthcheck、日志上限）+
-  `Caddyfile.example`；正式部署/备份/告警属 IKJK2N。
+- 部署：**裸跑为主**（`dotnet publish` + `deploy/cyrene-cloud-server.service` systemd 单元 +
+  `deploy/Caddyfile.example` 反代）；容器为备选（`docker-compose.yml`：mem_limit 512m +
+  healthcheck + 日志上限）；正式部署/备份/告警属 IKJK2N。

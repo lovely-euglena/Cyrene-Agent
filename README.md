@@ -481,7 +481,7 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | .NET 语音 Sidecar | `CyreneVoice`（TTS/ASR 音频 IO + Silero VAD ONNX + `System.Numerics.Tensors`；4 字节长度头二进制帧回传） |
 | .NET 进程间协议 | `src/main/dotnet-backend` `LineHostClient` — JSON 行协议（与 native-tool-host 同构），`spawn` 子进程 + readline 消费；各 host 由 `resolveDotnetConfig()` 0/1 开关切流 |
 | .NET 跨平台验证 | `smoke-host`（cyrene-smoke）引用 `cyrene-core`，在 Linux 跑协议冒烟（五套 96+ 项） |
-| .NET 云端服务端 | `cloud-server`（net10.0 Minimal API + SQLite WAL）— 事件库 + /v1/sync push/fetch/clone；compose 512m + Caddy 反代示例（云端昔涟 Phase 1） |
+| .NET 云端服务端 | `cloud-server`（net10.0 Minimal API + SQLite WAL）— 事件库 + /v1/sync push/fetch/clone；**裸跑为主**（systemd 单元 + Caddy 反代），容器备选（云端昔涟 Phase 1） |
 | 文档与邮件 | ExcelJS、docx、PDFKit、Nodemailer + imapflow / mailparser + Pandoc Sidecar |
 | 外部渠道 | 飞书 / 微信 iLink / QQ OneBot 11（`src/main/channels` 适配器） |
 | 国际化与分发 | i18next + electron-updater + `cyrene` CLI（`src/cli`）+ electron-builder（`package:win:dir`） |
