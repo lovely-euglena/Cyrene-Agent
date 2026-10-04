@@ -4,6 +4,8 @@
 name = "cyrene-cloud"
 main = "src/worker.ts"
 compatibility_date = "2026-10-01"
+# 仅自定义域可达（避免 workers.dev 旁路域名绕过域名白名单 / 认知面收敛）
+workers_dev = false
 
 # 自定义域（部署时替换为自己的域；3 级子域通常被通用证书覆盖，4 级子域需独立子 zone / ACM）
 routes = [

@@ -2,16 +2,21 @@
  * CloudStore：CF 版单租户 Durable Object（IKJN79）。
  *
  * 承载：事件库（插入序游标）/ 设备令牌（配对 / 撤销 / 轮换）/ 限流 / 生成闭环（DO alarm 重试）。
- * 语义与 .NET cloud-server（EventStore / AuthStore / DialogLoop / Program.cs）逐项对齐，
- * 由 scripts/dotnet-cloud-sync-test.py 核心档锁定（同一函数对部署实例跑）。
+ * 语义与 .NET cloud-server（EventStore / AuthStore / DialogLoop / Program.cs）逐项对齐。
  *
- * 差异（已在设计文档记录）：
+ * 验证口径：核心档套件（scripts/dotnet-cloud-sync-test.py，同一函数对部署实例跑）覆盖鉴权 / 配对 /
+ * 链与序号校验 / 整批原子性 / 分页与 clone；**限流阈值不在核心档内**，由 test/rate-limit.test.ts
+ * 单测 + cf-worker 工作流低阈值实例（CLOUD_RATE_PAIR_PER_MIN=2）的 429 断言覆盖。
+ *
+ * 差异（另见 README「与 .NET 版差异」）：
  * - healthz.rssMB 恒为 0（Workers 无进程 RSS 概念）；
  * - 生成失败重试由 DO alarm 承担（.NET 为进程内 2 次退避后等待下一次事件触发）；
- * - 限流为 DO 内固定窗口计数（CF 平台另有边缘限流；口径与 .NET 固定窗口一致）。
+ * - 限流为 DO 内固定窗口计数（CF 平台另有边缘限流）；窗口为绝对分钟对齐
+ *   （.NET 为按分区首请求起算的分段窗口）。
  */
 import { readSyncBatch, type SyncEventV0 } from "../../../src/main/sync/sync-protocol";
 import { generationEnabled, intEnv, MAX_PUSH_BODY_BYTES, type Env } from "./env";
+import { hitRateLimit } from "./rate-limit";
 import { replayBranch, trimContext, type ChatMessage } from "./replay";
 import {
   base64Url,
@@ -27,7 +32,6 @@ import {
 } from "./util";
 
 const SERVER_DEVICE_ID = "server";
-const RATE_WINDOW_MS = 60_000;
 const EVENT_COLUMNS =
   "id, event_id, session_id, type, lamport, device_id, seq, ts, payload, prev_hash, hash";
 
@@ -88,10 +92,11 @@ export class CloudStore {
     const url = new URL(request.url);
     const path = url.pathname;
     try {
-      const rateLimited = await this.enforceRateLimit(request, path);
+      // 先鉴权后限流：分区键只信任已验证主体（避免随机 Bearer 换桶），匿名固定按客户端 IP。
+      const auth = await this.authenticate(request);
+      const rateLimited = await this.enforceRateLimit(request, path, auth);
       if (rateLimited !== null) return rateLimited;
 
-      const auth = await this.authenticate(request);
       const isPairRedeem = request.method === "POST" && path === "/v1/pair";
       if (!isPairRedeem && auth === null) return json({ code: "E_UNAUTHORIZED" }, 401);
       const principal = auth as Principal;
@@ -102,7 +107,13 @@ export class CloudStore {
       if (path === "/v1/devices" && request.method === "GET") return this.listDevices(principal);
       const deviceAction = /^\/v1\/devices\/([^/]+)\/(revoke|rotate)$/u.exec(path);
       if (deviceAction !== null && request.method === "POST") {
-        return await this.manageDevice(principal, decodeURIComponent(deviceAction[1]), deviceAction[2]);
+        let deviceId: string;
+        try {
+          deviceId = decodeURIComponent(deviceAction[1]);
+        } catch {
+          return json({ code: "E_DEVICE_ID" }, 400); // 畸形百分号编码：4xx，而非兜底 500
+        }
+        return await this.manageDevice(principal, deviceId, deviceAction[2]);
       }
       if (path === "/v1/sync/push" && request.method === "POST") return await this.push(request);
       if (path === "/v1/sync/fetch" && request.method === "GET") return this.fetchEvents(url);
@@ -140,7 +151,11 @@ export class CloudStore {
     return { kind: "device", deviceId: row.device_id as string, name: row.name as string };
   }
 
-  private async enforceRateLimit(request: Request, path: string): Promise<Response | null> {
+  private async enforceRateLimit(
+    request: Request,
+    path: string,
+    auth: Principal | null,
+  ): Promise<Response | null> {
     let prefix: string | null = null;
     let limit = 0;
     if (path === "/v1/pair" || path === "/v1/pair/code") {
@@ -151,24 +166,8 @@ export class CloudStore {
       limit = intEnv(this.env.CLOUD_RATE_SYNC_PER_MIN, 300);
     }
     if (prefix === null) return null;
-    const window = Math.floor(Date.now() / RATE_WINDOW_MS);
-    const key = `${prefix}:${await this.partitionKey(request)}`;
-    this.sql.exec("DELETE FROM rate_limits WHERE window < ?", window - 1);
-    this.sql.exec(
-      "INSERT INTO rate_limits (key, window, count) VALUES (?, ?, 1) ON CONFLICT(key, window) DO UPDATE SET count = count + 1",
-      key,
-      window,
-    );
-    const row = this.sql.exec("SELECT count FROM rate_limits WHERE key = ? AND window = ?", key, window).toArray()[0];
-    const count = row !== undefined ? Number(row.count) : 1;
-    return count > limit ? json({ code: "E_RATE_LIMITED" }, 429) : null;
-  }
-
-  /** 分区键：优先按 token 哈希（不落明文），否则按客户端 IP（与 .NET PartitionKey 一致）。 */
-  private async partitionKey(request: Request): Promise<string> {
-    const token = extractBearer(request);
-    if (token !== null) return `t:${(await sha256Hex(token)).slice(0, 16)}`;
-    return `i:${request.headers.get("CF-Connecting-IP") ?? "unknown"}`;
+    const key = `${prefix}:${rateLimitPartition(request, auth)}`;
+    return hitRateLimit(this.sql, key, limit) ? json({ code: "E_RATE_LIMITED" }, 429) : null;
   }
 
   // ── healthz / 配对 / 设备 ──
@@ -286,8 +285,9 @@ export class CloudStore {
     if (contentLength !== null && Number(contentLength) > MAX_PUSH_BODY_BYTES) {
       return json({ code: "E_SYNC_BATCH_TOO_LARGE" }, 413);
     }
-    const text = await request.text();
-    if (new TextEncoder().encode(text).byteLength > MAX_PUSH_BODY_BYTES) {
+    // 无 Content-Length 的 chunked 请求也能在读入过程中超限即中止（内存有界）
+    const text = await readBodyLimited(request, MAX_PUSH_BODY_BYTES);
+    if (text === null) {
       return json({ code: "E_SYNC_BATCH_TOO_LARGE" }, 413);
     }
     const batch = readSyncBatch(text);
@@ -413,16 +413,42 @@ export class CloudStore {
     return json({ events: page.map(eventJson), cursor: String(cursor), hasMore });
   }
 
+  /** clone：以起始游标为快照上界，按 id 分页流式输出（内存有界；客户端断连即停止拉页）。 */
   private clone(url: URL): Response {
     const sessionId = url.searchParams.get("sessionId");
     const cursor = this.currentCursor();
-    const rows = (
-      sessionId === null
-        ? this.sql.exec(`SELECT ${EVENT_COLUMNS} FROM events WHERE id <= ? ORDER BY id`, cursor)
-        : this.sql.exec(`SELECT ${EVENT_COLUMNS} FROM events WHERE id <= ? AND session_id = ? ORDER BY id`, cursor, sessionId)
-    ).toArray() as unknown as EventRow[];
-    const body = rows.map((row) => JSON.stringify(eventJson(row))).join("\n");
-    return new Response(rows.length > 0 ? `${body}\n` : "", {
+    const sql = this.sql;
+    const encoder = new TextEncoder();
+    let lastId = 0;
+    const pageSize = 200;
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => {
+        const rows = (
+          sessionId === null
+            ? sql.exec(
+                `SELECT ${EVENT_COLUMNS} FROM events WHERE id <= ? AND id > ? ORDER BY id LIMIT ?`,
+                cursor,
+                lastId,
+                pageSize,
+              )
+            : sql.exec(
+                `SELECT ${EVENT_COLUMNS} FROM events WHERE id <= ? AND id > ? AND session_id = ? ORDER BY id LIMIT ?`,
+                cursor,
+                lastId,
+                sessionId,
+                pageSize,
+              )
+        ).toArray() as unknown as EventRow[];
+        if (rows.length === 0) {
+          controller.close();
+          return;
+        }
+        lastId = Number(rows[rows.length - 1].id);
+        const text = `${rows.map((row) => JSON.stringify(eventJson(row))).join("\n")}\n`;
+        controller.enqueue(encoder.encode(text));
+      },
+    });
+    return new Response(stream, {
       headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "X-Sync-Cursor": String(cursor) },
     });
   }
@@ -668,6 +694,7 @@ export class CloudStore {
       count INTEGER NOT NULL,
       PRIMARY KEY (key, window)
     )`);
+    this.sql.exec("CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window)");
     this.sql.exec(`CREATE TABLE IF NOT EXISTS dialog_pending (
       session_id TEXT PRIMARY KEY,
       enqueued_at TEXT NOT NULL,
@@ -681,6 +708,37 @@ export class CloudStore {
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
+}
+
+/** 限流分区键：已认证按主体（主控 / deviceId），匿名固定按客户端 IP——不信任未验证的 Bearer。 */
+function rateLimitPartition(request: Request, auth: Principal | null): string {
+  if (auth !== null) return auth.kind === "master" ? "p:master" : `p:${auth.deviceId}`;
+  return `i:${request.headers.get("CF-Connecting-IP") ?? "unknown"}`;
+}
+
+/** 流式读取请求体并限长：chunked（无 Content-Length）超限即中止，返回 null。 */
+async function readBodyLimited(request: Request, maxBytes: number): Promise<string | null> {
+  if (request.body === null) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
 }
 
 function extractBearer(request: Request): string | null {
