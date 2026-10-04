@@ -3,9 +3,9 @@ name: dotnet-backend
 on:
   push:
     branches: [feature/dotnet-backend, main]
-    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
   pull_request:
-    paths: ['dotnet/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dotnet-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dotnet-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
 
 jobs:
   build:
@@ -29,6 +29,7 @@ jobs:
         run: dotnet build dotnet/voice/CyreneVoice -c Release
       - name: Build smoke-host + Linux 协议套件（冒烟/边缘/矩阵/循环）
         run: |
+          sudo apt-get update && sudo apt-get install -y libfontconfig1
           dotnet build dotnet/smoke-host -c Release
           python3 scripts/dotnet-smoke-linux.py
           python3 scripts/dotnet-edge-test.py

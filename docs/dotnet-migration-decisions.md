@@ -528,3 +528,43 @@
   核心档（生成关）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；
   .NET 本地 e2e 回归 **11/11**。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。
+
+## 2026-10-05 增量：内置工具 T2「按库替代」批下沉 .NET（IKJK3V）
+
+- **范围**：11 件工具下沉——fetch_url（T1 遗留）、文档四件（write_markdown / write_excel / write_word /
+  write_pdf）、邮件四件（send_email / email_list / email_read / email_mark）、ast_grep 两件
+  （ast_grep_search / ast_grep_replace）。统一「TS 策略层 + .NET 执行层」：nativeFirst / withNativeFirst
+  包装，不可用/失败回退 TS 原实现，取消（AbortError）原样上抛；语义拒绝（覆盖防骤降等）不因轨道切换改变。
+- **fetch_url（Turndown → ReverseMarkdown v6）**：GitHub API 特化 / 正文容器提取 / 512KB 截断 /
+  30 分钟固定 TTL 缓存逐项移植；已知库差异：列表项缩进宽度、表格（TS 拍平为文本块，NET 输出 GFM
+  管道表——双轨显式断言防漂移）、整页回退路径的 `<title>`（NET 丢 head）；raw 格式两侧逐字一致。
+- **文档四件（exceljs → ClosedXML、docx → Open XML SDK、pdfkit → QuestPDF）**：
+  - write_markdown 与 fs_write_file 同款分工（TS 预检 / 覆盖防骤降 / review 基线；.NET 落盘 + changes 证据）；
+  - write_excel/word/pdf 的样式模板解析（skills 样式 + 自定义色覆盖）留在 TS，解析后经内部参数注入宿主；
+  - 已知差异：ClosedXML 列宽含 0.71 字符内边距（双轨容差 ±1）；exceljs 读取器只认无前缀标签，读不了
+    ClosedXML 的 `x:` 前缀 XML（双轨用 JSZip + 前缀归一自解析投影）；
+  - **顺带修复：TS pdfkit 与本机 msyh.ttc 不兼容（既有问题，`doc.text()` 抛 `createSubset is not a
+    function`）——QuestPDF 正确支持 TTC，迁移后 native 轨可用**；动态 import 补 CJS/ESM 互操作兜底
+    （tsx/Node ESM 加载 CJS 包时命名导出不可见）。
+- **邮件四件（nodemailer/imapflow/mailparser → MailKit/MimeKit）**：SMTP/IMAP 配置经 config 帧注入
+  （B1：授权码仅宿主内存驻留，调用前实时刷新）；发信确认卡留在 TS（B2 审批在 Electron），native 失败
+  回退 nodemailer 且不重复弹卡；校验文案（未启用/配置不完整/uid 无效/收件人无效等）逐字对齐；
+  矩阵用本地 fake SMTP + fake IMAP 覆盖快乐路径（发信捕获/列表/读信/标记/附件）。
+- **ast_grep 两件（@ast-grep/napi → 随包 ast-grep CLI JSON）**：CLI 平台二进制路径由 TS
+  `resolveAstGrepCommand` 解析后注入（pnpm/npm 两种布局；Linux 侧补可执行位）；文件收集 / 语言过滤 /
+  Skip 目录 / 上限（500 文件、50 匹配）与 TS 对齐；替换走 `--json=stream` 的 `replacement` 字段
+  （CLI 展开与 ast-grep 语义一致），C# 侧重叠编辑去重（保留最外层）+ 行级 diff 证据 + dryRun；
+  正式写入前先预演一遍拿变更清单，捕获 review 基线（runId 存在时）。
+  **顺带修复：TS napi 展开 `$$$` 多捕获重复逗号的真实 bug**（`console.log($$$A)` → `logger.info("a", ,, x)`；
+  改为源文本切片重建后与 CLI 一致 `logger.info("a", x)`）。
+- **测试**：矩阵 **145/0**（新增 fetch_url / 文档四件 / 邮件四件 / ast_grep 用例；含本地 fake 服务器、
+  zip 结构断言、PdfPig 文本提取探针、CLI 缺失错误帧）；dual-track **PASS**（新增 fetch_url 5 / 文档 6 /
+  邮件 12 / ast_grep 10：raw 逐字、读回投影、docx run 属性、落盘字节、校验路径逐字、TS↔CLI 逐字）；
+  vitest native 新增 **26 项**（fetch_url 3 / 文档 9 / 邮件 8 / ast_grep 6）；
+  `vitest run src/main/orchestrator/tools` **483/483**；tsc 三端 0；cyrene-core 洁净断言 PASS；
+  native-windows 全量编译 0 错误。
+- **剩余（非本批，均依赖其他层；按 issue「随各自 host 迁移」计划）**：run_verification（harness 审批 /
+  记账链路耦合）、shell_job（run_shell 属 T3，需连同后台任务底座一起迁）、translate（需 tool-host →
+  TS 的 LLM 回调协议，agent-host 回调模式默认关）、install_mcp_server（先迁 MCP 层）、moments_*
+  （随 moments 存储层）、recall_history（RAG host 数据层接线）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T2 按库替代批完成）。

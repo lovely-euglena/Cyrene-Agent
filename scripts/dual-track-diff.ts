@@ -8,6 +8,10 @@
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
  * web_search：确定性校验路径双轨（引擎/key 经 config 帧注入，无网络）。
  * weather / plan_trip：确定性路径双轨（配置/缺参/未启用，无网络）。
+ * fetch_url：本地 HTTP fixture 双轨（raw 逐字 / markdown 归一投影 / 表格已知差异）。
+ * 文档四件：读回投影双轨（单元格/数字格式/列宽/docx run 属性/PDF 文本提取）。
+ * 邮件四件：校验路径逐字双轨（IMAP/SMTP 快乐路径由矩阵 fake 服务器覆盖）。
+ * ast_grep 两件：TS napi ↔ 随包 CLI 逐字双轨（搜索/校验/dryRun/写入字节）。
  * git 八件：镜像仓库 + 本地 bare 远程（TS 纯回退实现 ↔ smoke host；commit/log/revert hash 归一）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
@@ -15,7 +19,7 @@ import { DUAL_TRACK_USER_DATA } from "./dual-track-env";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { evaluateExpression } from "../src/main/orchestrator/tools/builtin-tools/utility-tools";
@@ -1347,6 +1351,9 @@ async function runAstGrepDualTrack(): Promise<number> {
     if (!cli) {
       console.log("[SKIP] ast_grep 双轨（ast-grep CLI 平台包未安装）");
       return 0;
+    }
+    if (process.platform !== "win32") {
+      try { chmodSync(cli, 0o755); } catch { /* npm 解包丢可执行位时补齐 */ }
     }
     const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
       const tool = toolRegistry.getById(id);
