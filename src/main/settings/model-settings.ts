@@ -6,6 +6,12 @@ import { foldReasoning, normalizeReasoningPreference, type ReasoningPreference }
 import { normalizeManualReasoningConfig, type ManualReasoningConfig } from "../../shared/manual-reasoning";
 import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
+import {
+  applyKeyringToModelSettings,
+  isVaultMode,
+  stripKeysForDisk,
+  vaultifyModelSettingsForSave,
+} from "./secrets-keyring";
 import type { VisionConfig } from "../orchestrator/vision-captioner";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors/capabilities";
@@ -587,7 +593,10 @@ function loadModelSettings0(): ModelSettings {
 
 export function loadModelSettings(): ModelSettings {
   if (modelSettingsCache !== null) return modelSettingsCache;
-  return modelSettingsCache = loadModelSettings0();
+  const settings = loadModelSettings0();
+  // vault 模式：从 keyring 回填密钥（迁移前未 hydrate 时 no-op，明文照旧可读）
+  applyKeyringToModelSettings(settings);
+  return modelSettingsCache = settings;
 }
 
 /**
@@ -629,6 +638,8 @@ export function loadVisionConfig(from: ModelSettings = loadModelSettings()): Vis
  */
 export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettings {
   const existing = loadModelSettings();
+  // vault 模式（A2/A3）：摘 ""（=不改）/ 处理 SENTINEL（=清除）/ 新值入 vault
+  vaultifyModelSettingsForSave(settings as unknown as Record<string, unknown>);
   const merged: Partial<ModelSettings> = { ...existing, ...settings };
 
   // currentProvider 优先取传入的、再取已有的
@@ -687,7 +698,9 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   const final = normalizeModelSettings(merged);
   const filePath = getSettingsPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(final, null, 2), "utf8");
+  // vault 模式磁盘清痕（A2）：写副本（key 置空），返回值与内存缓存持真值
+  const persist = isVaultMode() ? stripKeysForDisk(final) : final;
+  fs.writeFileSync(filePath, JSON.stringify(persist, null, 2), "utf8");
   Object.assign(existing, final);
   return final;
 }

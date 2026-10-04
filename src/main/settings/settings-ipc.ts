@@ -20,6 +20,7 @@ import {
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
+import { getSecret, isVaultMode, maskGeneralSettingsForUi, maskModelSettingsForUi, VAULT_KEY_VISION } from "./secrets-keyring";
 import { switchEmbeddingModel } from "../rag";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
@@ -160,9 +161,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, runtimeStateService.getState());
   }
 
-  ipc.handle(IPC.SETTINGS_GET_CONFIG, () => getModelSettings());
+  ipc.handle(IPC.SETTINGS_GET_CONFIG, () => maskModelSettingsForUi(getModelSettings()));
   ipc.handle(IPC.SETTINGS_MODEL_PROFILES_LIST, () => ({
-    profiles: listSavedModelProfiles(getModelSettings()),
+    profiles: listSavedModelProfiles(getModelSettings()).map((p) => maskModelSettingsForUi(p)),
     defaultModelProfileId: getModelSettings().defaultModelProfileId,
   }));
   ipc.handle(IPC.SETTINGS_MODEL_PROFILE_SAVE, (_event, profile) => {
@@ -188,7 +189,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     return { profiles: listSavedModelProfiles(saved), defaultModelProfileId: saved.defaultModelProfileId };
   });
 
-  ipc.handle(IPC.SETTINGS_GET_GENERAL, () => getGeneralSettings());
+  ipc.handle(IPC.SETTINGS_GET_GENERAL, () => maskGeneralSettingsForUi(getGeneralSettings()));
 
   ipc.handle(IPC.SETTINGS_GET_TIMEOUT_SETTINGS, () => getTimeoutSettings());
 
@@ -271,7 +272,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.SETTINGS_WSL_SHUTDOWN, () => restartWsl());
 
   // TTS 面板调用的通用设置读写入口（历史命名遗留）
-  ipc.handle(IPC.TTS_LOAD_SETTINGS, () => getGeneralSettings());
+  ipc.handle(IPC.TTS_LOAD_SETTINGS, () => maskGeneralSettingsForUi(getGeneralSettings()));
 
   ipc.handle(IPC.TTS_SAVE_SETTINGS, async (_event, tts: Partial<GeneralSettings>) => {
     const before = getGeneralSettings();
@@ -379,9 +380,14 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   // 视觉模型连通性测试（实现与 native 设置窗共用：settings/vision-test.ts）
-  ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) =>
-    testVisionConnection(cfg),
-  );
+  // vault 模式：渲染端拿到的是掩码（apiKey 空）——空值时由 keyring 原地补真值，明文不出主进程
+  ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) => {
+    if (isVaultMode() && !cfg.apiKey?.trim()) {
+      const real = getSecret(VAULT_KEY_VISION);
+      if (real) return testVisionConnection({ ...cfg, apiKey: real });
+    }
+    return testVisionConnection(cfg);
+  });
 
   ipc.handle(IPC.EMBEDDING_SET_MODEL, async (_event, modelKey: string) => {
     console.log("[Cyrene] embedding model switch requested:", modelKey);

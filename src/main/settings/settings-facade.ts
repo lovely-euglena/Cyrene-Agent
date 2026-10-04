@@ -35,6 +35,12 @@ import type { ConversationMode } from "../../shared/chat-types";
 import type { SkillModeOverrides } from "../skills/types";
 import { normalizeLspServerOverrides } from "../lsp/server-catalog";
 import {
+  applyKeyringToGeneralSettings,
+  isVaultMode,
+  stripKeysForDisk,
+  vaultifyGeneralSettingsForSave,
+} from "./secrets-keyring";
+import {
   applyInstallerLaunchAtLoginSelection,
   consumeInstallerLaunchAtLoginSelection,
 } from "./launch-at-login";
@@ -576,14 +582,20 @@ function loadGeneralSettings0(): GeneralSettings {
 
 export function loadGeneralSettings(): GeneralSettings {
   if (generalSettingsCache !== null) return generalSettingsCache;
-  return (generalSettingsCache = loadGeneralSettings0());
+  const settings = loadGeneralSettings0();
+  applyKeyringToGeneralSettings(settings as unknown as Record<string, unknown>);
+  return (generalSettingsCache = settings);
 }
 
 export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralSettings {
   const before = loadGeneralSettings();
+  // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化
+  vaultifyGeneralSettingsForSave(partial as unknown as Record<string, unknown>);
   const normalized = normalizeGeneralSettings({ ...before, ...partial });
   const filePath = getGeneralSettingsPath();
-  fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2));
+  // vault 模式磁盘清痕：写副本（key 置空），内存缓存持真值
+  const persist = isVaultMode() ? stripKeysForDisk(normalized) : normalized;
+  fs.writeFileSync(filePath, JSON.stringify(persist, null, 2));
   generalSettingsCache = normalized;
   notifyGeneralSettingsChanged(before, normalized);
   return normalized;

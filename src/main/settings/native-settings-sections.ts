@@ -10,6 +10,7 @@ import type { GeneralSettings } from "./general-settings";
 import type { ModelSettings } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
 import type { ObsidianVaultConfig } from "../memory/obsidian-vault-config";
+import { isVaultMode } from "./secrets-keyring";
 import type { RendererScheduledTask, SchedulerToolInfo } from "../scheduler/scheduler-actions";
 
 /** L2 事件片段投影上限（防御异常大的记忆库撑爆帧；正常量级远小于此） */
@@ -327,7 +328,8 @@ export function buildApiSectionSnapshot(
       displayName: settings.displayName ?? "",
       baseUrl: settings.baseUrl,
       model: settings.model,
-      apiKey: settings.apiKey,
+      // vault 模式（A3）：WPF 快照去明文——api key 只回掩码（空串），写入空=不改（saveModelSettings 语义）
+      apiKey: isVaultMode() ? "" : settings.apiKey,
       contextWindowTokens: typeof settings.contextWindowTokens === "number" ? settings.contextWindowTokens : null,
       transport,
       multimodal: settings.multimodal !== false,
@@ -339,7 +341,7 @@ export function buildApiSectionSnapshot(
       // 视觉配置是全局的（不随档案走）
       vision: {
         baseUrl: vision?.baseUrl ?? "",
-        apiKey: vision?.apiKey ?? "",
+        apiKey: isVaultMode() ? "" : vision?.apiKey ?? "",
         model: vision?.model ?? "",
       },
     },
@@ -363,7 +365,7 @@ export function buildApiSectionSnapshot(
       displayName: profile.displayName ?? "",
       model: profile.model,
       baseUrl: profile.baseUrl,
-      apiKey: profile.apiKey,
+      apiKey: isVaultMode() ? "" : profile.apiKey,
       transport: profile.explicitTransport === "anthropic" || profile.explicitTransport === "responses"
         ? profile.explicitTransport
         : "openai",

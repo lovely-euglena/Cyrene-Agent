@@ -17,6 +17,10 @@ export interface DotnetBackendConfig {
   ragHost: boolean;
   memoryHost: boolean;
   voiceHost: boolean;
+  /** DPAPI 密钥库宿主（Phase 1 / A20；双轨 opt-in） */
+  secretsHost: boolean;
+  /** llm 作业宿主（Phase 2 / H1-H4；双轨 opt-in，依赖 secretsHost 的 vault 取 key） */
+  llmHost: boolean;
   portable: boolean;
   mcpHttp: boolean;
   vad: VadMode;
@@ -29,6 +33,8 @@ const DEFAULTS: DotnetBackendConfig = {
   ragHost: false,
   memoryHost: false,
   voiceHost: false,
+  secretsHost: false,
+  llmHost: false,
   portable: false,
   mcpHttp: false,
   vad: "hybrid",
@@ -41,6 +47,8 @@ const BOOL_KEYS: Record<keyof DotnetBackendConfig, string> = {
   ragHost: "CYRENE_RAG_HOST",
   memoryHost: "CYRENE_MEMORY_HOST",
   voiceHost: "CYRENE_VOICE_HOST",
+  secretsHost: "CYRENE_SECRETS_HOST",
+  llmHost: "CYRENE_LLM_HOST",
   portable: "CYRENE_PORTABLE",
   mcpHttp: "CYRENE_MCP_HTTP",
   vad: "CYRENE_VAD",
