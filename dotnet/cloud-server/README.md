@@ -68,8 +68,9 @@ curl http://127.0.0.1:7789/healthz
   - `200 {accepted, duplicates, cursor}`：重复 eventId 幂等跳过
 - `GET /v1/sync/fetch?since=<cursor>&limit=<1..1000>&sessionId=<可选>` →
   `{events, cursor, hasMore}`（插入序；`cursor` 不透明，客户端原样回传）
-- `GET /v1/sync/clone?sessionId=<可选>` — 全量 JSONL 流（每行一个事件），游标在
-  `X-Sync-Cursor` 响应头；新设备 clone 后从该游标走 fetch 增量。
+- `GET /v1/sync/clone?sessionId=<可选>` — 全量 JSONL 流（每行一个事件）；游标在
+  `X-Sync-Cursor` 响应头，同时作为**流内容快照上界**（并发写入的事件由后续 fetch 接力），
+  clone 后从该游标走 fetch 增量。
   注意：游标是**全局插入序**——带了 `sessionId` 的 clone，后续 fetch 必须带同一 `sessionId`，
   否则会跳过其他会话中 id 更小的事件
 

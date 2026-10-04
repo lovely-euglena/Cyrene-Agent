@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../cyrene-core/CyreneCore.csproj" />
+    <!-- 显式声明（不依赖 core 的传递引用）：core 调整包依赖时不静默破坏服务端 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
   </ItemGroup>
 
 </Project>

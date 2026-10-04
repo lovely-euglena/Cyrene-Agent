@@ -9,12 +9,16 @@
   5. 链校验 E_SYNC_CHAIN / E_SYNC_SEQ（整批回滚，失败批不入库）；
   6. clone 全量 JSONL + X-Sync-Cursor 与 fetch 游标一致；
   7. 畸形批 → 400 E_SYNC_BATCH_INVALID；
-  8. 请求体上限（>10MB → 413 E_SYNC_BATCH_TOO_LARGE，不落库）。
+  8. 请求体上限（>10MB → 413 E_SYNC_BATCH_TOO_LARGE，不落库）；
+  9. fetch?sessionId= 会话过滤；
+  10. 链过渡混用（同设备 未上链/已上链）；
+  11. CLOUD_TOKEN 门闩（独立实例 401/200）。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -44,11 +48,13 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def http(method, url, body=None, timeout=30):
+def http(method, url, body=None, timeout=30, headers=None):
     data = body.encode("utf-8") if isinstance(body, str) else body
     request = urllib.request.Request(url, data=data, method=method)
     if isinstance(body, str):
         request.add_header("Content-Type", "application/x-ndjson; charset=utf-8")
+    for key, value in (headers or {}).items():
+        request.add_header(key, value)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8"), dict(response.headers)
@@ -131,10 +137,11 @@ def main():
         env["DOTNET_ROOT"] = dotnet_home
         env["PATH"] = dotnet_home + os.pathsep + env.get("PATH", "")
     base = f"http://127.0.0.1:{port}"
+    log_path = os.path.join(data_dir, "server-out.log")
+    log_file = open(log_path, "w", encoding="utf-8", errors="replace")
     server = subprocess.Popen(
         ["dotnet", DLL, "--urls", base],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
+        env=env, stdout=log_file, stderr=subprocess.STDOUT,
     )
     try:
         ready, health = False, {}
@@ -149,12 +156,7 @@ def main():
                 pass
             time.sleep(0.5)
         if not ready:
-            print("[FAIL] 服务未就绪")
-            server.terminate()
-            try:
-                print((server.stdout.read() or "")[:2000])
-            except Exception:
-                pass
+            print("[FAIL] 服务未就绪（服务日志见下方）")
             return 1
         check("healthz 就绪 + RSS 观测", isinstance(health.get("rssMB"), (int, float)), json.dumps(health)[:120])
         print(f"  healthz: events={health.get('events')} rssMB={health.get('rssMB')}")
@@ -203,6 +205,7 @@ def main():
 
         thread_a = threading.Thread(target=client, args=("ca", "dev-a"))
         thread_b = threading.Thread(target=client, args=("cb", "dev-b"))
+        pre_concurrent = len(fetch_all(base)[0])
         thread_a.start()
         thread_b.start()
         thread_a.join()
@@ -212,12 +215,13 @@ def main():
         view_b, _ = fetch_all(base)
         ordered = canonical_ids(view_a)
         check("并发后双端收敛一致（(lamport, deviceId, seq) 全序）",
-              canonical_ids(view_a) == canonical_ids(view_b) and len(view_a) == 16
+              canonical_ids(view_a) == canonical_ids(view_b) and len(view_a) == pre_concurrent + 10
               and sum(1 for i in ordered if i.startswith("ca")) == 5
               and sum(1 for i in ordered if i.startswith("cb")) == 5,
               f"n={len(view_a)}")
 
-        # 4. 链校验
+        # 4. 链校验（基线动态计算）
+        baseline = len(fetch_all(base)[0])
         h1, h2, h3 = "a" * 64, "b" * 64, "c" * 64
         status, body, _ = push(base, [ev("ch1", session_id="s4", device="dev-c", lamport=1, seq=1, hashed=h1)])
         check("链首（hash 无 prevHash）接受", status == 200, body[:160])
@@ -237,7 +241,8 @@ def main():
         check("seq 非递增 → E_SYNC_SEQ",
               status == 400 and any(e.get("code") == "E_SYNC_SEQ" for e in data.get("errors", [])), body[:200])
         events, _ = fetch_all(base)
-        check("失败批整批回滚（总数不变 = 18）", len(events) == 18, f"n={len(events)}")
+        check("失败批整批回滚（总数不变）", len(events) == baseline + 2,
+              f"n={len(events)} baseline={baseline}")
 
         # 5. 畸形批
         status, body, _ = push(base, [ev("ok1"), "这不是 JSON", ev("ok2")])
@@ -260,19 +265,76 @@ def main():
               status == 200 and len(clone_ids) == len(events) and headers.get("X-Sync-Cursor") == cursor,
               f"clone={len(clone_ids)} fetch={len(events)} header={headers.get('X-Sync-Cursor')} cursor={cursor}")
         check("clone 集合与 fetch 一致", set(clone_ids) == {item["eventId"] for item in events})
+
+        # 8. 会话过滤（fetch?sessionId=）
+        status, body, _ = http("GET", base + "/v1/sync/fetch?since=0&limit=200&sessionId=s2")
+        data = json.loads(body)
+        check("fetch?sessionId= 过滤（s2 只回 3 条）",
+              status == 200 and len(data.get("events", [])) == 3
+              and all(item["sessionId"] == "s2" for item in data.get("events", [])), body[:160])
+
+        # 9. 链过渡：未上链/已上链混用（同设备）允许
+        status, body, _ = push(base, [ev("mix1", session_id="s5", device="dev-c", lamport=1, seq=1, hashed=h1)])
+        mix1 = status == 200
+        status, body, _ = push(base, [ev("mix2", session_id="s5", device="dev-c", lamport=2, seq=2)])
+        mix2 = status == 200
+        status, body, _ = push(base, [ev("mix3", session_id="s5", device="dev-c", lamport=3, seq=3, prev=h1, hashed=h2)])
+        check("链过渡策略：未上链/已上链混用允许（链尾 = 最近已上链）",
+              mix1 and mix2 and status == 200, body[:160])
+
+        # 10. CLOUD_TOKEN 门闩（独立实例）：无/错 token → 401，正确 → 200
+        token_port = free_port()
+        token_dir = tempfile.mkdtemp(prefix="cloud-sync-token-")
+        token_env = dict(env)
+        token_env["CYRENE_CLOUD_DATA"] = token_dir
+        token_env["CLOUD_TOKEN"] = "s3cret"
+        token_server = subprocess.Popen(
+            ["dotnet", DLL, "--urls", f"http://127.0.0.1:{token_port}"],
+            env=token_env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        )
+        try:
+            token_base = f"http://127.0.0.1:{token_port}"
+            token_ready = False
+            for _ in range(80):
+                try:
+                    status, _, _ = http("GET", token_base + "/healthz", timeout=3)
+                    if status == 200:
+                        token_ready = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            no_token = http("GET", token_base + "/v1/sync/fetch?since=0")[0]
+            wrong_token = http("GET", token_base + "/v1/sync/fetch?since=0",
+                               headers={"Authorization": "Bearer nope"})[0]
+            ok_token = http("GET", token_base + "/v1/sync/fetch?since=0",
+                            headers={"Authorization": "Bearer s3cret"})[0]
+            check("CLOUD_TOKEN 门闩（无/错 token 401，正确 200）",
+                  token_ready and no_token == 401 and wrong_token == 401 and ok_token == 200,
+                  f"ready={token_ready} no={no_token} wrong={wrong_token} ok={ok_token}")
+        finally:
+            token_server.terminate()
+            try:
+                token_server.wait(timeout=10)
+            except Exception:
+                token_server.kill()
+            shutil.rmtree(token_dir, ignore_errors=True)
     finally:
         server.terminate()
         try:
             server.wait(timeout=10)
         except Exception:
             server.kill()
+        log_file.close()
         try:
-            server_log = server.stdout.read() or ""
+            with open(log_path, encoding="utf-8", errors="replace") as handle:
+                server_log = handle.read()
         except Exception:
             server_log = ""
         if server_log.strip():
             print("--- server log (tail 30) ---")
             print("\n".join(server_log.strip().splitlines()[-30:]))
+        shutil.rmtree(data_dir, ignore_errors=True)
 
     passed = sum(1 for _, ok, _ in results if ok)
     failed = len(results) - passed

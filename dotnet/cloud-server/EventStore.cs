@@ -243,19 +243,21 @@ public sealed class EventStore
         return new FetchOutcome(events, cursor, hasMore);
     }
 
-    /// <summary>全量流（clone；插入序）。</summary>
-    public IEnumerable<SyncEventV0> StreamAll(string? sessionId)
+    /// <summary>全量流（clone；插入序，以 maxId 为上界固定快照——保证流内容 ⊆ 声明的 X-Sync-Cursor）。</summary>
+    public IEnumerable<SyncEventV0> StreamAll(string? sessionId, long maxId)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
         command.CommandText = sessionId is null
-            ? $"SELECT {EventColumns} FROM events ORDER BY id"
-            : $"SELECT {EventColumns} FROM events WHERE session_id=@session ORDER BY id";
+            ? $"SELECT {EventColumns} FROM events WHERE id<=@max ORDER BY id"
+            : $"SELECT {EventColumns} FROM events WHERE id<=@max AND session_id=@session ORDER BY id";
+        command.Parameters.AddWithValue("@max", maxId);
         if (sessionId is not null) command.Parameters.AddWithValue("@session", sessionId);
         using var reader = command.ExecuteReader();
         while (reader.Read()) yield return Map(reader);
     }
 
+    /// <summary>按 EventColumns 列序映射（改 SELECT 列必须同步此索引）。</summary>
     private static SyncEventV0 Map(SqliteDataReader reader) => new()
     {
         EventId = reader.GetString(0),
