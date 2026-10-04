@@ -81,6 +81,37 @@ public sealed class EventStore
         command.ExecuteNonQuery();
     }
 
+    /// <summary>eventId 是否已存在（生成前幂等预检，避免重复调用模型；异步可取消）。</summary>
+    public async Task<bool> ContainsAsync(string eventId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = Open();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM events WHERE event_id=@id LIMIT 1";
+        command.Parameters.AddWithValue("@id", eventId);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
+    /// <summary>会话水位：最大 lamport（任意设备）与指定设备最大 seq（生成事件用；从 DB 聚合，窗口化安全）。</summary>
+    public async Task<(long MaxLamport, long MaxSeq)> GetSessionWatermarkAsync(
+        string sessionId, string deviceId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = Open();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COALESCE(MAX(lamport), 0),
+                   COALESCE(MAX(CASE WHEN device_id = @device THEN seq END), 0)
+            FROM events WHERE session_id = @session
+            """;
+        command.Parameters.AddWithValue("@device", deviceId);
+        command.Parameters.AddWithValue("@session", sessionId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return (0, 0);
+        }
+        return (reader.GetInt64(0), reader.GetInt64(1));
+    }
+
     public long CurrentCursor()
     {
         using var connection = Open();

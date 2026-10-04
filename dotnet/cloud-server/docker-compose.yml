@@ -12,7 +12,9 @@ services:
     environment:
       ASPNETCORE_URLS: http://0.0.0.0:7789
       CYRENE_CLOUD_DATA: /data
-      # CLOUD_TOKEN: change-me   # IKJK2K 之前的最小门闩（建议反代同时限制来源）
+      # CLOUD_TOKEN: change-me   # 主控令牌（引导/运维；IKJK2K）
+      # CLOUD_LLM_API_KEY: change-me        # 服务端生成（IKJK2M）
+      # CLOUD_LLM_MODEL: gpt-4o-mini
     volumes:
       # 命名卷初始化继承镜像 /data 属主（cyrene, uid 10001）；bind mount 需自行 chown
       - cloud-data:/data

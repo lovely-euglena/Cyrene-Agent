@@ -25,6 +25,8 @@ Environment=CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud
 Environment=Logging__LogLevel__Microsoft.AspNetCore=Warning
 # Environment=CLOUD_TOKEN=change-me
 # Environment=CLOUD_ALLOWED_HOSTS=cloud.example.com
+# Environment=CLOUD_LLM_API_KEY=change-me
+# Environment=CLOUD_LLM_MODEL=gpt-4o-mini
 
 ExecStart=/usr/bin/dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll
 

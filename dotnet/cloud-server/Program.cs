@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using CyreneCloud.Auth;
+using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Sync;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -45,6 +46,24 @@ builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 
 builder.Services.AddSingleton(new EventStore(dbPath));
 builder.Services.AddSingleton(new AuthStore(dbPath, pairTtl));
 
+// 服务端文本生成（IKJK2M）：CLOUD_LLM_API_KEY 非空即启用；密钥只在服务端、日志不落
+var modelClient = new ModelClient(
+    Environment.GetEnvironmentVariable("CLOUD_LLM_API_KEY"),
+    Environment.GetEnvironmentVariable("CLOUD_LLM_MODEL") ?? "gpt-4o-mini",
+    Environment.GetEnvironmentVariable("CLOUD_LLM_BASE_URL"),
+    ReadIntEnv("CLOUD_LLM_TIMEOUT_SECONDS", 60),
+    ReadIntEnv("CLOUD_LLM_MAX_TOKENS", 1024));
+var dialogSystemPrompt = Environment.GetEnvironmentVariable("CLOUD_LLM_SYSTEM_PROMPT");
+var dialogContextChars = ReadIntEnv("CLOUD_LLM_CONTEXT_CHARS", 24000);
+builder.Services.AddSingleton(modelClient);
+builder.Services.AddSingleton(sp => new DialogLoop(
+    sp.GetRequiredService<EventStore>(),
+    modelClient,
+    sp.GetRequiredService<ILogger<DialogLoop>>(),
+    dialogSystemPrompt,
+    dialogContextChars));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DialogLoop>());
+
 var masterToken = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
 // 主控令牌字节预转换（鉴权热路径不重复分配；比较后临时数组清零）
 var masterTokenBytes = string.IsNullOrEmpty(masterToken) ? null : Encoding.UTF8.GetBytes(masterToken);
@@ -71,6 +90,7 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 var authStore = app.Services.GetRequiredService<AuthStore>();
+app.Logger.LogInformation("dialog loop enabled={Enabled} model={Model}", modelClient.Enabled, modelClient.ModelName);
 
 // Caddy 同机反代：只信任回环来源的 X-Forwarded-*（KnownProxies 默认空集合=不信任任何来源，
 // 必须显式列出回环，否则 XFF 失效 → 限流分区坍缩为同一 IP、远程 healthz 误豁免）
@@ -218,7 +238,7 @@ var sync = app.MapGroup("/v1/sync").RequireRateLimiting("sync");
 
 // POST /v1/sync/push：body = JSONL 事件批（协议 v0 读取语义）→ 整批校验（含链/序号）→
 // 幂等插入（event_id 首见生效）→ 原子提交；任一错误整批回滚（400）。
-sync.MapPost("/push", async (HttpContext context, EventStore store) =>
+sync.MapPost("/push", async (HttpContext context, EventStore store, DialogLoop dialog) =>
 {
     if (context.Request.ContentLength is > CloudApi.MaxPushBodyBytes)
     {
@@ -249,6 +269,23 @@ sync.MapPost("/push", async (HttpContext context, EventStore store) =>
     if (outcome.Errors.Count > 0)
     {
         return Results.BadRequest(new { code = CloudApi.BatchRejected, errors = outcome.Errors });
+    }
+    if (outcome.Accepted > 0)
+    {
+        // 仅「user 新消息 / 回退」触发服务端生成（过滤其他设备同步的 assistant，避免无效全量重放；
+        // 幂等由 DialogLoop 事件 id 保证）
+        dialog.Publish(batch.Events
+            .Where(item => item.Type switch
+            {
+                "turn_rewind" => true,
+                "message.append" => item.Payload.ValueKind == JsonValueKind.Object
+                    && item.Payload.TryGetProperty("role", out var role)
+                    && role.ValueKind == JsonValueKind.String
+                    && role.GetString() == "user",
+                _ => false,
+            })
+            .Select(item => item.SessionId)
+            .Distinct());
     }
     return Results.Json(new
     {

@@ -21,10 +21,14 @@
       越权管理 403 / healthz 设备计数）；
   17. 转发头只信回环代理（XFF 生效：远程 healthz 401）、Host 白名单（421）、日志脱敏、
       Linux 凭据权限（目录 0700 / DB 及 -wal/-shm 0600）；
-  18. 配对接口限流（超限 → 429；按转发头真实 IP 分区）。
+  18. 配对接口限流（超限 → 429；按转发头真实 IP 分区）；
+  19. 服务端生成闭环（mock LLM：用户消息 → assistant 事件，turnId 对齐）；
+  20. 断网重试幂等（重推 user 事件不二次生成）与上下文重放（历史注入）；
+  21. turn_rewind 编辑语义（替换后分支重生成）+ 上下文裁剪保护 system prompt + 用量日志/密钥脱敏。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
+import http.server as http_server
 import json
 import os
 import select
@@ -89,16 +93,18 @@ def ev(event_id, session_id="s1", lamport=0, device="dev-a", seq=0, payload=None
     return json.dumps(item, ensure_ascii=False)
 
 
-def push(base, lines):
-    return http("POST", base + "/v1/sync/push", "\n".join(lines))
+def push(base, lines, headers=None):
+    return http("POST", base + "/v1/sync/push", "\n".join(lines), headers=headers)
 
 
-def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=16 * 1024):
-    """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。
+def chunked_oversized_push_probe(port, limit=10 * 1024 * 1024, chunk_size=16 * 1024):
+    """裸 socket：chunked（无 Content-Length）超限——最小溢出（limit+1 字节）验证读取触顶回 413。
 
-    Windows 上服务端拒绝后关闭连接可能发 RST、丢掉已回写的 413（已知抖动，服务端每次正确）；
-    16KB chunk（介于原 64KB 与最小 8KB 之间）降低在途字节数，兼顾 CI 耗时，客户端侧再由调用方重试兜底。
+    只多发 1 字节：服务端触顶后基本无剩余未读体、连接干净关闭；多发会触发 RST 丢响应（Windows 实测）。
+    16KB chunk 兼顾 CI 耗时；调用方对 Windows 偶发 RST 丢响应做重试兜底（服务端每次正确 413）。
+    limit 与 CloudApi.MaxPushBodyBytes（README 10MB）保持同步。
     """
+    total = limit + 1
     with socket.create_connection(("127.0.0.1", port), timeout=30) as sock:
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
@@ -114,13 +120,10 @@ def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=16 * 1
             sent = 0
             while sent < total:
                 if select.select([sock], [], [], 0)[0]:
-                    break  # 服务端已开始回包，停止发送
-                sock.sendall(f"{chunk_size:x}\r\n".encode("ascii") + payload + b"\r\n")
-                sent += chunk_size
-            try:
-                sock.sendall(b"0\r\n\r\n")
-            except OSError:
-                pass
+                    break  # 服务端已回包：立即停止发送
+                size = min(chunk_size, total - sent)
+                sock.sendall(f"{size:x}\r\n".encode("ascii") + payload[:size] + b"\r\n")
+                sent += size
         except OSError:
             pass  # 服务端提前拒绝并关闭连接属预期
         data = bytearray()
@@ -202,6 +205,48 @@ def start_instance(dll, base_env, extra_env, log_handle=None, attempts=3):
         except Exception:
             server.kill()
     raise RuntimeError(f"服务启动失败（{attempts} 次尝试）")
+
+
+def start_mock_llm():
+    """本地 OpenAI 兼容 mock：记录请求体，回复「服务端回复-N」，带 usage。"""
+    captured = []
+
+    class Handler(http_server.BaseHTTPRequestHandler):
+        def _read_body(self):
+            if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                data = bytearray()
+                while True:
+                    size = int(self.rfile.readline().strip().split(b";")[0] or b"0", 16)
+                    if size == 0:
+                        self.rfile.readline()
+                        break
+                    data.extend(self.rfile.read(size))
+                    self.rfile.readline()
+                return bytes(data)
+            length = int(self.headers.get("Content-Length", 0))
+            return self.rfile.read(length)
+
+        def do_POST(self):
+            payload = json.loads(self._read_body().decode("utf-8"))
+            captured.append(payload)
+            reply = f"服务端回复-{len(captured)}"
+            body = json.dumps({
+                "choices": [{"message": {"role": "assistant", "content": reply}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http_server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, captured, server.server_address[1]
 
 
 def oversized_push_probe(port, content_length=11 * 1024 * 1024):
@@ -658,6 +703,120 @@ def main():
                 except Exception:
                     rate_server.kill()
             shutil.rmtree(rate_dir, ignore_errors=True)
+
+        # 13. 服务端文本对话闭环（IKJK2M；独立实例 + 本地 mock LLM）
+        llm_server, llm_requests, llm_port = start_mock_llm()
+        dlg_dir = tempfile.mkdtemp(prefix="cloud-sync-dialog-")
+        dlg_log = os.path.join(dlg_dir, "server-out.log")
+        dlg_handle = open(dlg_log, "w", encoding="utf-8", errors="replace")
+        dlg_server = None
+        try:
+            dlg_server, dlg_base, _ = start_instance(DLL, env, {
+                "CYRENE_CLOUD_DATA": dlg_dir,
+                "CLOUD_TOKEN": "dlg-master",
+                "CLOUD_LLM_BASE_URL": f"http://127.0.0.1:{llm_port}/v1",
+                "CLOUD_LLM_API_KEY": "sk-test-secret",
+                "CLOUD_LLM_MODEL": "mock-model",
+                "CLOUD_LLM_SYSTEM_PROMPT": "你是昔涟",
+                "CLOUD_LLM_CONTEXT_CHARS": "200",
+                "Logging__LogLevel__Default": "Information",
+            }, log_handle=dlg_handle)
+            dlg = {"Authorization": "Bearer dlg-master"}
+
+            def fetch_session(session_id):
+                status, body, _ = http(
+                    "GET", f"{dlg_base}/v1/sync/fetch?since=0&limit=1000&sessionId={session_id}", headers=dlg)
+                return json.loads(body).get("events", []) if status == 200 else []
+
+            def wait_for_assistant(session_id, expected_texts, timeout=20):
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    events = fetch_session(session_id)
+                    texts = [e["payload"].get("text") for e in events
+                             if e["type"] == "message.append" and e["payload"].get("role") == "assistant"]
+                    if all(text in texts for text in expected_texts):
+                        return events
+                    time.sleep(0.3)
+                return fetch_session(session_id)
+
+            # 13.1 用户消息 → 服务端生成 assistant 事件
+            status, body, _ = push(dlg_base, [ev("m-u1", session_id="m1", device="dev-a", lamport=1, seq=1,
+                                                 payload={"role": "user", "text": "第一问", "turnId": "t-m1"})],
+                                   headers=dlg)
+            events = wait_for_assistant("m1", ["服务端回复-1"])
+            assistants = [e for e in events
+                          if e["type"] == "message.append" and e["payload"].get("role") == "assistant"]
+            check("生成闭环：用户消息 → 服务端 assistant 事件（turnId 对齐）",
+                  status == 200 and len(assistants) == 1 and assistants[0]["payload"].get("turnId") == "t-m1"
+                  and assistants[0]["deviceId"] == "server", str(assistants)[:200])
+
+            # 13.2 重推同一 user 事件（模拟断网重试）→ 不产生二次生成
+            status, body, _ = push(dlg_base, [ev("m-u1", session_id="m1", device="dev-a", lamport=1, seq=1,
+                                                 payload={"role": "user", "text": "第一问", "turnId": "t-m1"})],
+                                   headers=dlg)
+            duplicates = json.loads(body).get("duplicates")
+            time.sleep(2)
+            events = fetch_session("m1")
+            assistants = [e for e in events if e["payload"].get("role") == "assistant"]
+            check("断网重试不重复：重推 user 事件 → 无二次生成",
+                  duplicates == 1 and len(assistants) == 1, f"duplicates={duplicates} assistants={len(assistants)}")
+
+            # 13.3 第二条消息 → 上下文注入历史（u1 → a1 → u2）
+            status, body, _ = push(dlg_base, [ev("m-u2", session_id="m1", device="dev-a", lamport=3, seq=2,
+                                                 payload={"role": "user", "text": "第二问", "turnId": "t-m2"})],
+                                   headers=dlg)
+            events = wait_for_assistant("m1", ["服务端回复-2"])
+            sent = [(item.get("role"), item.get("content")) for item in llm_requests[-1].get("messages", [])]
+            check("重放上下文：system + 历史消息（u1/a1/u2）注入模型请求",
+                  sent == [("system", "你是昔涟"), ("user", "第一问"), ("assistant", "服务端回复-1"), ("user", "第二问")],
+                  str(sent)[:220])
+
+            # 13.4 编辑（replace_user）→ 裁掉旧分支并以替换文本重生成
+            status, body, _ = push(dlg_base, [ev("m-edit", session_id="m1", device="dev-a", lamport=5, seq=3,
+                                                 typ="turn_rewind",
+                                                 payload={"anchorUserTurnId": "t-m1", "disposition": "replace_user",
+                                                          "reason": "edit", "replacementUser": {"text": "改问"},
+                                                          "revision": 2})],
+                                   headers=dlg)
+            events = wait_for_assistant("m1", ["服务端回复-3"])
+            sent = [(item.get("role"), item.get("content")) for item in llm_requests[-1].get("messages", [])]
+            edited = [e for e in events
+                      if e["payload"].get("role") == "assistant" and e["payload"].get("text") == "服务端回复-3"]
+            check("turn_rewind 编辑语义：上下文=system+替换后分支，重生成同轮回复",
+                  sent == [("system", "你是昔涟"), ("user", "改问")] and edited and edited[0]["payload"].get("turnId") == "t-m1",
+                  f"context={str(sent)[:120]} edited={str(edited)[:120]}")
+
+            # 13.5 超预算裁剪：system prompt 不被裁掉（只丢最旧历史、保留最后一条 user）
+            long_text = "丁" * 300
+            status, body, _ = push(dlg_base, [ev("m-u3", session_id="m1", device="dev-a", lamport=7, seq=4,
+                                                 payload={"role": "user", "text": long_text, "turnId": "t-m3"})],
+                                   headers=dlg)
+            events = wait_for_assistant("m1", ["服务端回复-4"])
+            sent = [(item.get("role"), item.get("content")) for item in llm_requests[-1].get("messages", [])]
+            check("上下文裁剪保护 system prompt（超预算仅丢最旧历史）",
+                  sent == [("system", "你是昔涟"), ("user", long_text)],
+                  str([(role, (text or "")[:16]) for role, text in sent])[:220])
+
+            # 13.6 用量日志 + 密钥脱敏
+            dlg_handle.close()
+            with open(dlg_log, encoding="utf-8", errors="replace") as handle:
+                dlg_log_text = handle.read()
+            check("生成用量记录（prompt/completion tokens）+ 密钥不落日志",
+                  "prompt_tokens=12" in dlg_log_text and "completion_tokens=7" in dlg_log_text
+                  and "sk-test-secret" not in dlg_log_text)
+        finally:
+            if dlg_server is not None:
+                dlg_server.terminate()
+                try:
+                    dlg_server.wait(timeout=10)
+                except Exception:
+                    dlg_server.kill()
+            try:
+                dlg_handle.close()
+            except Exception:
+                pass
+            llm_server.shutdown()
+            shutil.rmtree(dlg_dir, ignore_errors=True)
     finally:
         server.terminate()
         try:
