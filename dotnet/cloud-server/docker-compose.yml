@@ -1,10 +1,10 @@
 # 云端昔涟 cloud-server（2G 预算：mem_limit 512m + 日志上限 + 健康检查）
-# 构建上下文 = ./dotnet（含 cyrene-core 工程引用）
+# 构建上下文 = 仓库根（PWA 构建需 src/pwa + src/main/sync；见 .dockerignore 白名单）
 services:
   cloud-server:
     build:
-      context: ..
-      dockerfile: cloud-server/Dockerfile
+      context: ../..
+      dockerfile: dotnet/cloud-server/Dockerfile
     image: cyrene-cloud-server:dev
     container_name: cyrene-cloud-server
     restart: unless-stopped

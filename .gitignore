@@ -273,3 +273,6 @@ dist/renderer/cyrene-welcome.png
 # === PR 审查助手本地工作区（本地工具，不参与产品代码与 PR） ===
 /AGENTS.md
 /templates/
+
+# cloud-server PWA 构建产物（src/pwa → wwwroot；随 dotnet publish / Docker 构建生成，不入库）
+/dotnet/cloud-server/wwwroot/

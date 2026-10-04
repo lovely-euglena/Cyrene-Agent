@@ -1,8 +1,21 @@
-# cyrene-cloud-server 镜像（构建上下文 = ./dotnet）
+# cyrene-cloud-server 镜像（构建上下文 = 仓库根；PWA 构建需要 src/pwa 与 src/main/sync）
+# 运行镜像零 Node：PWA 在构建阶段产出，随 wwwroot 进镜像。
+
+# ── PWA 构建（Node 只在构建阶段）──
+FROM node:24-alpine AS pwa
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+WORKDIR /src/pwa
+COPY src/pwa/package.json src/pwa/package-lock.json ./
+RUN npm ci --no-audit --no-fund --registry=$NPM_REGISTRY
+COPY src/pwa/ ./
+COPY src/main/sync/ /src/main/sync/
+RUN CYRENE_PWA_OUT_DIR=/out npm run build
+
+# ── .NET 构建 ──
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY cyrene-core/ cyrene-core/
-COPY cloud-server/ cloud-server/
+COPY dotnet/cyrene-core/ cyrene-core/
+COPY dotnet/cloud-server/ cloud-server/
 RUN dotnet publish cloud-server/CloudServer.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
@@ -15,6 +28,7 @@ RUN apt-get update \
     && chmod 750 /data
 WORKDIR /app
 COPY --from=build /app ./
+COPY --from=pwa /out/ ./wwwroot/
 ENV ASPNETCORE_URLS=http://0.0.0.0:7789 \
     CYRENE_CLOUD_DATA=/data
 VOLUME /data

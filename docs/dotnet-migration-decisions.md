@@ -420,3 +420,20 @@
 - **验证（Windows 本地）**：tsc（main/preload/renderer）0 错误；`vitest` code-git/接线/facade **80/80**；
   矩阵 **92/92**（含新增 `__gitConfigGlobal` 生效断言：diff noprefix）；dual-track **PASS**（两轨仍等价）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJMO8。
+
+## 2026-10-04 增量：手机 PWA——查看与继续话题（IKJK2L）
+
+- **验收**：桌面离线时手机可打开最近会话、发送文字并得到回复（Edge 通道 e2e **10/10** 实测）。
+- **技术选型**：原生 TS + DOM（零运行时依赖，产物 gzip ~8KB）；独立嵌套包 `src/pwa`（vite+tsc 仅构建期）；
+  协议逻辑直接复用 `src/main/sync/sync-protocol.ts`（双端同一校验器）；构建产物 `dotnet/cloud-server/wwwroot`
+  静态托管（同源）。
+- **Q5 拍板**：token 存 localStorage（同源 + Bearer → 无 CORS/CSRF 面；XSS 由全量 textContent + 服务端 CSP 缓解）；
+- **Q7 拍板**：前台 3s 轮询（hidden 暂停）；SSE/长轮询按需再评估。
+- **重放一致性**：PWA 物化视图与 `DialogLoop.Replay` 逐条对齐（keep_user / replace_user / tombstone；单测锁定）。
+- **缓存/离线**：localStorage 事件快照（上限 5000；配额对半裁剪 + 最小写兜底）；SW 应用壳离线
+  （/v1 直通不缓存）；离线只读、发送失败回滚。
+- **构建/部署**：Docker 多阶段（node 构建 PWA → dotnet publish → 运行镜像拷 wwwroot，运行期零 Node）；
+  compose 构建上下文改仓库根（`.dockerignore` 白名单）；CI 增 PWA 构建、`vitest run src/pwa`、Playwright(Edge) e2e。
+- **验证（Windows 本地）**：PWA 单测 **33/33**（修复 `saveCache` 配额兜底死循环：`floor(1/2)=0` → `slice(0)` 不收缩）；
+  云冒烟 **51/51**（含 3 项静态托管断言）；e2e **10/10**（配对/查看/续聊/离线缓存）；构建 0 错误。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2L。

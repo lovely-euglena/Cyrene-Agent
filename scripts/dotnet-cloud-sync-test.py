@@ -24,7 +24,8 @@
   18. 配对接口限流（超限 → 429；按转发头真实 IP 分区）；
   19. 服务端生成闭环（mock LLM：用户消息 → assistant 事件，turnId 对齐）；
   20. 断网重试幂等（重推 user 事件不二次生成）与上下文重放（历史注入）；
-  21. turn_rewind 编辑语义（替换后分支重生成）+ 上下文裁剪保护 system prompt + 用量日志/密钥脱敏。
+  21. turn_rewind 编辑语义（替换后分支重生成）+ 上下文裁剪保护 system prompt + 用量日志/密钥脱敏；
+  22. PWA 静态托管（wwwroot 存在时）：GET / 返回 HTML、sw.js no-cache、HTML 附 CSP。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -309,6 +310,24 @@ def main():
         print(f"  healthz: cursor={health.get('cursor')} rssMB={rss}")
         if isinstance(rss, (int, float)) and rss >= 300:
             print("  [WARN] RSS 超过参考阈值 300MB（不计入 failed；口径：进程硬上限 512M / VPS 总预算 2G，见 README）")
+
+        # 1b. PWA 静态托管（wwwroot 随发布产物；未构建 PWA 时跳过）
+        wwwroot_index = os.path.join(os.path.dirname(DLL), "wwwroot", "index.html")
+        if os.path.exists(wwwroot_index):
+            status, _, headers = http("GET", base + "/")
+            check("PWA 静态托管：GET / 返回 HTML",
+                  status == 200 and "text/html" in headers.get("Content-Type", ""),
+                  f"status={status} type={headers.get('Content-Type')}")
+            status, _, headers = http("GET", base + "/sw.js")
+            check("PWA 静态托管：sw.js no-cache",
+                  status == 200 and headers.get("Cache-Control") == "no-cache",
+                  f"status={status} cc={headers.get('Cache-Control')}")
+            status, _, headers = http("GET", base + "/index.html")
+            check("PWA 静态托管：HTML 附 CSP",
+                  status == 200 and "default-src 'self'" in headers.get("Content-Security-Policy", ""),
+                  f"csp={headers.get('Content-Security-Policy')}")
+        else:
+            print("[SKIP] PWA 静态托管（wwwroot 未构建：npm --prefix src/pwa run build）")
 
         # 1. 幂等
         batch = [

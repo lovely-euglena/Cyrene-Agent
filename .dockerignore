@@ -1,0 +1,24 @@
+# Docker 构建上下文（= 仓库根）：只保留 dotnet/{cyrene-core,cloud-server} + src/{pwa,main/sync}
+.git
+.github
+node_modules
+**/node_modules
+release
+artifacts
+dist
+build
+docs
+prompts
+resources
+skills
+scripts
+fixtures
+src/renderer
+src/preload
+src/plugins
+src/shared
+src/main/*
+!src/main/sync
+dotnet/**/bin
+dotnet/**/obj
+dotnet/cloud-server/wwwroot
