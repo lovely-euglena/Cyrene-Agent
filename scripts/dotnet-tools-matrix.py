@@ -8,7 +8,7 @@ web_search / weather / plan_trip / fetch_url（本地 HTTP fixture + GitHub mock
 邮件四件（本地 fake SMTP + fake IMAP）/ ast_grep 两件（随包 CLI）
 每个工具多组输入：正常 + 参数缺失 + 参数类型错。验响应形状与错误语义。
 """
-import subprocess, json, os, tempfile, sys, re, shutil
+import subprocess, json, os, tempfile, sys, re, shutil, atexit
 
 # Windows 控制台默认 GBK：错误 detail 含 emoji（如 🚗）会撑爆 print；强制 UTF-8 输出
 try:
@@ -41,6 +41,8 @@ def check(name, ok, detail=""):
     print(f"{'[PASS]' if ok else '[FAIL]'} {name}" + (f" —— {str(detail)[:160]}" if not ok else (f" —— {str(detail)[:80]}" if detail else "")))
 
 tmp = tempfile.mkdtemp(prefix="tools-matrix-")
+# 任意退出路径（含断言失败 sys.exit(1)）清理临时目录
+atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
 
 frames = []
 n = 0
@@ -837,6 +839,7 @@ if not shutil.which("git"):
     print("[SKIP] git 段（未检测到系统 git）")
 else:
     gbase = tempfile.mkdtemp(prefix="tools-git-")
+    atexit.register(lambda: shutil.rmtree(gbase, ignore_errors=True))
     grepo = os.path.join(gbase, "repo")
     os.makedirs(grepo)
     gplain = os.path.join(gbase, "plain")

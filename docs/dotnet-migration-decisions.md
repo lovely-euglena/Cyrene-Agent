@@ -564,7 +564,52 @@
   `vitest run src/main/orchestrator/tools` **483/483**；tsc 三端 0；cyrene-core 洁净断言 PASS；
   native-windows 全量编译 0 错误。
 - **剩余（非本批，均依赖其他层；按 issue「随各自 host 迁移」计划）**：run_verification（harness 审批 /
-  记账链路耦合）、shell_job（run_shell 属 T3，需连同后台任务底座一起迁）、translate（需 tool-host →
+  记账链路耦合）、shell_job（属 T2；run_shell 属 T3，需连同后台任务底座一起迁）、translate（需 tool-host →
   TS 的 LLM 回调协议，agent-host 回调模式默认关）、install_mcp_server（先迁 MCP 层）、moments_*
   （随 moments 存储层）、recall_history（RAG host 数据层接线）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T2 按库替代批完成）。
+
+## 2026-10-05 增量：PR #20 审查修复（IKJK3V T2 批）
+
+- **背景**：Gitee PR #20 审查结论「不可合入」——1×P0（`__` 内部参数信任边界）+ 4×P1
+  （ast-grep 打包态路径、CLI 读取/超时、send_email 重复投递窗口、邮件三件取消透传）；
+  当批逐条修复，矩阵/dual-track 直连宿主的测试注入路径不受影响。
+- **P0 信任边界**：`nativeFirst` / `withNativeFirst` 统一下发前剥离模型 args 中的
+  `__` 键；可信内部参数改经 `NativeFirstOptions.internalArgs` 唯一通道注入
+  （git / search_text / download_file / ast-grep）；直接 `nativeToolHost.call`
+  的模型参数路径（str_replace 两段式 / fs 只读）同样先剥离。用例：
+  `native-tool-host.test.ts`（nativeFirst / withNativeFirst 剥离 + internalArgs 覆盖 +
+  fallbackOnError 语义）、`git-tools-native` / `str-replace-native` / `ast-grep-native`
+  接线级伪造注入用例。
+- **P1-1 ast-grep asar**：`resolveAstGrepCommand` 返回前做 `app.asar` →
+  `app.asar.unpacked` 重写（对照 sandbox-exec / sync-mcp-builtin），新增
+  `toUnpackedAsarPath` 的 asar 风格路径断言。
+- **P1-2 CLI 读取/超时**：`AstGrepTool.RunCli` 改双流 `ReadToEndAsync` 并发 +
+  `WaitForExit` 前置 + 超时 `Kill(entireProcessTree: true)`（对照 `GitTools.RunGit`）。
+- **P1-3 send_email 重复投递**：C# 把 `Disconnect` 移出发送失败判定（发送成功后的
+  断开失败仅日志）；TS 走 `nativeFirst(fallbackOnError:false)`——native 失败
+  （超时/进程崩溃/错误帧）不自动重发，返回「发送状态未知」明确提示；仅宿主未启动
+  （call 返回 null）时安全回退 TS（确定未发送）。
+- **P1-4 邮件取消**：`email_list` / `email_read` / `email_mark` execute 接收 ctx 并
+  透传 `signal: ctx?.signal`；补取消信号透传与 AbortError 原样上抛用例。
+- **P2 顺带**：workflow 加 `permissions: contents: read`、`pull_request` paths 补
+  `scripts/dual-track-diff.ts`、TS 步骤纳入 `vitest run src/main/orchestrator/tools`；
+  矩阵临时目录 atexit 清理；ast-grep `IsWithinWorkspace` 改 Ordinal 与
+  `SearchTools.cs` / TS 口径对齐；fetch_url 重定向上限 C# 50 → 20（对齐 TS fetch
+  默认）；`email_list` / `email_read` 时间格式 TS 侧固定为 `yyyy/M/d HH:mm:ss`
+  （与 C# 一致，去掉 locale 依赖，用例以格式断言锁定）。
+- **已知差异（保留，文档化 + 对应用例）**：
+  - `write_excel` 无 `headers` 时数据起始行两轨不同（C# 与 TS 的表头占位约定不同；
+    双轨现有投影断言只覆盖带表头场景，无 headers 场景暂不逐字承诺）；
+  - `email_read` 仅 HTML 邮件 native 无纯文本正文（TS mailparser 由 HTML 转 text，
+    C# 未引 html→text 库）→ native 返回「（无纯文本正文…）」；形态/校验用例已覆盖，
+    内容级对齐如需再做再引库；
+  - `Math.round` / 附件 KB 取整边界、`paragraphs` 非数组语义（C# 静默当空 vs TS 抛错）
+    保留为已知边界，双轨用例仅覆盖数组形态；
+  - 文档生成取消可能留半成品文件（native 被杀无原子写）、`ast_grep_replace` 预演失败/
+    部分写失败的基线时序缺口、ast-grep 取消不杀孙进程（杀 host 语义同 git）、
+    `ToolHostException.errorCode` 暂无 TS 消费方：按 issue 计划跟踪。
+- **CI 口径**：matrix 在 CI 先于 npm ci，ast-grep 段 SKIP → **131/0**（本地全量
+  145/145）；ast-grep 由 npm ci 之后的 dual-track 步骤覆盖；`docs/dotnet-backend.md`
+  已注明。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 审查修复）。

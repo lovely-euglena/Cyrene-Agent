@@ -2,7 +2,8 @@
  * document-tools native 轨接线测试（IKJK3V T2 库替代批）：
  *  - prepare → native 调用参数（路径 / 主题 / 看门狗）：write_excel / write_word / write_pdf / write_markdown
  *  - native 可用：结果原样透传
- *  - native 故障 / 业务失败载荷：回退 TS 原实现（文件真实落盘）
+ *  - native 故障 / 业务失败载荷：回退 TS 原实现（文件真实落盘；write_pdf 的 TS pdfkit
+ *    回退轨仍受既有 msyh.ttc 兼容问题影响——本批只修 native 轨）
  *  - write_markdown 覆盖防骤降：语义拒绝抛错，不触达 native、不改文件
  *  - 取消（AbortError）原样上抛，不回退重跑
  */

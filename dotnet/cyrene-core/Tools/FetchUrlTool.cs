@@ -17,8 +17,13 @@ namespace CyreneNative.Tools;
 ///     输出统一 LF。已知格式差异（列表缩进、链接/强调边界等）见 dual-track 归一说明——
 ///     语义等价，不承诺逐字节一致（不同库无法逐字对齐，双轨以归一投影比对）。
 ///   - 缓存：30 分钟固定 TTL（不续期；容量 100 超限整体清空；命中标注 [缓存] 摄取时间）。
-///   - 安全/健壮：20s 超时；单次最多 512KB（超出截断并标注）；HTTP 错误返回 [错误] 文本。
-///   - 测试注入口（模型不可见）：__githubApiBase 覆盖 GitHub API 基址（默认 api.github.com）。
+///   - 安全/健壮：20s 超时；单次最多 512KB（超出截断并标注）；HTTP 错误返回 [错误] 文本；
+///     重定向上限 20（对齐 TS fetch/undici 默认，见 MaxAutomaticRedirections）。
+///   - 测试注入口（经 TS 包装层后模型不可见；仅矩阵/双轨直连宿主注入）：
+///     __githubApiBase 覆盖 GitHub API 基址（默认 api.github.com）。
+///   - 已知库差异（双轨按已知差异断言，见 scripts/dual-track-diff.ts）：
+///     整页回退路径（无 article/main 正文容器）ReverseMarkdown 丢 <head>/<title>，
+///     TS Turndown 保留 <title> 文本；raw 格式两侧逐字一致。
 /// </summary>
 internal static class FetchUrlTool
 {
@@ -29,8 +34,18 @@ internal static class FetchUrlTool
     private const int CacheMaxEntries = 100;
     private const string UserAgent = "Mozilla/5.0 (Cyrene Agent) Chrome/120 Safari/537.36";
     private const string DefaultGithubApiBase = "https://api.github.com";
+    private const int MaxRedirects = 20;
 
-    private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan }; // 超时走按请求 CTS
+    private static readonly HttpClient Http = CreateHttpClient(); // 超时走按请求 CTS
+
+    private static HttpClient CreateHttpClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            MaxAutomaticRedirections = MaxRedirects, // 对齐 TS fetch（undici）默认 20
+        };
+        return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+    }
     private static readonly ConcurrentDictionary<string, (string Value, long At)> Cache = new();
 
     private static readonly Converter Md = CreateConverter();

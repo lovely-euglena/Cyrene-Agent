@@ -9,11 +9,15 @@
 |---|---|---|
 | `scripts/dotnet-smoke-linux.py` | 六 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测） | 23/23 |
 | `scripts/dotnet-edge-test.py` | 畸形帧/路径穿越/SQL 注入/1e308 权重/5MB payload/幽灵会话 | 13/13 |
-| `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）/ fetch_url（本地 HTTP fixture + GitHub API mock + 截断/缓存）/ 文档四件（zip 结构 + PdfPig 文本提取）/ 邮件四件（本地 fake SMTP + fake IMAP）/ ast_grep 两件（随包 CLI）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 145/145 |
+| `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）/ fetch_url（本地 HTTP fixture + GitHub API mock + 截断/缓存）/ 文档四件（zip 结构 + PdfPig 文本提取）/ 邮件四件（本地 fake SMTP + fake IMAP）/ ast_grep 两件（随包 CLI）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 145/145（本地全量；CI 131/0，见注） |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
 | `scripts/ipc-stress-test.ts` | 并发 20 call 路由/2MB payload/超时恢复/shutdown 清 pending | ALL PASS |
 | `scripts/dual-track-diff.ts` | calculator + fs 三件（输出/字节）+ exchange_rate + expense（输出/账本）+ search_text（6）+ str_replace（8，含诊断/空文件播种）+ apply_patch（9，事务/迁移/EOL）+ download_file（7，本地 HTTP/字节/黑名单）+ git（29，镜像仓库/本地 bare 远程/commit-log-revert hash 归一/截断与 staged）+ web_search（4，确定性校验）+ weather（4）+ plan_trip（3）+ fetch_url（5，raw 逐字/markdown 归一投影/表格已知差异）+ 文档四件（6，读回投影：单元格/数字格式/列宽容差/docx run 属性/PDF 文本提取）+ 邮件四件（12，校验路径逐字）+ ast_grep 两件（10，TS napi ↔ CLI 逐字/落盘字节） | 计算器 12 + fs 7 + life 10 + search 6 + srepl 8 + apply_patch 9 + download 7 + git 29 + web_search 4 + weather 4 + plan_trip 3 + fetch_url 5 + 文档 6 + 邮件 12 + ast_grep 10 |
 | `scripts/plugin-security-test.ts` | .NET 插件 risk 闸门（未声明拒注册/透传/invoke 闭环/优雅关停） | ALL PASS |
+
+> CI 口径注记：`dotnet-tools-matrix.py` 在工作流中先于 `npm ci` 运行，ast-grep 段因
+> CLI 未安装 SKIP（**131/0**）；ast-grep 由后续 TS 步骤的 dual-track（npm ci 之后）
+> 覆盖。本地安装依赖后全量为 145/145。
 
 实测修复的代表性缺陷：RagHost 建表 SQL 丢括号、Jieba 词典 Resources 不拷贝
 （rag-host 从未真正跑通）、Cosine 漏除 entry 范数、ToolHost 帧竞态丢帧、
