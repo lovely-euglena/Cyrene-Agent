@@ -13,7 +13,12 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
-        if (args.Length > 1 && args[0] == "--selftest") return OrchestratorSelfTest.Run();
+        if (args.Length > 1 && args[0] == "--selftest")
+        {
+            if (args[1] == "sync-protocol")
+                return SyncProtocolSelfTest.Run(args.Length > 2 ? args[2] : "fixtures/sync-protocol/cases");
+            return OrchestratorSelfTest.Run();
+        }
         if (args.Length > 0 && args[0] == "--tool-host") return ToolHost.Run();
         if (args.Length > 0 && args[0] == "--rag-host") return RagHost.RunProtocolLoop();
         if (args.Length > 0 && args[0] == "--memory-host") return MemoryHost.RunProtocolLoop();
