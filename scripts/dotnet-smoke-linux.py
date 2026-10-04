@@ -179,6 +179,54 @@ for frame in out:
         print("  ", raw.strip())
 check("selftest agents 退出码=0", code == 0, f"exit={code}")
 
+# ── 7. secrets-host（Phase 1 / A1：vault 往返 + list 无 value + .bak/迁移标记）──
+print("\n=== 7. secrets-host ===")
+sec_dir = tempfile.mkdtemp(prefix="cyrene-secrets-")
+sec_frames = [
+    json.dumps({"op": "secret.put", "callId": "s1", "name": "model:provider:PA", "value": "sk-live-1"}),
+    json.dumps({"op": "secret.get", "callId": "s2", "name": "model:provider:PA"}),
+    json.dumps({"op": "secret.get", "callId": "s3", "name": "missing"}),
+    json.dumps({"op": "secret.list", "callId": "s4"}),
+    json.dumps({"op": "secret.import", "callId": "s5", "values": {"tts:minimax": "sk-tts", "asr:minimax": "sk-asr"}}),
+    json.dumps({"op": "secret.status", "callId": "s6"}),
+    json.dumps({"op": "secret.mark-migrated", "callId": "s7"}),
+    json.dumps({"op": "secret.status", "callId": "s8"}),
+    json.dumps({"op": "secret.delete", "callId": "s9", "name": "asr:minimax"}),
+    json.dumps({"op": "secret.get", "callId": "s10", "name": "asr:minimax"}),
+]
+out, code, err = run_host(["--secrets-host", "--data-dir", sec_dir], sec_frames)
+by_id = {f.get("callId"): f for f in out if isinstance(f, dict)}
+check("secrets ready 帧", any(f.get("op") == "ready" for f in out))
+r1, r2, r3 = by_id.get("s1"), by_id.get("s2"), by_id.get("s3")
+check("put ok", r1 and r1.get("ok"), json.dumps(r1)[:150] if r1 else "none")
+v2 = (r2 or {}).get("data", {}).get("value")
+check("DPAPI/明文往返一致", v2 == "sk-live-1", f"value={v2!r}")
+check("get 缺失 value=None", (r3 or {}).get("data", {}).get("value") is None)
+entries = (by_id.get("s4") or {}).get("data", {}).get("entries", [])
+check("list 只有元数据无 value", all("value" not in e and "enc" not in e for e in entries) and len(entries) == 1,
+      json.dumps(entries)[:150])
+imp = (by_id.get("s5") or {}).get("data", {}).get("imported")
+check("import 2 条", imp == 2, f"imported={imp}")
+st = (by_id.get("s6") or {}).get("data", {})
+check("status migrated=false count=3", st.get("migrated") is False and st.get("count") == 3, json.dumps(st)[:150])
+check("mark-migrated ok", (by_id.get("s7") or {}).get("ok"))
+st2 = (by_id.get("s8") or {}).get("data", {})
+check("status migrated=true", st2.get("migrated") is True, json.dumps(st2)[:150])
+check("delete removed=true", (by_id.get("s9") or {}).get("data", {}).get("removed") is True)
+check("删除后 get=None", (by_id.get("s10") or {}).get("data", {}).get("value") is None)
+check("vault 文件存在", os.path.isfile(os.path.join(sec_dir, "secrets-vault.json")))
+
+# ── 8. llm-host（Phase 2 / H1-H3：mock SSE 全链自测 + 作业库自测）──
+print("\n=== 8. llm-host ===")
+out, code, err = run_host(["--selftest", "llm-stream"], [])
+for frame in out:
+    raw = frame.get("_raw", "") if isinstance(frame, dict) else ""
+    if "PASS" in raw or "FAIL" in raw:
+        print("  ", raw.strip())
+check("selftest llm-stream 退出码=0", code == 0, f"exit={code} {err[-200:] if code else ''}")
+out2, code2, _ = run_host(["--selftest", "llm-jobs"], [])
+check("selftest llm-jobs 退出码=0", code2 == 0, f"exit={code2}")
+
 # ── 汇总 ──
 passed = sum(1 for _, ok, _ in results if ok)
 failed = sum(1 for _, ok, _ in results if not ok)
