@@ -144,6 +144,38 @@ def canonical_ids(events):
     return [item["eventId"] for item in ordered]
 
 
+def wait_ready(base, timeout=40):
+    for _ in range(int(timeout / 0.5)):
+        try:
+            if http("GET", base + "/healthz", timeout=3)[0] == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def start_instance(dll, base_env, extra_env, log_handle=None, attempts=3):
+    """启动实例：端口探测 + 就绪等待；失败重试，抑制 bind 与启动之间的 TOCTOU 抖动。"""
+    for attempt in range(attempts):
+        port = free_port()
+        base = f"http://127.0.0.1:{port}"
+        env = dict(base_env)
+        env.update(extra_env)
+        server = subprocess.Popen(
+            ["dotnet", dll, "--urls", base],
+            env=env, stdout=log_handle or subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        )
+        if wait_ready(base):
+            return server, base, port
+        server.terminate()
+        try:
+            server.wait(timeout=10)
+        except Exception:
+            server.kill()
+    raise RuntimeError(f"服务启动失败（{attempts} 次尝试）")
+
+
 def oversized_push_probe(port, content_length=11 * 1024 * 1024):
     """裸 socket：只发请求头（超大 Content-Length）、不发 body——验证服务端在读取前就拒绝。"""
     with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
@@ -180,28 +212,23 @@ def main():
     if os.path.isdir(dotnet_home):
         env["DOTNET_ROOT"] = dotnet_home
         env["PATH"] = dotnet_home + os.pathsep + env.get("PATH", "")
-    base = f"http://127.0.0.1:{port}"
     log_path = os.path.join(data_dir, "server-out.log")
     log_file = open(log_path, "w", encoding="utf-8", errors="replace")
-    server = subprocess.Popen(
-        ["dotnet", DLL, "--urls", base],
-        env=env, stdout=log_file, stderr=subprocess.STDOUT,
-    )
     try:
-        ready, health = False, {}
-        for _ in range(80):
-            try:
-                status, body, _ = http("GET", base + "/healthz", timeout=3)
-                if status == 200:
-                    health = json.loads(body)
-                    ready = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        if not ready:
-            print("[FAIL] 服务未就绪（服务日志见下方）")
-            return 1
+        server, base, port = start_instance(DLL, env, {}, log_handle=log_file)
+    except RuntimeError as exc:
+        log_file.close()
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as handle:
+                print(handle.read()[-2000:])
+        except Exception:
+            pass
+        shutil.rmtree(data_dir, ignore_errors=True)
+        print(f"[FAIL] {exc}")
+        return 1
+    try:
+        status, body, _ = http("GET", base + "/healthz", timeout=3)
+        health = json.loads(body) if status == 200 else {}
         check("healthz 就绪 + RSS 观测", isinstance(health.get("rssMB"), (int, float)), json.dumps(health)[:120])
         rss = health.get("rssMB")
         print(f"  healthz: cursor={health.get('cursor')} rssMB={rss}")
@@ -367,41 +394,26 @@ def main():
               mix1 and mix2 and status == 200, body[:160])
 
         # 10. CLOUD_TOKEN 门闩（独立实例）：无/错 token → 401，正确 → 200
-        token_port = free_port()
         token_dir = tempfile.mkdtemp(prefix="cloud-sync-token-")
-        token_env = dict(env)
-        token_env["CYRENE_CLOUD_DATA"] = token_dir
-        token_env["CLOUD_TOKEN"] = "s3cret"
-        token_server = subprocess.Popen(
-            ["dotnet", DLL, "--urls", f"http://127.0.0.1:{token_port}"],
-            env=token_env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
-        )
+        token_server = None
         try:
-            token_base = f"http://127.0.0.1:{token_port}"
-            token_ready = False
-            for _ in range(80):
-                try:
-                    status, _, _ = http("GET", token_base + "/healthz", timeout=3)
-                    if status == 200:
-                        token_ready = True
-                        break
-                except Exception:
-                    pass
-                time.sleep(0.5)
+            token_server, token_base, _ = start_instance(
+                DLL, env, {"CYRENE_CLOUD_DATA": token_dir, "CLOUD_TOKEN": "s3cret"})
             no_token = http("GET", token_base + "/v1/sync/fetch?since=0")[0]
             wrong_token = http("GET", token_base + "/v1/sync/fetch?since=0",
                                headers={"Authorization": "Bearer nope"})[0]
             ok_token = http("GET", token_base + "/v1/sync/fetch?since=0",
                             headers={"Authorization": "Bearer s3cret"})[0]
             check("CLOUD_TOKEN 门闩（无/错 token 401，正确 200）",
-                  token_ready and no_token == 401 and wrong_token == 401 and ok_token == 200,
-                  f"ready={token_ready} no={no_token} wrong={wrong_token} ok={ok_token}")
+                  no_token == 401 and wrong_token == 401 and ok_token == 200,
+                  f"no={no_token} wrong={wrong_token} ok={ok_token}")
         finally:
-            token_server.terminate()
-            try:
-                token_server.wait(timeout=10)
-            except Exception:
-                token_server.kill()
+            if token_server is not None:
+                token_server.terminate()
+                try:
+                    token_server.wait(timeout=10)
+                except Exception:
+                    token_server.kill()
             shutil.rmtree(token_dir, ignore_errors=True)
     finally:
         server.terminate()

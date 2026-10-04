@@ -103,7 +103,7 @@ sync.MapPost("/push", async (HttpContext context, EventStore store) =>
             errors = batch.Errors,
         });
     }
-    var outcome = await store.PushBatchAsync(batch.Events, BuildLineIndex(text), context.RequestAborted);
+    var outcome = await store.PushBatchAsync(batch.Events, batch.LineByEventId, context.RequestAborted);
     if (outcome.Errors.Count > 0)
     {
         return Results.BadRequest(new { code = SyncHttp.BatchRejected, errors = outcome.Errors });
@@ -142,21 +142,27 @@ sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sess
     context.Response.Headers["X-Sync-Cursor"] = cursor.ToString();
     var options = new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     var newline = "\n"u8.ToArray();
+    var written = 0;
     try
     {
         foreach (var syncEvent in store.StreamAll(sessionId, cursor))
         {
             await JsonSerializer.SerializeAsync(context.Response.Body, syncEvent, options, context.RequestAborted);
             await context.Response.Body.WriteAsync(newline, context.RequestAborted);
+            written++;
         }
     }
     catch (OperationCanceledException)
     {
-        // 客户端断开：正常终止流（X-Sync-Cursor 已发出，客户端可凭已收数据续 fetch）
+        // 客户端断开：正常终止流；warning 留痕便于排查「半截 clone」（X-Sync-Cursor 已发出，可续 fetch）
+        app.Logger.LogWarning("clone 流被取消 sessionId={SessionId} cursor={Cursor} written={Written}",
+            sessionId, cursor, written);
     }
     catch (IOException)
     {
         // 连接中断（写失败）：同上
+        app.Logger.LogWarning("clone 写中断 sessionId={SessionId} cursor={Cursor} written={Written}",
+            sessionId, cursor, written);
     }
 });
 
@@ -171,34 +177,6 @@ static bool TryExtractBearer(HttpContext context, out byte[] token)
     if (raw.Length <= scheme.Length || !raw.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)) return false;
     token = Encoding.UTF8.GetBytes(raw[scheme.Length..].Trim());
     return token.Length > 0;
-}
-
-/// <summary>eventId → 0 基物理行号（与 ReadBatch 的错误索引语义对齐；批内重复取首见）。</summary>
-static Dictionary<string, int> BuildLineIndex(string text)
-{
-    var map = new Dictionary<string, int>(StringComparer.Ordinal);
-    var lines = text.Split('\n');
-    for (var i = 0; i < lines.Length; i++)
-    {
-        var line = lines[i].Trim().Trim('\uFEFF');
-        if (line.Length == 0) continue;
-        try
-        {
-            using var document = JsonDocument.Parse(line);
-            if (document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("eventId", out var id)
-                && id.ValueKind == JsonValueKind.String)
-            {
-                var eventId = id.GetString()!;
-                if (!map.ContainsKey(eventId)) map[eventId] = i;
-            }
-        }
-        catch (JsonException)
-        {
-            // 坏行已由 ReadBatch 计入 errors / truncatedTail，此处跳过
-        }
-    }
-    return map;
 }
 
 /// <summary>同步 HTTP 层的错误码与请求约束（集中定义，避免裸字面量）。</summary>
