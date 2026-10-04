@@ -8,7 +8,8 @@
   4. 两客户端并发 push → 双方全量 fetch 后按 (lamport, deviceId, seq) 收敛一致；
   5. 链校验 E_SYNC_CHAIN / E_SYNC_SEQ（整批回滚，失败批不入库）；
   6. clone 全量 JSONL + X-Sync-Cursor 与 fetch 游标一致；
-  7. 畸形批 → 400 E_SYNC_BATCH_INVALID。
+  7. 畸形批 → 400 E_SYNC_BATCH_INVALID；
+  8. 请求体上限（>10MB → 413 E_SYNC_BATCH_TOO_LARGE，不落库）。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -91,6 +92,29 @@ def fetch_all(base, limit=200):
 def canonical_ids(events):
     ordered = sorted(events, key=lambda item: (item["lamport"], item["deviceId"], item["seq"]))
     return [item["eventId"] for item in ordered]
+
+
+def oversized_push_probe(port, content_length=11 * 1024 * 1024):
+    """裸 socket：只发请求头（超大 Content-Length）、不发 body——验证服务端在读取前就拒绝。"""
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+        head = (
+            "POST /v1/sync/push HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\n"
+            f"Content-Length: {content_length}\r\n"
+            "Content-Type: application/x-ndjson; charset=utf-8\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode("ascii")
+        sock.sendall(head)
+        data = bytearray()
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except (OSError, socket.timeout):
+                break
+            if not chunk:
+                break
+            data.extend(chunk)
+        return data.decode("utf-8", "replace")
 
 
 def main():
@@ -221,7 +245,14 @@ def main():
         check("畸形批 → 400 E_SYNC_BATCH_INVALID",
               status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID", body[:160])
 
-        # 6. clone
+        # 6. 请求体上限（>10MB → 413，不落库；裸 socket 只发头不发体，验证读取前即拒绝）
+        response = oversized_push_probe(port)
+        first_line = response.split("\r\n", 1)[0]
+        check("请求体上限（Content-Length >10MB → 413 E_SYNC_BATCH_TOO_LARGE）",
+              " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
+              response[:200].replace("\r\n", " "))
+
+        # 7. clone
         status, clone_body, headers = http("GET", base + "/v1/sync/clone")
         clone_ids = [json.loads(line)["eventId"] for line in clone_body.splitlines() if line.strip()]
         events, cursor = fetch_all(base)

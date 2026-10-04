@@ -14,6 +14,7 @@ services:
       CYRENE_CLOUD_DATA: /data
       # CLOUD_TOKEN: change-me   # IKJK2K 之前的最小门闩（建议反代同时限制来源）
     volumes:
+      # 命名卷初始化继承镜像 /data 属主（cyrene, uid 10001）；bind mount 需自行 chown
       - cloud-data:/data
     ports:
       # 仅本机暴露；生产由反代终结 TLS（见 Caddyfile.example）
