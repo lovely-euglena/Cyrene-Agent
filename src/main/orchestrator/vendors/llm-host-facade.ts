@@ -12,15 +12,21 @@
  * 设计 §8 用例 8）。
  */
 import { AgentRuntimeError } from "../agent-runtime-error";
-import { llmHostClient } from "../../dotnet-backend/llm-host-client";
+import { llmHostClient as defaultLlmHostClient, type LlmHostClient } from "../../dotnet-backend/llm-host-client";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 import { LLM_EVENTS, LLM_LANES, type LlmHostEvent } from "../../dotnet-backend/llm-host-protocol";
-import { isKeyringHydrated, isVaultMode, vaultKeyForProvider } from "../../settings/secrets-keyring";
+import { isKeyringHydrated, isVaultMode, resolveVaultKeyForVendor } from "../../settings/secrets-keyring";
 import { resolveTransport } from "./transport-detector";
 import type { ModelRetryStatus } from "../../../shared/model-retry";
 import type { ChatMessage, ChatRequest, ChatResponse, ChatVendorAdapter, ToolCall, VendorConfig } from "./types";
 
 const AUTH_HEADER_PATTERN = /^(authorization|x-api-key|api-key|cookie)$/i;
+
+/** 客户端引用（可注入桩——双轨链路测试用；复审放行条件 2「宿主拉起与双轨链路」）。 */
+let llmHostClient: LlmHostClient = defaultLlmHostClient;
+export function __setLlmHostClientForTests(client: LlmHostClient | null): void {
+  llmHostClient = client ?? defaultLlmHostClient;
+}
 
 export interface LlmHostCallOptions {
   adapter: ChatVendorAdapter;
@@ -54,6 +60,16 @@ export function shouldRouteViaLlmHost(config: VendorConfig, request: ChatRequest
 export async function callLLMViaLlmHost(options: LlmHostCallOptions): Promise<ChatResponse> {
   const { adapter, request, config } = options;
   const signal = options.signal ?? new AbortController().signal; // 缺省 = 不可取消（后台通道）
+
+  // 复审 P0-1：生产链路显式拉起宿主（既有 host 模式同构——ensureStarted 幂等），
+  // 失败按宿主丢失回退 TS 直连
+  try {
+    const up = await llmHostClient.ensureStarted();
+    if (!up) throw new Error("llm-host 启动失败");
+  } catch (err) {
+    throw hostLost(err, "ensureStarted");
+  }
+
   const http = adapter.buildStreamRequest({ ...request, stream: true }, config);
 
   // 摘鉴权头（wire 去鉴权；.NET 从 vault 注入）
@@ -77,16 +93,20 @@ export async function callLLMViaLlmHost(options: LlmHostCallOptions): Promise<Ch
       lane: LLM_LANES.interactive,
       endpoint: http.url,
       method: "POST",
-      auth: { vaultKey: vaultKeyForProvider(config.provider), style: authStyle, headerName: authHeaderName },
+      // 复审 P1-10：按内存真值反查 key 实际所在槽位（档案 key 在 model:profile:<id>
+      // 槽而 provider 槽为空时，provider 槽硬编码会 AUTH_MISSING）
+      auth: { vaultKey: resolveVaultKeyForVendor(config.provider, config.apiKey), style: authStyle, headerName: authHeaderName },
       headers,
       body: http.body,
       protocol: "openai",
       timeoutMs: Math.max(30_000, options.timeoutMs || 120_000),
-      maxRetries: 3,
+      maxRetries: 5, // 对齐 modelRequestMaxRetries 默认（复审 P1-11）
       idleTimeoutMs: 45_000,
     });
     if (!jobId) throw new Error("submit 未返回 jobId");
   } catch (err) {
+    // submit 失败 = 作业未创建（jobId 为空），无 .NET 侧资源需取消；由 hostLost
+    // 统一 → 调用方回退直连（E_LLM_HOST_LOST）
     throw hostLost(err, "submit");
   }
 
@@ -118,7 +138,9 @@ async function collectJob(
     try {
       result = await llmHostClient.poll(jobId, cursor, 5_000);
     } catch (err) {
-      // host 丢失：无可见增量 → 明确收口（调用方可回退直连）；已有增量 → 如实失败
+      // host 丢失：先尽力取消 .NET 侧作业（幂等；host 已死则 no-op，复审 P1-11 防双计费），
+      // 无可见增量 → 明确收口（调用方可回退直连）；已有增量 → 如实失败
+      void llmHostClient.cancel(jobId).catch(() => { });
       if (text.length === 0 && thinking.length === 0 && toolAcc.size === 0) throw hostLost(err, "poll");
       throw err;
     }
@@ -130,8 +152,11 @@ async function collectJob(
       if (mapped.thinking !== undefined) thinking += mapped.thinking;
       if (mapped.finishReason) finishReason = mapped.finishReason;
       if (mapped.usage) usage = mapped.usage;
-      if (mapped.terminalError) throw terminalError(ev);
+      if (mapped.terminalError) throw terminalError(ev, options.config.model);
     }
+    // 节流（复审提示项 · H4 验收 §8-1）：有事件时也按 ~66ms 节奏轮询，
+    // 事件流量 ≤15/s——主线程事件循环保护（400 TPS 上游由 .NET 缓冲摊平）
+    if (result.events.length > 0) await new Promise((r) => setTimeout(r, 66));
     if (result.final) break;
   }
 
@@ -222,15 +247,19 @@ function translate(
   }
 }
 
-function terminalError(ev: LlmHostEvent): AgentRuntimeError {
+function terminalError(ev: LlmHostEvent, model: string): AgentRuntimeError {
   const message = ev.message ?? "llm-host 作业失败";
   return new AgentRuntimeError("E_MODEL_REQUEST_FAILED", `[${ev.code ?? "E_LLM_HOST_ERROR"}] ${message}`, {
-    modelFailure: { category: "UNKNOWN", provider: "llm-host", raw: message },
-  } as never);
+    modelFailure: {
+      provider: "llm-host",
+      model,
+      category: "SERVER_ERROR", // ModelFailureInfo 合法枚举（复审提示项；原 "PROVIDER"/无 model 不合规）
+    },
+  });
 }
 
 function hostLost(err: unknown, phase: string): AgentRuntimeError {
   return new AgentRuntimeError("E_LLM_HOST_LOST", `llm-host ${phase} 失败: ${err instanceof Error ? err.message : String(err)}`, {
     cause: err,
-  } as never);
+  });
 }

@@ -119,8 +119,16 @@ export class LineHostClient {
       if (!p) return;
       this.pending.delete(callId);
       clearTimeout(p.timer);
-      if (frame.ok === false) p.reject(new Error(String(frame.error ?? "host 调用失败")));
-      else p.resolve(frame.data ?? frame);
+      if (frame.ok === false) {
+        // 复审 P0-5：对齐仓库错误帧约定 {error: "msg", errorCode: "E_..."}——
+        // 业务错误码挂到 Error 上，调用方可分类（lane 满 / auth 缺失 / secret 不可用）
+        const err = new Error(String(frame.error ?? "host 调用失败")) as Error & { errorCode?: string; retryable?: boolean };
+        if (typeof frame.errorCode === "string") err.errorCode = frame.errorCode;
+        if (typeof frame.retryable === "boolean") err.retryable = frame.retryable;
+        p.reject(err);
+      } else {
+        p.resolve(frame.data ?? frame);
+      }
     } else if (op === "ready" || op === "log" || op === "vad_result" || op === "asr_partial" || op === "asr_final" || op === "tts_meta") {
       this.onEvent(frame);
     }

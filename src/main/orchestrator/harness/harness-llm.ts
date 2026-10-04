@@ -139,7 +139,8 @@ export async function callLLM(
   // host 丢失（E_LLM_HOST_LOST）且无可见增量 → 回退 TS 直连（告警一次）。
   if (shouldRouteViaLlmHost(vendorConfig, chatRequest)) {
     try {
-      return await callLLMViaLlmHost({
+      // 复审 P1-1：双轨成功路径与直连同口径落账（recordRequest/recordUsage）
+      return recordResponseUsage(await callLLMViaLlmHost({
         adapter,
         request: chatRequest,
         config: vendorConfig,
@@ -150,7 +151,7 @@ export async function callLLM(
           if (delta.type === "text_delta") onTextDelta?.(delta.delta);
         },
         onRetryStatus,
-      });
+      }));
     } catch (error) {
       const isHostLost = error instanceof AgentRuntimeError && error.code === "E_LLM_HOST_LOST";
       if (!isHostLost) throw error;

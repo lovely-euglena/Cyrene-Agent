@@ -68,8 +68,15 @@ if (application.isPrimaryProcess()) {
       // Phase 1 / A20：密钥库迁移 + hydrate 必须先于任何设置消费
       //（迁移前明文可读回退；迁移后清痕，keyring 为唯一真值来源）。
       try {
-        const { initSecretsVault } = await import("./settings/secrets-keyring");
+        const { initSecretsVault, onKeyringHydrated } = await import("./settings/secrets-keyring");
         const { getSettingsPath, getGeneralSettingsPath } = await import("./settings-store");
+        const { refreshGeneralSettingsFromKeyring } = await import("./settings/settings-facade");
+        const { refreshModelSettingsFromKeyring } = await import("./settings/model-settings");
+        // 复审 P0-6：pre-ready 阶段已建立的设置缓存，hydrate 完成后原地回填
+        onKeyringHydrated(() => {
+          refreshGeneralSettingsFromKeyring();
+          refreshModelSettingsFromKeyring();
+        });
         await initSecretsVault(getSettingsPath(), getGeneralSettingsPath());
       } catch (error) {
         console.error("[secrets] vault 初始化异常（按未迁移回退）:", error);

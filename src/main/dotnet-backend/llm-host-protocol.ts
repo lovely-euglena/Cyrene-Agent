@@ -33,6 +33,20 @@ export const LLM_LANES = {
   low: "low",
 } as const;
 
+/** secrets-host op 名（契约测试与 SecretsHost.cs 双向锁定，复审 P1-14）。 */
+export const SECRETS_OPS = {
+  ready: "ready",
+  result: "result",
+  get: "secret.get",
+  put: "secret.put",
+  delete: "secret.delete",
+  list: "secret.list",
+  import: "secret.import",
+  status: "secret.status",
+  markMigrated: "secret.mark-migrated",
+  shutdown: "shutdown",
+} as const;
+
 export const LLM_ERRORS = {
   authMissing: "E_LLM_HOST_AUTH_MISSING",
   badRequest: "E_LLM_HOST_BAD_REQUEST",
@@ -42,6 +56,7 @@ export const LLM_ERRORS = {
   httpPrefix: "E_LLM_HTTP_",
   httpNetwork: "E_LLM_HTTP_0",
   idleTimeout: "E_LLM_IDLE_TIMEOUT",
+  requestTimeout: "E_LLM_REQUEST_TIMEOUT",
   cancelled: "E_LLM_CANCELLED",
   truncated: "E_LLM_TRUNCATED",
 } as const;

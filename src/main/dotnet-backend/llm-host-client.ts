@@ -34,9 +34,9 @@ export class LlmHostClient extends LineHostClient {
     const r = (await this.call("llm.poll", { jobId, cursor, waitMs, maxEvents })) as {
       data?: LlmPollResult;
     };
-    return (
-      r.data ?? { jobId, cursor, nextCursor: cursor, events: [], final: true }
-    );
+    // 复审提示项：缺 data = 协议异常，如实报错（不静默回退默认值掩盖漂移）
+    if (!r.data) throw new Error("llm-host poll 响应缺 data（协议漂移？）");
+    return r.data;
   }
   async cancel(jobId: string): Promise<void> {
     await this.call("llm.cancel", { jobId });
