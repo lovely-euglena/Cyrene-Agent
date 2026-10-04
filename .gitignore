@@ -269,3 +269,7 @@ dist/renderer/cyrene-welcome.png
 /src/renderer/learn-exam-preview.html
 /src/renderer/learn-exam-preview.tsx
 /dist/renderer/learn-exam.html
+
+# === PR 审查助手本地工作区（本地工具，不参与产品代码与 PR） ===
+/AGENTS.md
+/templates/
