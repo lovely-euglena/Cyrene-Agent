@@ -1,0 +1,39 @@
+# CF 版服务端（IKJN79）：Workers + Durable Objects(SQLite)。
+# 部署前置：npm run assets:build（PWA 产物进 ./assets，随部署打包）；密钥用 wrangler secret put 注入。
+# 完整部署/验收步骤见 README.md；设计见 docs/design/2026-10-04-cloud-server-forms.md §4.2。
+name = "cyrene-cloud"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+# 仅自定义域可达（避免 workers.dev 旁路域名绕过域名白名单 / 认知面收敛）
+workers_dev = false
+
+# 自定义域（部署时替换为自己的域；3 级子域通常被通用证书覆盖，4 级子域需独立子 zone / ACM）
+routes = [
+  { pattern = "cyrene-cloud.ygwill.asia", custom_domain = true }
+]
+
+# PWA 静态资产（构建：npm run assets:build；run_worker_first 让 Worker 统一控制缓存头 / CSP）
+[assets]
+directory = "./assets"
+binding = "ASSETS"
+run_worker_first = true
+
+[durable_objects]
+bindings = [{ name = "CLOUD_STORE", class_name = "CloudStore" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CloudStore"]
+
+# 非敏感默认值（密钥 CLOUD_TOKEN / CLOUD_LLM_API_KEY 用 wrangler secret put 注入）
+[vars]
+# CLOUD_LLM_MODE = "echo"            # 测试部署：内置回声 mock（不调外部模型）
+# CLOUD_LLM_MODEL = "gpt-4o-mini"
+# CLOUD_LLM_BASE_URL = "https://api.openai.com/v1"
+# CLOUD_LLM_SYSTEM_PROMPT = ""
+# CLOUD_PAIR_TTL_SECONDS = "300"
+# CLOUD_RATE_SYNC_PER_MIN = "300"
+# CLOUD_RATE_PAIR_PER_MIN = "10"
+# CLOUD_ALLOWED_HOSTS = ""
+# CLOUD_DIALOG_MAX_ATTEMPTS = "3"
+# CLOUD_DIALOG_RETRY_BASE_MS = "1000"

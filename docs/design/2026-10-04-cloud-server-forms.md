@@ -1,7 +1,7 @@
 # 服务端四形态与能力声明 · 设计（IKJN70 / IKJN78）
 
 > **日期**：2026-10-04
-> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，PR 待合并）；Git 版适配器已实现（IKJN7B）；PHP 按 IKJN7C 推进
+> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，已合并）；Git 版适配器已实现（IKJN7B，PR 待合并）；PHP 版已实现并通过本地验收（IKJN7C，PR 待合并）
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（不变式 / Q8）· 总决策 IKJN70 ·
 > CF spike IKJN3W · 桌面端同步客户端 IKJK2I · PWA IKJK2L · 完整版运维 IKJK2N
 
@@ -59,11 +59,19 @@
 
 能力声明 `impl=dotnet-vps`；`generation` 随 `CLOUD_LLM_API_KEY` 动态；PWA 同源托管；运维见 IKJK2N。
 
-### 4.2 CF 版（IKJN79）
+### 4.2 CF 版（IKJN79，已实现）
 
-- TS 复用 `src/main/sync/sync-protocol.ts` 校验器；DO SQLite 承载事件表（spike IKJN3W 已验证协议子集 7/7）；
-- 注意：自定义域证书覆盖（4 级子域需独立子 zone / 已覆盖域名）；Bot Fight Mode 对脚本 UA 的 403/1010；
-- 生成走模型 API + DO alarm 重试；静态资产用 Workers 静态托管。
+- `cloudflare/cloud-server/`：Workers + DO SQLite（单租户单 DO `global`），TS 复用
+  `src/main/sync/sync-protocol.ts` 校验器；
+- 端点与 .NET 版逐项对齐：healthz / capabilities(impl=cf-workers) / pair(code) / devices(revoke/rotate) /
+  sync(push/fetch/clone)；鉴权（device token + 主控）、链/序号校验、整批原子性由核心档套件锁定；
+  限流（DO 固定窗口）不在核心档内，由 `test/rate-limit.test.ts` 单测 + cf-worker 工作流低阈值实例的
+  429 断言覆盖；
+- 生成：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 为内置回声 mock（测试部署），
+  设置 `CLOUD_LLM_API_KEY` 后走 OpenAI 兼容接口；静态资产用 Workers 静态资产（Worker 统一缓存头 / CSP）；
+- 部署要点：自定义域用 3 级子域（通用证书即时覆盖；4 级子域 alert 40，见 IKJN3W）；Bot Fight Mode 会拦
+  脚本 UA（403/1010，套件 / e2e 用 `--user-agent` 传浏览器 UA，或关闭 BFM）；步骤见
+  `cloudflare/cloud-server/README.md`。
 
 ### 4.3 Git 版（IKJN7B，桌面端；适配器已实现）
 
@@ -93,6 +101,19 @@
 - 本地 full 云冒烟：**54/54**（含 3 项能力声明检查）；
 - 核心档（本地实例）：**35/35**；远端核心档与本地核心档同一函数（CF 批次将直接对部署实例跑）；
 - PWA 单测：**39/39**（含能力解析/降级 6 项）；e2e（Edge 通道）：**11/11**（含能力声明检查）。
+
+### IKJN79 批次（CF 版）
+
+- 单测（重放 / 配对码 / 设备名 / 哈希 / 限流固定窗口）：**22/22**；
+- 本地 `wrangler dev`（回声 mock）：核心档 **35/35**、PWA e2e **11/11**（评审修复后复跑，持久实例可重复跑）；
+- 限流低阈值实例（`CLOUD_RATE_PAIR_PER_MIN=2`）：`/v1/pair/code` 连续三次 **200 200 429**；
+- 部署实例 `cyrene-cloud.ygwill.asia`（HTTPS，回声 mock）：核心档 **35/35**、PWA e2e **11/11**
+  （配对 / 查看 / 续聊 / 离线 / 生成闭环）；
+- .NET full 回归：**54/54**（套件鲁棒化后）。
+- 评审修复（2026-10-04）：限流口径修正 + 单测/工作流 429 断言；clone 流式分页（内存有界）；
+  限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化；README 差异清单补齐。
+- 核心档鲁棒化（IKJN79 顺带）：对启用服务端生成的实例，计数 / 集合断言收敛到 run 前缀事件
+  （生成事件 id 前缀 `gen-`）；clone 改为快照单调夹逼 + run 集合 + 游标边界。
 
 ### IKJN7B 批次（Git 版适配器）
 
