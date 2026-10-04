@@ -60,7 +60,7 @@
 > 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET 设计草案・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）设计草案・写类工具 evidence 帧协议 v1（fs 三件接线落地）・2026-10-04 手机 PWA（查看 / 续聊 / 离线只读）。
 
 <details>
-<summary>全部 56 篇 + 2 个子目录（按时间序）</summary>
+<summary>全部 57 篇 + 2 个子目录（按时间序）</summary>
 
 - [2026-08-08-cyreneHarnessloopdesign.md](./design/2026-08-08-cyreneHarnessloopdesign.md)
 - [2026-08-09-cyreneHarness-construction-plan.md](./design/2026-08-09-cyreneHarness-construction-plan.md)
@@ -113,6 +113,7 @@
 - [2026-10-03-llm-service-dotnet-job-polling.md](./design/2026-10-03-llm-service-dotnet-job-polling.md)
 - [2026-10-03-tool-evidence-frame-protocol.md](./design/2026-10-03-tool-evidence-frame-protocol.md)
 - [2026-10-04-pwa-mobile-client-design.md](./design/2026-10-04-pwa-mobile-client-design.md)
+- [2026-10-04-cloud-server-forms.md](./design/2026-10-04-cloud-server-forms.md)
 - [gamebot-Honkai-Star-Rail.md](./design/gamebot-Honkai-Star-Rail.md)
 - [plugin-marketplace.md](./design/plugin-marketplace.md)
 - [react-frontend-visual-guidelines.md](./design/react-frontend-visual-guidelines.md)

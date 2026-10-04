@@ -111,9 +111,12 @@ npm --prefix src/pwa run build # → dotnet/cloud-server/wwwroot/
 
 ## API（camelCase JSON）
 
-鉴权（IKJK2K）：除 `POST /v1/pair`（兑换）外，`/v1/*` 需 `Authorization: Bearer <device token>`
-（或 `CLOUD_TOKEN` 主控）；Bearer scheme 大小写不敏感。错误码：`401 E_UNAUTHORIZED`、
-`400 E_PAIR_CODE`、`404 E_DEVICE_NOT_FOUND`、`429 E_RATE_LIMITED`、`421 E_HOST_NOT_ALLOWED`。
+鉴权（IKJK2K）：除 `POST /v1/pair`（兑换）与 `GET /v1/capabilities`（公开只读）外，`/v1/*` 需
+`Authorization: Bearer <device token>`（或 `CLOUD_TOKEN` 主控）；Bearer scheme 大小写不敏感。错误码：
+`401 E_UNAUTHORIZED`、`400 E_PAIR_CODE`、`404 E_DEVICE_NOT_FOUND`、`429 E_RATE_LIMITED`、`421 E_HOST_NOT_ALLOWED`。
+
+- `GET /v1/capabilities`（**公开**）→ `{impl, protocol, sync, clone, cursor, generation, pairing, pwa, maxBatchBytes}`
+  （形态能力声明；PWA/桌面客户端据此降级 UI；IKJN78，四形态设计见 `docs/design/2026-10-04-cloud-server-forms.md`）
 
 - `GET /healthz` → `{status, rssMB, cursor, devices}`（cursor 为 O(1) 插入序游标；回环探针豁免、远程需令牌）
 - `POST /v1/pair/code`（需鉴权）→ `{code, expiresAt}`（一次性配对码，TTL 见 env）
@@ -159,7 +162,10 @@ SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电
 
 ```bash
 dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
-python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌 + 生成闭环 + PWA 静态托管（Windows 51 / Linux 52 项；wwwroot 未构建时跳过静态 3 项）
+python scripts/dotnet-cloud-sync-test.py        # 本地 full：同步收敛 + 配对/令牌 + 生成闭环 + PWA 静态托管 + 能力声明（Windows 54 / Linux 55 项；wwwroot 未构建时跳过静态 3 项）
+python scripts/dotnet-cloud-sync-test.py --profile core   # 本地核心档（同步核心 + 配对 + 能力声明）
+python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN   # 远端形态核心档（CF / PHP / …）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
 node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
+node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN   # 远端 e2e（不 spawn；--expect-echo 开启生成断言）
 ```

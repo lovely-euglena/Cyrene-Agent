@@ -21,6 +21,9 @@ var dataDir = Environment.GetEnvironmentVariable("CYRENE_CLOUD_DATA")
     ?? Path.Combine(AppContext.BaseDirectory, "data");
 var dbPath = Path.Combine(dataDir, "events.db");
 var pairTtl = TimeSpan.FromSeconds(ReadIntEnv("CLOUD_PAIR_TTL_SECONDS", 300));
+// PWA 静态产物目录（IKJK2L）；能力声明（IKJN78）与静态托管共用同一判断
+var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+var hasWebRoot = Directory.Exists(webRoot);
 // Linux：进程 umask 0077——任何新建文件（含 SQLite -wal/-shm）不以宽松权限落盘
 StorageHardening.EnforceProcessUmask();
 
@@ -122,8 +125,7 @@ if (allowedHosts.Count > 0)
 // wwwroot 存在即启用（构建：src/pwa → dotnet/cloud-server/wwwroot；Docker 构建阶段产出）。
 // 缓存策略：assets/ 下为带哈希产物（长缓存）；index.html / sw.js / manifest / 图标不缓存，
 // 保证升级即时生效；HTML 附 CSP（纯同源、无内联脚本/样式）。
-var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-if (Directory.Exists(webRoot))
+if (hasWebRoot)
 {
     var fileProvider = new PhysicalFileProvider(webRoot);
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
@@ -156,7 +158,10 @@ app.Use(async (context, next) =>
     var isHealthz = path.Equals("/healthz", StringComparison.OrdinalIgnoreCase);
     var isPairRedeem = HttpMethods.IsPost(context.Request.Method)
         && path.Equals("/v1/pair", StringComparison.OrdinalIgnoreCase);
-    if (isPairRedeem || (!path.StartsWithSegments("/v1") && !isHealthz))
+    // 能力声明公开只读（客户端在配对前就需要它来降级 UI；不含敏感信息）
+    var isCapabilities = HttpMethods.IsGet(context.Request.Method)
+        && path.Equals("/v1/capabilities", StringComparison.OrdinalIgnoreCase);
+    if (isPairRedeem || isCapabilities || (!path.StartsWithSegments("/v1") && !isHealthz))
     {
         await next();
         return;
@@ -204,6 +209,21 @@ app.MapGet("/healthz", (EventStore store, AuthStore auth) =>
         devices = auth.CountActiveDevices(), // O(1)：COUNT 聚合，不物化整表
     });
 });
+
+// GET /v1/capabilities：形态能力声明（公开只读；PWA/桌面客户端据此降级 UI 与交互；IKJN78）
+// 四形态（完整/CF/PHP/Git）以本声明区分能力边界，见 docs/design/2026-10-04-cloud-server-forms.md
+app.MapGet("/v1/capabilities", () => Results.Json(new
+{
+    impl = "dotnet-vps",
+    protocol = "v0",
+    sync = true,
+    clone = true,
+    cursor = "server",
+    generation = modelClient.Enabled ? "realtime" : "none",
+    pairing = "device-token",
+    pwa = hasWebRoot,
+    maxBatchBytes = CloudApi.MaxPushBodyBytes,
+}));
 
 // ── 配对与设备（IKJK2K） ──
 

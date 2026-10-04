@@ -6,6 +6,7 @@
  * 拉到的事件逐条过 validateSyncEvent（服务端异常数据不进入本地缓存/重放）。
  */
 import { validateSyncEvent, type SyncEventV0 } from "../../main/sync/sync-protocol";
+import { parseCapabilities, type ServerCapabilities } from "./capabilities";
 
 export class SyncHttpError extends Error {
   constructor(
@@ -55,6 +56,12 @@ export class SyncClient {
       name: String(response.name ?? ""),
       token: String(response.token ?? ""),
     };
+  }
+
+  /** GET /v1/capabilities：能力声明（公开只读；调用方失败时回退 defaultCapabilities）。 */
+  async capabilities(): Promise<ServerCapabilities> {
+    const response = await this.request("GET", "/v1/capabilities", {});
+    return parseCapabilities(response);
   }
 
   /** GET /v1/sync/fetch：插入序增量（一页）。 */

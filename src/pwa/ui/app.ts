@@ -12,6 +12,7 @@ import {
   createUserMessageEvent,
 } from "../core/event-factory";
 import { mergeEvents } from "../core/event-store";
+import { defaultCapabilities, showPendingFor, type ServerCapabilities } from "../core/capabilities";
 import { groupTurns, replaySession, summarizeSessions, type SessionSummary } from "../core/materializer";
 import { SyncClient, SyncHttpError } from "../core/sync-client";
 import { clearCache, emptyCache, loadCache, saveCache, type PwaCache } from "../core/cache";
@@ -31,6 +32,7 @@ class PwaApp {
   private pollTimer: number | null = null;
   private refreshing = false;
   private offline = false;
+  private capabilities: ServerCapabilities = defaultCapabilities();
   private statusText = "未连接";
   private login: LoginHandle | null = null;
   private chat: ChatHandle | null = null;
@@ -39,6 +41,7 @@ class PwaApp {
 
   start(): void {
     this.cache = loadCache();
+    void this.loadCapabilities();
     if (this.cache.token && this.cache.deviceId) {
       this.showSessions();
       void this.refresh();
@@ -90,7 +93,7 @@ class PwaApp {
   private updateChat(): void {
     if (this.view !== "chat" || !this.selectedSessionId || !this.chat) return;
     const events = this.cache.events.filter((event) => event.sessionId === this.selectedSessionId);
-    this.chat.update(groupTurns(replaySession(events)), this.offline, this.statusText);
+    this.chat.update(groupTurns(replaySession(events)), this.offline, this.statusText, showPendingFor(this.capabilities));
   }
 
   private sessionSummary(sessionId: string): SessionSummary | null {
@@ -115,6 +118,7 @@ class PwaApp {
       const result = await this.client.pair(code, name || "手机");
       this.cache = { token: result.token, deviceId: result.deviceId, deviceName: result.name, cursor: 0, events: [] };
       saveCache(this.cache);
+      void this.loadCapabilities();
       this.showSessions();
       await this.refresh();
       this.startPolling();
@@ -144,6 +148,16 @@ class PwaApp {
     this.pollTimer = window.setInterval(() => {
       if (!document.hidden && this.cache.token) void this.refresh();
     }, POLL_INTERVAL_MS);
+  }
+
+  /** 能力声明（公开只读）：失败/老服务端保持兼容默认（realtime / pwa=true）。 */
+  private async loadCapabilities(): Promise<void> {
+    try {
+      this.capabilities = await this.client.capabilities();
+      this.rerenderCurrentView();
+    } catch {
+      // 兼容默认已生效：不阻断主流程
+    }
   }
 
   private async refresh(): Promise<void> {

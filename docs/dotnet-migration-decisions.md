@@ -437,3 +437,19 @@
 - **验证（Windows 本地）**：PWA 单测 **33/33**（修复 `saveCache` 配额兜底死循环：`floor(1/2)=0` → `slice(0)` 不收缩）；
   云冒烟 **51/51**（含 3 项静态托管断言）；e2e **10/10**（配对/查看/续聊/离线缓存）；构建 0 错误。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2L。
+
+## 2026-10-04 增量：服务端四形态与能力声明（IKJN70 / IKJN78）
+
+- **决策（IKJN70）**：服务端做四形态——完整版（.NET VPS，参照实现）/ CF 版（Workers + DO）/ PHP 空间版 /
+  Git 仓库版；**Git 版只服务桌面端**（无 PWA、无服务端生成）；CF 先行；PHP 用便携 PHP 环境本地验证；
+  统一「一套协议 + 能力声明 + 一致性套件」防契约漂移；拆解：IKJN78（前置）/ IKJN79（CF）/ IKJN7B（Git）/
+  IKJN7C（PHP）；设计见 `docs/design/2026-10-04-cloud-server-forms.md`。
+- **能力声明（IKJN78）**：`GET /v1/capabilities`（公开只读）——impl / protocol / sync / clone /
+  cursor(server|file-offset) / generation(realtime|inline|none) / pairing / pwa / maxBatchBytes；
+  PWA 按声明降级（generation=none 不显示「等待回复」；解析失败 / 老服务端回退兼容默认 realtime / pwa=true）。
+- **一致性套件**：云冒烟新增核心档——`--profile core`（本地）或 `--base-url URL --master-token TOKEN`（远端）；
+  跑同步核心 + 配对 + 能力声明 +（pwa=true 时）静态托管；事件 id 带运行前缀，可对持久实例重复跑；
+  PWA e2e 支持 `--base-url / --master-token`（`--expect-echo` 显式开启生成断言）。
+- **验证（Windows 本地）**：本地 full 云冒烟 **54/54**（含 3 项能力声明）；核心档 **35/35**；
+  PWA 单测 **39/39**（含能力解析/降级 6 项）；e2e **11/11**（Edge 通道）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN70 / #IKJN78。
