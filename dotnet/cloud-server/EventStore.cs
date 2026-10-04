@@ -107,6 +107,7 @@ public sealed class EventStore
             using var transaction = connection.BeginTransaction();
             var accepted = 0;
             var duplicates = 0;
+            var hasError = false;
             var errors = new List<SyncReadError>();
             for (var index = 0; index < events.Count; index++)
             {
@@ -120,10 +121,15 @@ public sealed class EventStore
                 if (error is not null)
                 {
                     errors.Add(new SyncReadError(index, error));
+                    hasError = true;
                     continue;
                 }
-                Insert(connection, transaction, syncEvent);
-                accepted++;
+                if (!hasError)
+                {
+                    // fail-fast：首个错误后不再写库（继续校验只为多报错误；整批仍回滚）
+                    Insert(connection, transaction, syncEvent);
+                    accepted++;
+                }
             }
             if (errors.Count > 0)
             {

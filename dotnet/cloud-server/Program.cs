@@ -75,8 +75,17 @@ sync.MapPost("/push", async (HttpContext context, EventStore store) =>
     {
         return Results.Json(new { code = SyncHttp.BatchTooLarge }, statusCode: StatusCodes.Status413PayloadTooLarge);
     }
-    using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
-    var text = await reader.ReadToEndAsync(context.RequestAborted);
+    string text;
+    try
+    {
+        using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
+        text = await reader.ReadToEndAsync(context.RequestAborted);
+    }
+    catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
+    {
+        // chunked（无 Content-Length）到读取时才触顶：与前置快检统一为 413 + 错误码
+        return Results.Json(new { code = SyncHttp.BatchTooLarge }, statusCode: StatusCodes.Status413PayloadTooLarge);
+    }
     var batch = SyncProtocolV0.ReadBatch(text);
     if (batch.TruncatedTail || batch.Errors.Count > 0)
     {

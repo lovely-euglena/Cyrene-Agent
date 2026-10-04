@@ -9,7 +9,7 @@
   5. 链校验 E_SYNC_CHAIN / E_SYNC_SEQ（整批回滚，失败批不入库）；
   6. clone 全量 JSONL + X-Sync-Cursor 与 fetch 游标一致；
   7. 畸形批 → 400 E_SYNC_BATCH_INVALID；
-  8. 请求体上限（>10MB → 413 E_SYNC_BATCH_TOO_LARGE，不落库）；
+  8. 请求体上限（Content-Length 快检 + chunked 触顶均 → 413 E_SYNC_BATCH_TOO_LARGE，不落库）；
   9. fetch?sessionId= 会话过滤；
   10. 链过渡混用（同设备 未上链/已上链）；
   11. CLOUD_TOKEN 门闩（独立实例 401/200）。
@@ -18,6 +18,7 @@
 """
 import json
 import os
+import select
 import shutil
 import socket
 import subprocess
@@ -81,6 +82,43 @@ def push(base, lines):
     return http("POST", base + "/v1/sync/push", "\n".join(lines))
 
 
+def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=64 * 1024):
+    """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。"""
+    with socket.create_connection(("127.0.0.1", port), timeout=15) as sock:
+        head = (
+            "POST /v1/sync/push HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\n"
+            "Content-Type: application/x-ndjson; charset=utf-8\r\n"
+            "Transfer-Encoding: chunked\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode("ascii")
+        sock.sendall(head)
+        payload = b"x" * chunk_size
+        try:
+            sent = 0
+            while sent < total:
+                if select.select([sock], [], [], 0)[0]:
+                    break  # 服务端已开始回包，停止发送
+                sock.sendall(f"{chunk_size:x}\r\n".encode("ascii") + payload + b"\r\n")
+                sent += chunk_size
+            try:
+                sock.sendall(b"0\r\n\r\n")
+            except OSError:
+                pass
+        except OSError:
+            pass  # 服务端提前拒绝并关闭连接属预期
+        data = bytearray()
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except (OSError, socket.timeout):
+                break
+            if not chunk:
+                break
+            data.extend(chunk)
+        return data.decode("utf-8", "replace")
+
+
 def fetch_all(base, limit=200):
     events, cursor, has_more, guard = [], "0", True, 0
     while has_more and guard < 50:
@@ -92,6 +130,8 @@ def fetch_all(base, limit=200):
         cursor = data["cursor"]
         has_more = data["hasMore"]
         guard += 1
+    if has_more:
+        raise RuntimeError(f"fetch_all 超过 {guard} 页仍 hasMore（拒绝静默截断）")
     return events, cursor
 
 
@@ -254,6 +294,11 @@ def main():
         response = oversized_push_probe(port)
         first_line = response.split("\r\n", 1)[0]
         check("请求体上限（Content-Length >10MB → 413 E_SYNC_BATCH_TOO_LARGE）",
+              " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
+              response[:200].replace("\r\n", " "))
+        response = chunked_oversized_push_probe(port)
+        first_line = response.split("\r\n", 1)[0]
+        check("chunked 超限（无 Content-Length）→ 413 E_SYNC_BATCH_TOO_LARGE",
               " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
               response[:200].replace("\r\n", " "))
 
