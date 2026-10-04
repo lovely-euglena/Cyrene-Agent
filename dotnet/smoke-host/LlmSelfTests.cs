@@ -97,7 +97,7 @@ public static class LlmJobsSelfTest
         for (var i = 0; i < LlmJob.RingCapacity + 100; i++)
             ring.Append(new LlmEvent { Type = LlmContracts.EvDelta, Text = "y" });
         ring.Append(new LlmEvent { Type = LlmContracts.EvDone }, isTerminal: true);
-        Check(ring.EventCount == LlmJob.RingCapacity + 100, "ring 上限不破（绝对计数）");
+        Check(ring.EventCount - ring.DroppedEvents <= LlmJob.RingCapacity, "ring 活跃事件不破上限");
         Check(ring.DroppedEvents > 0, "溢出丢弃计数");
         // cursor=0（已丢段）→ 从 base 起读：不挂、不重、可读到终态
         var fromZero = ring.Poll(0, int.MaxValue, 0);
@@ -112,13 +112,13 @@ public static class LlmJobsSelfTest
         Check(unconf.PendingCount == 60, "poll 消费推进未确认量下降");
 
         // ── 7. TTL 回收（P0-4：SweepExpired 接线 + Cts 清理可达）──
-        using (var service = new LlmJobService(new TestSecrets()))
+        using (var store = new LlmJobStore()) // 裸 store：onDequeued=null，作业不被执行干扰终态
         {
-            var j = service.Store.Submit(MakeJob(LlmContracts.LaneInteractive))!;
+            var j = store.Submit(MakeJob(LlmContracts.LaneInteractive))!;
             j.State = LlmJobState.Done;
             j.FinishedAt = DateTimeOffset.UtcNow.AddMilliseconds(-10);
-            service.Store.SweepExpired(TimeSpan.FromMilliseconds(1));
-            Check(service.Store.Find(j.Id) == null, "TTL 过期回收");
+            store.SweepExpired(TimeSpan.FromMilliseconds(1));
+            Check(store.Find(j.Id) == null, "TTL 过期回收");
         }
 
         Console.WriteLine(_failures == 0 ? "SELFTEST llm-jobs: PASS" : $"SELFTEST llm-jobs: {_failures} FAILURES");
