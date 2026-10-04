@@ -1,0 +1,146 @@
+/**
+ * ast_grep native 轨接线测试（IKJK3V T2 库替代批）：
+ *  - search：native 参数注入（工作区根 + CLI 路径）→ 结果透传；CLI 不可解析时走 TS
+ *  - replace：dryRun 单次调用；正式写入时先预演捕获 review 基线（runId 存在时）
+ *  - 校验失败/CLI 缺失：不触达 native（走 TS 语义）
+ *  - native 失败回退 TS；取消（AbortError）原样上抛
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+let tmpDir: string;
+
+const registry = new Map<string, Record<string, unknown>>();
+vi.mock("./registry/tool-registry", () => ({
+  toolRegistry: {
+    register: (tool: Record<string, unknown>) => void registry.set(tool.id as string, tool),
+    getById: (id: string) => registry.get(id),
+    getEnabledTools: () => [...registry.values()],
+  },
+}));
+
+vi.mock("electron", () => ({
+  app: { getPath: (_name: string) => tmpDir },
+}));
+
+const h = vi.hoisted(() => ({
+  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number }>,
+  nativeResults: [] as Array<string | null>,
+  nativeError: null as Error | null,
+}));
+
+import { nativeToolHost } from "./native-tool-host";
+import { registerAstGrepTools, resolveAstGrepCommand } from "./ast-grep-tools";
+
+registerAstGrepTools();
+
+function getTool(id: string): {
+  execute: (args: Record<string, unknown>, ctx?: { runId?: string; resolvedWorkspaceRoot?: string }) => Promise<string>;
+} {
+  const tool = registry.get(id) as never;
+  if (!tool) throw new Error(`工具未注册：${id}`);
+  return tool;
+}
+
+const CLI = resolveAstGrepCommand();
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ast-grep-native-"));
+  fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, "src", "a.ts"), 'console.log("a", x);\n', "utf8");
+  h.nativeCalls = [];
+  h.nativeResults = [];
+  h.nativeError = null;
+  vi.spyOn(nativeToolHost, "call").mockImplementation(
+    async (tool: string, args: Record<string, unknown>, timeoutMs?: number) => {
+      h.nativeCalls.push({ tool, args, timeoutMs });
+      if (h.nativeError) throw h.nativeError;
+      return h.nativeResults.shift() ?? null;
+    },
+  );
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe("ast_grep native 轨", () => {
+  it("search：注入工作区根 + CLI 路径，看门狗 60s，结果透传", async () => {
+    expect(CLI).not.toBeNull(); // 依赖已安装（CI pnpm install 含平台可选包）；null 说明解析链断了
+    if (!CLI) return; // 平台包缺失环境跳过（走 TS）
+    h.nativeResults = [JSON.stringify({ success: true, matchCount: 1, matches: [] })];
+    const out = await getTool("ast_grep_search").execute(
+      { pattern: "console.log($$$A)" },
+      { resolvedWorkspaceRoot: tmpDir },
+    );
+    expect(JSON.parse(out).matchCount).toBe(1);
+    expect(h.nativeCalls).toHaveLength(1);
+    expect(h.nativeCalls[0].tool).toBe("ast_grep_search");
+    expect(h.nativeCalls[0].timeoutMs).toBe(60_000);
+    expect(h.nativeCalls[0].args.__cyreneWorkspaceRoot).toBe(tmpDir);
+    expect(h.nativeCalls[0].args.__astGrepCommand).toBe(CLI);
+    expect(h.nativeCalls[0].args.pattern).toBe("console.log($$$A)");
+  });
+
+  it("replace dryRun：单次 native 调用", async () => {
+    if (!CLI) return;
+    h.nativeResults = [JSON.stringify({ success: true, dryRun: true, filesToChange: 0, changes: [] })];
+    const out = await getTool("ast_grep_replace").execute(
+      { pattern: "console.log($A)", rewrite: "logger.info($A)", dryRun: true },
+      { resolvedWorkspaceRoot: tmpDir },
+    );
+    expect(JSON.parse(out).dryRun).toBe(true);
+    expect(h.nativeCalls).toHaveLength(1);
+    expect(h.nativeCalls[0].args.rewrite).toBe("logger.info($A)");
+  });
+
+  it("replace 正式写入（runId 存在）：先预演拿变更清单，再正式调用", async () => {
+    if (!CLI) return;
+    h.nativeResults = [
+      JSON.stringify({ success: true, dryRun: true, planned: [{ file: "src/a.ts", matchCount: 1 }], changes: [] }),
+      JSON.stringify({ success: true, dryRun: false, changedFiles: 1, changed: ["src/a.ts"], changes: [] }),
+    ];
+    const out = await getTool("ast_grep_replace").execute(
+      { pattern: "console.log($A)", rewrite: "logger.info($A)", dryRun: false },
+      { runId: "run-sg-1", resolvedWorkspaceRoot: tmpDir },
+    );
+    expect(JSON.parse(out).changedFiles).toBe(1);
+    expect(h.nativeCalls).toHaveLength(2);
+    expect(h.nativeCalls[0].args.dryRun).toBe(true);
+    expect(h.nativeCalls[1].args.dryRun).toBe(false);
+    // 预演捕获了 review 基线（captureBefore 落盘 absent 标记）
+    const baselineDir = path.join(tmpDir, "cyrene-runs", "reviews", "run-sg-1", "before");
+    expect(fs.existsSync(baselineDir)).toBe(true);
+  });
+
+  it("校验失败（空 pattern）：不触达 native，返回 TS 语义错误", async () => {
+    const out = await getTool("ast_grep_search").execute({ pattern: "  " }, { resolvedWorkspaceRoot: tmpDir });
+    expect(JSON.parse(out).success).toBe(false);
+    expect(JSON.parse(out).errors[0]).toBe("pattern 参数不能为空");
+    expect(h.nativeCalls).toHaveLength(0);
+  });
+
+  it("native 失败：回退 TS 实现（真实执行搜索）", async () => {
+    h.nativeError = new Error("host down");
+    const out = await getTool("ast_grep_search").execute(
+      { pattern: "console.log($$$A)" },
+      { resolvedWorkspaceRoot: tmpDir },
+    );
+    expect(JSON.parse(out).success).toBe(true);
+    expect(JSON.parse(out).matchCount).toBe(1);
+  });
+
+  it("取消（AbortError）：原样上抛", async () => {
+    if (!CLI) return;
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    h.nativeError = err;
+    await expect(
+      getTool("ast_grep_search").execute({ pattern: "x" }, { resolvedWorkspaceRoot: tmpDir }),
+    ).rejects.toThrow("aborted");
+  });
+});

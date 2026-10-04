@@ -454,6 +454,35 @@ frames.append(json.dumps({"op": "config", "email": None}))
 c_em11 = req("email_list", {})
 c_em12 = req("send_email", {"to": ["a@b.com"], "subject": "s", "body": "b"})
 
+# ast_grep：随包 CLI（__astGrepCommand 注入；搜索/校验/dryRun/写入）
+import glob as _glob
+def _ast_grep_cli():
+    for exe in ("ast-grep.exe", "ast-grep"):
+        hits = _glob.glob(os.path.join(ROOT, "node_modules", ".pnpm", "@ast-grep+cli-*",
+                                       "node_modules", "@ast-grep", "cli-*", exe))
+        if hits:
+            return hits[0]
+    return None
+
+sg_ws = os.path.join(tmp, "sgws")
+os.makedirs(os.path.join(sg_ws, "src"))
+open(os.path.join(sg_ws, "src", "a.ts"), "w", encoding="utf-8").write('console.log("a", x);\nconst y = 1;\nconsole.log(y);\n')
+open(os.path.join(sg_ws, "src", "b.ts"), "w", encoding="utf-8").write('function f() { console.log("b"); }\n')
+AST_CLI = _ast_grep_cli()
+SG = {"__cyreneWorkspaceRoot": sg_ws, "__astGrepCommand": AST_CLI}
+c_sg1 = req("ast_grep_search", {"pattern": "console.log($$$A)", **SG})
+c_sg2 = req("ast_grep_search", {"pattern": "console.log($$$A)", "paths": ["src/a.ts"], "language": "TypeScript", **SG})
+c_sg3 = req("ast_grep_search", {"pattern": "zzz_no_match", **SG})
+c_sg4 = req("ast_grep_search", {"pattern": "console.log($$$A)", "maxMatches": 1, **SG})
+c_sg5 = req("ast_grep_search", {"pattern": "x", "language": "Bogus", **SG})
+c_sg6 = req("ast_grep_search", {"pattern": "", **SG})
+c_sg7 = req("ast_grep_search", {"pattern": "x", "paths": ["../escape"], **SG})
+c_sg8 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": True, **SG})
+c_sg8b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"], **SG})
+c_sg9 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": False, "paths": ["src/a.ts"], **SG})
+c_sg9b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"], **SG})
+c_sg10 = req("ast_grep_search", {"pattern": "x", "__cyreneWorkspaceRoot": sg_ws})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 fu_srv.shutdown()
@@ -751,6 +780,45 @@ check("email_mark 生效（uid=1 未读）", "uid=1" in el10 and "未读" in el1
 check("email_read 不存在 uid", data_text(c_em9) == "[错误] 未找到 uid=99 的邮件（folder=INBOX）", data_text(c_em9))
 check("email 关闭后校验（list）", data_text(c_em11) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em11))
 check("email 关闭后校验（send）", data_text(c_em12) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em12))
+
+print("\n=== ast_grep（随包 CLI）===")
+if not AST_CLI:
+    check("ast-grep CLI 已解析", False, "平台包未安装（pnpm install 含可选依赖）")
+else:
+    check("ast-grep CLI 已解析", True)
+    d = data_json(c_sg1)
+    check("ast_grep_search 全工作区（3 处 / 2 文件 / 坐标）",
+          d and d.get("matchCount") == 3 and d.get("filesWithMatches") == 2 and d.get("scannedFiles") == 2
+          and d["matches"][0] == {"line": 1, "column": 1, "endLine": 1, "text": 'console.log("a", x)', "file": "src/a.ts"}, d)
+    d = data_json(c_sg2)
+    check("ast_grep_search 限定路径/语言", d and d.get("scannedFiles") == 1 and d.get("matchCount") == 2
+          and d.get("language") == "TypeScript", d)
+    d = data_json(c_sg3)
+    check("ast_grep_search 无匹配", d and d.get("matchCount") == 0 and d.get("truncated") is False, d)
+    d = data_json(c_sg4)
+    check("ast_grep_search maxMatches 截断", d and d.get("matchCount") == 1 and d.get("truncated") is True, d)
+    d = data_json(c_sg5)
+    check("ast_grep_search 非法语言", d and d.get("success") is False and "不支持的语言" in d["errors"][0], d)
+    d = data_json(c_sg6)
+    check("ast_grep_search 空 pattern", d and d.get("errors")[0] == "pattern 参数不能为空", d)
+    d = data_json(c_sg7)
+    check("ast_grep_search 路径逃逸跳过", d and d.get("scannedFiles") == 0 and "skipped" in d, d)
+    d = data_json(c_sg8)
+    check("ast_grep_replace dryRun（2 文件 / 3 处 + diff 证据）",
+          d and d.get("dryRun") is True and d.get("filesToChange") == 2 and d.get("totalMatches") == 3
+          and d["changes"][0]["diff"][1]["text"] == 'logger.info("a", x)'
+          and "note" in d, d)
+    d = data_json(c_sg8b)
+    check("ast_grep_replace dryRun 不落盘", d and d.get("matchCount") == 0, d)
+    d = data_json(c_sg9)
+    check("ast_grep_replace 写入（限定路径）", d and d.get("dryRun") is False and d.get("changedFiles") == 1
+          and d.get("changed") == ["src/a.ts"], d)
+    d = data_json(c_sg9b)
+    check("ast_grep_replace 落盘生效（改写后可搜到）", d and d.get("matchCount") == 2, d)
+    check("ast_grep_replace 落盘内容", open(os.path.join(sg_ws, "src", "a.ts"), encoding="utf-8").read()
+          == 'logger.info("a", x);\nconst y = 1;\nlogger.info(y);\n', open(os.path.join(sg_ws, "src", "a.ts"), encoding="utf-8").read())
+    f10 = by.get(c_sg10, {})
+    check("ast_grep_search 缺 CLI 错误帧", f10.get("ok") is False and "ast-grep CLI 不可用" in (f10.get("error") or ""), f10)
 
 print("\n=== git ===")
 if not shutil.which("git"):

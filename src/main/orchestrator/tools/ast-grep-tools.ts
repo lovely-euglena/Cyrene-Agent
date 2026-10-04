@@ -19,8 +19,100 @@ import type { ToolDiffLine, ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges } from "./registry/tool-evidence";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { withNativeFirst, isNativeFailurePayload, nativeToolHost } from "./native-tool-host";
+import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import { isAbortError } from "../../abort-utils";
 
 const LOG_PREFIX = "[AstGrep]";
+
+// ── native 轨（.NET ToolHost + 随包 ast-grep CLI）─────────
+/** native 轨看门狗：≥ C# CLI 超时（30s）。 */
+const AST_GREP_NATIVE_TIMEOUT_MS = 60_000;
+
+/** 解析随包 ast-grep CLI 可执行文件（平台包；找不到返回 null → 走 TS napi 实现）。 */
+export function resolveAstGrepCommand(): string | null {
+  try {
+    const cliDir = path.dirname(require.resolve("@ast-grep/cli/package.json"));
+    const platformPkg = process.platform === "win32"
+      ? (process.arch === "arm64" ? "@ast-grep/cli-win32-arm64-msvc" : "@ast-grep/cli-win32-x64-msvc")
+      : process.platform === "darwin"
+        ? (process.arch === "arm64" ? "@ast-grep/cli-darwin-arm64" : "@ast-grep/cli-darwin-x64")
+        : (process.arch === "arm64" ? "@ast-grep/cli-linux-arm64-gnu" : "@ast-grep/cli-linux-x64-gnu");
+    const exeName = process.platform === "win32" ? "ast-grep.exe" : "ast-grep";
+    const resolved = require.resolve(`${platformPkg}/${exeName}`, { paths: [cliDir] });
+    return fs.existsSync(resolved) ? resolved : null;
+  } catch {
+    return null; // 平台包缺失（可选依赖被裁）→ TS napi 轨
+  }
+}
+
+/**
+ * native 参数组装：参数校验（与 parseCommonArgs 同）通过 + CLI 可解析 + 有工作区时返回
+ * native 参数（注入 __cyreneWorkspaceRoot / __astGrepCommand）；否则返回 null → TS 原实现。
+ */
+function buildAstGrepNativeArgs(
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+  isReplace = false,
+): Record<string, unknown> | null {
+  try {
+    parseCommonArgs(args);
+  } catch {
+    return null;
+  }
+  const workspaceRoot = ctx?.resolvedWorkspaceRoot;
+  if (!workspaceRoot) return null;
+  const command = resolveAstGrepCommand();
+  if (!command) return null;
+  return {
+    ...args,
+    ...(isReplace ? { rewrite: String(args.rewrite ?? "") } : {}),
+    __cyreneWorkspaceRoot: workspaceRoot,
+    __astGrepCommand: command,
+  };
+}
+
+/**
+ * ast_grep_replace native 优先：dryRun 单次调用；正式写入时先预演一遍拿变更清单
+ * 以捕获 review 基线（native 写入前，与 TS 原实现的 captureBefore 时序对齐），再正式调用。
+ * 任何失败整体回退 TS；取消原样上抛。
+ */
+async function executeAstGrepReplaceNativeFirst(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+  if (!resolveDotnetConfig().toolHost) return executeAstGrepReplace(args, ctx);
+  const nativeArgs = buildAstGrepNativeArgs(args, ctx, true);
+  if (nativeArgs === null) return executeAstGrepReplace(args, ctx);
+  try {
+    if (ctx?.runId && args.dryRun === false) {
+      const planResult = await nativeToolHost.call(
+        "ast_grep_replace",
+        { ...nativeArgs, dryRun: true },
+        AST_GREP_NATIVE_TIMEOUT_MS,
+        ctx.signal,
+      );
+      if (planResult !== null) {
+        const planText = typeof planResult === "string" ? planResult : JSON.stringify(planResult);
+        if (!isNativeFailurePayload(planText)) {
+          const plan = JSON.parse(planText) as { planned?: Array<{ file: string }> };
+          const tracker = getRunReviewTracker(app.getPath("userData"));
+          const root = String(nativeArgs.__cyreneWorkspaceRoot);
+          for (const p of plan.planned ?? []) {
+            tracker.captureBefore(ctx.runId, path.resolve(root, p.file), p.file);
+          }
+        }
+      }
+    }
+    const result = await nativeToolHost.call("ast_grep_replace", nativeArgs, AST_GREP_NATIVE_TIMEOUT_MS, ctx?.signal);
+    if (result !== null) {
+      const text = typeof result === "string" ? result : JSON.stringify(result);
+      if (!isNativeFailurePayload(text)) return text;
+      console.warn(LOG_PREFIX, "ast_grep_replace native 返回错误载荷，回退 TS:", text.slice(0, 200));
+    }
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    console.warn(LOG_PREFIX, "ast_grep_replace native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+  }
+  return executeAstGrepReplace(args, ctx);
+}
 
 // ── 语言映射 ──────────────────────────────────────────────
 
@@ -190,13 +282,15 @@ function searchOneFile(source: string, lang: string, pattern: string): SingleMat
 
 /**
  * 展开 rewrite 模板中的元变量（napi 的 replace 是纯字面替换，元变量需手动展开）。
- * - `$$$NAME`（多捕获）→ 各节点文本用 ", " 连接（与 ast-grep CLI 行为一致）
+ * - `$$$NAME`（多捕获）→ 用源文本切片重建（保留原始分隔符/空白；napi 捕获含分隔节点，
+ *   直接 join 会重复逗号：`$$$A` 捕获 `"a", x` 时 join(", ") 得到 `"a", ,, x`——与 ast-grep CLI 不一致）
  * - `$NAME`（单捕获）→ 节点文本；未捕获时替换为空串
  */
-function expandRewrite(match: SgNode, rewrite: string): string {
+function expandRewrite(match: SgNode, rewrite: string, source: string): string {
   let result = rewrite.replace(/\$\$\$([A-Z][A-Z0-9_]*)/g, (_all, name: string) => {
     const nodes = match.getMultipleMatches(name);
-    return nodes.map((n) => n.text()).join(", ");
+    if (nodes.length === 0) return "";
+    return source.slice(nodes[0].range().start.index, nodes[nodes.length - 1].range().end.index);
   });
   result = result.replace(/\$([A-Z][A-Z0-9_]*)/g, (_all, name: string) => {
     const node = match.getMatch(name);
@@ -226,7 +320,7 @@ function replaceOneFile(
 
   // 先按起点排序，保证 edits 与 matches 的配对关系在去重时不错乱
   matches.sort((a, b) => a.range().start.index - b.range().start.index);
-  const edits: Edit[] = matches.map((m) => m.replace(expandRewrite(m, rewrite)));
+  const edits: Edit[] = matches.map((m) => m.replace(expandRewrite(m, rewrite, source)));
 
   // 重叠编辑去重：嵌套匹配（外层语句 + 内层表达式同时命中）会产生重叠区间，
   // commitEdits 对重叠编辑行为未定义。按起点排序后跳过被前一个覆盖的编辑，保留最外层。
@@ -249,7 +343,7 @@ function replaceOneFile(
       diffLines.push({ type: "remove", text });
       deletions++;
     }
-    const expanded = expandRewrite(match, rewrite);
+    const expanded = expandRewrite(match, rewrite, source);
     for (const text of expanded.split("\n")) {
       diffLines.push({ type: "add", text });
       insertions++;
@@ -508,7 +602,7 @@ const PATTERN_SYNTAX_DOC =
 const LANGUAGES_DOC = `支持的语言：${SUPPORTED_LANGUAGES.join("、")}（language 不传时按文件扩展名自动识别）`;
 
 export function registerAstGrepTools(): void {
-  toolRegistry.register({
+  toolRegistry.register(withNativeFirst({
     id: "ast_grep_search",
     name: "AST 代码搜索",
     description:
@@ -540,7 +634,7 @@ export function registerAstGrepTools(): void {
       required: ["pattern"],
     },
     execute: executeAstGrepSearch,
-  });
+  }, "ast_grep_search", (args, ctx) => buildAstGrepNativeArgs(args, ctx), AST_GREP_NATIVE_TIMEOUT_MS));
 
   toolRegistry.register({
     id: "ast_grep_replace",
@@ -575,7 +669,7 @@ export function registerAstGrepTools(): void {
       },
       required: ["pattern", "rewrite"],
     },
-    execute: executeAstGrepReplace,
+    execute: executeAstGrepReplaceNativeFirst,
   });
 
   console.log(LOG_PREFIX, "已注册：ast_grep_search / ast_grep_replace");

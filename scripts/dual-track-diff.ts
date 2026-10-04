@@ -1315,6 +1315,90 @@ async function runEmailDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── ast_grep 双轨（共享 fixture 工作区；TS napi ↔ .NET CLI JSON）──
+//
+// 显式有序 paths 规避目录枚举顺序差异；输出 JSON 逐字比对（路径为相对路径，两侧一致）；
+// 改写落盘后字节级比对。CLI 平台包缺失时跳过（TS 侧仍可运行）。
+
+async function runAstGrepDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] ast_grep ${name}`);
+    else { failed++; console.log(`[FAIL] ast_grep ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "sg-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "sg-dual-net-"));
+  for (const home of [tsHome, netHome]) {
+    mkdirSync(path.join(home, "src"), { recursive: true });
+    writeFileSync(path.join(home, "src", "a.ts"), 'console.log("a", x);\nconst y = 1;\nconsole.log(y);\n', "utf8");
+    writeFileSync(path.join(home, "src", "b.ts"), 'function f() { console.log("b"); }\n', "utf8");
+  }
+
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const sgTools = await import("../src/main/orchestrator/tools/ast-grep-tools");
+    sgTools.registerAstGrepTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const cli = sgTools.resolveAstGrepCommand();
+    if (!cli) {
+      console.log("[SKIP] ast_grep 双轨（ast-grep CLI 平台包未安装）");
+      return 0;
+    }
+    const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = toolRegistry.getById(id);
+      if (!tool) throw new Error(`TS 工具未注册: ${id}`);
+      return tool.execute(args, { resolvedWorkspaceRoot: tsHome } as never);
+    };
+    const runNet = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const host = await callSmokeTool(id, { ...args, __cyreneWorkspaceRoot: netHome, __astGrepCommand: cli });
+      return String(host.data ?? "");
+    };
+
+    const searchCases: Array<{ name: string; args: Record<string, unknown> }> = [
+      { name: "search 多捕获（$$$，2 文件 3 处）", args: { pattern: "console.log($$$A)", paths: ["src/a.ts", "src/b.ts"] } },
+      { name: "search 单捕获（$A）", args: { pattern: "console.log($A)", paths: ["src/a.ts", "src/b.ts"] } },
+      { name: "search 限定路径/语言", args: { pattern: "console.log($$$A)", paths: ["src/a.ts"], language: "TypeScript" } },
+      { name: "search 无匹配", args: { pattern: "zzz_no_match", paths: ["src/a.ts", "src/b.ts"] } },
+      { name: "search maxMatches 截断", args: { pattern: "console.log($$$A)", paths: ["src/a.ts", "src/b.ts"], maxMatches: 1 } },
+      { name: "search 非法语言（校验）", args: { pattern: "x", language: "Bogus", paths: ["src/a.ts"] } },
+      { name: "search 空 pattern（校验）", args: { pattern: "", paths: ["src/a.ts"] } },
+      { name: "search 路径逃逸跳过", args: { pattern: "x", paths: ["../escape"] } },
+    ];
+    for (const c of searchCases) {
+      const tsOut = await runTs("ast_grep_search", c.args);
+      const netOut = await runNet("ast_grep_search", c.args);
+      check(c.name, tsOut === netOut, `ts=${tsOut.slice(0, 200)} net=${netOut.slice(0, 200)}`);
+    }
+
+    // replace dryRun：完整输出（含 diff 证据）逐字比对
+    const dryArgs = { pattern: "console.log($$$A)", rewrite: "logger.info($$$A)", dryRun: true, paths: ["src/a.ts", "src/b.ts"] };
+    const tsDry = await runTs("ast_grep_replace", dryArgs);
+    const netDry = await runNet("ast_grep_replace", dryArgs);
+    check("replace dryRun（含 $$$ 展开 diff 证据）", tsDry === netDry, `ts=${tsDry.slice(0, 260)} net=${netDry.slice(0, 260)}`);
+
+    // replace 写入：输出 + 落盘字节
+    const writeArgs = { pattern: "console.log($$$A)", rewrite: "logger.info($$$A)", dryRun: false, paths: ["src/a.ts", "src/b.ts"] };
+    const tsWrite = await runTs("ast_grep_replace", writeArgs);
+    const netWrite = await runNet("ast_grep_replace", writeArgs);
+    const bytesSame = ["src/a.ts", "src/b.ts"].every((rel) =>
+      Buffer.compare(readFileSync(path.join(tsHome, rel)), readFileSync(path.join(netHome, rel))) === 0);
+    check("replace 写入（输出 + 落盘字节）", tsWrite === netWrite && bytesSame,
+      `ts=${tsWrite.slice(0, 200)} net=${netWrite.slice(0, 200)} bytes=${bytesSame}`);
+  } finally {
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 // ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
 
 /** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
@@ -1583,6 +1667,9 @@ async function main(): Promise<void> {
     // 邮件四件双轨（校验路径；IMAP/SMTP 快乐路径由矩阵 fake 服务器覆盖）
     if (useSmoke) failures += await runEmailDualTrack();
     else console.log("[SKIP] 邮件四件双轨（仅 smoke dll 轨支持）");
+    // ast_grep 双轨（TS napi ↔ .NET CLI；共享 fixture 工作区）
+    if (useSmoke) failures += await runAstGrepDualTrack();
+    else console.log("[SKIP] ast_grep 双轨（仅 smoke dll 轨支持）");
     // git 八件双轨（镜像仓库 + 本地 bare 远程）
     if (useSmoke) failures += await runGitDualTrack();
     else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");

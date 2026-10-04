@@ -216,6 +216,8 @@ internal static class ToolHost
                         new { id = "email_list", name = "收邮件列表(.NET)", description = "IMAP 最近邮件（uid/已读/时间/发件人/主题；可过滤）" },
                         new { id = "email_read", name = "读邮件(.NET)", description = "IMAP 单封详情（正文截断/附件名/默认标已读）" },
                         new { id = "email_mark", name = "标记邮件(.NET)", description = "IMAP 标记已读/未读" },
+                        new { id = "ast_grep_search", name = "AST 代码搜索(.NET)", description = "ast-grep CLI JSON：结构模式搜索（$$$ 通配；文件收集/上限同 TS）" },
+                        new { id = "ast_grep_replace", name = "AST 批量改写(.NET)", description = "ast-grep CLI JSON：结构模式改写（重叠去重 + diff 证据 + dryRun）" },
                     },
                 });
                 break;
@@ -367,6 +369,8 @@ internal static class ToolHost
                         "email_list" => EmailTools.List(args ?? EmptyArgs),
                         "email_read" => EmailTools.Read(args ?? EmptyArgs),
                         "email_mark" => EmailTools.Mark(args ?? EmptyArgs),
+                        "ast_grep_search" => AstGrepTool.Search(args ?? EmptyArgs),
+                        "ast_grep_replace" => AstGrepTool.Replace(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });
