@@ -139,7 +139,7 @@
   迁移清痕、失败回退、验收用例与开放问题）；Phase 2 细化方案见
   `docs/design/2026-10-03-llm-service-dotnet-job-polling.md`（.NET 厂商服务 + TS 轮询）；
   关联 Issue：Ygwill/cyrene-agent#IKJLB2。
-- **实施状态**：本批仅文档与决策，未开工。
+- **实施状态**：Phase 1（A1–A5）与 llm-host MVP（H0–H4）已实施于 `issue/IKJM7D` 分支（PR #19 复审修复后待合）；H5（后台队列接管）/H6（协议全量）为后续批次。
 
 ## 2026-10-03 增量：PR #1 审查修复（按件超时 + Number 语义）
 

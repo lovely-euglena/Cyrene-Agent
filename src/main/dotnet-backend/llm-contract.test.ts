@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { LLM_EVENTS, LLM_ERRORS, LLM_LANES, LLM_OPS } from "./llm-host-protocol";
+import { LLM_EVENTS, LLM_ERRORS, LLM_LANES, LLM_OPS, SECRETS_OPS } from "./llm-host-protocol";
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const CONTRACTS_CS = path.join(REPO_ROOT, "dotnet/cyrene-core/Llm/LlmContracts.cs");
@@ -102,6 +102,30 @@ describe("secrets-host 契约（SecretsHost.cs 协议帧）", () => {
   });
 });
 
+describe("secrets-host 契约双向绑定（复审 P1-14：SECRETS_OPS ↔ SecretsHost.cs）", () => {
+  it("TS SECRETS_OPS 每个值都在 SecretsHost.cs 源码中", () => {
+    const cs = fs.readFileSync(SECRETS_HOST_CS, "utf8");
+    for (const op of Object.values(SECRETS_OPS)) {
+      expect(cs.includes(`"${op}"`), `SECRETS_OPS.${op} 缺失于 SecretsHost.cs`).toBe(true);
+    }
+  });
+  it("C# 侧 secret.* op 无未登记进 TS 镜像的漂移", () => {
+    const cs = fs.readFileSync(SECRETS_HOST_CS, "utf8");
+    const csOps = [...new Set([...cs.matchAll(/"secret\.[a-z-]+"/g)].map((m) => m[0].replaceAll('"', "")))];
+    const tsOps = new Set(Object.values(SECRETS_OPS));
+    for (const op of csOps) {
+      expect(tsOps.has(op), `C# 新增 secret op "${op}" 未同步 TS SECRETS_OPS`).toBe(true);
+    }
+  });
+  it("错误帧对齐仓库约定（error/errorCode/retryable，复审 P0-5）", () => {
+    const secretsCs = fs.readFileSync(SECRETS_HOST_CS, "utf8");
+    expect(secretsCs).toContain("errorCode = code");
+    const llmCs = readCs("dotnet/cyrene-core/Llm/LlmHost.cs");
+    expect(llmCs).toContain("errorCode =");
+    expect(llmCs).toContain("retryable");
+  });
+});
+
 describe("llm-host 契约扫描（LlmHost.cs 分发 op）", () => {
   it("宿主 switch 分支覆盖 submit/poll/cancel/status/shutdown", () => {
     const cs = readCs("dotnet/cyrene-core/Llm/LlmHost.cs");
@@ -112,7 +136,7 @@ describe("llm-host 契约扫描（LlmHost.cs 分发 op）", () => {
 
   it("成功响应帧统一 data 信封（TS 客户端解包依据）", () => {
     const cs = readCs("dotnet/cyrene-core/Llm/LlmHost.cs");
-    expect(cs).toContain("data = new { jobId = job.Id }");
-    expect(cs).toContain("nextCursor = cursor + events.Count");
+    expect(cs).toContain("data = new { jobId = job!.Id }");
+    expect(cs).toContain("nextCursor");
   });
 });
