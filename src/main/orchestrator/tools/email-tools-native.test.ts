@@ -1,8 +1,8 @@
 /**
  * email 四件 native 轨接线测试（IKJK3V T2 库替代批）：
  *  - send_email：校验 + 确认卡（TS/B2）→ config 帧下发（含授权码，B1 仅内存）→ native 发送（60s 看门狗）；
- *    native 失败回退 nodemailer（不再重复弹确认卡）
- *  - email_list / email_read / email_mark：config 帧下发 + native 调用 + 失败回退
+ *    native 失败不自动重发（发送状态未知，避免重复投递）；宿主未启动时安全回退 nodemailer
+ *  - email_list / email_read / email_mark：config 帧下发 + native 调用 + 失败回退 + 取消信号透传
  *  - 校验路径（未启用/收件人无效/取消）不触达 native
  */
 
@@ -70,7 +70,7 @@ function injectConfig(overrides: Record<string, unknown> = {}): void {
 }
 
 function getTool(id: string): {
-  execute: (args: Record<string, unknown>, ctx?: { runId?: string }) => Promise<string>;
+  execute: (args: Record<string, unknown>, ctx?: { runId?: string; signal?: AbortSignal }) => Promise<string>;
 } {
   const tool = toolRegistry.getById(id);
   if (!tool) throw new Error(`工具未注册：${id}`);
@@ -136,10 +136,26 @@ describe("email 四件 native 轨", () => {
     expect(h.requestUserChoice).not.toHaveBeenCalled();
   });
 
-  it("send_email：native 失败 → 回退 nodemailer（不重复弹确认卡）", async () => {
+  it("send_email：native 失败不自动重发（发送状态未知提示，nodemailer 不触达）", async () => {
     injectConfig();
     h.requestUserChoice.mockResolvedValue("send");
-    h.nativeError = new Error("host down");
+    h.nativeError = new Error("native 工具 send_email 超时");
+
+    const out = await getTool("send_email").execute(
+      { to: ["to@example.com"], subject: "Hi", body: "Hello" },
+      {},
+    );
+
+    expect(out).toContain("发送状态未知");
+    expect(out).toContain("不会自动重发");
+    expect(h.sendMail).not.toHaveBeenCalled();
+    expect(h.requestUserChoice).toHaveBeenCalledTimes(1); // 确认只发生一次
+  });
+
+  it("send_email：宿主不可用（call 返回 null）→ 安全回退 nodemailer（确定未发送）", async () => {
+    injectConfig();
+    h.requestUserChoice.mockResolvedValue("send");
+    h.nativeResult = null; // host 未启动：未派发，回退不产生重复投递
     h.sendMail.mockResolvedValue({ messageId: "m1" });
 
     const out = await getTool("send_email").execute(
@@ -149,7 +165,6 @@ describe("email 四件 native 轨", () => {
 
     expect(out).toBe("[send_email] 已发送：to@example.com 主题：Hi");
     expect(h.sendMail).toHaveBeenCalledTimes(1);
-    expect(h.requestUserChoice).toHaveBeenCalledTimes(1); // 确认只发生一次
   });
 
   it("email_list：下发配置帧 + native 调用 + 结果透传", async () => {
@@ -181,11 +196,38 @@ describe("email 四件 native 轨", () => {
     expect(out).toBe("[错误] 邮件功能未启用，请在设置里开启");
   });
 
+  it("email_list / email_read / email_mark：取消信号透传（ctx.signal → native 调用）", async () => {
+    injectConfig();
+    const controller = new AbortController();
+    h.nativeResult = "ok";
+    await getTool("email_list").execute({}, { signal: controller.signal });
+    await getTool("email_read").execute({ uid: 7 }, { signal: controller.signal });
+    await getTool("email_mark").execute({ uid: 7 }, { signal: controller.signal });
+    expect(h.nativeCalls.map((c) => c.signal)).toEqual([
+      controller.signal, controller.signal, controller.signal,
+    ]);
+  });
+
   it("取消（AbortError）：原样上抛", async () => {
     injectConfig();
     const err = new Error("aborted");
     err.name = "AbortError";
     h.nativeError = err;
     await expect(getTool("email_list").execute({}, {})).rejects.toThrow("aborted");
+  });
+
+  it("email 三件在途取消：AbortError 原样上抛、不回退 TS", async () => {
+    injectConfig();
+    const err = Object.assign(new Error("aborted"), { name: "AbortError" });
+    h.nativeError = err;
+    await expect(
+      getTool("email_list").execute({}, { signal: new AbortController().signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      getTool("email_read").execute({ uid: 7 }, { signal: new AbortController().signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      getTool("email_mark").execute({ uid: 7 }, { signal: new AbortController().signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 });

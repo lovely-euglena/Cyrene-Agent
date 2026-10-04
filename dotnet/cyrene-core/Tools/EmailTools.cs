@@ -16,7 +16,9 @@ namespace CyreneNative.Tools;
 ///   - 配置（SMTP/IMAP 主机、端口、TLS、账号、授权码、发件人）经 config 帧注入
 ///     （B1：仅宿主内存驻留，不落盘；TS 每次调用前实时刷新）；
 ///   - 校验文案与 TS 逐字对齐（未启用 / 配置不完整 / 收件人无效 / uid 无效等），
-///     校验失败按普通结果返回（不回退）；连接/协议失败抛错误帧 → TS 包装层回退原实现；
+///     校验失败按普通结果返回（不回退）；收信连接/协议失败抛错误帧 → TS 包装层回退原实现；
+///     send_email 失败抛错误帧后 TS 不自动重发（发送状态可能未知，避免重复投递）；
+///     发送成功后的断开失败仅日志，不计入发送失败（防 TS 误判触发重复投递）。
 ///   - 发信确认卡在 TS（B2 审批在 Electron），本工具只做确认后的实际发送；
 ///   - email_read 正文 4000 字符截断（附"…（正文已截断）"），默认标记已读（失败不阻断阅读）。
 /// </summary>
@@ -59,6 +61,7 @@ internal static class EmailTools
         foreach (var p in attachments)
             if (!File.Exists(p)) return $"[错误] 附件不存在：{p}";
 
+        var client = new SmtpClient { Timeout = ClientTimeoutMs };
         try
         {
             var message = new MimeMessage();
@@ -72,16 +75,23 @@ internal static class EmailTools
             foreach (var p in attachments) builder.Attachments.Add(p);
             message.Body = builder.ToMessageBody();
 
-            using var client = new SmtpClient { Timeout = ClientTimeoutMs };
             client.Connect(host, port, secure ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTlsWhenAvailable);
             client.Authenticate(user, pass);
             client.Send(message);
-            client.Disconnect(true);
         }
         catch (Exception ex)
         {
-            // 连接/协议失败：抛错误帧 → TS 包装层回退 nodemailer 原实现
+            // 连接/认证/发送失败：抛错误帧；TS 包装层对 send_email 不自动重发
+            // （发送状态可能未知，避免重复投递）
             throw new ToolHostException("E_EMAIL_SEND", "发送失败：" + ex.Message);
+        }
+        finally
+        {
+            // 断开失败不属于发送失败：服务器已收件，若在此抛错会让 TS 误判未发送
+            // 而触发回退重发（重复投递窗口）。仅日志。
+            try { client.Disconnect(true); }
+            catch (Exception ex) { Console.Error.WriteLine("[EmailTools] SMTP 断开失败（已发送，忽略）：" + ex.Message); }
+            try { client.Dispose(); } catch { /* 释放失败忽略 */ }
         }
         return $"[send_email] 已发送：{string.Join(", ", to)} 主题：{subject}";
     }

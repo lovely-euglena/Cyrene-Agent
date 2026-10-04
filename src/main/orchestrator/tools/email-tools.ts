@@ -195,7 +195,9 @@ async function sendEmailTs(plan: SendEmailPlan): Promise<string> {
 
 /**
  * send_email：校验 → 确认卡（B2 审批保持在 Electron/TS）→ native 优先发送。
- * native 失败回退 nodemailer 实现（不再重复弹确认卡——确认已发生，重复弹卡会打断用户）。
+ * native 失败不自动回退 nodemailer：失败可能发生在「服务器已收件、确认未回」
+ * 之后，自动重发会重复投递——返回明确的不确定态提示（fallbackOnError:false）；
+ * 仅宿主未启动（call 返回 null）时安全回退 TS（确定未发送）。
  */
 async function executeSendEmail(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
   const plan = prepareSendEmail(args);
@@ -224,7 +226,7 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
     return "[send_email] 用户取消发送";
   }
 
-  // 实时下发邮件配置后 native 优先发送；失败回退 TS（已确认，不重复弹卡）
+  // 实时下发邮件配置后 native 优先发送；失败不自动重发（发送状态可能未知）
   pushEmailConfig();
   return nativeFirst(
     "send_email",
@@ -237,7 +239,16 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
       attachments: plan.attachments,
     },
     () => sendEmailTs(plan),
-    { timeoutMs: EMAIL_NATIVE_TIMEOUT_MS, signal: context?.signal },
+    {
+      timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+      signal: context?.signal,
+      // 副作用安全（审查 P1-3）：超时/进程故障/错误帧可能是「已发送、确认未回」，
+      // 自动回退会重复投递 → 禁止回退，返回明确的不确定态提示。
+      fallbackOnError: false,
+      uncertainFailureMessage: (error) =>
+        `[错误] 邮件发送状态未知：native 发送未收到确认（${error.message}）。` +
+        "为避免重复投递，不会自动重发；请先到邮箱「已发送」确认，必要时再手动重试。",
+    },
   );
 }
 
@@ -316,6 +327,16 @@ function formatAddress(address: { name?: string; address?: string } | undefined)
   return address.name ? `${address.name} <${address.address ?? ""}>` : (address.address ?? "(未知发件人)");
 }
 
+/**
+ * 邮件时间固定格式（与 native 轨 C# `yyyy/M/d HH:mm:ss` 对齐）：
+ * 不用 toLocaleString——locale 随环境变化会让双轨输出分叉（审查 P2-1③）。
+ */
+function formatEmailDate(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 /** 收件箱/文件夹列表：默认最近 10 封，可只看未读、可关键词过滤主题/发件人（TS 原实现，native 回退）。 */
 async function executeEmailListTs(args: Record<string, unknown>): Promise<string> {
   const folder = readMailbox(args);
@@ -337,7 +358,7 @@ async function executeEmailListTs(args: Record<string, unknown>): Promise<string
         const from = formatAddress(message.envelope?.from?.[0]);
         const subject = message.envelope?.subject || "(无主题)";
         if (search && !`${subject} ${from}`.toLowerCase().includes(search)) continue;
-        const date = message.envelope?.date ? new Date(message.envelope.date).toLocaleString() : "";
+        const date = message.envelope?.date ? formatEmailDate(new Date(message.envelope.date)) : "";
         const seen = message.flags?.has("\\Seen") ? "已读" : "未读";
         lines.push(`- uid=${message.uid} · ${seen} · ${date} · 发件人：${from}\n  主题：${subject}`);
       }
@@ -353,10 +374,13 @@ async function executeEmailListTs(args: Record<string, unknown>): Promise<string
   return typeof result === "string" ? result : JSON.stringify(result);
 }
 
-/** email_list：native 优先（MailKit），失败回退 TS（imapflow）。 */
-async function executeEmailList(args: Record<string, unknown>): Promise<string> {
+/** email_list：native 优先（MailKit），失败回退 TS（imapflow）；取消信号透传。 */
+async function executeEmailList(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   pushEmailConfig();
-  return nativeFirst("email_list", args, () => executeEmailListTs(args), { timeoutMs: EMAIL_NATIVE_TIMEOUT_MS });
+  return nativeFirst("email_list", args, () => executeEmailListTs(args), {
+    timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+    signal: ctx?.signal,
+  });
 }
 
 /** 读单封邮件：主题/收发件人/时间/附件名 + 纯文本正文（截断）；默认标记已读（TS 原实现，native 回退）。 */
@@ -394,7 +418,7 @@ async function executeEmailReadTs(args: Record<string, unknown>): Promise<string
         `主题：${parsed.subject ?? "(无主题)"}`,
         `发件人：${parsed.from?.text ?? "(未知)"}`,
         `收件人：${toText || "(未知)"}`,
-        `时间：${parsed.date ? parsed.date.toLocaleString() : "(未知)"}`,
+        `时间：${parsed.date ? formatEmailDate(parsed.date) : "(未知)"}`,
         `附件：${attachmentNames}`,
         "",
         bodyText || "（无纯文本正文；如需 HTML 原文请告知）",
@@ -406,10 +430,13 @@ async function executeEmailReadTs(args: Record<string, unknown>): Promise<string
   return typeof result === "string" ? result : JSON.stringify(result);
 }
 
-/** email_read：native 优先（MailKit），失败回退 TS（imapflow + mailparser）。 */
-async function executeEmailRead(args: Record<string, unknown>): Promise<string> {
+/** email_read：native 优先（MailKit），失败回退 TS（imapflow + mailparser）；取消信号透传。 */
+async function executeEmailRead(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   pushEmailConfig();
-  return nativeFirst("email_read", args, () => executeEmailReadTs(args), { timeoutMs: EMAIL_NATIVE_TIMEOUT_MS });
+  return nativeFirst("email_read", args, () => executeEmailReadTs(args), {
+    timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+    signal: ctx?.signal,
+  });
 }
 
 /** 标记已读/未读（TS 原实现，native 回退）。 */
@@ -435,10 +462,13 @@ async function executeEmailMarkTs(args: Record<string, unknown>): Promise<string
   return typeof result === "string" ? result : JSON.stringify(result);
 }
 
-/** email_mark：native 优先（MailKit），失败回退 TS（imapflow）。 */
-async function executeEmailMark(args: Record<string, unknown>): Promise<string> {
+/** email_mark：native 优先（MailKit），失败回退 TS（imapflow）；取消信号透传。 */
+async function executeEmailMark(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   pushEmailConfig();
-  return nativeFirst("email_mark", args, () => executeEmailMarkTs(args), { timeoutMs: EMAIL_NATIVE_TIMEOUT_MS });
+  return nativeFirst("email_mark", args, () => executeEmailMarkTs(args), {
+    timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+    signal: ctx?.signal,
+  });
 }
 
 // ══════════════════════════════════════════════════════════

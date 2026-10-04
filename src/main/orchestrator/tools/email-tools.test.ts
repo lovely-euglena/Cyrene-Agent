@@ -254,6 +254,8 @@ describe("email_list / email_read / email_mark（IMAP 收信）", () => {
     expect(res).toContain("uid=14");
     expect(res).toContain("未读");
     expect(res).toContain("发件人：小王 <x@y.com>");
+    // P2-1③：时间格式固定（与 native C# `yyyy/M/d HH:mm:ss` 对齐），不随 locale 变化
+    expect(res).toMatch(/uid=14 · 未读 · \d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}:\d{2} ·/);
     expect(res).toContain("uid=13");
     expect(res).toContain("已读");
     expect(imapLogoutMock).toHaveBeenCalled();
@@ -289,6 +291,8 @@ describe("email_list / email_read / email_mark（IMAP 收信）", () => {
     expect(res).toContain("发件人：小王 <x@y.com>");
     expect(res).toContain("report.pdf (2KB)");
     expect(res).toContain("这是正文内容");
+    // P2-1③：时间格式固定（与 native C# `yyyy/M/d HH:mm:ss` 对齐）
+    expect(res).toMatch(/时间：\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}:\d{2}/);
   });
 
   it("email_read：markSeen=false 不标记；非法 uid 不建连", async () => {
