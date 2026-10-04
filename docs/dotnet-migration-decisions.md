@@ -504,3 +504,27 @@
   `vitest run src/main/sync src/pwa` **70/70**；
   `tsc main` / `tsc preload` / `tsc renderer` 三端 0 错误。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。
+
+## 2026-10-04 增量：PHP 空间版服务端（IKJN7C）
+
+- **实现**：`php/cloud-server/`（零依赖：PDO SQLite + 手写路由/静态托管）；协议读取器 PHP 移植，
+  与 TS / C# 跑同一组 fixtures（11/11）；端点与 .NET 版逐项对齐（healthz / capabilities(impl=php-shared) /
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)，SQLite 自增序游标）。
+- **生成降级（inline）**：push 内联尽力（`max_execution_time` 预算内），超时/失败挂起 `dialog_pending`；
+  `bin/drain.php`（cron）重试；桌面端在线兜底；`CLOUD_LLM_MODE=echo` 回声 mock。
+- **虚拟主机适配**：`public/` 为站点根（`.htaccess` 模板）；`data/` 可写且 deny 直读；clone 逐行输出低内存；
+  配置走环境变量或 `config.local.php`。
+- **e2e 脚本修复（共享工具）**：seed 事件 id 唯一化（持久实例可重复跑）+ `data-session-id` 精确定位 +
+  生成断言接受 `inline`（PHP 形态）。
+- **评审修复（2026-10-05）**：P0 存储加固（`umask(0077)` + 目录 0700 + 库/`-wal`/`-shm` 0600，
+  Linux / CI 断言）；CI 阶段 2 环境变量传参修复（`env`）+ 就绪失败输出日志 + pnpm 锁定 + permissions；
+  clone 改生成器分页流式（兑现低内存声明）；id 长度 / 规范序改 UTF-16 码元（astral 与 TS / C# 一致）；
+  `BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名 IP，回环信任 XFF）；请求体限长读取；
+  trigger / drain 异常兜底；静态不回显 `.php` / 点文件；README 差异清单与 Apache 2.4+ 注明。
+- **复审修复（2026-10-05）**：XFF 取**最右受信跳**（防伪造绕限流；与 .NET `ForwardedHeaders` 口径一致）；
+  healthz 回环判定含 XFF（同机反代下外部客户端仍 401）；CI 阶段 1/2 数据目录隔离；新增 XFF / healthz 单测 5 项；
+  P3（umask 进程级副作用、断言强度、id 尾随控制符 fixture 统一）明确接受为跟进项。
+- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **47/47**（Linux / CI 另含 3 项权限断言）；
+  核心档（生成关）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；
+  .NET 本地 e2e 回归 **11/11**。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。

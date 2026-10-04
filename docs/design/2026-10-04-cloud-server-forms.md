@@ -1,7 +1,7 @@
 # 服务端四形态与能力声明 · 设计（IKJN70 / IKJN78）
 
 > **日期**：2026-10-04
-> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，已合并）；Git 版适配器已实现（IKJN7B，PR 待合并）；PHP 版已实现并通过本地验收（IKJN7C，PR 待合并）
+> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，已合并）；Git 版适配器已实现（IKJN7B，已合并）；PHP 版已实现并通过本地验收（IKJN7C，PR 待合并）
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（不变式 / Q8）· 总决策 IKJN70 ·
 > CF spike IKJN3W · 桌面端同步客户端 IKJK2I · PWA IKJK2L · 完整版运维 IKJK2N
 
@@ -90,11 +90,20 @@
   纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
   参数校验 / 同设备冲突 / 宿主受限 env / 取消，**19/19**；桌面端接线（事件导出器 / 物化视图）属 IKJK2I，后续接入。
 
-### 4.4 PHP 版（IKJN7C）
+### 4.4 PHP 版（IKJN7C，已实现）
 
-- 单文件/小套件实现 L1+L2；MySQL 自增序 = 服务端游标；
-- 生成：push 内联尽力（`max_execution_time` 内），失败挂起 + 可选 cron 排空 + 桌面兜底；
-- 便携 PHP 环境本地验证（无真实空间）。
+- `php/cloud-server/`：单套件实现 L1+L2（零依赖：PDO SQLite + 手写路由/静态托管）；
+  协议读取器与 TS / C# 跑同一组 fixtures（tests/run.php **11/11**）；
+- 鉴权 = device token（配对/撤销/轮换）+ 主控令牌；SQLite 固定窗口限流；域名白名单；
+- 生成降级（inline）：push 内联尽力（`max_execution_time` 预算内），超时/失败挂起 `dialog_pending`，
+  可选 cron 排空（`bin/drain.php`）+ 桌面兜底；`CLOUD_LLM_MODE=echo` 回声 mock；
+- 静态资产：`public/` 同空间托管（缓存头 / CSP 与 .NET / CF 口径一致）；Apache `.htaccess` 模板；
+- 虚拟主机约束：数据目录可写且不进 webroot；clone 生成器分页流式（内存有界）；配置走 env / config.local.php；
+- 存储加固（评审 P0）：入口 / cron `umask(0077)` + 目录 0700 + 库/`-wal`/`-shm` 0600
+  （best-effort；Linux / CI 断言）；
+- 并发与语义：`BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名按 IP，回环信任 XFF **最右**一跳）；
+  healthz 回环直连免鉴权（同机反代按 XFF 真实客户端判定）；id 长度 / 规范序按 UTF-16 码元
+  （与 TS / C# 一致，astral / emoji 亦对齐）。
 
 ## 5. 验证（IKJN78 批次，Windows 本地）
 
@@ -126,3 +135,16 @@
   `unsafe` 开关（`PAGER` / `GIT_EXTERNAL_DIFF` / `GIT_PROXY_COMMAND` / `GIT_TEMPLATE_DIR` /
   `GIT_CONFIG_COUNT` 等），宿主含受限键仍可用（含用例）；自愈先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
   补取消（aborted）用例。
+
+### IKJN7C 批次（PHP 空间版）
+
+- PHP 单测 **47/47**（含 11 个共享 fixtures：协议读取器与 TS / C# 逐字段一致；Linux / CI 另含 3 项权限加固断言）；
+- 核心档（生成关闭）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**（持久实例可重复跑）；
+- .NET 本地 e2e 回归 **11/11**；e2e 脚本顺带修复：seed 事件 id 唯一化 + `data-session-id` 精确定位 +
+  生成断言接受 `inline`（PHP 形态）。
+- 评审修复（2026-10-05）：存储加固（P0）；CI 阶段 2 传参修复（`env`）+ pnpm 锁定 + permissions + 就绪断言；
+  clone 生成器分页流式；id / 排序 UTF-16 码元语义对齐（含 astral 单测）；`BEGIN IMMEDIATE`；
+  限流分区 / 回环 XFF；请求体限长；生成触发 / 排空异常兜底；静态拦截 `.php` / 点文件；README 差异补齐。
+- 复审修复（2026-10-05）：XFF 改取**最右受信跳**（防客户端伪造最左值绕限流，与 .NET ForwardLimit=1 对齐）；
+  healthz 回环判定含 XFF（同机反代下外部客户端仍 401）；CI 阶段 1/2 数据目录隔离（防 pair 限流跨阶段叠加）；
+  新增 XFF / healthz 单测 5 项；P3（umask 进程级副作用、断言强度、id 尾随控制符 fixture 统一）明确接受为跟进项。

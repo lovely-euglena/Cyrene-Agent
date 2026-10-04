@@ -1,0 +1,62 @@
+# PHP 空间版服务端（IKJN7C）：单测（共享 fixtures + 权限断言）+ 本地 php -S 核心档 + PWA e2e（Gitee Go 兼容 GitHub Actions 语法）
+name: php-server
+on:
+  push:
+    branches: [main]
+    paths: ['php/**', 'src/pwa/**', 'fixtures/sync-protocol/**', 'scripts/dotnet-cloud-sync-test.py', 'scripts/pwa-e2e-test.mjs']
+  pull_request:
+    paths: ['php/**', 'src/pwa/**', 'fixtures/sync-protocol/**', 'scripts/dotnet-cloud-sync-test.py', 'scripts/pwa-e2e-test.mjs']
+
+permissions:
+  contents: read
+
+jobs:
+  php-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, mbstring, curl
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: PHP 单测（fixtures + 工具 + 集成 + 权限断言）
+        run: php php/cloud-server/tests/run.php
+      - name: PWA 资产构建
+        run: |
+          cd src/pwa
+          npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
+          cd ../..
+          node php/cloud-server/scripts/build-assets.mjs
+      - name: 本地 php -S 验收（核心档 + PWA e2e）
+        run: |
+          set -e
+          start_server() {
+            env CLOUD_TOKEN=smoke-master "$@" \
+              php -S 127.0.0.1:8088 -t php/cloud-server/public php/cloud-server/public/index.php > /tmp/php.log 2>&1 &
+            PHP_PID=$!
+            ready=0
+            for i in $(seq 1 60); do
+              if curl -fsS http://127.0.0.1:8088/v1/capabilities > /dev/null 2>&1; then ready=1; break; fi
+              sleep 1
+            done
+            if [ "$ready" != "1" ]; then
+              echo "php -S 未就绪（60s）"; cat /tmp/php.log; exit 1
+            fi
+          }
+          trap 'kill $PHP_PID 2>/dev/null || true' EXIT
+          # 阶段 1：生成关闭 → 核心档（独立数据目录）
+          start_server CYRENE_CLOUD_DATA=/tmp/cyrene-php-data-core
+          python3 scripts/dotnet-cloud-sync-test.py --base-url http://127.0.0.1:8088 --master-token smoke-master
+          kill $PHP_PID 2>/dev/null || true
+          wait $PHP_PID 2>/dev/null || true
+          # 阶段 2：inline echo → PWA e2e（独立数据目录，避免 pair 限流跨阶段叠加）
+          start_server CYRENE_CLOUD_DATA=/tmp/cyrene-php-data-e2e CLOUD_LLM_MODE=echo
+          pnpm install --frozen-lockfile
+          npx playwright install msedge
+          node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8088 --master-token smoke-master --expect-echo

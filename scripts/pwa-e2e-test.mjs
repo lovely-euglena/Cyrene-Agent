@@ -103,6 +103,30 @@ async function httpJson(method, url, body, headers = {}) {
   return { status: response.status, body: parsed, text };
 }
 
+/** 配对码签发（带状态诊断：限流 429 时给出明确原因，避免下游「Bearer undefined → 401」的误导）。 */
+async function requestPairCode(base) {
+  const response = await httpJson("POST", `${base}/v1/pair/code`, undefined, {
+    Authorization: `Bearer ${MASTER_TOKEN}`,
+  });
+  if (response.status !== 200 || typeof response.body.code !== "string") {
+    const hint =
+      response.status === 429
+        ? "（pair 限流：同一实例 1 分钟内重复跑套件 / e2e 可能触发；等待下一分钟或调大 CLOUD_RATE_PAIR_PER_MIN）"
+        : "";
+    throw new Error(`配对码签发失败：${response.status} ${response.text}${hint}`);
+  }
+  return response.body.code;
+}
+
+/** 配对兑换（带状态诊断）。 */
+async function redeemPairCode(base, code, deviceName) {
+  const response = await httpJson("POST", `${base}/v1/pair`, { code, deviceName });
+  if (response.status !== 200 || typeof response.body.token !== "string") {
+    throw new Error(`配对兑换失败：${response.status} ${response.text}`);
+  }
+  return response.body;
+}
+
 /** 进程内 OpenAI 兼容 mock：回复「回声：<最后一条 user 文本>」。 */
 function startMockLlm() {
   const requests = [];
@@ -163,14 +187,8 @@ async function startServer(dataDir, llmPort, port) {
 
 /** 桌面设备种子：session.create + 一条 user 消息（触发服务端生成，充当“最近会话”历史）。 */
 async function seedDesktopSession(base) {
-  const codeResponse = await httpJson("POST", `${base}/v1/pair/code`, undefined, {
-    Authorization: `Bearer ${MASTER_TOKEN}`,
-  });
-  const pairResponse = await httpJson("POST", `${base}/v1/pair`, {
-    code: codeResponse.body.code,
-    deviceName: "桌面",
-  });
-  const desktop = pairResponse.body;
+  const code = await requestPairCode(base);
+  const desktop = await redeemPairCode(base, code, "桌面");
   const events = [
     {
       eventId: `desk-1-${SESSION_ID}`,
@@ -246,14 +264,11 @@ async function runBrowser(base) {
 
     // 配对登录
     check("登录页渲染", await page.getByTestId("pair-code").isVisible());
-    const codeResponse = await httpJson("POST", `${base}/v1/pair/code`, undefined, {
-      Authorization: `Bearer ${MASTER_TOKEN}`,
-    });
-    await page.getByTestId("pair-code").fill(codeResponse.body.code);
+    const code = await requestPairCode(base);
+    await page.getByTestId("pair-code").fill(code);
     await page.getByTestId("pair-name").fill("E2E手机");
     await page.getByTestId("pair-submit").click();
 
-    // 会话列表（来自桌面种子）
     // 会话列表（来自桌面种子；用 data-session-id 精确定位，兼容持久实例上的历史会话）
     const sessionItem = page.locator(`[data-testid="session-item"][data-session-id="${SESSION_ID}"]`);
     await sessionItem.waitFor({ state: "visible", timeout: 15000 });
