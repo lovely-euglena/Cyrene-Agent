@@ -1,0 +1,43 @@
+# Cyrene 云端同步服务——裸跑 systemd 单元（IKJK2J）
+#
+# 安装（VPS）：
+#   sudo cp cyrene-cloud-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cyrene-cloud-server
+# 前置：
+#   - /opt/cyrene-cloud = dotnet publish 产物（cyrene-cloud-server.dll；framework-dependent）
+#   - 系统用户：sudo useradd --system --home-dir /opt/cyrene-cloud --shell /usr/sbin/nologin cyrene
+#   - 数据目录：sudo install -d -o cyrene -g cyrene -m 700 /var/lib/cyrene-cloud
+# 日志：journalctl -u cyrene-cloud-server -f
+
+[Unit]
+Description=Cyrene Cloud Server（事件库 + /v1/sync）
+Documentation=https://gitee.com/ygwill/cyrene-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cyrene
+Group=cyrene
+WorkingDirectory=/opt/cyrene-cloud
+Environment=ASPNETCORE_URLS=http://127.0.0.1:7789
+Environment=CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud
+Environment=Logging__LogLevel__Microsoft.AspNetCore=Warning
+# Environment=CLOUD_TOKEN=change-me
+
+ExecStart=/usr/bin/dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll
+
+Restart=always
+RestartSec=3
+
+# 2G 预算 + 最小权限（仅数据目录可写；对外由 Caddy 反代终结 TLS）
+MemoryMax=512M
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cyrene-cloud
+
+[Install]
+WantedBy=multi-user.target

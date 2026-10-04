@@ -10,7 +10,7 @@
   6. clone 全量 JSONL + X-Sync-Cursor 与 fetch 游标一致；
   7. 畸形批 → 400 E_SYNC_BATCH_INVALID。
 
-运行：dotnet build dotnet/cloud-server -c Release 后 python scripts/dotnet-cloud-sync-test.py
+运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
 import json
 import os
@@ -26,7 +26,9 @@ import urllib.request
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DLL = os.path.join(REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
+# 可选参数：发布产物 dll 路径（裸跑直测）；默认用 Release 构建输出
+DLL = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(
+    REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
 results = []
 
 

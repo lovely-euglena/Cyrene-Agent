@@ -7,6 +7,7 @@ namespace CyreneCloud.Storage;
 /// <summary>
 /// append-only 事件库（SQLite WAL，2G 预算）。
 ///
+/// - 持久性：WAL + synchronous=FULL——push 返回 200 的事件断电后不丢（事件库语义优先于写吞吐）；
 /// - 幂等：event_id 唯一索引，首见生效（重复只计数）；
 /// - 排序：客户端收敛序 = (lamport, deviceId, seq)（协议 v0）；服务端游标 = 插入序 id；
 /// - 链校验（v0 过渡策略，Q3 内容哈希重算待定稿）：
@@ -45,7 +46,7 @@ public sealed class EventStore
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
         using var pragma = connection.CreateCommand();
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;";
         pragma.ExecuteNonQuery();
         return connection;
     }

@@ -3,19 +3,58 @@
 事件库 + `/v1/sync` push / fetch / clone；契约 = 同步协议 v0
 （`docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/`）。
 
-## 本地运行
+## 裸跑（推荐主路线）
+
+```bash
+# ① 发布（仓库根；VPS 已装 ASP.NET Core Runtime 10 + libicu）
+dotnet publish dotnet/cloud-server -c Release -o ./artifacts/cyrene-cloud
+#    不想装运行时 → 自包含：-r linux-x64 --self-contained true（体积换零依赖）
+
+# ② VPS 部署（system 用户 + 0700 数据目录 + 产物）
+sudo useradd --system --home-dir /opt/cyrene-cloud --shell /usr/sbin/nologin cyrene || true
+sudo install -d -o cyrene -g cyrene -m 700 /var/lib/cyrene-cloud
+sudo rsync -a --delete ./artifacts/cyrene-cloud/ /opt/cyrene-cloud/
+
+# ③ systemd（单元在仓库 dotnet/cloud-server/deploy/，拷到 VPS 执行）
+sudo cp dotnet/cloud-server/deploy/cyrene-cloud-server.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now cyrene-cloud-server
+journalctl -u cyrene-cloud-server -f
+
+# ④ 验证 + 反代（TLS）
+curl http://127.0.0.1:7789/healthz
+caddy run --config dotnet/cloud-server/deploy/Caddyfile.example   # 同机反代；IKJK2K 接管暴露面
+```
+
+systemd 单元内置（`deploy/cyrene-cloud-server.service`）：`ASPNETCORE_URLS=http://127.0.0.1:7789`、
+`CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud`、`Restart=always`、`MemoryMax=512M`、`UMask=0077`、
+`ProtectSystem=strict`（仅数据目录可写）、日志走 journald。
+
+## 本地运行（开发）
 
 ```bash
 dotnet build dotnet/cloud-server -c Release
 CYRENE_CLOUD_DATA=./data dotnet dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll
-# 默认 http://127.0.0.1:7789（可用 --urls / ASPNETCORE_URLS 覆盖）
+# 默认 http://127.0.0.1:7789（--urls / ASPNETCORE_URLS 可覆盖）
 ```
 
-| 环境变量 | 说明 |
+### 环境变量
+
+| 变量 | 说明 |
 | --- | --- |
-| `CYRENE_CLOUD_DATA` | 数据目录（`events.db`，默认 `AppContext.BaseDirectory/data`） |
+| `CYRENE_CLOUD_DATA` | 数据目录（`events.db`；默认 `AppContext.BaseDirectory/data`） |
 | `CLOUD_TOKEN` | 非空时 `/v1/*` 需 `Authorization: Bearer <token>`（IKJK2K 前的最小门闩） |
 | `ASPNETCORE_URLS` | 监听地址（默认 `http://127.0.0.1:7789`） |
+
+## 容器（备选）
+
+```bash
+cd dotnet/cloud-server
+docker compose up -d --build
+curl http://127.0.0.1:7789/healthz
+```
+
+`mem_limit 512m` + healthcheck + `restart: unless-stopped` + 日志上限（json-file 10m×3）；
+同样仅绑 `127.0.0.1`，反代见 `deploy/Caddyfile.example`。
 
 ## API（camelCase JSON）
 
@@ -39,19 +78,14 @@ CYRENE_CLOUD_DATA=./data dotnet dotnet/cloud-server/bin/Release/net10.0/cyrene-c
 - 未上链事件：`prevHash` 必须缺省；过渡期允许与已上链事件混用；
 - 同 (sessionId, deviceId) 的 `seq` 严格递增；重复 `eventId` 幂等跳过。
 
-## 容器（compose）
+## 持久性
 
-```bash
-cd dotnet/cloud-server
-docker compose up -d --build
-curl http://127.0.0.1:7789/healthz
-```
-
-`mem_limit 512m` + healthcheck + `restart: unless-stopped` + 日志上限（json-file 10m×3）；
-仅绑 `127.0.0.1` 对外端口，TLS 终结见 `Caddyfile.example`（IKJK2K 接管暴露面）。
+SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电后不丢；备份/恢复演练属 IKJK2N。
 
 ## 测试
 
 ```bash
-python scripts/dotnet-cloud-sync-test.py   # 起真实服务：并发收敛/幂等/分页/clone/链校验
+dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
+python scripts/dotnet-cloud-sync-test.py        # 起真实服务：并发收敛/幂等/分页/clone/链校验
+python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
 ```
