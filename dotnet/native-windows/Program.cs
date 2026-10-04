@@ -104,6 +104,28 @@ public static class Program
             return Agents.AgentOrchestrator.RunProtocolLoop();
         }
 
+        // 密钥库托管宿主（Phase 1 / A20）：DPAPI vault 落 --data-dir，
+        // 模型/视觉/TTS/ASR 密钥读写经此，源 JSON 清痕。协议见 Secrets.SecretsHost。
+        if (args.Length > 0 && args[0] == "--secrets-host")
+        {
+            return Secrets.SecretsHost.Run(args, new Secrets.DpapiSecretProtector());
+        }
+
+        // llm 托管宿主（Phase 2 / H1+H2）：作业式厂商服务——TS 提交 wire 请求
+        // （去鉴权），此处注入鉴权 + 发送 + 流式解析 + 事件缓冲；TS 按 cursor 轮询。
+        // 密钥经 ISecretProvider 只读共享 vault（拍板 #3）。
+        if (args.Length > 0 && args[0] == "--llm-host")
+        {
+            var llmDataDir = Secrets.SecretsHost.ParseDataDir(args);
+            if (llmDataDir == null)
+            {
+                Console.Error.WriteLine("[llm-host] missing --data-dir (protocol violation)");
+                return 2;
+            }
+            var llmVault = new Secrets.SecretVault(llmDataDir, new Secrets.DpapiSecretProtector());
+            return Llm.LlmHost.Run(args, new Secrets.VaultSecretProvider(llmVault));
+        }
+
         // 纯后端 Agent 循环测试版：LLM function-calling while 循环全在本进程
         // （mock/真实端点均可），无 Electron 依赖——见 Agents.AgentLoop 头注释。
         if (args.Length > 0 && args[0] == "--agent-loop")
