@@ -169,7 +169,7 @@ async function seedDesktopSession(base) {
   const desktop = pairResponse.body;
   const events = [
     {
-      eventId: "desk-1",
+      eventId: `desk-1-${SESSION_ID}`,
       sessionId: SESSION_ID,
       type: "session.create",
       lamport: 1,
@@ -179,7 +179,7 @@ async function seedDesktopSession(base) {
       payload: { title: "最近会话", createdAt: "2026-10-04T01:00:00.000Z" },
     },
     {
-      eventId: "desk-2",
+      eventId: `desk-2-${SESSION_ID}`,
       sessionId: SESSION_ID,
       type: "message.append",
       lamport: 2,
@@ -237,7 +237,8 @@ async function runBrowser(base) {
       capsResponse.status() === 200 && ["realtime", "inline", "none"].includes(caps.generation),
       `status=${capsResponse.status()} generation=${caps.generation}`,
     );
-    const echoExpected = EXPECT_ECHO && caps.generation === "realtime";
+    // 生成回复断言：realtime（.NET/CF）与 inline（PHP 空间版）都是服务端生成
+    const echoExpected = EXPECT_ECHO && (caps.generation === "realtime" || caps.generation === "inline");
 
     // 配对登录
     check("登录页渲染", await page.getByTestId("pair-code").isVisible());
@@ -248,8 +249,8 @@ async function runBrowser(base) {
     await page.getByTestId("pair-name").fill("E2E手机");
     await page.getByTestId("pair-submit").click();
 
-    // 会话列表（来自桌面种子）
-    const sessionItem = page.getByTestId("session-item").filter({ hasText: "最近会话" });
+    // 会话列表（来自桌面种子；用 data-session-id 精确定位，兼容持久实例上的历史会话）
+    const sessionItem = page.locator(`[data-testid="session-item"][data-session-id="${SESSION_ID}"]`);
     await sessionItem.waitFor({ state: "visible", timeout: 15000 });
     check("配对后可见桌面会话", true);
 
@@ -260,7 +261,7 @@ async function runBrowser(base) {
       await page.getByTestId("messages").getByText("回声：桌面说：你好", { exact: true }).waitFor({ timeout: 15000 });
       check("看到服务端对桌面消息的生成回复", true);
     } else {
-      console.log("[SKIP] 桌面消息生成回复断言（远端未接回声 mock / generation != realtime）");
+      console.log("[SKIP] 桌面消息生成回复断言（远端未接回声 mock / generation = none）");
     }
 
     // 手机发送 → 服务端生成回复（轮询可见）
