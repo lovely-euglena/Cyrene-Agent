@@ -55,6 +55,11 @@ const PIPE_PATH = `\\\\.\\pipe\\${PIPE_NAME}`;
 interface TrayCommand {
   op: "cmd";
   action: string;
+  /**
+   * 拖动模式目标状态（TrayHost 菜单勾选透传）。旧版托盘不发该字段，
+   * 缺省按 true 兼容（旧行为：drag-mode 恒开启）。
+   */
+  checked?: boolean;
 }
 
 /**
@@ -147,7 +152,8 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
   };
 }
 
-function dispatchLine(line: string, input: DetachedTrayInput): void {
+/** 托盘命令分发（导出供测试锁定协议；生产路径由 socket 数据回调调用）。 */
+export function dispatchLine(line: string, input: DetachedTrayInput): void {
   let msg: TrayCommand;
   try {
     msg = JSON.parse(line) as TrayCommand;
@@ -169,7 +175,8 @@ function dispatchLine(line: string, input: DetachedTrayInput): void {
       input.togglePetWindow();
       break;
     case "drag-mode":
-      input.setPetDragMode?.(true);
+      // 勾选状态随命令透传（修复「只能开不能关」）；旧版托盘无 checked → true 兼容
+      input.setPetDragMode?.(typeof msg.checked === "boolean" ? msg.checked : true);
       break;
     case "quit":
       input.quit();
