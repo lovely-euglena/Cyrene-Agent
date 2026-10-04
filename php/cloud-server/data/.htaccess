@@ -1,0 +1,2 @@
+# 数据目录兜底：即使被部署进 webroot 也禁止直读（SQLite 文件）
+Require all denied

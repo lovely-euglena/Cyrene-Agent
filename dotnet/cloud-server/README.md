@@ -1,0 +1,171 @@
+# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J / IKJK2K / IKJK2M / IKJK2L）
+
+事件库 + `/v1/sync` push / fetch / clone + 手机 PWA 静态托管；契约 = 同步协议 v0
+（`docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/`）。
+
+## 裸跑（推荐主路线）
+
+```bash
+# ① 发布（仓库根；VPS 已装 ASP.NET Core Runtime 10 + libicu）
+dotnet publish dotnet/cloud-server -c Release -o ./artifacts/cyrene-cloud
+#    不想装运行时 → 自包含：-r linux-x64 --self-contained true（体积换零依赖）
+
+# ② VPS 部署（system 用户 + 0700 数据目录 + 产物）
+sudo useradd --system --home-dir /opt/cyrene-cloud --shell /usr/sbin/nologin cyrene || true
+sudo install -d -o cyrene -g cyrene -m 700 /var/lib/cyrene-cloud
+sudo rsync -a --delete ./artifacts/cyrene-cloud/ /opt/cyrene-cloud/
+
+# ③ systemd（单元在仓库 dotnet/cloud-server/deploy/，拷到 VPS 执行）
+sudo cp dotnet/cloud-server/deploy/cyrene-cloud-server.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now cyrene-cloud-server
+journalctl -u cyrene-cloud-server -f
+
+# ④ 验证 + 反代（TLS）
+curl http://127.0.0.1:7789/healthz
+caddy run --config dotnet/cloud-server/deploy/Caddyfile.example   # 同机反代；IKJK2K 接管暴露面
+```
+
+systemd 单元内置（`deploy/cyrene-cloud-server.service`）：`ASPNETCORE_URLS=http://127.0.0.1:7789`、
+`CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud`、`Restart=always`、`LimitNOFILE=65536`、`MemoryHigh=384M`、
+`MemoryMax=512M`、`UMask=0077`、`ProtectSystem=strict`（仅数据目录可写）、日志走 journald。
+
+## 本地运行（开发）
+
+```bash
+dotnet build dotnet/cloud-server -c Release
+CYRENE_CLOUD_DATA=./data dotnet dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll
+# 默认 http://127.0.0.1:7789（--urls / ASPNETCORE_URLS 可覆盖）
+```
+
+### 环境变量
+
+| 变量 | 说明 |
+| --- | --- |
+| `CYRENE_CLOUD_DATA` | 数据目录（`events.db`：事件 + 设备/配对码；默认 `AppContext.BaseDirectory/data`） |
+| `CLOUD_TOKEN` | 主控令牌（可选；引导/运维）：非空时可用它鉴权与出码 |
+| `CLOUD_PAIR_TTL_SECONDS` | 配对码有效期（默认 300 秒） |
+| `CLOUD_ALLOWED_HOSTS` | Host 白名单（逗号分隔；回环始终放行；不设 = 不校验，生产建议设置） |
+| `CLOUD_RATE_PAIR_PER_MIN` / `CLOUD_RATE_SYNC_PER_MIN` | 限流阈值/分钟（默认 10 / 300） |
+| `CLOUD_LLM_API_KEY` | 服务端模型密钥（非空即启用生成；只在服务端、不落日志） |
+| `CLOUD_LLM_MODEL` / `CLOUD_LLM_BASE_URL` | 模型名（默认 `gpt-4o-mini`）/ OpenAI 兼容端点（默认官方） |
+| `CLOUD_LLM_TIMEOUT_SECONDS` / `CLOUD_LLM_MAX_TOKENS` / `CLOUD_LLM_CONTEXT_CHARS` | 生成参数（默认 60 / 1024 / 24000） |
+| `CLOUD_LLM_SYSTEM_PROMPT` | 可选系统提示词（默认无） |
+| `ASPNETCORE_URLS` | 监听地址（默认 `http://127.0.0.1:7789`） |
+
+## 配对与设备令牌（IKJK2K）
+
+```text
+VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   # 或已配对设备 POST /v1/pair/code
+新设备:       POST /v1/pair { code, deviceName } → { deviceId, token }      # token 仅此一次回显
+```
+
+- 库内只存 token/配对码的 SHA-256 哈希；日志全程脱敏；撤销即时生效；轮换后旧 token 立即 401；
+- 命令行：`pair-code` / `devices` / `revoke <deviceId>`；容器内：
+  `docker compose exec cloud-server dotnet cyrene-cloud-server.dll pair-code`；
+- 安全基线：数据目录 0700 / `events.db` 0600（Linux，best-effort；systemd `UMask=0077` 兜底）、
+  Host 白名单、接口限流、远程 healthz 需令牌；TLS 由 Caddy 终结（`deploy/Caddyfile.example`）。
+
+## 服务端文本生成（IKJK2M）
+
+`CLOUD_LLM_API_KEY` 非空即启用：push 出现新用户消息（或 `turn_rewind` 编辑/重生成）后，服务端重放该会话事件 →
+活动分支消息流 → 调用模型 → 以 `deviceId=server` 写回 assistant 事件（各端 fetch 即可见）。
+
+- **幂等**：assistant eventId = `gen-<sha256(sessionId:锚点事件id)[..32]>`；断网重试/重复触发不产生重复消息，
+  预检已存在即跳过模型调用；
+- **重放**：`turn_rewind(keep_user)` 裁掉锚点后的旧 assistant 尾并重生成；`replace_user` 以 replacementUser
+  重建该轮；`tombstone` 移除目标轮；
+- **失败重试**：模型调用 2 次退避；仍失败只记日志（无副作用残留），下一次事件会再次触发；
+- **用量/脱敏**：成功日志记录模型名与 `prompt_tokens / completion_tokens`（不含消息正文）；密钥只在服务端、不进日志；
+- Q2 拍板：Phase 1 用最小聊天环（不引 LoopHost/Agents），工具链留后续批次。
+
+## 容器（备选）
+
+```bash
+cd dotnet/cloud-server
+docker compose up -d --build
+curl http://127.0.0.1:7789/healthz
+```
+
+`mem_limit 512m` + healthcheck + `restart: unless-stopped` + 日志上限（json-file 10m×3）；
+同样仅绑 `127.0.0.1`，反代见 `deploy/Caddyfile.example`。
+镜像内以非 root（`cyrene`，uid 10001）运行；命名卷 `cloud-data` 首次初始化会继承 `/data` 属主，
+若改 bind mount 需自行 `chown 10001`。容器内可直接出码：
+`docker compose exec cloud-server dotnet cyrene-cloud-server.dll pair-code`（或 `devices` / `revoke <id>`）。
+
+## 手机 PWA（IKJK2L）
+
+构建（仓库根；产物进 `wwwroot`，随 `dotnet publish` / Docker 构建进镜像）：
+
+```bash
+npm --prefix src/pwa ci        # 首次
+npm --prefix src/pwa run build # → dotnet/cloud-server/wwwroot/
+```
+
+- 手机访问 `https://<域名>/`：配对码登录（CLI `pair-code` 或已配对设备生成）→ 会话列表 → 查看 / 续聊；
+- 同源 Bearer 鉴权；token 存 localStorage；HTML 附 CSP；`assets/`（带哈希）长缓存，
+  `index.html` / `sw.js` / manifest 不缓存；
+- 离线：Service Worker 应用壳 + localStorage 事件快照 → 只读浏览（不支持离线发送）；
+  前台 3s 轮询接收服务端生成回复；
+- 本地开发：`npm --prefix src/pwa run dev`（vite 代理 `/v1`、`/healthz` → 127.0.0.1:7789）；
+- 设计文档：`docs/design/2026-10-04-pwa-mobile-client-design.md`。
+
+## API（camelCase JSON）
+
+鉴权（IKJK2K）：除 `POST /v1/pair`（兑换）与 `GET /v1/capabilities`（公开只读）外，`/v1/*` 需
+`Authorization: Bearer <device token>`（或 `CLOUD_TOKEN` 主控）；Bearer scheme 大小写不敏感。错误码：
+`401 E_UNAUTHORIZED`、`400 E_PAIR_CODE`、`404 E_DEVICE_NOT_FOUND`、`429 E_RATE_LIMITED`、`421 E_HOST_NOT_ALLOWED`。
+
+- `GET /v1/capabilities`（**公开**）→ `{impl, protocol, sync, clone, cursor, generation, pairing, pwa, maxBatchBytes}`
+  （形态能力声明；PWA/桌面客户端据此降级 UI；IKJN78，四形态设计见 `docs/design/2026-10-04-cloud-server-forms.md`）
+
+- `GET /healthz` → `{status, rssMB, cursor, devices}`（cursor 为 O(1) 插入序游标；回环探针豁免、远程需令牌）
+- `POST /v1/pair/code`（需鉴权）→ `{code, expiresAt}`（一次性配对码，TTL 见 env）
+- `POST /v1/pair`（**公开**）— `{code, deviceName}` → `{deviceId, name, token}`（device token 仅此一次回显）
+- `GET /v1/devices` → `{devices:[{deviceId, name, createdAt, lastSeenAt, revoked}]}`
+- `POST /v1/devices/{id}/revoke`（撤销即时生效）/ `POST /v1/devices/{id}/rotate`（返回新 token，仅此一次）
+- `POST /v1/sync/push` — body 为 JSONL 事件批（协议 v0 读取语义）；整批原子：
+  - `400 E_SYNC_BATCH_INVALID`：JSON 坏行 / 半截尾行 / 字段级校验失败（`errors:[{index,code}]`，`index` = 输入 JSONL 0 基物理行号）
+  - `400 E_SYNC_BATCH_REJECTED`：链/序号校验失败（`E_SYNC_CHAIN` / `E_SYNC_SEQ`；`index` 同上，与 BATCH_INVALID 统一为物理行号）
+  - `413 E_SYNC_BATCH_TOO_LARGE`：请求体超上限（10MB；客户端应切小批重推）
+  - `200 {accepted, duplicates, cursor}`：重复 eventId 幂等跳过（批内重复由读取器丢弃；跨批重复计入 `duplicates`）
+- `GET /v1/sync/fetch?since=<cursor>&limit=<1..1000>&sessionId=<可选>` →
+  `{events, cursor, hasMore}`（插入序；`cursor` 不透明，客户端原样回传）
+- `GET /v1/sync/clone?sessionId=<可选>` — 全量 JSONL 流（每行一个事件）；游标在
+  `X-Sync-Cursor` 响应头，同时作为**流内容快照上界**（并发写入的事件由后续 fetch 接力），
+  clone 后从该游标走 fetch 增量。
+  注意：游标是**全局插入序**——带了 `sessionId` 的 clone，后续 fetch 必须带同一 `sessionId`，
+  否则会跳过其他会话中 id 更小的事件
+
+客户端收敛：拉取后按 `(lamport, deviceId, seq)` 重排（协议 v0 读取语义），
+离线分叉两端最终收敛到同一全序。
+
+## 链校验（v0 过渡策略）
+
+- per-(sessionId, deviceId) 链接；`hash` 为「已上链」标记（客户端计算，服务端不重算内容哈希——Q3 待定稿）；
+- 已上链事件：有链尾 ⇒ `prevHash` 必须等于链尾 `hash`；无链尾 ⇒ `prevHash` 必须缺省；
+- 未上链事件：`prevHash` 必须缺省；过渡期允许与已上链事件混用；
+- 同 (sessionId, deviceId) 的 `seq` 严格递增；重复 `eventId` 幂等跳过。
+
+## 持久性
+
+SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电后不丢；备份/恢复演练属 IKJK2N。
+
+## 内存预算口径
+
+| 数字 | 含义 |
+| --- | --- |
+| `MemoryMax=512M` / `mem_limit 512m` | cloud-server **单进程硬上限**（OOM kill 阈值） |
+| `2G 预算` | **VPS 整机**内存预算（含反代、运行时、其他 sidecar） |
+| 冒烟参考阈值 `300MB` | 仅作告警输出，**不作为 CI pass/fail 门禁**（专用性能任务判定） |
+
+## 测试
+
+```bash
+dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
+python scripts/dotnet-cloud-sync-test.py        # 本地 full：同步收敛 + 配对/令牌 + 生成闭环 + PWA 静态托管 + 能力声明（Windows 54 / Linux 55 项；wwwroot 未构建时跳过静态 3 项）
+python scripts/dotnet-cloud-sync-test.py --profile core   # 本地核心档（同步核心 + 配对 + 能力声明）
+python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN   # 远端形态核心档（CF / PHP / …）
+python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
+node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
+node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN   # 远端 e2e（不 spawn；--expect-echo 开启生成断言）
+```

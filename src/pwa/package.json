@@ -1,0 +1,17 @@
+{
+  "name": "cyrene-pwa",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "云端昔涟手机 PWA（IKJK2L）：最小聊天页（会话列表 / 消息流 / 发送），构建产物由 cloud-server 静态托管。",
+  "scripts": {
+    "dev": "vite",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.3.0"
+  }
+}

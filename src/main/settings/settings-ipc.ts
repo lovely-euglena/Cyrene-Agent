@@ -10,6 +10,7 @@ import { DEFAULT_UI_FONT, isSupportedFontFileName } from "../../shared/ui-font";
 import type { GeneralSettings } from "./general-settings";
 import type { TimeoutSettings } from "../../shared/timeout-types";
 import { ensureCustomStylePrompt } from "../style-prompt";
+import { copyGlobalConfigToDedicated } from "../code-git/dedicated-git-config";
 import type { WindowManager } from "../windows/window-manager";
 import {
   reactChatWindow,
@@ -255,6 +256,16 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }
     return maskGeneralSettingsForUi(saved); // 复审 P1-2 出站掩码
+  });
+
+  // 「一键复制全局配置」（IKJMO8）：把用户全局 Git 配置复制进独立配置文件（可重复刷新）
+  ipc.handle(IPC.SETTINGS_GIT_CONFIG_COPY_GLOBAL, () => {
+    const settings = getGeneralSettings();
+    return copyGlobalConfigToDedicated({
+      userDataDir: app.getPath("userData"),
+      name: settings.gitCommitAuthorName,
+      email: settings.gitCommitAuthorEmail,
+    });
   });
 
   ipc.handle(IPC.SETTINGS_PANDOC_DETECT, (_event, pandocPath: unknown) =>

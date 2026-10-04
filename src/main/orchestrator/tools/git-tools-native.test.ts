@@ -60,6 +60,7 @@ function service(overrides: Partial<GitService> = {}): GitService {
     log: vi.fn(async () => []),
     getExecutableInfo: vi.fn(async () => ({ command: "git", source: "system" as const, version: "2.50.0" })),
     getCommitIdentity: vi.fn(() => null),
+    getDedicatedConfigPath: vi.fn(() => null),
     ...overrides,
   };
 }
@@ -116,6 +117,18 @@ describe("git native 轨接线", () => {
 
     expect(nativeMocks.calls[0].args.__gitIsolated).toBe(true);
     expect(nativeMocks.calls[0].args.__gitCommand).toBe("C:\\res\\mingit\\git.exe");
+  });
+
+  it("独立配置文件：开关开时注入 __gitConfigGlobal，关闭时不注入（IKJMO8）", async () => {
+    nativeMocks.nativeResult = "已初始化 Git 仓库";
+    const withConfig = service({ getDedicatedConfigPath: vi.fn(() => "C:\\data\\git\\config") });
+    await tool(withConfig, "git_init").execute({}, codeContext());
+    expect(nativeMocks.calls[0].args.__gitConfigGlobal).toBe("C:\\data\\git\\config");
+
+    nativeMocks.calls.length = 0;
+    const withoutConfig = service();
+    await tool(withoutConfig, "git_init").execute({}, codeContext());
+    expect(nativeMocks.calls[0].args.__gitConfigGlobal).toBeUndefined();
   });
 
   it("host 不可用：回退 GitService（模型参数与可信上下文一致）", async () => {

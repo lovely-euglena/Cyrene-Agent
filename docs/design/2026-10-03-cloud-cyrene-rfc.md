@@ -225,9 +225,10 @@ sequenceDiagram
 2. Q2：服务端生成复用 `Agents/LoopHost` 还是最小聊天环（IKJK2M）；
 3. Q3：哈希链组织（全局链 vs 每会话 / 每设备链）在并发分叉下的定义；
 4. Q4：桌面侧远端事件的落盘形态（旁路事件库 vs 回填 CTA）；
-5. Q5：PWA 的 token 存放与 CORS / CSRF 面；
+5. Q5：PWA 的 token 存放与 CORS / CSRF 面（✅ 已拍板 IKJK2L：localStorage + 同源 Bearer，无 CORS/CSRF 面；
+   XSS 由全量 textContent 渲染 + 服务端 CSP 缓解）；
 6. Q6：Linux 服务端密钥静态保护（DPAPI 不可用）；
-7. Q7：手机端收到回复的机制（轮询 / 长轮询 / SSE）；
+7. Q7：手机端收到回复的机制（✅ 已拍板 IKJK2L：前台 3s 轮询、hidden 暂停；SSE/长轮询按需再评估）；
 8. Q8：VPS 地域与备案取舍。
 
 ---

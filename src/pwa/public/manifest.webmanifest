@@ -1,0 +1,14 @@
+{
+  "name": "昔涟 · 云端",
+  "short_name": "昔涟",
+  "description": "手机查看与继续话题（云端昔涟 Phase 1）",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#141218",
+  "theme_color": "#1d1a23",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

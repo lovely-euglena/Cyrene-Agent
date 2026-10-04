@@ -73,6 +73,8 @@ interface SettingsWindowApi {
   listMcpServers: () => Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; toolIds: string[] }>>;
   listMcpServerConfigs: () => Promise<import("./settings/shared/types").McpServerConfigView[]>;
   saveGeneral: (payload: Record<string, unknown>) => Promise<unknown>;
+  /** 「一键复制全局配置」（IKJMO8）：全局 Git 配置 → 应用独立配置文件 */
+  copyGlobalGitConfig: () => Promise<{ ok: boolean; copied: string[]; path: string; message?: string }>;
   getPermissionLevel: () => Promise<{ level: string }>;
   setPermissionLevel: (level: string) => Promise<{ ok: boolean; level?: string; error?: string }>;
   openChromeGpu: () => void;

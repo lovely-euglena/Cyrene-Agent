@@ -189,6 +189,7 @@ import { createSocialContextService } from "../services/social-context/social-co
 import { createGitService } from "../code-git/git-service";
 import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/git-executable";
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
+import { dedicatedGitConfigPath, syncDedicatedGitConfig } from "../code-git/dedicated-git-config";
 import { installSingleInstanceGuard } from "../single-instance";
 import { migrateLegacyUserData } from "../user-data-migration";
 import { createWindowManager } from "../windows/window-manager";
@@ -1662,6 +1663,20 @@ createTray: (input) => {
         // Git：服务对象预创建；仓库监听只在打开仓库后启动
         // 探测结果在进程内缓存：成功过一次就不再重复探测，避免启动高峰期
         // 偶发超时导致 Git 面板误报"未检测到可用 Git"；探测失败不缓存，下次自动重试
+        // 独立 Git 配置文件：启动时按当前设置确保存在/最新（失败只记日志，不阻断启动）
+        try {
+          const gitConfigSettings = loadGeneralSettings();
+          if (gitConfigSettings.gitUseDedicatedConfig) {
+            syncDedicatedGitConfig({
+              userDataDir: app.getPath("userData"),
+              name: gitConfigSettings.gitCommitAuthorName,
+              email: gitConfigSettings.gitCommitAuthorEmail,
+            });
+          }
+        } catch (error) {
+          console.error("[Cyrene] ensure dedicated git config failed:", error);
+        }
+
         let resolvedGit: ResolvedGitExecutable | null = null;
         const git = createGitService({
           getSession: chatsStore.getSessionRecord,
@@ -1681,6 +1696,13 @@ createTray: (input) => {
               name: settings.gitCommitAuthorName,
               email: settings.gitCommitAuthorEmail,
             };
+          },
+          // 独立 Git 配置文件（IKJMO8）：开关开时所有 git 调用（TS/native）指向应用文件
+          getDedicatedConfigPath: () => {
+            const settings = loadGeneralSettings();
+            return settings.gitUseDedicatedConfig
+              ? dedicatedGitConfigPath(app.getPath("userData"))
+              : null;
           },
         });
 

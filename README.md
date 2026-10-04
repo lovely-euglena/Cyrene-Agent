@@ -62,7 +62,7 @@
 - **.NET 后端**：[docs/dotnet-backend.md](./docs/dotnet-backend.md) ・ **多 Agent 架构**：[docs/multi-agent-architecture.md](./docs/multi-agent-architecture.md)
 - **用户指南**：[docs/user-guide/](./docs/user-guide/)（飞书 / Learn / NapCat / QQ 官方机器人）
 - **插件开发**：[教程](./docs/plugins/plugin-dev-guide.md) ・ [API 规范](./docs/plugins/plugin-authoring.md) ・ [.NET 轨](./docs/plugins/dotnet-plugins.md)
-- **贡献指南**：[.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)（核心模块先开 Issue 讨论）
+- **贡献指南**：[.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)（核心模块先开 Issue 讨论）・ **审查规则**：[docs/pr-review-rules.md](./docs/pr-review-rules.md)
 
 ---
 
@@ -481,6 +481,7 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | .NET 语音 Sidecar | `CyreneVoice`（TTS/ASR 音频 IO + Silero VAD ONNX + `System.Numerics.Tensors`；4 字节长度头二进制帧回传） |
 | .NET 进程间协议 | `src/main/dotnet-backend` `LineHostClient` — JSON 行协议（与 native-tool-host 同构），`spawn` 子进程 + readline 消费；各 host 由 `resolveDotnetConfig()` 0/1 开关切流 |
 | .NET 跨平台验证 | `smoke-host`（cyrene-smoke）引用 `cyrene-core`，在 Linux 跑协议冒烟（五套 96+ 项） |
+| .NET 云端服务端 | `cloud-server`（net10.0 Minimal API + SQLite WAL）— 事件库 + /v1/sync + 配对/设备令牌 + 服务端生成（IKJK2M）；**裸跑为主**（systemd 单元 + Caddy 反代），容器备选（云端昔涟 Phase 1） |
 | 文档与邮件 | ExcelJS、docx、PDFKit、Nodemailer + imapflow / mailparser + Pandoc Sidecar |
 | 外部渠道 | 飞书 / 微信 iLink / QQ OneBot 11（`src/main/channels` 适配器） |
 | 国际化与分发 | i18next + electron-updater + `cyrene` CLI（`src/cli`）+ electron-builder（`package:win:dir`） |
@@ -583,7 +584,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 > 
 > 原项目的贡献者名单仅会在合并上游更新时同步更新，名单仅对应最新合并的版本，更新可能不及时，请见谅
 
-<!-- 贡献者头像列表由 .github/workflows/contributors.yml 自动维护，请勿手动修改这对标记之间的内容 -->
+<!-- 贡献者头像列表：自动更新已停用；请勿手动修改这对标记之间的内容 -->
 <!-- readme: contributors -start -->
 <table>
 	<tbody>

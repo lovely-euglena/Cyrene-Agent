@@ -9,7 +9,7 @@
 |---|---|---|
 | `scripts/dotnet-smoke-linux.py` | 八 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测 + **secrets-host vault 契约 10 项** + **llm-host 自测（作业库 10 项 + mock SSE 全链 12 项）**） | 37/37 |
 | `scripts/dotnet-edge-test.py` | 畸形帧/路径穿越/SQL 注入/1e308 权重/5MB payload/幽灵会话 | 13/13 |
-| `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 90/90 |
+| `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 91/91 |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
 | `scripts/ipc-stress-test.ts` | 并发 20 call 路由/2MB payload/超时恢复/shutdown 清 pending | ALL PASS |
 | `scripts/dual-track-diff.ts` | calculator + fs 三件（输出/字节）+ exchange_rate + expense（输出/账本）+ search_text（6）+ str_replace（8，含诊断/空文件播种）+ apply_patch（9，事务/迁移/EOL）+ download_file（7，本地 HTTP/字节/黑名单）+ git（29，镜像仓库/本地 bare 远程/commit-log-revert hash 归一/截断与 staged）+ web_search（4，确定性校验）+ weather（4）+ plan_trip（3） | 计算器 12 + fs 7 + life 10 + search 6 + srepl 8 + apply_patch 9 + download 7 + git 29 + web_search 4 + weather 4 + plan_trip 3 |
@@ -27,7 +27,7 @@ git commit 漏子命令、IPC argv 双传。
 | 原生窗口 | `cyrene-native serve`（默认） | 前置 | 生产 |
 | 分离托盘 | `cyrene-native --tray` | 前置 | 生产 |
 | MCP 连接 | `cyrene-native --mcp-host` | M4 前置 | 生产骨架（stdio/SSE + 重连/超时/进程树清理） |
-| 内置工具 | `cyrene-native --tool-host` | D | calculator/now/clipboard/sysinfo + fs 三件 + exchange_rate/expense/search_text + git 八件/apply_patch/download + web_search/weather/plan_trip 接线（evidence 帧协议 v1 + config 帧 + weather_card 事件帧，90 项矩阵实测） |
+| 内置工具 | `cyrene-native --tool-host` | D | calculator/now/clipboard/sysinfo + fs 三件 + exchange_rate/expense/search_text + git 八件/apply_patch/download + web_search/weather/plan_trip 接线（evidence 帧协议 v1 + config 帧 + weather_card 事件帧，91 项矩阵实测） |
 | Agent 会话 | `cyrene-native --agent-host` | H/J | LLM 回调闭环 + 多轮工具环 + orchestrate/mailbox/白名单**主路径拦截**（13 项实测） |
 | RAG | `cyrene-native --rag-host` | E | SQLite/WAL + jieba BM25（CutForSearch+标点过滤）+ 混合检索（余弦修正）+ JSON 迁移 |
 | 记忆 | `cyrene-native --memory-host` | I | L0/L1/冲突/反思表 + get/append op（L2/DMAE 建表暂缓驱动 A7） |
@@ -80,3 +80,28 @@ git commit 漏子命令、IPC argv 双传。
 
 `scripts/dotnet-smoke.ps1`：tool-host 五工具双轨 diff、agent-host 闭环、
 rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关。
+
+## 云端昔涟 cloud-server（IKJK2J / IKJK2K）
+
+- `dotnet/cloud-server/`：ASP.NET Core Minimal API + Microsoft.Data.Sqlite WAL——
+  append-only 事件库（event_id 幂等索引；插入序游标）+ `/v1/sync` push（JSONL 整批原子）/
+  fetch（since+limit+sessionId）/ clone（NDJSON 流 + `X-Sync-Cursor`）；协议校验复用
+  cyrene-core `SyncProtocolV0`（`docs/specs/2026-10-04-sync-protocol-v0.md`）。
+- 链校验（v0 过渡策略）：per-(sessionId, deviceId) 链接 + seq 严格递增；
+  内容哈希重算待 Q3 定稿；默认绑 127.0.0.1。
+- 鉴权/配对（IKJK2K）：device token（`POST /v1/pair` 兑换，库内哈希存储、撤销/轮换即时）或
+  `CLOUD_TOKEN` 主控；`/v1/*` 始终鉴权、`/v1/pair` 公开、`/healthz` 回环豁免；
+  Host 白名单 + 限流 + 日志脱敏 + Linux 0700/0600；CLI：`pair-code` / `devices` / `revoke`。
+- 服务端生成（IKJK2M）：`CLOUD_LLM_API_KEY` 启用；push 触发生成、事件重放取活动分支（编辑/重生成/删除语义）、
+  `gen-*` 幂等写回 `deviceId=server`；mock LLM 冒烟覆盖（断网重试不重复 / 编辑重生成）。
+- 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/并发收敛/链拒绝回滚/
+  clone 游标 + 配对令牌/限流/Host/脱敏 + 生成闭环 + PWA 静态托管 + 能力声明，Windows 54 / Linux 55 项；
+  wwwroot 未构建时跳过静态 3 项）。`--base-url/--profile core` 为远端/核心档（对任意 HTTP 形态）。
+- 能力声明（IKJN78）：`GET /v1/capabilities`（公开只读）——四形态（完整 / CF / PHP / Git）能力边界，
+  客户端按声明降级（设计见 `docs/design/2026-10-04-cloud-server-forms.md`）。
+- 手机 PWA（IKJK2L）：`src/pwa/`（原生 TS，零运行时依赖）→ 构建产物进 `wwwroot` 静态托管；
+  配对登录 + fetch/push + 离线只读缓存（SW 应用壳 + localStorage 事件快照）；物化视图与
+  `DialogLoop.Replay` 逐条对齐；e2e `node scripts/pwa-e2e-test.mjs <dll>`（Microsoft Edge 通道）。
+- 部署：**裸跑为主**（`dotnet publish` + `deploy/cyrene-cloud-server.service` systemd 单元 +
+  `deploy/Caddyfile.example` 反代，`CLOUD_ALLOWED_HOSTS` 建议随域名设置）；容器为备选
+  （`docker-compose.yml`：mem_limit 512m + healthcheck + 日志上限）；正式部署/备份/告警属 IKJK2N。

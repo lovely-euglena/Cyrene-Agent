@@ -19,6 +19,7 @@ interface GeneralValues {
   tasksVisible: boolean;
   gitCommitAuthorName: string;
   gitCommitAuthorEmail: string;
+  gitUseDedicatedConfig: boolean;
   language: UiLanguage;
 }
 
@@ -31,6 +32,7 @@ const defaults: GeneralValues = {
   tasksVisible: true,
   gitCommitAuthorName: "",
   gitCommitAuthorEmail: "",
+  gitUseDedicatedConfig: true,
   language: "zh-CN",
 };
 
@@ -47,6 +49,7 @@ function readGeneral(value: unknown): GeneralValues {
     // Git 提交身份（工作区 Git 面板提交用；默认值对齐旧页/原生窗）
     gitCommitAuthorName: typeof input.gitCommitAuthorName === "string" ? input.gitCommitAuthorName : "",
     gitCommitAuthorEmail: typeof input.gitCommitAuthorEmail === "string" ? input.gitCommitAuthorEmail : "",
+    gitUseDedicatedConfig: typeof input.gitUseDedicatedConfig === "boolean" ? input.gitUseDedicatedConfig : defaults.gitUseDedicatedConfig,
     language: normalizeUiLanguage(input.language),
   };
 }
@@ -59,6 +62,7 @@ export function GeneralSettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [clearingChat, setClearingChat] = useState(false);
+  const [copyingGitConfig, setCopyingGitConfig] = useState(false);
   const updateState = useAppUpdate();
   const updateView = resolveAppUpdateView(updateState);
   // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
@@ -178,6 +182,25 @@ export function GeneralSettingsPanel() {
     }
   }
 
+  /** 「一键复制全局配置」（IKJMO8）：把用户全局 Git 配置内容复制进应用独立配置文件。 */
+  async function copyGlobalGitConfig(): Promise<void> {
+    if (copyingGitConfig) return;
+    setCopyingGitConfig(true);
+    setStatus(t("settingsPage.preferences.saving"));
+    try {
+      const api = window.settings;
+      if (!api?.copyGlobalGitConfig) throw new Error("Settings API unavailable");
+      const result = await api.copyGlobalGitConfig();
+      setStatus(result?.ok
+        ? t("settingsPage.general.gitCopyGlobalDone")
+        : t("settingsPage.general.gitCopyGlobalNone"));
+    } catch {
+      setStatus(t("settingsPage.general.gitCopyGlobalFailed"));
+    } finally {
+      setCopyingGitConfig(false);
+    }
+  }
+
   return (
     <>
       <h1>{t("settingsPage.general.title")}</h1>
@@ -239,6 +262,16 @@ export function GeneralSettingsPanel() {
                   aria-label={t("settingsPage.general.gitAuthorEmail")}
                   onChange={(event) => { setValues((current) => ({ ...current, gitCommitAuthorEmail: event.target.value })); setStatus(t("settingsPage.preferences.unsaved")); }}
                 />
+              </div>
+            </div>
+            <div className="cy-settings-row">
+              <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.gitUseDedicatedConfig")}</strong><span>{t("settingsPage.general.gitUseDedicatedConfigDescription")}</span></div>
+              <SettingsSwitch ariaLabel={t("settingsPage.general.gitUseDedicatedConfig")} checked={values.gitUseDedicatedConfig} onChange={(checked) => void saveImmediate("gitUseDedicatedConfig", checked)} />
+            </div>
+            <div className="cy-settings-row">
+              <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.gitCopyGlobalConfig")}</strong><span>{t("settingsPage.general.gitCopyGlobalConfigDescription")}</span></div>
+              <div className="cy-settings-row__control">
+                <Button loading={copyingGitConfig} onClick={() => void copyGlobalGitConfig()}>{t("settingsPage.general.gitCopyGlobalConfigButton")}</Button>
               </div>
             </div>
           </Card>

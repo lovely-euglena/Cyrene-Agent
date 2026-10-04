@@ -31,7 +31,7 @@ TS 工具（git-tools.ts）── nativeFirst("git_xxx", 内部参数) ──> T
   仍由 TS `resolveGitExecutable` 完成（装配层缓存），native 调用时注入；C# 不做二次探测。
 - 会话绑定（conversationId ↔ workspaceRoot）：TS `ToolContext` 解析后注入；C# 无会话状态。
 - 并发/串行化：ToolHost 本身单线程 + NativeToolHost 串行闸门，天然串行；`maxConcurrentProcesses:1` 语义保持。
-- 提交身份（设置项）：`GitService.getCommitIdentity()` 注入；C# 仅在 commit 的 `-c user.name/user.email` 使用。
+- 提交身份（设置项）：`GitService.getCommitIdentity()` 注入；C# 在 commit/revert 的 `-c user.name/user.email` 使用。
 
 **命令与解析**：逐条对齐 simple-git 3.36 的实际命令（`status --porcelain -b -u --null`、
 `diff --stat=4096`、`branch -v`、`-c core.abbrev=40 commit -m`、`push --verbose --porcelain` 等），
@@ -67,3 +67,14 @@ TS 工具（git-tools.ts）── nativeFirst("git_xxx", 内部参数) ──> T
    `vitest src/main/orchestrator/tools` 446 passed、tsc 0 错误。
 2. **残项（后续批次）**：冲突拒提交与空仓库 push 失败路径的 dual-track 用例；
    无凭据远端场景（T2 凭证复核）；A20 密钥库接入时更新 §3。
+
+## 6. 独立 Git 配置文件（IKJMO8）
+
+- **动机**：身份此前只对 commit/revert 逐命令注入，覆盖不全；内置/系统 git 配置行为不一致。
+- **实现**：`<userData>/git/config` 由应用维护（`dedicated-git-config.ts`）：全局配置副本（一键复制快照）
+  → `[include]` 用户全局配置 → `[user]`/`[init] defaultBranch=main` 覆盖；开关
+  `gitUseDedicatedConfig`（默认开）控制所有 git 调用是否 `GIT_CONFIG_GLOBAL` 指向该文件。
+- **注入路径**：TS `buildGitClientEnv`（simple-git `.env`；内置 git 保留 NOSYSTEM，仅替换 GLOBAL 目标）；
+  native 轨 `__gitConfigGlobal` 内部参数 → C# `RunGit` 设 `GIT_CONFIG_GLOBAL`；关闭时不注入、维持原状。
+- **测试**：`dedicated-git-config.test.ts`（渲染/快照保留/一键复制）、`buildGitClientEnv` 单测、
+  native 注入断言、matrix `__gitConfigGlobal → diff noprefix` 生效断言、facade 保存同步断言。

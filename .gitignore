@@ -251,6 +251,8 @@ sticker-descriptions/
 .cyrene/
 dotnet/**/bin/
 dotnet/**/obj/
+# cloud-server 发布产物（裸跑）
+/artifacts/
 scripts/diagnostics/embedding-verify-data.json
 scripts/diagnostics/reranker-verify-data.json
 scripts/diagnostics/rag-search-fixture/
@@ -267,3 +269,10 @@ dist/renderer/cyrene-welcome.png
 /src/renderer/learn-exam-preview.html
 /src/renderer/learn-exam-preview.tsx
 /dist/renderer/learn-exam.html
+
+# === PR 审查助手本地工作区（本地工具，不参与产品代码与 PR） ===
+/AGENTS.md
+/templates/
+
+# cloud-server PWA 构建产物（src/pwa → wwwroot；随 dotnet publish / Docker 构建生成，不入库）
+/dotnet/cloud-server/wwwroot/

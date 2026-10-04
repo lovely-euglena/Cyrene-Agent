@@ -2,7 +2,7 @@
 
 > 本目录是仓库的文档中心。根 [README.md](../README.md)（[English](../README.en.md)）面向使用者与贡献者；
 > 这里按「现行 / 设计 / 记录 / 历史」四类组织全部文档，避免旧设计稿被误读为当前行为。
-> 最近整理：2026-10-03。
+> 最近整理：2026-10-04。
 
 ## 状态口径
 
@@ -19,7 +19,7 @@
 - **理解 Agent 架构**：根 README「CyreneHarness 核心引擎」→ [multi-agent-architecture.md](./multi-agent-architecture.md) → [design/2026-09-21-cta-conversation-transcript-architecture-design.md](./design/2026-09-21-cta-conversation-transcript-architecture-design.md)
 - **使用功能**：根 README → [user-guide/](./user-guide/)
 - **开发插件**：[plugins/plugin-dev-guide.md](./plugins/plugin-dev-guide.md)（教程）→ [plugins/plugin-authoring.md](./plugins/plugin-authoring.md)（API 规范）→ [plugins/dotnet-plugins.md](./plugins/dotnet-plugins.md)（.NET 轨）
-- **参与贡献**：[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)（核心模块需先开 Issue 讨论）
+- **参与贡献**：[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)（核心模块需先开 Issue 讨论）→ [pr-review-rules.md](./pr-review-rules.md)（合并前审查规则）
 
 ## 根级文档
 
@@ -29,6 +29,7 @@
 | [build-guide.md](./build-guide.md) | 现行 | Linux 交叉构建 Windows 便携版：环境 / 构建 / 分卷上传 / 常见坑 |
 | [dotnet-backend.md](./dotnet-backend.md) | 现行 | .NET 七 host 进程地图、实测矩阵、安全加固 |
 | [dotnet-migration-decisions.md](./dotnet-migration-decisions.md) | 现行 | .NET 迁移 A1–A19 决策记录 |
+| [pr-review-rules.md](./pr-review-rules.md) | 现行 | PR 审查规则：通用门槛 / 全模块矩阵 / 高危敏感专项 / 阻断标准 |
 | [multi-agent-architecture.md](./multi-agent-architecture.md) | 现行 | 多 Agent 编排（Plan B：编排下沉 .NET，循环复用 TS CyreneHarness） |
 | [local-models.md](./local-models.md) | 现行 | 本地模型（BGE-M3 等）的一键下载 / 放置与许可 |
 | [cloud-storage.md](./cloud-storage.md) | 设计 | 云存储工具设计文档 |
@@ -56,10 +57,10 @@
 > [2026-09-26-agent-orchestration-plan-b.md](./design/2026-09-26-agent-orchestration-plan-b.md)（多 Agent 编排机制 v1；子 Agent 接入接口已就绪、生产未接线）・
 > [2026-09-21-cta-conversation-transcript-architecture-design.md](./design/2026-09-21-cta-conversation-transcript-architecture-design.md)（CTA 会话轨迹）・
 > [2026-09-22-no-auto-resend-and-interruption-context-design.md](./design/2026-09-22-no-auto-resend-and-interruption-context-design.md)（取消自动续跑与中断进上下文）・
-> 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET（Phase 1 已实施 + llm-host H0–H4 MVP，issue/IKJM7D）・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）・写类工具 evidence 帧协议 v1（fs 三件接线落地）。
+> 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET（Phase 1 已实施 + llm-host H0–H4 MVP，issue/IKJM7D）・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）・写类工具 evidence 帧协议 v1（fs 三件接线落地）・2026-10-04 手机 PWA（查看 / 续聊 / 离线只读）。
 
 <details>
-<summary>全部 55 篇 + 2 个子目录（按时间序）</summary>
+<summary>全部 57 篇 + 2 个子目录（按时间序）</summary>
 
 - [2026-08-08-cyreneHarnessloopdesign.md](./design/2026-08-08-cyreneHarnessloopdesign.md)
 - [2026-08-09-cyreneHarness-construction-plan.md](./design/2026-08-09-cyreneHarness-construction-plan.md)
@@ -111,6 +112,8 @@
 - [2026-10-03-cloud-cyrene-rfc.md](./design/2026-10-03-cloud-cyrene-rfc.md)
 - [2026-10-03-llm-service-dotnet-job-polling.md](./design/2026-10-03-llm-service-dotnet-job-polling.md)
 - [2026-10-03-tool-evidence-frame-protocol.md](./design/2026-10-03-tool-evidence-frame-protocol.md)
+- [2026-10-04-pwa-mobile-client-design.md](./design/2026-10-04-pwa-mobile-client-design.md)
+- [2026-10-04-cloud-server-forms.md](./design/2026-10-04-cloud-server-forms.md)
 - [gamebot-Honkai-Star-Rail.md](./design/gamebot-Honkai-Star-Rail.md)
 - [plugin-marketplace.md](./design/plugin-marketplace.md)
 - [react-frontend-visual-guidelines.md](./design/react-frontend-visual-guidelines.md)

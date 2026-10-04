@@ -220,7 +220,7 @@
 - **外围归属**：可执行探测仍由 TS `resolveGitExecutable`（装配层缓存）负责，
   native 调用时注入 `__gitCommand/__gitSource/__gitVersion`（bundled 附
   `__gitIsolated`，C# 侧设 NOSYSTEM/NUL 隔离）；会话绑定由 ToolContext 解析后
-  注入；提交身份经 `GitService.getCommitIdentity()` 注入（仅 commit 的
+  注入；提交身份经 `GitService.getCommitIdentity()` 注入（commit/revert 的
   `-c user.name/email` 使用）；并发由 ToolHost 串行 + NativeToolHost 串行闸门保证。
 - **实现**：C# `GitTools.cs`（GitRunner + simple-git 同构解析：status
   `--porcelain -b -u --null`、`diff --stat=4096`、`branch -v`、
@@ -237,6 +237,16 @@
 - **未做/后续**：冲突拒提交与空仓库 push 失败路径的 dual-track 用例、无凭据
   远端场景（T2 凭证复核）随后续批次补；Git 面板 UI 仍走原 GitService
   （native 只承接工具执行，UI 时效依赖既有 workspace watcher）。
+
+## 2026-10-04 增量：CI 修复——git init/revert 环境确定性（IKJMMX）
+
+- **背景**：GitHub 流水线首次运行扩展后的工具矩阵，git 段 4 项失败：`git init` 初始分支随环境
+  （CI=master / 本机=main）；`git revert` 依赖环境全局身份（CI 无 → `Author identity unknown` exit 128）。
+- **修复（两轨同构）**：`git init` 显式 `-b main`（TS `git.raw(["init","-b","main"])` ↔ C# `init -b main`）；
+  `revert` 与 `commit` 一致——要求提交身份（缺邮箱给友好错误）并注入 `-c user.name/email`。
+- **测试**：矩阵 g_revert 注入身份 + 新增「无身份 revert 拒绝」（**91/91**，隐藏全局身份模拟 CI）；
+  TS 单测补 revert 身份用例；dual-track 两轨仍等价。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJMMX；GitHub run 37180790050 / job 111372772687。
 
 ## 2026-10-03 增量：PR #1 复审阻断修复（取消链路 + 串行闸门）
 
@@ -311,3 +321,210 @@
 - **PR #4 复审（第 1 轮，无阻断 2 改进）当批修复**：`dotnet-smoke.ps1` 读流改先后异步再
   限时等待（超时保护生效 + stderr 观察）；P/Invoke 白名单校验进洁净断言。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2G（服务端复用的前置）。
+
+## 2026-10-04 增量：IKJK2H / IKJK2J——同步协议 v0 与 cloud-server（云端昔涟 Phase 1）
+
+- **IKJK2H（契约层）**：事件信封 + 四类事件（message.append / session.create / turn_rewind /
+  tombstone）定稿于 `docs/specs/2026-10-04-sync-protocol-v0.md`；JSON Schema + 11 组共享
+  fixtures，TS（`src/main/sync`）与 C#（`cyrene-core/Sync`）双端读取器/校验器跑同一套向量。
+  **Q1 拍板（按 RFC 建议，可回退）**：compaction checkpoint 不外同步；presentation patch
+  随事件携带。**读取语义**：半截尾行修剪（truncatedTail）、eventId 幂等去重、
+  `(lamport, deviceId, seq)` 稳定全序。
+- **IKJK2J（服务端）**：`dotnet/cloud-server`（ASP.NET Core Minimal API + SQLite WAL）——
+  插入序游标 + JSONL push（整批原子）/ fetch / clone（NDJSON + `X-Sync-Cursor`）。
+  **链校验过渡策略（Q3 部分落定）**：per-(sessionId, deviceId) 链接，hash=已上链标记
+  （有链尾 ⇒ prevHash 必须等链尾；无链尾 ⇒ 必须缺省）；未上链事件缺省 prevHash（过渡期混用）；
+  同对 seq 严格递增；**内容哈希重算待 Q3 定稿**。
+  **安全过渡**：默认绑 127.0.0.1；`CLOUD_TOKEN` 非空时 /v1/* 需 Bearer（K 之前最小门闩）。
+  **部署（裸跑为主）**：`dotnet publish` + systemd 单元
+  （`deploy/cyrene-cloud-server.service`：MemoryMax=512M / UMask=0077 / ProtectSystem=strict /
+  Restart=always / journald）+ `deploy/Caddyfile.example`；容器为备选（Dockerfile + compose）。
+  SQLite WAL + `synchronous=FULL`：push 返回 200 即持久。本机无 Docker/systemd，单元与容器编排
+  未实测（Linux 侧首跑，CI 已加入发布产物直测）。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；
+  `scripts/dotnet-cloud-sync-test.py` 18/18（幂等/乱序/分页/双客户端并发收敛/链拒绝与
+  整批回滚/畸形批/clone 游标对齐）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2H、#IKJK2J。
+
+## 2026-10-04 增量：IKJK2K——配对与设备令牌（服务端）
+
+- **自建令牌体系**（原 RFC 的 signature-verification 一次性 token 在本仓库不存在）：device token =
+  32 字节随机（`cyn_` 前缀），**库内只存 SHA-256 哈希**、签发仅回显一次；配对码 = 8 位易读字母表
+  （无 0/O/1/I/L，输入容错空格/连字符）、一次性 + TTL（默认 300s，`CLOUD_PAIR_TTL_SECONDS`）、只存哈希；
+  撤销 = 标记即 401（每请求查库）；轮换 = 原子替换哈希。
+- **引导与流程**（RFC §4.1）：首个设备用 CLI `pair-code`（或主控令牌调 `POST /v1/pair/code`）出码；
+  新设备 `POST /v1/pair` 兑换；此后已配对设备即可为新设备出码。
+- **鉴权语义**：`/v1/*` **始终**需 Bearer（device token 或 `CLOUD_TOKEN` 主控）；`POST /v1/pair` 公开；
+  `/healthz` 回环探针豁免、远程需令牌；Bearer scheme 大小写不敏感（RFC 7235）。承接 J 复审硬化：
+  `errors[].index` 统一物理行号、healthz O(1) 游标、`FetchAsync` 取消链、payload `Clone()` 防泄漏。
+- **暴露面/资源**：Host 白名单（`CLOUD_ALLOWED_HOSTS`，回环豁免）、限流（pair 10/min/IP、
+  sync 300/min/令牌或 IP，env 可调）、转发头只信任回环来源（Caddy 同机）；TLS = Caddy ACME。
+- **Q6 部分落定**：凭据静态保护 = 哈希存储 + Linux 0700/0600（best-effort）；全库静态加密仍开放。
+  Q5（PWA token 存放 / CORS / CSRF）随 IKJK2L 拍板。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py`
+  **36/36**（配对一次性 / 过期 TTL / 轮换 / 撤销即时 401 / 伪造 401 / Host 421 / 日志脱敏 /
+  限流 429 / 设备列表）；Linux 侧另断言目录 0700 + DB 0600（CI 实跑，37 项）。
+- **#7 复审补丁（原 PR #7 关闭前终稿：1 阻断 + 2 改进，均已修复）**：① `UseForwardedHeaders` 显式
+  `KnownProxies` = 回环（v4/v6）——默认空集合不信任任何来源，XFF 此前实际失效；修复后限流按真实
+  客户端 IP 分区、远程 healthz 鉴权语义恢复（冒烟新增 XFF 断言）；② Linux `umask(0o077)`（建库前）+
+  目录 0700 提前至首次连接前 + DB/-wal/-shm 全部 0600（附属文件不再以宽松权限落盘）；③ 设备名
+  UTF-16 截断代理对安全（63a+emoji → 63a）。冒烟 **39/39**（Windows；Linux 40，含 -wal/-shm 权限）。
+- **#9 复审补丁（⛔ 1 阻断 + 1 改进，均已修复）**：① 设备管理端点补 principal 校验——`GET /v1/devices`
+  仅 master；rotate/revoke = master 任意 / device 仅自身，越权 403（`E_FORBIDDEN`），冒烟含反向断言；
+  ② healthz 设备计数改 `COUNT(*)` 聚合（O(1)，不再物化整表）。
+- **#9 二轮复审补丁（⚠️ 无阻断 + 4 改进，均已修复）**：① master token 字节预转换缓存、比较后临时数组
+  `ZeroMemory`；② healthz 改 DI 注入（去闭包，风格统一）；③ `Rotate` 标注并发语义（仅最后写入 token 有效）；
+  ④ chunked 探针 16KB chunk / timeout 30s 平衡 CI 耗时与 Windows RST 抖动。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。
+
+## 2026-10-04 增量：IKJK2M——服务端文本对话闭环（服务端生成）
+
+- **Q2 拍板：最小聊天环**（不复用 LoopHost/Agents）：cloud-server 内置 `DialogLoop` + OpenAI 兼容
+  `ModelClient`；理由 = Phase 1 只做文本、无工具链，512MB 预算与依赖面从简；后续要上工具/多轮编排再评估复用 core。
+- **触发**：push 成功且 `accepted>0` 且批内含 `message.append` / `turn_rewind` → 会话入队（去重、单工作线程串行）。
+- **重放**：事件按 `(lamport, deviceId, seq)` 全序 → 活动分支消息流（keep_user 裁尾重生成 / replace_user 以
+  replacementUser 重建 / tombstone 移除目标轮）；只回「最后一条是 user」的轮。
+- **幂等**：assistant eventId = `gen-` + sha256(sessionId:锚点事件id)[..32]；写回复用 EventStore 幂等索引，
+  预检已存在即跳过模型调用 → 断网重试不产生重复消息（验收标准）。
+- **生成事件**：`deviceId=server`、`lamport=max+1`、`seq=server 设备内 +1`、无哈希链（未上链，过渡期允许）。
+- **失败与观测**：模型调用 2 次退避重试；失败只记日志、下次事件再触发；成功日志记录模型名与 token 用量；
+  密钥仅 env→内存，不落库/日志（冒烟含脱敏断言）。
+- **配置**：`CLOUD_LLM_API_KEY`（启用开关）/ `CLOUD_LLM_MODEL`（默认 gpt-4o-mini）/ `CLOUD_LLM_BASE_URL`
+  （OpenAI 兼容；显式字节体避免 chunked）/ `CLOUD_LLM_TIMEOUT_SECONDS` / `CLOUD_LLM_MAX_TOKENS` /
+  `CLOUD_LLM_CONTEXT_CHARS` / `CLOUD_LLM_SYSTEM_PROMPT`（可选）。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py` **48/48**
+  （Windows；Linux 49，合并 K 后全量口径；mock LLM：生成闭环/turnId 对齐、断网重试不重复、上下文历史注入、编辑语义重生成、用量日志+脱敏）；
+  连续两轮稳定；chunked 超限探针改「最小溢出（limit+1）」消除 Windows RST 抖动。
+- **#8 复审补丁（⛔ 2 阻断 + 2 改进，均已修复）**：① `TrimContext` 保护 system prompt（只丢最旧历史、
+  至少保留最后一条待回复 user）；② `EventStore.Contains` → `ContainsAsync`（异步 + 取消，信号链完整）；
+  ③ 队列改有界（10k，`TryWrite` 满载撤销去重标记 + 告警，不静默丢弃）；④ 长会话全量加载标注
+  Phase 2 窗口化 TODO。冒烟通过（合并 K 后全量 **48/48**；新增：超预算裁剪保护 system prompt）。
+- **#10 复审补丁（⚠️ 无阻断 + 4 改进，均已修复）**：① lamport/seq 改存储层水位查询
+  （`GetSessionWatermarkAsync`），与 Phase 2 窗口化解耦；② Publish 仅 user 消息/回退入队（过滤 assistant
+  同步的无效全量重放）；③ 文档测试计数统一为当前口径（Windows 48 / Linux 49）；④ 重试仅限可重试异常
+  （401/403/404 不重试，参数常量化）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2M。
+
+## 2026-10-04 增量：Git 独立配置文件（IKJMO8）
+
+- **背景**：提交身份此前逐命令注入（`-c user.name/email`，仅 commit/revert 覆盖），身份对「所有 git
+  操作」不统一；内置/系统 git 配置行为也不一致（内置禁全局配置、系统跟随用户全局）。
+- **方案**：设置新增开关「使用独立 Git 配置文件」（`gitUseDedicatedConfig`，**默认开**）；应用维护
+  `<userData>/git/config`，优先级（低 → 高）：全局配置副本（「一键复制」快照） → 实时 `[include]`
+  用户全局配置（`~/.gitconfig`、`~/.config/git/config`，保 credential helper 等） → `[user]` 身份 +
+  `[init] defaultBranch=main`（应用覆盖，永远最后生效）。
+- **生效**：开关开时所有 git 调用（系统+内置、TS+.NET）统一 `GIT_CONFIG_GLOBAL=<该文件>`（内置 git 仍
+  保留 `GIT_CONFIG_NOSYSTEM=1`）；TS 客户端经 `buildGitClientEnv` 注入 env，native 轨经
+  `__gitConfigGlobal` 内部参数（C# `RunGit` 设 env）；开关关维持原状（内置 NUL、系统跟随全局）。
+- **一键复制**：设置区按钮把用户全局配置文件内容写入独立文件快照（可重复刷新；无全局文件时提示）。
+- **验证（Windows 本地）**：tsc（main/preload/renderer）0 错误；`vitest` code-git/接线/facade **80/80**；
+  矩阵 **92/92**（含新增 `__gitConfigGlobal` 生效断言：diff noprefix）；dual-track **PASS**（两轨仍等价）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJMO8。
+
+## 2026-10-04 增量：手机 PWA——查看与继续话题（IKJK2L）
+
+- **验收**：桌面离线时手机可打开最近会话、发送文字并得到回复（Edge 通道 e2e **10/10** 实测）。
+- **技术选型**：原生 TS + DOM（零运行时依赖，产物 gzip ~8KB）；独立嵌套包 `src/pwa`（vite+tsc 仅构建期）；
+  协议逻辑直接复用 `src/main/sync/sync-protocol.ts`（双端同一校验器）；构建产物 `dotnet/cloud-server/wwwroot`
+  静态托管（同源）。
+- **Q5 拍板**：token 存 localStorage（同源 + Bearer → 无 CORS/CSRF 面；XSS 由全量 textContent + 服务端 CSP 缓解）；
+- **Q7 拍板**：前台 3s 轮询（hidden 暂停）；SSE/长轮询按需再评估。
+- **重放一致性**：PWA 物化视图与 `DialogLoop.Replay` 逐条对齐（keep_user / replace_user / tombstone；单测锁定）。
+- **缓存/离线**：localStorage 事件快照（上限 5000；配额对半裁剪 + 最小写兜底）；SW 应用壳离线
+  （/v1 直通不缓存）；离线只读、发送失败回滚。
+- **构建/部署**：Docker 多阶段（node 构建 PWA → dotnet publish → 运行镜像拷 wwwroot，运行期零 Node）；
+  compose 构建上下文改仓库根（`.dockerignore` 白名单）；CI 增 PWA 构建、`vitest run src/pwa`、Playwright(Edge) e2e。
+- **验证（Windows 本地）**：PWA 单测 **33/33**（修复 `saveCache` 配额兜底死循环：`floor(1/2)=0` → `slice(0)` 不收缩）；
+  云冒烟 **51/51**（含 3 项静态托管断言）；e2e **10/10**（配对/查看/续聊/离线缓存）；构建 0 错误。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2L。
+
+## 2026-10-04 增量：服务端四形态与能力声明（IKJN70 / IKJN78）
+
+- **决策（IKJN70）**：服务端做四形态——完整版（.NET VPS，参照实现）/ CF 版（Workers + DO）/ PHP 空间版 /
+  Git 仓库版；**Git 版只服务桌面端**（无 PWA、无服务端生成）；CF 先行；PHP 用便携 PHP 环境本地验证；
+  统一「一套协议 + 能力声明 + 一致性套件」防契约漂移；拆解：IKJN78（前置）/ IKJN79（CF）/ IKJN7B（Git）/
+  IKJN7C（PHP）；设计见 `docs/design/2026-10-04-cloud-server-forms.md`。
+- **能力声明（IKJN78）**：`GET /v1/capabilities`（公开只读）——impl / protocol / sync / clone /
+  cursor(server|file-offset) / generation(realtime|inline|none) / pairing / pwa / maxBatchBytes；
+  PWA 按声明降级（generation=none 不显示「等待回复」；解析失败 / 老服务端回退兼容默认 realtime / pwa=true）。
+- **一致性套件**：云冒烟新增核心档——`--profile core`（本地）或 `--base-url URL --master-token TOKEN`（远端）；
+  跑同步核心 + 配对 + 能力声明 +（pwa=true 时）静态托管；事件 id 带运行前缀，可对持久实例重复跑；
+  PWA e2e 支持 `--base-url / --master-token`（`--expect-echo` 显式开启生成断言）。
+- **验证（Windows 本地）**：本地 full 云冒烟 **54/54**（含 3 项能力声明）；核心档 **35/35**；
+  PWA 单测 **39/39**（含能力解析/降级 6 项）；e2e **11/11**（Edge 通道）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN70 / #IKJN78。
+
+## 2026-10-04 增量：CF 版服务端（IKJN79）
+
+- **实现**：`cloudflare/cloud-server/`（Workers + Durable Objects SQLite，单租户单 DO `global`）；TS 复用
+  `src/main/sync/sync-protocol.ts` 校验器；端点与 .NET 版逐项对齐（healthz / capabilities(impl=cf-workers) /
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)），鉴权、链/序号校验、整批原子性由核心档
+  套件锁定；限流（DO 固定窗口）不在核心档内，由单测（`test/rate-limit.test.ts`）+ 工作流低阈值实例的
+  429 断言覆盖。
+- **生成**：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 回声 mock（测试部署）；
+  `CLOUD_LLM_API_KEY` 走 OpenAI 兼容接口（与 .NET ModelClient 同口径）。
+- **静态资产**：Workers 静态资产（构建 PWA → `assets/`）；Worker 统一缓存头 / CSP（与 .NET 静态托管一致）。
+- **部署**：`wrangler deploy`；自定义域 `cyrene-cloud.ygwill.asia`（3 级子域，通用证书即时覆盖——规避
+  IKJN3W 的 4 级子域 alert 40 证书问题）；测试部署 `--var CLOUD_LLM_MODE:echo`。
+- **Bot Fight Mode**：拦脚本 UA（403/1010）——套件 / e2e 新增 `--user-agent` 覆盖；生产建议关闭 BFM 或独立
+  zone（桌面端同步客户端同为非浏览器 UA）。
+- **套件鲁棒化**：核心档对启用服务端生成的实例鲁棒——计数 / 集合断言收敛到 run 前缀事件（生成事件 id
+  前缀 `gen-`）；clone 改快照单调夹逼 + run 集合 + 游标边界。
+- **验证（Windows 本地）**：CF 单测 **22/22**（含限流固定窗口 4 项）；本地 wrangler dev（回声 mock）
+  核心档 **35/35**、e2e **11/11**（持久实例可重复跑）；限流低阈值实例 `/v1/pair/code` 连续三次
+  **200 200 429**；.NET full 回归 **54/54**；部署实例（HTTPS）核心档 **35/35**、e2e **11/11**。
+- **评审修复**：限流口径修正（核心档不覆盖限流；单测 + 工作流 429 断言补验证）；clone 流式分页；
+  限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化（pnpm / 就绪断言 /
+  进程回收 / permissions）；README 已知差异清单补齐；`workers_dev` 关闭。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN79。
+
+## 2026-10-04 增量：Git 仓库版 remote 适配器（IKJN7B）
+
+- **实现**：`src/main/sync/git-remote.ts`（`GitRepoRemote`）——每设备 `events-<deviceId>.jsonl`
+  append-only 分片 + 字节偏移增量（无全局游标）；push = 追加 + commit + push；fetch = pull `--rebase` +
+  读新行；合并 = eventId 幂等 + 规范序并集（`mergeSyncEvents`）；`.gitattributes` 固定 `*.jsonl -text`
+  （禁用行尾转换，保字节偏移语义）。
+- **保守合并**：pull 失败/冲突一律 `rebase --abort` + 抛错（不 force、不重写远端历史）；
+  强制推送（历史重写）后前缀哈希失配 / 文件收缩 → 分片回退全量重读；半截尾行读取只到最后一个换行，
+  本设备追加前自愈修剪。
+- **鉴权**：仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，日志脱敏）；纯本地模式（无远端）可用。
+- **边界**：适配器不接线 UI / 不落盘同步状态（`FetchState` 由调用方持有）；桌面端同步客户端
+  （事件导出器 / 物化视图）属 IKJK2I，后续接入。
+- **评审修复（2026-10-05）**：init 错误统一脱敏（URL 变形覆盖）并补注入断言；push 失败自愈
+  （提交失败回滚追加 / 无新事件补提交补推送）；git 调用无输出超时 + AbortSignal 取消 + 默认隔离 env；
+  错误码可重试分级；`.gitattributes` 缺规则自动追加；错误 index 改分片物理行号（clone 同步上报）；
+  规范序比较器抽公共导出；测试计数修正并补 9 个用例。
+- **复审修复（2026-10-05）**：默认隔离 env 与 simple-git 3.36 安全拦截对齐（argv-parser 全集放行：
+  `PAGER`/`GIT_PAGER`/`GIT_EXTERNAL_DIFF`/`GIT_PROXY_COMMAND`/`GIT_TEMPLATE_DIR`/`GIT_CONFIG_COUNT` 等，
+  宿主含受限键仍可用，含用例）；`healPendingState` 先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例；文档注明隔离全局配置会停用用户 `credential.helper`（HTTPS 走内联 PAT）。
+- **验证（Windows 本地）**：适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
+  强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 /
+  提交回滚 / 未推送自愈 / 参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+  `vitest run src/main/sync src/pwa` **70/70**；
+  `tsc main` / `tsc preload` / `tsc renderer` 三端 0 错误。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。
+
+## 2026-10-04 增量：PHP 空间版服务端（IKJN7C）
+
+- **实现**：`php/cloud-server/`（零依赖：PDO SQLite + 手写路由/静态托管）；协议读取器 PHP 移植，
+  与 TS / C# 跑同一组 fixtures（11/11）；端点与 .NET 版逐项对齐（healthz / capabilities(impl=php-shared) /
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)，SQLite 自增序游标）。
+- **生成降级（inline）**：push 内联尽力（`max_execution_time` 预算内），超时/失败挂起 `dialog_pending`；
+  `bin/drain.php`（cron）重试；桌面端在线兜底；`CLOUD_LLM_MODE=echo` 回声 mock。
+- **虚拟主机适配**：`public/` 为站点根（`.htaccess` 模板）；`data/` 可写且 deny 直读；clone 逐行输出低内存；
+  配置走环境变量或 `config.local.php`。
+- **e2e 脚本修复（共享工具）**：seed 事件 id 唯一化（持久实例可重复跑）+ `data-session-id` 精确定位 +
+  生成断言接受 `inline`（PHP 形态）。
+- **评审修复（2026-10-05）**：P0 存储加固（`umask(0077)` + 目录 0700 + 库/`-wal`/`-shm` 0600，
+  Linux / CI 断言）；CI 阶段 2 环境变量传参修复（`env`）+ 就绪失败输出日志 + pnpm 锁定 + permissions；
+  clone 改生成器分页流式（兑现低内存声明）；id 长度 / 规范序改 UTF-16 码元（astral 与 TS / C# 一致）；
+  `BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名 IP，回环信任 XFF）；请求体限长读取；
+  trigger / drain 异常兜底；静态不回显 `.php` / 点文件；README 差异清单与 Apache 2.4+ 注明。
+- **复审修复（2026-10-05）**：XFF 取**最右受信跳**（防伪造绕限流；与 .NET `ForwardedHeaders` 口径一致）；
+  healthz 回环判定含 XFF（同机反代下外部客户端仍 401）；CI 阶段 1/2 数据目录隔离；新增 XFF / healthz 单测 5 项；
+  P3（umask 进程级副作用、断言强度、id 尾随控制符 fixture 统一）明确接受为跟进项。
+- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **47/47**（Linux / CI 另含 3 项权限断言）；
+  核心档（生成关）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；
+  .NET 本地 e2e 回归 **11/11**。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。

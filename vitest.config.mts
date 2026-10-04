@@ -8,6 +8,7 @@ export default defineConfig({
       "src/main/**/*.test.ts",
       "src/renderer/**/*.test.ts",
       "src/shared/**/*.test.ts",
+      "src/pwa/**/*.test.ts",
       "src/cli/**/*.test.ts",
       "skills/**/tests/**/*.test.ts",
       "scripts/cline-poc/**/*.test.ts",
