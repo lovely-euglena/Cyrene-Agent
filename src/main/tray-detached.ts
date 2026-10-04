@@ -10,10 +10,9 @@
 //
 // 通信协议：JSON 行（\n 分隔，低频控制通道，无需三件套的长度前缀帧）。
 
-import * as fs from "node:fs";
-import * as nodeNet from "net";
 import type { NativeImage, Tray } from "electron";
 import type { WindowActivationRequest } from "./application/window-activation";
+import { acquireTrayPipeLink, isTrayPipeAvailable } from "./tray-pipe";
 
 export type TrayLike = Pick<Tray, "isDestroyed" | "destroy" | "setImage" | "setToolTip"> & {
   /** Windows 托盘气泡（内置 Tray 与分离托盘同名，宿主通知统一走这里） */
@@ -46,11 +45,10 @@ export interface DetachedTrayInput {
   requestActivation(request: WindowActivationRequest): void;
   togglePetWindow(): void;
   setPetDragMode?(enabled: boolean): boolean;
+  /** IKJK51：托盘「隐藏窗口」——隐藏全部应用窗口（调度继续常驻）。 */
+  hideWindows?(): void;
   quit(): void;
 }
-
-const PIPE_NAME = "cyrene-tray";
-const PIPE_PATH = `\\\\.\\pipe\\${PIPE_NAME}`;
 
 interface TrayCommand {
   op: "cmd";
@@ -59,72 +57,38 @@ interface TrayCommand {
 
 /**
  * 托盘进程可用性探测：pipe 不存在（托盘未运行）→ 直接回退内置 Tray，
- * 避免返回一个无图标的「死托盘」。
- *
- * 实现注意：不能用 fs.existsSync(PIPE_PATH)——对 .NET
- * NamedPipeServerStream 创建的实例返回 false（stat/open 报 EBUSY/失败），
- * 会误判成「托盘未运行」。用管道命名空间枚举（readdir）判断名字存在，
- * 实测对 .NET 管道可靠；非 Windows 恒 false（分离托盘为 Windows 专属）。
+ * 避免返回一个无图标的「死托盘」。实现见 tray-pipe（readdir 枚举；
+ * 不能用 fs.existsSync——对 .NET 管道实例会误判 EBUSY）。
  */
 export function isDetachedTrayPipeAvailable(): boolean {
-  if (process.platform !== "win32") return false;
-  try {
-    return fs.readdirSync("\\\\.\\pipe\\").includes(PIPE_NAME);
-  } catch {
-    return false;
-  }
+  return isTrayPipeAvailable();
 }
 
 export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
   if (!isDetachedTrayPipeAvailable()) return null;
-  let socket: nodeNet.Socket | null = null;
-  let destroyed = false;
-  let lineBuffer = "";
-
   // 快探测：托盘在 Electron 启动前应已就位（托盘拉起 Electron 的正常流）。
   // 托盘未跑（pipe 不存在）→ 返回 null，调用方回退内置 Tray。
-  try {
-    socket = nodeNet.connect(PIPE_PATH);
-    socket.on("error", () => { /* pipe 断开：托盘先走，静默 */ });
-    socket.on("connect", () => {
-      send({ op: "tray.ready" });
-    });
-    socket.on("data", (chunk: Buffer) => {
-      lineBuffer += chunk.toString("utf8");
-      for (;;) {
-        const idx = lineBuffer.indexOf("\n");
-        if (idx < 0) break;
-        const line = lineBuffer.slice(0, idx).trim();
-        lineBuffer = lineBuffer.slice(idx + 1);
-        if (!line) continue;
-        dispatchLine(line, input);
-      }
-    });
-    socket.on("close", () => {
-      socket = null;
-      // 托盘进程退出：分离托盘消失（用户主动关的），Electron 继续——
-      // 已有的窗口/桌宠不受影响；托盘回来时 Electron 侧无自动重连
-      //（下次 Electron 启动才重连，v1 简化）
-    });
-  } catch {
-    return null;
-  }
+  //
+  // IKJK51：socket 由 tray-pipe 共享链路持有（调度宿主客户端共用同一连接，
+  // 托盘单连接语义），断线自动重连在链路层；本模块只保留 TrayLike 语义。
+  const link = acquireTrayPipeLink();
+  let destroyed = false;
+  void link.connect();
+  const unsubscribe = link.onLine((line) => {
+    if (!destroyed) dispatchLine(line, input);
+  });
 
   function send(payload: Record<string, unknown>): void {
-    if (!socket || destroyed) return;
-    try {
-      socket.write(JSON.stringify(payload) + "\n");
-    } catch {
-      /* ignore */
-    }
+    if (destroyed) return;
+    link.send(payload);
   }
 
   return {
     isDestroyed: () => destroyed,
     destroy: () => {
       destroyed = true;
-      try { socket?.end(); } catch { /* ignore */ }
-      socket = null;
+      unsubscribe();
+      // 共享链路不在此销毁：调度宿主客户端可能仍在使用；应用退出随进程回收。
     },
     setImage: (image: NativeImage) => {
       // 跨进程无法直接传 NativeImage：落盘 temp 后发路径。
@@ -167,6 +131,9 @@ function dispatchLine(line: string, input: DetachedTrayInput): void {
       break;
     case "toggle-pet":
       input.togglePetWindow();
+      break;
+    case "hide-windows":
+      input.hideWindows?.();
       break;
     case "drag-mode":
       input.setPetDragMode?.(true);

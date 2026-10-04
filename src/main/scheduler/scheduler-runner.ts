@@ -68,8 +68,14 @@ export function applyScheduledExecutionPolicy(options: CyreneRunOptions, mode: P
 }
 
 export function createSchedulerRunner(deps: RunnerDeps) {
-  async function runScheduledTask(task: ScheduledTask, _scheduledFireAt: Date, manual: boolean): Promise<ScheduledRunResult> {
-    const historyId = deps.id();
+  async function runScheduledTask(
+    task: ScheduledTask,
+    _scheduledFireAt: Date,
+    manual: boolean,
+    /** headless（IKJK51）：复用托盘预建历史 id；缺省自生成。 */
+    historyIdOverride?: string,
+  ): Promise<ScheduledRunResult> {
+    const historyId = historyIdOverride ?? deps.id();
     const startedAt = deps.now();
     const allTools = toolRegistry.getAllTools();
     const effectiveTools = filterToolsForTask(task, allTools);

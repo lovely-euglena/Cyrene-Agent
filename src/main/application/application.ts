@@ -15,6 +15,7 @@ import type { PreReadyResult } from "./pre-ready";
 import type { ShellResult } from "./shell-bootstrap";
 import type { CoreResult } from "./core-bootstrap";
 import type { BackgroundHandle } from "./background";
+import { headlessScheduledArgs } from "../scheduler/headless-args";
 
 export interface ApplicationDependencies {
   app: Pick<App, "whenReady" | "quit" | "on" | "removeListener">;
@@ -26,6 +27,8 @@ export interface ApplicationDependencies {
   startShell(): Promise<ShellResult>;
   startCore(shell: ShellResult): Promise<CoreResult>;
   startBackground(core: CoreResult): BackgroundHandle;
+  /** IKJK51：headless 定时任务执行（`--scheduled-task`）；执行后由 start() 收尾退出。 */
+  runHeadlessScheduledTask?(core: CoreResult): Promise<void>;
   logFatal(error: unknown): void;
 }
 
@@ -58,6 +61,15 @@ export function createApplication(deps: ApplicationDependencies): Application {
     async start(): Promise<void> {
       shell = await deps.startShell();
       const core = await deps.startCore(shell);
+      // IKJK51：headless 定时任务——core 就绪即执行，跳过 background（不建窗口/托盘）
+      if (headlessScheduledArgs() && deps.runHeadlessScheduledTask) {
+        try {
+          await deps.runHeadlessScheduledTask(core);
+        } finally {
+          deps.app.quit();
+        }
+        return;
+      }
       deps.readiness.transition("background-starting");
       const background = deps.startBackground(core);
       context = {

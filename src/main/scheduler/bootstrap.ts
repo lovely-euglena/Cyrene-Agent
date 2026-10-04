@@ -12,6 +12,9 @@ import { SchedulerEngine, type SchedulerEngineDeps } from "./scheduler-engine";
 import { getSchedulerStore } from "./scheduler-store";
 import { registerSchedulerIpc } from "./scheduler-ipc";
 import { createSchedulerRunner } from "./scheduler-runner";
+import { broadcastSchedulerChanged } from "./scheduler-actions";
+import { createHostModeAdapter, type SchedulerEngineSurface, type SchedulerStoreSurface } from "./host-mode";
+import type { SchedulerHostClient } from "./host-client";
 
 export interface SchedulerSubsystemDeps {
   agentRuntime: AgentRuntime;
@@ -26,6 +29,8 @@ export interface SchedulerSubsystemDeps {
    * 插件停用时定时触发和手动触发都被跳过。
    */
   canRunTask?: (task: ScheduledTask) => boolean;
+  /** IKJK51：调度宿主客户端（host 模式）；缺省 = 纯 TS scheduler。 */
+  hostClient?: SchedulerHostClient;
   /** 生命周期事件发布器：调度轮次事件与 scheduler:finished 由此发布。 */
   publishLifecycle?: LifecyclePublisher;
   conversationJournal?: ConversationJournalService;
@@ -33,11 +38,17 @@ export interface SchedulerSubsystemDeps {
 }
 
 export interface SchedulerSubsystem {
-  store: ReturnType<typeof getSchedulerStore>;
-  engine: SchedulerEngine;
+  store: SchedulerStoreSurface;
+  engine: SchedulerEngineSurface;
   initialize(): void;
   start(): void;
   stop(): void;
+  /** 插件运行状态同步（host 模式：下发宿主 CanRun 依据；TS 模式：undefined）。 */
+  syncPluginRunningState?(running: Record<string, boolean>): void;
+  /** headless 执行（IKJK51）：`--scheduled-task` 实例调用；host 模式下先确保连接。 */
+  runScheduledTaskForHeadless?(taskId: string, historyId?: string, fireAt?: string): Promise<{ ok: boolean; error?: string }>;
+  /** 宿主通知（host 模式：tray.notify 气泡）。 */
+  notifyHost?(title: string, content: string): void;
 }
 
 /**
@@ -45,7 +56,9 @@ export interface SchedulerSubsystem {
  * 不加载 store、不注册 IPC、不启动定时器 —— initialize / start / stop 必须显式调用。
  */
 export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): SchedulerSubsystem {
-  const store = deps.store ?? getSchedulerStore();
+  const localStore = deps.store ?? getSchedulerStore();
+  // host 模式（IKJK51）：store/engine 换宿主适配器；runner 经闭包读最终 store。
+  let store: SchedulerStoreSurface = localStore;
 
   const runner = createSchedulerRunner({
     buildOptions: (task) => deps.agentRuntime.buildSchedulerOptions(task),
@@ -77,19 +90,50 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
   });
 
   const engineDeps: SchedulerEngineDeps = {
-    store,
+    store: localStore,
     runTask: runner.runScheduledTask,
     ...(deps.canRunTask ? { canRunTask: deps.canRunTask } : {}),
   };
-  const engine = deps.createEngine
-    ? deps.createEngine(engineDeps)
-    : new SchedulerEngine(engineDeps);
+  const hostAdapter = deps.hostClient
+    ? createHostModeAdapter({
+        client: deps.hostClient,
+        runTask: runner.runScheduledTask,
+        ...(deps.canRunTask ? { canRunTask: deps.canRunTask } : {}),
+        onChanged: broadcastSchedulerChanged,
+      })
+    : null;
+  if (hostAdapter) store = hostAdapter.store;
+  const engine: SchedulerEngineSurface = hostAdapter
+    ? hostAdapter.engine
+    : deps.createEngine
+      ? deps.createEngine(engineDeps)
+      : new SchedulerEngine(engineDeps);
   const registerIpc = deps.registerIpc ?? registerSchedulerIpc;
 
   let initialized = false;
   return {
     store,
     engine,
+    ...(hostAdapter
+      ? {
+          syncPluginRunningState: hostAdapter.syncPluginRunningState,
+          notifyHost: (title: string, content: string) => {
+            deps.hostClient?.send("tray.notify", { title, content });
+          },
+        }
+      : {}),
+    /** IKJK51：headless 执行——host 模式先确保管道连接（历史经 sched.report 回写宿主）。 */
+    async runScheduledTaskForHeadless(taskId: string, historyId?: string, fireAt?: string) {
+      if (deps.hostClient) await deps.hostClient.ensureConnected();
+      const task = store.getTasks().find((t) => t.id === taskId);
+      if (!task) return { ok: false, error: "task not found" };
+      try {
+        await runner.runScheduledTask(task, fireAt ? new Date(fireAt) : new Date(), false, historyId);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
     /** 加载持久化 store + 注册 IPC。idempotent。 */
     initialize(): void {
       if (initialized) return;

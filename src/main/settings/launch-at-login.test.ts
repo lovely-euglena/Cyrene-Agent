@@ -21,6 +21,33 @@ describe("syncLaunchAtLogin", () => {
 
     expect(setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: false });
   });
+
+  it("IKJK51：调度常驻时登录项指向 cyrene-native --tray", () => {
+    const setLoginItemSettings = vi.fn();
+
+    syncLaunchAtLogin(true, { setLoginItemSettings }, {
+      trayPath: "C:\\app\\cyrene-native.exe",
+      trayArgs: ["--tray", "--data-dir", "C:\\ud"],
+    });
+
+    expect(setLoginItemSettings).toHaveBeenCalledWith({
+      openAtLogin: true,
+      path: "C:\\app\\cyrene-native.exe",
+      args: ["--tray", "--data-dir", "C:\\ud"],
+    });
+  });
+
+  it("IKJK51：关闭时同时清 Electron 与托盘登录项（防切换指向后残留）", () => {
+    const setLoginItemSettings = vi.fn();
+
+    syncLaunchAtLogin(false, { setLoginItemSettings }, {
+      trayPath: "C:\\app\\cyrene-native.exe",
+      trayArgs: ["--tray"],
+    });
+
+    expect(setLoginItemSettings).toHaveBeenNthCalledWith(1, { openAtLogin: false });
+    expect(setLoginItemSettings).toHaveBeenNthCalledWith(2, { openAtLogin: false, path: "C:\\app\\cyrene-native.exe" });
+  });
 });
 
 describe("consumeInstallerLaunchAtLoginSelection", () => {
