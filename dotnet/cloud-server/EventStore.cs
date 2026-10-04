@@ -77,14 +77,14 @@ public sealed class EventStore
         command.ExecuteNonQuery();
     }
 
-    /// <summary>eventId 是否已存在（生成前幂等预检，避免重复调用模型）。</summary>
-    public bool Contains(string eventId)
+    /// <summary>eventId 是否已存在（生成前幂等预检，避免重复调用模型；异步可取消）。</summary>
+    public async Task<bool> ContainsAsync(string eventId, CancellationToken cancellationToken = default)
     {
-        using var connection = Open();
-        using var command = connection.CreateCommand();
+        await using var connection = Open();
+        await using var command = connection.CreateCommand();
         command.CommandText = "SELECT 1 FROM events WHERE event_id=@id LIMIT 1";
         command.Parameters.AddWithValue("@id", eventId);
-        return command.ExecuteScalar() is not null;
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
     public long CurrentCursor()

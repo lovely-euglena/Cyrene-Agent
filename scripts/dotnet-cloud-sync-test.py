@@ -22,7 +22,7 @@
   18. 配对接口限流（超限 → 429）；
   19. 服务端生成闭环（mock LLM：用户消息 → assistant 事件，turnId 对齐）；
   20. 断网重试幂等（重推 user 事件不二次生成）与上下文重放（历史注入）；
-  21. turn_rewind 编辑语义（替换后分支重生成）+ 用量日志/密钥脱敏。
+  21. turn_rewind 编辑语义（替换后分支重生成）+ 上下文裁剪保护 system prompt + 用量日志/密钥脱敏。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -636,6 +636,8 @@ def main():
                 "CLOUD_LLM_BASE_URL": f"http://127.0.0.1:{llm_port}/v1",
                 "CLOUD_LLM_API_KEY": "sk-test-secret",
                 "CLOUD_LLM_MODEL": "mock-model",
+                "CLOUD_LLM_SYSTEM_PROMPT": "你是昔涟",
+                "CLOUD_LLM_CONTEXT_CHARS": "200",
                 "Logging__LogLevel__Default": "Information",
             }, log_handle=dlg_handle)
             dlg = {"Authorization": "Bearer dlg-master"}
@@ -684,8 +686,8 @@ def main():
                                    headers=dlg)
             events = wait_for_assistant("m1", ["服务端回复-2"])
             sent = [(item.get("role"), item.get("content")) for item in llm_requests[-1].get("messages", [])]
-            check("重放上下文：历史消息（u1/a1/u2）注入模型请求",
-                  sent == [("user", "第一问"), ("assistant", "服务端回复-1"), ("user", "第二问")],
+            check("重放上下文：system + 历史消息（u1/a1/u2）注入模型请求",
+                  sent == [("system", "你是昔涟"), ("user", "第一问"), ("assistant", "服务端回复-1"), ("user", "第二问")],
                   str(sent)[:220])
 
             # 13.4 编辑（replace_user）→ 裁掉旧分支并以替换文本重生成
@@ -699,11 +701,22 @@ def main():
             sent = [(item.get("role"), item.get("content")) for item in llm_requests[-1].get("messages", [])]
             edited = [e for e in events
                       if e["payload"].get("role") == "assistant" and e["payload"].get("text") == "服务端回复-3"]
-            check("turn_rewind 编辑语义：上下文=替换后分支，重生成同轮回复",
-                  sent == [("user", "改问")] and edited and edited[0]["payload"].get("turnId") == "t-m1",
+            check("turn_rewind 编辑语义：上下文=system+替换后分支，重生成同轮回复",
+                  sent == [("system", "你是昔涟"), ("user", "改问")] and edited and edited[0]["payload"].get("turnId") == "t-m1",
                   f"context={str(sent)[:120]} edited={str(edited)[:120]}")
 
-            # 13.5 用量日志 + 密钥脱敏
+            # 13.5 超预算裁剪：system prompt 不被裁掉（只丢最旧历史、保留最后一条 user）
+            long_text = "丁" * 300
+            status, body, _ = push(dlg_base, [ev("m-u3", session_id="m1", device="dev-a", lamport=7, seq=4,
+                                                 payload={"role": "user", "text": long_text, "turnId": "t-m3"})],
+                                   headers=dlg)
+            events = wait_for_assistant("m1", ["服务端回复-4"])
+            sent = [(item.get("role"), item.get("content")) for item in llm_requests[-1].get("messages", [])]
+            check("上下文裁剪保护 system prompt（超预算仅丢最旧历史）",
+                  sent == [("system", "你是昔涟"), ("user", long_text)],
+                  str([(role, (text or "")[:16]) for role, text in sent])[:220])
+
+            # 13.6 用量日志 + 密钥脱敏
             dlg_handle.close()
             with open(dlg_log, encoding="utf-8", errors="replace") as handle:
                 dlg_log_text = handle.read()

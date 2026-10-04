@@ -29,7 +29,16 @@ public sealed class DialogLoop : BackgroundService
     private readonly ILogger<DialogLoop> _logger;
     private readonly string? _systemPrompt;
     private readonly int _contextChars;
-    private readonly Channel<string> _queue = Channel.CreateUnbounded<string>();
+    private const int QueueCapacity = 10_000;
+
+    // 有界队列（Phase 1 内存预算 512MB）：满载时拒绝新入队并告警——不阻塞 push，
+    // 撤销去重标记后由后续事件再次触发（不静默丢弃）。
+    private readonly Channel<string> _queue = Channel.CreateBounded<string>(
+        new BoundedChannelOptions(QueueCapacity)
+        {
+            SingleReader = true,
+            FullMode = BoundedChannelFullMode.Wait, // TryWrite 满载返回 false，不阻塞
+        });
     private readonly ConcurrentDictionary<string, byte> _queued = new();
 
     public DialogLoop(EventStore store, ModelClient model, ILogger<DialogLoop> logger, string? systemPrompt, int contextChars)
@@ -47,9 +56,13 @@ public sealed class DialogLoop : BackgroundService
         if (!_model.Enabled) return;
         foreach (var sessionId in sessionIds)
         {
-            if (_queued.TryAdd(sessionId, 0))
+            if (!_queued.TryAdd(sessionId, 0)) continue;
+            if (!_queue.Writer.TryWrite(sessionId))
             {
-                _queue.Writer.TryWrite(sessionId);
+                // 队列满载：撤销去重标记并告警（后续事件可再次触发，避免静默丢弃）
+                _queued.TryRemove(sessionId, out _);
+                _logger.LogWarning("对话队列已满（{Capacity}），跳过本次触发 session={Session}",
+                    QueueCapacity, sessionId);
             }
         }
     }
@@ -94,7 +107,7 @@ public sealed class DialogLoop : BackgroundService
         if (string.IsNullOrWhiteSpace(pending.Text)) return;
 
         var assistantEventId = "gen-" + Sha256Hex($"{sessionId}:{pending.AnchorEventId}")[..32];
-        if (_store.Contains(assistantEventId)) return;
+        if (await _store.ContainsAsync(assistantEventId, cancellationToken)) return;
 
         var context = branch.Select(item => new ModelClient.ChatMessage(item.Role, item.Text)).ToList();
         if (!string.IsNullOrEmpty(_systemPrompt))
@@ -137,6 +150,7 @@ public sealed class DialogLoop : BackgroundService
 
     private async Task<List<SyncEventV0>> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
     {
+        // TODO(Phase 2)：长会话窗口化重放——只加载最近 N 条事件即可构建上下文（Phase 1 全量可接受）
         var all = new List<SyncEventV0>();
         long cursor = 0;
         while (true)
@@ -258,19 +272,22 @@ public sealed class DialogLoop : BackgroundService
         return null;
     }
 
-    /// <summary>按字符预算从最旧开始丢（保留最后一条待回复 user）。</summary>
+    /// <summary>按字符预算从最旧开始丢（保留 system prompt 与最后一条待回复 user）。</summary>
     private void TrimContext(List<ModelClient.ChatMessage> context)
     {
+        // system prompt（若在头部）不可裁剪：只丢最旧的历史消息
+        var startIndex = context.Count > 0 && context[0].Role == "system" ? 1 : 0;
         var total = context.Sum(item => item.Content.Length);
-        var drop = 0;
-        while (total > _contextChars && drop < context.Count - 1)
+        var drop = startIndex;
+        var maxDrop = context.Count - 1; // 至少保留最后一条待回复 user
+        while (total > _contextChars && drop < maxDrop)
         {
             total -= context[drop].Content.Length;
             drop++;
         }
-        if (drop > 0)
+        if (drop > startIndex)
         {
-            context.RemoveRange(0, drop);
+            context.RemoveRange(startIndex, drop - startIndex);
         }
     }
 
