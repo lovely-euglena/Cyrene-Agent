@@ -1,0 +1,41 @@
+# CF 版服务端（IKJN79）：类型检查 + 单测 + 本地 wrangler dev 核心档 + PWA e2e（Gitee Go 兼容 GitHub Actions 语法）
+name: cf-worker
+on:
+  push:
+    branches: [main]
+    paths: ['cloudflare/**', 'src/main/sync/**', 'src/pwa/**', 'scripts/dotnet-cloud-sync-test.py', 'scripts/pwa-e2e-test.mjs']
+  pull_request:
+    paths: ['cloudflare/**', 'src/main/sync/**', 'src/pwa/**', 'scripts/dotnet-cloud-sync-test.py', 'scripts/pwa-e2e-test.mjs']
+
+jobs:
+  cf-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 依赖（worker / PWA / 根 Playwright）
+        run: |
+          cd cloudflare/cloud-server && npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
+          cd ../../src/pwa && npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
+          cd ../.. && (npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com || npm install --no-audit --no-fund --registry=https://registry.npmmirror.com)
+      - name: 类型检查 + 单测
+        run: |
+          cd cloudflare/cloud-server
+          npm run check
+          npm test
+      - name: 本地 wrangler dev + 核心档 + PWA e2e
+        run: |
+          cd cloudflare/cloud-server
+          npm run assets:build
+          printf 'CLOUD_TOKEN=smoke-master\nCLOUD_LLM_MODE=echo\n' > .dev.vars
+          npx wrangler dev --port 8787 --ip 127.0.0.1 > /tmp/wrangler.log 2>&1 &
+          for i in $(seq 1 120); do
+            curl -fsS http://127.0.0.1:8787/v1/capabilities > /dev/null 2>&1 && break
+            sleep 1
+          done
+          cd ../..
+          python3 scripts/dotnet-cloud-sync-test.py --base-url http://127.0.0.1:8787 --master-token smoke-master
+          npx playwright install msedge
+          node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8787 --master-token smoke-master --expect-echo
