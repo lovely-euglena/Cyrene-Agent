@@ -507,6 +507,8 @@ public sealed partial class SettingsWindow
                     ["baseUrl"] = form.BaseUrl,
                     ["model"] = form.Model,
                     ["apiKey"] = form.ApiKey,
+                    // 复审 P1-6：掩码后主进程按档案槽回填真 key（与设置页同口径）
+                    ["profileId"] = form.ProfileId,
                     ["transport"] = TransportValue(),
                 },
             });

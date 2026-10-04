@@ -21,7 +21,7 @@ import {
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
-import { getSecret, isVaultMode, maskGeneralSettingsForUi, maskModelSettingsForUi, resolveVaultKeyForVendor, VAULT_KEY_VISION } from "./secrets-keyring";
+import { getSecret, isVaultMode, maskGeneralSettingsForUi, maskModelSettingsForUi, VAULT_KEY_VISION } from "./secrets-keyring";
 import { switchEmbeddingModel } from "../rag";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
@@ -30,7 +30,7 @@ import { testVendorConnection } from "../orchestrator/vendors/test-connection";
 import { testVisionConnection } from "./vision-test";
 import { getAdapterForConfig } from "../orchestrator/vendors";
 import type { VendorConfig } from "../orchestrator/vendors";
-import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
+import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, resolveTestConnectionApiKey, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
 import type { ModelSettings } from "./model-settings";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
@@ -379,14 +379,17 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     return maskModelSettingsForUi(saved); // 复审 P1-2 出站掩码
   });
 
-  // 复审 P1-3：vault 模式下渲染端拿到的是掩码（apiKey 空）——空值时按内存真值反查
-  // vault 槽位回填，明文不出主进程
-  ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => {
-    if (isVaultMode() && !cfg.apiKey?.trim()) {
-      const real = getSecret(resolveVaultKeyForVendor(cfg.provider, getModelSettings().apiKey));
-      if (real) return testVendorConnection({ ...cfg, apiKey: real });
-    }
-    return testVendorConnection(cfg);
+  // 复审 P1-6：vault 模式下渲染端拿到的是掩码（apiKey 空）——按 profileId/上下文
+  // 精确解析真 key 回填（不回退活跃 provider 槽跨端点），明文不出主进程
+  ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig & { profileId?: string }) => {
+    const apiKey = resolveTestConnectionApiKey({
+      provider: cfg.provider,
+      apiKey: cfg.apiKey,
+      profileId: typeof cfg.profileId === "string" ? cfg.profileId : undefined,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
+    });
+    return testVendorConnection({ ...cfg, apiKey });
   });
   ipc.handle(IPC.SETTINGS_PREVIEW_REASONING, (_event, cfg: VendorConfig) => {
     const request = getAdapterForConfig(cfg).buildRequest({

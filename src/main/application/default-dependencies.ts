@@ -32,7 +32,7 @@ import {
   sidebarWindow,
   tasksWindow,
 } from "../windows/window-state";
-import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile, resolveTestConnectionApiKey, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { createModelBackedConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
@@ -652,11 +652,19 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       }
       case "test": {
         const config = asObj(payload.config);
+        // 复审 P1-6：WPF 原生测试连接与设置页同口径——掩码空 key 按 profileId/上下文回填
+        const apiKey = resolveTestConnectionApiKey({
+          provider: asStr(config.provider),
+          apiKey: asStr(config.apiKey),
+          profileId: asStr(config.profileId) || undefined,
+          baseUrl: asStr(config.baseUrl),
+          model: asStr(config.model),
+        });
         void testVendorConnection({
           provider: asStr(config.provider),
           baseUrl: asStr(config.baseUrl),
           model: asStr(config.model),
-          apiKey: asStr(config.apiKey),
+          apiKey,
           explicitTransport: transportOf(config.transport),
         } as Parameters<typeof testVendorConnection>[0]).then((result) => {
           nativeNotice(

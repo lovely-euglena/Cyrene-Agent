@@ -423,7 +423,7 @@ const settingsApi = {
   saveModelProfile: (profile: unknown) => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILE_SAVE, profile),
   deleteModelProfile: (id: string) => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILE_DELETE, id),
   setDefaultModelProfile: (id: string) => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILE_SET_DEFAULT, id),
-  testConnection: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_CONNECTION, config),
+  testConnection: (config: { provider: string; baseUrl: string; model: string; apiKey: string; profileId?: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_CONNECTION, config),
   previewReasoning: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_PREVIEW_REASONING, config),
   testVision: (config: { baseUrl: string; apiKey: string; model: string }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_VISION, config),
   // main → settings：要求切到指定标签（窗口已打开时由 main 发这个事件）

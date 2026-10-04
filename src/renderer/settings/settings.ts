@@ -1386,6 +1386,8 @@ if (testConnectionBtn) {
         apiKey,
         explicitTransport: transportSelect.value as ProviderProfile["explicitTransport"],
         reasoning: apiState.editingReasoning,
+        // 复审 P1-6：掩码空 key 时主进程按档案槽回填真 key
+        ...(apiState.editingProfileId ? { profileId: apiState.editingProfileId } : {}),
       });
       if (result.ok) {
         setSaveStatus(t("settings.api.testOk", {

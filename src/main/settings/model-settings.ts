@@ -8,10 +8,14 @@ import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
 import {
   applyKeyringToModelSettings,
+  getSecret,
   isPlaintextFallbackSave,
   isVaultActive,
+  isVaultMode,
   stripKeysForDisk,
   vaultifyModelSettingsForSave,
+  vaultKeyForProfile,
+  vaultKeyForProvider,
 } from "./secrets-keyring";
 import type { VisionConfig } from "../orchestrator/vision-captioner";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
@@ -755,6 +759,49 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
  */
 export function refreshModelSettingsFromKeyring(): void {
   if (modelSettingsCache !== null) applyKeyringToModelSettings(modelSettingsCache);
+}
+
+export interface TestConnectionKeyContext {
+  provider: string;
+  apiKey?: string;
+  /** 复审 P1-6：被测档案 id（渲染端/WPF 表单携带；有则精确解析 model:profile:<id> 槽）。 */
+  profileId?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+/**
+ * 复审 P1-6：测试连接的真 key 回填。
+ * 掩码后渲染端/WPF 的 apiKey 为空——按上下文（profileId → provider+baseUrl+model 档案 →
+ * 同 provider 档案槽 → provider 槽）解析 keyring 真值；解析不到回空（测试显式失败，
+ * 不拿活跃 provider 的 key 去测别的 endpoint——凭据不跨端点）。
+ */
+export function resolveTestConnectionApiKey(ctx: TestConnectionKeyContext): string {
+  if (ctx.apiKey && ctx.apiKey.trim()) return ctx.apiKey;
+  if (!isVaultMode()) return ctx.apiKey ?? "";
+  const settings = loadModelSettings();
+  const profiles = listSavedModelProfiles(settings);
+  if (ctx.profileId) {
+    const direct = getSecret(vaultKeyForProfile(ctx.profileId));
+    if (direct) return direct;
+    const profile = profiles.find((item) => item.id === ctx.profileId);
+    if (profile) {
+      const byProvider = getSecret(vaultKeyForProvider(profile.provider));
+      if (byProvider) return byProvider;
+    }
+  }
+  const exact = profiles.find((item) => item.provider === ctx.provider
+    && item.baseUrl === ctx.baseUrl && item.model === ctx.model);
+  if (exact) {
+    const v = getSecret(vaultKeyForProfile(exact.id)) ?? getSecret(vaultKeyForProvider(exact.provider));
+    if (v) return v;
+  }
+  const sameProvider = profiles.find((item) => item.provider === ctx.provider);
+  if (sameProvider) {
+    const v = getSecret(vaultKeyForProfile(sameProvider.id)) ?? getSecret(vaultKeyForProvider(sameProvider.provider));
+    if (v) return v;
+  }
+  return getSecret(vaultKeyForProvider(ctx.provider)) ?? "";
 }
 
 
