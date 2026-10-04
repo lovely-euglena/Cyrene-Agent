@@ -222,6 +222,34 @@ c_fu5 = req("fetch_url", {"url": fu_base + "/missing"})
 c_fu6 = req("fetch_url", {"url": "ftp://example.com/x"})
 c_fu7 = req("fetch_url", {"url": "https://github.com/o/r", "__githubApiBase": fu_base})
 
+# 文档四件（write_markdown / write_excel / write_word / write_pdf）
+docdir = os.path.join(tmp, "docs")
+os.makedirs(docdir, exist_ok=True)
+DOC_MD_NEW = os.path.join(docdir, "新建.md")
+DOC_MD_APPEND = os.path.join(docdir, "追加.md")
+DOC_MD_OVER = os.path.join(docdir, "覆盖.md")
+DOC_XLSX = os.path.join(docdir, "成绩.xlsx")
+DOC_DOCX = os.path.join(docdir, "报告.docx")
+DOC_PDF = os.path.join(docdir, "合同.pdf")
+DOC_THEME_XLSX = {"headerFill": "FF1F4E79", "headerFont": "FFFFFFFF", "headerBorder": "FF1F4E79",
+                  "zebraFill": "FFF2F2F2", "borderColor": "FFBFBFBF"}
+DOC_THEME_WORD = {"titleColor": "1F4E79", "titleSize": 28, "titleFont": "微软雅黑", "bodyFont": "微软雅黑",
+                  "bodySize": 24, "bodyColor": "333333", "lineSpacing": 360, "headingColor": "1F4E79"}
+c_dm1 = req("write_markdown", {"path": DOC_MD_NEW, "content": "第一行\n第二行"})
+c_dm2a = req("write_markdown", {"path": DOC_MD_APPEND, "content": "第一行\n第二行"})
+c_dm2b = req("write_markdown", {"path": DOC_MD_APPEND, "content": "第三行", "append": True})
+c_dm3a = req("write_markdown", {"path": DOC_MD_OVER, "content": "第一行\n第二行\n第三行"})
+c_dm3b = req("write_markdown", {"path": DOC_MD_OVER, "content": "x"})
+c_dm4 = req("write_markdown", {"path": "", "content": "x"})
+c_dx1 = req("write_excel", {"path": DOC_XLSX, "theme": DOC_THEME_XLSX, "sheets": [
+    {"name": "成绩", "headers": ["姓名", "分数", "比率"], "rows": [["张三", 95, 0.5], ["李四", 1200, 0.25]]}]})
+c_dx2 = req("write_excel", {"path": os.path.join(docdir, "空.xlsx"), "sheets": []})
+c_dw1 = req("write_word", {"path": DOC_DOCX, "title": "季度报告", "theme": DOC_THEME_WORD,
+                           "paragraphs": ["第一段正文。", "第二段正文。"]})
+c_dw2 = req("write_word", {"path": "", "title": "x", "paragraphs": []})
+c_dp1 = req("write_pdf", {"path": DOC_PDF, "title": "PDF Report 合作协议", "paragraphs": ["Alpha 甲方：示例公司", "Beta 乙方：测试公司"]})
+c_dp2 = req("write_pdf", {"path": "", "title": "x", "paragraphs": []})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 fu_srv.shutdown()
@@ -426,6 +454,67 @@ fu7 = data_text(c_fu7)
 check("fetch_url GitHub API 特化（元信息 + README）",
       "# o/r" in fu7 and "> 演示仓库" in fu7 and "stars: 42" in fu7 and "license: MIT" in fu7
       and "这是 README 正文" in fu7, fu7[:300])
+
+print("\n=== 文档四件（write_markdown / write_excel / write_word / write_pdf）===")
+import zipfile
+d = data_json(c_dm1)
+check("write_markdown 新建（added 证据 2 行）", d and d.get("success") and d.get("append") is False
+      and d["changes"][0].get("kind") == "added" and d["changes"][0].get("insertions") == 2, d)
+check("write_markdown 新建文件内容", open(DOC_MD_NEW, encoding="utf-8").read() == "第一行\n第二行",
+      open(DOC_MD_NEW, encoding="utf-8").read())
+d = data_json(c_dm2b)
+check("write_markdown 追加补换行（added 1 行）", d and d.get("append") is True
+      and d["changes"][0].get("insertions") == 1
+      and open(DOC_MD_APPEND, encoding="utf-8").read() == "第一行\n第二行\n第三行", d)
+d = data_json(c_dm3b)
+check("write_markdown 覆盖（modified 3→1 + remove/add diff）", d and d["changes"][0].get("kind") == "modified"
+      and d["changes"][0].get("insertions") == 1 and d["changes"][0].get("deletions") == 3
+      and [l.get("type") for l in d["changes"][0]["diff"]] == ["remove", "remove", "remove", "add"], d)
+check("write_markdown 空 path 拒绝", by.get(c_dm4, {}).get("ok") is False, by.get(c_dm4))
+
+check("write_excel 生成结果文案", data_text(c_dx1) == "[write_excel] 已生成：" + DOC_XLSX, data_text(c_dx1))
+if os.path.exists(DOC_XLSX):
+    z = zipfile.ZipFile(DOC_XLSX)
+    ss = z.read("xl/sharedStrings.xml").decode("utf-8")
+    st = z.read("xl/styles.xml").decode("utf-8")
+    sh = z.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    check("write_excel 单元格值（sharedStrings）",
+          all(s in ss for s in ["姓名", "分数", "比率", "张三", "李四"]), ss[:200])
+    check("write_excel 数字格式（0.0% / #,##0 / #,##0.00）",
+          'formatCode="0.0%"' in st and 'formatCode="#,##0"' in st and 'formatCode="#,##0.00"' in st, "")
+    check("write_excel 主题色（表头/斑马纹 solid fill）",
+          'rgb="FF1F4E79"' in st and 'rgb="FFF2F2F2"' in st, "")
+    check("write_excel 冻结首行 + 自动筛选 + 列宽",
+          "<x:pane" in sh and 'ySplit="1"' in sh and "<x:autoFilter" in sh and "<x:cols>" in sh, "")
+else:
+    check("write_excel 文件存在", False)
+check("write_excel sheets 为空拒绝", by.get(c_dx2, {}).get("ok") is False, by.get(c_dx2))
+
+check("write_word 生成结果文案", data_text(c_dw1) == "[write_word] 已生成：" + DOC_DOCX, data_text(c_dw1))
+if os.path.exists(DOC_DOCX):
+    doc = zipfile.ZipFile(DOC_DOCX).read("word/document.xml").decode("utf-8")
+    check("write_word 文本与样式（标题/正文/字号/颜色/加粗/行距）",
+          "季度报告" in doc and "第一段正文。" in doc and "第二段正文。" in doc
+          and 'w:val="28"' in doc and 'w:val="24"' in doc
+          and 'w:val="1F4E79"' in doc and 'w:val="333333"' in doc
+          and "<w:b />" in doc and 'w:after="200"' in doc and 'w:after="120"' in doc, doc[:200])
+else:
+    check("write_word 文件存在", False)
+check("write_word 空 path 拒绝", by.get(c_dw2, {}).get("ok") is False, by.get(c_dw2))
+
+check("write_pdf 生成结果文案", data_text(c_dp1) == "[write_pdf] 已生成：" + DOC_PDF, data_text(c_dp1))
+check("write_pdf 文件签名", os.path.exists(DOC_PDF) and open(DOC_PDF, "rb").read(5) == b"%PDF-")
+check("write_pdf 空 path 拒绝", by.get(c_dp2, {}).get("ok") is False, by.get(c_dp2))
+if os.path.exists(DOC_PDF):
+    probe = subprocess.run(["dotnet", NATIVE, "--pdf-text", DOC_PDF], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", cwd=ROOT)
+    pdf_text = probe.stdout or ""
+    ascii_ok = "PDF Report" in pdf_text and "Alpha" in pdf_text and "Beta" in pdf_text
+    # Linux 无 CJK 字体（QuestPDF 回退 Lato），中文断言仅在 Windows 跑
+    cjk_ok = os.name != "nt" or ("合作协议" in pdf_text and "甲方：示例公司" in pdf_text and "乙方：测试公司" in pdf_text)
+    check("write_pdf 文本提取（标题/段落）", ascii_ok and cjk_ok, pdf_text[:120])
+else:
+    check("write_pdf 文本提取（文件缺失）", False)
 
 print("\n=== git ===")
 if not shutil.which("git"):

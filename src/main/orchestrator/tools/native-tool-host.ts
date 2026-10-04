@@ -31,6 +31,8 @@ import { resolveNativeWindowsExe } from "../../windows/native-windows-host";
 import { trackChildProcess } from "../../child-processes";
 import { createAbortError, isAbortError } from "../../abort-utils";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import type { ToolDefinition } from "./registry/tool-registry";
+import type { ToolContext } from "./registry/tool-context";
 
 const LOG_PREFIX = "[ToolHost]";
 
@@ -410,4 +412,51 @@ export async function nativeFirst(
     console.warn(LOG_PREFIX, `native 轨失败回退 TS（${tool}）:`, error instanceof Error ? error.message : error);
   }
   return fallback(args);
+}
+
+/** 判定宿主输出是否为"成功载荷里的业务失败"（C# Err(...) JSON）——是则调用方回退 TS 拿原错误语义。 */
+export function isNativeFailurePayload(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text) as { success?: unknown } | null;
+    return parsed !== null && typeof parsed === "object" && parsed.success === false;
+  } catch {
+    return false; // 非 JSON（纯文本输出）按成功处理
+  }
+}
+
+/**
+ * 通用"native 优先"工具包装（写类/生成类工具）：保留工具元数据，把 execute 换成
+ * prepare → native 调用 → 失败回退 TS 原实现。
+ *
+ * prepare 返回 native 调用参数；返回 null 表示"不触达 native"（校验不通过或 host 不可用），
+ * 直接走 TS 原实现产出语义一致的错误/结果。prepare 内抛出的语义拒绝（如覆盖防骤降）
+ * 原样上抛，不回退重跑副作用。
+ */
+export function withNativeFirst(
+  tool: ToolDefinition,
+  nativeTool: string,
+  prepare: (args: Record<string, unknown>, ctx?: ToolContext) => Record<string, unknown> | null,
+  timeoutMs?: number,
+): ToolDefinition {
+  const tsExecute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    execute: async (args, ctx) => {
+      if (!resolveDotnetConfig().toolHost) return tsExecute(args, ctx);
+      const nativeArgs = prepare(args, ctx);
+      if (nativeArgs === null) return tsExecute(args, ctx);
+      try {
+        const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal);
+        if (result !== null) {
+          const text = typeof result === "string" ? result : JSON.stringify(result);
+          if (!isNativeFailurePayload(text)) return text;
+          console.warn(LOG_PREFIX, nativeTool, "native 返回错误载荷，回退 TS:", text.slice(0, 200));
+        }
+      } catch (error) {
+        if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复执行副作用
+        console.warn(LOG_PREFIX, nativeTool, "native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+      }
+      return tsExecute(args, ctx);
+    },
+  };
 }

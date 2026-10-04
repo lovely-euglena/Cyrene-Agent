@@ -185,6 +185,10 @@ internal static class ToolHost
                         new { id = "git_log", name = "Git 历史(.NET)", description = "hash/日期/作者/信息（ref / path / maxCount）" },
                         new { id = "download_file", name = "下载文件(.NET)", description = "URL 二进制落盘（沙箱/黑名单/64MiB/空闲超时；root 注入）" },
                         new { id = "fetch_url", name = "读取网页(.NET)", description = "URL 正文抓取（正文提取 + markdown；GitHub API 特化；30 分钟 TTL）" },
+                        new { id = "write_markdown", name = "写 Markdown(.NET)", description = "笔记写入（.md/.txt 覆盖/追加 + changes 证据；path 由 TS 预检注入）" },
+                        new { id = "write_excel", name = "写 Excel(.NET)", description = "美观 Excel 生成（ClosedXML；主题/列宽/冻结/筛选/数字格式）" },
+                        new { id = "write_word", name = "写 Word(.NET)", description = "Word 文档生成（Open XML SDK；标题/正文主题样式）" },
+                        new { id = "write_pdf", name = "写 PDF(.NET)", description = "PDF 生成（QuestPDF；中文字体自动注册）" },
                     },
                 });
                 break;
@@ -299,6 +303,10 @@ internal static class ToolHost
                         "git_log" => GitTools.Log(args ?? EmptyArgs),
                         "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
                         "fetch_url" => FetchUrlTool.Execute(args ?? EmptyArgs),
+                        "write_markdown" => WriteMarkdownTool.Execute(args ?? EmptyArgs),
+                        "write_excel" => ExcelTool.Execute(args ?? EmptyArgs),
+                        "write_word" => WordTool.Execute(args ?? EmptyArgs),
+                        "write_pdf" => PdfTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });

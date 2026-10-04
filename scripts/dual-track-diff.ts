@@ -978,6 +978,252 @@ async function runFetchUrlDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── 文档四件双轨（write_markdown / write_excel / write_word / write_pdf）──
+//
+// 库替代（exceljs→ClosedXML、docx→Open XML SDK、pdfkit→QuestPDF）无法逐字节一致：
+//  - write_markdown：结果 JSON 投影（success/tool/append/changes）+ 落盘字节逐字节；
+//  - write_excel：exceljs 读回两文件比对投影（值/数字格式/列宽容差 ±1/主题色/冻结/筛选）；
+//  - write_word：JSZip（经 exceljs 传递依赖解析）抽 word/document.xml，比对段落文本 +
+//    run 属性（字体/字号/颜色/加粗/段落间距）；
+//  - write_pdf：结果文案 + 文件签名；.NET 侧文本提取（smoke-host --pdf-text）断言标题/段落
+//    （pdfkit 无读回能力，TS 侧不做文本提取——内容校验由 .NET 侧承担，已在决策文档注明）。
+
+/** 经 exceljs 的依赖树解析 jszip（项目未直接依赖 zip 库；pnpm 隔离布局下用 paths 解析）。 */
+function loadJsZip(): { loadAsync(data: Buffer): Promise<{ file(name: string): { async(type: string): Promise<string> } | null }> } {
+  const requireFn = require as unknown as ((id: string) => unknown) & { resolve(id: string, opts?: { paths?: string[] }): string };
+  const jszipPath = requireFn.resolve("jszip", { paths: [requireFn.resolve("exceljs")] });
+  return requireFn(jszipPath) as never;
+}
+
+/**
+ * xlsx 投影读取（JSZip + 前缀归一 + 正则）：同时兼容 exceljs（无前缀）与
+ * ClosedXML（x: 前缀）两种写法。exceljs 的读取器只认无前缀标签，读不了
+ * ClosedXML 输出（WorkbookXform 按精确 tag 匹配），故不依赖读取库。
+ * 投影：sheet 名 / 单元格（值 + 数字格式）/ 列宽 / 冻结 / 自动筛选。
+ */
+async function readXlsxProjection(file: string): Promise<Record<string, unknown>> {
+  const JSZip = loadJsZip();
+  const zip = await JSZip.loadAsync(readFileSync(file));
+  const read = async (name: string): Promise<string> => {
+    const entry = zip.file(name);
+    const xml = entry ? await entry.async("string") : "";
+    // 去元素前缀（<x:foo> → <foo>），属性前缀（r:id / mc:*）不动
+    return xml.replace(/<\/?x:/g, (m) => (m.startsWith("</") ? "</" : "<"));
+  };
+
+  const workbook = await read("xl/workbook.xml");
+  const sheet = workbook.match(/<sheet[^>]*name="([^"]*)"/)?.[1] ?? "";
+
+  const sharedXml = await read("xl/sharedStrings.xml");
+  const sharedStrings = [...sharedXml.matchAll(/<si>([\s\S]*?)<\/si>/g)]
+    .map((m) => [...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join(""));
+
+  const stylesXml = await read("xl/styles.xml");
+  const numFmtMap = new Map<number, string>();
+  for (const m of stylesXml.matchAll(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"[^>]*\/>/g)) {
+    numFmtMap.set(Number(m[1]), m[2]);
+  }
+  const builtinNumFmt: Record<number, string> = {
+    0: "General", 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00",
+    9: "0%", 10: "0.00%", 14: "mm-dd-yy", 49: "@",
+  };
+  const cellXfsXml = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] ?? "";
+  const styleNumFmtIds = [...cellXfsXml.matchAll(/<xf[^>]*numFmtId="(\d+)"/g)].map((m) => Number(m[1]));
+  const numFmtOf = (styleIdx: number): string => {
+    const id = styleNumFmtIds[styleIdx] ?? 0;
+    const code = numFmtMap.get(id) ?? builtinNumFmt[id] ?? "";
+    return code === "General" ? "" : code;
+  };
+
+  const sheetXml = await read("xl/worksheets/sheet1.xml");
+  const cells: Array<{ addr: string; value: unknown; numFmt: string }> = [];
+  for (const m of sheetXml.matchAll(/<c r="([A-Z]+\d+)"(?:[^>]*\bs="(\d+)")?[^>]*?(?:\bt="(\w+)")?[^>]*>([\s\S]*?)<\/c>/g)) {
+    const addr = m[1];
+    const styleIdx = m[2] !== undefined ? Number(m[2]) : 0;
+    const type = m[3] ?? "n";
+    const raw = m[4].match(/<v>([^<]*)<\/v>/)?.[1];
+    let value: unknown = null;
+    if (type === "s" && raw !== undefined) value = sharedStrings[Number(raw)] ?? "";
+    else if (type === "inlineStr") value = [...m[4].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join("");
+    else if (raw !== undefined) value = Number(raw);
+    cells.push({ addr, value, numFmt: numFmtOf(styleIdx) });
+  }
+
+  const widths: Record<number, number> = {};
+  for (const m of sheetXml.matchAll(/<col[^>]*min="(\d+)"[^>]*max="(\d+)"[^>]*width="([\d.]+)"/g)) {
+    for (let i = Number(m[1]); i <= Number(m[2]); i++) widths[i] = Number(m[3]);
+  }
+  const frozen = /<pane[^>]*ySplit="1"/.test(sheetXml);
+  const autoFilter = sheetXml.match(/<autoFilter ref="([^"]*)"/)?.[1] ?? null;
+  const solidFills = [...stylesXml.matchAll(/patternType="solid"[^>]*>\s*<fgColor rgb="([0-9A-Fa-f]{8})"/g)]
+    .map((m) => m[1].toUpperCase()).sort();
+
+  return { sheet, cells, widths, frozen, autoFilter, solidFills };
+}
+
+/** 列宽逐列比较（ClosedXML 写入 width 含 0.71 字符内边距，容差 ±1）。 */
+function widthsClose(tsWidths: Record<number, number>, netWidths: Record<number, number>): boolean {
+  const keys = new Set([...Object.keys(tsWidths), ...Object.keys(netWidths)].map(Number));
+  for (const key of keys) {
+    const a = tsWidths[key];
+    const b = netWidths[key];
+    if (a === undefined || b === undefined) return false;
+    if (Math.abs(a - b) > 1) return false;
+  }
+  return true;
+}
+
+async function readDocxProjection(file: string): Promise<unknown> {
+  const JSZip = loadJsZip();
+  const zip = await JSZip.loadAsync(readFileSync(file));
+  const entry = zip.file("word/document.xml");
+  const xml = entry ? await entry.async("string") : "";
+  return [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)].map((m) => {
+    const p = m[0];
+    const texts = [...p.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map((t) => t[1]);
+    const rpr = p.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/)?.[1] ?? "";
+    return {
+      text: texts.join(""),
+      bold: /<w:b\s*\/>/.test(rpr),
+      sz: rpr.match(/<w:sz w:val="(\d+)"/)?.[1] ?? null,
+      color: rpr.match(/<w:color w:val="([0-9A-Fa-f]{6})"/)?.[1] ?? null,
+      fonts: [...rpr.matchAll(/w:(?:ascii|eastAsia|hAnsi)="([^"]+)"/g)].map((m) => m[1]).sort().join(","),
+      after: p.match(/<w:spacing[^>]*w:after="(\d+)"/)?.[1] ?? null,
+      line: p.match(/<w:spacing[^>]*w:line="(\d+)"/)?.[1] ?? null,
+    };
+  });
+}
+
+async function runDocumentDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] document ${name}`);
+    else { failed++; console.log(`[FAIL] document ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "doc-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "doc-dual-net-"));
+
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const docTools = await import("../src/main/orchestrator/tools/document-tools");
+    docTools.registerDocumentTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = toolRegistry.getById(id);
+      if (!tool) throw new Error(`TS 工具未注册: ${id}`);
+      return tool.execute(args, { resolvedWorkspaceRoot: tsHome } as never);
+    };
+    const normalize = (text: string): string => text.split(tsHome).join(netHome);
+
+    // 1. write_markdown：新建 / 追加 / 覆盖（结果投影 + 落盘字节）
+    {
+      const cases: Array<{ name: string; args: Record<string, unknown>; path: string }> = [
+        { name: "新建", args: { filename: "笔记.md", content: "第一行\n第二行" }, path: "笔记.md" },
+        { name: "追加", args: { filename: "笔记.md", content: "第三行", append: true }, path: "笔记.md" },
+        { name: "覆盖", args: { filename: "覆盖.md", content: "a\nb\nc" }, path: "覆盖.md" },
+      ];
+      for (const c of cases) {
+        const tsOut = await runTs("write_markdown", c.args);
+        const host = await callSmokeTool("write_markdown", { path: path.join(netHome, c.path), content: c.args.content, append: c.args.append ?? false });
+        const netOut = String(host.data ?? "");
+        const proj = (text: string): unknown => {
+          const j = JSON.parse(text) as Record<string, unknown>;
+          return {
+            success: j.success, tool: j.tool, append: j.append,
+            changes: (j.changes as Array<Record<string, unknown>>).map((ch) => ({
+              kind: ch.kind, insertions: ch.insertions, deletions: ch.deletions, diff: ch.diff,
+            })),
+          };
+        };
+        const bytesSame = Buffer.compare(readFileSync(path.join(tsHome, c.path)), readFileSync(path.join(netHome, c.path))) === 0;
+        check(`write_markdown ${c.name}（投影 + 字节）`,
+          JSON.stringify(proj(tsOut)) === JSON.stringify(proj(netOut)) && bytesSame,
+          `ts=${JSON.stringify(proj(tsOut)).slice(0, 180)} net=${JSON.stringify(proj(netOut)).slice(0, 180)} bytes=${bytesSame}`);
+      }
+    }
+
+    // 2. write_excel：读回投影（值/数字格式/列宽 ±1/主题色/冻结/筛选/边框）
+    {
+      const args = {
+        filename: "成绩.xlsx",
+        sheets: [{ name: "成绩", headers: ["姓名", "分数", "比率"], rows: [["张三", 95, 0.5], ["李四", 1200, 0.25]] }],
+      };
+      const tsOut = await runTs("write_excel", args);
+      const host = await callSmokeTool("write_excel", {
+        path: path.join(netHome, "成绩.xlsx"),
+        sheets: args.sheets,
+        theme: { headerFill: "FF1F4E79", headerFont: "FFFFFFFF", headerBorder: "FF1F4E79", zebraFill: "FFF2F2F2", borderColor: "FFBFBFBF" },
+      });
+      const netOut = String(host.data ?? "");
+      const tsProj = await readXlsxProjection(path.join(tsHome, "成绩.xlsx"));
+      const netProj = await readXlsxProjection(path.join(netHome, "成绩.xlsx"));
+      const tsWidths = tsProj.widths as Record<number, number>;
+      const netWidths = netProj.widths as Record<number, number>;
+      const widthsOk = widthsClose(tsWidths, netWidths);
+      const sameExceptWidths = JSON.stringify({ ...tsProj, widths: null }) === JSON.stringify({ ...netProj, widths: null });
+      check("write_excel 投影（值/数字格式/主题色/冻结/筛选 + 列宽容差 ±1）",
+        normalize(tsOut) === netOut && sameExceptWidths && widthsOk,
+        `result=${normalize(tsOut) === netOut} proj=${sameExceptWidths} widths=${widthsOk} ts=${JSON.stringify(tsProj).slice(0, 260)} net=${JSON.stringify(netProj).slice(0, 260)}`);
+    }
+
+    // 3. write_word：抽 document.xml 比对段落文本 + run 属性
+    {
+      const args = { filename: "报告.docx", title: "季度报告", paragraphs: ["第一段正文。", "第二段正文。"] };
+      const tsOut = await runTs("write_word", args);
+      const host = await callSmokeTool("write_word", {
+        path: path.join(netHome, "报告.docx"),
+        title: args.title,
+        paragraphs: args.paragraphs,
+        theme: { titleColor: "1F4E79", titleSize: 28, titleFont: "微软雅黑", bodyFont: "微软雅黑", bodySize: 24, bodyColor: "333333", lineSpacing: 360, headingColor: "1F4E79" },
+      });
+      const netOut = String(host.data ?? "");
+      const tsProj = await readDocxProjection(path.join(tsHome, "报告.docx"));
+      const netProj = await readDocxProjection(path.join(netHome, "报告.docx"));
+      check("write_word 段落文本 + run 属性（字体/字号/颜色/加粗/间距）",
+        normalize(tsOut) === netOut && JSON.stringify(tsProj) === JSON.stringify(netProj),
+        `ts=${JSON.stringify(tsProj).slice(0, 260)} net=${JSON.stringify(netProj).slice(0, 260)}`);
+    }
+
+    // 4. write_pdf：结果文案 + 签名 + .NET 文本提取
+    // 注意：TS 轨 pdfkit 与本机 msyh.ttc 不兼容（既有问题：fontkit 集合对象无 createSubset，
+    // doc.text() 抛错）——该环境下跳过 TS 侧生成比对，只校验 .NET 轨；QuestPDF 正确支持
+    // TTC（迁移顺带修复）。Linux（无 CJK 字体）中文断言仅在 Windows 跑。
+    {
+      const args = { filename: "合同.pdf", title: "PDF Report 合作协议", paragraphs: ["Alpha 甲方：示例公司", "Beta 乙方：测试公司"] };
+      let tsOut: string | null = null;
+      try {
+        tsOut = await runTs("write_pdf", args);
+      } catch (error) {
+        console.log(`[INFO] document write_pdf TS 轨生成失败（已知 msyh.ttc/pdfkit 兼容问题），仅校验 .NET 轨: ${error instanceof Error ? error.message : error}`);
+      }
+      const host = await callSmokeTool("write_pdf", { path: path.join(netHome, "合同.pdf"), title: args.title, paragraphs: args.paragraphs });
+      const netOut = String(host.data ?? "");
+      const netSig = readFileSync(path.join(netHome, "合同.pdf")).subarray(0, 5).toString() === "%PDF-";
+      const tsSig = tsOut === null ? true : readFileSync(path.join(tsHome, "合同.pdf")).subarray(0, 5).toString() === "%PDF-";
+      const probe = spawnSync("dotnet", [SMOKE_DLL, "--pdf-text", path.join(netHome, "合同.pdf")], { encoding: "utf-8", cwd: path.dirname(SMOKE_DLL) });
+      const pdfText = probe.stdout ?? "";
+      const asciiOk = pdfText.includes("PDF Report") && pdfText.includes("Alpha") && pdfText.includes("Beta");
+      const cjkOk = process.platform !== "win32"
+        || (pdfText.includes("合作协议") && pdfText.includes("甲方：示例公司") && pdfText.includes("乙方：测试公司"));
+      check("write_pdf 文案 + 签名 + 文本提取（标题/段落）",
+        (tsOut === null || normalize(tsOut) === netOut) && netSig && tsSig && asciiOk && cjkOk,
+        `result=${tsOut === null ? "ts-skip" : normalize(tsOut) === netOut} sig=${netSig} tsSig=${tsSig} text=${JSON.stringify(pdfText.slice(0, 160))}`);
+    }
+  } finally {
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 // ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
 
 /** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
@@ -1240,6 +1486,9 @@ async function main(): Promise<void> {
     // fetch_url 双轨（本地 HTTP fixture；raw 逐字 / markdown 归一投影）
     if (useSmoke) failures += await runFetchUrlDualTrack();
     else console.log("[SKIP] fetch_url 双轨（仅 smoke dll 轨支持）");
+    // 文档四件双轨（write_markdown/excel/word/pdf；读回投影比对）
+    if (useSmoke) failures += await runDocumentDualTrack();
+    else console.log("[SKIP] 文档四件双轨（仅 smoke dll 轨支持）");
     // git 八件双轨（镜像仓库 + 本地 bare 远程）
     if (useSmoke) failures += await runGitDualTrack();
     else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");
