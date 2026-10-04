@@ -93,8 +93,10 @@ rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关�
 - 服务端生成（IKJK2M）：`CLOUD_LLM_API_KEY` 启用；push 触发生成、事件重放取活动分支（编辑/重生成/删除语义）、
   `gen-*` 幂等写回 `deviceId=server`；mock LLM 冒烟覆盖（断网重试不重复 / 编辑重生成）。
 - 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/并发收敛/链拒绝回滚/
-  clone 游标 + 配对令牌/限流/Host/脱敏 + 生成闭环 + PWA 静态托管，Windows 51 / Linux 52 项；
-  wwwroot 未构建时跳过静态 3 项）。
+  clone 游标 + 配对令牌/限流/Host/脱敏 + 生成闭环 + PWA 静态托管 + 能力声明，Windows 54 / Linux 55 项；
+  wwwroot 未构建时跳过静态 3 项）。`--base-url/--profile core` 为远端/核心档（对任意 HTTP 形态）。
+- 能力声明（IKJN78）：`GET /v1/capabilities`（公开只读）——四形态（完整 / CF / PHP / Git）能力边界，
+  客户端按声明降级（设计见 `docs/design/2026-10-04-cloud-server-forms.md`）。
 - 手机 PWA（IKJK2L）：`src/pwa/`（原生 TS，零运行时依赖）→ 构建产物进 `wwwroot` 静态托管；
   配对登录 + fetch/push + 离线只读缓存（SW 应用壳 + localStorage 事件快照）；物化视图与
   `DialogLoop.Replay` 逐条对齐；e2e `node scripts/pwa-e2e-test.mjs <dll>`（Microsoft Edge 通道）。
