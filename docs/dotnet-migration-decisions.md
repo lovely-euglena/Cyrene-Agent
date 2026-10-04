@@ -477,3 +477,30 @@
   限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化（pnpm / 就绪断言 /
   进程回收 / permissions）；README 已知差异清单补齐；`workers_dev` 关闭。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN79。
+
+## 2026-10-04 增量：Git 仓库版 remote 适配器（IKJN7B）
+
+- **实现**：`src/main/sync/git-remote.ts`（`GitRepoRemote`）——每设备 `events-<deviceId>.jsonl`
+  append-only 分片 + 字节偏移增量（无全局游标）；push = 追加 + commit + push；fetch = pull `--rebase` +
+  读新行；合并 = eventId 幂等 + 规范序并集（`mergeSyncEvents`）；`.gitattributes` 固定 `*.jsonl -text`
+  （禁用行尾转换，保字节偏移语义）。
+- **保守合并**：pull 失败/冲突一律 `rebase --abort` + 抛错（不 force、不重写远端历史）；
+  强制推送（历史重写）后前缀哈希失配 / 文件收缩 → 分片回退全量重读；半截尾行读取只到最后一个换行，
+  本设备追加前自愈修剪。
+- **鉴权**：仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，日志脱敏）；纯本地模式（无远端）可用。
+- **边界**：适配器不接线 UI / 不落盘同步状态（`FetchState` 由调用方持有）；桌面端同步客户端
+  （事件导出器 / 物化视图）属 IKJK2I，后续接入。
+- **评审修复（2026-10-05）**：init 错误统一脱敏（URL 变形覆盖）并补注入断言；push 失败自愈
+  （提交失败回滚追加 / 无新事件补提交补推送）；git 调用无输出超时 + AbortSignal 取消 + 默认隔离 env；
+  错误码可重试分级；`.gitattributes` 缺规则自动追加；错误 index 改分片物理行号（clone 同步上报）；
+  规范序比较器抽公共导出；测试计数修正并补 9 个用例。
+- **复审修复（2026-10-05）**：默认隔离 env 与 simple-git 3.36 安全拦截对齐（argv-parser 全集放行：
+  `PAGER`/`GIT_PAGER`/`GIT_EXTERNAL_DIFF`/`GIT_PROXY_COMMAND`/`GIT_TEMPLATE_DIR`/`GIT_CONFIG_COUNT` 等，
+  宿主含受限键仍可用，含用例）；`healPendingState` 先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例；文档注明隔离全局配置会停用用户 `credential.helper`（HTTPS 走内联 PAT）。
+- **验证（Windows 本地）**：适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
+  强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 /
+  提交回滚 / 未推送自愈 / 参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+  `vitest run src/main/sync src/pwa` **70/70**；
+  `tsc main` / `tsc preload` / `tsc renderer` 三端 0 错误。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。

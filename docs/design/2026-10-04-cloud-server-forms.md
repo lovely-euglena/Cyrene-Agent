@@ -1,7 +1,7 @@
 # 服务端四形态与能力声明 · 设计（IKJN70 / IKJN78）
 
 > **日期**：2026-10-04
-> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79）；Git / PHP 按 IKJN7B / IKJN7C 推进
+> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，已合并）；Git 版适配器已实现（IKJN7B，PR 待合并）；PHP 版已实现并通过本地验收（IKJN7C，PR 待合并）
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（不变式 / Q8）· 总决策 IKJN70 ·
 > CF spike IKJN3W · 桌面端同步客户端 IKJK2I · PWA IKJK2L · 完整版运维 IKJK2N
 
@@ -73,11 +73,22 @@
   脚本 UA（403/1010，套件 / e2e 用 `--user-agent` 传浏览器 UA，或关闭 BFM）；步骤见
   `cloudflare/cloud-server/README.md`。
 
-### 4.3 Git 版（IKJN7B，桌面端）
+### 4.3 Git 版（IKJN7B，桌面端；适配器已实现）
 
-- 每设备 `events-<deviceId>.jsonl` append-only 分片；fetch = pull + 读新行（字节偏移），
-  强制推送后回退全量重读；
-- push = commit + push；合并 = eventId 幂等 + 规范序并集；无生成 / 无 PWA。
+- `src/main/sync/git-remote.ts`（`GitRepoRemote`）：每设备 `events-<deviceId>.jsonl` append-only 分片 +
+  字节偏移增量；`.gitattributes` 固定 `*.jsonl -text`（禁用行尾转换，保字节偏移语义）；
+- push = 追加分片 + commit + push；fetch = pull `--rebase` + 读新行；合并 = eventId 幂等 +
+  规范序并集（`mergeSyncEvents`）；无生成 / 无 PWA；
+- 保守合并：pull 失败/冲突一律中止（不 force、不重写远端历史）；强制推送（历史重写）后
+  前缀哈希失配 / 文件收缩 → 该分片回退全量重读；半截尾行只读到最后一个换行（本设备追加前自愈修剪）；
+- 鉴权 = 仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，不外泄日志；init 错误同样脱敏并覆盖
+  URL 变形）；状态由调用方持有（`FetchState` 每分片 `{offset, prefixHash}`，模块不落盘额外状态）；
+- 失败路径：git 调用带无输出超时（`timeoutMs`）与取消（`signal`）；提交失败回滚追加（文件 + 暂存区）；
+  无新事件 / 同批重试自愈（补提交 / 补推送）；默认隔离用户全局 git 配置与终端凭证提示；
+  错误码可重试分级（git / timeout / push_rejected 可重试，conflict / aborted / invalid_config 需处理）；
+- 适配器测试（独立 bare 远端 + 双工作副本）：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
+  纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
+  参数校验 / 同设备冲突 / 宿主受限 env / 取消，**19/19**；桌面端接线（事件导出器 / 物化视图）属 IKJK2I，后续接入。
 
 ### 4.4 PHP 版（IKJN7C）
 
@@ -103,3 +114,15 @@
   限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化；README 差异清单补齐。
 - 核心档鲁棒化（IKJN79 顺带）：对启用服务端生成的实例，计数 / 集合断言收敛到 run 前缀事件
   （生成事件 id 前缀 `gen-`）；clone 改为快照单调夹逼 + run 集合 + 游标边界。
+
+### IKJN7B 批次（Git 版适配器）
+
+- 适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
+  纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
+  参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+- 组合回归：`vitest run src/main/sync src/pwa` **70/70**；`tsc main` / `tsc preload` /
+  `tsc renderer` 三端 0 错误。
+- 复审修复（2026-10-05）：默认隔离 env 与 simple-git 安全拦截对齐——按 argv-parser 全集补齐
+  `unsafe` 开关（`PAGER` / `GIT_EXTERNAL_DIFF` / `GIT_PROXY_COMMAND` / `GIT_TEMPLATE_DIR` /
+  `GIT_CONFIG_COUNT` 等），宿主含受限键仍可用（含用例）；自愈先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例。
