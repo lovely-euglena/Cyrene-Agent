@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""cloud-server 同步收敛冒烟（IKJK2J 验收）：真实起服务 + 两客户端并发 push/fetch。
+
+覆盖：
+  1. /healthz 就绪 + RSS 观测（D5 预算证据）；
+  2. push 幂等（重复批：duplicates、不重复入库）；
+  3. 乱序批 + 分页游标（limit 步进，不重不漏；服务端按协议 v0 规范序入库）；
+  4. 两客户端并发 push → 双方全量 fetch 后按 (lamport, deviceId, seq) 收敛一致；
+  5. 链校验 E_SYNC_CHAIN / E_SYNC_SEQ（整批回滚，失败批不入库）；
+  6. clone 全量 JSONL + X-Sync-Cursor 与 fetch 游标一致；
+  7. 畸形批 → 400 E_SYNC_BATCH_INVALID。
+
+运行：dotnet build dotnet/cloud-server -c Release 后 python scripts/dotnet-cloud-sync-test.py
+"""
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DLL = os.path.join(REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append((name, bool(ok), detail))
+    print(f"{'[PASS]' if ok else '[FAIL]'} {name}" + (f" —— {detail}" if detail and not ok else ""))
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def http(method, url, body=None, timeout=30):
+    data = body.encode("utf-8") if isinstance(body, str) else body
+    request = urllib.request.Request(url, data=data, method=method)
+    if isinstance(body, str):
+        request.add_header("Content-Type", "application/x-ndjson; charset=utf-8")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read().decode("utf-8"), dict(response.headers)
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8"), dict(exc.headers)
+
+
+def ev(event_id, session_id="s1", lamport=0, device="dev-a", seq=0, payload=None,
+       prev=None, hashed=None, typ="message.append"):
+    item = {
+        "eventId": event_id, "sessionId": session_id, "type": typ,
+        "lamport": lamport, "deviceId": device, "seq": seq,
+        "ts": "2026-10-04T03:00:00.000Z",
+        "payload": payload if payload is not None else {"role": "user", "text": "message", "turnId": f"turn-{event_id}"},
+    }
+    if prev is not None:
+        item["prevHash"] = prev
+    if hashed is not None:
+        item["hash"] = hashed
+    return json.dumps(item, ensure_ascii=False)
+
+
+def push(base, lines):
+    return http("POST", base + "/v1/sync/push", "\n".join(lines))
+
+
+def fetch_all(base, limit=200):
+    events, cursor, has_more, guard = [], "0", True, 0
+    while has_more and guard < 50:
+        status, body, _ = http("GET", f"{base}/v1/sync/fetch?since={cursor}&limit={limit}")
+        if status != 200:
+            raise RuntimeError(f"fetch {status}: {body[:200]}")
+        data = json.loads(body)
+        events.extend(data["events"])
+        cursor = data["cursor"]
+        has_more = data["hasMore"]
+        guard += 1
+    return events, cursor
+
+
+def canonical_ids(events):
+    ordered = sorted(events, key=lambda item: (item["lamport"], item["deviceId"], item["seq"]))
+    return [item["eventId"] for item in ordered]
+
+
+def main():
+    if not os.path.exists(DLL):
+        print(f"[FAIL] 未找到 {DLL}，先 dotnet build dotnet/cloud-server -c Release")
+        return 1
+    port = free_port()
+    data_dir = tempfile.mkdtemp(prefix="cloud-sync-")
+    env = dict(os.environ)
+    env["CYRENE_CLOUD_DATA"] = data_dir
+    env["Logging__LogLevel__Default"] = "Warning"
+    dotnet_home = os.path.expanduser("~/.dotnet")
+    if os.path.isdir(dotnet_home):
+        env["DOTNET_ROOT"] = dotnet_home
+        env["PATH"] = dotnet_home + os.pathsep + env.get("PATH", "")
+    base = f"http://127.0.0.1:{port}"
+    server = subprocess.Popen(
+        ["dotnet", DLL, "--urls", base],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+    )
+    try:
+        ready, health = False, {}
+        for _ in range(80):
+            try:
+                status, body, _ = http("GET", base + "/healthz", timeout=3)
+                if status == 200:
+                    health = json.loads(body)
+                    ready = True
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        if not ready:
+            print("[FAIL] 服务未就绪")
+            server.terminate()
+            try:
+                print((server.stdout.read() or "")[:2000])
+            except Exception:
+                pass
+            return 1
+        check("healthz 就绪 + RSS 观测", isinstance(health.get("rssMB"), (int, float)), json.dumps(health)[:120])
+        print(f"  healthz: events={health.get('events')} rssMB={health.get('rssMB')}")
+        check("RSS 预算（基准 <300MB；空载 ≤150MB 以 Linux 容器复测）",
+              health.get("rssMB", 999) < 300, f"rssMB={health.get('rssMB')}")
+
+        # 1. 幂等
+        batch = [
+            ev("a1", lamport=0, seq=0, typ="session.create",
+               payload={"title": "会话", "createdAt": "2026-10-04T03:00:00.000Z"}),
+            ev("a2", lamport=1, seq=1),
+            ev("a3", lamport=2, seq=2, payload={"role": "assistant", "text": "回复"}),
+        ]
+        status, body, _ = push(base, batch)
+        data = json.loads(body)
+        check("push 首批 accepted=3", status == 200 and data.get("accepted") == 3 and data.get("duplicates") == 0, body[:200])
+        status, body, _ = push(base, batch)
+        data = json.loads(body)
+        check("重复批幂等（accepted=0 / duplicates=3）",
+              status == 200 and data.get("accepted") == 0 and data.get("duplicates") == 3, body[:200])
+
+        # 2. 乱序批 + 分页
+        shuffled = [
+            ev("b3", session_id="s2", device="dev-b", lamport=5, seq=2),
+            ev("b1", session_id="s2", device="dev-b", lamport=3, seq=0),
+            ev("b2", session_id="s2", device="dev-b", lamport=4, seq=1),
+        ]
+        status, body, _ = push(base, shuffled)
+        check("乱序批 accepted=3（服务端按协议 v0 规范序入库）",
+              status == 200 and json.loads(body).get("accepted") == 3, body[:200])
+        events, _ = fetch_all(base, limit=2)
+        check("分页游标不重不漏（limit=2 步进）",
+              len(events) == 6 and len({item["eventId"] for item in events}) == 6, f"n={len(events)}")
+        check("首批插入序 a1,a2,a3",
+              [item["eventId"] for item in events[:3]] == ["a1", "a2", "a3"],
+              str([item["eventId"] for item in events])[:120])
+
+        # 3. 两客户端并发
+        errors = []
+
+        def client(name, device):
+            for i in range(1, 6):
+                status, body, _ = push(base, [ev(f"{name}{i}", session_id="s3", device=device, lamport=i, seq=i)])
+                if status != 200:
+                    errors.append((name, i, status, body[:120]))
+
+        thread_a = threading.Thread(target=client, args=("ca", "dev-a"))
+        thread_b = threading.Thread(target=client, args=("cb", "dev-b"))
+        thread_a.start()
+        thread_b.start()
+        thread_a.join()
+        thread_b.join()
+        check("两客户端并发 push 全 200", not errors, str(errors)[:200])
+        view_a, _ = fetch_all(base)
+        view_b, _ = fetch_all(base)
+        ordered = canonical_ids(view_a)
+        check("并发后双端收敛一致（(lamport, deviceId, seq) 全序）",
+              canonical_ids(view_a) == canonical_ids(view_b) and len(view_a) == 16
+              and sum(1 for i in ordered if i.startswith("ca")) == 5
+              and sum(1 for i in ordered if i.startswith("cb")) == 5,
+              f"n={len(view_a)}")
+
+        # 4. 链校验
+        h1, h2, h3 = "a" * 64, "b" * 64, "c" * 64
+        status, body, _ = push(base, [ev("ch1", session_id="s4", device="dev-c", lamport=1, seq=1, hashed=h1)])
+        check("链首（hash 无 prevHash）接受", status == 200, body[:160])
+        status, body, _ = push(base, [ev("ch2", session_id="s4", device="dev-c", lamport=2, seq=2, prev=h1, hashed=h2)])
+        check("链续（prevHash=链尾）接受", status == 200, body[:160])
+        status, body, _ = push(base, [ev("bad1", session_id="s4", device="dev-c", lamport=3, seq=3, prev=h3, hashed=h3)])
+        data = json.loads(body)
+        check("坏 link → 400 E_SYNC_CHAIN",
+              status == 400 and data.get("code") == "E_SYNC_BATCH_REJECTED"
+              and any(e.get("code") == "E_SYNC_CHAIN" for e in data.get("errors", [])), body[:200])
+        status, body, _ = push(base, [ev("bad2", session_id="s4", device="dev-c", lamport=4, seq=4, prev=h2)])
+        data = json.loads(body)
+        check("半链（prevHash 无 hash）→ E_SYNC_CHAIN",
+              status == 400 and any(e.get("code") == "E_SYNC_CHAIN" for e in data.get("errors", [])), body[:200])
+        status, body, _ = push(base, [ev("bad3", session_id="s4", device="dev-c", lamport=5, seq=2)])
+        data = json.loads(body)
+        check("seq 非递增 → E_SYNC_SEQ",
+              status == 400 and any(e.get("code") == "E_SYNC_SEQ" for e in data.get("errors", [])), body[:200])
+        events, _ = fetch_all(base)
+        check("失败批整批回滚（总数不变 = 18）", len(events) == 18, f"n={len(events)}")
+
+        # 5. 畸形批
+        status, body, _ = push(base, [ev("ok1"), "这不是 JSON", ev("ok2")])
+        data = json.loads(body)
+        check("畸形批 → 400 E_SYNC_BATCH_INVALID",
+              status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID", body[:160])
+
+        # 6. clone
+        status, clone_body, headers = http("GET", base + "/v1/sync/clone")
+        clone_ids = [json.loads(line)["eventId"] for line in clone_body.splitlines() if line.strip()]
+        events, cursor = fetch_all(base)
+        check("clone 全量 + X-Sync-Cursor 对齐",
+              status == 200 and len(clone_ids) == len(events) and headers.get("X-Sync-Cursor") == cursor,
+              f"clone={len(clone_ids)} fetch={len(events)} header={headers.get('X-Sync-Cursor')} cursor={cursor}")
+        check("clone 集合与 fetch 一致", set(clone_ids) == {item["eventId"] for item in events})
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=10)
+        except Exception:
+            server.kill()
+        try:
+            server_log = server.stdout.read() or ""
+        except Exception:
+            server_log = ""
+        if server_log.strip():
+            print("--- server log (tail 30) ---")
+            print("\n".join(server_log.strip().splitlines()[-30:]))
+
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = len(results) - passed
+    print(f"\n{'='*50}\ncloud-server 同步冒烟汇总: {passed} passed / {failed} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
