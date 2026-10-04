@@ -1,0 +1,9 @@
+{
+  "name": "未知类型：memory.append → E_SYNC_TYPE（Phase 2 预留，v0 拒绝）",
+  "description": "第 1 行 type 不在 v0 四类中，记 E_SYNC_TYPE；第 2 行正常输出。",
+  "input": "{\"eventId\":\"e1\",\"sessionId\":\"s1\",\"type\":\"memory.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-04T02:00:01.000Z\",\"payload\":{}}\n{\"eventId\":\"e2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-04T02:00:02.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"正常\",\"turnId\":\"turn-1\"}}",
+  "expect": {
+    "events": ["e2"],
+    "errors": [{ "index": 0, "code": "E_SYNC_TYPE" }]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "信封非法：缺字段/浮点 seq/时区 ts/负 lamport/多余键/坏 prevHash → E_SYNC_ENVELOPE",
+  "description": "0-5 行各有一种信封违规；第 7 行（index=6）合法输出。错误码优先级 ENVELOPE > TYPE > PAYLOAD。",
+  "input": "{\"eventId\":\"x1\",\"type\":\"message.append\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-04T02:00:00.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"缺 sessionId\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"x2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":1.5,\"ts\":\"2026-10-04T02:00:00.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"浮点 seq\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"x3\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-04T02:00:00+08:00\",\"payload\":{\"role\":\"user\",\"text\":\"带时区偏移的 ts\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"x4\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":-1,\"deviceId\":\"dev-a\",\"seq\":3,\"ts\":\"2026-10-04T02:00:00.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"负 lamport\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"x5\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":4,\"ts\":\"2026-10-04T02:00:00.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"多余键\",\"turnId\":\"turn-1\"},\"extra\":1}\n{\"eventId\":\"x6\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":5,\"ts\":\"2026-10-04T02:00:00.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"坏 prevHash\",\"turnId\":\"turn-1\"},\"prevHash\":\"0123\"}\n{\"eventId\":\"e-ok\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":9,\"deviceId\":\"dev-a\",\"seq\":9,\"ts\":\"2026-10-04T02:00:09.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"正常\"}}",
+  "expect": {
+    "events": ["e-ok"],
+    "errors": [
+      { "index": 0, "code": "E_SYNC_ENVELOPE" },
+      { "index": 1, "code": "E_SYNC_ENVELOPE" },
+      { "index": 2, "code": "E_SYNC_ENVELOPE" },
+      { "index": 3, "code": "E_SYNC_ENVELOPE" },
+      { "index": 4, "code": "E_SYNC_ENVELOPE" },
+      { "index": 5, "code": "E_SYNC_ENVELOPE" }
+    ]
+  }
+}
