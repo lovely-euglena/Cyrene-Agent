@@ -1,4 +1,4 @@
-# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J）
+# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J / IKJK2K）
 
 事件库 + `/v1/sync` push / fetch / clone；契约 = 同步协议 v0
 （`docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/`）。
@@ -41,9 +41,25 @@ CYRENE_CLOUD_DATA=./data dotnet dotnet/cloud-server/bin/Release/net10.0/cyrene-c
 
 | 变量 | 说明 |
 | --- | --- |
-| `CYRENE_CLOUD_DATA` | 数据目录（`events.db`；默认 `AppContext.BaseDirectory/data`） |
-| `CLOUD_TOKEN` | 非空时 `/v1/*` 与**远程** `/healthz` 需 `Authorization: Bearer <token>`（scheme 大小写不敏感；回环探针豁免）。IKJK2K 配对制将取代它 |
+| `CYRENE_CLOUD_DATA` | 数据目录（`events.db`：事件 + 设备/配对码；默认 `AppContext.BaseDirectory/data`） |
+| `CLOUD_TOKEN` | 主控令牌（可选；引导/运维）：非空时可用它鉴权与出码 |
+| `CLOUD_PAIR_TTL_SECONDS` | 配对码有效期（默认 300 秒） |
+| `CLOUD_ALLOWED_HOSTS` | Host 白名单（逗号分隔；回环始终放行；不设 = 不校验，生产建议设置） |
+| `CLOUD_RATE_PAIR_PER_MIN` / `CLOUD_RATE_SYNC_PER_MIN` | 限流阈值/分钟（默认 10 / 300） |
 | `ASPNETCORE_URLS` | 监听地址（默认 `http://127.0.0.1:7789`） |
+
+## 配对与设备令牌（IKJK2K）
+
+```text
+VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   # 或已配对设备 POST /v1/pair/code
+新设备:       POST /v1/pair { code, deviceName } → { deviceId, token }      # token 仅此一次回显
+```
+
+- 库内只存 token/配对码的 SHA-256 哈希；日志全程脱敏；撤销即时生效；轮换后旧 token 立即 401；
+- 命令行：`pair-code` / `devices` / `revoke <deviceId>`；容器内：
+  `docker compose exec cloud-server dotnet cyrene-cloud-server.dll pair-code`；
+- 安全基线：数据目录 0700 / `events.db` 0600（Linux，best-effort；systemd `UMask=0077` 兜底）、
+  Host 白名单、接口限流、远程 healthz 需令牌；TLS 由 Caddy 终结（`deploy/Caddyfile.example`）。
 
 ## 容器（备选）
 
@@ -56,11 +72,20 @@ curl http://127.0.0.1:7789/healthz
 `mem_limit 512m` + healthcheck + `restart: unless-stopped` + 日志上限（json-file 10m×3）；
 同样仅绑 `127.0.0.1`，反代见 `deploy/Caddyfile.example`。
 镜像内以非 root（`cyrene`，uid 10001）运行；命名卷 `cloud-data` 首次初始化会继承 `/data` 属主，
-若改 bind mount 需自行 `chown 10001`。
+若改 bind mount 需自行 `chown 10001`。容器内可直接出码：
+`docker compose exec cloud-server dotnet cyrene-cloud-server.dll pair-code`（或 `devices` / `revoke <id>`）。
 
 ## API（camelCase JSON）
 
-- `GET /healthz` → `{status, rssMB, cursor}`（cursor 为 O(1) 插入序游标；`CLOUD_TOKEN` 非空时远程访问需令牌、回环探针豁免）
+鉴权（IKJK2K）：除 `POST /v1/pair`（兑换）外，`/v1/*` 需 `Authorization: Bearer <device token>`
+（或 `CLOUD_TOKEN` 主控）；Bearer scheme 大小写不敏感。错误码：`401 E_UNAUTHORIZED`、
+`400 E_PAIR_CODE`、`404 E_DEVICE_NOT_FOUND`、`429 E_RATE_LIMITED`、`421 E_HOST_NOT_ALLOWED`。
+
+- `GET /healthz` → `{status, rssMB, cursor, devices}`（cursor 为 O(1) 插入序游标；回环探针豁免、远程需令牌）
+- `POST /v1/pair/code`（需鉴权）→ `{code, expiresAt}`（一次性配对码，TTL 见 env）
+- `POST /v1/pair`（**公开**）— `{code, deviceName}` → `{deviceId, name, token}`（device token 仅此一次回显）
+- `GET /v1/devices` → `{devices:[{deviceId, name, createdAt, lastSeenAt, revoked}]}`
+- `POST /v1/devices/{id}/revoke`（撤销即时生效）/ `POST /v1/devices/{id}/rotate`（返回新 token，仅此一次）
 - `POST /v1/sync/push` — body 为 JSONL 事件批（协议 v0 读取语义）；整批原子：
   - `400 E_SYNC_BATCH_INVALID`：JSON 坏行 / 半截尾行 / 字段级校验失败（`errors:[{index,code}]`，`index` = 输入 JSONL 0 基物理行号）
   - `400 E_SYNC_BATCH_REJECTED`：链/序号校验失败（`E_SYNC_CHAIN` / `E_SYNC_SEQ`；`index` 同上，与 BATCH_INVALID 统一为物理行号）
@@ -100,6 +125,6 @@ SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电
 
 ```bash
 dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
-python scripts/dotnet-cloud-sync-test.py        # 起真实服务：并发收敛/幂等/分页/clone/链校验
+python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌/限流/Host/脱敏（36 项）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
 ```

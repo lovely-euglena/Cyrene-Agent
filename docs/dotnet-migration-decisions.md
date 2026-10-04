@@ -335,3 +335,34 @@
   `scripts/dotnet-cloud-sync-test.py` 18/18（幂等/乱序/分页/双客户端并发收敛/链拒绝与
   整批回滚/畸形批/clone 游标对齐）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2H、#IKJK2J。
+
+## 2026-10-04 增量：IKJK2K——配对与设备令牌（服务端）
+
+- **自建令牌体系**（原 RFC 的 signature-verification 一次性 token 在本仓库不存在）：device token =
+  32 字节随机（`cyn_` 前缀），**库内只存 SHA-256 哈希**、签发仅回显一次；配对码 = 8 位易读字母表
+  （无 0/O/1/I/L，输入容错空格/连字符）、一次性 + TTL（默认 300s，`CLOUD_PAIR_TTL_SECONDS`）、只存哈希；
+  撤销 = 标记即 401（每请求查库）；轮换 = 原子替换哈希。
+- **引导与流程**（RFC §4.1）：首个设备用 CLI `pair-code`（或主控令牌调 `POST /v1/pair/code`）出码；
+  新设备 `POST /v1/pair` 兑换；此后已配对设备即可为新设备出码。
+- **鉴权语义**：`/v1/*` **始终**需 Bearer（device token 或 `CLOUD_TOKEN` 主控）；`POST /v1/pair` 公开；
+  `/healthz` 回环探针豁免、远程需令牌；Bearer scheme 大小写不敏感（RFC 7235）。承接 J 复审硬化：
+  `errors[].index` 统一物理行号、healthz O(1) 游标、`FetchAsync` 取消链、payload `Clone()` 防泄漏。
+- **暴露面/资源**：Host 白名单（`CLOUD_ALLOWED_HOSTS`，回环豁免）、限流（pair 10/min/IP、
+  sync 300/min/令牌或 IP，env 可调）、转发头只信任回环来源（Caddy 同机）；TLS = Caddy ACME。
+- **Q6 部分落定**：凭据静态保护 = 哈希存储 + Linux 0700/0600（best-effort）；全库静态加密仍开放。
+  Q5（PWA token 存放 / CORS / CSRF）随 IKJK2L 拍板。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py`
+  **36/36**（配对一次性 / 过期 TTL / 轮换 / 撤销即时 401 / 伪造 401 / Host 421 / 日志脱敏 /
+  限流 429 / 设备列表）；Linux 侧另断言目录 0700 + DB 0600（CI 实跑，37 项）。
+- **#7 复审补丁（原 PR #7 关闭前终稿：1 阻断 + 2 改进，均已修复）**：① `UseForwardedHeaders` 显式
+  `KnownProxies` = 回环（v4/v6）——默认空集合不信任任何来源，XFF 此前实际失效；修复后限流按真实
+  客户端 IP 分区、远程 healthz 鉴权语义恢复（冒烟新增 XFF 断言）；② Linux `umask(0o077)`（建库前）+
+  目录 0700 提前至首次连接前 + DB/-wal/-shm 全部 0600（附属文件不再以宽松权限落盘）；③ 设备名
+  UTF-16 截断代理对安全（63a+emoji → 63a）。冒烟 **39/39**（Windows；Linux 40，含 -wal/-shm 权限）。
+- **#9 复审补丁（⛔ 1 阻断 + 1 改进，均已修复）**：① 设备管理端点补 principal 校验——`GET /v1/devices`
+  仅 master；rotate/revoke = master 任意 / device 仅自身，越权 403（`E_FORBIDDEN`），冒烟含反向断言；
+  ② healthz 设备计数改 `COUNT(*)` 聚合（O(1)，不再物化整表）。
+- **#9 二轮复审补丁（⚠️ 无阻断 + 4 改进，均已修复）**：① master token 字节预转换缓存、比较后临时数组
+  `ZeroMemory`；② healthz 改 DI 注入（去闭包，风格统一）；③ `Rotate` 标注并发语义（仅最后写入 token 有效）；
+  ④ chunked 探针 16KB chunk / timeout 30s 平衡 CI 耗时与 Windows RST 抖动。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。

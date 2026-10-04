@@ -79,16 +79,19 @@ git commit 漏子命令、IPC argv 双传。
 `scripts/dotnet-smoke.ps1`：tool-host 五工具双轨 diff、agent-host 闭环、
 rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关。
 
-## 云端昔涟 cloud-server（IKJK2J）
+## 云端昔涟 cloud-server（IKJK2J / IKJK2K）
 
 - `dotnet/cloud-server/`：ASP.NET Core Minimal API + Microsoft.Data.Sqlite WAL——
   append-only 事件库（event_id 幂等索引；插入序游标）+ `/v1/sync` push（JSONL 整批原子）/
   fetch（since+limit+sessionId）/ clone（NDJSON 流 + `X-Sync-Cursor`）；协议校验复用
   cyrene-core `SyncProtocolV0`（`docs/specs/2026-10-04-sync-protocol-v0.md`）。
 - 链校验（v0 过渡策略）：per-(sessionId, deviceId) 链接 + seq 严格递增；
-  内容哈希重算待 Q3 定稿；默认绑 127.0.0.1，`CLOUD_TOKEN` 为 K 之前的最小门闩。
-- 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/两客户端并发收敛/
-  链拒绝整批回滚/clone 游标）。
+  内容哈希重算待 Q3 定稿；默认绑 127.0.0.1。
+- 鉴权/配对（IKJK2K）：device token（`POST /v1/pair` 兑换，库内哈希存储、撤销/轮换即时）或
+  `CLOUD_TOKEN` 主控；`/v1/*` 始终鉴权、`/v1/pair` 公开、`/healthz` 回环豁免；
+  Host 白名单 + 限流 + 日志脱敏 + Linux 0700/0600；CLI：`pair-code` / `devices` / `revoke`。
+- 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/并发收敛/链拒绝回滚/
+  clone 游标 + 配对令牌/限流/Host/脱敏，36 项）。
 - 部署：**裸跑为主**（`dotnet publish` + `deploy/cyrene-cloud-server.service` systemd 单元 +
-  `deploy/Caddyfile.example` 反代）；容器为备选（`docker-compose.yml`：mem_limit 512m +
-  healthcheck + 日志上限）；正式部署/备份/告警属 IKJK2N。
+  `deploy/Caddyfile.example` 反代，`CLOUD_ALLOWED_HOSTS` 建议随域名设置）；容器为备选
+  （`docker-compose.yml`：mem_limit 512m + healthcheck + 日志上限）；正式部署/备份/告警属 IKJK2N。
