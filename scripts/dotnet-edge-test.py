@@ -20,14 +20,15 @@ def run_host(args, frames, timeout=60, raw=False):
     try:
         p = subprocess.run(["dotnet", NATIVE] + args, input=inp,
                            capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace",
                            cwd=REPO_ROOT, env=env)
     except subprocess.TimeoutExpired:
         return [], -99, "TIMEOUT"
     out = []
-    for line in p.stdout.strip().splitlines():
+    for line in (p.stdout or "").strip().splitlines():
         try: out.append(json.loads(line))
         except Exception: out.append({"_raw": line[:100]})
-    return out, p.returncode, p.stderr[:300]
+    return out, p.returncode, (p.stderr or "")[:300]
 
 def check(name, ok, detail=""):
     results.append((name, bool(ok), detail))

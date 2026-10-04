@@ -24,12 +24,13 @@ def run(frames, timeout=90):
         env["PATH"] = dr + os.pathsep + env.get("PATH", "")
     p = subprocess.run(["dotnet", NATIVE, "--agent-host"], input="\n".join(frames),
                        capture_output=True, text=True, timeout=timeout,
+                       encoding="utf-8", errors="replace",
                        cwd=REPO_ROOT, env=env)
     out = []
-    for line in p.stdout.strip().splitlines():
+    for line in (p.stdout or "").strip().splitlines():
         try: out.append(json.loads(line))
         except Exception: out.append({"_raw": line[:100]})
-    return out, p.returncode, p.stderr[:200]
+    return out, p.returncode, (p.stderr or "")[:200]
 
 def check(name, ok, detail=""):
     results.append((name, bool(ok), detail))
