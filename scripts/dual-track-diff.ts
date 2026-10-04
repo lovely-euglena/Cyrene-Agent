@@ -1224,6 +1224,97 @@ async function runDocumentDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── 邮件四件双轨（确定性校验路径：配置缺失/参数非法，无网络）──
+//
+// IMAP/SMTP 快乐路径依赖 fake 服务器（矩阵侧已覆盖 C# 轨）；双轨比对校验文案与
+// 回退契约：TS（getter 注入）↔ .NET（config 帧注入）在校验失败时逐字一致。
+
+async function runEmailDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] email ${name}`);
+    else { failed++; console.log(`[FAIL] email ${name} —— ${detail}`); }
+  };
+
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const emailTools = await import("../src/main/orchestrator/tools/email-tools");
+    emailTools.registerEmailTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = toolRegistry.getById(id);
+      if (!tool) throw new Error(`TS 工具未注册: ${id}`);
+      return tool.execute(args, undefined as never);
+    };
+    const inject = (cfg: Record<string, unknown>): void => {
+      emailTools.setEmailConfig(
+        () => cfg.enabled as boolean,
+        () => cfg.host as string,
+        () => cfg.port as number,
+        () => cfg.secure as boolean,
+        () => cfg.user as string,
+        () => cfg.pass as string,
+        () => cfg.fromName as string,
+        () => cfg.imapHost as string,
+        () => cfg.imapPort as number,
+        () => cfg.imapSecure as boolean,
+      );
+    };
+    const netCfg = (cfg: Record<string, unknown> | null): Record<string, unknown> | null => cfg === null ? null : {
+      enabled: cfg.enabled, smtpHost: cfg.host ?? "", smtpPort: cfg.port ?? 465, smtpSecure: cfg.secure ?? true,
+      user: cfg.user ?? "", pass: cfg.pass ?? "", fromName: cfg.fromName ?? "",
+      imapHost: cfg.imapHost ?? "", imapPort: cfg.imapPort ?? 993, imapSecure: cfg.imapSecure ?? true,
+    };
+
+    const full = {
+      enabled: true, host: "smtp.example.com", port: 465, secure: true, user: "u@example.com", pass: "p",
+      fromName: "C", imapHost: "imap.example.com", imapPort: 993, imapSecure: true,
+    };
+    const cases: Array<{ name: string; tool: string; args: Record<string, unknown>; cfg: Record<string, unknown>; expected: string }> = [
+      { name: "email_list 未启用", tool: "email_list", args: {}, cfg: { enabled: false },
+        expected: "[错误] 邮件功能未启用，请在设置里开启" },
+      { name: "email_list 缺 IMAP 主机", tool: "email_list", args: {}, cfg: { ...full, imapHost: "" },
+        expected: "[错误] IMAP 未配置：请在设置 → 插件 → 邮件 填写 IMAP 服务器（收信与发信共用邮箱与授权码）" },
+      { name: "email_list 缺凭据", tool: "email_list", args: {}, cfg: { ...full, user: "" },
+        expected: "[错误] IMAP 配置不完整：缺少发件邮箱/授权码（收信与发信共用）" },
+      { name: "email_read 缺 uid", tool: "email_read", args: {}, cfg: full,
+        expected: "[错误] 缺少有效的邮件 uid（先用 email_list 获取 uid）" },
+      { name: "email_mark 缺 uid", tool: "email_mark", args: { uid: 0 }, cfg: full,
+        expected: "[错误] 缺少有效的邮件 uid（先用 email_list 获取 uid）" },
+      { name: "send_email 未启用", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "b" }, cfg: { enabled: false },
+        expected: "[错误] 邮件功能未启用，请在设置里开启" },
+      { name: "send_email SMTP 配置不完整", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "b" }, cfg: { ...full, host: "" },
+        expected: "[错误] SMTP 配置不完整：缺少 主机/用户名/授权码" },
+      { name: "send_email 空收件人", tool: "send_email", args: { to: [], subject: "s", body: "b" }, cfg: full,
+        expected: "[错误] 收件人列表为空" },
+      { name: "send_email 收件人无效", tool: "send_email", args: { to: ["bad"], subject: "s", body: "b" }, cfg: full,
+        expected: "[错误] 收件人邮箱无效：bad" },
+      { name: "send_email 主题为空", tool: "send_email", args: { to: ["a@b.com"], subject: " ", body: "b" }, cfg: full,
+        expected: "[错误] 邮件主题不能为空" },
+      { name: "send_email 正文为空", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "" }, cfg: full,
+        expected: "[错误] 邮件正文不能为空" },
+      { name: "send_email 附件不存在", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "b", attachments: ["C:/definitely/not/exists-xyz.txt"] }, cfg: full,
+        expected: "[错误] 附件不存在：C:/definitely/not/exists-xyz.txt" },
+    ];
+    for (const c of cases) {
+      inject(c.cfg);
+      const tsOut = await runTs(c.tool, c.args);
+      const host = await callSmokeTool(c.tool, c.args, [{ op: "config", email: netCfg(c.cfg) }]);
+      const netOut = String(host.data ?? "");
+      check(c.name, tsOut === c.expected && netOut === c.expected, `ts=${tsOut} net=${netOut} expected=${c.expected}`);
+    }
+  } finally {
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+  }
+  return failed;
+}
+
 // ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
 
 /** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
@@ -1489,6 +1580,9 @@ async function main(): Promise<void> {
     // 文档四件双轨（write_markdown/excel/word/pdf；读回投影比对）
     if (useSmoke) failures += await runDocumentDualTrack();
     else console.log("[SKIP] 文档四件双轨（仅 smoke dll 轨支持）");
+    // 邮件四件双轨（校验路径；IMAP/SMTP 快乐路径由矩阵 fake 服务器覆盖）
+    if (useSmoke) failures += await runEmailDualTrack();
+    else console.log("[SKIP] 邮件四件双轨（仅 smoke dll 轨支持）");
     // git 八件双轨（镜像仓库 + 本地 bare 远程）
     if (useSmoke) failures += await runGitDualTrack();
     else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");

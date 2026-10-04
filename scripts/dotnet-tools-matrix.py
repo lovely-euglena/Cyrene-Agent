@@ -250,9 +250,215 @@ c_dw2 = req("write_word", {"path": "", "title": "x", "paragraphs": []})
 c_dp1 = req("write_pdf", {"path": DOC_PDF, "title": "PDF Report 合作协议", "paragraphs": ["Alpha 甲方：示例公司", "Beta 乙方：测试公司"]})
 c_dp2 = req("write_pdf", {"path": "", "title": "x", "paragraphs": []})
 
+# 邮件四件：本地 fake SMTP + fake IMAP（ASCII fixture；中文 MIME 编码由 MimeKit 库保证）
+_SMTP_MESSAGES = []
+
+class _SmtpHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.wfile.write(b"220 fake ESMTP ready\r\n")
+        in_data = False
+        data_lines = []
+        auth_login_step = 0
+        while True:
+            line = self.rfile.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").rstrip("\r\n")
+            if in_data:
+                if text == ".":
+                    in_data = False
+                    _SMTP_MESSAGES.append("\n".join(data_lines))
+                    self.wfile.write(b"250 OK queued\r\n")
+                else:
+                    data_lines.append(text[1:] if text.startswith("..") else text)
+                continue
+            if auth_login_step == 1:
+                auth_login_step = 2
+                self.wfile.write(b"334 UGFzc3dvcmQ6\r\n")
+                continue
+            if auth_login_step == 2:
+                auth_login_step = 0
+                self.wfile.write(b"235 Authentication successful\r\n")
+                continue
+            upper = text.upper()
+            if upper.startswith("EHLO") or upper.startswith("HELO"):
+                self.wfile.write(b"250-fake\r\n250-AUTH PLAIN LOGIN\r\n250 OK\r\n")
+            elif upper.startswith("AUTH LOGIN"):
+                auth_login_step = 1
+                self.wfile.write(b"334 VXNlcm5hbWU6\r\n")
+            elif upper.startswith("AUTH PLAIN"):
+                if len(text.split(" ")) >= 3:
+                    self.wfile.write(b"235 Authentication successful\r\n")
+                else:
+                    self.rfile.readline()
+                    self.wfile.write(b"235 Authentication successful\r\n")
+            elif upper.startswith("MAIL FROM") or upper.startswith("RCPT TO"):
+                self.wfile.write(b"250 OK\r\n")
+            elif upper.startswith("DATA"):
+                in_data = True
+                self.wfile.write(b"354 End data with <CR><LF>.<CR><LF>\r\n")
+            elif upper.startswith("RSET"):
+                self.wfile.write(b"250 OK\r\n")
+            elif upper.startswith("QUIT"):
+                self.wfile.write(b"221 Bye\r\n")
+                break
+            else:
+                self.wfile.write(b"250 OK\r\n")
+
+_IMAP_MAILS = [
+    {"uid": 1, "flags": ["\\Seen"], "subject": "Hello One", "name": "Sender A", "addr": "a@example.com",
+     "date": "Mon, 05 Oct 2026 01:00:00 +0800", "body": "Body one"},
+    {"uid": 2, "flags": [], "subject": "Hello Two", "name": "Sender B", "addr": "b@example.com",
+     "date": "Mon, 05 Oct 2026 02:00:00 +0800", "body": "Body two",
+     "attachment": "note.txt"},
+]
+
+def _imap_raw(m):
+    if m.get("attachment"):
+        att = "A" * 2048
+        return ("From: {name} <{addr}>\r\nTo: to@example.com\r\nSubject: {subject}\r\nDate: {date}\r\n"
+                "Message-ID: <m{uid}@example.com>\r\nMIME-Version: 1.0\r\n"
+                "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n\r\n"
+                "--BOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n"
+                "--BOUND\r\nContent-Type: text/plain; name=\"note.txt\"\r\n"
+                "Content-Disposition: attachment; filename=\"note.txt\"\r\n"
+                "Content-Transfer-Encoding: 8bit\r\n\r\n{att}\r\n--BOUND--\r\n"
+                ).format(att=att, **m).encode("utf-8")
+    return ("From: {name} <{addr}>\r\nTo: to@example.com\r\nSubject: {subject}\r\nDate: {date}\r\n"
+            "Message-ID: <m{uid}@example.com>\r\nMIME-Version: 1.0\r\n"
+            "Content-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n").format(**m).encode("utf-8")
+
+def _imap_envelope(m):
+    from_addr = '(({name} NIL {mailbox} {host}))'.format(name=m["name"], mailbox=m["addr"].split("@")[0], host=m["addr"].split("@")[1])
+    return '("{date}" "{subject}" {from_addr} {from_addr} {from_addr} NIL NIL NIL NIL "msgid")'.format(
+        date=m["date"], subject=m["subject"], from_addr=from_addr)
+
+def _parse_uid_set(spec):
+    ids = set()
+    for part in spec.split(","):
+        if ":" in part:
+            a, b = part.split(":", 1)
+            lo, hi = min(int(a), int(b)), max(int(a), int(b))
+            for i in range(lo, hi + 1):
+                ids.add(i)
+        elif part.isdigit():
+            ids.add(int(part))
+    return ids
+
+class _ImapHandler(socketserver.StreamRequestHandler):
+    def _ok(self, tag, text):
+        self.wfile.write(f"{tag} OK {text}\r\n".encode())
+
+    def handle(self):
+        self.wfile.write(b"* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] Fake IMAP ready\r\n")
+        while True:
+            line = self.rfile.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").rstrip("\r\n")
+            parts = text.split(" ")
+            tag = parts[0] if parts else "?"
+            cmd = parts[1].upper() if len(parts) > 1 else ""
+            if cmd == "AUTHENTICATE":
+                self.wfile.write(b"+ \r\n")
+                self.rfile.readline()  # base64 凭据（fake 不校验）
+                self._ok(tag, "AUTHENTICATE completed")
+            elif cmd == "CAPABILITY":
+                self.wfile.write(b"* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n")
+                self._ok(tag, "CAPABILITY completed")
+            elif cmd == "LIST":
+                pattern = parts[-1].strip('"') if len(parts) > 2 else ""
+                if pattern == "":
+                    self.wfile.write(b"* LIST (\\Noselect) \"/\" \"\"\r\n")
+                elif "INBOX" in pattern.upper() or pattern == "*":
+                    self.wfile.write(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                self._ok(tag, "LIST completed")
+            elif cmd == "LOGIN":
+                self._ok(tag, "LOGIN completed")
+            elif cmd in ("SELECT", "EXAMINE"):
+                self.wfile.write(b"* 2 EXISTS\r\n* 0 RECENT\r\n")
+                self.wfile.write(b"* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n")
+                self.wfile.write(b"* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)] Flags permitted.\r\n")
+                self.wfile.write(b"* OK [UIDVALIDITY 1] UIDs valid\r\n")
+                self.wfile.write(b"* OK [UIDNEXT 3] Predicted next UID\r\n")
+                mode = "READ-ONLY" if cmd == "EXAMINE" else "READ-WRITE"
+                self._ok(tag, f"[{mode}] {cmd} completed")
+            elif cmd == "CLOSE":
+                self._ok(tag, "CLOSE completed")
+            elif cmd == "LOGOUT":
+                self.wfile.write(b"* BYE Logging out\r\n")
+                self._ok(tag, "LOGOUT completed")
+                break
+            elif cmd == "NOOP":
+                self._ok(tag, "NOOP completed")
+            elif cmd == "UID":
+                sub = parts[2].upper() if len(parts) > 2 else ""
+                if sub == "SEARCH":
+                    crit = " ".join(parts[3:]).upper()
+                    ids = [m["uid"] for m in _IMAP_MAILS if "UNSEEN" not in crit or "\\Seen" not in m["flags"]]
+                    self.wfile.write(("* SEARCH" + "".join(f" {i}" for i in ids) + "\r\n").encode())
+                    self._ok(tag, "UID SEARCH completed")
+                elif sub == "FETCH":
+                    uids = _parse_uid_set(parts[3]) if len(parts) > 3 else set()
+                    items = text[text.find("("):].upper() if "(" in text else ""
+                    for m in _IMAP_MAILS:
+                        if m["uid"] not in uids:
+                            continue
+                        if "BODY" in items or "RFC822" in items:
+                            raw = _imap_raw(m)
+                            self.wfile.write(f"* {m['uid']} FETCH (UID {m['uid']} BODY[] {{{len(raw)}}}\r\n".encode())
+                            self.wfile.write(raw + b")\r\n")
+                        else:
+                            size = len(_imap_raw(m))
+                            flags = " ".join(m["flags"])
+                            self.wfile.write(
+                                f"* {m['uid']} FETCH (UID {m['uid']} FLAGS ({flags}) ENVELOPE {_imap_envelope(m)} RFC822.SIZE {size})\r\n".encode())
+                    self._ok(tag, "UID FETCH completed")
+                elif sub == "STORE":
+                    uids = _parse_uid_set(parts[3]) if len(parts) > 3 else set()
+                    op = parts[4] if len(parts) > 4 else ""
+                    for m in _IMAP_MAILS:
+                        if m["uid"] not in uids:
+                            continue
+                        if op.startswith("+"):
+                            if "\\Seen" in text and "\\Seen" not in m["flags"]:
+                                m["flags"].append("\\Seen")
+                        elif op.startswith("-"):
+                            if "\\Seen" in text and "\\Seen" in m["flags"]:
+                                m["flags"].remove("\\Seen")
+                    self._ok(tag, "UID STORE completed")
+                else:
+                    self._ok(tag, "unsupported UID subcommand")
+            else:
+                self._ok(tag, "unsupported command")
+
+smtp_srv = socketserver.TCPServer(("127.0.0.1", 0), _SmtpHandler)
+imap_srv = socketserver.TCPServer(("127.0.0.1", 0), _ImapHandler)
+threading.Thread(target=smtp_srv.serve_forever, daemon=True).start()
+threading.Thread(target=imap_srv.serve_forever, daemon=True).start()
+frames.append(json.dumps({"op": "config", "email": {
+    "enabled": True, "smtpHost": "127.0.0.1", "smtpPort": smtp_srv.server_address[1], "smtpSecure": False,
+    "user": "sender@example.com", "pass": "authcode", "fromName": "Cyrene",
+    "imapHost": "127.0.0.1", "imapPort": imap_srv.server_address[1], "imapSecure": False}}))
+c_em1 = req("send_email", {"to": ["to@example.com"], "cc": ["cc@example.com"], "subject": "Hello Subject", "body": "Hello body"})
+c_em2 = req("send_email", {"to": [], "subject": "s", "body": "b"})
+c_em3 = req("send_email", {"to": ["bad"], "subject": "s", "body": "b"})
+c_em4 = req("email_list", {})
+c_em5 = req("email_list", {"unreadOnly": True})
+c_em6 = req("email_read", {"uid": 2, "markSeen": True})
+c_em7 = req("email_list", {})
+c_em8 = req("email_mark", {"uid": 1, "seen": False})
+c_em9 = req("email_read", {"uid": 99})
+c_em10 = req("email_list", {})
+frames.append(json.dumps({"op": "config", "email": None}))
+c_em11 = req("email_list", {})
+c_em12 = req("send_email", {"to": ["a@b.com"], "subject": "s", "body": "b"})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
 fu_srv.shutdown()
+smtp_srv.shutdown()
+imap_srv.shutdown()
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
 
 def data_json(cid):
@@ -515,6 +721,36 @@ if os.path.exists(DOC_PDF):
     check("write_pdf 文本提取（标题/段落）", ascii_ok and cjk_ok, pdf_text[:120])
 else:
     check("write_pdf 文本提取（文件缺失）", False)
+
+print("\n=== 邮件四件（fake SMTP + fake IMAP）===")
+check("send_email 成功文案", data_text(c_em1) == "[send_email] 已发送：to@example.com 主题：Hello Subject", data_text(c_em1))
+if _SMTP_MESSAGES:
+    raw = _SMTP_MESSAGES[-1]
+    check("send_email SMTP 捕获（To/Cc/Subject/正文）",
+          "to@example.com" in raw and "cc@example.com" in raw and "Hello Subject" in raw and "Hello body" in raw,
+          raw[:220])
+else:
+    check("send_email SMTP 捕获", False)
+check("send_email 空收件人拒绝", data_text(c_em2) == "[错误] 收件人列表为空", data_text(c_em2))
+check("send_email 收件人无效拒绝", data_text(c_em3) == "[错误] 收件人邮箱无效：bad", data_text(c_em3))
+el4 = data_text(c_em4)
+check("email_list 两封（uid/已读/发件人/主题）",
+      "uid=2" in el4 and "uid=1" in el4 and "未读" in el4 and "已读" in el4
+      and "Sender A <a@example.com>" in el4 and "Hello One" in el4 and "共 2 封" in el4, el4[:220])
+el5 = data_text(c_em5)
+check("email_list 仅未读（uid=2）", "uid=2" in el5 and "uid=1" not in el5 and "未读" in el5, el5[:220])
+er6 = data_text(c_em6)
+check("email_read 详情（主题/发件人/收件人/附件/正文）",
+      "uid=2" in er6 and "Hello Two" in er6 and "Sender B <b@example.com>" in er6
+      and "to@example.com" in er6 and "note.txt" in er6 and "Body two" in er6, er6[:300])
+el7 = data_text(c_em7)
+check("email_read 默认标已读（再列两封均已读）", el7.count("已读") == 2, el7[:220])
+check("email_mark 标未读", data_text(c_em8) == "[email_mark] uid=1 已标记为未读（folder=INBOX）", data_text(c_em8))
+el10 = data_text(c_em10)
+check("email_mark 生效（uid=1 未读）", "uid=1" in el10 and "未读" in el10, el10[:220])
+check("email_read 不存在 uid", data_text(c_em9) == "[错误] 未找到 uid=99 的邮件（folder=INBOX）", data_text(c_em9))
+check("email 关闭后校验（list）", data_text(c_em11) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em11))
+check("email 关闭后校验（send）", data_text(c_em12) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em12))
 
 print("\n=== git ===")
 if not shutil.which("git"):

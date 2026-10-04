@@ -80,6 +80,8 @@ export interface HostRuntimeSettings {
   weather: WeatherHostSettings | null;
   /** 出行工具配置（B1：key 仅宿主内存驻留，不落盘；调用前刷新）。 */
   travel: TravelHostSettings | null;
+  /** 邮件配置（B1：授权码仅宿主内存驻留，不落盘；调用前刷新）。 */
+  email: EmailHostSettings | null;
 }
 
 /** web_search 宿主侧配置。 */
@@ -105,6 +107,20 @@ export interface WeatherHostSettings {
 export interface TravelHostSettings {
   amapKey: string;
   enabled: boolean;
+}
+
+/** 邮件宿主侧配置（SMTP/IMAP 共用账号；pass 为授权码，B1 仅内存驻留）。 */
+export interface EmailHostSettings {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  user: string;
+  pass: string;
+  fromName: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
 }
 
 /** nativeFirst 按件选项：长耗时工具（大文件下载/外网请求）覆盖默认 5s 看门狗。 */
@@ -135,6 +151,7 @@ export class NativeToolHost {
     webSearch: null,
     weather: null,
     travel: null,
+    email: null,
   };
 
   /** 兼容旧入口：仅更新时区（now 工具每次调用实时下发）。 */
@@ -153,6 +170,7 @@ export class NativeToolHost {
     if (patch.webSearch !== undefined) this.settings.webSearch = patch.webSearch;
     if (patch.weather !== undefined) this.settings.weather = patch.weather;
     if (patch.travel !== undefined) this.settings.travel = patch.travel;
+    if (patch.email !== undefined) this.settings.email = patch.email;
     if (this.proc && !this.exited) this.send({ op: "config", ...this.settings });
   }
 

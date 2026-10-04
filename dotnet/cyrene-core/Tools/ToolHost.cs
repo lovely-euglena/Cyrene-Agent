@@ -79,6 +79,17 @@ internal static class ToolHostConfig
     // plan_trip（B1：key 仅内存驻留）
     internal static string TravelAmapKey { get; set; } = "";
     internal static bool TravelEnabled { get; set; } = true;
+    // email（B1：授权码仅内存驻留；SMTP/IMAP 共用账号）
+    internal static bool EmailEnabled { get; set; }
+    internal static string EmailSmtpHost { get; set; } = "";
+    internal static int EmailSmtpPort { get; set; } = 465;
+    internal static bool EmailSmtpSecure { get; set; } = true;
+    internal static string EmailUser { get; set; } = "";
+    internal static string EmailPass { get; set; } = "";
+    internal static string EmailFromName { get; set; } = "";
+    internal static string EmailImapHost { get; set; } = "";
+    internal static int EmailImapPort { get; set; } = 993;
+    internal static bool EmailImapSecure { get; set; } = true;
 }
 
 internal static class ToolHost
@@ -91,6 +102,18 @@ internal static class ToolHost
         => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()!
             : "";
+
+    /// <summary>读取对象属性中的整数（非数字/缺失 → fallback）。</summary>
+    private static int JsonInt(JsonElement obj, string key, int fallback)
+        => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number
+            ? (int)Math.Round(value.GetDouble())
+            : fallback;
+
+    /// <summary>读取对象属性中的布尔（非布尔/缺失 → fallback）。</summary>
+    private static bool JsonBool(JsonElement obj, string key, bool fallback)
+        => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : fallback;
 
     // 工具执行期间的事件通道（宿主主动性旁路帧，如 weather_card）。
     private static Stream? activeStdout;
@@ -189,6 +212,10 @@ internal static class ToolHost
                         new { id = "write_excel", name = "写 Excel(.NET)", description = "美观 Excel 生成（ClosedXML；主题/列宽/冻结/筛选/数字格式）" },
                         new { id = "write_word", name = "写 Word(.NET)", description = "Word 文档生成（Open XML SDK；标题/正文主题样式）" },
                         new { id = "write_pdf", name = "写 PDF(.NET)", description = "PDF 生成（QuestPDF；中文字体自动注册）" },
+                        new { id = "send_email", name = "发送邮件(.NET)", description = "SMTP 发信（MailKit；确认卡在 TS；附件/抄送）" },
+                        new { id = "email_list", name = "收邮件列表(.NET)", description = "IMAP 最近邮件（uid/已读/时间/发件人/主题；可过滤）" },
+                        new { id = "email_read", name = "读邮件(.NET)", description = "IMAP 单封详情（正文截断/附件名/默认标已读）" },
+                        new { id = "email_mark", name = "标记邮件(.NET)", description = "IMAP 标记已读/未读" },
                     },
                 });
                 break;
@@ -258,6 +285,35 @@ internal static class ToolHost
                         ToolHostConfig.TravelEnabled = true;
                     }
                 }
+                if (root.TryGetProperty("email", out var em))
+                {
+                    if (em.ValueKind == JsonValueKind.Object)
+                    {
+                        ToolHostConfig.EmailEnabled = em.TryGetProperty("enabled", out var een) && een.ValueKind == JsonValueKind.True;
+                        ToolHostConfig.EmailSmtpHost = JsonStr(em, "smtpHost");
+                        ToolHostConfig.EmailSmtpPort = JsonInt(em, "smtpPort", 465);
+                        ToolHostConfig.EmailSmtpSecure = JsonBool(em, "smtpSecure", ToolHostConfig.EmailSmtpPort == 465);
+                        ToolHostConfig.EmailUser = JsonStr(em, "user");
+                        ToolHostConfig.EmailPass = JsonStr(em, "pass");
+                        ToolHostConfig.EmailFromName = JsonStr(em, "fromName");
+                        ToolHostConfig.EmailImapHost = JsonStr(em, "imapHost");
+                        ToolHostConfig.EmailImapPort = JsonInt(em, "imapPort", 993);
+                        ToolHostConfig.EmailImapSecure = JsonBool(em, "imapSecure", ToolHostConfig.EmailImapPort == 993);
+                    }
+                    else if (em.ValueKind == JsonValueKind.Null)
+                    {
+                        ToolHostConfig.EmailEnabled = false;
+                        ToolHostConfig.EmailSmtpHost = "";
+                        ToolHostConfig.EmailSmtpPort = 465;
+                        ToolHostConfig.EmailSmtpSecure = true;
+                        ToolHostConfig.EmailUser = "";
+                        ToolHostConfig.EmailPass = "";
+                        ToolHostConfig.EmailFromName = "";
+                        ToolHostConfig.EmailImapHost = "";
+                        ToolHostConfig.EmailImapPort = 993;
+                        ToolHostConfig.EmailImapSecure = true;
+                    }
+                }
                 break;
             }
             case "call":
@@ -307,6 +363,10 @@ internal static class ToolHost
                         "write_excel" => ExcelTool.Execute(args ?? EmptyArgs),
                         "write_word" => WordTool.Execute(args ?? EmptyArgs),
                         "write_pdf" => PdfTool.Execute(args ?? EmptyArgs),
+                        "send_email" => EmailTools.Send(args ?? EmptyArgs),
+                        "email_list" => EmailTools.List(args ?? EmptyArgs),
+                        "email_read" => EmailTools.Read(args ?? EmptyArgs),
+                        "email_mark" => EmailTools.Mark(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });
