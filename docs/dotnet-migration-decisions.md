@@ -466,7 +466,12 @@
 - **鉴权**：仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，日志脱敏）；纯本地模式（无远端）可用。
 - **边界**：适配器不接线 UI / 不落盘同步状态（`FetchState` 由调用方持有）；桌面端同步客户端
   （事件导出器 / 物化视图）属 IKJK2I，后续接入。
-- **验证（Windows 本地）**：适配器测试 **9/9**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
-  强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则）；`vitest run src/main/sync src/pwa` **59/59**；
-  `tsc main` 0 错误。
+- **评审修复（2026-10-05）**：init 错误统一脱敏（URL 变形覆盖）并补注入断言；push 失败自愈
+  （提交失败回滚追加 / 无新事件补提交补推送）；git 调用无输出超时 + AbortSignal 取消 + 默认隔离 env；
+  错误码可重试分级；`.gitattributes` 缺规则自动追加；错误 index 改分片物理行号（clone 同步上报）；
+  规范序比较器抽公共导出；测试计数修正并补 9 个用例。
+- **验证（Windows 本地）**：适配器测试 **17/17**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
+  强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 /
+  提交回滚 / 未推送自愈 / 参数校验 / 同设备冲突）；`vitest run src/main/sync src/pwa` **68/68**；
+  `tsc main` / `tsc preload` / `tsc renderer` 三端 0 错误。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。
