@@ -25,10 +25,16 @@
   19. 服务端生成闭环（mock LLM：用户消息 → assistant 事件，turnId 对齐）；
   20. 断网重试幂等（重推 user 事件不二次生成）与上下文重放（历史注入）；
   21. turn_rewind 编辑语义（替换后分支重生成）+ 上下文裁剪保护 system prompt + 用量日志/密钥脱敏；
-  22. PWA 静态托管（wwwroot 存在时）：GET / 返回 HTML、sw.js no-cache、HTML 附 CSP。
+  22. PWA 静态托管（wwwroot 存在 / capabilities.pwa=true）：GET / 返回 HTML、sw.js no-cache、HTML 附 CSP；
+  23. 能力声明 GET /v1/capabilities（impl / 字段枚举 / pwa / generation；IKJN78）。
 
-运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
+运行：
+  python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]   # 本地 full profile（起真实实例，全量检查）
+  python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN [--profile core]
+                                                                # 远端/核心档：对任意 HTTP 形态跑同步核心 + 配对 + 能力声明
+                                                                # （跳过生成闭环/限流/环境注入类检查；本地 --profile core 亦可）
 """
+import argparse
 import http.server as http_server
 import json
 import os
@@ -41,6 +47,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -274,7 +281,310 @@ def oversized_push_probe(port, content_length=11 * 1024 * 1024):
         return data.decode("utf-8", "replace")
 
 
+def summarize():
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = len(results) - passed
+    print(f"\n{'='*50}\ncloud-server 同步冒烟汇总: {passed} passed / {failed} failed")
+    return 1 if failed else 0
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="cloud-server 同步冒烟（本地 full / 远端 core；IKJK2J / IKJK2K / IKJN78）")
+    parser.add_argument("dll", nargs="?", default=None, help="本地模式：cloud-server 发布产物 dll")
+    parser.add_argument("--base-url", dest="base_url", default=None,
+                        help="远端模式：已部署实例的 base URL（不再起本地实例）")
+    parser.add_argument("--master-token", dest="master_token", default=None,
+                        help="主控令牌（远端模式必填；本地模式默认 smoke-master）")
+    parser.add_argument("--profile", choices=["full", "core"], default=None,
+                        help="检查档位（默认：本地 full / 远端 core；core 跳过生成/限流/环境注入类检查）")
+    return parser.parse_args()
+
+
+def run_core_checks(base, master_token):
+    """核心档（IKJN78）：对任意 HTTP 形态跑协议 v0 同步核心 + 配对令牌 + 能力声明（+ PWA 静态）。
+
+    用于远端形态（CF / PHP / …）与本地 core profile；事件/会话 id 带运行前缀（对持久化实例可重复跑）。
+    不覆盖需实例环境注入的检查：生成闭环 / 限流阈值 / Host 白名单 / 日志脱敏 / Linux 权限 /
+    裸 socket 请求体上限探测（这些仅本地 full profile）。
+    """
+    BASE_HEADERS["Authorization"] = f"Bearer {master_token}"
+    run = str(int(time.time()))
+
+    def sess(name):
+        return f"s-{run}-{name}"
+
+    # 0. healthz + 能力声明
+    status, body, _ = http("GET", base + "/healthz", timeout=5)
+    check("healthz 就绪（核心档）", status == 200, f"{status} {body[:120]}")
+    status, body, _ = http("GET", base + "/v1/capabilities")
+    caps = json.loads(body) if status == 200 else {}
+    check("能力声明 /v1/capabilities（impl/sync/clone/cursor/generation/pairing/pwa/maxBatchBytes）",
+          status == 200 and isinstance(caps.get("impl"), str) and bool(caps.get("impl"))
+          and caps.get("sync") is True and caps.get("clone") is True
+          and caps.get("cursor") in ("server", "file-offset")
+          and caps.get("generation") in ("realtime", "inline", "none")
+          and isinstance(caps.get("pairing"), str) and isinstance(caps.get("pwa"), bool)
+          and isinstance(caps.get("maxBatchBytes"), int),
+          f"{status} {body[:200]}")
+
+    # 0b. PWA 静态托管（按能力声明）
+    if caps.get("pwa") is True:
+        status, _, headers = http("GET", base + "/")
+        check("PWA 静态托管：GET / 返回 HTML",
+              status == 200 and "text/html" in headers.get("Content-Type", ""), f"status={status}")
+        status, _, headers = http("GET", base + "/sw.js")
+        check("PWA 静态托管：sw.js no-cache",
+              status == 200 and headers.get("Cache-Control") == "no-cache",
+              f"status={status} cc={headers.get('Cache-Control')}")
+        status, _, headers = http("GET", base + "/index.html")
+        check("PWA 静态托管：HTML 附 CSP",
+              status == 200 and "default-src 'self'" in headers.get("Content-Security-Policy", ""),
+              f"csp={headers.get('Content-Security-Policy')}")
+    else:
+        print("[SKIP] PWA 静态托管（capabilities.pwa=false）")
+
+    # 1. push 幂等
+    batch = [
+        ev(f"{run}-a1", session_id=sess("1"), lamport=0, seq=0, typ="session.create",
+           payload={"title": "会话", "createdAt": "2026-10-04T03:00:00.000Z"}),
+        ev(f"{run}-a2", session_id=sess("1"), lamport=1, seq=1),
+        ev(f"{run}-a3", session_id=sess("1"), lamport=2, seq=2, payload={"role": "assistant", "text": "回复"}),
+    ]
+    status, body, _ = push(base, batch)
+    data = json.loads(body) if status == 200 else {}
+    check("push 首批 accepted=3", status == 200 and data.get("accepted") == 3 and data.get("duplicates") == 0, body[:200])
+    status, body, _ = push(base, batch)
+    data = json.loads(body) if status == 200 else {}
+    check("重复批幂等（accepted=0 / duplicates=3）",
+          status == 200 and data.get("accepted") == 0 and data.get("duplicates") == 3, body[:200])
+
+    # 2. 乱序批 + 分页
+    shuffled = [
+        ev(f"{run}-b3", session_id=sess("2"), device="dev-b", lamport=5, seq=2),
+        ev(f"{run}-b1", session_id=sess("2"), device="dev-b", lamport=3, seq=0),
+        ev(f"{run}-b2", session_id=sess("2"), device="dev-b", lamport=4, seq=1),
+    ]
+    status, body, _ = push(base, shuffled)
+    check("乱序批 accepted=3（服务端按协议 v0 规范序入库）",
+          status == 200 and json.loads(body).get("accepted") == 3, body[:200])
+    events, _ = fetch_all(base, limit=2)
+    whole, _ = fetch_all(base, limit=1000)
+    check("分页游标不重不漏（步进序 == 单次全量序）",
+          canonical_ids(events) == canonical_ids(whole), f"paged={len(events)} whole={len(whole)}")
+    run_ids = [item["eventId"] for item in events if item["eventId"].startswith(run + "-")]
+    check("插入序（run 内前三条 a1,a2,a3）",
+          run_ids[:3] == [f"{run}-a1", f"{run}-a2", f"{run}-a3"], str(run_ids[:5]))
+
+    # 2b. 批内重复 eventId
+    dup_batch = [
+        ev(f"{run}-d1", session_id=sess("6"), device="dev-d", lamport=1, seq=1),
+        ev(f"{run}-d1", session_id=sess("6"), device="dev-d", lamport=1, seq=1),
+        ev(f"{run}-d2", session_id=sess("6"), device="dev-d", lamport=2, seq=2),
+    ]
+    status, body, _ = push(base, dup_batch)
+    data = json.loads(body) if status == 200 else {}
+    check("批内重复 eventId（丢弃重复 → accepted=2 / duplicates=0）",
+          status == 200 and data.get("accepted") == 2 and data.get("duplicates") == 0, body[:200])
+
+    # 3. 两客户端并发
+    errors = []
+
+    def client(name, device):
+        for i in range(1, 6):
+            status, body, _ = push(base, [ev(f"{run}-{name}{i}", session_id=sess("3"), device=device, lamport=i, seq=i)])
+            if status != 200:
+                errors.append((name, i, status, body[:120]))
+
+    pre_concurrent = len(fetch_all(base)[0])
+    thread_a = threading.Thread(target=client, args=("ca", "dev-a"))
+    thread_b = threading.Thread(target=client, args=("cb", "dev-b"))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+    check("两客户端并发 push 全 200", not errors, str(errors)[:200])
+    view_a, _ = fetch_all(base)
+    view_b, _ = fetch_all(base)
+    run_ca = sum(1 for item in canonical_ids(view_a) if item.startswith(f"{run}-ca"))
+    run_cb = sum(1 for item in canonical_ids(view_a) if item.startswith(f"{run}-cb"))
+    check("并发后双端收敛一致（(lamport, deviceId, seq) 全序）",
+          canonical_ids(view_a) == canonical_ids(view_b) and len(view_a) == pre_concurrent + 10
+          and run_ca == 5 and run_cb == 5,
+          f"n={len(view_a)} ca={run_ca} cb={run_cb}")
+
+    # 4. 链校验
+    baseline = len(fetch_all(base)[0])
+    h1, h2, h3 = "a" * 64, "b" * 64, "c" * 64
+    status, body, _ = push(base, [ev(f"{run}-ch1", session_id=sess("4"), device="dev-c", lamport=1, seq=1, hashed=h1)])
+    check("链首（hash 无 prevHash）接受", status == 200, body[:160])
+    status, body, _ = push(base, [ev(f"{run}-ch2", session_id=sess("4"), device="dev-c", lamport=2, seq=2, prev=h1, hashed=h2)])
+    check("链续（prevHash=链尾）接受", status == 200, body[:160])
+    status, body, _ = push(base, [ev(f"{run}-bad1", session_id=sess("4"), device="dev-c", lamport=3, seq=3, prev=h3, hashed=h3)])
+    data = json.loads(body) if status == 400 else {}
+    check("坏 link → 400 E_SYNC_CHAIN",
+          status == 400 and data.get("code") == "E_SYNC_BATCH_REJECTED"
+          and any(e.get("code") == "E_SYNC_CHAIN" for e in data.get("errors", [])), body[:200])
+    status, body, _ = push(base, [ev(f"{run}-bad2", session_id=sess("4"), device="dev-c", lamport=4, seq=4, prev=h2)])
+    data = json.loads(body) if status == 400 else {}
+    check("半链（prevHash 无 hash）→ E_SYNC_CHAIN",
+          status == 400 and any(e.get("code") == "E_SYNC_CHAIN" for e in data.get("errors", [])), body[:200])
+    status, body, _ = push(base, [ev(f"{run}-bad3", session_id=sess("4"), device="dev-c", lamport=5, seq=2)])
+    data = json.loads(body) if status == 400 else {}
+    check("seq 非递增 → E_SYNC_SEQ",
+          status == 400 and any(e.get("code") == "E_SYNC_SEQ" for e in data.get("errors", [])), body[:200])
+    events, _ = fetch_all(base)
+    check("失败批整批回滚（总数不变）", len(events) == baseline + 2, f"n={len(events)} baseline={baseline}")
+
+    # 4b. 链拒绝 errors[].index = 物理行号
+    bad_first = [
+        ev(f"{run}-lb1", session_id=sess("9"), device="dev-e", lamport=9, seq=9, prev=h3, hashed=h3),
+        ev(f"{run}-lg1", session_id=sess("9"), device="dev-e", lamport=1, seq=1),
+        ev(f"{run}-lg2", session_id=sess("9"), device="dev-e", lamport=5, seq=5),
+    ]
+    status, body, _ = push(base, bad_first)
+    data = json.loads(body) if status == 400 else {}
+    check("链拒绝 errors[].index 指向物理行号（排序错位场景）",
+          status == 400 and data.get("code") == "E_SYNC_BATCH_REJECTED"
+          and [e.get("index") for e in data.get("errors", [])] == [0], body[:200])
+
+    # 5. 畸形批 + 半截尾行
+    status, body, _ = push(base, [ev(f"{run}-ok1"), "这不是 JSON", ev(f"{run}-ok2")])
+    data = json.loads(body) if status == 400 else {}
+    check("畸形批 → 400 E_SYNC_BATCH_INVALID",
+          status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID", body[:160])
+    half = ('{"eventId":"' + run + '-t1","sessionId":"' + sess("7") + '","type":"message.append","lamport":1,'
+            '"deviceId":"dev-t","seq":1,"ts":"2026-10-04T03:00:00.000Z","payl')
+    status, body, _ = http("POST", base + "/v1/sync/push", half)
+    data = json.loads(body) if status == 400 else {}
+    check("半截尾行 → 400 E_SYNC_BATCH_INVALID（truncatedTail）",
+          status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID" and data.get("truncatedTail") is True,
+          body[:160])
+
+    # 6. clone
+    status, clone_body, headers = http("GET", base + "/v1/sync/clone")
+    clone_ids = [json.loads(line)["eventId"] for line in clone_body.splitlines() if line.strip()]
+    events, cursor = fetch_all(base)
+    check("clone 全量 + X-Sync-Cursor 对齐",
+          status == 200 and len(clone_ids) == len(events) and headers.get("X-Sync-Cursor") == cursor,
+          f"clone={len(clone_ids)} fetch={len(events)} header={headers.get('X-Sync-Cursor')} cursor={cursor}")
+    check("clone 集合与 fetch 一致", set(clone_ids) == {item["eventId"] for item in events})
+
+    # 7. 会话过滤
+    status, body, _ = http("GET", base + f"/v1/sync/fetch?since=0&limit=200&sessionId={sess('2')}")
+    data = json.loads(body) if status == 200 else {}
+    check("fetch?sessionId= 过滤（只回本 run 的 3 条）",
+          status == 200 and len(data.get("events", [])) == 3
+          and all(item["sessionId"] == sess("2") for item in data.get("events", [])), body[:160])
+
+    # 8. 链过渡混用
+    status, body, _ = push(base, [ev(f"{run}-mix1", session_id=sess("5"), device="dev-c", lamport=1, seq=1, hashed=h1)])
+    mix1 = status == 200
+    status, body, _ = push(base, [ev(f"{run}-mix2", session_id=sess("5"), device="dev-c", lamport=2, seq=2)])
+    mix2 = status == 200
+    status, body, _ = push(base, [ev(f"{run}-mix3", session_id=sess("5"), device="dev-c", lamport=3, seq=3, prev=h1, hashed=h2)])
+    check("链过渡策略：未上链/已上链混用允许（链尾 = 最近已上链）", mix1 and mix2 and status == 200, body[:160])
+
+    # 9. 配对与设备令牌（HTTP 级；master 出码）
+    master = {"Authorization": f"Bearer {master_token}"}
+    status, body, _ = http("POST", base + "/v1/pair/code", headers=master)
+    code = json.loads(body).get("code", "") if status == 200 else ""
+    check("配对出码（master → 一次性配对码，格式 XXXX-XXXX）", status == 200 and len(code) == 9, body[:160])
+    redeem_body = json.dumps({"code": code, "deviceName": "烟测手机"}, ensure_ascii=False)
+    status, body, _ = http("POST", base + "/v1/pair", redeem_body, headers={"Content-Type": "application/json"})
+    data = json.loads(body) if status == 200 else {}
+    device_token = data.get("token", "")
+    device_id = data.get("deviceId", "")
+    check("配对兑换（device token 仅此一次回显）",
+          status == 200 and device_token.startswith("cyn_") and device_id.startswith("dev_"), body[:160])
+    status, body, _ = http("POST", base + "/v1/pair", redeem_body, headers={"Content-Type": "application/json"})
+    check("配对码一次性（二次兑换 400 E_PAIR_CODE）",
+          status == 400 and json.loads(body).get("code") == "E_PAIR_CODE", body[:160])
+    ok_dev = http("GET", base + "/v1/sync/fetch?since=0", headers={"Authorization": f"Bearer {device_token}"})[0] == 200
+    forged = http("GET", base + "/v1/sync/fetch?since=0", headers={"Authorization": "Bearer cyn_forged"})[0]
+    check("device token 可用 / 伪造 token 401", ok_dev and forged == 401, f"ok={ok_dev} forged={forged}")
+    status, body, _ = http("POST", base + f"/v1/devices/{device_id}/rotate",
+                           headers={"Authorization": f"Bearer {device_token}"})
+    new_token = json.loads(body).get("token", "") if status == 200 else ""
+    old_after = http("GET", base + "/v1/sync/fetch?since=0", headers={"Authorization": f"Bearer {device_token}"})[0]
+    new_ok = http("GET", base + "/v1/sync/fetch?since=0", headers={"Authorization": f"Bearer {new_token}"})[0]
+    check("轮换即时生效（旧 token 401 / 新 token 200）",
+          status == 200 and old_after == 401 and new_ok == 200, f"rotate={status} old={old_after} new={new_ok}")
+    status, body, _ = http("POST", base + f"/v1/devices/{device_id}/revoke",
+                           headers={"Authorization": f"Bearer {new_token}"})
+    revoked_after = http("GET", base + "/v1/sync/fetch?since=0", headers={"Authorization": f"Bearer {new_token}"})[0]
+    check("撤销即时生效（撤销后 401）", status == 200 and revoked_after == 401, f"revoke={status} after={revoked_after}")
+    status, body, _ = http("GET", base + "/v1/devices", headers=master)
+    devices = json.loads(body).get("devices", []) if status == 200 else []
+    check("设备列表（含撤销标记）",
+          status == 200 and any(d.get("deviceId") == device_id and d.get("revoked") for d in devices), body[:160])
+    status, body, _ = http("POST", base + "/v1/pair/code", headers=master)
+    code3 = json.loads(body).get("code", "") if status == 200 else ""
+    status, body, _ = http("POST", base + "/v1/pair",
+                           json.dumps({"code": code3, "deviceName": "a" * 63 + "😀"}, ensure_ascii=False),
+                           headers={"Content-Type": "application/json"})
+    data = json.loads(body) if status == 200 else {}
+    token3 = data.get("token", "")
+    check("设备名截断不切断代理对（63a+emoji → 63a）",
+          status == 200 and data.get("name") == "a" * 63, f"status={status} name={data.get('name')!r}")
+    cross_rotate = http("POST", base + f"/v1/devices/{device_id}/rotate",
+                        headers={"Authorization": f"Bearer {token3}"})[0]
+    cross_list = http("GET", base + "/v1/devices", headers={"Authorization": f"Bearer {token3}"})[0]
+    check("设备管理越权（他设备 rotate 403、清单仅 master 403）",
+          cross_rotate == 403 and cross_list == 403, f"rotate={cross_rotate} list={cross_list}")
+
+
 def main():
+    args = parse_args()
+    remote = bool(args.base_url)
+    profile = args.profile or ("core" if remote else "full")
+    master_token = args.master_token or MAIN_TOKEN
+
+    if remote or profile == "core":
+        # 核心档：对任意 HTTP 形态（远端或本地实例）跑同步核心 + 配对 + 能力声明
+        dll = os.path.abspath(args.dll) if args.dll else DLL
+        server = None
+        data_dir = None
+        log_file = None
+        if remote:
+            base = args.base_url.rstrip("/")
+            parsed = urllib.parse.urlparse(base)
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            print(f"[info] 远端模式 base={base}（跳过需本地进程/环境注入的检查）")
+        else:
+            if not os.path.exists(dll):
+                print(f"[FAIL] 未找到 {dll}，先 dotnet build dotnet/cloud-server -c Release")
+                return 1
+            data_dir = tempfile.mkdtemp(prefix="cloud-sync-core-")
+            env = dict(os.environ)
+            env["CYRENE_CLOUD_DATA"] = data_dir
+            env["Logging__LogLevel__Default"] = "Warning"
+            env["CLOUD_TOKEN"] = master_token
+            dotnet_home = os.path.expanduser("~/.dotnet")
+            if os.path.isdir(dotnet_home):
+                env["DOTNET_ROOT"] = dotnet_home
+                env["PATH"] = dotnet_home + os.pathsep + env.get("PATH", "")
+            log_path = os.path.join(data_dir, "server-out.log")
+            log_file = open(log_path, "w", encoding="utf-8", errors="replace")
+            try:
+                server, base, port = start_instance(dll, env, {}, log_handle=log_file)
+            except RuntimeError as exc:
+                log_file.close()
+                print(f"[FAIL] {exc}")
+                shutil.rmtree(data_dir, ignore_errors=True)
+                return 1
+        try:
+            run_core_checks(base, master_token)
+        finally:
+            if server is not None:
+                server.terminate()
+                try:
+                    server.wait(timeout=10)
+                except Exception:
+                    server.kill()
+                log_file.close()
+                shutil.rmtree(data_dir, ignore_errors=True)
+        return summarize()
+
     if not os.path.exists(DLL):
         print(f"[FAIL] 未找到 {DLL}，先 dotnet build dotnet/cloud-server -c Release")
         return 1
@@ -310,6 +620,22 @@ def main():
         print(f"  healthz: cursor={health.get('cursor')} rssMB={rss}")
         if isinstance(rss, (int, float)) and rss >= 300:
             print("  [WARN] RSS 超过参考阈值 300MB（不计入 failed；口径：进程硬上限 512M / VPS 总预算 2G，见 README）")
+
+        # 0. 能力声明（IKJN78；公开只读）
+        status, body, _ = http("GET", base + "/v1/capabilities")
+        caps = json.loads(body) if status == 200 else {}
+        check("能力声明 /v1/capabilities（impl/sync/clone/cursor/generation/pairing/pwa/maxBatchBytes）",
+              status == 200 and isinstance(caps.get("impl"), str) and bool(caps.get("impl"))
+              and caps.get("sync") is True and caps.get("clone") is True
+              and caps.get("cursor") in ("server", "file-offset")
+              and caps.get("generation") in ("realtime", "inline", "none")
+              and isinstance(caps.get("pairing"), str) and isinstance(caps.get("pwa"), bool)
+              and isinstance(caps.get("maxBatchBytes"), int),
+              f"{status} {body[:200]}")
+        check("能力声明：实例配置一致（无 LLM → generation=none；pwa 与 wwwroot 存在性一致）",
+              caps.get("generation") == "none"
+              and caps.get("pwa") == os.path.exists(os.path.join(os.path.dirname(DLL), "wwwroot")),
+              f"generation={caps.get('generation')} pwa={caps.get('pwa')}")
 
         # 1b. PWA 静态托管（wwwroot 随发布产物；未构建 PWA 时跳过）
         wwwroot_index = os.path.join(os.path.dirname(DLL), "wwwroot", "index.html")
@@ -741,6 +1067,9 @@ def main():
                 "Logging__LogLevel__Default": "Information",
             }, log_handle=dlg_handle)
             dlg = {"Authorization": "Bearer dlg-master"}
+            status, body, _ = http("GET", dlg_base + "/v1/capabilities")
+            check("能力声明：LLM 实例 generation=realtime",
+                  status == 200 and json.loads(body).get("generation") == "realtime", body[:160])
 
             def fetch_session(session_id):
                 status, body, _ = http(
@@ -853,10 +1182,7 @@ def main():
             print("\n".join(server_log.strip().splitlines()[-30:]))
         shutil.rmtree(data_dir, ignore_errors=True)
 
-    passed = sum(1 for _, ok, _ in results if ok)
-    failed = len(results) - passed
-    print(f"\n{'='*50}\ncloud-server 同步冒烟汇总: {passed} passed / {failed} failed")
-    return 1 if failed else 0
+    return summarize()
 
 
 if __name__ == "__main__":
