@@ -382,11 +382,15 @@
 - **配置**：`CLOUD_LLM_API_KEY`（启用开关）/ `CLOUD_LLM_MODEL`（默认 gpt-4o-mini）/ `CLOUD_LLM_BASE_URL`
   （OpenAI 兼容；显式字节体避免 chunked）/ `CLOUD_LLM_TIMEOUT_SECONDS` / `CLOUD_LLM_MAX_TOKENS` /
   `CLOUD_LLM_CONTEXT_CHARS` / `CLOUD_LLM_SYSTEM_PROMPT`（可选）。
-- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py` **41/41**
-  （mock LLM：生成闭环/turnId 对齐、断网重试不重复、上下文历史注入、编辑语义重生成、用量日志+脱敏）；
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py` **48/48**
+  （Windows；Linux 49，合并 K 后全量口径；mock LLM：生成闭环/turnId 对齐、断网重试不重复、上下文历史注入、编辑语义重生成、用量日志+脱敏）；
   连续两轮稳定；chunked 超限探针改「最小溢出（limit+1）」消除 Windows RST 抖动。
 - **#8 复审补丁（⛔ 2 阻断 + 2 改进，均已修复）**：① `TrimContext` 保护 system prompt（只丢最旧历史、
   至少保留最后一条待回复 user）；② `EventStore.Contains` → `ContainsAsync`（异步 + 取消，信号链完整）；
   ③ 队列改有界（10k，`TryWrite` 满载撤销去重标记 + 告警，不静默丢弃）；④ 长会话全量加载标注
-  Phase 2 窗口化 TODO。冒烟 **42/42**（新增：超预算裁剪保护 system prompt）。
+  Phase 2 窗口化 TODO。冒烟通过（合并 K 后全量 **48/48**；新增：超预算裁剪保护 system prompt）。
+- **#10 复审补丁（⚠️ 无阻断 + 4 改进，均已修复）**：① lamport/seq 改存储层水位查询
+  （`GetSessionWatermarkAsync`），与 Phase 2 窗口化解耦；② Publish 仅 user 消息/回退入队（过滤 assistant
+  同步的无效全量重放）；③ 文档测试计数统一为当前口径（Windows 48 / Linux 49）；④ 重试仅限可重试异常
+  （401/403/404 不重试，参数常量化）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2M。

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -23,6 +24,8 @@ namespace CyreneCloud.Dialog;
 public sealed class DialogLoop : BackgroundService
 {
     private const string ServerDeviceId = "server";
+    private const int MaxAttempts = 2;
+    private static readonly TimeSpan RetryBaseDelay = TimeSpan.FromSeconds(1);
 
     private readonly EventStore _store;
     private readonly ModelClient _model;
@@ -119,11 +122,10 @@ public sealed class DialogLoop : BackgroundService
         var completion = await CompleteWithRetryAsync(context, cancellationToken);
         if (completion is null || string.IsNullOrWhiteSpace(completion.Text)) return;
 
-        var lamport = events.Max(item => item.Lamport) + 1;
-        var seq = events.Where(item => item.DeviceId == ServerDeviceId)
-                        .Select(item => item.Seq)
-                        .DefaultIfEmpty(0)
-                        .Max() + 1;
+        // 水位从存储层聚合查询（不依赖内存快照：Phase 2 窗口化重放后依然正确）
+        var (maxLamport, maxSeq) = await _store.GetSessionWatermarkAsync(sessionId, ServerDeviceId, cancellationToken);
+        var lamport = maxLamport + 1;
+        var seq = maxSeq + 1;
         var generated = new SyncEventV0
         {
             EventId = assistantEventId,
@@ -150,7 +152,7 @@ public sealed class DialogLoop : BackgroundService
 
     private async Task<List<SyncEventV0>> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
     {
-        // TODO(Phase 2)：长会话窗口化重放——只加载最近 N 条事件即可构建上下文（Phase 1 全量可接受）
+        // TODO(Phase 2)：长会话窗口化重放——只加载最近 N 条事件即可构建上下文（水位/seq 已改 DB 聚合，窗口化安全）
         var all = new List<SyncEventV0>();
         long cursor = 0;
         while (true)
@@ -246,7 +248,7 @@ public sealed class DialogLoop : BackgroundService
     private async Task<ModelClient.Completion?> CompleteWithRetryAsync(
         List<ModelClient.ChatMessage> context, CancellationToken cancellationToken)
     {
-        for (var attempt = 1; attempt <= 2; attempt++)
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
             try
             {
@@ -260,12 +262,21 @@ public sealed class DialogLoop : BackgroundService
             {
                 throw;
             }
+            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized
+                or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
+            {
+                // 确定性配置错误（密钥/模型/地址）：重试无意义，等待人工修正
+                _logger.LogError(ex, "模型配置不可用（不重试）status={Status} model={Model}",
+                    (int?)ex.StatusCode, _model.ModelName);
+                return null;
+            }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "模型调用失败（第 {Attempt} 次）model={Model}", attempt, _model.ModelName);
-                if (attempt < 2)
+                _logger.LogWarning(ex, "模型调用失败（第 {Attempt}/{Max} 次）model={Model}",
+                    attempt, MaxAttempts, _model.ModelName);
+                if (attempt < MaxAttempts)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
+                    await Task.Delay(RetryBaseDelay * attempt, cancellationToken);
                 }
             }
         }

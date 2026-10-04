@@ -142,6 +142,6 @@ SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电
 
 ```bash
 dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
-python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌 + 生成闭环（41 项）
+python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌 + 生成闭环（Windows 48 / Linux 49 项）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
 ```

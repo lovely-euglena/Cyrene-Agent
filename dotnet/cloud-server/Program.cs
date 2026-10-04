@@ -272,9 +272,18 @@ sync.MapPost("/push", async (HttpContext context, EventStore store, DialogLoop d
     }
     if (outcome.Accepted > 0)
     {
-        // 新用户消息 / 回退 → 触发服务端生成（异步；幂等由 DialogLoop 事件 id 保证）
+        // 仅「user 新消息 / 回退」触发服务端生成（过滤其他设备同步的 assistant，避免无效全量重放；
+        // 幂等由 DialogLoop 事件 id 保证）
         dialog.Publish(batch.Events
-            .Where(item => item.Type is "message.append" or "turn_rewind")
+            .Where(item => item.Type switch
+            {
+                "turn_rewind" => true,
+                "message.append" => item.Payload.ValueKind == JsonValueKind.Object
+                    && item.Payload.TryGetProperty("role", out var role)
+                    && role.ValueKind == JsonValueKind.String
+                    && role.GetString() == "user",
+                _ => false,
+            })
             .Select(item => item.SessionId)
             .Distinct());
     }
