@@ -109,6 +109,8 @@ public sealed class EventStore
             var errors = new List<SyncReadError>();
             for (var index = 0; index < events.Count; index++)
             {
+                // 批内逐事件响应取消：中断即抛出 → 事务 Dispose 回滚；append-only 下断开后重复推送幂等无害
+                cancellationToken.ThrowIfCancellationRequested();
                 var syncEvent = events[index];
                 if (EventIdExists(connection, transaction, syncEvent.EventId))
                 {

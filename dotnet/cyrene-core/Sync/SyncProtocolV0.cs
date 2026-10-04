@@ -89,6 +89,7 @@ public static class SyncProtocolV0
                 result.DroppedDuplicates.Add(syncEvent.EventId);
                 continue;
             }
+            result.LineByEventId.TryAdd(syncEvent.EventId, i);
             result.Events.Add(syncEvent);
         }
 
@@ -275,6 +276,9 @@ public sealed class SyncReadResult
 
     /// <summary>因 EventId 重复被丢弃的事件（按出现序，可能重复出现同一 id）。</summary>
     public List<string> DroppedDuplicates { get; } = [];
+
+    /// <summary>eventId → 输入 0 基物理行号（首见；与 <see cref="SyncReadError.Index"/> 同一空间）。</summary>
+    public Dictionary<string, int> LineByEventId { get; } = new(StringComparer.Ordinal);
 
     /// <summary>末条非空行 JSON 不完整（半截批，建议从上一游标重拉）。</summary>
     public bool TruncatedTail { get; set; }
