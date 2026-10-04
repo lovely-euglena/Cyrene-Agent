@@ -378,6 +378,39 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
   });
 });
 
+describe("collectPlaintextKeys 边界（复审 P2-4③④）", () => {
+  it("perProvider[provider] 存在但 apiKey 为空 → 顶层 apiKey 仍入库（不被清痕丢失）", () => {
+    const hits = collectPlaintextKeys({
+      provider: "PA",
+      apiKey: "sk-top-only",
+      perProvider: { PA: { apiKey: "", model: "m" } },
+    }, null);
+    expect(hits.some((h) => h.vaultKey === "model:provider:PA" && h.value === "sk-top-only")).toBe(true);
+  });
+
+  it("perProvider[provider] 有非空 key → 顶层镜像不重复入库", () => {
+    const hits = collectPlaintextKeys({
+      provider: "PA",
+      apiKey: "sk-mirror",
+      perProvider: { PA: { apiKey: "sk-real" } },
+    }, null);
+    const pa = hits.filter((h) => h.vaultKey === "model:provider:PA");
+    expect(pa).toHaveLength(1);
+    expect(pa[0].value).toBe("sk-real");
+  });
+
+  it("PROVIDER_RENAMES 同步建槽（旧名 key 以新名入 vault，normalize 后可见）", () => {
+    const hits = collectPlaintextKeys({
+      provider: "DeepSeek",
+      apiKey: "",
+      perProvider: { "DeepSeek": { apiKey: "sk-ds" }, "MiniMax": { apiKey: "sk-mm" } },
+    }, null);
+    expect(hits.some((h) => h.vaultKey === "model:provider:DeepSeek（深度求索）" && h.value === "sk-ds")).toBe(true);
+    expect(hits.some((h) => h.vaultKey === "model:provider:MiniMax（稀宇科技）" && h.value === "sk-mm")).toBe(true);
+    expect(hits.some((h) => h.vaultKey.includes("DeepSeek") && !h.vaultKey.includes("深度求索"))).toBe(false);
+  });
+});
+
 describe("collectPlaintextKeys + migratePlaintextKeys（A4：import→校验→.bak→清空）", () => {
   it("收集→导入→源清空→.bak 存在→grep 无明文→幂等", async () => {
     reset();

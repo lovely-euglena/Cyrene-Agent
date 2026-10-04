@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveDotnetConfig } from "../dotnet-backend/config";
 import { activeSecretsClient, secretsDataDir } from "../dotnet-backend/secrets-client";
+import { renamedProvider } from "./provider-renames";
 
 // ── vault key 命名 ──
 
@@ -169,7 +170,9 @@ export async function initSecretsVault(
   if (!isVaultMode()) {
     if (!warnedFallback) {
       warnedFallback = true;
-      console.log("[secrets] vault 关闭（CYRENE_SECRETS_HOST=0）：密钥维持明文 JSON 存储");
+      // 复审 P2-4⑥：开关关闭不等于「明文仍可见」——已迁移过的 vault 不会被读取，
+      // 密钥不可见（重新开启恢复）；仅从未迁移的配置维持明文存储
+      console.log("[secrets] vault 关闭（CYRENE_SECRETS_HOST=0）：不读取 vault；若此前已迁移，密钥将不可见（重新开启恢复）");
     }
     return { mode: false, hostUp: false, migrated: 0, hydrated: false };
   }
@@ -283,7 +286,8 @@ export function collectPlaintextKeys(
     const perProvider = modelSettingsRaw.perProvider as Record<string, { apiKey?: unknown }> | undefined;
     if (perProvider && typeof perProvider === "object") {
       for (const [provider, entry] of Object.entries(perProvider)) {
-        push(`perProvider.${provider}`, vaultKeyForProvider(provider), entry?.apiKey);
+        // 复审 P2-4④：与 normalize 的 PROVIDER_RENAMES 同步建槽——否则重命名用户 key 迁移后查不到
+        push(`perProvider.${provider}`, vaultKeyForProvider(renamedProvider(provider)), entry?.apiKey);
       }
     }
     const profiles = modelSettingsRaw.modelProfiles as Array<{ id?: string; apiKey?: unknown }> | undefined;
@@ -293,12 +297,15 @@ export function collectPlaintextKeys(
       }
     }
     push("vision", VAULT_KEY_VISION, (modelSettingsRaw.vision as { apiKey?: unknown } | undefined)?.apiKey);
-    // 极老配置兜底（复审提示项）：仅顶层 apiKey（无 perProvider 命中）→ 按当前 provider 槽入库
+    // 极老配置兜底（复审 P2-4③）：顶层 apiKey 仅在当前 provider 槽无「非空」key 时入库——
+    // perProvider[provider] 存在但 apiKey 为空时顶层 key 也要保（否则被清痕丢失）
     const currentProvider = typeof modelSettingsRaw.provider === "string" ? modelSettingsRaw.provider : "";
-    const providerHit = currentProvider
-      && perProvider && typeof perProvider === "object" && perProvider[currentProvider];
-    if (currentProvider && !providerHit) {
-      push(`topLevel.${currentProvider}`, vaultKeyForProvider(currentProvider), modelSettingsRaw.apiKey);
+    const providerEntry = currentProvider && perProvider && typeof perProvider === "object"
+      ? perProvider[currentProvider]
+      : undefined;
+    const providerHasKey = typeof providerEntry?.apiKey === "string" && providerEntry.apiKey.trim() !== "";
+    if (currentProvider && !providerHasKey) {
+      push(`topLevel.${currentProvider}`, vaultKeyForProvider(renamedProvider(currentProvider)), modelSettingsRaw.apiKey);
     }
     // 顶层 apiKey 是 perProvider 镜像（有 perProvider 命中时不重复入库，清空即可）
   }
@@ -360,11 +367,20 @@ export async function migratePlaintextKeys(
   for (const [p, raw] of [[settingsJsonPath, modelRaw], [generalJsonPath, generalRaw]] as const) {
     if (!raw || !fs.existsSync(p)) continue;
     clearKeysInRaw(raw);
-    fs.copyFileSync(p, `${p}.pre-secrets.bak`);
+    const bakPath = `${p}.pre-secrets.bak`;
+    fs.copyFileSync(p, bakPath);
+    // 复审 P2-5：.bak 含全部明文 key——非 Windows 收紧 0600（规则 §2.5 落盘权限）
+    tightenFileMode(bakPath);
     fs.writeFileSync(p, JSON.stringify(raw, null, 2), "utf8");
   }
-  console.log(`[secrets] 迁移完成：${hits.length} 条明文 key 已入 vault，源 JSON 已清痕（.bak 保留）`);
+  console.log(`[secrets] 迁移完成：${hits.length} 条明文 key 已入 vault，源 JSON 已清痕（.bak 保留，权限 0600）`);
   return hits.length;
+}
+
+/** 非 Windows 平台把文件权限收紧至 0600（owner rw）；失败/Windows 静默跳过。 */
+function tightenFileMode(filePath: string): void {
+  if (process.platform === "win32") return;
+  try { fs.chmodSync(filePath, 0o600); } catch { /* 平台不支持：不阻断迁移 */ }
 }
 
 /** 原地清空 raw 对象里的全部 key 字段（顶层镜像 + 集合内条目）。 */

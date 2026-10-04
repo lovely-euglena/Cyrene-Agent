@@ -28,6 +28,7 @@ import {
 } from "../../shared/session-model";
 import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type SavedModelProfile } from "./model-catalog";
 import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
+import { renamedProvider } from "./provider-renames";
 
 /**
  * 统一模型配置入口：所有模块（包括 Code 模式）必须通过此函数读取。
@@ -86,23 +87,6 @@ export interface ProviderProfile {
 }
 
 /**
- * 厂商名变更映射：旧 providerName → 新 providerName。
- *
- * 触发时机：UI 上为了对齐"英文名（中文公司名）"格式重命名了 preset 后，
- * 已存盘的 model-settings.json 里 provider 字段（以及 perProvider 字典的键）
- * 仍是旧名；normalize 阶段做一次性迁移，把旧名的 perProvider 数据搬到新名下，
- * provider 字段也改写为新名。迁移后写盘一次即清除痕迹。
- *
- * 后续如果再次重命名，**只追加键值对**，不要删除老条目，避免回归。
- */
-const PROVIDER_RENAMES: Record<string, string> = {
-  "MiniMax": "MiniMax（稀宇科技）",
-  "DeepSeek": "DeepSeek（深度求索）",
-  "智谱 GLM": "GLM（智谱）",
-  "通义千问（DashScope）": "Qwen（通义千问）",
-};
-
-/**
  * 把 perProvider 字典 + currentProvider 字段一起套用 PROVIDER_RENAMES。
  * - 旧名 → 新名：直接搬数据；如果新名已存在数据，旧名的不覆盖（保护"已用新名存过"的情况）。
  * - 不在映射表里的键：原样保留。
@@ -113,7 +97,7 @@ function migrateProviderRenames(
 ): { provider: string; perProvider: Record<string, ProviderProfile> } {
   const next: Record<string, ProviderProfile> = {};
   for (const [key, value] of Object.entries(perProvider)) {
-    const newKey = PROVIDER_RENAMES[key] ?? key;
+    const newKey = renamedProvider(key);
     if (next[newKey]) {
       // 新名已经有数据（说明用户已经在新名下存过），旧名的本地副本保留为最近一次更新优先：
       // 这里取保守路线 → 不覆盖 next[newKey]，旧名直接丢弃。
@@ -125,7 +109,7 @@ function migrateProviderRenames(
     }
     next[newKey] = value;
   }
-  const newProvider = PROVIDER_RENAMES[currentProvider] ?? currentProvider;
+  const newProvider = renamedProvider(currentProvider);
   return { provider: newProvider, perProvider: next };
 }
 
@@ -253,7 +237,7 @@ function normalizeProviderProfile(
   input: Partial<ProviderProfile> | null | undefined,
   provider = DEFAULT_MODEL_SETTINGS.provider,
 ): ProviderProfile {
-  const normalizedProvider = PROVIDER_RENAMES[provider] ?? provider;
+  const normalizedProvider = renamedProvider(provider);
   const explicitTransport: ProviderProfile["explicitTransport"] =
     migrateLegacyExplicitTransport(input, normalizedProvider);
   const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
@@ -400,7 +384,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
   const modelProfiles: SavedModelProfile[] = hasPersistedProfiles
     ? input!.modelProfiles!.filter((item): item is SavedModelProfile => Boolean(item && typeof item === "object" && typeof item.id === "string" && typeof item.provider === "string"))
       .map((item) => {
-        const normalizedProvider = PROVIDER_RENAMES[item.provider] ?? item.provider;
+        const normalizedProvider = renamedProvider(item.provider);
         return { ...normalizeProviderProfile(item, normalizedProvider), id: item.id, provider: normalizedProvider };
       })
     : [];

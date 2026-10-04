@@ -214,7 +214,19 @@ st2 = (by_id.get("s8") or {}).get("data", {})
 check("status migrated=true", st2.get("migrated") is True, json.dumps(st2)[:150])
 check("delete removed=true", (by_id.get("s9") or {}).get("data", {}).get("removed") is True)
 check("删除后 get=None", (by_id.get("s10") or {}).get("data", {}).get("value") is None)
-check("vault 文件存在", os.path.isfile(os.path.join(sec_dir, "secrets-vault.json")))
+vault_path = os.path.join(sec_dir, "secrets-vault.json")
+check("vault 文件存在", os.path.isfile(vault_path))
+# 复审 P2-5：vault/.bak 落盘权限 0600（Windows 无 Unix mode，跳过）
+if os.name == "nt":
+    check("vault 文件权限 0600（Windows 跳过）", True)
+    check("vault .bak 权限 0600（Windows 跳过）", True)
+else:
+    import stat as _stat
+    _mode = _stat.S_IMODE(os.stat(vault_path).st_mode)
+    check("vault 文件权限 0600", _mode == 0o600, oct(_mode))
+    _bak = vault_path + ".bak"
+    _bmode = _stat.S_IMODE(os.stat(_bak).st_mode) if os.path.isfile(_bak) else None
+    check("vault .bak 权限 0600", _bmode == 0o600, oct(_bmode) if _bmode is not None else "missing")
 
 # ── 8. llm-host（Phase 2 / H1-H3：mock SSE 全链自测 + 作业库自测）──
 print("\n=== 8. llm-host ===")

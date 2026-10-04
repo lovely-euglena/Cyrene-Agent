@@ -97,7 +97,9 @@ public sealed class SecretVault
         var tmp = _filePath + ".tmp";
         var bak = _filePath + ".bak";
         File.WriteAllText(tmp, JsonSerializer.Serialize(vault, new JsonSerializerOptions { WriteIndented = true }));
+        TightenUnixMode(tmp); // 复审 P2-5：.tmp 也含密文条目，落盘即收紧（Windows no-op）
         if (File.Exists(_filePath)) File.Copy(_filePath, bak, overwrite: true);
+        TightenUnixMode(bak); // 复审 P2-5：.bak 同口径 0600
         File.Move(tmp, _filePath, overwrite: true);
         TightenUnixMode(_filePath); // vault 含密钥（加密态）：Unix 收紧 0600，Windows no-op（P1-9）
     }

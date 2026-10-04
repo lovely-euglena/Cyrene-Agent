@@ -7,7 +7,7 @@
 
 | 套件 | 覆盖 | 结果 |
 |---|---|---|
-| `scripts/dotnet-smoke-linux.py` | 八 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测 + **secrets-host vault 契约 10 项** + **llm-host 自测（作业库 10 项 + mock SSE 全链 12 项）**） | 37/37 |
+| `scripts/dotnet-smoke-linux.py` | 八 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测 + **secrets-host vault 契约 12 项 + vault/.bak 权限 0600 断言** + **llm-host 自测（作业库 19 项 + mock SSE 全链 41 项）**） | 39/39 |
 | `scripts/dotnet-edge-test.py` | 畸形帧/路径穿越/SQL 注入/1e308 权重/5MB payload/幽灵会话 | 13/13 |
 | `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 91/91 |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
@@ -20,7 +20,7 @@
 Agent 白名单只在自测验函数未接线（P0）、tool_result 生命周期断链、
 git commit 漏子命令、IPC argv 双传。
 
-## 七 host 进程地图（B3：独立启停，崩溃宿主监督重启）
+## 九 host 进程地图（B3：独立启停，崩溃宿主监督重启；另含原生窗口/分离托盘两形态）
 
 | Host | 入口 | 阶段 | 状态 |
 |---|---|---|---|

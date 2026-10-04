@@ -14,6 +14,18 @@
 > `src/main/llm-queue.ts`（现有后台限流队列，本设计接管其职责）。
 > 服务器版关联：决策 issue [IKJK2F](https://gitee.com/ygwill/cyrene-agent/issues/IKJK2F) ·
 > 里程碑 [#229292「云端昔涟：不落」](https://gitee.com/ygwill/cyrene-agent/milestones/229292)。
+>
+> **实施偏差注记（2026-10-05，复审后补）**：本稿为设计目标态，落地以 `LlmContracts.cs`
+> 冻结契约为准，已知偏差：
+> - 事件名：本稿 §4.2 的 `text_delta/thinking_delta/tool_call` 在实现中为
+>   `delta/reasoning_delta/tool_calls_delta`（对齐 OpenAI chunk 形态，契约两侧锁定）；
+> - **批合并未实现**：本稿 §4.2 的「上游 16–50ms 批合并 / ≥256 字符」未落地——.NET 逐
+>   事件落 ring，节流由 TS poll 侧 ~66ms 节奏承担（400 TPS 由 ring 缓冲摊平）；
+> - `truncated`：ring drop-oldest 不注入合成事件（保持绝对序号连续），改由 `llm.poll`
+>   帧的 `dropped/truncated` 字段告知增量缺口；
+> - cursor：实现为绝对序号 + 低于丢弃段时 clamp 到 base 补读（幂等，不重投）；
+> - 重试/超时：总时长 `timeoutMs`、idle `idleTimeoutMs`、`maxRetries` 均按帧透传生效
+>   （对齐 `model-retry-runner` 语义）；lane 并发 4/2/1 持槽至作业终态。
 
 ---
 
