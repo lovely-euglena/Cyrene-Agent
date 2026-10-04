@@ -149,7 +149,9 @@ describe("stripKeysForDisk（A2 清痕）", () => {
 });
 
 describe("maskModelSettingsForUi / maskGeneralSettingsForUi（A3）", () => {
-  it("model：key → '' + hasApiKey", () => {
+  it("model：vault 激活时 key → '' + hasApiKey", async () => {
+    reset();
+    await hydrateKeyring(); // 复审 P0：掩码门控 = isVaultActive（须已 hydrate）
     const masked = maskModelSettingsForUi({
       apiKey: "sk-x",
       perProvider: { P: { apiKey: "sk-y" } },
@@ -162,18 +164,36 @@ describe("maskModelSettingsForUi / maskGeneralSettingsForUi（A3）", () => {
     expect((masked.vision as Record<string, unknown>).apiKey).toBe("");
   });
 
-  it("空 key → hasApiKey=false", () => {
+  it("空 key → hasApiKey=false", async () => {
+    reset();
+    await hydrateKeyring();
     const masked = maskModelSettingsForUi({ apiKey: "" });
     expect(masked.apiKey).toBe("");
     expect(masked.hasApiKey).toBe(false);
   });
 
-  it("general：TTS/ASR 字段掩码 + has<Field>", () => {
+  it("复审 P0：宿主缺失（未 hydrate）不掩码——渲染端持明文，回传不会清盘", () => {
+    reset(); // 未 hydrate = vault 未激活（宿主缺失/迁移未发生）
+    const settings = { apiKey: "sk-plain", perProvider: { P: { apiKey: "sk-p" } } };
+    const masked = maskModelSettingsForUi(settings);
+    expect(masked).toBe(settings); // 原样返回（同一引用）
+    expect(masked.apiKey).toBe("sk-plain");
+  });
+
+  it("general：vault 激活时 TTS/ASR 字段掩码 + has<Field>", async () => {
+    reset();
+    await hydrateKeyring();
     const masked = maskGeneralSettingsForUi({ ttsMinimaxKey: "sk-t", asrMinimaxKey: "" });
     expect(masked.ttsMinimaxKey).toBe("");
     expect((masked as Record<string, unknown>).hasTtsMinimaxKey).toBe(true);
     expect((masked as Record<string, unknown>).hasAsrMinimaxKey).toBe(false);
     expect(SECRET_GENERAL_FIELDS.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("复审 P0：宿主缺失时 general 不掩码", () => {
+    reset();
+    const settings = { ttsMinimaxKey: "sk-plain" };
+    expect(maskGeneralSettingsForUi(settings).ttsMinimaxKey).toBe("sk-plain");
   });
 });
 

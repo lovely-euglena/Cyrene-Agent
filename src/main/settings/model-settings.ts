@@ -8,6 +8,7 @@ import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
 import {
   applyKeyringToModelSettings,
+  isPlaintextFallbackSave,
   isVaultActive,
   stripKeysForDisk,
   vaultifyModelSettingsForSave,
@@ -630,6 +631,45 @@ export function loadVisionConfig(from: ModelSettings = loadModelSettings()): Vis
 }
 
 /**
+ * 复审 P0（掩码-保存门控一致性）：迁移前宿主缺失（vault 模式未激活）时，陈旧掩码
+ * 载荷可能回传空 key。空串一律按「不改」处理——逐槽位用内存旧值回填，避免
+ * `normalizeProviderProfile` 把缺失 apiKey 补 "" 后覆盖写盘（永久丢钥）。
+ * 仅在此回退态生效；纯明文模式（vault 关闭）与 vault 激活态语义不变。
+ */
+function preserveKeysOnPlaintextFallback(incoming: Partial<ModelSettings>, existing: ModelSettings): void {
+  if (!isPlaintextFallbackSave()) return;
+  const keep = (target: Record<string, unknown>, field: string, oldValue: unknown): void => {
+    if (typeof target[field] === "string" && target[field].trim() === ""
+      && typeof oldValue === "string" && oldValue.trim() !== "") {
+      target[field] = oldValue;
+    }
+  };
+  const provider = (typeof incoming.provider === "string" && incoming.provider.trim()) || existing.provider;
+  keep(incoming as unknown as Record<string, unknown>, "apiKey",
+    existing.perProvider?.[provider]?.apiKey || existing.apiKey);
+  const per = incoming.perProvider;
+  if (per && typeof per === "object") {
+    for (const [name, entry] of Object.entries(per)) {
+      if (entry && typeof entry === "object") {
+        keep(entry as unknown as Record<string, unknown>, "apiKey", existing.perProvider?.[name]?.apiKey);
+      }
+    }
+  }
+  const profiles = incoming.modelProfiles;
+  if (Array.isArray(profiles)) {
+    for (const profile of profiles) {
+      if (profile && typeof profile === "object") {
+        const old = existing.modelProfiles?.find((item) => item.id === profile.id);
+        keep(profile as unknown as Record<string, unknown>, "apiKey", old?.apiKey);
+      }
+    }
+  }
+  if (incoming.vision && typeof incoming.vision === "object") {
+    keep(incoming.vision as unknown as Record<string, unknown>, "apiKey", existing.vision?.apiKey);
+  }
+}
+
+/**
  * 保存逻辑：
  *   - 渲染端发来的 settings 既可能带顶层 baseUrl/model/apiKey（旧调用方式），
  *     也可能带 perProvider（新调用方式，未来可扩展）。
@@ -640,6 +680,7 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   const existing = loadModelSettings();
   // vault 模式（A2/A3）：摘 ""（=不改）/ 处理 SENTINEL（=清除）/ 新值入 vault
   vaultifyModelSettingsForSave(settings as unknown as Record<string, unknown>);
+  preserveKeysOnPlaintextFallback(settings, existing);
   const merged: Partial<ModelSettings> = { ...existing, ...settings };
 
   // currentProvider 优先取传入的、再取已有的

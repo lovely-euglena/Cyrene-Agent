@@ -62,6 +62,15 @@ export function isVaultActive(): boolean {
   return isVaultMode() && hydrated;
 }
 
+/**
+ * 迁移前宿主缺失的明文回退态（复审 P0 门控一致性）：vault 模式开但未激活。
+ * 掩码与保存共用此判定——未激活不掩码（渲染端持明文，维持「迁移前回退明文」语义），
+ * 保存侧再把空串按「不改」处理（防陈旧掩码载荷覆盖写盘）。
+ */
+export function isPlaintextFallbackSave(): boolean {
+  return isVaultMode() && !isVaultActive();
+}
+
 /** hydrate 完成回调（复审 P0-6：先建的 settings 缓存原地回填用；避免循环 import）。 */
 const hydratedListeners: Array<() => void> = [];
 export function onKeyringHydrated(cb: () => void): void {
@@ -486,9 +495,13 @@ export function stripKeysForDisk<T>(settings: T): T {
 
 export interface KeyMask { hasKey: boolean }
 
-/** 掩码模型设置快照（vault 模式专用；非 vault 模式维持明文展示不变）。 */
+/**
+ * 掩码模型设置快照（vault 模式专用；非 vault 模式维持明文展示不变）。
+ * 复审 P0 门控一致性：仅 vault 实际可用（isVaultActive）时掩码——宿主缺失（迁移
+ * 未发生）时不掩码，否则渲染端整包回传掩码空串会覆盖写盘明文 key（永久丢钥）。
+ */
 export function maskModelSettingsForUi<T>(settings: T): T {
-  if (!isVaultMode()) return settings;
+  if (!isVaultActive()) return settings;
   const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
   const mask = (obj: Record<string, unknown>, field = "apiKey"): void => {
     const v = obj[field];
@@ -504,9 +517,9 @@ export function maskModelSettingsForUi<T>(settings: T): T {
   return copy as T;
 }
 
-/** 掩码 general 设置快照（TTS/ASR key → "" + has<Field> 布尔）。 */
+/** 掩码 general 设置快照（TTS/ASR key → "" + has<Field> 布尔）。同 model：仅 vault 激活时掩码。 */
 export function maskGeneralSettingsForUi<T>(settings: T): T {
-  if (!isVaultMode()) return settings;
+  if (!isVaultActive()) return settings;
   const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
   for (const field of SECRET_GENERAL_FIELDS) {
     const v = copy[field.jsonField];

@@ -37,7 +37,9 @@ import type { SkillModeOverrides } from "../skills/types";
 import { normalizeLspServerOverrides } from "../lsp/server-catalog";
 import {
   applyKeyringToGeneralSettings,
+  isPlaintextFallbackSave,
   isVaultActive,
+  SECRET_GENERAL_FIELDS,
   stripKeysForDisk,
   vaultifyGeneralSettingsForSave,
 } from "./secrets-keyring";
@@ -596,6 +598,17 @@ export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralS
   const before = loadGeneralSettings();
   // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化
   vaultifyGeneralSettingsForSave(partial as unknown as Record<string, unknown>);
+  // 复审 P0（掩码-保存门控一致性）：迁移前宿主缺失时，陈旧掩码空串按「不改」保旧明文 key
+  if (isPlaintextFallbackSave()) {
+    const incoming = partial as unknown as Record<string, unknown>;
+    const existing = before as unknown as Record<string, unknown>;
+    for (const field of SECRET_GENERAL_FIELDS) {
+      if (typeof incoming[field.jsonField] === "string" && (incoming[field.jsonField] as string).trim() === ""
+        && typeof existing[field.jsonField] === "string" && (existing[field.jsonField] as string).trim() !== "") {
+        incoming[field.jsonField] = existing[field.jsonField];
+      }
+    }
+  }
   const normalized = normalizeGeneralSettings({ ...before, ...partial });
   // 复审 P0-7：normalize 归一空串后按 keyring 回填（SENTINEL 已删槽不复活）
   if (isVaultActive()) applyKeyringToGeneralSettings(normalized as unknown as Record<string, unknown>);
