@@ -150,6 +150,7 @@ CI：`dotnet-backend` 工作流同时跑 C# 契约自测与 TS vitest（双端�
 ## 7. 开放项（后续批次）
 
 - **哈希链**（Q3）：`prevHash` / `hash` 的组织方式与必填时机在 IKJK2J 定稿后收紧；
-- **HTTP 细节**：push/fetch/clone、游标推进、错误码到 HTTP 状态映射（IKJK2I/J）；
+- **HTTP 细节**：push/fetch/clone 已由 IKJK2J 落定（`dotnet/cloud-server/README.md`：JSONL push、
+  插入序游标、`X-Sync-Cursor`）；客户端接入面（IKJK2I）沿用；错误码到 HTTP 映射见该 README。
 - **类型扩展策略**：Phase 2 新增 `memory.*` / `mood.shift` 等按 v0.x 修订 + 增补 fixtures；
 - **附件 / 工具条目同步范围**：由 IKJK2I 导出器决定过滤边界。

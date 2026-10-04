@@ -311,3 +311,24 @@
 - **PR #4 复审（第 1 轮，无阻断 2 改进）当批修复**：`dotnet-smoke.ps1` 读流改先后异步再
   限时等待（超时保护生效 + stderr 观察）；P/Invoke 白名单校验进洁净断言。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2G（服务端复用的前置）。
+
+## 2026-10-04 增量：IKJK2H / IKJK2J——同步协议 v0 与 cloud-server（云端昔涟 Phase 1）
+
+- **IKJK2H（契约层）**：事件信封 + 四类事件（message.append / session.create / turn_rewind /
+  tombstone）定稿于 `docs/specs/2026-10-04-sync-protocol-v0.md`；JSON Schema + 11 组共享
+  fixtures，TS（`src/main/sync`）与 C#（`cyrene-core/Sync`）双端读取器/校验器跑同一套向量。
+  **Q1 拍板（按 RFC 建议，可回退）**：compaction checkpoint 不外同步；presentation patch
+  随事件携带。**读取语义**：半截尾行修剪（truncatedTail）、eventId 幂等去重、
+  `(lamport, deviceId, seq)` 稳定全序。
+- **IKJK2J（服务端）**：`dotnet/cloud-server`（ASP.NET Core Minimal API + SQLite WAL）——
+  插入序游标 + JSONL push（整批原子）/ fetch / clone（NDJSON + `X-Sync-Cursor`）。
+  **链校验过渡策略（Q3 部分落定）**：per-(sessionId, deviceId) 链接，hash=已上链标记
+  （有链尾 ⇒ prevHash 必须等链尾；无链尾 ⇒ 必须缺省）；未上链事件缺省 prevHash（过渡期混用）；
+  同对 seq 严格递增；**内容哈希重算待 Q3 定稿**。
+  **安全过渡**：默认绑 127.0.0.1；`CLOUD_TOKEN` 非空时 /v1/* 需 Bearer（K 之前最小门闩）。
+  **容器**：Dockerfile + compose（mem_limit 512m、healthcheck、restart、日志上限 10m×3）+
+  Caddyfile.example；本机无 Docker，镜像/编排未实测（Linux 侧首跑）。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；
+  `scripts/dotnet-cloud-sync-test.py` 18/18（幂等/乱序/分页/双客户端并发收敛/链拒绝与
+  整批回滚/畸形批/clone 游标对齐）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2H、#IKJK2J。

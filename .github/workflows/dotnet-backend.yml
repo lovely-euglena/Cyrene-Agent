@@ -37,6 +37,10 @@ jobs:
       - name: sync-protocol v0 契约（C# 读取器跑共享 fixtures）
         run: |
           dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-protocol fixtures/sync-protocol/cases
+      - name: Build cloud-server + 同步收敛冒烟（并发 push/fetch）
+        run: |
+          dotnet build dotnet/cloud-server -c Release
+          python3 scripts/dotnet-cloud-sync-test.py
       - uses: actions/setup-node@v4
         with:
           node-version: 24
