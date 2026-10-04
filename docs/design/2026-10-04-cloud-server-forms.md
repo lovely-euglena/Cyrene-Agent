@@ -1,7 +1,7 @@
 # 服务端四形态与能力声明 · 设计（IKJN70 / IKJN78）
 
 > **日期**：2026-10-04
-> **状态**：能力声明与一致性套件已实现（IKJN78）；CF / Git / PHP 按 IKJN79 / IKJN7B / IKJN7C 推进
+> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，PR 待合并）；Git 版适配器已实现（IKJN7B，PR 待合并）；PHP 版已实现并通过本地验收（IKJN7C）
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（不变式 / Q8）· 总决策 IKJN70 ·
 > CF spike IKJN3W · 桌面端同步客户端 IKJK2I · PWA IKJK2L · 完整版运维 IKJK2N
 
@@ -71,14 +71,25 @@
   强制推送后回退全量重读；
 - push = commit + push；合并 = eventId 幂等 + 规范序并集；无生成 / 无 PWA。
 
-### 4.4 PHP 版（IKJN7C）
+### 4.4 PHP 版（IKJN7C，已实现）
 
-- 单文件/小套件实现 L1+L2；MySQL 自增序 = 服务端游标；
-- 生成：push 内联尽力（`max_execution_time` 内），失败挂起 + 可选 cron 排空 + 桌面兜底；
-- 便携 PHP 环境本地验证（无真实空间）。
+- `php/cloud-server/`：单套件实现 L1+L2（零依赖：PDO SQLite + 手写路由/静态托管）；
+  协议读取器与 TS / C# 跑同一组 fixtures（tests/run.php **11/11**）；
+- 鉴权 = device token（配对/撤销/轮换）+ 主控令牌；SQLite 固定窗口限流；域名白名单；
+- 生成降级（inline）：push 内联尽力（`max_execution_time` 预算内），超时/失败挂起 `dialog_pending`，
+  可选 cron 排空（`bin/drain.php`）+ 桌面兜底；`CLOUD_LLM_MODE=echo` 回声 mock；
+- 静态资产：`public/` 同空间托管（缓存头 / CSP 与 .NET / CF 口径一致）；Apache `.htaccess` 模板；
+- 虚拟主机约束：数据目录可写且不进 webroot；clone 逐行输出（低内存）；配置走 env / config.local.php。
 
 ## 5. 验证（IKJN78 批次，Windows 本地）
 
 - 本地 full 云冒烟：**54/54**（含 3 项能力声明检查）；
 - 核心档（本地实例）：**35/35**；远端核心档与本地核心档同一函数（CF 批次将直接对部署实例跑）；
 - PWA 单测：**39/39**（含能力解析/降级 6 项）；e2e（Edge 通道）：**11/11**（含能力声明检查）。
+
+### IKJN7C 批次（PHP 空间版）
+
+- PHP 单测 **40/40**（含 11 个共享 fixtures：协议读取器与 TS / C# 逐字段一致）；
+- 核心档（生成关闭）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**（持久实例可重复跑）；
+- .NET 本地 e2e 回归 **11/11**；e2e 脚本顺带修复：seed 事件 id 唯一化 + `data-session-id` 精确定位 +
+  生成断言接受 `inline`（PHP 形态）。

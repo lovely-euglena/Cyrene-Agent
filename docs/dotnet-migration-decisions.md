@@ -453,3 +453,18 @@
 - **验证（Windows 本地）**：本地 full 云冒烟 **54/54**（含 3 项能力声明）；核心档 **35/35**；
   PWA 单测 **39/39**（含能力解析/降级 6 项）；e2e **11/11**（Edge 通道）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN70 / #IKJN78。
+
+## 2026-10-04 增量：PHP 空间版服务端（IKJN7C）
+
+- **实现**：`php/cloud-server/`（零依赖：PDO SQLite + 手写路由/静态托管）；协议读取器 PHP 移植，
+  与 TS / C# 跑同一组 fixtures（11/11）；端点与 .NET 版逐项对齐（healthz / capabilities(impl=php-shared) /
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)，SQLite 自增序游标）。
+- **生成降级（inline）**：push 内联尽力（`max_execution_time` 预算内），超时/失败挂起 `dialog_pending`；
+  `bin/drain.php`（cron）重试；桌面端在线兜底；`CLOUD_LLM_MODE=echo` 回声 mock。
+- **虚拟主机适配**：`public/` 为站点根（`.htaccess` 模板）；`data/` 可写且 deny 直读；clone 逐行输出低内存；
+  配置走环境变量或 `config.local.php`。
+- **e2e 脚本修复（共享工具）**：seed 事件 id 唯一化（持久实例可重复跑）+ `data-session-id` 精确定位 +
+  生成断言接受 `inline`（PHP 形态）。
+- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **40/40**；核心档（生成关）**35/35**；
+  鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；.NET 本地 e2e 回归 **11/11**。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。
