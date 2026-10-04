@@ -93,13 +93,13 @@ def push(base, lines):
     return http("POST", base + "/v1/sync/push", "\n".join(lines))
 
 
-def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=8 * 1024):
+def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=16 * 1024):
     """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。
 
     Windows 上服务端拒绝后关闭连接可能发 RST、丢掉已回写的 413（已知抖动，服务端每次正确）；
-    用小 chunk 降低「超限后在途字节数」，客户端侧再由调用方重试兜底。
+    16KB chunk（介于原 64KB 与最小 8KB 之间）降低在途字节数，兼顾 CI 耗时，客户端侧再由调用方重试兜底。
     """
-    with socket.create_connection(("127.0.0.1", port), timeout=15) as sock:
+    with socket.create_connection(("127.0.0.1", port), timeout=30) as sock:
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{port}\r\n"

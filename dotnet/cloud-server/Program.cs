@@ -46,6 +46,8 @@ builder.Services.AddSingleton(new EventStore(dbPath));
 builder.Services.AddSingleton(new AuthStore(dbPath, pairTtl));
 
 var masterToken = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
+// 主控令牌字节预转换（鉴权热路径不重复分配；比较后临时数组清零）
+var masterTokenBytes = string.IsNullOrEmpty(masterToken) ? null : Encoding.UTF8.GetBytes(masterToken);
 var allowedHosts = (Environment.GetEnvironmentVariable("CLOUD_ALLOWED_HOSTS") ?? "")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -118,7 +120,7 @@ app.Use(async (context, next) =>
         string? principal = null;
         if (!string.IsNullOrEmpty(token))
         {
-            if (!string.IsNullOrEmpty(masterToken) && TokenEquals(token, masterToken))
+            if (masterTokenBytes is not null && TokenEquals(masterTokenBytes, token))
             {
                 principal = "master";
             }
@@ -141,7 +143,7 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.MapGet("/healthz", (EventStore store) =>
+app.MapGet("/healthz", (EventStore store, AuthStore auth) =>
 {
     using var process = Process.GetCurrentProcess();
     return Results.Json(new
@@ -149,7 +151,7 @@ app.MapGet("/healthz", (EventStore store) =>
         status = "ok",
         rssMB = Math.Round(process.WorkingSet64 / 1024.0 / 1024.0, 1),
         cursor = store.CurrentCursor(), // O(1)：替代全表 COUNT(*)
-        devices = authStore.CountActiveDevices(), // O(1)：COUNT 聚合，不物化整表
+        devices = auth.CountActiveDevices(), // O(1)：COUNT 聚合，不物化整表
     });
 });
 
@@ -330,8 +332,19 @@ static bool CanManageDevice(HttpContext context, string deviceId)
         || (principal is not null && string.Equals(principal, deviceId, StringComparison.Ordinal));
 }
 
-static bool TokenEquals(string left, string right) =>
-    CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(left), Encoding.UTF8.GetBytes(right));
+// 定长比较（防时序侧信道）；临时字节数组用后即清零，主控令牌字节启动时预转换缓存
+static bool TokenEquals(ReadOnlySpan<byte> expected, string actual)
+{
+    var actualBytes = Encoding.UTF8.GetBytes(actual);
+    try
+    {
+        return CryptographicOperations.FixedTimeEquals(expected, actualBytes);
+    }
+    finally
+    {
+        CryptographicOperations.ZeroMemory(actualBytes);
+    }
+}
 
 static int ReadIntEnv(string name, int fallback) =>
     int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value > 0 ? value : fallback;
