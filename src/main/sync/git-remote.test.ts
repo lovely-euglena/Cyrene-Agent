@@ -1,9 +1,9 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import simpleGit from "simple-git";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { GitRepoRemote, mergeSyncEvents } from "./git-remote";
+import { GitRemoteError, GitRepoRemote, mergeSyncEvents } from "./git-remote";
 import type { SyncEventV0 } from "./sync-protocol";
 
 const TIMEOUT = 30_000;
@@ -207,4 +207,179 @@ describe("GitRepoRemote（IKJN7B）", () => {
     expect(merged.map((event) => event.eventId)).toEqual(["m2", "m1", "m3"]);
     expect(merged.find((event) => event.eventId === "m1")?.deviceId).toBe("dev-a");
   });
+
+  it("参数校验：非法 deviceId / remoteUrl / branch 直接拒绝", () => {
+    const base = { dir: path.join(root, "validate"), author: { name: "tester", email: "tester@example.com" } };
+    expect(() => new GitRepoRemote({ ...base, deviceId: "bad id" })).toThrow(GitRemoteError);
+    expect(() => new GitRepoRemote({ ...base, deviceId: "ok", remoteUrl: "-u./evil" })).toThrow(GitRemoteError);
+    expect(() => new GitRepoRemote({ ...base, deviceId: "ok", remoteUrl: "ftp://host/repo.git" })).toThrow(GitRemoteError);
+    expect(() => new GitRepoRemote({ ...base, deviceId: "ok", branch: "-x" })).toThrow(GitRemoteError);
+    expect(() => new GitRepoRemote({ ...base, deviceId: "ok", branch: "feat..x" })).toThrow(GitRemoteError);
+    expect(() => new GitRepoRemote({ ...base, deviceId: "ok", branch: "x.lock" })).toThrow(GitRemoteError);
+    expect(() => new GitRepoRemote({ ...base, deviceId: "ok", timeoutMs: 0 })).toThrow(GitRemoteError);
+  });
+
+  it(".gitattributes 已有但缺规则：自动追加（git 视作不做行尾转换）", async () => {
+    const dir = path.join(root, "attr2");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, ".gitattributes"), "*.md text\n", "utf8");
+    const local = new GitRepoRemote({
+      dir,
+      deviceId: "attr2-a",
+      author: { name: "tester", email: "tester@example.com" },
+    });
+    await local.init();
+    const content = readFileSync(path.join(dir, ".gitattributes"), "utf8");
+    expect(content).toContain("*.md text");
+    expect(content).toContain("*.jsonl -text");
+    const attr = await simpleGit({ baseDir: dir }).raw(["check-attr", "text", "--", "events-attr2-a.jsonl"]);
+    expect(attr).toContain("unset");
+  }, TIMEOUT);
+
+  it("init 失败：错误消息脱敏（不含 remoteUrl 及其变形）", async () => {
+    const missing = path.join(root, "missing", "repo.git").replace(/\\/g, "/");
+    const adapter = new GitRepoRemote({
+      dir: path.join(root, "sanitize"),
+      deviceId: "sanitize-a",
+      remoteUrl: missing,
+      author: { name: "tester", email: "tester@example.com" },
+    });
+    let error: unknown = null;
+    try {
+      await adapter.init();
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(GitRemoteError);
+    const message = (error as Error).message;
+    expect(message).not.toContain(missing);
+    expect(message).not.toContain("missing");
+    expect(message).toContain("<remote>");
+  }, TIMEOUT);
+
+  it("commit 失败：回滚本次追加（文件 + 暂存区），解除故障后重试成功", async () => {
+    const remote = await newRemote("rollback");
+    const a = adapter("rollback", "rollback-a", remote);
+    await a.init();
+    const aGit = simpleGit({ baseDir: path.join(root, "rollback") });
+    await aGit.raw(["config", "commit.gpgsign", "true"]); // 注入提交失败（无签名密钥/程序）
+    let code = "";
+    try {
+      await a.push([ev("rb1", "rollback-a", 1, 1)]);
+    } catch (error) {
+      code = (error as GitRemoteError).code;
+    }
+    expect(code).toBe("git");
+    const shardPath = path.join(root, "rollback", "events-rollback-a.jsonl");
+    const content = existsSync(shardPath) ? readFileSync(shardPath, "utf8") : "";
+    expect(content).not.toContain("rb1");
+    expect((await aGit.raw(["status", "--porcelain"])).trim()).toBe("");
+    await aGit.raw(["config", "commit.gpgsign", "false"]);
+    const retry = await a.push([ev("rb1", "rollback-a", 1, 1)]);
+    expect(retry.appended).toBe(1);
+    expect(retry.pushed).toBe(true);
+  }, TIMEOUT);
+
+  it("push 失败后同批重试自愈：未推送提交补推（无新事件）", async () => {
+    const remote = await newRemote("healpush");
+    const a = adapter("healpush", "healpush-a", remote);
+    await a.init();
+    const aGit = simpleGit({ baseDir: path.join(root, "healpush") });
+    await aGit.raw(["remote", "set-url", "origin", path.join(root, "bad", "missing.git").replace(/\\/g, "/")]);
+    let failed = false;
+    try {
+      await a.push([ev("hp1", "healpush-a", 1, 1)]);
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    expect(readFileSync(path.join(root, "healpush", "events-healpush-a.jsonl"), "utf8")).toContain("hp1");
+    await aGit.raw(["remote", "set-url", "origin", remote]);
+    const healed = await a.push([ev("hp1", "healpush-a", 1, 1)]); // 同批重试：无新事件 → 自愈补推
+    expect(healed.appended).toBe(0);
+    expect(healed.pushed).toBe(true);
+    const b = adapter("healpush-b", "healpush-b", remote);
+    await b.init();
+    const fetched = await b.fetch({});
+    expect(fetched.events.map((event) => event.eventId)).toContain("hp1");
+  }, TIMEOUT);
+
+  it("文件收缩：offset 越界 → 全量重读", async () => {
+    const remote = await newRemote("shrink");
+    const a = adapter("shrink-a", "shrink-a", remote);
+    const b = adapter("shrink-b", "shrink-b", remote);
+    await a.init();
+    await b.init();
+    await a.push([ev("sh1", "shrink-a", 1, 1), ev("sh2", "shrink-a", 2, 2), ev("sh3", "shrink-a", 3, 3)]);
+    const bFirst = await b.fetch({});
+    expect(bFirst.events.map((event) => event.eventId)).toEqual(["sh1", "sh2", "sh3"]);
+    const shardPath = path.join(root, "shrink-a", "events-shrink-a.jsonl");
+    writeFileSync(shardPath, JSON.stringify(ev("sh1", "shrink-a", 1, 1)) + "\n");
+    const aGit = simpleGit({ baseDir: path.join(root, "shrink-a") });
+    await aGit.raw([...IDENTITY, "commit", "-a", "-m", "shrink"]);
+    await aGit.raw(["push", "origin", "main"]);
+    const bAfter = await b.fetch(bFirst.state);
+    expect(bAfter.reread).toContain("shrink-a");
+    expect(bAfter.events.map((event) => event.eventId)).toEqual(["sh1"]);
+  }, TIMEOUT);
+
+  it("append 自愈：半截尾行被修剪后再追加", async () => {
+    const remote = await newRemote("trim");
+    const a = adapter("trim-a", "trim-a", remote);
+    await a.init();
+    await a.push([ev("t1", "trim-a", 1, 1)]);
+    const shardPath = path.join(root, "trim-a", "events-trim-a.jsonl");
+    appendFileSync(shardPath, '{"eventId":"t2","broken'); // 模拟写入中断
+    const outcome = await a.push([ev("t3", "trim-a", 3, 3)]);
+    expect(outcome.appended).toBe(1);
+    const content = readFileSync(shardPath, "utf8");
+    expect(content).not.toContain("broken");
+    expect(content).toContain('"t1"');
+    expect(content).toContain('"t3"');
+    expect(content.endsWith("\n")).toBe(true);
+  }, TIMEOUT);
+
+  it("坏行上报：index 为分片物理行号（fetch 与 clone 同口径）", async () => {
+    const remote = await newRemote("badline");
+    const a = adapter("badline-a", "badline-a", remote);
+    await a.init();
+    const shardPath = path.join(root, "badline-a", "events-badline-a.jsonl");
+    writeFileSync(
+      shardPath,
+      [JSON.stringify(ev("g1", "badline-a", 1, 1)), "{not-json", JSON.stringify(ev("g2", "badline-a", 2, 2))].join("\n") + "\n",
+    );
+    const aGit = simpleGit({ baseDir: path.join(root, "badline-a") });
+    await aGit.raw([...IDENTITY, "add", "--", "events-badline-a.jsonl"]);
+    await aGit.raw([...IDENTITY, "commit", "-m", "badline"]);
+    await aGit.raw(["push", "origin", "main"]);
+    const b = adapter("badline-b", "badline-b", remote);
+    await b.init();
+    const fetched = await b.fetch({});
+    expect(fetched.events.map((event) => event.eventId)).toEqual(["g1", "g2"]);
+    expect(fetched.errors).toEqual([{ deviceId: "badline-a", index: 1, code: "E_SYNC_BAD_JSON" }]);
+    const cloned = await b.clone();
+    expect(cloned.errors).toEqual([{ deviceId: "badline-a", index: 1, code: "E_SYNC_BAD_JSON" }]);
+  }, TIMEOUT);
+
+  it("同设备双副本：分片分叉 push 冲突 → 保守中止（rebase 已回滚，不 force）", async () => {
+    const remote = await newRemote("conflict");
+    const a1 = adapter("conflict-a1", "conflict-a", remote);
+    const a2 = adapter("conflict-a2", "conflict-a", remote);
+    await a1.init();
+    await a2.init();
+    await a1.push([ev("c1", "conflict-a", 1, 1)]);
+    await a2.fetch({});
+    await a1.push([ev("c2", "conflict-a", 2, 2)]);
+    let code = "";
+    try {
+      await a2.push([ev("c2b", "conflict-a", 2, 2)]);
+    } catch (error) {
+      code = (error as GitRemoteError).code;
+    }
+    expect(code).toBe("conflict");
+    const a2Git = simpleGit({ baseDir: path.join(root, "conflict-a2") });
+    expect((await a2Git.raw(["status", "--porcelain"])).trim()).toBe("");
+    expect(existsSync(path.join(root, "conflict-a2", ".git", "rebase-merge"))).toBe(false);
+    expect(existsSync(path.join(root, "conflict-a2", ".git", "rebase-apply"))).toBe(false);
+  }, TIMEOUT);
 });
