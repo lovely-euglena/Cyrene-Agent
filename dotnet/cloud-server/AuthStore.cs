@@ -26,11 +26,15 @@ public sealed class AuthStore
     {
         _dbPath = Path.GetFullPath(dbPath);
         var dir = Path.GetDirectoryName(_dbPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+            StorageHardening.TryHardenDirectory(_dbPath); // 目录 0700：须先于首次打开 DB
+        }
         _connectionString = new SqliteConnectionStringBuilder { DataSource = _dbPath, Pooling = true }.ToString();
         _pairTtl = pairTtl;
         Initialize();
-        StorageHardening.TryHarden(_dbPath);
+        StorageHardening.TryHardenFiles(_dbPath); // DB/-wal/-shm 0600：Initialize 后才存在
     }
 
     /// <summary>设备信息（token 永不外泄；Revoked = 撤销标记，撤销即时生效）。</summary>
@@ -72,7 +76,11 @@ public sealed class AuthStore
         var code = NormalizeCode(rawCode);
         if (code is null) return new RedeemResult(false, "E_PAIR_CODE");
         var name = string.IsNullOrWhiteSpace(deviceName) ? "未命名设备" : deviceName.Trim();
-        if (name.Length > 64) name = name[..64];
+        if (name.Length > 64)
+        {
+            name = name[..64];
+            if (char.IsHighSurrogate(name[^1])) name = name[..^1]; // 不切断代理对（emoji 等）
+        }
 
         var now = DateTimeOffset.UtcNow;
         var deviceId = "dev_" + RandomHex(6);
@@ -163,6 +171,15 @@ public sealed class AuthStore
         return devices;
     }
 
+    /// <summary>活跃设备计数（healthz 用；COUNT 聚合，不物化整表）。</summary>
+    public int CountActiveDevices()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
     /// <summary>撤销设备；已撤销视为幂等成功，不存在返回 false。</summary>
     public bool Revoke(string deviceId)
     {
@@ -179,7 +196,8 @@ public sealed class AuthStore
         return exists.ExecuteScalar() is not null;
     }
 
-    /// <summary>轮换 token（旧 token 立即失效）；不存在或已撤销返回 (false, null)。</summary>
+    /// <summary>轮换 token（旧 token 立即失效）；不存在或已撤销返回 (false, null)。
+    /// 注意：并发 rotate 可能都返回成功，但仅最后写入的 token 有效（v1 无乐观锁，边缘情况可接受）。</summary>
     public (bool Ok, string? Token) Rotate(string deviceId)
     {
         var token = "cyn_" + Base64Url(RandomNumberGenerator.GetBytes(32));
