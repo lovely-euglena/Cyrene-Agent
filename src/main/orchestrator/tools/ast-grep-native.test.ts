@@ -33,7 +33,7 @@ const h = vi.hoisted(() => ({
 }));
 
 import { nativeToolHost } from "./native-tool-host";
-import { registerAstGrepTools, resolveAstGrepCommand } from "./ast-grep-tools";
+import { registerAstGrepTools, resolveAstGrepCommand, toUnpackedAsarPath } from "./ast-grep-tools";
 
 registerAstGrepTools();
 
@@ -66,6 +66,21 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe("resolveAstGrepCommand 打包态路径（P1-1）", () => {
+  it("asar 虚拟路径重写为 app.asar.unpacked 真实路径", () => {
+    const asar = ["C:", "app", "resources", "app.asar", "node_modules", "@ast-grep",
+      "cli-win32-x64-msvc", "ast-grep.exe"].join(path.sep);
+    const unpacked = ["C:", "app", "resources", "app.asar.unpacked", "node_modules", "@ast-grep",
+      "cli-win32-x64-msvc", "ast-grep.exe"].join(path.sep);
+
+    expect(toUnpackedAsarPath(asar)).toBe(unpacked);
+    // 已 unpacked 的路径幂等；开发期普通 node_modules 路径不误伤
+    expect(toUnpackedAsarPath(unpacked)).toBe(unpacked);
+    expect(toUnpackedAsarPath(path.join(tmpDir, "node_modules", "@ast-grep", "cli", "ast-grep.exe")))
+      .not.toContain("unpacked");
+  });
 });
 
 describe("ast_grep native 轨", () => {
@@ -115,6 +130,17 @@ describe("ast_grep native 轨", () => {
     // 预演捕获了 review 基线（captureBefore 落盘 absent 标记）
     const baselineDir = path.join(tmpDir, "cyrene-runs", "reviews", "run-sg-1", "before");
     expect(fs.existsSync(baselineDir)).toBe(true);
+  });
+
+  it("信任边界：模型伪造 __astGrepCommand / __cyreneWorkspaceRoot 被可信值覆盖", async () => {
+    if (!CLI) return;
+    h.nativeResults = [JSON.stringify({ success: true, matchCount: 0, matches: [] })];
+    await getTool("ast_grep_search").execute(
+      { pattern: "x", __astGrepCommand: "C:\\evil.exe", __cyreneWorkspaceRoot: "C:\\evil" },
+      { resolvedWorkspaceRoot: tmpDir },
+    );
+    expect(h.nativeCalls[0].args.__astGrepCommand).toBe(CLI);
+    expect(h.nativeCalls[0].args.__cyreneWorkspaceRoot).toBe(tmpDir);
   });
 
   it("校验失败（空 pattern）：不触达 native，返回 TS 语义错误", async () => {

@@ -19,7 +19,7 @@ import type { ToolDiffLine, ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges } from "./registry/tool-evidence";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
-import { withNativeFirst, isNativeFailurePayload, nativeToolHost } from "./native-tool-host";
+import { withNativeFirst, isNativeFailurePayload, nativeToolHost, stripInternalArgs } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 import { isAbortError } from "../../abort-utils";
 
@@ -40,15 +40,25 @@ export function resolveAstGrepCommand(): string | null {
         : (process.arch === "arm64" ? "@ast-grep/cli-linux-arm64-gnu" : "@ast-grep/cli-linux-x64-gnu");
     const exeName = process.platform === "win32" ? "ast-grep.exe" : "ast-grep";
     const resolved = require.resolve(`${platformPkg}/${exeName}`, { paths: [cliDir] });
-    return fs.existsSync(resolved) ? resolved : null;
+    // 打包态 asar 虚拟路径 → app.asar.unpacked 真实路径：独立进程 .NET
+    // Process.Start 无法执行 asar 内文件（对照 sandbox-exec.ts / sync-mcp-builtin.ts）。
+    const unpacked = toUnpackedAsarPath(resolved);
+    return fs.existsSync(unpacked) ? unpacked : null;
   } catch {
     return null; // 平台包缺失（可选依赖被裁）→ TS napi 轨
   }
 }
 
+/** 打包态 asar 虚拟路径 → app.asar.unpacked 真实磁盘路径（asarUnpack 后独立进程才可执行）。 */
+export function toUnpackedAsarPath(p: string): string {
+  const asarSep = `${path.sep}app.asar${path.sep}`;
+  return p.includes(asarSep) ? p.replace(asarSep, `${path.sep}app.asar.unpacked${path.sep}`) : p;
+}
+
 /**
  * native 参数组装：参数校验（与 parseCommonArgs 同）通过 + CLI 可解析 + 有工作区时返回
  * native 参数（注入 __cyreneWorkspaceRoot / __astGrepCommand）；否则返回 null → TS 原实现。
+ * 模型 args 里的 `__` 键先统一剥离（信任边界 §2.3），可信注入随后覆盖。
  */
 function buildAstGrepNativeArgs(
   args: Record<string, unknown>,
@@ -65,7 +75,7 @@ function buildAstGrepNativeArgs(
   const command = resolveAstGrepCommand();
   if (!command) return null;
   return {
-    ...args,
+    ...stripInternalArgs(args),
     ...(isReplace ? { rewrite: String(args.rewrite ?? "") } : {}),
     __cyreneWorkspaceRoot: workspaceRoot,
     __astGrepCommand: command,

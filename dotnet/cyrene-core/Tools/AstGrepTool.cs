@@ -306,10 +306,11 @@ internal static class AstGrepTool
 
     private static bool IsWithinWorkspace(string absPath, string workspaceRoot)
     {
+        // 口径与 SearchTools.cs / TS isWithinWorkspace 一致（Ordinal，不做大小写折叠）
         var root = Path.GetFullPath(workspaceRoot);
         var resolved = Path.GetFullPath(absPath);
-        return string.Equals(resolved, root, StringComparison.OrdinalIgnoreCase)
-            || resolved.StartsWith(root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(resolved, root, StringComparison.Ordinal)
+            || resolved.StartsWith(root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     private static string ToDisplayPath(string relPath)
@@ -346,13 +347,17 @@ internal static class AstGrepTool
         foreach (var f in files) psi.ArgumentList.Add(f.AbsPath);
 
         using var proc = Process.Start(psi) ?? throw new ToolHostException("E_AST_GREP_CLI", "ast-grep 启动失败");
-        var stdout = proc.StandardOutput.ReadToEnd();
-        var stderr = proc.StandardError.ReadToEnd();
+        // 双流并发读取 + 超时前置（对照 GitTools.RunGit）：顺序读取时超时不可达，
+        // 且 stderr 写满管道缓冲会死锁；超时按进程树 Kill 防孙进程孤儿化。
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
         if (!proc.WaitForExit(CliTimeoutMs))
         {
-            try { proc.Kill(true); } catch { /* 已退出 */ }
+            try { proc.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
             throw new ToolHostException("E_AST_GREP_TIMEOUT", "ast-grep 执行超时");
         }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         // exit 1 = 无匹配（ast-grep 约定，stdout 空）；stderr 非空/异常退出 → 抛错误帧回退 TS
         if (stderr.Trim().Length > 0 || proc.ExitCode is not (0 or 1))
             throw new ToolHostException("E_AST_GREP_CLI", "ast-grep 执行失败: " + stderr.Trim());
