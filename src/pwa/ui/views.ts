@@ -112,7 +112,7 @@ export function renderSessions(root: HTMLElement, props: SessionsProps): void {
 // ── 聊天 ──
 
 export interface ChatHandle {
-  update(turns: readonly Turn[], offline: boolean, status: string): void;
+  update(turns: readonly Turn[], offline: boolean, status: string, showPending: boolean): void;
   setError(message: string | null): void;
   setSending(sending: boolean): void;
 }
@@ -156,7 +156,7 @@ export function mountChat(root: HTMLElement, props: ChatProps): ChatHandle {
   const nearBottom = (): boolean =>
     messages.scrollHeight - messages.scrollTop - messages.clientHeight < 120;
 
-  const renderMessages = (turns: readonly Turn[]): void => {
+  const renderMessages = (turns: readonly Turn[], showPending: boolean): void => {
     const stick = nearBottom();
     messages.replaceChildren();
     for (const turn of turns) {
@@ -166,17 +166,17 @@ export function mountChat(root: HTMLElement, props: ChatProps): ChatHandle {
       }
     }
     const last = turns[turns.length - 1];
-    if (last && last.assistants.length === 0) {
+    if (showPending && last && last.assistants.length === 0) {
       messages.append(el("div", { class: "msg msg-assistant pending", "data-testid": "pending" }, el("div", { class: "bubble" }, "……")));
     }
     if (stick) messages.scrollTop = messages.scrollHeight;
   };
 
   return {
-    update(turns, offline, statusText) {
+    update(turns, offline, statusText, showPending) {
       setHidden(banner, !offline);
       status.textContent = statusText;
-      renderMessages(turns);
+      renderMessages(turns, showPending);
     },
     setError(message) {
       error.textContent = message ?? "";

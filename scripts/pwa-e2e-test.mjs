@@ -8,7 +8,10 @@
  * 前置：
  *   ① 构建 PWA：npm --prefix src/pwa run build（产物进 dotnet/cloud-server/wwwroot）；
  *   ② 发布 cloud-server：dotnet publish dotnet/cloud-server -c Release -o artifacts/cyrene-cloud（wwwroot 随产物）。
- * 运行：node scripts/pwa-e2e-test.mjs [发布产物 dll 路径]
+ * 运行：
+ *   node scripts/pwa-e2e-test.mjs [发布产物 dll 路径]                      # 本地（起服务 + mock LLM，断言生成回复）
+ *   node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN      # 远端（不 spawn；默认不断言生成回复）
+ *   node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN --expect-echo   # 远端且部署接了回声 mock
  */
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
@@ -19,11 +22,32 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DLL = process.argv[2]
-  ? resolve(process.argv[2])
-  : join(REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll");
-const MASTER_TOKEN = "pwa-e2e-master";
-const SESSION_ID = "sess-desktop";
+const ARGV = process.argv.slice(2);
+
+function argValue(name) {
+  const index = ARGV.indexOf(name);
+  return index >= 0 ? ARGV[index + 1] : undefined;
+}
+
+const BASE_URL_ARG = argValue("--base-url");
+const MASTER_TOKEN_ARG = argValue("--master-token");
+/** 远端默认不断言生成回复文本（需部署接回声 mock 时用 --expect-echo 显式开启）。 */
+const EXPECT_ECHO = ARGV.includes("--expect-echo") || !BASE_URL_ARG;
+const DLL = (() => {
+  const valueFlags = new Set(["--base-url", "--master-token"]);
+  for (let index = 0; index < ARGV.length; index++) {
+    const item = ARGV[index];
+    if (valueFlags.has(item)) {
+      index++;
+      continue;
+    }
+    if (item.startsWith("--")) continue;
+    return resolve(item);
+  }
+  return join(REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll");
+})();
+const MASTER_TOKEN = MASTER_TOKEN_ARG ?? "pwa-e2e-master";
+const SESSION_ID = `sess-desktop-${Math.floor(Date.now() / 1000)}`;
 
 const results = [];
 function check(name, ok, detail = "") {
@@ -200,6 +224,21 @@ async function runBrowser(base) {
       `status=${sw.status()} cc=${sw.headers()["cache-control"]}`,
     );
 
+    // 能力声明（公开只读；驱动生成回复断言是否可用）
+    const capsResponse = await context.request.get(`${base}/v1/capabilities`);
+    let caps = {};
+    try {
+      caps = await capsResponse.json();
+    } catch {
+      // 老服务端：按兼容默认（不断言生成）
+    }
+    check(
+      "能力声明 /v1/capabilities（generation 字段）",
+      capsResponse.status() === 200 && ["realtime", "inline", "none"].includes(caps.generation),
+      `status=${capsResponse.status()} generation=${caps.generation}`,
+    );
+    const echoExpected = EXPECT_ECHO && caps.generation === "realtime";
+
     // 配对登录
     check("登录页渲染", await page.getByTestId("pair-code").isVisible());
     const codeResponse = await httpJson("POST", `${base}/v1/pair/code`, undefined, {
@@ -217,14 +256,23 @@ async function runBrowser(base) {
     await sessionItem.click();
     await page.getByTestId("messages").getByText("桌面说：你好", { exact: true }).waitFor({ timeout: 10000 });
     check("打开会话看到桌面消息（桌面已离线）", true);
-    await page.getByTestId("messages").getByText("回声：桌面说：你好", { exact: true }).waitFor({ timeout: 15000 });
-    check("看到服务端对桌面消息的生成回复", true);
+    if (echoExpected) {
+      await page.getByTestId("messages").getByText("回声：桌面说：你好", { exact: true }).waitFor({ timeout: 15000 });
+      check("看到服务端对桌面消息的生成回复", true);
+    } else {
+      console.log("[SKIP] 桌面消息生成回复断言（远端未接回声 mock / generation != realtime）");
+    }
 
     // 手机发送 → 服务端生成回复（轮询可见）
     await page.getByTestId("chat-input").fill("手机说：在吗");
     await page.getByTestId("send").click();
-    await page.getByTestId("messages").getByText("回声：手机说：在吗", { exact: true }).waitFor({ timeout: 20000 });
-    check("手机发送文字并收到回复", true);
+    await page.getByTestId("messages").getByText("手机说：在吗", { exact: true }).waitFor({ timeout: 10000 });
+    if (echoExpected) {
+      await page.getByTestId("messages").getByText("回声：手机说：在吗", { exact: true }).waitFor({ timeout: 20000 });
+      check("手机发送文字并收到回复", true);
+    } else {
+      check("手机发送文字（乐观渲染；远端未断言生成回复）", true);
+    }
 
     // 刷新后登录态保持
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -249,24 +297,36 @@ async function runBrowser(base) {
 }
 
 async function main() {
-  const wwwrootIndex = join(dirname(DLL), "wwwroot", "index.html");
-  if (!existsSync(DLL)) {
-    console.error(`找不到 cloud-server 产物：${DLL}`);
-    process.exit(2);
-  }
-  if (!existsSync(wwwrootIndex)) {
-    console.error(`找不到 PWA 产物：${wwwrootIndex}\n先 npm --prefix src/pwa run build 并重新发布 cloud-server`);
-    process.exit(2);
+  const remote = Boolean(BASE_URL_ARG);
+  if (!remote) {
+    const wwwrootIndex = join(dirname(DLL), "wwwroot", "index.html");
+    if (!existsSync(DLL)) {
+      console.error(`找不到 cloud-server 产物：${DLL}`);
+      process.exit(2);
+    }
+    if (!existsSync(wwwrootIndex)) {
+      console.error(`找不到 PWA 产物：${wwwrootIndex}\n先 npm --prefix src/pwa run build 并重新发布 cloud-server`);
+      process.exit(2);
+    }
   }
 
-  const dataDir = mkdtempSync(join(tmpdir(), "cyrene-pwa-e2e-"));
-  const llm = await startMockLlm();
-  const port = await freePort();
+  let dataDir = null;
+  let llm = null;
   let server = null;
+  let base = null;
   try {
-    server = await startServer(dataDir, llm.port, port);
-    await seedDesktopSession(server.base);
-    await runBrowser(server.base);
+    if (remote) {
+      base = BASE_URL_ARG.replace(/\/+$/, "");
+      console.log(`[info] 远端模式 base=${base}（不 spawn 服务；生成回复断言默认关闭）`);
+    } else {
+      dataDir = mkdtempSync(join(tmpdir(), "cyrene-pwa-e2e-"));
+      llm = await startMockLlm();
+      const port = await freePort();
+      server = await startServer(dataDir, llm.port, port);
+      base = server.base;
+    }
+    await seedDesktopSession(base);
+    await runBrowser(base);
   } catch (error) {
     check(`执行异常：${error instanceof Error ? error.message : String(error)}`, false);
     if (server) {
@@ -284,11 +344,13 @@ async function main() {
         setTimeout(resolveExit, 5000);
       });
     }
-    llm.server.close();
-    try {
-      rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    } catch {
-      // Windows 下 SQLite 句柄释放可能滞后：临时目录清理失败不影响冒烟结果
+    llm?.server.close();
+    if (dataDir) {
+      try {
+        rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch {
+        // Windows 下 SQLite 句柄释放可能滞后：临时目录清理失败不影响冒烟结果
+      }
     }
   }
 
