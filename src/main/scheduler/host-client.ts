@@ -246,8 +246,7 @@ export function createSchedulerHostClient(): SchedulerHostClient {
     request,
     send,
     getTasks,
-    refreshTasks: refreshSnapshot,
-    onChanged: (cb) => {
+    refreshTasks: refreshSnapshot,    onChanged: (cb) => {
       changedListeners.add(cb);
       return () => changedListeners.delete(cb);
     },
@@ -271,4 +270,15 @@ export function createSchedulerHostClient(): SchedulerHostClient {
       rejectPending(new Error("scheduler host client disposed"));
     },
   };
+}
+
+/**
+ * TS 模式（开关关闭）下的保险（IKJK51）：通知托盘停用其调度，
+ * 防止「登录项残留 + CYRENE_SCHEDULER_HOST 关闭」造成双调度。
+ */
+export function disarmSchedulerHost(): void {
+  const link = acquireTrayPipeLink();
+  void link.connect().then((ok) => {
+    if (ok) link.send({ op: "sched.mode", enabled: false });
+  }).catch(() => undefined);
 }

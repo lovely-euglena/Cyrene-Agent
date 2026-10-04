@@ -27,7 +27,8 @@ export function resolveTrayLoginItemOptions(userDataPath: string): TrayLoginItem
       typeof import("../windows/native-windows-host");
     const trayPath = resolveNativeWindowsExe();
     if (!trayPath) return undefined;
-    return { trayPath, trayArgs: ["--tray", "--data-dir", userDataPath] };
+    // --scheduler：托盘启用常驻调度（无此标志仅托盘 UI；见 sched.mode 协商）
+    return { trayPath, trayArgs: ["--tray", "--scheduler", "--data-dir", userDataPath] };
   } catch {
     return undefined;
   }

@@ -117,8 +117,13 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
     start: () => {
       if (mode === "host") {
         void client.ensureConnected().then((ok) => {
-          if (ok) syncPluginState();
-          else promote("scheduler host unavailable at start");
+          if (ok) {
+            // 协商：托盘调度启用（手动起的托盘可能未带 --scheduler）
+            client.send("sched.mode", { enabled: true });
+            syncPluginState();
+          } else {
+            promote("scheduler host unavailable at start");
+          }
         });
       } else {
         localEngine?.start();
@@ -185,6 +190,8 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
   const offConn = client.onConnectionChange((connected) => {
     if (!connected) return;
     if (mode === "local") demote("scheduler host recovered");
+    // 重连/接管后重申启用（托盘可能刚重启且未带 --scheduler）
+    client.send("sched.mode", { enabled: true });
     syncPluginState();
   });
 

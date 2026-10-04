@@ -136,7 +136,7 @@ import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
 import { createSchedulerSubsystem, type SchedulerSubsystem } from "../scheduler/bootstrap";
 import { createSchedulerActions } from "../scheduler/scheduler-actions";
-import { createSchedulerHostClient } from "../scheduler/host-client";
+import { createSchedulerHostClient, disarmSchedulerHost } from "../scheduler/host-client";
 import { resolveDotnetConfig } from "../dotnet-backend/config";
 import { isTrayPipeAvailable } from "../tray-pipe";
 import { headlessScheduledArgs } from "../scheduler/headless-args";
@@ -1993,6 +1993,10 @@ createTray: (input) => {
           : null;
         if (schedulerHostEnabled && !schedulerHostClient) {
           console.warn("[scheduler] CYRENE_SCHEDULER_HOST=1 但托盘管道不可用——回退 TS scheduler");
+        }
+        if (!schedulerHostClient && isTrayPipeAvailable()) {
+          // 开关关闭但托盘在跑（登录项残留等）：停用托盘调度，避免双调度
+          disarmSchedulerHost();
         }
         const subsystem = createSchedulerSubsystem({
           agentRuntime: runtime,

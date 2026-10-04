@@ -79,6 +79,7 @@ Electron → Tray：
 | `sched.history` | `{taskId, limit}` | `{entries:[…]}` |
 | `sched.report` | `{entry}`（同 id 覆盖，running→终态） | — |
 | `sched.plugin-state` | `{running:{pluginId:bool}}` | — |
+| `sched.mode` | `{enabled}`（托盘调度启用/停用协商） | — |
 
 Tray → Electron：
 - `{op:"event", name:"sched.fire", data:{taskId, scheduledFireAt}}`（到点；在线时）
