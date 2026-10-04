@@ -362,4 +362,7 @@
 - **#9 复审补丁（⛔ 1 阻断 + 1 改进，均已修复）**：① 设备管理端点补 principal 校验——`GET /v1/devices`
   仅 master；rotate/revoke = master 任意 / device 仅自身，越权 403（`E_FORBIDDEN`），冒烟含反向断言；
   ② healthz 设备计数改 `COUNT(*)` 聚合（O(1)，不再物化整表）。
+- **#9 二轮复审补丁（⚠️ 无阻断 + 4 改进，均已修复）**：① master token 字节预转换缓存、比较后临时数组
+  `ZeroMemory`；② healthz 改 DI 注入（去闭包，风格统一）；③ `Rotate` 标注并发语义（仅最后写入 token 有效）；
+  ④ chunked 探针 16KB chunk / timeout 30s 平衡 CI 耗时与 Windows RST 抖动。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。

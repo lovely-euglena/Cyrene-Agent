@@ -196,7 +196,8 @@ public sealed class AuthStore
         return exists.ExecuteScalar() is not null;
     }
 
-    /// <summary>轮换 token（旧 token 立即失效）；不存在或已撤销返回 (false, null)。</summary>
+    /// <summary>轮换 token（旧 token 立即失效）；不存在或已撤销返回 (false, null)。
+    /// 注意：并发 rotate 可能都返回成功，但仅最后写入的 token 有效（v1 无乐观锁，边缘情况可接受）。</summary>
     public (bool Ok, string? Token) Rotate(string deviceId)
     {
         var token = "cyn_" + Base64Url(RandomNumberGenerator.GetBytes(32));
