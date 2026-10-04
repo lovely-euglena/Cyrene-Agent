@@ -1,4 +1,4 @@
-# CF 版服务端（IKJN79）：类型检查 + 单测 + 本地 wrangler dev 核心档 + PWA e2e（Gitee Go 兼容 GitHub Actions 语法）
+# CF 版服务端（IKJN79）：类型检查 + 单测 + 本地 wrangler dev 核心档 + PWA e2e + 限流低阈值断言（Gitee Go 兼容 GitHub Actions 语法）
 name: cf-worker
 on:
   push:
@@ -7,35 +7,72 @@ on:
   pull_request:
     paths: ['cloudflare/**', 'src/main/sync/**', 'src/pwa/**', 'scripts/dotnet-cloud-sync-test.py', 'scripts/pwa-e2e-test.mjs']
 
+permissions:
+  contents: read
+
 jobs:
   cf-worker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: 依赖（worker / PWA / 根 Playwright）
+      - name: 依赖（worker / PWA / 根（pnpm 锁定））
         run: |
           cd cloudflare/cloud-server && npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
           cd ../../src/pwa && npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
-          cd ../.. && (npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com || npm install --no-audit --no-fund --registry=https://registry.npmmirror.com)
-      - name: 类型检查 + 单测
+          cd ../.. && pnpm install --frozen-lockfile
+      - name: 类型检查 + 单测（含限流固定窗口）
         run: |
           cd cloudflare/cloud-server
           npm run check
           npm test
       - name: 本地 wrangler dev + 核心档 + PWA e2e
         run: |
+          set -e
           cd cloudflare/cloud-server
           npm run assets:build
           printf 'CLOUD_TOKEN=smoke-master\nCLOUD_LLM_MODE=echo\n' > .dev.vars
           npx wrangler dev --port 8787 --ip 127.0.0.1 > /tmp/wrangler.log 2>&1 &
+          WRANGLER_PID=$!
+          trap 'kill $WRANGLER_PID 2>/dev/null || true' EXIT
+          ready=0
           for i in $(seq 1 120); do
-            curl -fsS http://127.0.0.1:8787/v1/capabilities > /dev/null 2>&1 && break
+            if curl -fsS http://127.0.0.1:8787/v1/capabilities > /dev/null 2>&1; then ready=1; break; fi
             sleep 1
           done
+          if [ "$ready" != "1" ]; then
+            echo "wrangler dev 未就绪（120s）"; cat /tmp/wrangler.log; exit 1
+          fi
           cd ../..
           python3 scripts/dotnet-cloud-sync-test.py --base-url http://127.0.0.1:8787 --master-token smoke-master
           npx playwright install msedge
           node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8787 --master-token smoke-master --expect-echo
+      - name: 限流低阈值断言（评审 P1 口径修复的可跑验证）
+        run: |
+          set -e
+          cd cloudflare/cloud-server
+          npx wrangler dev --port 8788 --ip 127.0.0.1 --persist-to /tmp/wrangler-rl-state --var CLOUD_RATE_PAIR_PER_MIN:2 > /tmp/wrangler-rl.log 2>&1 &
+          WRANGLER_PID=$!
+          trap 'kill $WRANGLER_PID 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8788/v1/capabilities > /dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            echo "限流实例未就绪（120s）"; cat /tmp/wrangler-rl.log; exit 1
+          fi
+          codes=""
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer smoke-master" http://127.0.0.1:8788/v1/pair/code)
+            codes="$codes $code"
+          done
+          echo "pair/code 连续请求状态码：$codes"
+          if [ "$codes" != " 200 200 429" ]; then
+            echo "限流断言失败（期望 200 200 429）"; cat /tmp/wrangler-rl.log; exit 1
+          fi
