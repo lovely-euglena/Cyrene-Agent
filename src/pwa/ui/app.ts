@@ -166,14 +166,15 @@ class PwaApp {
     let changed = false;
     try {
       const result = await this.client.fetchAll(this.cache.token, this.cache.cursor);
-      if (result.events.length > 0) {
+      // 游标推进即持久化：整页事件都被协议校验丢弃时（cursor 已前进）也不会重复拉取同一页
+      if (result.cursor !== this.cache.cursor || result.events.length > 0) {
         this.cache = saveCache({
           ...this.cache,
           cursor: result.cursor,
           events: mergeEvents(this.cache.events, result.events),
         });
-        changed = true;
       }
+      if (result.events.length > 0) changed = true;
       if (this.offline) {
         this.offline = false;
         changed = true;
