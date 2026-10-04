@@ -171,6 +171,15 @@ public sealed class AuthStore
         return devices;
     }
 
+    /// <summary>活跃设备计数（healthz 用；COUNT 聚合，不物化整表）。</summary>
+    public int CountActiveDevices()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
     /// <summary>撤销设备；已撤销视为幂等成功，不存在返回 false。</summary>
     public bool Revoke(string deviceId)
     {

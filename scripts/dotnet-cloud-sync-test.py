@@ -17,7 +17,8 @@
   13. 半截尾行 truncatedTail → 400；
   14. 分页步进序 == 单次全量序（不重不漏）；
   15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）；
-  16. 配对与设备令牌（master 出码 → 兑换；一次性/过期/轮换/撤销/设备列表；设备名代理对安全截断）；
+  16. 配对与设备令牌（master 出码 → 兑换；一次性/过期/轮换/撤销/设备列表；设备名代理对安全截断；
+      越权管理 403 / healthz 设备计数）；
   17. 转发头只信回环代理（XFF 生效：远程 healthz 401）、Host 白名单（421）、日志脱敏、
       Linux 凭据权限（目录 0700 / DB 及 -wal/-shm 0600）；
   18. 配对接口限流（超限 → 429；按转发头真实 IP 分区）。
@@ -550,6 +551,22 @@ def main():
             check("设备名截断不切断代理对（63a+emoji → 63a）",
                   status == 200 and data.get("name") == "a" * 63,
                   f"status={status} name={data.get('name')!r}")
+
+            # 越权：普通 device token 不得管理他人设备 / 枚举设备清单（403）
+            cross_rotate = http("POST", pair_base + f"/v1/devices/{device_id}/rotate",
+                                headers={"Authorization": f"Bearer {token3}"})[0]
+            cross_revoke = http("POST", pair_base + f"/v1/devices/{device_id}/revoke",
+                                headers={"Authorization": f"Bearer {token3}"})[0]
+            cross_list = http("GET", pair_base + "/v1/devices",
+                              headers={"Authorization": f"Bearer {token3}"})[0]
+            check("设备管理越权（他设备 rotate/revoke 403、清单仅 master）",
+                  cross_rotate == 403 and cross_revoke == 403 and cross_list == 403,
+                  f"rotate={cross_rotate} revoke={cross_revoke} list={cross_list}")
+
+            # healthz 设备计数（O(1) 聚合）：此时 device_id 已撤销，仅剩 63a 设备活跃
+            status, body, _ = http("GET", pair_base + "/healthz")
+            active_devices = json.loads(body).get("devices") if status == 200 else None
+            check("healthz 设备计数（撤销后仅剩活跃设备）", active_devices == 1, f"devices={active_devices}")
 
             evil = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: evil.com", "Connection: close"])
             good = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: example.com", "Connection: close"])
