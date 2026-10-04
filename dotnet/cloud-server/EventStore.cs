@@ -39,6 +39,7 @@ public sealed class EventStore
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         _connectionString = new SqliteConnectionStringBuilder { DataSource = fullPath, Pooling = true }.ToString();
         Initialize();
+        StorageHardening.TryHarden(fullPath);
     }
 
     private SqliteConnection Open()
