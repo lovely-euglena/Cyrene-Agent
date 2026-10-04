@@ -17,9 +17,10 @@
   13. 半截尾行 truncatedTail → 400；
   14. 分页步进序 == 单次全量序（不重不漏）；
   15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）；
-  16. 配对与设备令牌（master 出码 → 兑换；一次性/过期/轮换/撤销/设备列表）；
-  17. Host 白名单（421）、日志脱敏、Linux 凭据权限 0600；
-  18. 配对接口限流（超限 → 429）。
+  16. 配对与设备令牌（master 出码 → 兑换；一次性/过期/轮换/撤销/设备列表；设备名代理对安全截断）；
+  17. 转发头只信回环代理（XFF 生效：远程 healthz 401）、Host 白名单（421）、日志脱敏、
+      Linux 凭据权限（目录 0700 / DB 及 -wal/-shm 0600）；
+  18. 配对接口限流（超限 → 429；按转发头真实 IP 分区）。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -91,8 +92,12 @@ def push(base, lines):
     return http("POST", base + "/v1/sync/push", "\n".join(lines))
 
 
-def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=64 * 1024):
-    """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。"""
+def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=8 * 1024):
+    """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。
+
+    Windows 上服务端拒绝后关闭连接可能发 RST、丢掉已回写的 413（已知抖动，服务端每次正确）；
+    用小 chunk 降低「超限后在途字节数」，客户端侧再由调用方重试兜底。
+    """
     with socket.create_connection(("127.0.0.1", port), timeout=15) as sock:
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
@@ -386,11 +391,17 @@ def main():
         check("请求体上限（Content-Length >10MB → 413 E_SYNC_BATCH_TOO_LARGE）",
               " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
               response[:200].replace("\r\n", " "))
-        response = chunked_oversized_push_probe(port)
+        response = ""
+        chunked_attempts = 0
+        for _ in range(3):  # Windows RST 抖动：重试至多 3 次（服务端每次正确 413）
+            chunked_attempts += 1
+            response = chunked_oversized_push_probe(port)
+            if " 413 " in response.split("\r\n", 1)[0] and "E_SYNC_BATCH_TOO_LARGE" in response:
+                break
         first_line = response.split("\r\n", 1)[0]
         check("chunked 超限（无 Content-Length）→ 413 E_SYNC_BATCH_TOO_LARGE",
               " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
-              response[:200].replace("\r\n", " "))
+              f"attempts={chunked_attempts} resp={response[:160]}".replace("\r\n", " "))
 
         # 7. clone
         status, clone_body, headers = http("GET", base + "/v1/sync/clone")
@@ -514,6 +525,32 @@ def main():
                   status == 200 and any(d.get("deviceId") == device_id and d.get("revoked") for d in devices),
                   body[:160])
 
+            # 转发头：只信任回环代理（Caddy 同机）——XFF 生效后该请求视为远程，healthz 需令牌
+            # （去掉默认 Authorization：确保 401 来自「远程需令牌」而非 token 不匹配）
+            saved_auth = BASE_HEADERS.pop("Authorization", None)
+            try:
+                local_healthz = http("GET", pair_base + "/healthz")[0]
+                fwd_healthz = http("GET", pair_base + "/healthz",
+                                   headers={"X-Forwarded-For": "203.0.113.7"})[0]
+            finally:
+                if saved_auth is not None:
+                    BASE_HEADERS["Authorization"] = saved_auth
+            check("转发头信任回环代理（本机探针 200 / XFF=远程 → healthz 401）",
+                  local_healthz == 200 and fwd_healthz == 401,
+                  f"local={local_healthz} fwd={fwd_healthz}")
+
+            # 设备名截断：63×a + emoji（UTF-16 长 65）截到 64 恰落代理对中间，须回退为 63
+            status, body, _ = http("POST", pair_base + "/v1/pair/code", headers=master)
+            code3 = json.loads(body).get("code", "") if status == 200 else ""
+            status, body, _ = http("POST", pair_base + "/v1/pair",
+                                   json.dumps({"code": code3, "deviceName": "a" * 63 + "😀"}, ensure_ascii=False),
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            token3 = data.get("token", "")
+            check("设备名截断不切断代理对（63a+emoji → 63a）",
+                  status == 200 and data.get("name") == "a" * 63,
+                  f"status={status} name={data.get('name')!r}")
+
             evil = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: evil.com", "Connection: close"])
             good = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: example.com", "Connection: close"])
             check("Host 白名单（evil.com 421 / example.com 200）",
@@ -529,14 +566,26 @@ def main():
                       and "pair-master" not in pair_log_text)
             if new_token:
                 log_ok = log_ok and new_token not in pair_log_text
+            if token3:
+                log_ok = log_ok and token3 not in pair_log_text
+            if code3:
+                log_ok = log_ok and code3 not in pair_log_text
             check("日志脱敏（token/配对码/master 不明文）", log_ok)
 
             if os.name == "posix":
                 import stat as stat_module
-                db_mode = stat_module.S_IMODE(os.stat(os.path.join(pair_dir, "events.db")).st_mode)
-                dir_mode = stat_module.S_IMODE(os.stat(pair_dir).st_mode)
-                check("Linux 凭据权限（目录 0700 / events.db 0600）",
-                      dir_mode == 0o700 and db_mode == 0o600, f"dir={oct(dir_mode)} db={oct(db_mode)}")
+
+                def _mode(path):
+                    return stat_module.S_IMODE(os.stat(path).st_mode) if os.path.exists(path) else None
+
+                dir_mode = _mode(pair_dir)
+                db_mode = _mode(os.path.join(pair_dir, "events.db"))
+                aux_modes = {suf: _mode(os.path.join(pair_dir, "events.db" + suf)) for suf in ("-wal", "-shm")}
+                aux_ok = all(mode is None or mode == 0o600 for mode in aux_modes.values())
+                check("Linux 凭据权限（目录 0700 / events.db 及 -wal/-shm 0600）",
+                      dir_mode == 0o700 and db_mode == 0o600 and aux_ok,
+                      f"dir={dir_mode and oct(dir_mode)} db={db_mode and oct(db_mode)} "
+                      f"wal={aux_modes['-wal'] and oct(aux_modes['-wal'])} shm={aux_modes['-shm'] and oct(aux_modes['-shm'])}")
         finally:
             if pair_server is not None:
                 pair_server.terminate()
@@ -566,6 +615,24 @@ def main():
             ]
             check("配对接口限流（2/min → 第 3 次 429）",
                   statuses[:2] == [400, 400] and statuses[2] == 429, f"statuses={statuses}")
+
+            # 转发头参与限流分区：匿名（无 Bearer → 按 IP 分区）先耗尽回环配额，再验证 XFF 真实 IP 独立
+            saved_auth = BASE_HEADERS.pop("Authorization", None)
+            try:
+                anon = [http("POST", rate_base + "/v1/pair", garbage,
+                             headers={"Content-Type": "application/json"})[0]
+                        for _ in range(3)]
+                fwd1 = [http("POST", rate_base + "/v1/pair", garbage,
+                             headers={"Content-Type": "application/json", "X-Forwarded-For": "203.0.113.1"})[0]
+                        for _ in range(3)]
+                fwd2 = http("POST", rate_base + "/v1/pair", garbage,
+                            headers={"Content-Type": "application/json", "X-Forwarded-For": "203.0.113.2"})[0]
+            finally:
+                if saved_auth is not None:
+                    BASE_HEADERS["Authorization"] = saved_auth
+            check("匿名限流按回环 IP（2/min → 第 3 次 429）", anon == [400, 400, 429], f"anon={anon}")
+            check("限流按转发头真实 IP 分区（.1 三连 → 400,400,429；.2 独立 → 400）",
+                  fwd1 == [400, 400, 429] and fwd2 == 400, f"fwd1={fwd1} fwd2={fwd2}")
         finally:
             if rate_server is not None:
                 rate_server.terminate()
