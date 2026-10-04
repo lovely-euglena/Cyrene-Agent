@@ -26,8 +26,8 @@ caddy run --config dotnet/cloud-server/deploy/Caddyfile.example   # 同机反代
 ```
 
 systemd 单元内置（`deploy/cyrene-cloud-server.service`）：`ASPNETCORE_URLS=http://127.0.0.1:7789`、
-`CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud`、`Restart=always`、`MemoryMax=512M`、`UMask=0077`、
-`ProtectSystem=strict`（仅数据目录可写）、日志走 journald。
+`CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud`、`Restart=always`、`LimitNOFILE=65536`、`MemoryHigh=384M`、
+`MemoryMax=512M`、`UMask=0077`、`ProtectSystem=strict`（仅数据目录可写）、日志走 journald。
 
 ## 本地运行（开发）
 
@@ -42,7 +42,7 @@ CYRENE_CLOUD_DATA=./data dotnet dotnet/cloud-server/bin/Release/net10.0/cyrene-c
 | 变量 | 说明 |
 | --- | --- |
 | `CYRENE_CLOUD_DATA` | 数据目录（`events.db`；默认 `AppContext.BaseDirectory/data`） |
-| `CLOUD_TOKEN` | 非空时 `/v1/*` 需 `Authorization: Bearer <token>`（IKJK2K 前的最小门闩） |
+| `CLOUD_TOKEN` | 非空时 `/v1/*` 与**远程** `/healthz` 需 `Authorization: Bearer <token>`（scheme 大小写不敏感；回环探针豁免）。IKJK2K 配对制将取代它 |
 | `ASPNETCORE_URLS` | 监听地址（默认 `http://127.0.0.1:7789`） |
 
 ## 容器（备选）
@@ -60,12 +60,12 @@ curl http://127.0.0.1:7789/healthz
 
 ## API（camelCase JSON）
 
-- `GET /healthz` → `{status, rssMB, events}`
+- `GET /healthz` → `{status, rssMB, cursor}`（cursor 为 O(1) 插入序游标；`CLOUD_TOKEN` 非空时远程访问需令牌、回环探针豁免）
 - `POST /v1/sync/push` — body 为 JSONL 事件批（协议 v0 读取语义）；整批原子：
-  - `400 E_SYNC_BATCH_INVALID`：JSON 坏行 / 半截尾行 / 字段级校验失败（`errors:[{index,code}]`）
-  - `400 E_SYNC_BATCH_REJECTED`：链/序号校验失败（`E_SYNC_CHAIN` / `E_SYNC_SEQ`）
+  - `400 E_SYNC_BATCH_INVALID`：JSON 坏行 / 半截尾行 / 字段级校验失败（`errors:[{index,code}]`，`index` = 输入 JSONL 0 基物理行号）
+  - `400 E_SYNC_BATCH_REJECTED`：链/序号校验失败（`E_SYNC_CHAIN` / `E_SYNC_SEQ`；`index` 同上，与 BATCH_INVALID 统一为物理行号）
   - `413 E_SYNC_BATCH_TOO_LARGE`：请求体超上限（10MB；客户端应切小批重推）
-  - `200 {accepted, duplicates, cursor}`：重复 eventId 幂等跳过
+  - `200 {accepted, duplicates, cursor}`：重复 eventId 幂等跳过（批内重复由读取器丢弃；跨批重复计入 `duplicates`）
 - `GET /v1/sync/fetch?since=<cursor>&limit=<1..1000>&sessionId=<可选>` →
   `{events, cursor, hasMore}`（插入序；`cursor` 不透明，客户端原样回传）
 - `GET /v1/sync/clone?sessionId=<可选>` — 全量 JSONL 流（每行一个事件）；游标在
@@ -87,6 +87,14 @@ curl http://127.0.0.1:7789/healthz
 ## 持久性
 
 SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电后不丢；备份/恢复演练属 IKJK2N。
+
+## 内存预算口径
+
+| 数字 | 含义 |
+| --- | --- |
+| `MemoryMax=512M` / `mem_limit 512m` | cloud-server **单进程硬上限**（OOM kill 阈值） |
+| `2G 预算` | **VPS 整机**内存预算（含反代、运行时、其他 sidecar） |
+| 冒烟参考阈值 `300MB` | 仅作告警输出，**不作为 CI pass/fail 门禁**（专用性能任务判定） |
 
 ## 测试
 

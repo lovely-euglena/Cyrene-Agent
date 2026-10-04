@@ -31,7 +31,10 @@ Restart=always
 RestartSec=3
 
 # 2G 预算 + 最小权限（仅数据目录可写；对外由 Caddy 反代终结 TLS）
+LimitNOFILE=65536
+MemoryHigh=384M
 MemoryMax=512M
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

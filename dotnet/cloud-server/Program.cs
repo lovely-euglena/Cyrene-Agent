@@ -19,9 +19,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
 
-var urls = builder.Configuration["urls"]
-    ?? Environment.GetEnvironmentVariable("ASPNETCORE_URLS")
-    ?? "http://127.0.0.1:7789";
+// 默认仅绑 127.0.0.1；--urls / ASPNETCORE_URLS 由 CreateBuilder 统一接入配置
+var urls = builder.Configuration["urls"] ?? "http://127.0.0.1:7789";
 builder.WebHost.UseUrls(urls);
 // push 请求体硬上限（超出 → 413 E_SYNC_BATCH_TOO_LARGE；handler 另有 Content-Length 快检）
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = SyncHttp.MaxPushBodyBytes);
@@ -35,22 +34,30 @@ var app = builder.Build();
 var bearer = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
 if (!string.IsNullOrEmpty(bearer))
 {
-    var expected = Encoding.UTF8.GetBytes("Bearer " + bearer);
+    var expectedToken = Encoding.UTF8.GetBytes(bearer);
     app.Use(async (context, next) =>
     {
-        if (!context.Request.Path.StartsWithSegments("/v1"))
+        var path = context.Request.Path;
+        var isHealthz = path.Equals("/healthz", StringComparison.OrdinalIgnoreCase);
+        if (!path.StartsWithSegments("/v1") && !isHealthz)
         {
             await next();
             return;
         }
-        var provided = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
-        if (!CryptographicOperations.FixedTimeEquals(provided, expected))
+        // healthz：本机探针（回环）放行；远程访问需令牌（避免经反代外泄事件规模/RSS）
+        if (isHealthz && context.Connection.RemoteIpAddress is { } address && System.Net.IPAddress.IsLoopback(address))
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsJsonAsync(new { code = SyncHttp.Unauthorized });
+            await next();
             return;
         }
-        await next();
+        // RFC 7235：auth-scheme 大小写不敏感；仅对 token 部分做定长比较
+        if (TryExtractBearer(context, out var provided) && CryptographicOperations.FixedTimeEquals(provided, expectedToken))
+        {
+            await next();
+            return;
+        }
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await context.Response.WriteAsJsonAsync(new { code = SyncHttp.Unauthorized });
     });
 }
 
@@ -61,7 +68,7 @@ app.MapGet("/healthz", (EventStore store) =>
     {
         status = "ok",
         rssMB = Math.Round(process.WorkingSet64 / 1024.0 / 1024.0, 1),
-        events = store.Count(),
+        cursor = store.CurrentCursor(), // O(1)：替代全表 COUNT(*)（append-only 下随规模线性恶化）
     });
 });
 
@@ -96,7 +103,7 @@ sync.MapPost("/push", async (HttpContext context, EventStore store) =>
             errors = batch.Errors,
         });
     }
-    var outcome = await store.PushBatchAsync(batch.Events, context.RequestAborted);
+    var outcome = await store.PushBatchAsync(batch.Events, BuildLineIndex(text), context.RequestAborted);
     if (outcome.Errors.Count > 0)
     {
         return Results.BadRequest(new { code = SyncHttp.BatchRejected, errors = outcome.Errors });
@@ -110,13 +117,13 @@ sync.MapPost("/push", async (HttpContext context, EventStore store) =>
 });
 
 // GET /v1/sync/fetch?since=&limit=&sessionId=：插入序增量（cursor 不透明，客户端原样回传）。
-sync.MapGet("/fetch", (EventStore store, string? since, int? limit, string? sessionId) =>
+sync.MapGet("/fetch", async (HttpContext context, EventStore store, string? since, int? limit, string? sessionId) =>
 {
     if (!long.TryParse(since ?? "0", out var sinceId) || sinceId < 0)
     {
         return Results.BadRequest(new { code = SyncHttp.Cursor });
     }
-    var outcome = store.Fetch(sinceId, Math.Clamp(limit ?? 200, 1, 1000), sessionId);
+    var outcome = await store.FetchAsync(sinceId, Math.Clamp(limit ?? 200, 1, 1000), sessionId, context.RequestAborted);
     return Results.Json(new
     {
         events = outcome.Events,
@@ -154,6 +161,45 @@ sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sess
 });
 
 app.Run();
+
+/// <summary>从 Authorization 头解析 Bearer token（scheme 大小写不敏感，RFC 7235）。</summary>
+static bool TryExtractBearer(HttpContext context, out byte[] token)
+{
+    token = [];
+    const string scheme = "Bearer ";
+    var raw = context.Request.Headers.Authorization.ToString();
+    if (raw.Length <= scheme.Length || !raw.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)) return false;
+    token = Encoding.UTF8.GetBytes(raw[scheme.Length..].Trim());
+    return token.Length > 0;
+}
+
+/// <summary>eventId → 0 基物理行号（与 ReadBatch 的错误索引语义对齐；批内重复取首见）。</summary>
+static Dictionary<string, int> BuildLineIndex(string text)
+{
+    var map = new Dictionary<string, int>(StringComparer.Ordinal);
+    var lines = text.Split('\n');
+    for (var i = 0; i < lines.Length; i++)
+    {
+        var line = lines[i].Trim().Trim('\uFEFF');
+        if (line.Length == 0) continue;
+        try
+        {
+            using var document = JsonDocument.Parse(line);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("eventId", out var id)
+                && id.ValueKind == JsonValueKind.String)
+            {
+                var eventId = id.GetString()!;
+                if (!map.ContainsKey(eventId)) map[eventId] = i;
+            }
+        }
+        catch (JsonException)
+        {
+            // 坏行已由 ReadBatch 计入 errors / truncatedTail，此处跳过
+        }
+    }
+    return map;
+}
 
 /// <summary>同步 HTTP 层的错误码与请求约束（集中定义，避免裸字面量）。</summary>
 internal static class SyncHttp
