@@ -79,8 +79,10 @@ node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8088 --master-token sm
 ## 与 .NET / CF 版差异
 
 - 游标同为插入序（SQLite AUTOINCREMENT）；生成档 = `inline`（非 realtime）；PWA 同空间静态；
-- 限流为 SQLite 固定窗口（绝对分钟对齐；匿名分区 = 客户端 IP，回环信任 `X-Forwarded-For` 首个地址；
-  已认证分区 = 主控 / deviceId）；无 CF 边缘限流；`healthz.rssMB` = PHP 内存峰值（非进程 RSS）；
+- 限流为 SQLite 固定窗口（绝对分钟对齐；匿名分区 = 客户端 IP，回环信任 `X-Forwarded-For` **最右**一跳
+  ——与 .NET `ForwardedHeaders` ForwardLimit=1 口径一致；已认证分区 = 主控 / deviceId）；
+  无 CF 边缘限流；`healthz.rssMB` = PHP 内存峰值（非进程 RSS）；
+- healthz：回环直连免鉴权；同机反代下按 XFF 最右跳判定真实客户端（外部客户端仍 401，与 .NET 对齐）；
 - 内联生成受 `max_execution_time` 约束：放不下即挂起（cron/桌面兜底），不阻塞同步；
 - 存储加固：入口 / cron `umask(0077)` + 目录 0700 + `events.db`/`-wal`/`-shm` 0600
   （best-effort；Linux / CI 有权限断言）；

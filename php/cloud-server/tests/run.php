@@ -15,6 +15,7 @@ require_once __DIR__ . '/../lib/storage.php';
 require_once __DIR__ . '/../lib/store.php';
 require_once __DIR__ . '/../lib/auth.php';
 require_once __DIR__ . '/../lib/dialog.php';
+require_once __DIR__ . '/../lib/server.php';
 
 cyrene_harden_umask(); // 与入口一致：测试建库前收紧 umask（Linux 权限断言依赖）
 
@@ -75,6 +76,20 @@ check(
     '规范序：UTF-16 码元序（U+10000 < U+E000；UTF-8 字节序相反）',
     cyrene_utf16_compare("\u{10000}", "\u{E000}") < 0 && strcmp("\u{10000}", "\u{E000}") > 0
 );
+
+// ── 反向代理语义（XFF 最右受信跳 / healthz 回环判定） ──
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.7, 10.0.0.1';
+check('XFF：取最右受信跳（不取客户端可伪造的最左值）', cyrene_client_ip() === '10.0.0.1');
+check('healthz 回环判定：同机反代下外部客户端需鉴权', cyrene_is_loopback() === false);
+unset($_SERVER['HTTP_X_FORWARDED_FOR']);
+check('healthz 回环判定：直连回环免鉴权', cyrene_is_loopback() === true);
+$_SERVER['REMOTE_ADDR'] = '203.0.113.9';
+check('healthz 回环判定：非回环需鉴权', cyrene_is_loopback() === false);
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['HTTP_X_FORWARDED_FOR'] = '127.0.0.1';
+check('healthz 回环判定：受信代理转发自回环仍免鉴权', cyrene_is_loopback() === true);
+unset($_SERVER['HTTP_X_FORWARDED_FOR']);
 
 // ── 集成（临时 SQLite） ──
 $dataDir = sys_get_temp_dir() . '/cyrene-php-test-' . bin2hex(random_bytes(4));

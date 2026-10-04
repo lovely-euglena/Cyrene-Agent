@@ -82,8 +82,9 @@
 - 虚拟主机约束：数据目录可写且不进 webroot；clone 生成器分页流式（内存有界）；配置走 env / config.local.php；
 - 存储加固（评审 P0）：入口 / cron `umask(0077)` + 目录 0700 + 库/`-wal`/`-shm` 0600
   （best-effort；Linux / CI 断言）；
-- 并发与语义：`BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名按 IP，回环信任 XFF）；
-  id 长度 / 规范序按 UTF-16 码元（与 TS / C# 一致，astral / emoji 亦对齐）。
+- 并发与语义：`BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名按 IP，回环信任 XFF **最右**一跳）；
+  healthz 回环直连免鉴权（同机反代按 XFF 真实客户端判定）；id 长度 / 规范序按 UTF-16 码元
+  （与 TS / C# 一致，astral / emoji 亦对齐）。
 
 ## 5. 验证（IKJN78 批次，Windows 本地）
 
@@ -93,10 +94,13 @@
 
 ### IKJN7C 批次（PHP 空间版）
 
-- PHP 单测 **42/42**（含 11 个共享 fixtures：协议读取器与 TS / C# 逐字段一致；Linux / CI 另含 3 项权限加固断言）；
+- PHP 单测 **47/47**（含 11 个共享 fixtures：协议读取器与 TS / C# 逐字段一致；Linux / CI 另含 3 项权限加固断言）；
 - 核心档（生成关闭）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**（持久实例可重复跑）；
 - .NET 本地 e2e 回归 **11/11**；e2e 脚本顺带修复：seed 事件 id 唯一化 + `data-session-id` 精确定位 +
   生成断言接受 `inline`（PHP 形态）。
 - 评审修复（2026-10-05）：存储加固（P0）；CI 阶段 2 传参修复（`env`）+ pnpm 锁定 + permissions + 就绪断言；
   clone 生成器分页流式；id / 排序 UTF-16 码元语义对齐（含 astral 单测）；`BEGIN IMMEDIATE`；
   限流分区 / 回环 XFF；请求体限长；生成触发 / 排空异常兜底；静态拦截 `.php` / 点文件；README 差异补齐。
+- 复审修复（2026-10-05）：XFF 改取**最右受信跳**（防客户端伪造最左值绕限流，与 .NET ForwardLimit=1 对齐）；
+  healthz 回环判定含 XFF（同机反代下外部客户端仍 401）；CI 阶段 1/2 数据目录隔离（防 pair 限流跨阶段叠加）；
+  新增 XFF / healthz 单测 5 项；P3（umask 进程级副作用、断言强度、id 尾随控制符 fixture 统一）明确接受为跟进项。

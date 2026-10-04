@@ -249,25 +249,56 @@ function cyrene_enforce_rate_limit(array $config, string $path, EventStore $even
     return $events->rateLimitHit($prefix . ':' . $partition, $limit) ? ['code' => 'E_RATE_LIMITED'] : null;
 }
 
-/** 客户端 IP：反向代理（默认信任回环）下取 X-Forwarded-For 首个地址；其余场景用 REMOTE_ADDR。 */
+/**
+ * 客户端 IP：直连用 REMOTE_ADDR；回环（受信代理）时取 X-Forwarded-For **最右**一跳
+ * （nginx `$proxy_add_x_forwarded_for` 追加直连对端，最右值为代理实际看到的客户端；
+ * 取最左值会被客户端自带 XFF 伪造——与 .NET ForwardedHeaders ForwardLimit=1 口径一致）。
+ */
 function cyrene_client_ip(): string
 {
     $remote = (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown');
     if (in_array($remote, ['127.0.0.1', '::1'], true)) {
-        $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
-        if (is_string($forwarded) && $forwarded !== '') {
-            $first = trim(explode(',', $forwarded)[0]);
-            if ($first !== '') {
-                return $first;
-            }
+        $forwarded = cyrene_forwarded_client_ip();
+        if ($forwarded !== null) {
+            return $forwarded;
         }
     }
     return $remote;
 }
 
+/** X-Forwarded-For 最右非空跳（无则 null）。 */
+function cyrene_forwarded_client_ip(): ?string
+{
+    $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+    if (!is_string($forwarded) || trim($forwarded) === '') {
+        return null;
+    }
+    $parts = explode(',', $forwarded);
+    for ($i = count($parts) - 1; $i >= 0; $i--) {
+        $candidate = trim($parts[$i]);
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+    return null;
+}
+
+/**
+ * 回环判定（healthz 免鉴权）：仅「直连回环」或「受信代理转发且真实客户端为回环」；
+ * 同机反代下外部请求 REMOTE_ADDR=127.0.0.1 但 XFF 指向外部客户端 → 需鉴权
+ * （与 .NET 经 ForwardedHeaders 重写 RemoteIpAddress 后的行为一致）。
+ */
 function cyrene_is_loopback(): bool
 {
-    return in_array((string)($_SERVER['REMOTE_ADDR'] ?? ''), ['127.0.0.1', '::1'], true);
+    $remote = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    if (!in_array($remote, ['127.0.0.1', '::1'], true)) {
+        return false;
+    }
+    $forwarded = cyrene_forwarded_client_ip();
+    if ($forwarded === null) {
+        return true;
+    }
+    return in_array($forwarded, ['127.0.0.1', '::1'], true);
 }
 
 function cyrene_extract_bearer(): ?string

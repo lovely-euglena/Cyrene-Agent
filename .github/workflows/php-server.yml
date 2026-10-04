@@ -37,7 +37,7 @@ jobs:
         run: |
           set -e
           start_server() {
-            env CLOUD_TOKEN=smoke-master CYRENE_CLOUD_DATA=/tmp/cyrene-php-data "$@" \
+            env CLOUD_TOKEN=smoke-master "$@" \
               php -S 127.0.0.1:8088 -t php/cloud-server/public php/cloud-server/public/index.php > /tmp/php.log 2>&1 &
             PHP_PID=$!
             ready=0
@@ -50,13 +50,13 @@ jobs:
             fi
           }
           trap 'kill $PHP_PID 2>/dev/null || true' EXIT
-          # 阶段 1：生成关闭 → 核心档（当前套件对生成并发计数断言为保守口径）
-          start_server
+          # 阶段 1：生成关闭 → 核心档（独立数据目录）
+          start_server CYRENE_CLOUD_DATA=/tmp/cyrene-php-data-core
           python3 scripts/dotnet-cloud-sync-test.py --base-url http://127.0.0.1:8088 --master-token smoke-master
           kill $PHP_PID 2>/dev/null || true
           wait $PHP_PID 2>/dev/null || true
-          # 阶段 2：inline echo → PWA e2e（断言生成回复）
-          start_server CLOUD_LLM_MODE=echo
+          # 阶段 2：inline echo → PWA e2e（独立数据目录，避免 pair 限流跨阶段叠加）
+          start_server CYRENE_CLOUD_DATA=/tmp/cyrene-php-data-e2e CLOUD_LLM_MODE=echo
           pnpm install --frozen-lockfile
           npx playwright install msedge
           node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8088 --master-token smoke-master --expect-echo

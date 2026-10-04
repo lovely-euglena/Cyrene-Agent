@@ -470,7 +470,10 @@
   clone 改生成器分页流式（兑现低内存声明）；id 长度 / 规范序改 UTF-16 码元（astral 与 TS / C# 一致）；
   `BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名 IP，回环信任 XFF）；请求体限长读取；
   trigger / drain 异常兜底；静态不回显 `.php` / 点文件；README 差异清单与 Apache 2.4+ 注明。
-- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **42/42**（Linux / CI 另含 3 项权限断言）；
+- **复审修复（2026-10-05）**：XFF 取**最右受信跳**（防伪造绕限流；与 .NET `ForwardedHeaders` 口径一致）；
+  healthz 回环判定含 XFF（同机反代下外部客户端仍 401）；CI 阶段 1/2 数据目录隔离；新增 XFF / healthz 单测 5 项；
+  P3（umask 进程级副作用、断言强度、id 尾随控制符 fixture 统一）明确接受为跟进项。
+- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **47/47**（Linux / CI 另含 3 项权限断言）；
   核心档（生成关）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；
   .NET 本地 e2e 回归 **11/11**。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。
