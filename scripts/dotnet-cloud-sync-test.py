@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cloud-server 同步收敛冒烟（IKJK2J 验收）：真实起服务 + 两客户端并发 push/fetch。
+"""cloud-server 同步收敛冒烟（IKJK2J / IKJK2K 验收）：真实起服务 + 两客户端并发 push/fetch + 配对令牌。
 
 覆盖：
   1. /healthz 就绪 + RSS 观测（信息输出，不作 CI 门禁）；
@@ -16,7 +16,10 @@
   12. 批内重复 eventId（读取器丢弃重复 → accepted=2/duplicates=0）；
   13. 半截尾行 truncatedTail → 400；
   14. 分页步进序 == 单次全量序（不重不漏）；
-  15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）。
+  15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）；
+  16. 配对与设备令牌（master 出码 → 兑换；一次性/过期/轮换/撤销/设备列表）；
+  17. Host 白名单（421）、日志脱敏、Linux 凭据权限 0600；
+  18. 配对接口限流（超限 → 429）。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -39,6 +42,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 可选参数：发布产物 dll 路径（裸跑直测）；默认用 Release 构建输出
 DLL = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(
     REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
+MAIN_TOKEN = "smoke-master"  # 主实例主控令牌（IKJK2K 起 /v1 始终鉴权）
+BASE_HEADERS = {}            # 默认注入请求头（主实例；显式 headers 覆盖）
 results = []
 
 
@@ -58,7 +63,7 @@ def http(method, url, body=None, timeout=30, headers=None):
     request = urllib.request.Request(url, data=data, method=method)
     if isinstance(body, str):
         request.add_header("Content-Type", "application/x-ndjson; charset=utf-8")
-    for key, value in (headers or {}).items():
+    for key, value in {**BASE_HEADERS, **(headers or {})}.items():
         request.add_header(key, value)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -92,6 +97,7 @@ def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=64 * 1
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{port}\r\n"
+            f"Authorization: Bearer {MAIN_TOKEN}\r\n"
             "Content-Type: application/x-ndjson; charset=utf-8\r\n"
             "Transfer-Encoding: chunked\r\n"
             "Connection: close\r\n\r\n"
@@ -111,6 +117,22 @@ def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=64 * 1
                 pass
         except OSError:
             pass  # 服务端提前拒绝并关闭连接属预期
+        data = bytearray()
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except (OSError, socket.timeout):
+                break
+            if not chunk:
+                break
+            data.extend(chunk)
+        return data.decode("utf-8", "replace")
+
+
+def raw_http_probe(port, request_lines, timeout=10):
+    """裸 socket 发任意请求行（如伪造 Host），返回原始响应文本。"""
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.sendall(("\r\n".join(request_lines) + "\r\n\r\n").encode("ascii"))
         data = bytearray()
         while True:
             try:
@@ -150,6 +172,7 @@ def oversized_push_probe(port, content_length=11 * 1024 * 1024):
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{port}\r\n"
+            f"Authorization: Bearer {MAIN_TOKEN}\r\n"
             f"Content-Length: {content_length}\r\n"
             "Content-Type: application/x-ndjson; charset=utf-8\r\n"
             "Connection: close\r\n\r\n"
@@ -176,6 +199,7 @@ def main():
     env = dict(os.environ)
     env["CYRENE_CLOUD_DATA"] = data_dir
     env["Logging__LogLevel__Default"] = "Warning"
+    env["CLOUD_TOKEN"] = MAIN_TOKEN
     dotnet_home = os.path.expanduser("~/.dotnet")
     if os.path.isdir(dotnet_home):
         env["DOTNET_ROOT"] = dotnet_home
@@ -202,6 +226,7 @@ def main():
         if not ready:
             print("[FAIL] 服务未就绪（服务日志见下方）")
             return 1
+        BASE_HEADERS["Authorization"] = f"Bearer {MAIN_TOKEN}"
         check("healthz 就绪 + RSS 观测", isinstance(health.get("rssMB"), (int, float)), json.dumps(health)[:120])
         rss = health.get("rssMB")
         print(f"  healthz: cursor={health.get('cursor')} rssMB={rss}")
@@ -388,7 +413,7 @@ def main():
                 except Exception:
                     pass
                 time.sleep(0.5)
-            no_token = http("GET", token_base + "/v1/sync/fetch?since=0")[0]
+            no_token = http("GET", token_base + "/v1/sync/fetch?since=0", headers={"Authorization": ""})[0]
             wrong_token = http("GET", token_base + "/v1/sync/fetch?since=0",
                                headers={"Authorization": "Bearer nope"})[0]
             ok_token = http("GET", token_base + "/v1/sync/fetch?since=0",
@@ -403,6 +428,167 @@ def main():
             except Exception:
                 token_server.kill()
             shutil.rmtree(token_dir, ignore_errors=True)
+
+        # 11. 配对与设备令牌（IKJK2K；独立实例：TTL 2s + Host 白名单 + 日志落文件）
+        pair_port = free_port()
+        pair_dir = tempfile.mkdtemp(prefix="cloud-sync-pair-")
+        pair_log = os.path.join(pair_dir, "server-out.log")
+        pair_handle = open(pair_log, "w", encoding="utf-8", errors="replace")
+        pair_env = dict(env)
+        pair_env["CYRENE_CLOUD_DATA"] = pair_dir
+        pair_env["CLOUD_TOKEN"] = "pair-master"
+        pair_env["CLOUD_PAIR_TTL_SECONDS"] = "2"
+        pair_env["CLOUD_ALLOWED_HOSTS"] = "example.com"
+        pair_server = subprocess.Popen(
+            ["dotnet", DLL, "--urls", f"http://127.0.0.1:{pair_port}"],
+            env=pair_env, stdout=pair_handle, stderr=subprocess.STDOUT,
+        )
+        try:
+            pair_base = f"http://127.0.0.1:{pair_port}"
+            pair_ready = False
+            for _ in range(80):
+                try:
+                    status, _, _ = http("GET", pair_base + "/healthz", timeout=3)
+                    if status == 200:
+                        pair_ready = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            master = {"Authorization": "Bearer pair-master"}
+            status, body, _ = http("POST", pair_base + "/v1/pair/code", headers=master)
+            code = json.loads(body).get("code", "") if status == 200 else ""
+            check("配对出码（master → 一次性配对码，格式 XXXX-XXXX）",
+                  pair_ready and status == 200 and len(code) == 9, body[:160])
+
+            redeem_body = json.dumps({"code": code, "deviceName": "烟测手机"}, ensure_ascii=False)
+            status, body, _ = http("POST", pair_base + "/v1/pair", redeem_body,
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            device_token = data.get("token", "")
+            device_id = data.get("deviceId", "")
+            check("配对兑换（device token 仅此一次回显）",
+                  status == 200 and device_token.startswith("cyn_") and device_id.startswith("dev_"), body[:160])
+
+            status, body, _ = http("POST", pair_base + "/v1/pair", redeem_body,
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            check("配对码一次性（二次兑换 400 E_PAIR_CODE）",
+                  status == 400 and data.get("code") == "E_PAIR_CODE", body[:160])
+
+            ok_dev = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                          headers={"Authorization": f"Bearer {device_token}"})[0] == 200
+            forged = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                          headers={"Authorization": "Bearer cyn_forged"})[0]
+            check("device token 可用 / 伪造 token 401", ok_dev and forged == 401,
+                  f"ok={ok_dev} forged={forged}")
+
+            status, body, _ = http("POST", pair_base + "/v1/pair/code", headers=master)
+            code2 = json.loads(body).get("code", "") if status == 200 else ""
+            time.sleep(3)
+            status, body, _ = http("POST", pair_base + "/v1/pair",
+                                   json.dumps({"code": code2, "deviceName": "迟到"}, ensure_ascii=False),
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            check("配对码过期（TTL 2s）→ 400 E_PAIR_CODE",
+                  status == 400 and data.get("code") == "E_PAIR_CODE", body[:160])
+
+            status, body, _ = http("POST", pair_base + f"/v1/devices/{device_id}/rotate",
+                                   headers={"Authorization": f"Bearer {device_token}"})
+            new_token = json.loads(body).get("token", "") if status == 200 else ""
+            old_after = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                             headers={"Authorization": f"Bearer {device_token}"})[0]
+            new_ok = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                          headers={"Authorization": f"Bearer {new_token}"})[0]
+            check("轮换即时生效（旧 token 401 / 新 token 200）",
+                  status == 200 and old_after == 401 and new_ok == 200,
+                  f"rotate={status} old={old_after} new={new_ok}")
+
+            status, body, _ = http("POST", pair_base + f"/v1/devices/{device_id}/revoke",
+                                   headers={"Authorization": f"Bearer {new_token}"})
+            revoked_after = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                                 headers={"Authorization": f"Bearer {new_token}"})[0]
+            check("撤销即时生效（撤销后 401）", status == 200 and revoked_after == 401,
+                  f"revoke={status} after={revoked_after}")
+
+            status, body, _ = http("GET", pair_base + "/v1/devices", headers=master)
+            devices = json.loads(body).get("devices", []) if status == 200 else []
+            check("设备列表（含撤销标记）",
+                  status == 200 and any(d.get("deviceId") == device_id and d.get("revoked") for d in devices),
+                  body[:160])
+
+            evil = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: evil.com", "Connection: close"])
+            good = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: example.com", "Connection: close"])
+            check("Host 白名单（evil.com 421 / example.com 200）",
+                  " 421 " in evil.split("\r\n", 1)[0] and " 200 " in good.split("\r\n", 1)[0],
+                  f"evil={evil.splitlines()[:1]} good={good.splitlines()[:1]}")
+
+            pair_handle.close()
+            with open(pair_log, encoding="utf-8", errors="replace") as handle:
+                pair_log_text = handle.read()
+            log_ok = (bool(device_token) and device_token not in pair_log_text
+                      and bool(code) and code not in pair_log_text
+                      and bool(code2) and code2 not in pair_log_text
+                      and "pair-master" not in pair_log_text)
+            if new_token:
+                log_ok = log_ok and new_token not in pair_log_text
+            check("日志脱敏（token/配对码/master 不明文）", log_ok)
+
+            if os.name == "posix":
+                import stat as stat_module
+                db_mode = stat_module.S_IMODE(os.stat(os.path.join(pair_dir, "events.db")).st_mode)
+                dir_mode = stat_module.S_IMODE(os.stat(pair_dir).st_mode)
+                check("Linux 凭据权限（目录 0700 / events.db 0600）",
+                      dir_mode == 0o700 and db_mode == 0o600, f"dir={oct(dir_mode)} db={oct(db_mode)}")
+        finally:
+            pair_server.terminate()
+            try:
+                pair_server.wait(timeout=10)
+            except Exception:
+                pair_server.kill()
+            try:
+                pair_handle.close()
+            except Exception:
+                pass
+            shutil.rmtree(pair_dir, ignore_errors=True)
+
+        # 12. 配对接口限流（独立实例：2/min/IP → 第 3 次 429）
+        rate_port = free_port()
+        rate_dir = tempfile.mkdtemp(prefix="cloud-sync-rate-")
+        rate_env = dict(env)
+        rate_env["CYRENE_CLOUD_DATA"] = rate_dir
+        rate_env["CLOUD_RATE_PAIR_PER_MIN"] = "2"
+        rate_server = subprocess.Popen(
+            ["dotnet", DLL, "--urls", f"http://127.0.0.1:{rate_port}"],
+            env=rate_env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        )
+        try:
+            rate_base = f"http://127.0.0.1:{rate_port}"
+            rate_ready = False
+            for _ in range(80):
+                try:
+                    status, _, _ = http("GET", rate_base + "/healthz", timeout=3)
+                    if status == 200:
+                        rate_ready = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            garbage = json.dumps({"code": "ZZZZ-ZZZZ"})
+            statuses = [
+                http("POST", rate_base + "/v1/pair", garbage,
+                     headers={"Content-Type": "application/json"})[0]
+                for _ in range(3)
+            ]
+            check("配对接口限流（2/min → 第 3 次 429）",
+                  rate_ready and statuses[:2] == [400, 400] and statuses[2] == 429, f"statuses={statuses}")
+        finally:
+            rate_server.terminate()
+            try:
+                rate_server.wait(timeout=10)
+            except Exception:
+                rate_server.kill()
+            shutil.rmtree(rate_dir, ignore_errors=True)
     finally:
         server.terminate()
         try:

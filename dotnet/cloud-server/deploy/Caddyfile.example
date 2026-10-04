@@ -1,6 +1,12 @@
-# 反代示例（IKJK2K 拍板暴露面/TLS 后启用；当前 cloud-server 仅绑 127.0.0.1）
+# 反代示例（IKJK2K：TLS 终结 + Host 白名单第一层）
 # Caddy 自动 ACME 签发 + 续期；把域名 A 记录指向 VPS 后：
 #   caddy run --config Caddyfile
+# 注意：
+#   - cloud-server 侧建议同时设 CLOUD_ALLOWED_HOSTS=sync.example.com（第二层校验，回环豁免）；
+#   - X-Forwarded-* 由 Caddy 自动携带（服务端只信任回环来源，限流取真实客户端 IP）；
+#   - healthz 可选在边缘屏蔽（服务端已有「回环豁免 + 远程令牌」门闩）：
+#       @health path /healthz
+#       respond @health 404
 
 sync.example.com {
     reverse_proxy 127.0.0.1:7789
