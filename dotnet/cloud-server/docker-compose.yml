@@ -1,0 +1,34 @@
+# 云端昔涟 cloud-server（2G 预算：mem_limit 512m + 日志上限 + 健康检查）
+# 构建上下文 = ./dotnet（含 cyrene-core 工程引用）
+services:
+  cloud-server:
+    build:
+      context: ..
+      dockerfile: cloud-server/Dockerfile
+    image: cyrene-cloud-server:dev
+    container_name: cyrene-cloud-server
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      ASPNETCORE_URLS: http://0.0.0.0:7789
+      CYRENE_CLOUD_DATA: /data
+      # CLOUD_TOKEN: change-me   # IKJK2K 之前的最小门闩（建议反代同时限制来源）
+    volumes:
+      - cloud-data:/data
+    ports:
+      # 仅本机暴露；生产由反代终结 TLS（见 Caddyfile.example）
+      - "127.0.0.1:7789:7789"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  cloud-data:
