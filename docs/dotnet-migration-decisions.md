@@ -355,3 +355,23 @@
   **36/36**（配对一次性 / 过期 TTL / 轮换 / 撤销即时 401 / 伪造 401 / Host 421 / 日志脱敏 /
   限流 429 / 设备列表）；Linux 侧另断言目录 0700 + DB 0600（CI 实跑，37 项）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。
+
+## 2026-10-04 增量：IKJK2M——服务端文本对话闭环（服务端生成）
+
+- **Q2 拍板：最小聊天环**（不复用 LoopHost/Agents）：cloud-server 内置 `DialogLoop` + OpenAI 兼容
+  `ModelClient`；理由 = Phase 1 只做文本、无工具链，512MB 预算与依赖面从简；后续要上工具/多轮编排再评估复用 core。
+- **触发**：push 成功且 `accepted>0` 且批内含 `message.append` / `turn_rewind` → 会话入队（去重、单工作线程串行）。
+- **重放**：事件按 `(lamport, deviceId, seq)` 全序 → 活动分支消息流（keep_user 裁尾重生成 / replace_user 以
+  replacementUser 重建 / tombstone 移除目标轮）；只回「最后一条是 user」的轮。
+- **幂等**：assistant eventId = `gen-` + sha256(sessionId:锚点事件id)[..32]；写回复用 EventStore 幂等索引，
+  预检已存在即跳过模型调用 → 断网重试不产生重复消息（验收标准）。
+- **生成事件**：`deviceId=server`、`lamport=max+1`、`seq=server 设备内 +1`、无哈希链（未上链，过渡期允许）。
+- **失败与观测**：模型调用 2 次退避重试；失败只记日志、下次事件再触发；成功日志记录模型名与 token 用量；
+  密钥仅 env→内存，不落库/日志（冒烟含脱敏断言）。
+- **配置**：`CLOUD_LLM_API_KEY`（启用开关）/ `CLOUD_LLM_MODEL`（默认 gpt-4o-mini）/ `CLOUD_LLM_BASE_URL`
+  （OpenAI 兼容；显式字节体避免 chunked）/ `CLOUD_LLM_TIMEOUT_SECONDS` / `CLOUD_LLM_MAX_TOKENS` /
+  `CLOUD_LLM_CONTEXT_CHARS` / `CLOUD_LLM_SYSTEM_PROMPT`（可选）。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py` **41/41**
+  （mock LLM：生成闭环/turnId 对齐、断网重试不重复、上下文历史注入、编辑语义重生成、用量日志+脱敏）；
+  连续两轮稳定；chunked 超限探针改「最小溢出（limit+1）」消除 Windows RST 抖动。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2M。
