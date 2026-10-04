@@ -354,4 +354,9 @@
 - **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py`
   **36/36**（配对一次性 / 过期 TTL / 轮换 / 撤销即时 401 / 伪造 401 / Host 421 / 日志脱敏 /
   限流 429 / 设备列表）；Linux 侧另断言目录 0700 + DB 0600（CI 实跑，37 项）。
+- **#7 复审补丁（原 PR #7 关闭前终稿：1 阻断 + 2 改进，均已修复）**：① `UseForwardedHeaders` 显式
+  `KnownProxies` = 回环（v4/v6）——默认空集合不信任任何来源，XFF 此前实际失效；修复后限流按真实
+  客户端 IP 分区、远程 healthz 鉴权语义恢复（冒烟新增 XFF 断言）；② Linux `umask(0o077)`（建库前）+
+  目录 0700 提前至首次连接前 + DB/-wal/-shm 全部 0600（附属文件不再以宽松权限落盘）；③ 设备名
+  UTF-16 截断代理对安全（63a+emoji → 63a）。冒烟 **39/39**（Windows；Linux 40，含 -wal/-shm 权限）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。

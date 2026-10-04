@@ -36,10 +36,14 @@ public sealed class EventStore
     {
         var fullPath = Path.GetFullPath(dbPath);
         var dir = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+            StorageHardening.TryHardenDirectory(fullPath); // 目录 0700：须先于首次打开 DB
+        }
         _connectionString = new SqliteConnectionStringBuilder { DataSource = fullPath, Pooling = true }.ToString();
         Initialize();
-        StorageHardening.TryHarden(fullPath);
+        StorageHardening.TryHardenFiles(fullPath); // DB/-wal/-shm 0600：Initialize 后才存在
     }
 
     private SqliteConnection Open()

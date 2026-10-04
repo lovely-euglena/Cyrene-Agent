@@ -19,6 +19,8 @@ var dataDir = Environment.GetEnvironmentVariable("CYRENE_CLOUD_DATA")
     ?? Path.Combine(AppContext.BaseDirectory, "data");
 var dbPath = Path.Combine(dataDir, "events.db");
 var pairTtl = TimeSpan.FromSeconds(ReadIntEnv("CLOUD_PAIR_TTL_SECONDS", 300));
+// Linux：进程 umask 0077——任何新建文件（含 SQLite -wal/-shm）不以宽松权限落盘
+StorageHardening.EnforceProcessUmask();
 
 // 裸跑运维子命令（不进 Web 管线）：pair-code / devices / revoke <deviceId>
 if (args.Length > 0 && args[0] is "pair-code" or "devices" or "revoke")
@@ -68,11 +70,15 @@ builder.Services.AddRateLimiter(options =>
 var app = builder.Build();
 var authStore = app.Services.GetRequiredService<AuthStore>();
 
-// Caddy 同机反代：只信任回环来源的 X-Forwarded-*（限流取真实客户端 IP）
-app.UseForwardedHeaders(new ForwardedHeadersOptions
+// Caddy 同机反代：只信任回环来源的 X-Forwarded-*（KnownProxies 默认空集合=不信任任何来源，
+// 必须显式列出回环，否则 XFF 失效 → 限流分区坍缩为同一 IP、远程 healthz 误豁免）
+var forwardedOptions = new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
-});
+};
+forwardedOptions.KnownProxies.Add(System.Net.IPAddress.Loopback);
+forwardedOptions.KnownProxies.Add(System.Net.IPAddress.IPv6Loopback);
+app.UseForwardedHeaders(forwardedOptions);
 
 if (allowedHosts.Count > 0)
 {
