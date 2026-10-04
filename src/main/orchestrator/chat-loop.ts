@@ -294,6 +294,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
         config: vendorConfig,
         timeoutMs: remainingBudget(),
         signal: attempt.signal,
+        onStreamActivity: attempt.onStreamActivity,
         onDelta,
       });
       emitTextDelta(timePrefixFilter.finish());
