@@ -1,0 +1,9 @@
+data/*
+!data/.htaccess
+config.local.php
+# PWA 构建产物（scripts/build-assets.mjs 生成，不入库）
+public/index.html
+public/sw.js
+public/manifest.webmanifest
+public/icon.svg
+public/assets/

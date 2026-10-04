@@ -1,0 +1,25 @@
+# cyrene-cloud-php（IKJN7C）：Apache 虚拟主机配置
+# public/ 为站点根；静态文件由 Apache 直接服务，其余（/v1/*、/healthz）重写到 index.php。
+DirectoryIndex index.html index.php
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [L]
+
+<IfModule mod_headers.c>
+  # HTML：CSP + no-cache（与 .NET / CF 静态托管口径一致）
+  <FilesMatch "\.html$">
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  # sw.js / manifest：no-cache（升级即时生效）
+  <FilesMatch "^(sw\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(js|css|svg|png|ico|woff2)$">
+    Header set X-Content-Type-Options "nosniff"
+  </FilesMatch>
+  # 带哈希静态产物：长缓存
+  <If "%{REQUEST_URI} =~ m#^/assets/#">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </If>
+</IfModule>
