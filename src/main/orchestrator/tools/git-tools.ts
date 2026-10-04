@@ -25,6 +25,7 @@ function nativeFirstGit(
       const executable = await gitService.getExecutableInfo();
       if (!executable) return fallback();
       const identity = gitService.getCommitIdentity();
+      const configGlobal = gitService.getDedicatedConfigPath();
       const nativeArgs: Record<string, unknown> = {
         ...args,
         __cyreneRoot: tctx.workspaceRoot,
@@ -34,6 +35,7 @@ function nativeFirstGit(
         __gitVersion: executable.version,
         ...(executable.source === "bundled" ? { __gitIsolated: true } : {}),
         ...(identity ? { __gitIdentity: identity } : {}),
+        ...(configGlobal ? { __gitConfigGlobal: configGlobal } : {}),
       };
       return await nativeFirst(toolId, nativeArgs, () => fallback(), { signal: ctx?.signal });
     } catch (error) {

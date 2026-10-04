@@ -276,6 +276,12 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * Git 提交作者邮箱（必填）：未填写时 git_commit 会拒绝提交并提示来设置里补填。
    */
   gitCommitAuthorEmail: string;
+  /**
+   * 使用应用自管的独立 Git 配置文件（默认开，IKJMO8）。
+   * 开启后所有 git 调用经 `GIT_CONFIG_GLOBAL` 指向 `<userData>/git/config`：
+   * 全局配置副本（一键复制） → 实时 include 用户全局配置 → 身份/初始化覆盖（见 dedicated-git-config.ts）。
+   */
+  gitUseDedicatedConfig: boolean;
   /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
   recentProjects: string[];
   /** 用户明确接受的免责声明版本；空字符串表示尚未接受当前条款。 */

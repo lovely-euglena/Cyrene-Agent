@@ -26,6 +26,7 @@ import {
 } from "../../shared/preferences";
 import { normalizeCitaSettings } from "../cita/settings";
 import { getGeneralSettingsPath } from "../settings-store";
+import { syncDedicatedGitConfig } from "../code-git/dedicated-git-config";
 import { normalizeWindowVisibilitySettings } from "../window-visibility-settings";
 import type { GeneralSettings } from "./general-settings";
 import { MAX_PLUGIN_MEMORY_LIMIT_MB, MAX_PLUGIN_STORAGE_QUOTA_MB } from "../../plugins/limits";
@@ -162,6 +163,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   lspServerOverrides: [],
   gitCommitAuthorName: "Cyrene",
   gitCommitAuthorEmail: "",
+  gitUseDedicatedConfig: true,
   recentProjects: [],
   disclaimerAcceptedVersion: "",
 };
@@ -229,6 +231,8 @@ export function normalizeGeneralSettings(
     const text = typeof value === "string" ? value.replace(/[\r\n]/g, "").trim() : "";
     return text.slice(0, 254);
   };
+  const normalizeGitUseDedicatedConfig = (value: unknown): boolean =>
+    typeof value === "boolean" ? value : DEFAULT_GENERAL_SETTINGS.gitUseDedicatedConfig;
   return {
     plugins: Object.fromEntries(
       Object.entries(input?.plugins ?? {}).filter(
@@ -453,6 +457,7 @@ export function normalizeGeneralSettings(
     lspServerOverrides: normalizeLspServerOverrides(input?.lspServerOverrides),
     gitCommitAuthorName: normalizeGitCommitAuthorName(input?.gitCommitAuthorName),
     gitCommitAuthorEmail: normalizeGitCommitAuthorEmail(input?.gitCommitAuthorEmail),
+    gitUseDedicatedConfig: normalizeGitUseDedicatedConfig(input?.gitUseDedicatedConfig),
     recentProjects: normalizeRecentProjects(input?.recentProjects),
     disclaimerAcceptedVersion: typeof input?.disclaimerAcceptedVersion === "string"
       ? input.disclaimerAcceptedVersion.trim().slice(0, 64)
@@ -586,5 +591,17 @@ export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralS
   fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2));
   generalSettingsCache = normalized;
   notifyGeneralSettingsChanged(before, normalized);
+  // 独立 Git 配置文件随设置同步（仅开关开时；失败只记日志，不阻断设置保存）
+  try {
+    if (normalized.gitUseDedicatedConfig) {
+      syncDedicatedGitConfig({
+        userDataDir: path.dirname(filePath),
+        name: normalized.gitCommitAuthorName,
+        email: normalized.gitCommitAuthorEmail,
+      });
+    }
+  } catch (error) {
+    console.error("[Cyrene] sync dedicated git config failed:", error);
+  }
   return normalized;
 }

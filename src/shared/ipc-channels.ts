@@ -155,6 +155,7 @@ export const IPC = {
   SETTINGS_TEST_VISION: "settings:test-vision",
   SETTINGS_GET_GENERAL: "settings:get-general",
   SETTINGS_SAVE_GENERAL: "settings:save-general",
+  SETTINGS_GIT_CONFIG_COPY_GLOBAL: "settings:git-config-copy-global",
   SETTINGS_OPEN_SIDEBAR: "settings:open-sidebar",
   SETTINGS_CLOSE_SIDEBAR: "settings:close-sidebar",
   SETTINGS_OPEN_TASKS: "settings:open-tasks",
