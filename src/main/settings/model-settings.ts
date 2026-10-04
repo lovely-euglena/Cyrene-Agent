@@ -8,7 +8,7 @@ import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
 import {
   applyKeyringToModelSettings,
-  isVaultMode,
+  isVaultActive,
   stripKeysForDisk,
   vaultifyModelSettingsForSave,
 } from "./secrets-keyring";
@@ -696,13 +696,24 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   merged.perProvider = perProvider;
 
   const final = normalizeModelSettings(merged);
+  // 复审 P0-7：normalize 会把掩码空串归一进槽位——vault 激活时按 keyring 回填
+  //（SENTINEL 已删的槽 keyring 无值，不会复活；用户新值已同步进 keyring，回填即新值）
+  if (isVaultActive()) applyKeyringToModelSettings(final);
   const filePath = getSettingsPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   // vault 模式磁盘清痕（A2）：写副本（key 置空），返回值与内存缓存持真值
-  const persist = isVaultMode() ? stripKeysForDisk(final) : final;
+  const persist = stripKeysForDisk(final);
   fs.writeFileSync(filePath, JSON.stringify(persist, null, 2), "utf8");
   Object.assign(existing, final);
   return final;
+}
+
+/**
+ * 复审 P0-6：hydrate 晚于缓存建立时（pre-ready 阶段已 load），对已建缓存原地回填。
+ * initSecretsVault 完成后由启动序调用；非 vault / 未 hydrate 时 no-op。
+ */
+export function refreshModelSettingsFromKeyring(): void {
+  if (modelSettingsCache !== null) applyKeyringToModelSettings(modelSettingsCache);
 }
 
 

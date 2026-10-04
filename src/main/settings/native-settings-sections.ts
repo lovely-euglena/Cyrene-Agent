@@ -10,7 +10,7 @@ import type { GeneralSettings } from "./general-settings";
 import type { ModelSettings } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
 import type { ObsidianVaultConfig } from "../memory/obsidian-vault-config";
-import { isVaultMode } from "./secrets-keyring";
+import { isVaultMode, maskGeneralSettingsForUi } from "./secrets-keyring";
 import type { RendererScheduledTask, SchedulerToolInfo } from "../scheduler/scheduler-actions";
 
 /** L2 事件片段投影上限（防御异常大的记忆库撑爆帧；正常量级远小于此） */
@@ -572,7 +572,9 @@ export type TtsSettingsView = Pick<
 >;
 
 /** TTS 快照：旧页 loadTtsConfig 同款默认回填（缺省/非法值回落旧页默认）。 */
-export function buildTtsSectionSnapshot(settings: TtsSettingsView): NativeTtsSnapshot {
+export function buildTtsSectionSnapshot(settingsView: TtsSettingsView): NativeTtsSnapshot {
+  // 复审 P1-3：vault 模式下 WPF 快照 TTS/ASR 去明文（掩码副本进 section 组装）
+  const settings = isVaultMode() ? maskGeneralSettingsForUi(settingsView) : settingsView;
   return {
     engine: (["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland"] as const)
       .find((engine) => engine === settings.ttsEngine) ?? "off",
@@ -637,9 +639,11 @@ export type AsrSettingsView = Pick<
 
 /** ASR 快照：旧页 loadAsrConfig 同款默认回填（mossland key 与 TTS 共用）。 */
 export function buildAsrSectionSnapshot(
-  settings: AsrSettingsView,
+  settingsView: AsrSettingsView,
   localPlugins: string[] = [],
 ): NativeAsrSnapshot {
+  // 复审 P1-3：同 TTS——vault 模式 ASR 快照去明文
+  const settings = isVaultMode() ? maskGeneralSettingsForUi(settingsView) : settingsView;
   return {
     engine: (["off", "aliyun", "mossland", "local"] as const)
       .find((engine) => engine === settings.asrEngine) ?? "off",

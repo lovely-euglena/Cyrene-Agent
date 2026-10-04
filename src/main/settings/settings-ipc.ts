@@ -20,7 +20,7 @@ import {
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
-import { getSecret, isVaultMode, maskGeneralSettingsForUi, maskModelSettingsForUi, VAULT_KEY_VISION } from "./secrets-keyring";
+import { getSecret, isVaultMode, maskGeneralSettingsForUi, maskModelSettingsForUi, resolveVaultKeyForVendor, VAULT_KEY_VISION } from "./secrets-keyring";
 import { switchEmbeddingModel } from "../rag";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
@@ -171,7 +171,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     if (saved.added && saved.settings.defaultModelProfileId === saved.settings.modelProfiles?.at(-1)?.id) {
       broadcastModelConfigChanged(saved.settings);
     }
-    return { added: saved.added, profiles: listSavedModelProfiles(saved.settings), defaultModelProfileId: saved.settings.defaultModelProfileId };
+    return { added: saved.added, profiles: listSavedModelProfiles(saved.settings).map((p) => maskModelSettingsForUi(p)), defaultModelProfileId: saved.settings.defaultModelProfileId }; // 复审 P1-2 出站掩码
   });
   ipc.handle(IPC.SETTINGS_MODEL_PROFILE_DELETE, (_event, id: unknown) => {
     if (typeof id !== "string") return null;
@@ -180,13 +180,13 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const defaultModelProfileId = settings.defaultModelProfileId === id ? profiles[0]?.id : settings.defaultModelProfileId;
     const saved = saveModelSettings({ modelProfiles: profiles, defaultModelProfileId });
     broadcastModelConfigChanged(saved);
-    return { profiles: listSavedModelProfiles(saved), defaultModelProfileId: saved.defaultModelProfileId };
+    return { profiles: listSavedModelProfiles(saved).map((p) => maskModelSettingsForUi(p)), defaultModelProfileId: saved.defaultModelProfileId }; // 复审 P1-2 出站掩码
   });
   ipc.handle(IPC.SETTINGS_MODEL_PROFILE_SET_DEFAULT, (_event, id: unknown) => {
     if (typeof id !== "string") return null;
     const saved = setDefaultModelProfile(id);
     broadcastModelConfigChanged(saved);
-    return { profiles: listSavedModelProfiles(saved), defaultModelProfileId: saved.defaultModelProfileId };
+    return { profiles: listSavedModelProfiles(saved).map((p) => maskModelSettingsForUi(p)), defaultModelProfileId: saved.defaultModelProfileId }; // 复审 P1-2 出站掩码
   });
 
   ipc.handle(IPC.SETTINGS_GET_GENERAL, () => maskGeneralSettingsForUi(getGeneralSettings()));
@@ -254,7 +254,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     if ("proactiveChatMode" in settings || "proactiveDeliveryTarget" in settings) {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }
-    return saved;
+    return maskGeneralSettingsForUi(saved); // 复审 P1-2 出站掩码
   });
 
   ipc.handle(IPC.SETTINGS_PANDOC_DETECT, (_event, pandocPath: unknown) =>
@@ -302,8 +302,8 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }
 
-    // 返回不含密钥明文的副本（前端展示用）
-    return saved;
+    // 复审 P1-2：返回不含密钥明文的副本（注释与行为对齐）
+    return maskGeneralSettingsForUi(saved);
   });
 
   ipc.handle(IPC.SETTINGS_OPEN_CUSTOM_STYLE_PROMPT, async () => {
@@ -364,11 +364,19 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       }
       throw error;
     }
-    broadcastModelConfigChanged(saved);
-    return saved;
+    broadcastModelConfigChanged(maskModelSettingsForUi(saved));
+    return maskModelSettingsForUi(saved); // 复审 P1-2 出站掩码
   });
 
-  ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => testVendorConnection(cfg));
+  // 复审 P1-3：vault 模式下渲染端拿到的是掩码（apiKey 空）——空值时按内存真值反查
+  // vault 槽位回填，明文不出主进程
+  ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => {
+    if (isVaultMode() && !cfg.apiKey?.trim()) {
+      const real = getSecret(resolveVaultKeyForVendor(cfg.provider, getModelSettings().apiKey));
+      if (real) return testVendorConnection({ ...cfg, apiKey: real });
+    }
+    return testVendorConnection(cfg);
+  });
   ipc.handle(IPC.SETTINGS_PREVIEW_REASONING, (_event, cfg: VendorConfig) => {
     const request = getAdapterForConfig(cfg).buildRequest({
       model: cfg.model,

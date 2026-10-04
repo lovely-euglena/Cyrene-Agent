@@ -36,7 +36,7 @@ import type { SkillModeOverrides } from "../skills/types";
 import { normalizeLspServerOverrides } from "../lsp/server-catalog";
 import {
   applyKeyringToGeneralSettings,
-  isVaultMode,
+  isVaultActive,
   stripKeysForDisk,
   vaultifyGeneralSettingsForSave,
 } from "./secrets-keyring";
@@ -592,11 +592,23 @@ export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralS
   // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化
   vaultifyGeneralSettingsForSave(partial as unknown as Record<string, unknown>);
   const normalized = normalizeGeneralSettings({ ...before, ...partial });
+  // 复审 P0-7：normalize 归一空串后按 keyring 回填（SENTINEL 已删槽不复活）
+  if (isVaultActive()) applyKeyringToGeneralSettings(normalized as unknown as Record<string, unknown>);
   const filePath = getGeneralSettingsPath();
-  // vault 模式磁盘清痕：写副本（key 置空），内存缓存持真值
-  const persist = isVaultMode() ? stripKeysForDisk(normalized) : normalized;
+  // vault 激活时磁盘清痕（写副本，key 置空），内存缓存持真值；未激活原样写（复审 P0-8）
+  const persist = stripKeysForDisk(normalized);
   fs.writeFileSync(filePath, JSON.stringify(persist, null, 2));
   generalSettingsCache = normalized;
   notifyGeneralSettingsChanged(before, normalized);
   return normalized;
+}
+
+/**
+ * 复审 P0-6：hydrate 晚于缓存建立时对已建 general 缓存原地回填
+ * （pre-ready 阶段 loadGeneralSettings 先建立缓存，keyring 未 hydrate 回填 no-op）。
+ */
+export function refreshGeneralSettingsFromKeyring(): void {
+  if (generalSettingsCache !== null) {
+    applyKeyringToGeneralSettings(generalSettingsCache as unknown as Record<string, unknown>);
+  }
 }

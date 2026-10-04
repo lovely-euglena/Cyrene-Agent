@@ -11,6 +11,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   hydrateKeyring,
+  onKeyringHydrated,
   SECRET_CLEAR_SENTINEL,
   SECRET_GENERAL_FIELDS,
   VAULT_KEY_VISION,
@@ -64,16 +65,18 @@ function reset(): void {
 }
 
 describe("vaultifyModelSettingsForSave（空=不改 / SENTINEL=清 / 新值入 vault）", () => {
-  it("非空新值 → 入 vault 并保留原字段（最终由 stripKeysForDisk 清盘）", () => {
+  it("非空新值 → 入 vault 并保留原字段（最终由 stripKeysForDisk 清盘）", async () => {
     reset();
+    await hydrateKeyring(); // isVaultActive 门控：hydrated 才走 vault 路径
     const incoming: Record<string, unknown> = { provider: "MiniMax（稀宇科技）", apiKey: "  sk-new-1  " };
     vaultifyModelSettingsForSave(incoming);
     expect(vault.get("model:provider:MiniMax（稀宇科技）")).toBe("sk-new-1");
     expect(incoming.apiKey).toBe("  sk-new-1  "); // 原样保留，内存缓存持真值
   });
 
-  it("空串 → 摘除字段（=不改，掩码回传不丢 key）", () => {
+  it("空串 → 摘除字段（=不改，掩码回传不丢 key）", async () => {
     reset();
+    await hydrateKeyring();
     setSecret("model:provider:P1", "sk-old");
     const incoming: Record<string, unknown> = { provider: "P1", apiKey: "" };
     vaultifyModelSettingsForSave(incoming);
@@ -81,8 +84,9 @@ describe("vaultifyModelSettingsForSave（空=不改 / SENTINEL=清 / 新值入 v
     expect(vault.get("model:provider:P1")).toBe("sk-old");
   });
 
-  it("SENTINEL → 删 vault key + 字段置空（显式清除）", () => {
+  it("SENTINEL → 删 vault key + 字段置空（显式清除）", async () => {
     reset();
+    await hydrateKeyring();
     setSecret("model:provider:P1", "sk-old");
     const incoming: Record<string, unknown> = { provider: "P1", apiKey: SECRET_CLEAR_SENTINEL };
     vaultifyModelSettingsForSave(incoming);
@@ -90,8 +94,9 @@ describe("vaultifyModelSettingsForSave（空=不改 / SENTINEL=清 / 新值入 v
     expect(incoming.apiKey).toBe("");
   });
 
-  it("perProvider / profiles / vision 各槽位同语义", () => {
+  it("perProvider / profiles / vision 各槽位同语义", async () => {
     reset();
+    await hydrateKeyring();
     const incoming: Record<string, unknown> = {
       perProvider: { PV: { apiKey: "sk-pv" } },
       modelProfiles: [{ id: "prof1", apiKey: "" }],
@@ -184,6 +189,30 @@ describe("applyKeyring（hydrate 后回填）", () => {
   });
 });
 
+describe("复审 P0-8 / P0-6（host 缺失保存回退 + 冷启动回填）", () => {
+  it("host 缺失（未 hydrate）保存 → 整体回退明文语义：不清盘、不丢 key", () => {
+    reset(); // 不 hydrate → isVaultActive=false（宿主缺失/迁移未发生）
+    const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-keep-me" };
+    vaultifyModelSettingsForSave(incoming); // no-op（门控）
+    expect(incoming.apiKey).toBe("sk-keep-me"); // 用户输入原样保留
+    const final = { provider: "PA", apiKey: "sk-keep-me", perProvider: { PA: { apiKey: "sk-keep-me" } } };
+    const disk = stripKeysForDisk(final); // 未激活 → 原样返回（不清痕）
+    expect((disk as { apiKey: string }).apiKey).toBe("sk-keep-me"); // 磁盘不丢 key
+  });
+
+  it("onKeyringHydrated：先建缓存场景（pre-ready），hydrate 完成触发回调（冷启动回填依据）", async () => {
+    reset();
+    let fired = false;
+    onKeyringHydrated(() => { fired = true; });
+    vault.set("tts:mimo", "sk-cold");
+    await hydrateKeyring();
+    expect(fired).toBe(true); // index.ts 据此调 refreshGeneral/ModelSettingsFromKeyring
+    const cached: Record<string, unknown> = { ttsMimoKey: "" }; // 模拟 pre-ready 已建的空缓存
+    applyKeyringToGeneralSettings(cached);
+    expect(cached.ttsMimoKey).toBe("sk-cold");
+  });
+});
+
 describe("collectPlaintextKeys + migratePlaintextKeys（A4：import→校验→.bak→清空）", () => {
   it("收集→导入→源清空→.bak 存在→grep 无明文→幂等", async () => {
     reset();
@@ -207,8 +236,8 @@ describe("collectPlaintextKeys + migratePlaintextKeys（A4：import→校验→.
 
     const migrated = await migratePlaintextKeys(modelPath, generalPath);
     expect(migrated).toBeGreaterThanOrEqual(5);
-    expect(existsSync(`${modelPath}.bak`)).toBe(true);
-    expect(existsSync(`${generalPath}.bak`)).toBe(true);
+    expect(existsSync(`${modelPath}.pre-secrets.bak`)).toBe(true);
+    expect(existsSync(`${generalPath}.pre-secrets.bak`)).toBe(true);
 
     const modelRaw = readFileSync(modelPath, "utf8");
     const generalRaw = readFileSync(generalPath, "utf8");

@@ -51,6 +51,22 @@ export function isVaultMode(): boolean {
   }
 }
 
+/**
+ * vault 实际可用（复审 P0-8）：配置开 且 keyring 已 hydrate。
+ * hydrated 只能经宿主成功 list/get 达成——宿主缺失/崩溃（迁移未发生）时为 false，
+ * 保存路径据此整体回退明文语义（不清盘、不静默丢用户输入，设计 §4.5 用例 4）。
+ */
+export function isVaultActive(): boolean {
+  return isVaultMode() && hydrated;
+}
+
+/** hydrate 完成回调（复审 P0-6：先建的 settings 缓存原地回填用；避免循环 import）。 */
+const hydratedListeners: Array<() => void> = [];
+export function onKeyringHydrated(cb: () => void): void {
+  if (hydrated) cb();
+  else hydratedListeners.push(cb);
+}
+
 export function isKeyringHydrated(): boolean {
   return hydrated;
 }
@@ -152,10 +168,27 @@ export async function hydrateKeyring(): Promise<void> {
     }
     keyring.clear();
     for (const [k, v] of next) keyring.set(k, v);
+    const wasHydrated = hydrated;
     hydrated = true;
+    if (!wasHydrated) for (const cb of hydratedListeners.splice(0)) cb();
   } catch (err) {
     console.error("[secrets] hydrate 失败:", err instanceof Error ? err.message : err);
   }
+}
+
+/**
+ * 反查 key 所在槽位（复审 P1-10 槽位漂移）：档案展开后真 key 可能在
+ * model:profile:<id> 槽而 provider 槽为空——以内存真值（vendorConfig.apiKey）
+ * 反查 keyring 命中的槽名；未命中回退 provider 槽（.NET 侧 AUTH_MISSING 时
+ * facade 回退直连）。
+ */
+export function resolveVaultKeyForVendor(provider: string, apiKeyValue: string): string {
+  if (apiKeyValue) {
+    for (const [name, v] of keyring) {
+      if (v === apiKeyValue) return name;
+    }
+  }
+  return vaultKeyForProvider(provider);
 }
 
 // ── 迁移（A4：import → 回读校验 → .bak → 源清空） ──
@@ -191,7 +224,14 @@ export function collectPlaintextKeys(
       }
     }
     push("vision", VAULT_KEY_VISION, (modelSettingsRaw.vision as { apiKey?: unknown } | undefined)?.apiKey);
-    // 顶层 apiKey 是 perProvider 镜像，不单独入库（清空即可，加载时重新镜像）
+    // 极老配置兜底（复审提示项）：仅顶层 apiKey（无 perProvider 命中）→ 按当前 provider 槽入库
+    const currentProvider = typeof modelSettingsRaw.provider === "string" ? modelSettingsRaw.provider : "";
+    const providerHit = currentProvider
+      && perProvider && typeof perProvider === "object" && perProvider[currentProvider];
+    if (currentProvider && !providerHit) {
+      push(`topLevel.${currentProvider}`, vaultKeyForProvider(currentProvider), modelSettingsRaw.apiKey);
+    }
+    // 顶层 apiKey 是 perProvider 镜像（有 perProvider 命中时不重复入库，清空即可）
   }
 
   if (generalRaw) {
@@ -247,11 +287,11 @@ export async function migratePlaintextKeys(
     }
   }
 
-  // .bak + 源清空
+  // .bak + 源清空（复审 P1-11：后缀区分 model-settings schema 迁移的 .bak，避免互覆）
   for (const [p, raw] of [[settingsJsonPath, modelRaw], [generalJsonPath, generalRaw]] as const) {
     if (!raw || !fs.existsSync(p)) continue;
     clearKeysInRaw(raw);
-    fs.copyFileSync(p, `${p}.bak`);
+    fs.copyFileSync(p, `${p}.pre-secrets.bak`);
     fs.writeFileSync(p, JSON.stringify(raw, null, 2), "utf8");
   }
   console.log(`[secrets] 迁移完成：${hits.length} 条明文 key 已入 vault，源 JSON 已清痕（.bak 保留）`);
@@ -329,7 +369,7 @@ export function applyKeyringToGeneralSettings(settings: Record<string, unknown>)
  * 返回磁盘写入副本（全部 key 置空）；调用方继续用原对象回内存。
  */
 export function vaultifyModelSettingsForSave(incoming: Record<string, unknown>): void {
-  if (!isVaultMode()) return;
+  if (!isVaultActive()) return; // 复审 P0-8：host 缺失（迁移未发生）→ 整体回退明文保存语义
   const provider = typeof incoming.provider === "string" ? incoming.provider : "";
   handleTopLevelKey(incoming, provider ? vaultKeyForProvider(provider) : "", "apiKey");
 
@@ -371,8 +411,9 @@ function handleTopLevelKey(obj: Record<string, unknown>, vaultKey: string, field
   if (vaultKey) setSecret(vaultKey, v.trim());
 }
 
-/** 磁盘副本：全部 key 字段置空（vault 模式专用；源 JSON 清痕铁律）。 */
+/** 磁盘副本：全部 key 字段置空（vault 激活时专用；源 JSON 清痕铁律。复审 P0-8：未激活时原样返回）。 */
 export function stripKeysForDisk<T>(settings: T): T {
+  if (!isVaultActive()) return settings;
   const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
   for (const field of SECRET_GENERAL_FIELDS) {
     if (typeof copy[field.jsonField] === "string") copy[field.jsonField] = "";
@@ -428,9 +469,9 @@ export function maskGeneralSettingsForUi<T>(settings: T): T {
   return copy as T;
 }
 
-/** general 保存路径的 vaultify（同 model 语义：空=不改 / SENTINEL=清）。 */
+/** general 保存路径的 vaultify（同 model 语义：空=不改 / SENTINEL=清；P0-8：host 缺失时整体回退明文）。 */
 export function vaultifyGeneralSettingsForSave(incoming: Record<string, unknown>): void {
-  if (!isVaultMode()) return;
+  if (!isVaultActive()) return;
   for (const field of SECRET_GENERAL_FIELDS) {
     handleTopLevelKey(incoming, field.vaultKey, field.jsonField);
   }
