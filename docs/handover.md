@@ -32,6 +32,8 @@ dotnet/
   smoke-host/              # Linux 冒烟壳（引用 cyrene-core，协议冒烟）
 src/main/dotnet-backend/   # TS 侧：config.ts（双轨开关唯一解析）、
                            # host-clients.ts（LineHostClient IPC）、native-tool-host
+src/main/sync/             # 同步协议 v0：读取器/校验器（fixtures/sync-protocol/ 双端向量；
+                           # 事件导出器/客户端/物化视图属 IKJK2I）
 src/plugins/               # 插件层（含 dotnet-adapter.ts：.NET 插件进程适配）
 scripts/                   # 测试/发版脚本（见 §5）
 release/                   # 打包产物（gitignore 外的工作区）
