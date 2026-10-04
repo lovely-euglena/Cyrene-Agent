@@ -78,3 +78,17 @@ git commit 漏子命令、IPC argv 双传。
 
 `scripts/dotnet-smoke.ps1`：tool-host 五工具双轨 diff、agent-host 闭环、
 rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关。
+
+## 云端昔涟 cloud-server（IKJK2J）
+
+- `dotnet/cloud-server/`：ASP.NET Core Minimal API + Microsoft.Data.Sqlite WAL——
+  append-only 事件库（event_id 幂等索引；插入序游标）+ `/v1/sync` push（JSONL 整批原子）/
+  fetch（since+limit+sessionId）/ clone（NDJSON 流 + `X-Sync-Cursor`）；协议校验复用
+  cyrene-core `SyncProtocolV0`（`docs/specs/2026-10-04-sync-protocol-v0.md`）。
+- 链校验（v0 过渡策略）：per-(sessionId, deviceId) 链接 + seq 严格递增；
+  内容哈希重算待 Q3 定稿；默认绑 127.0.0.1，`CLOUD_TOKEN` 为 K 之前的最小门闩。
+- 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/两客户端并发收敛/
+  链拒绝整批回滚/clone 游标）。
+- 部署：**裸跑为主**（`dotnet publish` + `deploy/cyrene-cloud-server.service` systemd 单元 +
+  `deploy/Caddyfile.example` 反代）；容器为备选（`docker-compose.yml`：mem_limit 512m +
+  healthcheck + 日志上限）；正式部署/备份/告警属 IKJK2N。

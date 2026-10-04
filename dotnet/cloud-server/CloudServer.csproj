@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    cyrene-cloud-server —— 云端昔涟 Phase 1 服务端主体（IKJK2J）。
+    2G 内存预算：SQLite WAL + append-only 事件表；无 ORM、无后台作业。
+    同步协议校验复用 dotnet/cyrene-core（SyncProtocolV0）；TLS/设备令牌属 IKJK2K。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>cyrene-cloud-server</AssemblyName>
+    <RootNamespace>CyreneCloud</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../cyrene-core/CyreneCore.csproj" />
+    <!-- 显式声明（不依赖 core 的传递引用）：core 调整包依赖时不静默破坏服务端 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>
