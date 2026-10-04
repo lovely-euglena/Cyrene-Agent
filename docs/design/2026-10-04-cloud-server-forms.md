@@ -64,8 +64,9 @@
 - `cloudflare/cloud-server/`：Workers + DO SQLite（单租户单 DO `global`），TS 复用
   `src/main/sync/sync-protocol.ts` 校验器；
 - 端点与 .NET 版逐项对齐：healthz / capabilities(impl=cf-workers) / pair(code) / devices(revoke/rotate) /
-  sync(push/fetch/clone)；鉴权（device token + 主控）、限流（DO 固定窗口）、链/序号校验、整批原子性
-  由核心档套件锁定；
+  sync(push/fetch/clone)；鉴权（device token + 主控）、链/序号校验、整批原子性由核心档套件锁定；
+  限流（DO 固定窗口）不在核心档内，由 `test/rate-limit.test.ts` 单测 + cf-worker 工作流低阈值实例的
+  429 断言覆盖；
 - 生成：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 为内置回声 mock（测试部署），
   设置 `CLOUD_LLM_API_KEY` 后走 OpenAI 兼容接口；静态资产用 Workers 静态资产（Worker 统一缓存头 / CSP）；
 - 部署要点：自定义域用 3 级子域（通用证书即时覆盖；4 级子域 alert 40，见 IKJN3W）；Bot Fight Mode 会拦
@@ -92,10 +93,13 @@
 
 ### IKJN79 批次（CF 版）
 
-- 单测（重放 / 配对码 / 设备名 / 哈希）：**18/18**；
-- 本地 `wrangler dev`（回声 mock）：核心档 **35/35**、PWA e2e **11/11**；
+- 单测（重放 / 配对码 / 设备名 / 哈希 / 限流固定窗口）：**22/22**；
+- 本地 `wrangler dev`（回声 mock）：核心档 **35/35**、PWA e2e **11/11**（评审修复后复跑，持久实例可重复跑）；
+- 限流低阈值实例（`CLOUD_RATE_PAIR_PER_MIN=2`）：`/v1/pair/code` 连续三次 **200 200 429**；
 - 部署实例 `cyrene-cloud.ygwill.asia`（HTTPS，回声 mock）：核心档 **35/35**、PWA e2e **11/11**
   （配对 / 查看 / 续聊 / 离线 / 生成闭环）；
 - .NET full 回归：**54/54**（套件鲁棒化后）。
+- 评审修复（2026-10-04）：限流口径修正 + 单测/工作流 429 断言；clone 流式分页（内存有界）；
+  限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化；README 差异清单补齐。
 - 核心档鲁棒化（IKJN79 顺带）：对启用服务端生成的实例，计数 / 集合断言收敛到 run 前缀事件
   （生成事件 id 前缀 `gen-`）；clone 改为快照单调夹逼 + run 集合 + 游标边界。

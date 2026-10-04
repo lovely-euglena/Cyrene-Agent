@@ -458,8 +458,9 @@
 
 - **实现**：`cloudflare/cloud-server/`（Workers + Durable Objects SQLite，单租户单 DO `global`）；TS 复用
   `src/main/sync/sync-protocol.ts` 校验器；端点与 .NET 版逐项对齐（healthz / capabilities(impl=cf-workers) /
-  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)），鉴权、限流（DO 固定窗口）、链/序号校验、
-  整批原子性由核心档套件锁定。
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)），鉴权、链/序号校验、整批原子性由核心档
+  套件锁定；限流（DO 固定窗口）不在核心档内，由单测（`test/rate-limit.test.ts`）+ 工作流低阈值实例的
+  429 断言覆盖。
 - **生成**：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 回声 mock（测试部署）；
   `CLOUD_LLM_API_KEY` 走 OpenAI 兼容接口（与 .NET ModelClient 同口径）。
 - **静态资产**：Workers 静态资产（构建 PWA → `assets/`）；Worker 统一缓存头 / CSP（与 .NET 静态托管一致）。
@@ -469,6 +470,10 @@
   zone（桌面端同步客户端同为非浏览器 UA）。
 - **套件鲁棒化**：核心档对启用服务端生成的实例鲁棒——计数 / 集合断言收敛到 run 前缀事件（生成事件 id
   前缀 `gen-`）；clone 改快照单调夹逼 + run 集合 + 游标边界。
-- **验证（Windows 本地）**：CF 单测 **18/18**；本地 wrangler dev（回声 mock）核心档 **35/35**、e2e **11/11**；
-  .NET full 回归 **54/54**；部署实例（HTTPS）核心档 **35/35**、e2e **11/11**。
+- **验证（Windows 本地）**：CF 单测 **22/22**（含限流固定窗口 4 项）；本地 wrangler dev（回声 mock）
+  核心档 **35/35**、e2e **11/11**（持久实例可重复跑）；限流低阈值实例 `/v1/pair/code` 连续三次
+  **200 200 429**；.NET full 回归 **54/54**；部署实例（HTTPS）核心档 **35/35**、e2e **11/11**。
+- **评审修复**：限流口径修正（核心档不覆盖限流；单测 + 工作流 429 断言补验证）；clone 流式分页；
+  限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化（pnpm / 就绪断言 /
+  进程回收 / permissions）；README 已知差异清单补齐；`workers_dev` 关闭。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN79。

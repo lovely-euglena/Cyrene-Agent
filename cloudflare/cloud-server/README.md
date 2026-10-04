@@ -67,8 +67,13 @@ node scripts/pwa-e2e-test.mjs --base-url https://<域> --master-token <TOKEN> --
 - 数据：DO SQLite（单实例）；导出 = 调 `/v1/sync/clone`（JSONL 全量，游标在 `X-Sync-Cursor`）；
 - 环境变量：见 `src/env.ts` 与 `wrangler.toml` 注释（`CLOUD_PAIR_TTL_SECONDS` / `CLOUD_RATE_*` /
   `CLOUD_LLM_*` / `CLOUD_ALLOWED_HOSTS` / `CLOUD_DIALOG_*`）；
-- 与 .NET 版差异：`healthz.rssMB` 恒 0（Workers 无进程 RSS 概念）；生成重试由 DO alarm 承担；
-  限流为 DO 固定窗口（CF 平台另有边缘限流）。
+- 与 .NET 版差异（已知差异清单；排障时按此对照）：
+  - `healthz.rssMB` 恒 0（Workers 无进程 RSS 概念）；healthz 恒需 Bearer（.NET 对回环探针豁免）；
+  - 生成重试由 DO alarm 承担（次数 / 退避见 `CLOUD_DIALOG_*` 默认值，与 .NET 的进程内重试不同）；
+  - 限流为 DO 固定窗口且为**绝对分钟对齐**（.NET 为按分区首请求起算的分段窗口）；CF 平台另有边缘限流；
+  - 超限请求体在 Worker 层（带 Content-Length 时）先于鉴权返回 413；`fetch` 的 `limit` 非数字回退 200
+    （.NET 400）、`since` 带 `+1` / 空格回 400（.NET 接受）——均为无副作用差异；
+  - `workers_dev` 已在 `wrangler.toml` 关闭（仅自定义域可达）。
 
 ## 结构
 
