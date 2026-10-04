@@ -60,6 +60,7 @@ DEFAULT_DLL = os.path.join(REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/c
 DLL = DEFAULT_DLL
 MAIN_TOKEN = "smoke-master"  # 主实例主控令牌（IKJK2K 起 /v1 始终鉴权）
 BASE_HEADERS = {}            # 默认注入请求头（主实例；显式 headers 覆盖）
+USER_AGENT = None            # --user-agent 覆盖（部分 WAF 如 CF Bot Fight Mode 会拦脚本 UA；显式 headers 仍优先）
 results = []
 
 
@@ -79,6 +80,8 @@ def http(method, url, body=None, timeout=30, headers=None):
     request = urllib.request.Request(url, data=data, method=method)
     if isinstance(body, str):
         request.add_header("Content-Type", "application/x-ndjson; charset=utf-8")
+    if USER_AGENT:
+        request.add_header("User-Agent", USER_AGENT)
     for key, value in {**BASE_HEADERS, **(headers or {})}.items():
         request.add_header(key, value)
     try:
@@ -299,6 +302,8 @@ def parse_args():
                         help="主控令牌（远端模式必填；本地模式默认 smoke-master）")
     parser.add_argument("--profile", choices=["full", "core"], default=None,
                         help="检查档位（默认：本地 full / 远端 core；core 跳过生成/限流/环境注入类检查）")
+    parser.add_argument("--user-agent", dest="user_agent", default=None,
+                        help="覆盖 User-Agent（部分 WAF 如 CF Bot Fight Mode 会拦脚本 UA；远端验收可传浏览器 UA）")
     return parser.parse_args()
 
 
@@ -553,9 +558,10 @@ def run_core_checks(base, master_token):
 
 
 def main():
-    global DLL
+    global DLL, USER_AGENT
     args = parse_args()
     DLL = os.path.abspath(args.dll) if args.dll else DEFAULT_DLL
+    USER_AGENT = args.user_agent
     remote = bool(args.base_url)
     profile = args.profile or ("core" if remote else "full")
     master_token = args.master_token or MAIN_TOKEN
