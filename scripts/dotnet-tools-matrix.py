@@ -174,8 +174,57 @@ c_pt2 = req("plan_trip", {"origin": "A", "destination": "B"})
 frames.append(json.dumps({"op": "config", "travel": {"amapKey": "k", "enabled": True}}))
 c_pt3 = req("plan_trip", {"destination": "B"})
 
+# fetch_url：本地 HTTP fixture（正文提取/markdown/raw/截断/404/缓存）+ GitHub API mock
+import http.server, socketserver, threading
+FU_FILLER = "填充文字" * 30  # 120 字：保证 article 正文稳定 ≥200 字阈值（走正文容器路径）
+FU_PAGE = """<!doctype html><html><head><title>Fixture</title><style>.x{}</style><script>var a=1;</script></head>
+<body><nav>导航链接 首页</nav><header>页头</header>
+<article><h1>大标题</h1>
+<p>这是正文段落，包含<strong>加粗</strong>与<em>斜体</em>以及<a href="https://example.com/x">链接</a>。""" + FU_FILLER + """</p>
+<ul><li>项目一</li><li>项目二</li></ul>
+<pre><code>const x = 1;</code></pre>
+<table><thead><tr><th>列A</th><th>列B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>
+<p>结尾段落：""" + FU_FILLER + """</p>
+</article><footer>页脚</footer><aside>侧栏</aside></body></html>"""
+
+class _FuHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, body, ctype):
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path == "/page.html":
+            self._send(200, FU_PAGE, "text/html; charset=utf-8")
+        elif path == "/big.html":
+            self._send(200, "<html><body><article><p>" + ("很长的正文" * 40000) + "</p></article></body></html>", "text/html; charset=utf-8")
+        elif path == "/repos/o/r":
+            self._send(200, json.dumps({"description": "演示仓库", "stargazers_count": 42, "forks_count": 7,
+                                        "language": "TypeScript", "default_branch": "main",
+                                        "license": {"spdx_id": "MIT"}}), "application/json")
+        elif path == "/repos/o/r/readme":
+            self._send(200, "# 演示 README\n\n这是 README 正文。\n", "text/plain; charset=utf-8")
+        else:
+            self._send(404, "not found", "text/plain; charset=utf-8")
+
+fu_srv = socketserver.TCPServer(("127.0.0.1", 0), _FuHandler)
+fu_base = "http://127.0.0.1:" + str(fu_srv.server_address[1])
+threading.Thread(target=fu_srv.serve_forever, daemon=True).start()
+c_fu1 = req("fetch_url", {"url": fu_base + "/page.html"})
+c_fu2 = req("fetch_url", {"url": fu_base + "/page.html"})          # 缓存命中
+c_fu3 = req("fetch_url", {"url": fu_base + "/page.html", "format": "raw"})
+c_fu4 = req("fetch_url", {"url": fu_base + "/big.html"})
+c_fu5 = req("fetch_url", {"url": fu_base + "/missing"})
+c_fu6 = req("fetch_url", {"url": "ftp://example.com/x"})
+c_fu7 = req("fetch_url", {"url": "https://github.com/o/r", "__githubApiBase": fu_base})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
+fu_srv.shutdown()
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
 
 def data_json(cid):
@@ -359,6 +408,24 @@ check("plan_trip 缺 key",
       data_text(c_pt2) == "[提示] 高德 API Key 未配置。可在 设置→插件 中找到 🚗出行工具，填入高德 Web 服务 API Key（注册地址：https://lbs.amap.com）。",
       data_text(c_pt2))
 check("plan_trip 缺起点", data_text(c_pt3) == "[错误] 请提供起点和终点", data_text(c_pt3))
+
+print("\n=== fetch_url（本地 HTTP fixture + GitHub API mock）===")
+fu1 = data_text(c_fu1)
+check("fetch_url markdown 正文提取（标题/列表/代码/表格）",
+      "# 大标题" in fu1 and "- 项目一" in fu1 and "```" in fu1 and "| 列A |" in fu1, fu1[:200])
+check("fetch_url 剥导航/页头/页脚/侧栏",
+      "导航链接" not in fu1 and "页头" not in fu1 and "页脚" not in fu1 and "侧栏" not in fu1, fu1[:200])
+check("fetch_url 缓存命中标注", data_text(c_fu2).startswith("[缓存] 摄取于 "), data_text(c_fu2)[:60])
+fu3 = data_text(c_fu3)
+check("fetch_url raw 原文（不转换）", "<article>" in fu3 and "Content-Type: text/html" in fu3, fu3[:120])
+fu4 = data_text(c_fu4)
+check("fetch_url 512KB 截断标注", "[已截断到 524288 字节]" in fu4, fu4[:160])
+check("fetch_url 404", data_text(c_fu5).startswith("[错误] HTTP 404"), data_text(c_fu5))
+check("fetch_url 非法协议拒绝", data_text(c_fu6) == "[错误] url 必须以 http:// 或 https:// 开头", data_text(c_fu6))
+fu7 = data_text(c_fu7)
+check("fetch_url GitHub API 特化（元信息 + README）",
+      "# o/r" in fu7 and "> 演示仓库" in fu7 and "stars: 42" in fu7 and "license: MIT" in fu7
+      and "这是 README 正文" in fu7, fu7[:300])
 
 print("\n=== git ===")
 if not shutil.which("git"):

@@ -184,6 +184,7 @@ internal static class ToolHost
                         new { id = "git_diff", name = "Git 差异(.NET)", description = "工作区/暂存/ref diff + changes 证据（unified patch 解析）" },
                         new { id = "git_log", name = "Git 历史(.NET)", description = "hash/日期/作者/信息（ref / path / maxCount）" },
                         new { id = "download_file", name = "下载文件(.NET)", description = "URL 二进制落盘（沙箱/黑名单/64MiB/空闲超时；root 注入）" },
+                        new { id = "fetch_url", name = "读取网页(.NET)", description = "URL 正文抓取（正文提取 + markdown；GitHub API 特化；30 分钟 TTL）" },
                     },
                 });
                 break;
@@ -297,6 +298,7 @@ internal static class ToolHost
                         "git_diff" => GitTools.Diff(args ?? EmptyArgs),
                         "git_log" => GitTools.Log(args ?? EmptyArgs),
                         "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
+                        "fetch_url" => FetchUrlTool.Execute(args ?? EmptyArgs),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });

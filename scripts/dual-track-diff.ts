@@ -872,6 +872,112 @@ async function runWeatherTravelDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── fetch_url 双轨（本地 HTTP fixture；raw 逐字、markdown 归一投影）──
+//
+// 库替代（Turndown → ReverseMarkdown）无法逐字节一致，双轨按"归一投影"比对：
+//  - 列表项缩进宽度（Turndown 4 列 vs ReverseMarkdown 1 列）与行尾空白归一；
+//  - 表格：Turndown 核心不支持表格（拍平为文本块），ReverseMarkdown 输出 GFM 管道表——
+//    显式断言该已知差异（两者都保留单元格文字，NET 结构更完整），防未来静默漂移；
+//  - 正文容器路径（article ≥200 字）严格比对；整页回退路径的 <title> 差异见 FetchUrlTool.cs 头注释。
+
+/** fetch_url markdown 归一投影：列表缩进宽度 + 行尾空白。 */
+function normalizeFetchMarkdown(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .map((line) => line.replace(/^(\s*)([-*+])\s{1,4}/, "$1$2 "))
+    .map((line) => line.replace(/^(\s*)(\d+\.)\s{1,4}/, "$1$2 "))
+    .join("\n");
+}
+
+async function runFetchUrlDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] fetch_url ${name}`);
+    else { failed++; console.log(`[FAIL] fetch_url ${name} —— ${detail}`); }
+  };
+
+  const filler = "填充文字".repeat(30); // 120 字：保证 article 正文稳定 ≥200 字阈值（走正文容器路径）
+  const page = `<!doctype html><html><head><title>Fixture</title><style>.x{}</style><script>var a=1;</script></head>
+<body><nav>导航链接 首页</nav><header>页头</header>
+<article><h1>大标题</h1>
+<p>这是正文段落，包含<strong>加粗</strong>与<em>斜体</em>以及<a href="https://example.com/x">链接</a>。${filler}</p>
+<ul><li>项目一</li><li>项目二</li></ul>
+<pre><code>const x = 1;</code></pre>
+<p>结尾段落：${filler}</p>
+</article><footer>页脚</footer><aside>侧栏</aside></body></html>`;
+  const tablePage = `<!doctype html><html><body><article><h1>表格页</h1>
+<p>${filler}</p>
+<table><thead><tr><th>列A</th><th>列B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>
+<p>${filler}</p></article></body></html>`;
+
+  const server = createServer((req, res) => {
+    const url = req.url ?? "/";
+    if (url === "/page.html") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(page);
+    } else if (url === "/table.html") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(tablePage);
+    } else {
+      res.statusCode = 404;
+      res.end("nope");
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  // 强制 TS 轨：临时关闭 toolHost 并重置配置缓存，确保比对的是 TS 原实现而非 native 转发
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const { fetchUrlTool } = await import("../src/main/orchestrator/tools/builtin-tools/fetch-url-tool");
+    const tsFetch = (args: Record<string, unknown>): Promise<string> => fetchUrlTool.execute(args, undefined);
+
+    // 1. markdown（正文容器路径）：归一投影比对
+    const tsMd = await tsFetch({ url: `${base}/page.html` });
+    const netMdHost = await callSmokeTool("fetch_url", { url: `${base}/page.html` });
+    const netMd = String(netMdHost.data ?? "");
+    check("markdown 归一投影（标题/段落/列表/代码块）",
+      normalizeFetchMarkdown(tsMd) === normalizeFetchMarkdown(netMd),
+      `ts=${JSON.stringify(normalizeFetchMarkdown(tsMd).slice(0, 220))} net=${JSON.stringify(normalizeFetchMarkdown(netMd).slice(0, 220))}`);
+
+    // 2. raw：逐字比对
+    const tsRaw = await tsFetch({ url: `${base}/page.html`, format: "raw" });
+    const netRawHost = await callSmokeTool("fetch_url", { url: `${base}/page.html`, format: "raw" });
+    const netRaw = String(netRawHost.data ?? "");
+    check("raw 逐字（原文不转换）", tsRaw === netRaw, `ts=${JSON.stringify(tsRaw.slice(0, 160))} net=${JSON.stringify(netRaw.slice(0, 160))}`);
+
+    // 3. 404：错误文案逐字
+    const ts404 = await tsFetch({ url: `${base}/missing` });
+    const net404Host = await callSmokeTool("fetch_url", { url: `${base}/missing` });
+    check("404 错误文案", ts404 === String(net404Host.data ?? "") && ts404.startsWith("[错误] HTTP 404"), `ts=${ts404} net=${net404Host.data}`);
+
+    // 4. 非法协议：校验文案逐字
+    const tsBad = await tsFetch({ url: "ftp://example.com/x" });
+    const netBadHost = await callSmokeTool("fetch_url", { url: "ftp://example.com/x" });
+    check("非法协议拒绝文案", tsBad === String(netBadHost.data ?? ""), `ts=${tsBad} net=${netBadHost.data}`);
+
+    // 5. 表格：已知库差异显式断言（都保留单元格文字；NET 输出 GFM 管道表，TS 拍平）
+    const tsTable = await tsFetch({ url: `${base}/table.html` });
+    const netTableHost = await callSmokeTool("fetch_url", { url: `${base}/table.html` });
+    const netTable = String(netTableHost.data ?? "");
+    check("表格已知差异（TS 拍平 / NET GFM 管道表，均保留文字）",
+      tsTable.includes("列A") && tsTable.includes("列B") && !tsTable.includes("| 列A |")
+      && netTable.includes("| 列A |") && netTable.includes("| 列B |"),
+      `ts=${JSON.stringify(tsTable.slice(0, 200))} net=${JSON.stringify(netTable.slice(0, 200))}`);
+  } finally {
+    server.close();
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+  }
+  return failed;
+}
+
 // ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
 
 /** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
@@ -1131,6 +1237,9 @@ async function main(): Promise<void> {
     // weather / plan_trip 双轨（确定性路径）
     if (useSmoke) failures += await runWeatherTravelDualTrack();
     else console.log("[SKIP] weather/plan_trip 双轨（仅 smoke dll 轨支持）");
+    // fetch_url 双轨（本地 HTTP fixture；raw 逐字 / markdown 归一投影）
+    if (useSmoke) failures += await runFetchUrlDualTrack();
+    else console.log("[SKIP] fetch_url 双轨（仅 smoke dll 轨支持）");
     // git 八件双轨（镜像仓库 + 本地 bare 远程）
     if (useSmoke) failures += await runGitDualTrack();
     else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");

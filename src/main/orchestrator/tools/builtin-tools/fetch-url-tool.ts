@@ -14,8 +14,12 @@ import TurndownService from "turndown";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
 import { TtlResultCache } from "./ttl-result-cache";
+import { nativeFirst } from "../native-tool-host";
 
 const LOG_PREFIX = "[BuiltinTools]";
+
+/** native 轨看门狗：≥ C# 单请求超时（20s），避免长请求被误杀。 */
+const FETCH_URL_NATIVE_TIMEOUT_MS = 25_000;
 
 const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_MAX_BYTES = 512 * 1024; // 单次最多 512KB，防止 LLM 上下文爆炸
@@ -299,5 +303,11 @@ export const fetchUrlTool: ToolDefinition = {
     },
     required: ["url"],
   },
-  execute: executeFetchUrl,
+  execute: (args, ctx) =>
+    // native 优先（.NET FetchUrlTool，Turndown → ReverseMarkdown 库替代）；
+    // host 不可用/失败回退上方 TS 原实现（含 TS 侧缓存），取消原样上抛不回退。
+    nativeFirst("fetch_url", args, (nativeArgs) => executeFetchUrl(nativeArgs, ctx), {
+      timeoutMs: FETCH_URL_NATIVE_TIMEOUT_MS,
+      signal: ctx?.signal,
+    }),
 };
