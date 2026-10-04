@@ -121,12 +121,14 @@ sync.MapGet("/fetch", (EventStore store, string? since, int? limit, string? sess
 sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sessionId) =>
 {
     context.Response.ContentType = "application/x-ndjson; charset=utf-8";
-    context.Response.Headers["X-Sync-Cursor"] = store.CurrentCursor().ToString();
+    // 先取快照上界再流式读：流内容严格 ⊆ id<=cursor（并发 push 的事件留给后续 fetch，不重不漏）
+    var cursor = store.CurrentCursor();
+    context.Response.Headers["X-Sync-Cursor"] = cursor.ToString();
     var options = new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     var newline = "\n"u8.ToArray();
     try
     {
-        foreach (var syncEvent in store.StreamAll(sessionId))
+        foreach (var syncEvent in store.StreamAll(sessionId, cursor))
         {
             await JsonSerializer.SerializeAsync(context.Response.Body, syncEvent, options, context.RequestAborted);
             await context.Response.Body.WriteAsync(newline, context.RequestAborted);
