@@ -220,7 +220,7 @@
 - **外围归属**：可执行探测仍由 TS `resolveGitExecutable`（装配层缓存）负责，
   native 调用时注入 `__gitCommand/__gitSource/__gitVersion`（bundled 附
   `__gitIsolated`，C# 侧设 NOSYSTEM/NUL 隔离）；会话绑定由 ToolContext 解析后
-  注入；提交身份经 `GitService.getCommitIdentity()` 注入（仅 commit 的
+  注入；提交身份经 `GitService.getCommitIdentity()` 注入（commit/revert 的
   `-c user.name/email` 使用）；并发由 ToolHost 串行 + NativeToolHost 串行闸门保证。
 - **实现**：C# `GitTools.cs`（GitRunner + simple-git 同构解析：status
   `--porcelain -b -u --null`、`diff --stat=4096`、`branch -v`、
@@ -237,6 +237,16 @@
 - **未做/后续**：冲突拒提交与空仓库 push 失败路径的 dual-track 用例、无凭据
   远端场景（T2 凭证复核）随后续批次补；Git 面板 UI 仍走原 GitService
   （native 只承接工具执行，UI 时效依赖既有 workspace watcher）。
+
+## 2026-10-04 增量：CI 修复——git init/revert 环境确定性（IKJMMX）
+
+- **背景**：GitHub 流水线首次运行扩展后的工具矩阵，git 段 4 项失败：`git init` 初始分支随环境
+  （CI=master / 本机=main）；`git revert` 依赖环境全局身份（CI 无 → `Author identity unknown` exit 128）。
+- **修复（两轨同构）**：`git init` 显式 `-b main`（TS `git.raw(["init","-b","main"])` ↔ C# `init -b main`）；
+  `revert` 与 `commit` 一致——要求提交身份（缺邮箱给友好错误）并注入 `-c user.name/email`。
+- **测试**：矩阵 g_revert 注入身份 + 新增「无身份 revert 拒绝」（**91/91**，隐藏全局身份模拟 CI）；
+  TS 单测补 revert 身份用例；dual-track 两轨仍等价。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJMMX；GitHub run 37180790050 / job 111372772687。
 
 ## 2026-10-03 增量：PR #1 复审阻断修复（取消链路 + 串行闸门）
 

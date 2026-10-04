@@ -469,7 +469,7 @@ else:
     commit2_text = g.get("g_commit2", {}).get("data")
     check("git commit #2 输出", isinstance(commit2_text, str) and re.match(r"^已创建提交 [0-9a-f]{40}$", commit2_text), commit2_text)
     g_hash2 = commit2_text.split(" ")[-1] if isinstance(commit2_text, str) else ""
-    g = grun([("g_revert", "git_revert", {"commit": g_hash2[:12], "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC})])
+    g = grun([("g_revert", "git_revert", {"commit": g_hash2[:12], "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC})])
     check("git revert 消息", g.get("g_revert", {}).get("data") == f"已创建回退提交 {g_hash2[:12]}"
           and g.get("g_revert", {}).get("ok") is True, g.get("g_revert"))
 
@@ -509,6 +509,7 @@ else:
         ("g_bad_path", "git_commit", {"message": "x", "paths": ["../escape.txt"], "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
         ("g_bad_count", "git_log", {"maxCount": 0, "__cyreneRoot": grepo, **GITC}),
         ("g_bad_revert", "git_revert", {"commit": "zzz", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_revert_noident", "git_revert", {"commit": g_hash2[:12], "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
     ])
     d = gdata(g, "g_norepo")
     check("git status 非仓库（not_repository 形状）",
@@ -517,6 +518,10 @@ else:
     for cid, name in [("g_bad_ident", "无身份拒绝"), ("g_bad_ref", "空 ref 拒绝"), ("g_bad_branch", "非法分支名拒绝"),
                       ("g_bad_path", "路径逃逸拒绝"), ("g_bad_count", "maxCount 0 拒绝"), ("g_bad_revert", "非法 hash 拒绝")]:
         check(f"git 校验（{name}）", g.get(cid, {}).get("ok") is False, g.get(cid))
+    check("git 校验（无身份 revert → 友好错误）",
+          g.get("g_revert_noident", {}).get("ok") is False
+          and "Git 提交邮箱" in (g.get("g_revert_noident", {}).get("error") or ""),
+          g.get("g_revert_noident"))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

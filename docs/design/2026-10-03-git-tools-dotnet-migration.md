@@ -31,7 +31,7 @@ TS 工具（git-tools.ts）── nativeFirst("git_xxx", 内部参数) ──> T
   仍由 TS `resolveGitExecutable` 完成（装配层缓存），native 调用时注入；C# 不做二次探测。
 - 会话绑定（conversationId ↔ workspaceRoot）：TS `ToolContext` 解析后注入；C# 无会话状态。
 - 并发/串行化：ToolHost 本身单线程 + NativeToolHost 串行闸门，天然串行；`maxConcurrentProcesses:1` 语义保持。
-- 提交身份（设置项）：`GitService.getCommitIdentity()` 注入；C# 仅在 commit 的 `-c user.name/user.email` 使用。
+- 提交身份（设置项）：`GitService.getCommitIdentity()` 注入；C# 在 commit/revert 的 `-c user.name/user.email` 使用。
 
 **命令与解析**：逐条对齐 simple-git 3.36 的实际命令（`status --porcelain -b -u --null`、
 `diff --stat=4096`、`branch -v`、`-c core.abbrev=40 commit -m`、`push --verbose --porcelain` 等），

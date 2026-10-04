@@ -230,6 +230,18 @@ export function createGitService(deps: GitServiceDeps): GitService {
     });
   }
 
+  /** 提交类操作（commit / revert）共用的身份校验：缺邮箱给出设置指引。 */
+  function requireCommitIdentity(): GitCommitIdentity {
+    const identity = deps.getCommitIdentity?.() ?? null;
+    const email = identity?.email?.trim();
+    if (!email) {
+      throw new Error(
+        "尚未配置 Git 提交邮箱：请在 设置 → 通用设置 → 「Git 提交身份」填写邮箱（提交作者名默认 Cyrene）",
+      );
+    }
+    return { name: identity?.name?.trim() || "Cyrene", email };
+  }
+
   async function trustedContextForSession(sessionId: string): Promise<TrustedGitContext> {
     const resolved = await resolveCodeSession(sessionId);
     if (isCodeGitStatus(resolved)) throw new Error(resolved.message ?? "Git 状态暂时不可用");
@@ -282,17 +294,7 @@ export function createGitService(deps: GitServiceDeps): GitService {
       if (paths.length === 0 || paths.some((item) => !isSafeRelativePath(item))) {
         throw new Error("请提供要提交的仓库内文件路径");
       }
-      const identity = deps.getCommitIdentity?.() ?? null;
-      const email = identity?.email?.trim();
-      if (!email) {
-        throw new Error(
-          "尚未配置 Git 提交邮箱：请在 设置 → 通用设置 → 「Git 提交身份」填写邮箱（提交作者名默认 Cyrene）",
-        );
-      }
-      const commitIdentity: GitCommitIdentity = {
-        name: identity?.name?.trim() || "Cyrene",
-        email,
-      };
+      const commitIdentity = requireCommitIdentity();
       const client = await clientForTrustedContext(ctx, commitIdentity);
       const status = await client.getStatus();
       if (status.conflicted?.length) throw new Error("存在冲突文件，请先处理冲突后再提交");
@@ -325,7 +327,7 @@ export function createGitService(deps: GitServiceDeps): GitService {
 
     async revert(ctx, commit) {
       if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new Error("提交标识必须是 7 到 40 位十六进制 hash");
-      const client = await clientForTrustedContext(ctx);
+      const client = await clientForTrustedContext(ctx, requireCommitIdentity());
       await client.revert(commit);
       emitChanged(ctx.sessionId);
       return `已创建回退提交 ${commit}`;
@@ -472,7 +474,8 @@ function createSimpleGitClient(input: {
       }
       return { insertions, deletions, byPath };
     },
-    init: async () => { await git.init(); },
+    // 初始分支固定 main（不随环境 init.defaultBranch 漂移；与 C# 侧 init -b main 同构）
+    init: async () => { await git.raw(["init", "-b", "main"]); },
     add: async (paths) => { await git.raw(["add", "-A", "--", ...paths]); },
     async commit(message) {
       const result = await git.commit(message);

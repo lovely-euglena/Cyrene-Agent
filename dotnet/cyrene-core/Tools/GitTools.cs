@@ -92,7 +92,8 @@ internal static class GitTools
     public static string Init(JsonElement args)
     {
         var root = Root(args);
-        var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "init" }));
+        // 初始分支固定 main：不随环境 init.defaultBranch 漂移（CI=master / 本机=main 曾导致矩阵断言分裂）
+        var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "init", "-b", "main" }));
         if (result.ExitCode != 0) throw GitFailed("git init", result);
         return "已初始化 Git 仓库";
     }
@@ -176,7 +177,15 @@ internal static class GitTools
         var commit = Str(args, "commit").Trim();
         if (!Regex.IsMatch(commit, "^[0-9a-f]{7,40}$", RegexOptions.IgnoreCase))
             throw new ToolHostException("E_GIT_INPUT", "提交标识必须是 7 到 40 位十六进制 hash");
-        var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "revert", "--no-edit", commit }));
+        // 与 commit 一致：revert 也会产生提交，身份必须来自设置（不依赖环境全局 git config）
+        var identity = GitIdentity(args);
+        var email = identity?.Email?.Trim() ?? "";
+        if (email.Length == 0)
+            throw new ToolHostException("E_GIT_IDENTITY",
+                "尚未配置 Git 提交邮箱：请在 设置 → 通用设置 → 「Git 提交身份」填写邮箱（提交作者名默认 Cyrene）");
+        var name = identity?.Name?.Trim() is { Length: > 0 } n ? n : "Cyrene";
+        var result = RunGit(args, root, Concat(BaseConfig(args, new GitIdentityInfo(name, email)),
+            new[] { "revert", "--no-edit", commit }));
         if (result.ExitCode != 0) throw GitFailed("git revert", result);
         return $"已创建回退提交 {commit}";
     }

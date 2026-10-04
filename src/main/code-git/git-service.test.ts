@@ -293,6 +293,35 @@ describe("GitService 独立配置文件传递（IKJMO8）", () => {
   });
 });
 
+describe("GitService revert identity", () => {
+  const ctx = { sessionId: "session-1", mode: "code" as const, workspaceRoot: "C:\\repo" };
+
+  it("缺少提交邮箱时拒绝 revert 并给出设置指引", async () => {
+    const current = createGitService({
+      getSession: () => session("code"),
+      resolveExecutable: async () => executable,
+      createClient: () => client(),
+      getCommitIdentity: () => null,
+    });
+    await expect(current.revert(ctx, "abc1234")).rejects.toThrow(/Git 提交邮箱/);
+  });
+
+  it("revert 时把身份传给客户端（缺名回退 Cyrene）", async () => {
+    const createClient = vi.fn(() => client());
+    const current = createGitService({
+      getSession: () => session("code"),
+      resolveExecutable: async () => executable,
+      createClient,
+      getCommitIdentity: () => ({ email: "cyrene@example.com" }),
+    });
+    await current.revert(ctx, "abc1234");
+    expect(createClient).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRoot: "C:\\repo",
+      identity: { name: "Cyrene", email: "cyrene@example.com" },
+    }));
+  });
+});
+
 describe("GitService.log", () => {
   const ctx = { sessionId: "session-1", mode: "code" as const, workspaceRoot: "C:\\repo" };
 
