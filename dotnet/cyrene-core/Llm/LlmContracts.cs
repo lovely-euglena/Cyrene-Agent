@@ -13,18 +13,19 @@ namespace CyreneNative.Llm;
 ///   {"op":"ready"}
 ///   → {"op":"llm.submit","callId":"c1","lane":"interactive|normal|low",
 ///      "endpoint":"https://…/chat/completions","method":"POST",
-///      "auth":{"vaultKey":"model:provider:MiniMax…","style":"bearer|raw"},
+///      "auth":{"vaultKey":"model:provider:MiniMax…","style":"bearer|raw","headerName":"x-api-key"},
 ///      "headers":{"Content-Type":"application/json",…非鉴权头…},
 ///      "body":"{…完整 wire 请求体（TS 塑形，去鉴权）…}",
-///      "protocol":"openai","timeoutMs":180000,"maxRetries":3,"idleTimeoutMs":45000}
+///      "protocol":"openai","timeoutMs":180000,"maxRetries":5,"idleTimeoutMs":45000}
 ///   → {"op":"llm.poll","callId":"c2","jobId":"j1","cursor":0,"maxEvents":200,"waitMs":5000}
 ///   → {"op":"llm.cancel","callId":"c3","jobId":"j1"}
 ///   → {"op":"llm.status"}
 ///   → {"op":"shutdown"}
 /// 帧（native → 宿主）：
 ///   ← {"op":"ready"}
-///   ← {"op":"result","callId","ok":true,"data":…} / {"op":"result","callId","ok":false,"error":{code,message}}
-///   （MVP 纯 poll 拉取，无推送帧；retry/done/error 终态经 poll 事件下发）
+///   ← {"op":"result","callId","ok":true,"data":…} / {"op":"result","callId","ok":false,"error":"…","errorCode":"E_…","retryable":false}
+///   （MVP 纯 poll 拉取，无推送帧；retry/done/error 终态经 poll 事件下发；
+///    poll data 另带 dropped/truncated 反映 ring 溢出，见 §4.4）
 ///
 /// 事件（event.type，LlmEvent）：
 ///   delta            {"type":"delta","text":…}                  文本增量
@@ -42,11 +43,13 @@ namespace CyreneNative.Llm;
 ///   E_LLM_HOST_JOB_MISSING    jobId 不存在（过期/宿主重启）
 ///   E_LLM_HOST_LANE_FULL      low 通道积压超上限
 ///   E_LLM_HOST_SECRET_UNAVAILABLE  密钥保护器不可用（DPAPI 故障）
+///   E_LLM_HOST_INTERNAL       宿主执行期内部错误（兜底 catch，非帧/body 非法）
 ///   E_LLM_HTTP_<status>       上游 HTTP 非法状态（透传，如 E_LLM_HTTP_401）
 ///   E_LLM_HTTP_0              网络层失败（连接/超时/流中断）
-///   E_LLM_IDLE_TIMEOUT        上游静默超限
+///   E_LLM_IDLE_TIMEOUT        上游静默超限（含连接/响应头阶段）
+///   E_LLM_REQUEST_TIMEOUT     总时长超限（timeoutMs，不可重试）
 ///   E_LLM_CANCELLED           用户取消
-///   E_LLM_TRUNCATED           反压溢出（ring 满，上游不可暂停）
+///   E_LLM_TRUNCATED           反压暂停兜底（消费者死亡 60s；ring 溢出走 poll.dropped/truncated）
 ///
 /// 重试语义（与 TS model-retry-runner 对齐）：
 ///   首个可见增量（delta/reasoning_delta/tool_calls_delta）到达前失败
@@ -85,6 +88,7 @@ public static class LlmContracts
     public const string ErrJobMissing = "E_LLM_HOST_JOB_MISSING";
     public const string ErrLaneFull = "E_LLM_HOST_LANE_FULL";
     public const string ErrSecretUnavailable = "E_LLM_HOST_SECRET_UNAVAILABLE";
+    public const string ErrInternal = "E_LLM_HOST_INTERNAL";
     public const string ErrHttpPrefix = "E_LLM_HTTP_";
     public const string ErrHttpNetwork = "E_LLM_HTTP_0";
     public const string ErrIdleTimeout = "E_LLM_IDLE_TIMEOUT";

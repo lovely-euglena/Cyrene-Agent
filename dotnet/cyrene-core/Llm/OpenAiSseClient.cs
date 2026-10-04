@@ -61,7 +61,9 @@ public static class OpenAiSseClient
     {
         using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var ctIdle = idleCts.Token;
-        idleCts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(5_000, idleTimeoutMs)));
+        // 下限对齐契约（ParseJob clamp ≥1000；复审 P1-2：连接/响应头阶段 idle 也要可达/可测）
+        var idleFloorMs = Math.Max(1_000, idleTimeoutMs);
+        idleCts.CancelAfter(TimeSpan.FromMilliseconds(idleFloorMs));
 
         try
         {
@@ -80,7 +82,7 @@ public static class OpenAiSseClient
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ctIdle).ConfigureAwait(false);
             var reader = new StreamReader(stream, Encoding.UTF8);
-            var idleMs = TimeSpan.FromMilliseconds(Math.Max(5_000, idleTimeoutMs));
+            var idleMs = TimeSpan.FromMilliseconds(idleFloorMs);
 
             while (true)
             {
@@ -113,7 +115,13 @@ public static class OpenAiSseClient
             }
         }
         catch (OpenAiHttpException) { throw; }
-        catch (OperationCanceledException) { throw; } // 用户取消：交由 service 语义处理
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 复审 P1-2：连接/响应头阶段 idleCts 触发（ct 未取消）→ 归 idle 超时，
+            // 由 service 按网络/idle 可重试分类，而不是裸 OCE 落 REQUEST_TIMEOUT
+            throw new OpenAiHttpException(0, null, "连接/响应头超时（idle）", isIdleTimeout: true);
+        }
+        catch (OperationCanceledException) { throw; } // 用户取消/总超时：交由 service 语义处理
         catch (HttpRequestException ex) { throw new OpenAiHttpException(0, null, ex.Message); }       // 网络 → 可重试（P0-9）
         catch (IOException ex) { throw new OpenAiHttpException(0, null, ex.Message); }                // 流中断 → 可重试（P0-9）
     }

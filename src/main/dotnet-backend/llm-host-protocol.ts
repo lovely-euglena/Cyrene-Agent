@@ -53,6 +53,7 @@ export const LLM_ERRORS = {
   jobMissing: "E_LLM_HOST_JOB_MISSING",
   laneFull: "E_LLM_HOST_LANE_FULL",
   secretUnavailable: "E_LLM_HOST_SECRET_UNAVAILABLE",
+  internal: "E_LLM_HOST_INTERNAL",
   httpPrefix: "E_LLM_HTTP_",
   httpNetwork: "E_LLM_HTTP_0",
   idleTimeout: "E_LLM_IDLE_TIMEOUT",
@@ -82,6 +83,10 @@ export interface LlmPollResult {
   nextCursor: number;
   events: LlmHostEvent[];
   final: boolean;
+  /** 复审 P2-1④：ring 溢出累计丢弃数（>0 = 增量有缺口）。 */
+  dropped?: number;
+  /** 复审 P2-1④：ring 曾 drop-oldest（丢弃段不可恢复）——消费侧应告警。 */
+  truncated?: boolean;
 }
 
 /** 归一化 token 事件（C# LlmEvent 的 camelCase 序列化形态）。 */

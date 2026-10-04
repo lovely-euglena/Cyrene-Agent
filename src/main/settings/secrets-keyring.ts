@@ -506,8 +506,6 @@ export function stripKeysForDisk<T>(settings: T): T {
 
 // ── 掩码（A3：设置页读取只回掩码/hasKey） ──
 
-export interface KeyMask { hasKey: boolean }
-
 /**
  * 掩码模型设置快照（vault 模式专用；非 vault 模式维持明文展示不变）。
  * 复审 P0 门控一致性：仅 vault 实际可用（isVaultActive）时掩码——宿主缺失（迁移

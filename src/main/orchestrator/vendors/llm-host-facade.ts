@@ -144,6 +144,7 @@ async function collectJob(
   let thinking = "";
   let finishReason = "stop";
   let usage: ChatResponse["usage"] | undefined;
+  let warnedDropped = false;
   const toolAcc = new Map<number, { id: string; name: string; arguments: string }>();
 
   while (!signal.aborted) {
@@ -160,6 +161,11 @@ async function collectJob(
       throw err;
     }
     cursor = result.nextCursor;
+    // 复审 P2-1④：ring 溢出（drop-oldest）→ 增量缺口告警（每次作业一次，不刷屏）
+    if (!warnedDropped && ((result.dropped ?? 0) > 0 || result.truncated === true)) {
+      warnedDropped = true;
+      console.warn(`[llm-host] job ${jobId} 事件 ring 溢出：累计丢弃 ${result.dropped ?? 0} 条（增量有缺口）`);
+    }
 
     for (const ev of result.events) {
       const mapped = translate(ev, onDelta, onRetryStatus, toolAcc, options.maxRetries ?? 5);

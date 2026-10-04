@@ -68,8 +68,6 @@ public sealed class SecretVault
         [JsonPropertyName("updatedAt")] public string UpdatedAt { get; set; } = "";
     }
 
-    private readonly object _fileGate = new();
-
     private VaultFile Load()
     {
         if (!File.Exists(_filePath)) return new VaultFile();

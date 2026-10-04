@@ -115,14 +115,18 @@ public sealed class LlmJobService : IDisposable
         }
         catch (OperationCanceledException) when (job.Cts.IsCancellationRequested)
         {
-            MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent { Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled });
+            MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent
+            {
+                Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled, Retryable = false,
+            });
         }
         catch (Exception ex)
         {
+            // 复审 P2-2②：兜底异常是执行期内部错误，不是帧/body 非法（BAD_REQUEST 契约语义）
             MarkTerminal(job, LlmJobState.Error, new LlmEvent
             {
-                Type = LlmContracts.EvError, Code = LlmContracts.ErrBadRequest,
-                Message = Trunc(ex.Message), Retryable = false,
+                Type = LlmContracts.EvError, Code = LlmContracts.ErrInternal,
+                Message = Trunc(ex.Message), Retryable = false, Category = "UNKNOWN",
             });
         }
         finally
@@ -141,7 +145,10 @@ public sealed class LlmJobService : IDisposable
             var ct = job.Cts.Token;
             if (ct.IsCancellationRequested)
             {
-                MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent { Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled });
+                MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent
+                {
+                    Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled, Retryable = false,
+                });
                 return;
             }
 
@@ -186,7 +193,6 @@ public sealed class LlmJobService : IDisposable
             if (job.Metrics.QueueWaitMs == null)
                 job.Metrics.QueueWaitMs = (long)(job.StartedAt.Value - job.EnqueuedAt).TotalMilliseconds;
 
-            var hadVisibleBefore = job.SawVisibleDelta;
             OpenAiHttpException? failure = null;
             OperationCanceledException? cancelled = null;
             try
@@ -215,7 +221,10 @@ public sealed class LlmJobService : IDisposable
 
             if (cancelled != null)
             {
-                MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent { Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled });
+                MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent
+                {
+                    Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled, Retryable = false,
+                });
                 return;
             }
 
@@ -240,7 +249,6 @@ public sealed class LlmJobService : IDisposable
             }
 
             // 退避重试：retry-after 头优先，否则指数 1s,2s,4s…封顶 30s（修 off-by-one）
-            job.RetryCount = attempt;
             job.Metrics.Retries = attempt;
             job.State = LlmJobState.WaitingRetry;
             var delayMs = ComputeDelayMs(failure.RetryAfterMs, attempt - 1);
@@ -252,7 +260,10 @@ public sealed class LlmJobService : IDisposable
             try { await Task.Delay(delayMs, ct).ConfigureAwait(false); }
             catch (OperationCanceledException)
             {
-                MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent { Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled });
+                MarkTerminal(job, LlmJobState.Cancelled, new LlmEvent
+                {
+                    Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled, Retryable = false,
+                });
                 return;
             }
         }
@@ -285,10 +296,10 @@ public sealed class LlmJobService : IDisposable
             var mapped = MapWire(ev, ref finish, ref usage);
             if (mapped == null) return true;
 
-            // 反压：未确认量 ≥ 高水位 → 暂停上游读（TCP 反压），poll 消费推进至低水位恢复；
-            // 消费者死亡 60s → truncated 终态（P0-2 修复）
+            // 反压：未确认量 ≥ 高水位 → 暂停上游读（TCP 反压），poll 消费推进至低水位恢复
+            //（迟滞：暂停后降至 ≤LowWater 才恢复，复审 P2-3）；消费者死亡 60s → truncated 终态
             var pausedAt = Stopwatch.StartNew();
-            while (job.Unconfirmed() >= LlmJob.HighWater && !job.IsTerminal)
+            while (job.Unconfirmed() > LlmJob.LowWater && !job.IsTerminal)
             {
                 if (pausedAt.ElapsedMilliseconds > LlmJob.StallTimeoutMs)
                 {
@@ -300,14 +311,15 @@ public sealed class LlmJobService : IDisposable
                     return false;
                 }
                 ct.WaitHandle.WaitOne(20);
-                if (ct.IsCancellationRequested) return false;
+                // 复审 P1-1：暂停路径的取消/总超时不能被吞成 Done——抛 OCE 交既有分类
+                //（job.Cts → Cancelled；attemptCts 超时 → E_LLM_REQUEST_TIMEOUT）
+                if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
             }
             job.Append(mapped);
             var t = mapped.Type;
             if (t is LlmContracts.EvDelta or LlmContracts.EvReasoningDelta or LlmContracts.EvToolCallsDelta)
             {
                 job.SawVisibleDelta = true;
-                job.FirstDeltaAt ??= DateTimeOffset.UtcNow;
                 if (job.Metrics.TtftMs == null) job.Metrics.TtftMs = ttft.ElapsedMilliseconds;
             }
             return true;
@@ -320,7 +332,7 @@ public sealed class LlmJobService : IDisposable
     private void EmitTerminalEvents(LlmJob job, string? finish, JsonElement? usage)
     {
         if (job.IsTerminal) return; // 流结束前已被取消/出错：终态不覆盖（error/done 只发一个）
-        job.Append(new LlmEvent { Type = LlmContracts.EvFinish, Reason = finish ?? "stop" }, isTerminal: true);
+        job.Append(new LlmEvent { Type = LlmContracts.EvFinish, Reason = finish ?? "stop" });
         if (usage != null)
         {
             long In(string prop) => usage.Value.TryGetProperty(prop, out var v) && v.TryGetInt64(out var i) ? i : 0;
@@ -332,9 +344,9 @@ public sealed class LlmJobService : IDisposable
                 OutputTokens = In("completion_tokens"),
                 CachedInputTokens = usage.Value.TryGetProperty("prompt_tokens_details", out var det)
                     && det.ValueKind == JsonValueKind.Object && det.TryGetProperty("cached_tokens", out var c) && c.TryGetInt64(out var ci) ? ci : null,
-            }, isTerminal: true);
+            });
         }
-        job.Append(new LlmEvent { Type = LlmContracts.EvDone }, isTerminal: true);
+        job.Append(new LlmEvent { Type = LlmContracts.EvDone });
         job.State = LlmJobState.Done;
         job.FinishedAt = DateTimeOffset.UtcNow;
     }
@@ -355,7 +367,7 @@ public sealed class LlmJobService : IDisposable
         if (job.IsTerminal) return; // 终态只发一次（cancel 竞速：先到先得）
         if (terminalEvent != null)
         {
-            job.Append(terminalEvent, isTerminal: true);
+            job.Append(terminalEvent);
             if (terminalEvent.Code != null) job.Metrics.ErrorCode = terminalEvent.Code;
         }
         job.State = state;
@@ -380,6 +392,8 @@ public sealed class LlmJobService : IDisposable
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                // 复审 P2-6：State 输出枚举名（"Done"）而非数字，日志/status 可读
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
             });
         }
         Console.Error.WriteLine($"[llm-metrics] {json}");

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -64,13 +65,14 @@ public static class LlmJobsSelfTest
         Check(job.EventCount == 3, "事件计数");
 
         var batch1 = job.Poll(0, 2, 0);
-        Check(batch1.Count == 2 && batch1[0].Text == "你" && batch1[1].Text == "好", "cursor=0 前 2 条");
+        Check(batch1.Events.Count == 2 && batch1.Events[0].Text == "你" && batch1.Events[1].Text == "好", "cursor=0 前 2 条");
+        Check(batch1.NextCursor == 2, "nextCursor=有效位点（P2-1①）");
         var batch1again = job.Poll(0, 2, 0);
-        Check(batch1again.Count == 2 && batch1again[0].Text == "你", "cursor 幂等（重复 poll 不丢不重）");
+        Check(batch1again.Events.Count == 2 && batch1again.Events[0].Text == "你", "cursor 幂等（重复 poll 不丢不重）");
         var batch2 = job.Poll(2, 2, 0);
-        Check(batch2.Count == 1 && batch2[0].Type == LlmContracts.EvDone, "断点续读补齐");
+        Check(batch2.Events.Count == 1 && batch2.Events[0].Type == LlmContracts.EvDone, "断点续读补齐");
         var batchEmpty = job.Poll(3, 2, 20);
-        Check(batchEmpty.Count == 0, "cursor 到底返回空");
+        Check(batchEmpty.Events.Count == 0, "cursor 到底返回空");
 
         // ── 3. lane 并发槽位数（静态声明）──
         Check(LlmJobStore.LaneSlotOf(LlmContracts.LaneInteractive) == 4, "interactive=4 声明");
@@ -80,15 +82,15 @@ public static class LlmJobsSelfTest
         // ── 4. 400 TPS 量级追写 + 轮询不丢不重（内存压测）──
         var hz = MakeJob(LlmContracts.LaneInteractive);
         for (var i = 0; i < 400; i++) hz.Append(new LlmEvent { Type = LlmContracts.EvDelta, Text = "x" });
-        hz.Append(new LlmEvent { Type = LlmContracts.EvDone }, isTerminal: true);
+        hz.Append(new LlmEvent { Type = LlmContracts.EvDone });
         var got = new StringBuilder();
         var cursor = 0;
         while (cursor < hz.EventCount)
         {
             var b = hz.Poll(cursor, 100, 0);
-            if (b.Count == 0) break;
-            foreach (var e in b) if (e.Type == LlmContracts.EvDelta) got.Append(e.Text);
-            cursor += b.Count;
+            if (b.Events.Count == 0) break;
+            foreach (var e in b.Events) if (e.Type == LlmContracts.EvDelta) got.Append(e.Text);
+            cursor = b.NextCursor;
         }
         Check(got.Length == 400 && got.ToString() == new string('x', 400), "400 事件聚合无损");
 
@@ -96,13 +98,15 @@ public static class LlmJobsSelfTest
         var ring = MakeJob(LlmContracts.LaneInteractive);
         for (var i = 0; i < LlmJob.RingCapacity + 100; i++)
             ring.Append(new LlmEvent { Type = LlmContracts.EvDelta, Text = "y" });
-        ring.Append(new LlmEvent { Type = LlmContracts.EvDone }, isTerminal: true);
+        ring.Append(new LlmEvent { Type = LlmContracts.EvDone });
         Check(ring.EventCount - ring.DroppedEvents <= LlmJob.RingCapacity, "ring 活跃事件不破上限");
         Check(ring.DroppedEvents > 0, "溢出丢弃计数");
         // cursor=0（已丢段）→ 从 base 起读：不挂、不重、可读到终态
         var fromZero = ring.Poll(0, int.MaxValue, 0);
-        Check(fromZero.Count > 0 && fromZero[^1].Type == LlmContracts.EvDone, "drop-oldest 后 cursor 续读至终态");
-        Check(ring.Poll(0, 1, 0).Count > 0, "cursor 幂等保持（不挂）");
+        Check(fromZero.Events.Count > 0 && fromZero.Events[^1].Type == LlmContracts.EvDone, "drop-oldest 后 cursor 续读至终态");
+        // P2-1①：cursor 落在丢弃段时 nextCursor 必须是 clamp 后位点，不能是 cursor+count（会重复投递）
+        Check(fromZero.NextCursor == ring.EventCount, "丢弃段 cursor clamp 后 nextCursor 正确（P2-1①）");
+        Check(ring.Poll(0, 1, 0).Events.Count > 0, "cursor 幂等保持（不挂）");
 
         // ── 6. 未确认量语义（P0-2 核心：poll 消费推进 → PendingCount 下降）──
         var unconf = MakeJob(LlmContracts.LaneInteractive);
@@ -275,20 +279,20 @@ public static class LlmStreamSelfTest
             job = service.Store.Find(jobId);
             if (job == null) throw new InvalidOperationException("job missing");
             var batch = job.Poll(cursor, 500, 25);
-            cursor += batch.Count;
-            all.AddRange(batch);
+            cursor = batch.NextCursor;
+            all.AddRange(batch.Events);
             if (job.IsTerminal && cursor >= job.EventCount) break;
         }
         return (all, job!);
     }
 
-    private static LlmJob SubmitInteractive(LlmJobService service, string endpoint, int maxRetries = 1, int timeoutMs = 15000)
+    private static LlmJob SubmitInteractive(LlmJobService service, string endpoint, int maxRetries = 1, int timeoutMs = 15000, int idleTimeoutMs = 5000)
     {
         var frame = JsonDocument.Parse($@"{{
             ""lane"": ""interactive"", ""endpoint"": ""{endpoint}"", ""method"": ""POST"",
             ""auth"": {{ ""vaultKey"": ""k"", ""style"": ""bearer"" }},
             ""headers"": {{ ""Content-Type"": ""application/json"" }},
-            ""body"": ""{{}}"", ""protocol"": ""openai"", ""timeoutMs"": {timeoutMs}, ""maxRetries"": {maxRetries}, ""idleTimeoutMs"": 5000
+            ""body"": ""{{}}"", ""protocol"": ""openai"", ""timeoutMs"": {timeoutMs}, ""maxRetries"": {maxRetries}, ""idleTimeoutMs"": {idleTimeoutMs}
         }}").RootElement;
         var job = service.TrySubmit(frame, out var err);
         if (job == null) throw new InvalidOperationException("submit failed: " + err);
@@ -470,17 +474,18 @@ public static class LlmStreamSelfTest
             Check(text == new string('x', 4000), "4000 事件无损");
         }
 
-        // ── 7. timeoutMs 总时长兜底（复审 P1-5：慢流 + 超短 timeout → REQUEST_TIMEOUT 终态）──
+        // ── 7. timeoutMs 总时长兜底（复审 P1-5/P2-6：慢流 + 最短 timeout=1000
+        //     （ParseJob clamp 下限，声明值与生效值一致）→ REQUEST_TIMEOUT 终态）──
         {
             using var server = new MockSseServer(async (ctx, n) =>
             {
                 await WriteSseChunkAsync(ctx.Response, Chunk(content: "开头")).ConfigureAwait(false);
-                await Task.Delay(3000).ConfigureAwait(false); // 慢流：超过 timeoutMs=400
+                await Task.Delay(3000).ConfigureAwait(false); // 慢流：超过 timeoutMs=1000
                 await WriteSseChunkAsync(ctx.Response, Chunk(finish: "stop")).ConfigureAwait(false);
                 ctx.Response.Close();
             });
             using var service = new LlmJobService(new FileSecrets());
-            var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 400);
+            var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 1000);
             var (events, j) = await PollUntilDone(service, job.Id).ConfigureAwait(false);
             Check(j.State == LlmJobState.Error, "总超时 → 终态 Error");
             Check(Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrRequestTimeout), "REQUEST_TIMEOUT 错误码（P1-5）");
@@ -511,6 +516,128 @@ public static class LlmStreamSelfTest
                 var peak = Volatile.Read(ref itServer.PeakConcurrent);
                 Check(peak >= 2 && peak <= 4, $"interactive 并发 ∈ [2,4]（实测 {peak}）");
             }
+        }
+
+        // ── 9. 指标出口 State 枚举字符串（复审 P2-6：JsonStringEnumConverter + 出口断言）──
+        using (var server = new MockSseServer(async (ctx, n) =>
+            await WriteSseAsync(ctx.Response, Chunk(content: "m"), Chunk(finish: "stop")).ConfigureAwait(false)))
+        {
+            var originalError = Console.Error;
+            var captured = new StringWriter();
+            Console.SetError(captured);
+            try
+            {
+                using var service = new LlmJobService(new FileSecrets());
+                var job = SubmitInteractive(service, server.Url, maxRetries: 0);
+                await PollUntilDone(service, job.Id).ConfigureAwait(false);
+                await Task.Delay(100).ConfigureAwait(false); // 等 PublishMetrics 落 stderr
+                var metricLine = captured.ToString().Split('\n').LastOrDefault(l => l.Contains("[llm-metrics]"));
+                Check(metricLine != null && metricLine.Contains("\"state\":\"Done\""), "指标出口 State 为枚举字符串（P2-6）");
+                var metrics = service.RecentMetrics();
+                Check(metrics.Count > 0 && metrics[^1].State == LlmJobState.Done, "llm.status 指标出口（P2-6）");
+            }
+            finally { Console.SetError(originalError); }
+        }
+
+        // ── 10. 反压暂停中取消 → Cancelled（复审 P1-1：不吞成 Done）──
+        {
+            using var server = new MockSseServer(async (ctx, n) =>
+            {
+                var sb = new StringBuilder();
+                for (var i = 0; i < 4000; i++) sb.Append("data: " + Chunk(content: "x") + "\n\n");
+                sb.Append("data: [DONE]\n\n");
+                var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+                ctx.Response.ContentType = "text/event-stream";
+                ctx.Response.ContentLength64 = bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
+                await ctx.Response.OutputStream.FlushAsync().ConfigureAwait(false);
+                await Task.Delay(500).ConfigureAwait(false);
+                ctx.Response.Close();
+            });
+            using var service = new LlmJobService(new FileSecrets());
+            var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 60000);
+            await Task.Delay(300).ConfigureAwait(false); // 不 poll → 进入超水位暂停
+            Check(service.Store.Cancel(job.Id), "暂停中 cancel 受理");
+            var (events, j) = await PollUntilDone(service, job.Id).ConfigureAwait(false);
+            Check(j.State == LlmJobState.Cancelled, "暂停中取消 → 终态 Cancelled（P1-1）");
+            Check(Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrCancelled), "取消错误码");
+            Check(!Has(events, LlmContracts.EvDone, _ => true), "取消不补 done");
+        }
+
+        // ── 11. 反压暂停中总超时 → REQUEST_TIMEOUT（复审 P1-1：不吞成 Done）──
+        {
+            using var server = new MockSseServer(async (ctx, n) =>
+            {
+                var sb = new StringBuilder();
+                for (var i = 0; i < 4000; i++) sb.Append("data: " + Chunk(content: "x") + "\n\n");
+                var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+                ctx.Response.ContentType = "text/event-stream";
+                ctx.Response.ContentLength64 = bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
+                await ctx.Response.OutputStream.FlushAsync().ConfigureAwait(false);
+                await Task.Delay(500).ConfigureAwait(false);
+                ctx.Response.Close();
+            });
+            using var service = new LlmJobService(new FileSecrets());
+            var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 1000);
+            await Task.Delay(1500).ConfigureAwait(false); // 不 poll → 暂停中总超时
+            var (events, j) = await PollUntilDone(service, job.Id).ConfigureAwait(false);
+            Check(j.State == LlmJobState.Error, "暂停中总超时 → 终态 Error（P1-1）");
+            Check(Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrRequestTimeout), "暂停中 REQUEST_TIMEOUT 错误码");
+            Check(!Has(events, LlmContracts.EvDone, _ => true), "暂停超时不补 done");
+        }
+
+        // ── 12. 连接/响应头阶段 idle → E_LLM_IDLE_TIMEOUT（复审 P1-2）──
+        {
+            using var server = new MockSseServer(async (ctx, n) =>
+            {
+                await Task.Delay(1500).ConfigureAwait(false); // 慢响应头 > idle 1000ms
+                await WriteSseAsync(ctx.Response, Chunk(content: "late"), Chunk(finish: "stop")).ConfigureAwait(false);
+            });
+            using var service = new LlmJobService(new FileSecrets());
+            var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 15000, idleTimeoutMs: 1000);
+            var (events, j) = await PollUntilDone(service, job.Id).ConfigureAwait(false);
+            Check(j.State == LlmJobState.Error, "连接阶段 idle → 终态 Error");
+            Check(Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrIdleTimeout), "连接阶段 E_LLM_IDLE_TIMEOUT（P1-2）");
+            Check(!Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrRequestTimeout), "不误分类为 REQUEST_TIMEOUT");
+        }
+
+        // ── 13. 读循环 idle → E_LLM_IDLE_TIMEOUT（P0-9 既有读侧分类回归）──
+        {
+            using var server = new MockSseServer(async (ctx, n) =>
+            {
+                await WriteSseChunkAsync(ctx.Response, Chunk(content: "开头")).ConfigureAwait(false);
+                await Task.Delay(1500).ConfigureAwait(false); // 静默 > idle 1000ms
+                await WriteSseChunkAsync(ctx.Response, Chunk(finish: "stop")).ConfigureAwait(false);
+                ctx.Response.Close();
+            });
+            using var service = new LlmJobService(new FileSecrets());
+            var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 15000, idleTimeoutMs: 1000);
+            var (events, j) = await PollUntilDone(service, job.Id).ConfigureAwait(false);
+            Check(j.State == LlmJobState.Error, "读循环 idle → 终态 Error");
+            Check(Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrIdleTimeout), "读循环 E_LLM_IDLE_TIMEOUT");
+        }
+
+        // ── 14. 排队中取消 → 终态事件立即可达（复审 P2-2③）──
+        using (var service = new LlmJobService(new FileSecrets()))
+        {
+            // low lane 起 1 个慢作业占住槽位，其余排队；取消排队者应立即见 cancelled 终态
+            using var slowServer = new MockSseServer(async (ctx, n) =>
+            {
+                await Task.Delay(800).ConfigureAwait(false);
+                await WriteSseAsync(ctx.Response, Chunk(content: "s"), Chunk(finish: "stop")).ConfigureAwait(false);
+            });
+            var running = SubmitLow(service, slowServer.Url);
+            await Task.Delay(150).ConfigureAwait(false); // 确保第一个作业已被 pump 取走（占住 low 槽位）
+            var queued = SubmitLow(service, slowServer.Url);
+            var queuedCancel = service.Store.Cancel(queued.Id);
+            Check(queuedCancel, "排队中 cancel 受理");
+            var slice = queued.Poll(0, 10, 0);
+            Check(queued.IsTerminal && slice.Events.Count == 1
+                && slice.Events[0].Type == LlmContracts.EvError
+                && slice.Events[0].Code == LlmContracts.ErrCancelled,
+                "排队取消落终态事件 + 立即可 poll（P2-2③）");
+            await PollUntilDone(service, running.Id).ConfigureAwait(false);
         }
 
         Console.WriteLine(_failures == 0 ? "SELFTEST llm-stream: PASS" : $"SELFTEST llm-stream: {_failures} FAILURES");

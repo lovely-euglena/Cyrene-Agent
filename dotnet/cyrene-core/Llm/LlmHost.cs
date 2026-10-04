@@ -72,7 +72,8 @@ public static class LlmHost
             });
         }
 
-        // EOF 排空：等 inflight 收敛（StorageHost.DrainInflight 先例）→ Dispose join pump（排作业）
+        // EOF 排空：等 inflight 收敛（StorageHost.DrainInflight 先例）→ Dispose 等待各 pump
+        // 收口在跑作业（join ≤2s/线程；不再接新作业）
         DrainInflight(TimeSpan.FromSeconds(15));
         return 0;
     }
@@ -117,9 +118,12 @@ public static class LlmHost
                 var cursor = frame.TryGetProperty("cursor", out var cu) && cu.TryGetInt32(out var cv) ? Math.Max(0, cv) : 0;
                 var maxEvents = frame.TryGetProperty("maxEvents", out var me) && me.TryGetInt32(out var mv) ? Math.Clamp(mv, 1, 500) : 200;
                 var waitMs = frame.TryGetProperty("waitMs", out var w) && w.TryGetInt32(out var wv) ? Math.Clamp(wv, 0, 10_000) : 0;
-                var events = job.Poll(cursor, maxEvents, waitMs);
+                var slice = job.Poll(cursor, maxEvents, waitMs);
+                // 复审 P2-1①：nextCursor 用 Poll clamp 后的有效位点（cursor 落在丢弃段时
+                // 不能按 cursor+events.Count 自算，否则同批事件重复投递）
+                var nextCursor = slice.NextCursor;
+                var dropped = job.DroppedEvents;
                 // done 之后 final=true（TS 据此停止轮询）；error/cancelled 终态同样 final
-                var nextCursor = cursor + events.Count;
                 var final = job.IsTerminal && nextCursor >= job.EventCount;
                 if (callId != null)
                     WriteFrame(new
@@ -127,7 +131,8 @@ public static class LlmHost
                         op = LlmContracts.OpResult,
                         callId,
                         ok = true,
-                        data = new { jobId = job.Id, cursor = nextCursor, nextCursor, final, dropped = job.DroppedEvents, events },
+                        // truncated：ring 曾 drop-oldest（丢弃段不可恢复）——TS 侧告警增量缺口
+                        data = new { jobId = job.Id, cursor = nextCursor, nextCursor, final, dropped, truncated = dropped > 0, events = slice.Events },
                     });
                 return;
             }
@@ -135,8 +140,12 @@ public static class LlmHost
             {
                 var jobId = frame.TryGetProperty("jobId", out var j2) && j2.ValueKind == JsonValueKind.String ? j2.GetString() : null;
                 var ok = service.Store.Cancel(jobId ?? "");
-                if (callId != null)
-                    WriteFrame(new { op = LlmContracts.OpResult, callId, ok, error = ok ? null : "job not found", errorCode = ok ? null : LlmContracts.ErrJobMissing });
+                // 复审 P2-6：失败帧走 WriteError（error/errorCode/retryable 三件套齐全）
+                if (ok)
+                {
+                    if (callId != null) WriteFrame(new { op = LlmContracts.OpResult, callId, ok = true });
+                }
+                else WriteError(callId, LlmContracts.ErrJobMissing, "job not found");
                 return;
             }
             case LlmContracts.OpStatus:
@@ -173,6 +182,8 @@ public static class LlmHost
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            // 复审 P2-6：status.metrics[].state 输出枚举名（与 PublishMetrics 出口一致）
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
         });
         lock (IoLock)
         {

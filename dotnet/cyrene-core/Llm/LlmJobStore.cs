@@ -28,6 +28,9 @@ public sealed class LlmEvent
 /// <summary>作业状态：queued → running →（waiting_retry）→ done | error | cancelled。</summary>
 public enum LlmJobState { Queued, Running, WaitingRetry, Done, Error, Cancelled }
 
+/// <summary>poll 结果：事件段 + clamp 后的有效 nextCursor（P2-1①）。</summary>
+public readonly record struct LlmPollSlice(IReadOnlyList<LlmEvent> Events, int NextCursor);
+
 /// <summary>结构化指标（设计 §6 可观测；终态时经 stderr 结构化日志 + llm.status 出口）。</summary>
 public sealed class LlmJobMetrics
 {
@@ -48,10 +51,10 @@ public sealed class LlmJobMetrics
 /// 单条作业：事件 ring + 长轮询等待 + 重试/取消/指标。
 ///
 /// 反压语义（IKJM7D 复审 P0-2 修复）：
-///   - ring 上限 RingCapacity；**满时 drop-oldest**（_base 前移 + _dropped 计数 + 终态事件保护），
-///     SSE 回调永不阻塞、永不死锁；
+///   - ring 上限 RingCapacity；**满时 drop-oldest**（_base 前移 + _dropped 计数；单次腾位
+///     即保证终态 done/error 可追加），SSE 回调永不阻塞、永不死锁；
 ///   - 高水位反压按「未确认量 = EventCount - PolledCursor」判定：poll 消费推进 PolledCursor，
-///     上游读在 ≥HighWater 时暂停、降至 ≤LowWater 恢复（设计 §8 用例 3）；
+///     上游读在 ≥HighWater 时暂停、降至 ≤LowWater 恢复（迟滞，设计 §8 用例 3）；
 ///   - 消费者死亡导致的永久暂停由 stall 兜底（service 侧 60s 超水位 → truncated 终态）。
 /// </summary>
 public sealed class LlmJob
@@ -79,11 +82,9 @@ public sealed class LlmJob
     public LlmJobMetrics Metrics { get; } = new();
 
     public LlmJobState State { get; set; } = LlmJobState.Queued;
-    public int RetryCount { get; set; }
     public bool SawVisibleDelta { get; set; }
     public DateTimeOffset EnqueuedAt { get; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? StartedAt { get; set; }
-    public DateTimeOffset? FirstDeltaAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
     public CancellationTokenSource Cts { get; } = new();
 
@@ -115,9 +116,9 @@ public sealed class LlmJob
 
     /// <summary>
     /// 追加事件；ring 满时 drop-oldest（_base 前移，_dropped 计数）。
-    /// 终态事件受保护：满时丢弃两条最旧腾位，保证 done/error 必达。
+    /// 满时先丢弃一条最旧腾位再追加（单次 drop 已保证终态 done/error 必达，无二次分支）。
     /// </summary>
-    public bool Append(LlmEvent e, bool isTerminal = false)
+    public bool Append(LlmEvent e)
     {
         lock (_gate)
         {
@@ -126,10 +127,6 @@ public sealed class LlmJob
                 _events.RemoveAt(0);
                 _base++;
                 _dropped++;
-            }
-            if (isTerminal && _events.Count >= RingCapacity)
-            {
-                _events.RemoveAt(0); _base++; _dropped++;
             }
             _events.Add(e);
             Monitor.PulseAll(_gate); // 唤醒长轮询等待者
@@ -140,9 +137,11 @@ public sealed class LlmJob
     /// <summary>
     /// 取 [cursor, cursor+max) 事件段；cursor 低于 _base（已被丢弃）时从 _base 起补读
     /// （丢弃段不可恢复，调用方经 DroppedEvents/truncated 知晓）。为空且 waitMs>0 时
-    /// 长轮询（Monitor.Wait，不占读帧线程）。返回实际 nextCursor（幂等）。
+    /// 长轮询（Monitor.Wait，不占读帧线程）。
+    /// 复审 P2-1①：返回 clamp 后的有效 nextCursor——宿主不得按 cursor+events.Count 自算
+    /// （cursor 在丢弃段时会重复投递同一批事件）。
     /// </summary>
-    public IReadOnlyList<LlmEvent> Poll(int cursor, int maxEvents, int waitMs)
+    public LlmPollSlice Poll(int cursor, int maxEvents, int waitMs)
     {
         lock (_gate)
         {
@@ -160,7 +159,7 @@ public sealed class LlmJob
             var next = effective + slice.Count;
             if (next > Interlocked.Read(ref _polledCursor))
                 Interlocked.Exchange(ref _polledCursor, next);
-            return slice;
+            return new LlmPollSlice(slice, next);
         }
     }
 
@@ -263,12 +262,27 @@ public sealed class LlmJobStore : IDisposable
         }
     }
 
+    private static readonly object UnknownLaneGate = new();
+    private static readonly HashSet<string> UnknownLanes = new(StringComparer.Ordinal);
+
+    /// <summary>复审 P2-1③：未知 lane 不再静默归 interactive——warn 一次（每值）。</summary>
     private static int LaneIndex(string lane) => lane switch
     {
         LlmContracts.LaneNormal => 1,
         LlmContracts.LaneLow => 2,
-        _ => 0,
+        LlmContracts.LaneInteractive => 0,
+        _ => UnknownLane(lane),
     };
+
+    private static int UnknownLane(string lane)
+    {
+        lock (UnknownLaneGate)
+        {
+            if (UnknownLanes.Add(lane))
+                Console.Error.WriteLine($"[llm-host] 未知 lane \"{lane}\" → 归 interactive（契约外值）");
+        }
+        return 0;
+    }
 
     /// <summary>lane → 并发槽位数（自测/诊断用）。</summary>
     public static int LaneSlotOf(string lane) => LaneIndex(lane) switch
@@ -312,11 +326,11 @@ public sealed class LlmJobStore : IDisposable
     {
         var job = Find(jobId);
         if (job == null) return false;
+        var wasQueued = false;
         lock (_gate)
         {
             if (job.IsTerminal) return true;
             // 尚未出队：从队列摘除并落取消终态；运行中：保留状态，由 Cts 让执行流收口
-            var wasQueued = false;
             for (var i = 0; i < _queues.Length; i++)
             {
                 if (_queues[i].Count == 0) continue;
@@ -324,11 +338,20 @@ public sealed class LlmJobStore : IDisposable
                 wasQueued |= remaining.Count != _queues[i].Count;
                 _queues[i] = new Queue<string>(remaining);
             }
-            if (wasQueued) job.State = LlmJobState.Cancelled;
             Monitor.PulseAll(_gate);
         }
+        if (wasQueued)
+        {
+            // 复审 P2-2③：排队中取消也要落终态事件并唤醒 poll 等待方（原先只改 State，
+            // 最迟 waitMs≤10s 才可见）。Append 在 job gate 上 PulseAll，终态立即可达。
+            job.State = LlmJobState.Cancelled;
+            job.Append(new LlmEvent
+            {
+                Type = LlmContracts.EvError, Code = LlmContracts.ErrCancelled, Retryable = false,
+            });
+            job.FinishedAt = DateTimeOffset.UtcNow;
+        }
         try { job.Cts.Cancel(); } catch { /* 已释放 */ }
-        if (job.State == LlmJobState.Cancelled) job.FinishedAt = DateTimeOffset.UtcNow;
         return true;
     }
 
