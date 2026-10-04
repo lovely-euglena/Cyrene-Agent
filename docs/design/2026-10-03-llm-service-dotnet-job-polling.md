@@ -1,7 +1,7 @@
 # LLM 服务化：.NET 厂商服务（job + 轮询取 token）
 
 > **日期**：2026-10-03
-> **状态**：设计草案（讨论中，未实施）
+> **状态**：Phase 1 已实施（issue/IKJM7D 分支，A1–A5；llm-host H0–H4 MVP 同批落地）
 > **关联 Issue**：[Ygwill/cyrene-agent#IKJLB2](https://gitee.com/ygwill/cyrene-agent/issues/IKJLB2)
 > **结论先行**：新增 `cyrene-native --llm-host` **作业式厂商服务**——TS `llm.submit` 提交请求，
 > .NET 负责「鉴权注入 → 发送 → 流式解析 → 事件缓冲」，TS 按 cursor **轮询**取归一化 token 事件。
