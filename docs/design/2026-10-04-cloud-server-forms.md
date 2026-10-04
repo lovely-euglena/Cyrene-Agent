@@ -1,7 +1,7 @@
 # 服务端四形态与能力声明 · 设计（IKJN70 / IKJN78）
 
 > **日期**：2026-10-04
-> **状态**：能力声明与一致性套件已实现（IKJN78）；CF / Git / PHP 按 IKJN79 / IKJN7B / IKJN7C 推进
+> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，PR 待合并）；Git 版适配器已实现（IKJN7B）；PHP 按 IKJN7C 推进
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（不变式 / Q8）· 总决策 IKJN70 ·
 > CF spike IKJN3W · 桌面端同步客户端 IKJK2I · PWA IKJK2L · 完整版运维 IKJK2N
 
@@ -65,11 +65,18 @@
 - 注意：自定义域证书覆盖（4 级子域需独立子 zone / 已覆盖域名）；Bot Fight Mode 对脚本 UA 的 403/1010；
 - 生成走模型 API + DO alarm 重试；静态资产用 Workers 静态托管。
 
-### 4.3 Git 版（IKJN7B，桌面端）
+### 4.3 Git 版（IKJN7B，桌面端；适配器已实现）
 
-- 每设备 `events-<deviceId>.jsonl` append-only 分片；fetch = pull + 读新行（字节偏移），
-  强制推送后回退全量重读；
-- push = commit + push；合并 = eventId 幂等 + 规范序并集；无生成 / 无 PWA。
+- `src/main/sync/git-remote.ts`（`GitRepoRemote`）：每设备 `events-<deviceId>.jsonl` append-only 分片 +
+  字节偏移增量；`.gitattributes` 固定 `*.jsonl -text`（禁用行尾转换，保字节偏移语义）；
+- push = 追加分片 + commit + push；fetch = pull `--rebase` + 读新行；合并 = eventId 幂等 +
+  规范序并集（`mergeSyncEvents`）；无生成 / 无 PWA；
+- 保守合并：pull 失败/冲突一律中止（不 force、不重写远端历史）；强制推送（历史重写）后
+  前缀哈希失配 / 文件收缩 → 该分片回退全量重读；半截尾行只读到最后一个换行（本设备追加前自愈修剪）；
+- 鉴权 = 仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，不外泄日志）；状态由调用方持有
+  （`FetchState` 每分片 `{offset, prefixHash}`，模块不落盘额外状态）；
+- 适配器测试（独立 bare 远端 + 双工作副本）：双工作副本收敛 / 离线分叉保守合并 / 强推恢复 /
+  半截行 / 幂等 / 纯本地 **9/9**；桌面端接线（事件导出器 / 物化视图）属 IKJK2I，后续接入。
 
 ### 4.4 PHP 版（IKJN7C）
 
@@ -82,3 +89,9 @@
 - 本地 full 云冒烟：**54/54**（含 3 项能力声明检查）；
 - 核心档（本地实例）：**35/35**；远端核心档与本地核心档同一函数（CF 批次将直接对部署实例跑）；
 - PWA 单测：**39/39**（含能力解析/降级 6 项）；e2e（Edge 通道）：**11/11**（含能力声明检查）。
+
+### IKJN7B 批次（Git 版适配器）
+
+- 适配器测试 **9/9**（独立 bare 远端 + 双工作副本：双工作副本收敛 / 离线分叉保守合并 /
+  强制推送恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则）；
+- 组合回归：`vitest run src/main/sync src/pwa` **59/59**；`tsc -p tsconfig.main.json` 0 错误。

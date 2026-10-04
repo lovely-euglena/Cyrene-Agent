@@ -453,3 +453,20 @@
 - **验证（Windows 本地）**：本地 full 云冒烟 **54/54**（含 3 项能力声明）；核心档 **35/35**；
   PWA 单测 **39/39**（含能力解析/降级 6 项）；e2e **11/11**（Edge 通道）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN70 / #IKJN78。
+
+## 2026-10-04 增量：Git 仓库版 remote 适配器（IKJN7B）
+
+- **实现**：`src/main/sync/git-remote.ts`（`GitRepoRemote`）——每设备 `events-<deviceId>.jsonl`
+  append-only 分片 + 字节偏移增量（无全局游标）；push = 追加 + commit + push；fetch = pull `--rebase` +
+  读新行；合并 = eventId 幂等 + 规范序并集（`mergeSyncEvents`）；`.gitattributes` 固定 `*.jsonl -text`
+  （禁用行尾转换，保字节偏移语义）。
+- **保守合并**：pull 失败/冲突一律 `rebase --abort` + 抛错（不 force、不重写远端历史）；
+  强制推送（历史重写）后前缀哈希失配 / 文件收缩 → 分片回退全量重读；半截尾行读取只到最后一个换行，
+  本设备追加前自愈修剪。
+- **鉴权**：仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，日志脱敏）；纯本地模式（无远端）可用。
+- **边界**：适配器不接线 UI / 不落盘同步状态（`FetchState` 由调用方持有）；桌面端同步客户端
+  （事件导出器 / 物化视图）属 IKJK2I，后续接入。
+- **验证（Windows 本地）**：适配器测试 **9/9**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
+  强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则）；`vitest run src/main/sync src/pwa` **59/59**；
+  `tsc main` 0 错误。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。
