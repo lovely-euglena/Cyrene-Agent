@@ -1,0 +1,7 @@
+# 反代示例（IKJK2K 拍板暴露面/TLS 后启用；当前 cloud-server 仅绑 127.0.0.1）
+# Caddy 自动 ACME 签发 + 续期；把域名 A 记录指向 VPS 后：
+#   caddy run --config Caddyfile
+
+sync.example.com {
+    reverse_proxy 127.0.0.1:7789
+}
