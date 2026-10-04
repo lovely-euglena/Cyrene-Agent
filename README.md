@@ -62,7 +62,7 @@
 - **.NET 后端**：[docs/dotnet-backend.md](./docs/dotnet-backend.md) ・ **多 Agent 架构**：[docs/multi-agent-architecture.md](./docs/multi-agent-architecture.md)
 - **用户指南**：[docs/user-guide/](./docs/user-guide/)（飞书 / Learn / NapCat / QQ 官方机器人）
 - **插件开发**：[教程](./docs/plugins/plugin-dev-guide.md) ・ [API 规范](./docs/plugins/plugin-authoring.md) ・ [.NET 轨](./docs/plugins/dotnet-plugins.md)
-- **贡献指南**：[.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)（核心模块先开 Issue 讨论）
+- **贡献指南**：[.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)（核心模块先开 Issue 讨论）・ **审查规则**：[docs/pr-review-rules.md](./docs/pr-review-rules.md)
 
 ---
 
@@ -584,7 +584,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 > 
 > 原项目的贡献者名单仅会在合并上游更新时同步更新，名单仅对应最新合并的版本，更新可能不及时，请见谅
 
-<!-- 贡献者头像列表由 .github/workflows/contributors.yml 自动维护，请勿手动修改这对标记之间的内容 -->
+<!-- 贡献者头像列表：自动更新已停用；请勿手动修改这对标记之间的内容 -->
 <!-- readme: contributors -start -->
 <table>
 	<tbody>

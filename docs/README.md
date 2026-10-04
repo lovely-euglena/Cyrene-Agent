@@ -2,7 +2,7 @@
 
 > 本目录是仓库的文档中心。根 [README.md](../README.md)（[English](../README.en.md)）面向使用者与贡献者；
 > 这里按「现行 / 设计 / 记录 / 历史」四类组织全部文档，避免旧设计稿被误读为当前行为。
-> 最近整理：2026-10-03。
+> 最近整理：2026-10-04。
 
 ## 状态口径
 
@@ -19,7 +19,7 @@
 - **理解 Agent 架构**：根 README「CyreneHarness 核心引擎」→ [multi-agent-architecture.md](./multi-agent-architecture.md) → [design/2026-09-21-cta-conversation-transcript-architecture-design.md](./design/2026-09-21-cta-conversation-transcript-architecture-design.md)
 - **使用功能**：根 README → [user-guide/](./user-guide/)
 - **开发插件**：[plugins/plugin-dev-guide.md](./plugins/plugin-dev-guide.md)（教程）→ [plugins/plugin-authoring.md](./plugins/plugin-authoring.md)（API 规范）→ [plugins/dotnet-plugins.md](./plugins/dotnet-plugins.md)（.NET 轨）
-- **参与贡献**：[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)（核心模块需先开 Issue 讨论）
+- **参与贡献**：[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)（核心模块需先开 Issue 讨论）→ [pr-review-rules.md](./pr-review-rules.md)（合并前审查规则）
 
 ## 根级文档
 
@@ -29,6 +29,7 @@
 | [build-guide.md](./build-guide.md) | 现行 | Linux 交叉构建 Windows 便携版：环境 / 构建 / 分卷上传 / 常见坑 |
 | [dotnet-backend.md](./dotnet-backend.md) | 现行 | .NET 七 host 进程地图、实测矩阵、安全加固 |
 | [dotnet-migration-decisions.md](./dotnet-migration-decisions.md) | 现行 | .NET 迁移 A1–A19 决策记录 |
+| [pr-review-rules.md](./pr-review-rules.md) | 现行 | PR 审查规则：通用门槛 / 全模块矩阵 / 高危敏感专项 / 阻断标准 |
 | [multi-agent-architecture.md](./multi-agent-architecture.md) | 现行 | 多 Agent 编排（Plan B：编排下沉 .NET，循环复用 TS CyreneHarness） |
 | [local-models.md](./local-models.md) | 现行 | 本地模型（BGE-M3 等）的一键下载 / 放置与许可 |
 | [cloud-storage.md](./cloud-storage.md) | 设计 | 云存储工具设计文档 |
