@@ -1,0 +1,73 @@
+:root {
+  color-scheme: dark;
+  --bg: #141218;
+  --bg-soft: #1d1a23;
+  --bg-raise: #262230;
+  --line: #35303f;
+  --text: #ece8f2;
+  --text-dim: #a49caf;
+  --accent: #d98fb3;
+  --accent-strong: #c96f9d;
+  --user: #3a2f46;
+  --assistant: #241f2c;
+  --danger: #e08a8a;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+#app { height: 100%; }
+button { font: inherit; color: inherit; }
+input { font: inherit; color: inherit; }
+
+/* 通用 */
+.banner { padding: 8px 14px; background: #4a3a1e; color: #f0d9a8; font-size: 13px; text-align: center; }
+.error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
+.status { color: var(--text-dim); font-size: 12px; }
+.primary { background: var(--accent-strong); border: 0; color: #fff; border-radius: 10px; padding: 10px 16px; }
+.primary:disabled { opacity: 0.6; }
+.ghost { background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--text-dim); font-size: 13px; }
+
+/* 登录 */
+.login { height: 100%; display: grid; place-items: center; padding: 24px; }
+.login-card { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 10px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+.login-card h1 { margin: 0 0 2px; font-size: 20px; }
+.login-card .hint { margin: 0 0 6px; color: var(--text-dim); font-size: 13px; }
+.login-card input { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.login-card input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+/* 会话列表 */
+.sessions { height: 100%; display: flex; flex-direction: column; }
+.app-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.app-header h1 { display: inline; margin: 0 8px 0 0; font-size: 17px; }
+.session-list { flex: 1; overflow-y: auto; padding: 8px; }
+.session-item { display: block; width: 100%; text-align: left; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; }
+.session-item:active { background: var(--bg-raise); }
+.session-title { font-weight: 600; margin-bottom: 4px; }
+.session-preview { color: var(--text-dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-time { color: var(--text-dim); font-size: 11px; }
+.empty { color: var(--text-dim); text-align: center; margin-top: 40px; }
+
+/* 聊天 */
+.chat { height: 100%; display: flex; flex-direction: column; }
+.chat-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.chat-heading { min-width: 0; }
+.chat-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.back { background: none; border: 0; font-size: 20px; padding: 4px 8px; }
+.messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.msg { display: flex; }
+.msg-user { justify-content: flex-end; }
+.msg-assistant { justify-content: flex-start; }
+.bubble { max-width: 82%; padding: 9px 12px; border-radius: var(--radius); white-space: pre-wrap; word-break: break-word; }
+.msg-user .bubble { background: var(--user); border-bottom-right-radius: 4px; }
+.msg-assistant .bubble { background: var(--assistant); border-bottom-left-radius: 4px; }
+.pending .bubble { color: var(--text-dim); letter-spacing: 2px; }
+.composer { display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--bg-soft); }
+.composer input { flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.composer input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }

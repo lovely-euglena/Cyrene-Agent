@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="昔涟">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#262230" />
+      <stop offset="1" stop-color="#141218" />
+    </linearGradient>
+    <linearGradient id="moon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e7a8c6" />
+      <stop offset="1" stop-color="#c96f9d" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)" />
+  <circle cx="64" cy="64" r="34" fill="url(#moon)" />
+  <circle cx="76" cy="56" r="28" fill="#1d1a23" />
+  <circle cx="42" cy="40" r="3" fill="#e7a8c6" />
+  <circle cx="34" cy="58" r="2" fill="#e7a8c6" opacity="0.7" />
+  <circle cx="46" cy="88" r="2" fill="#e7a8c6" opacity="0.5" />
+</svg>
