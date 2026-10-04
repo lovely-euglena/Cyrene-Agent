@@ -10,12 +10,14 @@
  *  - 掩码：maskModelSettingsForUi / maskGeneralSettingsForUi（A3，设置页只回掩码）。
  *
  * host 缺失策略（设计 §8 用例 4/5）：迁移前回退明文（告警一次）；迁移后宿主缺失
- * → keyring 空（调用 401 明确报错）且保存路径拒绝写明文（vaultMigrated 守卫）。
+ * → keyring 空（调用 401 明确报错）且保存路径硬失败（IKJNX1 #1：抛
+ * E_SECRETS_HOST_LOST，不写明文、不清盘；migrated 状态在宿主缺失时读盘上
+ * secrets-vault.json 的 migratedAt 明文标记判定）。
  */
 import fs from "node:fs";
 import path from "node:path";
 import { resolveDotnetConfig } from "../dotnet-backend/config";
-import { activeSecretsClient } from "../dotnet-backend/secrets-client";
+import { activeSecretsClient, secretsDataDir } from "../dotnet-backend/secrets-client";
 
 // ── vault key 命名 ──
 
@@ -75,6 +77,49 @@ export function isVaultMigrated(): boolean {
   return vaultMigrated;
 }
 
+/**
+ * 迁移标记磁盘读取（IKJNX1 #1）：宿主缺失时无法经 status() 拿 migrated，改读
+ * <data-dir>/secrets-vault.json 的明文 migratedAt（.NET SecretVault.cs 明示该
+ * 字段是「host 缺失策略依据」）。文件缺失 / 解析失败 / 非 string → false（按未迁移）。
+ */
+function readVaultMigratedMarker(): boolean {
+  try {
+    const p = path.join(secretsDataDir(), "secrets-vault.json");
+    if (!fs.existsSync(p)) return false;
+    const raw = JSON.parse(fs.readFileSync(p, "utf8")) as { migratedAt?: unknown };
+    return typeof raw.migratedAt === "string" && raw.migratedAt !== "";
+  } catch {
+    return false;
+  }
+}
+
+/** 宿主存活判定（同步；测试桩可无 isAlive——缺省视为存活，保持兼容）。 */
+function isSecretsHostAlive(): boolean {
+  const c = activeSecretsClient() as { isAlive?: () => boolean };
+  return typeof c.isAlive === "function" ? c.isAlive() : true;
+}
+
+/**
+ * 保存路径门控（IKJNX1 #1；设计 §4.5 / §8 用例 4/5）：
+ *  - 非 vault 模式 → false（明文语义）；
+ *  - hydrated 且宿主存活 → true（vault 路径）；
+ *  - 已迁移但宿主不可用 / 未 hydrate → 抛 E_SECRETS_HOST_LOST（硬失败：不写明文、
+ *    不清盘；错误上抛 = IPC invoke reject，可观察）；
+ *  - 迁移前宿主缺失 → false（回退明文，复审 P0-8：不清盘、不丢输入）。
+ */
+function ensureVaultSaveAllowed(): boolean {
+  if (!isVaultMode()) return false;
+  if (hydrated && isSecretsHostAlive()) return true;
+  // 内存态可能滞后（status() 曾失败 / 会话内进程猝死）：宿主不可用时以盘上
+  // migratedAt 标记兜底——已清痕的 vault 绝不回退写明文（设计 §4.5 用例 5）。
+  if (isVaultMigrated() || readVaultMigratedMarker()) {
+    throw new Error(
+      "E_SECRETS_HOST_LOST: 密钥已迁移至 vault，但宿主不可用——保存已拒绝（不写明文、不清盘）。请检查 cyrene-native 安装后重试。",
+    );
+  }
+  return false;
+}
+
 /** 同步取密钥（loadModelSettings / loadGeneralSettings 的热路径）。 */
 export function getSecret(name: string): string | undefined {
   return keyring.get(name);
@@ -127,8 +172,10 @@ export async function initSecretsVault(
     console.error("[secrets] 宿主启动失败:", err instanceof Error ? err.message : err);
   }
   if (!hostUp) {
+    // IKJNX1 #1：宿主缺失时 migrated 状态改读盘上标记（status() 不可达）
+    if (!vaultMigrated) vaultMigrated = readVaultMigratedMarker();
     if (vaultMigrated) {
-      // 迁移后宿主缺失：明确报错（设计用例 5——不写明文、不静默回退）
+      // 迁移后宿主缺失：明确报错（设计用例 5——不写明文、不静默回退；保存路径硬失败）
       console.error("[secrets] E_SECRETS_HOST_LOST：密钥已迁移 vault 但宿主不可用——请检查 cyrene-native 安装；保存路径已拒绝写明文");
     } else if (!warnedFallback) {
       warnedFallback = true;
@@ -369,7 +416,7 @@ export function applyKeyringToGeneralSettings(settings: Record<string, unknown>)
  * 返回磁盘写入副本（全部 key 置空）；调用方继续用原对象回内存。
  */
 export function vaultifyModelSettingsForSave(incoming: Record<string, unknown>): void {
-  if (!isVaultActive()) return; // 复审 P0-8：host 缺失（迁移未发生）→ 整体回退明文保存语义
+  if (!ensureVaultSaveAllowed()) return; // P0-8 明文回退；IKJNX1 #1：迁移后宿主缺失在此抛 E_SECRETS_HOST_LOST
   const provider = typeof incoming.provider === "string" ? incoming.provider : "";
   handleTopLevelKey(incoming, provider ? vaultKeyForProvider(provider) : "", "apiKey");
 
@@ -411,9 +458,10 @@ function handleTopLevelKey(obj: Record<string, unknown>, vaultKey: string, field
   if (vaultKey) setSecret(vaultKey, v.trim());
 }
 
-/** 磁盘副本：全部 key 字段置空（vault 激活时专用；源 JSON 清痕铁律。复审 P0-8：未激活时原样返回）。 */
+/** 磁盘副本：全部 key 字段置空（vault 激活时专用；源 JSON 清痕铁律。P0-8：未激活时原样返回；
+ *  IKJNX1 #1：迁移后宿主缺失时抛 E_SECRETS_HOST_LOST——纵深防御，绝不把明文写回盘）。 */
 export function stripKeysForDisk<T>(settings: T): T {
-  if (!isVaultActive()) return settings;
+  if (!ensureVaultSaveAllowed()) return settings;
   const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
   for (const field of SECRET_GENERAL_FIELDS) {
     if (typeof copy[field.jsonField] === "string") copy[field.jsonField] = "";
@@ -469,9 +517,10 @@ export function maskGeneralSettingsForUi<T>(settings: T): T {
   return copy as T;
 }
 
-/** general 保存路径的 vaultify（同 model 语义：空=不改 / SENTINEL=清；P0-8：host 缺失时整体回退明文）。 */
+/** general 保存路径的 vaultify（同 model 语义：空=不改 / SENTINEL=清；P0-8：host 缺失时整体回退明文；
+ *  IKJNX1 #1：迁移后宿主缺失 → 抛 E_SECRETS_HOST_LOST）。 */
 export function vaultifyGeneralSettingsForSave(incoming: Record<string, unknown>): void {
-  if (!isVaultActive()) return;
+  if (!ensureVaultSaveAllowed()) return;
   for (const field of SECRET_GENERAL_FIELDS) {
     handleTopLevelKey(incoming, field.vaultKey, field.jsonField);
   }

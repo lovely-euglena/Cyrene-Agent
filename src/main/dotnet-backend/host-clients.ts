@@ -82,6 +82,11 @@ export class LineHostClient {
     return ok;
   }
 
+  /** 保存路径门控用（IKJNX1 #1）：同步判定宿主进程当前是否存活（不触发拉起）。 */
+  isAlive(): boolean {
+    return !!this.proc && !this.exited;
+  }
+
   protected resolveExe(): string | null {
     // 数组 mode：argv[0] 即可执行（测试后门/自定义 sidecar 启动）
     if (Array.isArray(this.mode)) return String(this.mode[0]);

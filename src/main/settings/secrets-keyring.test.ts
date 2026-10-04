@@ -11,6 +11,8 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   hydrateKeyring,
+  initSecretsVault,
+  isVaultMigrated,
   onKeyringHydrated,
   SECRET_CLEAR_SENTINEL,
   SECRET_GENERAL_FIELDS,
@@ -23,15 +25,23 @@ import {
   migratePlaintextKeys,
   setSecret,
   stripKeysForDisk,
+  vaultifyGeneralSettingsForSave,
   vaultifyModelSettingsForSave,
   __resetKeyringForTests,
 } from "./secrets-keyring";
-import { __setSecretsHostClientForTests, type SecretsHostClient } from "../dotnet-backend/secrets-client";
+import {
+  __setSecretsDataDirForTests,
+  __setSecretsHostClientForTests,
+  type SecretsHostClient,
+} from "../dotnet-backend/secrets-client";
 
 const vault = new Map<string, string>();
 
 class StubSecretsClient {
-  async ensureStarted() { return true; }
+  hostUp = true;
+  alive = true;
+  async ensureStarted() { return this.hostUp; }
+  isAlive() { return this.alive; }
   async status() { return { count: vault.size, migrated: true, migratedAt: "2026-10-04T00:00:00Z", protector: "stub", available: true }; }
   async get(name: string) { return vault.get(name) ?? null; }
   async put(name: string, value: string) { vault.set(name, value); }
@@ -48,20 +58,25 @@ class StubSecretsClient {
 
 const ENV_KEYS = ["CYRENE_SECRETS_HOST"] as const;
 
+const stub = new StubSecretsClient();
+
 beforeAll(() => {
   for (const k of ENV_KEYS) process.env[k] = "1";
-  __setSecretsHostClientForTests(new StubSecretsClient() as unknown as SecretsHostClient);
+  __setSecretsHostClientForTests(stub as unknown as SecretsHostClient);
 });
 
 afterAll(() => {
   for (const k of ENV_KEYS) delete process.env[k];
   __setSecretsHostClientForTests(null);
+  __setSecretsDataDirForTests(null);
   __resetKeyringForTests();
 });
 
 function reset(): void {
   vault.clear();
   __resetKeyringForTests();
+  stub.hostUp = true;
+  stub.alive = true;
 }
 
 describe("vaultifyModelSettingsForSave（空=不改 / SENTINEL=清 / 新值入 vault）", () => {
@@ -210,6 +225,106 @@ describe("复审 P0-8 / P0-6（host 缺失保存回退 + 冷启动回填）", ()
     const cached: Record<string, unknown> = { ttsMimoKey: "" }; // 模拟 pre-ready 已建的空缓存
     applyKeyringToGeneralSettings(cached);
     expect(cached.ttsMimoKey).toBe("sk-cold");
+  });
+});
+
+describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST_LOST，设计 §4.5/§8 用例 5）", () => {
+  it("启动即迁移后（盘上 migratedAt 标记）+ 宿主缺失：vaultify/strip 均抛错，不动传入对象、不写 vault", async () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-marker-"));
+    __setSecretsDataDirForTests(dir);
+    writeFileSync(
+      path.join(dir, "secrets-vault.json"),
+      JSON.stringify({ version: 1, migratedAt: "2026-10-05T00:00:00Z", entries: {} }),
+    );
+    stub.hostUp = false;
+    stub.alive = false;
+    try {
+      const r = await initSecretsVault(path.join(dir, "model-settings.json"), path.join(dir, "general-settings.json"));
+      expect(r.hostUp).toBe(false);
+      expect(r.hydrated).toBe(false);
+      expect(isVaultMigrated()).toBe(true); // 宿主缺失但盘上标记命中
+
+      const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-new" };
+      expect(() => vaultifyModelSettingsForSave(incoming)).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(incoming.apiKey).toBe("sk-new"); // 不丢输入
+
+      const general: Record<string, unknown> = { ttsMimoKey: "sk-tts" };
+      expect(() => vaultifyGeneralSettingsForSave(general)).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(general.ttsMimoKey).toBe("sk-tts");
+
+      const final = { provider: "PA", apiKey: "sk-new" };
+      expect(() => stripKeysForDisk(final)).toThrow(/E_SECRETS_HOST_LOST/); // 纵深防御：不清盘
+      expect(final.apiKey).toBe("sk-new");
+      expect(vault.size).toBe(0); // 未写明文也未写 vault
+    } finally {
+      __setSecretsDataDirForTests(null);
+      reset();
+    }
+  });
+
+  it("会话内宿主死亡（已 hydrate）：vaultify/strip 抛错；宿主恢复后回 vault 路径", async () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-alive-"));
+    try {
+      const r = await initSecretsVault(path.join(dir, "model-settings.json"), path.join(dir, "general-settings.json"));
+      expect(r.hostUp).toBe(true);
+      expect(isVaultMigrated()).toBe(true);
+
+      stub.alive = false; // 会话内进程死亡
+      const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-new" };
+      expect(() => vaultifyModelSettingsForSave(incoming)).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(incoming.apiKey).toBe("sk-new");
+      expect(() => stripKeysForDisk({ apiKey: "sk-new" })).toThrow(/E_SECRETS_HOST_LOST/);
+
+      stub.alive = true; // 恢复后正常走 vault
+      vaultifyModelSettingsForSave(incoming);
+      expect(vault.get("model:provider:PA")).toBe("sk-new");
+    } finally {
+      reset();
+    }
+  });
+
+  it("内存态未迁移但盘上 marker 在（status 曾失败场景）：宿主死亡仍硬失败", () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-marker2-"));
+    __setSecretsDataDirForTests(dir);
+    writeFileSync(
+      path.join(dir, "secrets-vault.json"),
+      JSON.stringify({ version: 1, migratedAt: "2026-10-05T00:00:00Z", entries: {} }),
+    );
+    stub.hostUp = false;
+    stub.alive = false;
+    try {
+      expect(isVaultMigrated()).toBe(false); // 未经 init，内存态未标记
+      const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-new" };
+      expect(() => vaultifyModelSettingsForSave(incoming)).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(incoming.apiKey).toBe("sk-new");
+      expect(() => stripKeysForDisk({ apiKey: "sk-new" })).toThrow(/E_SECRETS_HOST_LOST/);
+    } finally {
+      __setSecretsDataDirForTests(null);
+      reset();
+    }
+  });
+
+  it("marker 读取：文件缺失 / 坏 JSON → 按未迁移（回退明文，不抛）", async () => {
+    for (const raw of [null, "{ not json"]) {
+      reset();
+      const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-nomarker-"));
+      __setSecretsDataDirForTests(dir);
+      if (raw !== null) writeFileSync(path.join(dir, "secrets-vault.json"), raw);
+      stub.hostUp = false;
+      try {
+        await initSecretsVault(path.join(dir, "model-settings.json"), path.join(dir, "general-settings.json"));
+        expect(isVaultMigrated()).toBe(false);
+        const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-keep" };
+        expect(() => vaultifyModelSettingsForSave(incoming)).not.toThrow();
+        expect(incoming.apiKey).toBe("sk-keep");
+      } finally {
+        __setSecretsDataDirForTests(null);
+        reset();
+      }
+    }
   });
 });
 
