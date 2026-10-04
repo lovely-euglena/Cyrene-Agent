@@ -15,10 +15,18 @@ const nativeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./native-tool-host", () => ({
-  nativeFirst: async (tool: string, args: Record<string, unknown>, fallback: (a: Record<string, unknown>) => unknown) => {
-    nativeMocks.calls.push({ tool, args });
+  nativeFirst: async (
+    tool: string,
+    args: Record<string, unknown>,
+    fallback: (a: Record<string, unknown>) => unknown,
+    options?: { internalArgs?: Record<string, unknown> },
+  ) => {
+    // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+    const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
+    const nativeArgs = { ...clean, ...(options?.internalArgs ?? {}) };
+    nativeMocks.calls.push({ tool, args: nativeArgs });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
-    return fallback(args);
+    return fallback(nativeArgs);
   },
 }));
 

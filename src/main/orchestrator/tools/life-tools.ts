@@ -19,7 +19,7 @@ import { resolveTimeoutPolicy } from "../../runtime-policy";
 import { getDateLocale } from "../../locale-context";
 import { logger, LogTag } from "../../logger";
 import { getRunReviewTracker } from "../review/run-review-tracker";
-import { nativeFirst, nativeToolHost } from "./native-tool-host";
+import { nativeFirst, nativeToolHost, stripInternalArgs } from "./native-tool-host";
 import type { ToolContext } from "./registry/tool-context";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 import { isAbortError } from "../../abort-utils";
@@ -414,8 +414,10 @@ async function executeStrReplaceNativeFirst(
   ctx?: ToolContext,
 ): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return executeStrReplaceTs(args, ctx);
+  // 信任边界：模型 args 里的 `__` 键一律剥离（防伪造 __dryRun/__cyreneRoot 等）
+  const cleanArgs = stripInternalArgs(args);
   try {
-    const prep = await nativeToolHost.call("str_replace", { ...args, __dryRun: true }, undefined, ctx?.signal);
+    const prep = await nativeToolHost.call("str_replace", { ...cleanArgs, __dryRun: true }, undefined, ctx?.signal);
     if (prep === null) return executeStrReplaceTs(args, ctx);
     const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
     let prepared = false;
@@ -434,7 +436,7 @@ async function executeStrReplaceNativeFirst(
     // 检查——两段之间文件若被外部改动（TOCTOU），把失败载荷原样透传给模型
     // 比静默回退更安全：透传让模型感知"文件已变"后重新决策，而回退 TS 会
     // 基于已变更的内容二次匹配重跑，可能产生非预期编辑。
-    const result = await nativeToolHost.call("str_replace", args, undefined, ctx?.signal);
+    const result = await nativeToolHost.call("str_replace", cleanArgs, undefined, ctx?.signal);
     if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
   } catch (error) {
     if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复改文件

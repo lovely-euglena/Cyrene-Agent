@@ -27,7 +27,9 @@ vi.mock("../../windows/native-windows-host", () => ({
   resolveNativeWindowsExe: mocks.resolveNativeWindowsExe,
 }));
 
-import { NativeToolHost } from "./native-tool-host";
+import { NativeToolHost, nativeFirst, nativeToolHost, withNativeFirst } from "./native-tool-host";
+import type { ToolDefinition } from "./registry/tool-registry";
+import { resetDotnetConfigCache } from "../../dotnet-backend/config";
 
 class FakeChild extends EventEmitter {
   pid = 5150;
@@ -218,5 +220,131 @@ describe("NativeToolHost.call 看门狗", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(rejection).resolves.toBeInstanceOf(Error);
     expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── 信任边界（P0，docs/pr-review-rules.md §2.3）────────────
+
+describe("nativeFirst 信任边界（__ 内部参数）", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("模型 args 携带 __ 键：下发宿主前被剥离，fallback 不触发", async () => {
+    const call = vi.spyOn(nativeToolHost, "call").mockResolvedValue("ok");
+    const fallback = vi.fn(() => "ts");
+
+    const out = await nativeFirst(
+      "fetch_url",
+      { url: "https://github.com/o/r", __githubApiBase: "https://evil.example" },
+      fallback,
+    );
+
+    expect(out).toBe("ok");
+    expect(call).toHaveBeenCalledWith(
+      "fetch_url",
+      { url: "https://github.com/o/r" },
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("internalArgs 可信注入：模型伪造的同名 __ 键被覆盖", async () => {
+    const call = vi.spyOn(nativeToolHost, "call").mockResolvedValue("ok");
+
+    await nativeFirst(
+      "search_text",
+      { query: "x", __cyreneWorkspaceRoot: "C:\\evil" },
+      () => "ts",
+      { internalArgs: { __cyreneWorkspaceRoot: "C:\\trusted" } },
+    );
+
+    expect(call).toHaveBeenCalledWith(
+      "search_text",
+      { query: "x", __cyreneWorkspaceRoot: "C:\\trusted" },
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("fallbackOnError=false：native 失败不重跑副作用，返回不确定态提示", async () => {
+    vi.spyOn(nativeToolHost, "call").mockRejectedValue(new Error("native 工具 send_email 超时"));
+    const fallback = vi.fn(() => "已发送");
+
+    const out = await nativeFirst("send_email", { to: ["a@b.com"] }, fallback, { fallbackOnError: false });
+
+    expect(out).toContain("状态未知");
+    expect(out).toContain("超时");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("fallbackOnError=false：宿主不可用（call 返回 null）仍安全回退 TS", async () => {
+    vi.spyOn(nativeToolHost, "call").mockResolvedValue(null);
+    const fallback = vi.fn(() => "已发送");
+
+    const out = await nativeFirst("send_email", { to: ["a@b.com"] }, fallback, { fallbackOnError: false });
+
+    expect(out).toBe("已发送");
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("CYRENE_TOOL_HOST=0：零触达宿主，直接回退 TS", async () => {
+    const prev = process.env.CYRENE_TOOL_HOST;
+    process.env.CYRENE_TOOL_HOST = "0";
+    resetDotnetConfigCache();
+    try {
+      const call = vi.spyOn(nativeToolHost, "call");
+      const fallback = vi.fn(() => "ts");
+
+      const out = await nativeFirst("fetch_url", { url: "https://example.com" }, fallback);
+
+      expect(out).toBe("ts");
+      expect(call).not.toHaveBeenCalled();
+      expect(fallback).toHaveBeenCalledTimes(1);
+    } finally {
+      if (prev === undefined) delete process.env.CYRENE_TOOL_HOST;
+      else process.env.CYRENE_TOOL_HOST = prev;
+      resetDotnetConfigCache();
+    }
+  });
+});
+
+describe("withNativeFirst 信任边界（__ 内部参数）", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prepare 收到剥离 __ 后的模型 args；prepare 注入的可信参数保留", async () => {
+    const call = vi.spyOn(nativeToolHost, "call").mockResolvedValue("ok");
+    const seen: Record<string, unknown>[] = [];
+    const base: ToolDefinition = {
+      id: "fake_tool",
+      name: "fake",
+      description: "fake",
+      enabled: true,
+      risk: "safe",
+      modes: ["code"],
+      effectKind: "read",
+      inputSchema: { type: "object" },
+      execute: async () => "ts",
+    };
+    const wrapped = withNativeFirst(base, "fake_tool", (args) => {
+      seen.push(args);
+      return { ...args, __trusted: "1" };
+    });
+
+    const out = await wrapped.execute({ pattern: "x", __evil: "1" }, undefined);
+
+    expect(out).toBe("ok");
+    expect(seen).toEqual([{ pattern: "x" }]);
+    expect(call).toHaveBeenCalledWith(
+      "fake_tool",
+      { pattern: "x", __trusted: "1" },
+      undefined,
+      undefined,
+    );
   });
 });

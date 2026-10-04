@@ -9,7 +9,8 @@ import { isAbortError } from "../../abort-utils";
 /**
  * git native 轨包装（IKJLIL）：
  *  - 可信上下文（工作区 / 会话 / git 可执行 / 提交身份）由 ToolContext 与 GitService
- *    注入内部参数（`__cyreneRoot` / `__sessionId` / `__gitCommand` / ...），模型参数不参与；
+ *    注入内部参数（`__cyreneRoot` / `__sessionId` / `__gitCommand` / ...），经
+ *    nativeFirst(options.internalArgs) 通道下发；模型参数里的 `__` 键由 nativeFirst 统一剥离；
  *  - host 不可用 / 命令失败 → 回退 GitService 原实现（错误语义一致）；
  *  - AbortError 原样上抛：取消必须中止，不回退重跑副作用。
  */
@@ -26,8 +27,7 @@ function nativeFirstGit(
       if (!executable) return fallback();
       const identity = gitService.getCommitIdentity();
       const configGlobal = gitService.getDedicatedConfigPath();
-      const nativeArgs: Record<string, unknown> = {
-        ...args,
+      const internalArgs: Record<string, unknown> = {
         __cyreneRoot: tctx.workspaceRoot,
         __sessionId: tctx.sessionId,
         __gitCommand: executable.command,
@@ -37,7 +37,7 @@ function nativeFirstGit(
         ...(identity ? { __gitIdentity: identity } : {}),
         ...(configGlobal ? { __gitConfigGlobal: configGlobal } : {}),
       };
-      return await nativeFirst(toolId, nativeArgs, () => fallback(), { signal: ctx?.signal });
+      return await nativeFirst(toolId, args, () => fallback(), { signal: ctx?.signal, internalArgs });
     } catch (error) {
       if (isAbortError(error)) throw error;
       return fallback();

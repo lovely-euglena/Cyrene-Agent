@@ -20,6 +20,8 @@ const nativeMocks = vi.hoisted(() => ({
 
 vi.mock("./native-tool-host", () => ({
   nativeToolHost: { call: nativeMocks.call },
+  stripInternalArgs: (args: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__"))),
 }));
 
 vi.mock("../../dotnet-backend/config", () => ({

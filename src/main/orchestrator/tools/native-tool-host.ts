@@ -131,6 +131,33 @@ export interface NativeFirstOptions {
   signal?: AbortSignal;
   /** 调用内事件回调（如 weather_card）：event 帧按 callId 路由；只有 native 轨会触发。 */
   onEvent?: (event: HostToolEvent) => void;
+  /**
+   * 可信内部参数（`__` 前缀，docs/pr-review-rules.md §2.3）：nativeFirst 先剥离
+   * 模型 args 中的 `__` 键，再合并本字段下发宿主。模型/渲染层注入的内部参数
+   * 一律丢弃——内部参数只能经此通道由主进程可信装配注入。
+   */
+  internalArgs?: Record<string, unknown>;
+  /**
+   * native 轨失败（超时/进程故障/错误帧）时是否回退 TS，默认 true。
+   * 副作用类工具（send_email）置 false：失败可能发生在「已执行但未收到确认」之后，
+   * 自动回退会重复副作用——此时返回 uncertainFailureMessage（不重跑）。
+   */
+  fallbackOnError?: boolean;
+  /** fallbackOnError=false 且 native 失败时的提示文案（缺省为通用不确定态文案）。 */
+  uncertainFailureMessage?: (error: Error) => string;
+}
+
+/**
+ * 剥离模型 args 中的内部参数（`__` 前缀）。
+ * 信任边界（docs/pr-review-rules.md §2.3）：`__` 键只能由主进程可信装配注入，
+ * 来自模型 / 渲染层的一律视为攻击并丢弃，不得进入宿主帧。
+ */
+export function stripInternalArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (!key.startsWith("__")) clean[key] = value;
+  }
+  return clean;
 }
 
 export class NativeToolHost {
@@ -366,6 +393,10 @@ export class NativeToolHost {
    * 调用一个 native 工具。返回 null = native 轨不可用（调用方回退 TS）。
    * 拒绝（超时/进程故障）同样由调用方捕获后回退 TS；signal 中止时以
    * AbortError 拒绝——调用方必须原样上抛，不得回退重跑。
+   *
+   * 信任边界：args 必须是「模型参数已剥离 `__` 键 + 可信内部参数」的最终装配结果
+   * （用 nativeFirst / withNativeFirst，或调用方自行 stripInternalArgs）；
+   * 模型/渲染层原始 args 不得直接传入。
    */
   async call(
     tool: string,
@@ -410,6 +441,7 @@ export const nativeToolHost = new NativeToolHost();
  * fallback 参数即原 TS execute 函数——双轨语义对齐由测试保证。
  * options.timeoutMs：按件看门狗（缺省 5s），长任务必须覆盖。
  * options.signal：父运行取消信号（AbortError 原样上抛，不回退重跑）。
+ * options.internalArgs：可信 `__` 内部参数（唯一注入通道）；模型 args 里的 `__` 键先被剥离。
  */
 export async function nativeFirst(
   tool: string,
@@ -420,16 +452,27 @@ export async function nativeFirst(
   // CYRENE_TOOL_HOST=0：所有接线方式（含裸 nativeFirst 工具）统一零触达
   if (!resolveDotnetConfig().toolHost) return fallback(args);
   if (options.signal?.aborted) throw createAbortError();
+  // 信任边界：模型 args 的 `__` 键一律剥离；可信内部参数只经 internalArgs 注入
+  const nativeArgs = options.internalArgs
+    ? { ...stripInternalArgs(args), ...options.internalArgs }
+    : stripInternalArgs(args);
   try {
-    const result = await nativeToolHost.call(tool, args, options.timeoutMs, options.signal, options.onEvent);
+    const result = await nativeToolHost.call(tool, nativeArgs, options.timeoutMs, options.signal, options.onEvent);
     if (result !== null) {
       return typeof result === "string" ? result : JSON.stringify(result);
     }
   } catch (error) {
     if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复执行副作用
-    console.warn(LOG_PREFIX, `native 轨失败回退 TS（${tool}）:`, error instanceof Error ? error.message : error);
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (options.fallbackOnError === false) {
+      // 副作用安全：失败可能是「已执行、确认未回」，自动回退会重复副作用
+      console.warn(LOG_PREFIX, `native 轨失败且禁止自动回退（${tool}）:`, failure.message);
+      return options.uncertainFailureMessage?.(failure)
+        ?? `[错误] ${tool} 执行状态未知（native 轨失败：${failure.message}）；为避免重复执行副作用不会自动回退。`;
+    }
+    console.warn(LOG_PREFIX, `native 轨失败回退 TS（${tool}）:`, failure.message);
   }
-  return fallback(args);
+  return fallback(nativeArgs);
 }
 
 /** 判定宿主输出是否为"成功载荷里的业务失败"（C# Err(...) JSON）——是则调用方回退 TS 拿原错误语义。 */
@@ -448,7 +491,8 @@ export function isNativeFailurePayload(text: string): boolean {
  *
  * prepare 返回 native 调用参数；返回 null 表示"不触达 native"（校验不通过或 host 不可用），
  * 直接走 TS 原实现产出语义一致的错误/结果。prepare 内抛出的语义拒绝（如覆盖防骤降）
- * 原样上抛，不回退重跑副作用。
+ * 原样上抛，不回退重跑副作用。模型 args 中的 `__` 键在进入 prepare 前统一剥离
+ * （信任边界 §2.3），可信内部参数只能由 prepare 自行装配。
  */
 export function withNativeFirst(
   tool: ToolDefinition,
@@ -461,7 +505,8 @@ export function withNativeFirst(
     ...tool,
     execute: async (args, ctx) => {
       if (!resolveDotnetConfig().toolHost) return tsExecute(args, ctx);
-      const nativeArgs = prepare(args, ctx);
+      // 信任边界：先剥离模型 args 的 `__` 键，再交给 prepare 装配可信内部参数
+      const nativeArgs = prepare(stripInternalArgs(args), ctx);
       if (nativeArgs === null) return tsExecute(args, ctx);
       try {
         const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal);
