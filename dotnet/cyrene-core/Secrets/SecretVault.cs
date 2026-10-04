@@ -32,7 +32,7 @@ public interface ISecretProtector
 ///
 /// 纪律：
 ///   - 原子写：.tmp 写全 → 旧文件转 .bak → .tmp 原子替换（崩溃任意点不损坏，验收用例 9）；
-///   - 跨进程互斥：Global\CyreneSecretsVault（llm-host 只读 + secrets-host 写并发）；
+///   - 跨进程互斥：Local\CyreneSecretsVault（llm-host 只读 + secrets-host 写并发，限同登录会话）；
 ///   - 绝不落明文：保护器不可用 → Put 抛出（不降级明文——密钥库与 SSH 档案不同，
 ///     静默明文等于白做）；list 只回元信息不回 value；
 ///   - migratedAt：TS 迁移（A4）完成标记，host 缺失策略（迁移前回退/迁移后硬失败）依据。
@@ -41,7 +41,7 @@ public sealed class SecretVault
 {
     private readonly string _filePath;
     private readonly ISecretProtector _protector;
-    private static readonly Mutex GlobalMutex = new(false, @"Global\CyreneSecretsVault");
+    private static readonly Mutex GlobalMutex = new(false, @"Local\CyreneSecretsVault");
 
     public SecretVault(string dataDir, ISecretProtector protector)
     {
@@ -101,6 +101,18 @@ public sealed class SecretVault
         File.WriteAllText(tmp, JsonSerializer.Serialize(vault, new JsonSerializerOptions { WriteIndented = true }));
         if (File.Exists(_filePath)) File.Copy(_filePath, bak, overwrite: true);
         File.Move(tmp, _filePath, overwrite: true);
+        TightenUnixMode(_filePath); // vault 含密钥（加密态）：Unix 收紧 0600，Windows no-op（P1-9）
+    }
+
+    /// <summary>Unix 平台收紧文件权限至 0600（owner rw）；Windows / 不支持时静默跳过。</summary>
+    private static void TightenUnixMode(string path)
+    {
+        try
+        {
+            if (!OperatingSystem.IsWindows() && File.Exists(path))
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch { /* 平台不支持（如容器内特殊 fs）：不阻断 */ }
     }
 
     /// <summary>跨进程安全执行 vault 读写（互斥失败不致命：单机场景 Mutex 可用性极高）。</summary>
@@ -108,7 +120,7 @@ public sealed class SecretVault
     {
         try
         {
-            if (!GlobalMutex.WaitOne(TimeSpan.FromSeconds(10)))
+            if (!GlobalMutex.WaitOne(TimeSpan.FromSeconds(5)))
                 throw new IOException("secrets vault 互斥等待超时");
         }
         catch (AbandonedMutexException) { /* 前持有者崩溃：锁已得手，继续 */ }

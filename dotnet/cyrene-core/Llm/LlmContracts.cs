@@ -88,6 +88,7 @@ public static class LlmContracts
     public const string ErrHttpPrefix = "E_LLM_HTTP_";
     public const string ErrHttpNetwork = "E_LLM_HTTP_0";
     public const string ErrIdleTimeout = "E_LLM_IDLE_TIMEOUT";
+    public const string ErrRequestTimeout = "E_LLM_REQUEST_TIMEOUT";
     public const string ErrCancelled = "E_LLM_CANCELLED";
     public const string ErrTruncated = "E_LLM_TRUNCATED";
 }

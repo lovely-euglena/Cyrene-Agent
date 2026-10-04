@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace CyreneNative.Llm;
 
@@ -27,25 +28,39 @@ public sealed class LlmEvent
 /// <summary>作业状态：queued → running →（waiting_retry）→ done | error | cancelled。</summary>
 public enum LlmJobState { Queued, Running, WaitingRetry, Done, Error, Cancelled }
 
-/// <summary>结构化指标（设计 §6 可观测：queue wait / TTFT / retry 计数；桌面版落日志，服务器版接 metrics）。</summary>
+/// <summary>结构化指标（设计 §6 可观测；终态时经 stderr 结构化日志 + llm.status 出口）。</summary>
 public sealed class LlmJobMetrics
 {
+    public string JobId { get; set; } = "";
+    public string Lane { get; set; } = "";
+    public LlmJobState State { get; set; }
     public long? QueueWaitMs { get; set; }
     public long? TtftMs { get; set; }
     public long? TotalMs { get; set; }
     public int Retries { get; set; }
     public long DroppedEvents { get; set; }
     public long? TokensOut { get; set; }
+    public string? ErrorCode { get; set; }
     public DateTimeOffset? ClosedAt { get; set; }
 }
 
-/// <summary>单条作业：事件 ring + 长轮询等待 + 重试/取消/指标。</summary>
+/// <summary>
+/// 单条作业：事件 ring + 长轮询等待 + 重试/取消/指标。
+///
+/// 反压语义（IKJM7D 复审 P0-2 修复）：
+///   - ring 上限 RingCapacity；**满时 drop-oldest**（_base 前移 + _dropped 计数 + 终态事件保护），
+///     SSE 回调永不阻塞、永不死锁；
+///   - 高水位反压按「未确认量 = EventCount - PolledCursor」判定：poll 消费推进 PolledCursor，
+///     上游读在 ≥HighWater 时暂停、降至 ≤LowWater 恢复（设计 §8 用例 3）；
+///   - 消费者死亡导致的永久暂停由 stall 兜底（service 侧 60s 超水位 → truncated 终态）。
+/// </summary>
 public sealed class LlmJob
 {
-    public const int RingCapacity = 8192;      // 事件 ring 上限（高水位 80% 暂停上游，见 LlmJobService）
-    public const int HighWater = 6553;         // ~80%
-    public const int LowWater = 2048;          // 恢复阈值
-    public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
+    public const int RingCapacity = 4096;      // 对齐设计 §4（复审提示项：8192→4096）
+    public const int HighWater = 3276;         // 未确认量 ~80%
+    public const int LowWater = 1024;          // 恢复阈值
+    public const int StallTimeoutMs = 60_000;  // 超水位暂停兜底（消费者死亡）
+    public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(5); // 对齐设计（10min→5min）
 
     public string Id { get; } = "j" + Guid.NewGuid().ToString("N")[..12];
     public string Lane { get; }
@@ -54,7 +69,7 @@ public sealed class LlmJob
     public string Body { get; }
     public string? AuthVaultKey { get; }
     public string AuthStyle { get; }
-    /// <summary>authStyle=raw 时的鉴权头名（如 x-api-key；bearer 走 Authorization 固定头）。</summary>
+    /// <summary>authStyle=raw 时的鉴权头名（如 x-api-key / api-key；bearer 走 Authorization 固定头）。</summary>
     public string AuthHeaderName { get; }
     public IReadOnlyDictionary<string, string> Headers { get; }
     public string Protocol { get; }
@@ -72,10 +87,14 @@ public sealed class LlmJob
     public DateTimeOffset? FinishedAt { get; set; }
     public CancellationTokenSource Cts { get; } = new();
 
+    /// <summary>执行 Task（service 注入；pump 据此持有槽位至终态——P0-3）。</summary>
+    public Task? RunTask { get; set; }
+
     private readonly object _gate = new();
-    private readonly List<LlmEvent> _events = new();          // 终态后保留至 TTL
+    private readonly List<LlmEvent> _events = new();          // [base, base+count) 绝对序号连续
+    private int _base;                                        // 已被 drop-oldest 丢弃的事件数
     private long _dropped;
-    private long _waiters;
+    private long _polledCursor;                               // 消费位点（TS 已拉取到的最大 nextCursor）
 
     public LlmJob(string lane, string endpoint, string method, string body,
         string? authVaultKey, string authStyle, IReadOnlyDictionary<string, string> headers,
@@ -84,18 +103,34 @@ public sealed class LlmJob
         Lane = lane; Endpoint = endpoint; Method = method; Body = body;
         AuthVaultKey = authVaultKey; AuthStyle = authStyle; AuthHeaderName = authHeaderName ?? "x-api-key"; Headers = headers;
         Protocol = protocol; TimeoutMs = timeoutMs; MaxRetries = maxRetries; IdleTimeoutMs = idleTimeoutMs;
+        Metrics.JobId = Id; Metrics.Lane = lane;
     }
 
-    public int EventCount { get { lock (_gate) return _events.Count; } }
+    public int EventCount { get { lock (_gate) return _base + _events.Count; } }
     public long DroppedEvents { get { lock (_gate) return _dropped; } }
     public bool IsTerminal => State is LlmJobState.Done or LlmJobState.Error or LlmJobState.Cancelled;
 
-    /// <summary>追加事件；ring 满且不可丢弃时返回 false（反压溢出）。</summary>
-    public bool Append(LlmEvent e)
+    /// <summary>未确认事件量（生产-消费差）：高水位反压按此判定，poll 消费推进后回落。</summary>
+    public int PendingCount { get { lock (_gate) return _base + _events.Count - (int)Math.Min((long)_base + _events.Count, Interlocked.Read(ref _polledCursor)); } }
+
+    /// <summary>
+    /// 追加事件；ring 满时 drop-oldest（_base 前移，_dropped 计数）。
+    /// 终态事件受保护：满时丢弃两条最旧腾位，保证 done/error 必达。
+    /// </summary>
+    public bool Append(LlmEvent e, bool isTerminal = false)
     {
         lock (_gate)
         {
-            if (_events.Count >= RingCapacity) { _dropped++; Monitor.PulseAll(_gate); return false; }
+            if (_events.Count >= RingCapacity)
+            {
+                _events.RemoveAt(0);
+                _base++;
+                _dropped++;
+            }
+            if (isTerminal && _events.Count >= RingCapacity)
+            {
+                _events.RemoveAt(0); _base++; _dropped++;
+            }
             _events.Add(e);
             Monitor.PulseAll(_gate); // 唤醒长轮询等待者
             return true;
@@ -103,42 +138,42 @@ public sealed class LlmJob
     }
 
     /// <summary>
-    /// 取 [cursor, cursor+max) 事件段；为空且 waitMs>0 时长轮询（Monitor.Wait，不占读帧线程）。
-    /// 返回实际 nextCursor（幂等：cursor 不变即无新事件）。
+    /// 取 [cursor, cursor+max) 事件段；cursor 低于 _base（已被丢弃）时从 _base 起补读
+    /// （丢弃段不可恢复，调用方经 DroppedEvents/truncated 知晓）。为空且 waitMs>0 时
+    /// 长轮询（Monitor.Wait，不占读帧线程）。返回实际 nextCursor（幂等）。
     /// </summary>
     public IReadOnlyList<LlmEvent> Poll(int cursor, int maxEvents, int waitMs)
     {
         lock (_gate)
         {
-            WaitLocked(cursor, waitMs);
-            var end = Math.Min(cursor + Math.Max(1, maxEvents), _events.Count);
-            if (cursor >= end) return Array.Empty<LlmEvent>();
-            var slice = _events.GetRange(cursor, end - cursor);
+            var effective = Math.Clamp(cursor, _base, _base + _events.Count);
+            var deadline = waitMs <= 0 ? DateTime.MinValue : DateTime.UtcNow.AddMilliseconds(waitMs);
+            while (effective >= _base + _events.Count && !IsTerminal)
+            {
+                var remaining = (long)(deadline - DateTime.UtcNow).TotalMilliseconds;
+                if (waitMs <= 0 || remaining <= 0 || !Monitor.Wait(_gate, (int)Math.Min(remaining, int.MaxValue)))
+                    break;
+                effective = Math.Clamp(effective, _base, _base + _events.Count);
+            }
+            var take = Math.Min(maxEvents, _base + _events.Count - effective);
+            var slice = _events.GetRange(effective - _base, Math.Max(0, take));
+            var next = effective + slice.Count;
+            if (next > Interlocked.Read(ref _polledCursor))
+                Interlocked.Exchange(ref _polledCursor, next);
             return slice;
         }
     }
 
-    private void WaitLocked(int cursor, int waitMs)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(Math.Clamp(waitMs, 0, 10_000));
-        while (cursor >= _events.Count && DateTime.UtcNow < deadline && !IsTerminal)
-        {
-            // 终态时 ring 里可能仍有未读事件（error/done 已在 ring），Poll 会立即返回它们。
-            var remaining = deadline - DateTime.UtcNow;
-            Monitor.Wait(_gate, remaining <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1) : remaining);
-        }
-    }
-
-    /// <summary>缓冲房间数（>0 = 上游可继续推）。</summary>
-    public int Room { get { lock (_gate) return RingCapacity - _events.Count; } }
+    /// <summary>当前未确认量快照（service 反压判定用）。</summary>
+    public int Unconfirmed() => PendingCount;
 }
 
 /// <summary>
-/// 作业注册表 + lane 调度。
-///   interactive：并行上限 4（主聊天，TTFT 优先）；
-///   normal：并行上限 2（结构化/摘要类）；
-///   low：并行上限 1、队列上限 32（标题/心情/记忆三件等后台任务，满载拒绝 E_LLM_HOST_LANE_FULL）。
-/// 调度器每 lane 一条 pump 线程；queue wait / TTFT / TPS 计数在 LlmJob 上。
+/// 作业注册表 + 三 lane 队列调度。
+///
+/// 并发语义（IKJM7D 复审 P0-3 修复）：pump 出队后调用 onDequeued（service 注入
+/// job.RunTask），**同步等待 RunTask 完成后才 Release 槽位**——并发上限在作业整个
+/// 运行期生效，low lane 严格单并发 FIFO。
 /// </summary>
 public sealed class LlmJobStore : IDisposable
 {
@@ -166,12 +201,65 @@ public sealed class LlmJobStore : IDisposable
     public LlmJobStore(Action<LlmJob>? onDequeued = null)
     {
         _onDequeued = onDequeued;
+        // 每 lane 按并发槽位数起 pump（P0-3：4/2/1 真实生效——槽位持到作业终态）
         for (var lane = 0; lane < 3; lane++)
         {
-            var idx = lane;
-            var t = new Thread(() => PumpLoop(idx)) { IsBackground = true, Name = $"llm-lane-{idx}" };
-            t.Start();
-            _pumps.Add(t);
+            var count = lane switch { 1 => NormalParallel, 2 => LowParallel, _ => InteractiveParallel };
+            for (var i = 0; i < count; i++)
+            {
+                var laneIdx = lane;
+                var t = new Thread(() => PumpLoop(laneIdx)) { IsBackground = true, Name = $"llm-pump-{lane}-{i}" };
+                _pumps.Add(t);
+                t.Start();
+            }
+        }
+    }
+
+    private void PumpLoop(int laneIdx)
+    {
+        try
+        {
+            while (!_shutdown.IsCancellationRequested)
+            {
+                LlmJob? job;
+                try
+                {
+                    _slots[laneIdx].Wait(_shutdown.Token);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (ObjectDisposedException) { break; }
+
+                job = Take(laneIdx);
+                if (job == null)
+                {
+                    _slots[laneIdx].Release();
+                    if (_shutdown.IsCancellationRequested) break;
+                    lock (_gate)
+                    {
+                        if (_queues[laneIdx].Count == 0)
+                            Monitor.Wait(_gate, 200); // 空转退避，防取不到时自旋烧 CPU
+                    }
+                    continue;
+                }
+                try
+                {
+                    _onDequeued?.Invoke(job);              // 注入 RunTask（同步启动）
+                    job.RunTask?.Wait();                   // 槽位持有至作业终态（P0-3）
+                }
+                catch { /* RunTask 聚合异常已由 service 记录为终态 */ }
+                finally
+                {
+                    try { _slots[laneIdx].Release(); }
+                    catch (ObjectDisposedException) { /* dispose 竞速（P1-12） */ }
+                    catch (SemaphoreFullException) { /* 重复释放防御 */ }
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* shutdown：正常退出路径（P1-12） */ }
+        catch (ObjectDisposedException) { /* dispose 竞速：静默退出 */ }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[llm-host] pump-{laneIdx} 异常退出: {ex.Message}");
         }
     }
 
@@ -193,15 +281,25 @@ public sealed class LlmJobStore : IDisposable
     /// <summary>入队；low 满载返回 null（调用方回 E_LLM_HOST_LANE_FULL）。</summary>
     public LlmJob? Submit(LlmJob job)
     {
-        var idx = LaneIndex(job.Lane);
         lock (_gate)
         {
-            if (idx == 2 && _queues[2].Count >= LowQueueCap) return null;
-            _queues[idx].Enqueue(job.Id);
+            if (job.Lane == LlmContracts.LaneLow && _queues[2].Count >= LowQueueCap)
+                return null; // 满载拒绝
             _jobs[job.Id] = job;
+            _queues[LaneIndex(job.Lane)].Enqueue(job.Id);
             Monitor.PulseAll(_gate);
         }
         return job;
+    }
+
+    private LlmJob? Take(int laneIdx)
+    {
+        lock (_gate)
+        {
+            if (_queues[laneIdx].Count == 0) return null;
+            var id = _queues[laneIdx].Dequeue();
+            return _jobs.TryGetValue(id, out var j) ? j : null;
+        }
     }
 
     public LlmJob? Find(string? jobId)
@@ -234,58 +332,24 @@ public sealed class LlmJobStore : IDisposable
         return true;
     }
 
-    private void PumpLoop(int laneIdx)
+    /// <summary>终态作业过 TTL 后回收（_jobs 与事件 ring 释放）。宿主 Timer 定期调用（P0-4）。</summary>
+    public void SweepExpired(TimeSpan? maxAge = null)
     {
-        while (!_shutdown.IsCancellationRequested)
-        {
-            LlmJob? job = null;
-            lock (_gate)
-            {
-                while (_queues[laneIdx].Count == 0 && !_shutdown.IsCancellationRequested)
-                    Monitor.Wait(_gate, 500);
-                if (_shutdown.IsCancellationRequested) return;
-                job = _jobs[_queues[laneIdx].Dequeue()];
-            }
-            if (job.IsTerminal) continue;
-            _slots[laneIdx].Wait(_shutdown.Token);
-            if (_shutdown.IsCancellationRequested) { _slots[laneIdx].Release(); return; }
-            lock (_gate)
-            {
-                if (job.State == LlmJobState.Cancelled) { _slots[laneIdx].Release(); continue; }
-                job.State = LlmJobState.Running;
-                job.StartedAt = DateTimeOffset.UtcNow;
-            }
-            try { _onDequeued?.Invoke(job); }
-            catch (Exception ex)
-            {
-                job.Append(new LlmEvent { Type = LlmContracts.EvError, Code = LlmContracts.ErrBadRequest, Message = $"调度异常: {ex.Message}", Retryable = false });
-                job.State = LlmJobState.Error;
-                job.FinishedAt = DateTimeOffset.UtcNow;
-            }
-            finally
-            {
-                // 完成时机由执行方置终态；这里只归还并发槽。终态后仍可能有长轮询在读尾事件，
-                // 归还即允许下一作业并行——正确性由 job 隔离保证。
-                _slots[laneIdx].Release();
-            }
-        }
-    }
-
-    /// <summary>清 TTL 过期作业（宿主循环定时调用）。</summary>
-    public void SweepExpired()
-    {
-        List<string>? dead = null;
+        var ttl = maxAge ?? LlmJob.Ttl;
+        List<LlmJob>? dead = null;
         lock (_gate)
         {
             foreach (var (id, job) in _jobs)
             {
-                if (job.IsTerminal && job.FinishedAt.HasValue && DateTimeOffset.UtcNow - job.FinishedAt.Value > LlmJob.Ttl)
-                    (dead ??= new List<string>()).Add(id);
+                if (job.IsTerminal && job.FinishedAt.HasValue && DateTimeOffset.UtcNow - job.FinishedAt.Value > ttl)
+                    (dead ??= new List<LlmJob>()).Add(job);
             }
-            if (dead != null) foreach (var id in dead) _jobs.Remove(id);
+            if (dead != null)
+                foreach (var job in dead) _jobs.Remove(job.Id); // 引用已持有，Remove 后仍可清理 Cts（修死代码）
         }
         if (dead != null)
-            foreach (var id in dead) try { Find(id)?.Cts.Dispose(); } catch { }
+            foreach (var job in dead)
+                try { job.Cts.Dispose(); } catch { /* 并发取消竞速 */ }
     }
 
     public (int jobs, int running, int queued) Snapshot()
@@ -302,6 +366,8 @@ public sealed class LlmJobStore : IDisposable
     {
         _shutdown.Cancel();
         lock (_gate) Monitor.PulseAll(_gate);
+        foreach (var t in _pumps)
+            try { t.Join(2000); } catch { /* 已退出 */ }
         foreach (var s in _slots) try { s.Dispose(); } catch { }
     }
 }

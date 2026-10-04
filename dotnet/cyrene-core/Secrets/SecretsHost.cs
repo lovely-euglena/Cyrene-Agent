@@ -23,7 +23,7 @@ namespace CyreneNative.Secrets;
 ///   → {"op":"secret.status","callId"}                 ← {"op":"result","callId","ok":true,"data":{count,migrated,migratedAt,protector,available}}
 ///   → {"op":"secret.mark-migrated","callId"}          ← {"op":"result","callId","ok":true,"data":{}}
 ///   → {"op":"shutdown"}
-/// 失败：{"op":"result","callId","ok":false,"code":"E_SECRET_…","message":"…"}
+/// 失败：{"op":"result","callId","ok":false,"error":"…","errorCode":"E_SECRET_…","retryable":false}（对齐 StorageHost 约定）
 ///
 /// 读帧线程纪律（StorageHost 先例）：op 丢 Task.Run；EOF → 排空 → 退出。
 /// </summary>
@@ -74,7 +74,7 @@ public static class SecretsHost
             {
                 var callId = Str(frame, "callId");
                 if (callId != null)
-                    WriteFrame(new { op = "result", callId, ok = false, code = "E_SECRET_HOST_ERROR", message = Trunc(ex.Message) });
+                    WriteFrame(new { op = "result", callId, ok = false, error = Trunc(ex.Message), errorCode = "E_SECRET_HOST_ERROR", retryable = false });
             }
         }
         return 0;
@@ -98,7 +98,8 @@ public static class SecretsHost
             {
                 var name = Str(frame, "name");
                 var value = Str(frame, "value");
-                if (name == null || value == null) { Fail(callId, "E_SECRET_BAD_REQUEST", "name/value required"); return; }
+                if (name == null || value == null || value.Length == 0)
+                { Fail(callId, "E_SECRET_BAD_REQUEST", "name/value required（空 value 拒绝——清 key 用 secret.delete）"); return; }
                 try { vault.Put(name, value); }
                 catch (Exception ex) { Fail(callId, "E_SECRET_PUT_FAILED", ex.Message); return; }
                 Ok(callId, new { });
@@ -166,7 +167,8 @@ public static class SecretsHost
 
     private static void Fail(string? callId, string code, string message)
     {
-        if (callId != null) WriteFrame(new { op = "result", callId, ok = false, code, message = Trunc(message) });
+        if (callId != null)
+            WriteFrame(new { op = "result", callId, ok = false, error = Trunc(message), errorCode = code, retryable = false });
     }
 
     private static string Trunc(string s) => s.Length <= 300 ? s : s[..300];
