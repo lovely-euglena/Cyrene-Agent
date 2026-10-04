@@ -335,3 +335,23 @@
   `scripts/dotnet-cloud-sync-test.py` 18/18（幂等/乱序/分页/双客户端并发收敛/链拒绝与
   整批回滚/畸形批/clone 游标对齐）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2H、#IKJK2J。
+
+## 2026-10-04 增量：IKJK2K——配对与设备令牌（服务端）
+
+- **自建令牌体系**（原 RFC 的 signature-verification 一次性 token 在本仓库不存在）：device token =
+  32 字节随机（`cyn_` 前缀），**库内只存 SHA-256 哈希**、签发仅回显一次；配对码 = 8 位易读字母表
+  （无 0/O/1/I/L，输入容错空格/连字符）、一次性 + TTL（默认 300s，`CLOUD_PAIR_TTL_SECONDS`）、只存哈希；
+  撤销 = 标记即 401（每请求查库）；轮换 = 原子替换哈希。
+- **引导与流程**（RFC §4.1）：首个设备用 CLI `pair-code`（或主控令牌调 `POST /v1/pair/code`）出码；
+  新设备 `POST /v1/pair` 兑换；此后已配对设备即可为新设备出码。
+- **鉴权语义**：`/v1/*` **始终**需 Bearer（device token 或 `CLOUD_TOKEN` 主控）；`POST /v1/pair` 公开；
+  `/healthz` 回环探针豁免、远程需令牌；Bearer scheme 大小写不敏感（RFC 7235）。承接 J 复审硬化：
+  `errors[].index` 统一物理行号、healthz O(1) 游标、`FetchAsync` 取消链、payload `Clone()` 防泄漏。
+- **暴露面/资源**：Host 白名单（`CLOUD_ALLOWED_HOSTS`，回环豁免）、限流（pair 10/min/IP、
+  sync 300/min/令牌或 IP，env 可调）、转发头只信任回环来源（Caddy 同机）；TLS = Caddy ACME。
+- **Q6 部分落定**：凭据静态保护 = 哈希存储 + Linux 0700/0600（best-effort）；全库静态加密仍开放。
+  Q5（PWA token 存放 / CORS / CSRF）随 IKJK2L 拍板。
+- **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；`dotnet-cloud-sync-test.py`
+  **36/36**（配对一次性 / 过期 TTL / 轮换 / 撤销即时 401 / 伪造 401 / Host 421 / 日志脱敏 /
+  限流 429 / 设备列表）；Linux 侧另断言目录 0700 + DB 0600（CI 实跑，37 项）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。
