@@ -306,6 +306,8 @@ def run_core_checks(base, master_token):
     """核心档（IKJN78）：对任意 HTTP 形态跑协议 v0 同步核心 + 配对令牌 + 能力声明（+ PWA 静态）。
 
     用于远端形态（CF / PHP / …）与本地 core profile；事件/会话 id 带运行前缀（对持久化实例可重复跑）。
+    对启用服务端生成的实例（如 CF 验收的回声 mock）：计数 / 集合断言只统计 run 前缀事件
+    （生成事件 id 前缀 gen-），clone 允许生成事件在快照边界间落入（单调夹逼 + run 集合）。
     不覆盖需实例环境注入的检查：生成闭环 / 限流阈值 / Host 白名单 / 日志脱敏 / Linux 权限 /
     裸 socket 请求体上限探测（这些仅本地 full profile）。
     """
@@ -314,6 +316,10 @@ def run_core_checks(base, master_token):
 
     def sess(name):
         return f"s-{run}-{name}"
+
+    def run_only(items):
+        """仅本 run 前缀事件（并发生成下计数断言保持确定）。"""
+        return [item for item in items if item["eventId"].startswith(run + "-")]
 
     # 0. healthz + 能力声明
     status, body, _ = http("GET", base + "/healthz", timeout=5)
@@ -372,7 +378,8 @@ def run_core_checks(base, master_token):
     events, _ = fetch_all(base, limit=2)
     whole, _ = fetch_all(base, limit=1000)
     check("分页游标不重不漏（步进序 == 单次全量序）",
-          canonical_ids(events) == canonical_ids(whole), f"paged={len(events)} whole={len(whole)}")
+          canonical_ids(run_only(events)) == canonical_ids(run_only(whole)),
+          f"paged={len(events)} whole={len(whole)}")
     run_ids = [item["eventId"] for item in events if item["eventId"].startswith(run + "-")]
     check("插入序（run 内前三条 a1,a2,a3）",
           run_ids[:3] == [f"{run}-a1", f"{run}-a2", f"{run}-a3"], str(run_ids[:5]))
@@ -397,7 +404,7 @@ def run_core_checks(base, master_token):
             if status != 200:
                 errors.append((name, i, status, body[:120]))
 
-    pre_concurrent = len(fetch_all(base)[0])
+    pre_run = len(run_only(fetch_all(base)[0]))
     thread_a = threading.Thread(target=client, args=("ca", "dev-a"))
     thread_b = threading.Thread(target=client, args=("cb", "dev-b"))
     thread_a.start()
@@ -407,15 +414,17 @@ def run_core_checks(base, master_token):
     check("两客户端并发 push 全 200", not errors, str(errors)[:200])
     view_a, _ = fetch_all(base)
     view_b, _ = fetch_all(base)
-    run_ca = sum(1 for item in canonical_ids(view_a) if item.startswith(f"{run}-ca"))
-    run_cb = sum(1 for item in canonical_ids(view_a) if item.startswith(f"{run}-cb"))
+    run_view_a = run_only(view_a)
+    run_view_b = run_only(view_b)
+    run_ca = sum(1 for item in run_view_a if item["eventId"].startswith(f"{run}-ca"))
+    run_cb = sum(1 for item in run_view_a if item["eventId"].startswith(f"{run}-cb"))
     check("并发后双端收敛一致（(lamport, deviceId, seq) 全序）",
-          canonical_ids(view_a) == canonical_ids(view_b) and len(view_a) == pre_concurrent + 10
+          canonical_ids(run_view_a) == canonical_ids(run_view_b) and len(run_view_a) == pre_run + 10
           and run_ca == 5 and run_cb == 5,
-          f"n={len(view_a)} ca={run_ca} cb={run_cb}")
+          f"run={len(run_view_a)} ca={run_ca} cb={run_cb}")
 
     # 4. 链校验
-    baseline = len(fetch_all(base)[0])
+    baseline = len(run_only(fetch_all(base)[0]))
     h1, h2, h3 = "a" * 64, "b" * 64, "c" * 64
     status, body, _ = push(base, [ev(f"{run}-ch1", session_id=sess("4"), device="dev-c", lamport=1, seq=1, hashed=h1)])
     check("链首（hash 无 prevHash）接受", status == 200, body[:160])
@@ -435,7 +444,8 @@ def run_core_checks(base, master_token):
     check("seq 非递增 → E_SYNC_SEQ",
           status == 400 and any(e.get("code") == "E_SYNC_SEQ" for e in data.get("errors", [])), body[:200])
     events, _ = fetch_all(base)
-    check("失败批整批回滚（总数不变）", len(events) == baseline + 2, f"n={len(events)} baseline={baseline}")
+    check("失败批整批回滚（总数不变）", len(run_only(events)) == baseline + 2,
+          f"run={len(run_only(events))} baseline={baseline}")
 
     # 4b. 链拒绝 errors[].index = 物理行号
     bad_first = [
@@ -462,21 +472,28 @@ def run_core_checks(base, master_token):
           status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID" and data.get("truncatedTail") is True,
           body[:160])
 
-    # 6. clone
+    # 6. clone（对启用生成的实例：允许生成事件在快照边界间落入；run 前缀集合 + 游标边界断言）
+    events_before, cursor_before = fetch_all(base)
     status, clone_body, headers = http("GET", base + "/v1/sync/clone")
     clone_ids = [json.loads(line)["eventId"] for line in clone_body.splitlines() if line.strip()]
-    events, cursor = fetch_all(base)
-    check("clone 全量 + X-Sync-Cursor 对齐",
-          status == 200 and len(clone_ids) == len(events) and headers.get("X-Sync-Cursor") == cursor,
-          f"clone={len(clone_ids)} fetch={len(events)} header={headers.get('X-Sync-Cursor')} cursor={cursor}")
-    check("clone 集合与 fetch 一致", set(clone_ids) == {item["eventId"] for item in events})
+    events_after, cursor_after = fetch_all(base)
+    clone_run = sorted(item for item in clone_ids if item.startswith(run + "-"))
+    after_run = sorted(item["eventId"] for item in run_only(events_after))
+    clone_header = int(headers.get("X-Sync-Cursor", "-1"))
+    check("clone 全量 + X-Sync-Cursor 对齐（run 前缀 + 游标边界）",
+          status == 200 and clone_run == after_run and int(cursor_before) <= clone_header <= int(cursor_after),
+          f"clone={len(clone_ids)} header={clone_header} cursor={cursor_before}..{cursor_after}")
+    check("clone 快照单调（前 ⊆ clone ⊆ 后）",
+          {item["eventId"] for item in events_before} <= set(clone_ids) <= {item["eventId"] for item in events_after},
+          f"before={len(events_before)} clone={len(clone_ids)} after={len(events_after)}")
 
-    # 7. 会话过滤
+    # 7. 会话过滤（run 前缀 3 条；生成回复（gen-）可存在但必须同会话）
     status, body, _ = http("GET", base + f"/v1/sync/fetch?since=0&limit=200&sessionId={sess('2')}")
     data = json.loads(body) if status == 200 else {}
-    check("fetch?sessionId= 过滤（只回本 run 的 3 条）",
-          status == 200 and len(data.get("events", [])) == 3
-          and all(item["sessionId"] == sess("2") for item in data.get("events", [])), body[:160])
+    items = data.get("events", [])
+    check("fetch?sessionId= 过滤（run 内 3 条且不串会话）",
+          status == 200 and sorted(item["eventId"] for item in run_only(items)) == [f"{run}-b1", f"{run}-b2", f"{run}-b3"]
+          and all(item["sessionId"] == sess("2") for item in items), body[:160])
 
     # 8. 链过渡混用
     status, body, _ = push(base, [ev(f"{run}-mix1", session_id=sess("5"), device="dev-c", lamport=1, seq=1, hashed=h1)])
