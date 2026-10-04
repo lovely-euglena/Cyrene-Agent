@@ -1,0 +1,9 @@
+{
+  "name": "半截批：末条非空行 JSON 不完整 → 修剪 + truncatedTail",
+  "description": "第 2 行被截断（崩溃/断网合法遗留）：不记错误，置 truncatedTail=true，调用方应从上一游标重拉。",
+  "input": "{\"eventId\":\"e1\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-04T02:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"半截前\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"e2\",\"sessionId\":\"s1\",\"type\":\"message.app",
+  "expect": {
+    "events": ["e1"],
+    "truncatedTail": true
+  }
+}

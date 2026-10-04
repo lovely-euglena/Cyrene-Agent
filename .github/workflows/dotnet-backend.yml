@@ -3,9 +3,9 @@ name: dotnet-backend
 on:
   push:
     branches: [feature/dotnet-backend, main]
-    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/sync/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/check-cyrene-core-clean.py']
   pull_request:
-    paths: ['dotnet/**', 'scripts/dotnet-*.py', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/sync/**', 'fixtures/**', 'scripts/dotnet-*.py', 'scripts/check-cyrene-core-clean.py']
 
 jobs:
   build:
@@ -34,11 +34,15 @@ jobs:
           python3 scripts/dotnet-edge-test.py
           python3 scripts/dotnet-tools-matrix.py
           python3 scripts/dotnet-agent-loop-test.py
+      - name: sync-protocol v0 契约（C# 读取器跑共享 fixtures）
+        run: |
+          dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-protocol fixtures/sync-protocol/cases
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: TS 类型检查 + 双轨基线
+      - name: TS 类型检查 + 双轨基线 + sync-protocol 契约（TS 侧）
         run: |
           npm ci --registry=https://registry.npmmirror.com || npm install --registry=https://registry.npmmirror.com
           npx tsc -p tsconfig.main.json --noEmit
+          npx vitest run src/main/sync
           npx tsx scripts/dual-track-diff.ts

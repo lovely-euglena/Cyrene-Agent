@@ -21,14 +21,15 @@ def run_host(args, frames, timeout=60):
     p = subprocess.run(
         ["dotnet", NATIVE] + args,
         input="\n".join(frames), capture_output=True, text=True, timeout=timeout,
+        encoding="utf-8", errors="replace",
         cwd=REPO_ROOT, env=env)
     out = []
-    for line in p.stdout.strip().splitlines():
+    for line in (p.stdout or "").strip().splitlines():
         try:
             out.append(json.loads(line))
         except Exception:
             out.append({"_raw": line[:120]})
-    return out, p.returncode, p.stderr
+    return out, p.returncode, (p.stderr or "")
 
 def check(name, ok, detail=""):
     results.append((name, ok, detail))
@@ -38,7 +39,7 @@ def check(name, ok, detail=""):
 print("\n=== 1. tool-host ===")
 tmpdir = tempfile.mkdtemp(prefix="cyrene-smoke-")
 test_file = os.path.join(tmpdir, "hello.txt")
-with open(test_file, "w") as f:
+with open(test_file, "w", encoding="utf-8") as f:
     f.write("line1 你好\nline2 world\nline3 test\n")
 
 frames = [
@@ -74,7 +75,7 @@ c6 = by_id.get("c6"); check("calculator", c6 and c6.get("ok") and "7" in str(c6.
 print("\n=== 2. rag-host ===")
 ragdb = os.path.join(tmpdir, "rag.sqlite")
 memjson = os.path.join(tmpdir, "memory.json")
-with open(memjson, "w") as f:
+with open(memjson, "w", encoding="utf-8") as f:
     json.dump([
         {"id": "e1", "text": "今天天气很好，阳光明媚", "embedding": [0.1, 0.2, 0.3], "source": "user_memory", "weight": 1.0, "createdAt": 1700000000000, "lastRecalledAt": 0},
         {"id": "e2", "text": "我喜欢吃苹果和香蕉", "embedding": [0.9, 0.1, 0.05], "source": "user_memory", "weight": 1.0, "createdAt": 1700000000001, "lastRecalledAt": 0},
@@ -171,9 +172,11 @@ ms = by_id.get("ms"); check("stats", ms and ms.get("ok"))
 # ── 6. selftest agents（J6 越权保护）──
 print("\n=== 6. selftest（越权保护）===")
 out, code, err = run_host(["--selftest", "agents"], [])
-for line in (err or "").strip().splitlines():
-    if "PASS" in line or "FAIL" in line:
-        print("  ", line.strip())
+# 自测行写 stdout（被 run_host 解析为 _raw 帧）；stderr 仅用于失败诊断
+for frame in out:
+    raw = frame.get("_raw", "") if isinstance(frame, dict) else ""
+    if "PASS" in raw or "FAIL" in raw:
+        print("  ", raw.strip())
 check("selftest agents 退出码=0", code == 0, f"exit={code}")
 
 # ── 汇总 ──

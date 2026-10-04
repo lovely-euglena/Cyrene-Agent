@@ -1,0 +1,8 @@
+{
+  "name": "正常批：会话创建 + 用户/助手消息（有序）",
+  "description": "三事件按 (lamport, deviceId, seq) 已有序，原样输出。",
+  "input": "{\"eventId\":\"e1\",\"sessionId\":\"s1\",\"type\":\"session.create\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-04T02:00:00.000Z\",\"payload\":{\"title\":\"测试会话\",\"createdAt\":\"2026-10-04T02:00:00.000Z\"}}\n{\"eventId\":\"e2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-04T02:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"你好\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"e3\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-04T02:00:02.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"你好，我是昔涟。\"}}",
+  "expect": {
+    "events": ["e1", "e2", "e3"]
+  }
+}

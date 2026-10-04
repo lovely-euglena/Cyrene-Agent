@@ -1,0 +1,8 @@
+{
+  "name": "乱序批：双设备交错，按 (lamport, deviceId 序数, seq) 收敛",
+  "description": "输入序 [ec, eb, ed, ea]；期望 [ed, ea, eb, ec]：lamport 1 组内 dev-a seq0(D) < seq1(A)，再 dev-b seq0(B)，最后 lamport 2(C)。",
+  "input": "{\"eventId\":\"ec\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-04T02:00:02.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"C\",\"turnId\":\"turn-3\"}}\n{\"eventId\":\"eb\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-b\",\"seq\":0,\"ts\":\"2026-10-04T02:00:01.500Z\",\"payload\":{\"role\":\"user\",\"text\":\"B\",\"turnId\":\"turn-2\"}}\n{\"eventId\":\"ed\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-04T02:00:00.500Z\",\"payload\":{\"role\":\"user\",\"text\":\"D\",\"turnId\":\"turn-4\"}}\n{\"eventId\":\"ea\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-04T02:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"A\",\"turnId\":\"turn-1\"}}",
+  "expect": {
+    "events": ["ed", "ea", "eb", "ec"]
+  }
+}
