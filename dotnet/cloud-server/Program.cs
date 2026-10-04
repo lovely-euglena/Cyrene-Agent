@@ -321,6 +321,47 @@ static string PartitionKey(string prefix, HttpContext context)
     return $"{prefix}:i:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
 }
 
+// 裸跑运维子命令（本地 shell 使用；容器：docker compose exec cloud-server dotnet cyrene-cloud-server.dll <cmd>）
+int RunCli(string[] cliArgs)
+{
+    try { Console.OutputEncoding = Encoding.UTF8; } catch { /* 控制台编码只影响显示 */ }
+    var auth = new AuthStore(dbPath, pairTtl);
+    switch (cliArgs[0])
+    {
+        case "pair-code":
+        {
+            var (code, expiresAt) = auth.CreatePairCode("cli");
+            Console.WriteLine($"配对码: {code}");
+            Console.WriteLine($"有效期至 {expiresAt}（单次使用；在新设备上兑换 device token）");
+            return 0;
+        }
+        case "devices":
+        {
+            var devices = auth.ListDevices();
+            if (devices.Count == 0)
+            {
+                Console.WriteLine("（暂无已配对设备）");
+                return 0;
+            }
+            foreach (var device in devices)
+            {
+                Console.WriteLine($"{device.DeviceId}  [{(device.Revoked ? "已撤销" : "有效")}]  {device.Name}  " +
+                                  $"created={device.CreatedAt}  lastSeen={device.LastSeenAt ?? "-"}");
+            }
+            return 0;
+        }
+        case "revoke" when cliArgs.Length >= 2:
+        {
+            var revoked = auth.Revoke(cliArgs[1]);
+            Console.WriteLine(revoked ? $"已撤销设备 {cliArgs[1]}" : $"未找到设备 {cliArgs[1]}");
+            return revoked ? 0 : 1;
+        }
+        default:
+            Console.Error.WriteLine("用法: cyrene-cloud-server pair-code | devices | revoke <deviceId>");
+            return 2;
+    }
+}
+
 /// <summary>HTTP 层的错误码与请求约束（集中定义，避免裸字面量）。</summary>
 internal static class CloudApi
 {
