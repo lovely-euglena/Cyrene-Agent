@@ -310,7 +310,7 @@ function registerTranslateTool(): void {
       }
 
       // 动态 import 避免循环依赖；协议跟随档案配置（explicitTransport），与主链路同源
-      const { getAdapterForConfig } = await import("../vendors");
+      const { getAdapterForConfig } = await import("../vendors/index.js");
       const fromHint = args.from ? `（源语言：${args.from}）` : "（自动检测源语言）";
       const sysPrompt = `你是翻译器${fromHint}。把以下文本翻译成${to}，只输出译文，不要任何解释或额外文字。`;
       const ctrl = new AbortController();
