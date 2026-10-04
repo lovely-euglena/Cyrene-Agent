@@ -1,4 +1,4 @@
-# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J / IKJK2K）
+# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J / IKJK2K / IKJK2M）
 
 事件库 + `/v1/sync` push / fetch / clone；契约 = 同步协议 v0
 （`docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/`）。
@@ -46,6 +46,10 @@ CYRENE_CLOUD_DATA=./data dotnet dotnet/cloud-server/bin/Release/net10.0/cyrene-c
 | `CLOUD_PAIR_TTL_SECONDS` | 配对码有效期（默认 300 秒） |
 | `CLOUD_ALLOWED_HOSTS` | Host 白名单（逗号分隔；回环始终放行；不设 = 不校验，生产建议设置） |
 | `CLOUD_RATE_PAIR_PER_MIN` / `CLOUD_RATE_SYNC_PER_MIN` | 限流阈值/分钟（默认 10 / 300） |
+| `CLOUD_LLM_API_KEY` | 服务端模型密钥（非空即启用生成；只在服务端、不落日志） |
+| `CLOUD_LLM_MODEL` / `CLOUD_LLM_BASE_URL` | 模型名（默认 `gpt-4o-mini`）/ OpenAI 兼容端点（默认官方） |
+| `CLOUD_LLM_TIMEOUT_SECONDS` / `CLOUD_LLM_MAX_TOKENS` / `CLOUD_LLM_CONTEXT_CHARS` | 生成参数（默认 60 / 1024 / 24000） |
+| `CLOUD_LLM_SYSTEM_PROMPT` | 可选系统提示词（默认无） |
 | `ASPNETCORE_URLS` | 监听地址（默认 `http://127.0.0.1:7789`） |
 
 ## 配对与设备令牌（IKJK2K）
@@ -60,6 +64,19 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
   `docker compose exec cloud-server dotnet cyrene-cloud-server.dll pair-code`；
 - 安全基线：数据目录 0700 / `events.db` 0600（Linux，best-effort；systemd `UMask=0077` 兜底）、
   Host 白名单、接口限流、远程 healthz 需令牌；TLS 由 Caddy 终结（`deploy/Caddyfile.example`）。
+
+## 服务端文本生成（IKJK2M）
+
+`CLOUD_LLM_API_KEY` 非空即启用：push 出现新用户消息（或 `turn_rewind` 编辑/重生成）后，服务端重放该会话事件 →
+活动分支消息流 → 调用模型 → 以 `deviceId=server` 写回 assistant 事件（各端 fetch 即可见）。
+
+- **幂等**：assistant eventId = `gen-<sha256(sessionId:锚点事件id)[..32]>`；断网重试/重复触发不产生重复消息，
+  预检已存在即跳过模型调用；
+- **重放**：`turn_rewind(keep_user)` 裁掉锚点后的旧 assistant 尾并重生成；`replace_user` 以 replacementUser
+  重建该轮；`tombstone` 移除目标轮；
+- **失败重试**：模型调用 2 次退避；仍失败只记日志（无副作用残留），下一次事件会再次触发；
+- **用量/脱敏**：成功日志记录模型名与 `prompt_tokens / completion_tokens`（不含消息正文）；密钥只在服务端、不进日志；
+- Q2 拍板：Phase 1 用最小聊天环（不引 LoopHost/Agents），工具链留后续批次。
 
 ## 容器（备选）
 
@@ -125,6 +142,6 @@ SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电
 
 ```bash
 dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
-python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌/限流/Host/脱敏（36 项）
+python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌 + 生成闭环（41 项）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
 ```

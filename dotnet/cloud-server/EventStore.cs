@@ -77,6 +77,16 @@ public sealed class EventStore
         command.ExecuteNonQuery();
     }
 
+    /// <summary>eventId 是否已存在（生成前幂等预检，避免重复调用模型）。</summary>
+    public bool Contains(string eventId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM events WHERE event_id=@id LIMIT 1";
+        command.Parameters.AddWithValue("@id", eventId);
+        return command.ExecuteScalar() is not null;
+    }
+
     public long CurrentCursor()
     {
         using var connection = Open();
