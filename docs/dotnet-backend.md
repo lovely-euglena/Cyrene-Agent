@@ -93,7 +93,11 @@ rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关�
 - 服务端生成（IKJK2M）：`CLOUD_LLM_API_KEY` 启用；push 触发生成、事件重放取活动分支（编辑/重生成/删除语义）、
   `gen-*` 幂等写回 `deviceId=server`；mock LLM 冒烟覆盖（断网重试不重复 / 编辑重生成）。
 - 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/并发收敛/链拒绝回滚/
-  clone 游标 + 配对令牌/限流/Host/脱敏 + 生成闭环，Windows 48 / Linux 49 项）。
+  clone 游标 + 配对令牌/限流/Host/脱敏 + 生成闭环 + PWA 静态托管，Windows 51 / Linux 52 项；
+  wwwroot 未构建时跳过静态 3 项）。
+- 手机 PWA（IKJK2L）：`src/pwa/`（原生 TS，零运行时依赖）→ 构建产物进 `wwwroot` 静态托管；
+  配对登录 + fetch/push + 离线只读缓存（SW 应用壳 + localStorage 事件快照）；物化视图与
+  `DialogLoop.Replay` 逐条对齐；e2e `node scripts/pwa-e2e-test.mjs <dll>`（Microsoft Edge 通道）。
 - 部署：**裸跑为主**（`dotnet publish` + `deploy/cyrene-cloud-server.service` systemd 单元 +
   `deploy/Caddyfile.example` 反代，`CLOUD_ALLOWED_HOSTS` 建议随域名设置）；容器为备选
   （`docker-compose.yml`：mem_limit 512m + healthcheck + 日志上限）；正式部署/备份/告警属 IKJK2N。
