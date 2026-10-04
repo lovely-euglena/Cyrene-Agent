@@ -179,6 +179,15 @@ for frame in out:
         print("  ", raw.strip())
 check("selftest agents 退出码=0", code == 0, f"exit={code}")
 
+# ── 7. selftest scheduler（IKJK51：排期/存储/引擎向量）──
+print("\n=== 7. selftest（调度核心）===")
+out, code, err = run_host(["--selftest", "scheduler"], [])
+for frame in out:
+    raw = frame.get("_raw", "") if isinstance(frame, dict) else ""
+    if "PASS" in raw or "FAIL" in raw:
+        print("  ", raw.strip())
+check("selftest scheduler 退出码=0", code == 0, f"exit={code}")
+
 # ── 汇总 ──
 passed = sum(1 for _, ok, _ in results if ok)
 failed = sum(1 for _, ok, _ in results if not ok)
