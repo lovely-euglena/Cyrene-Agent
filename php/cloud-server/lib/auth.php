@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/util.php';
+require_once __DIR__ . '/storage.php';
 require_once __DIR__ . '/store.php';
 
 /**
@@ -45,6 +46,7 @@ final class AuthStore
             redeemed_at TEXT,
             redeemed_by TEXT
         )');
+        cyrene_harden_storage($dir, $dbPath);
     }
 
     /** 签发一次性配对码（返回 [显示码, 过期时间]；库内只存规范化哈希）。 */
@@ -77,7 +79,8 @@ final class AuthStore
         $deviceId = 'dev_' . cyrene_random_hex(6);
         $token = 'cyn_' . cyrene_base64url(random_bytes(32));
         $now = cyrene_iso_now();
-        $this->pdo->beginTransaction();
+        // BEGIN IMMEDIATE：一次性兑换（UPDATE ... WHERE redeemed_at IS NULL）在并发下需先取写锁
+        $this->pdo->exec('BEGIN IMMEDIATE');
         try {
             $statement = $this->pdo->prepare(
                 'UPDATE pairing_codes SET redeemed_at = ?, redeemed_by = ?

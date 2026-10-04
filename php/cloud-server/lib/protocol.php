@@ -33,7 +33,23 @@ function sync_has_only_keys(array $value, array $allowed): bool
 
 function sync_is_id(mixed $value): bool
 {
-    return is_string($value) && preg_match('/^[^\x00-\x1f\x7f]{1,200}$/u', $value) === 1;
+    if (!is_string($value)) {
+        return false;
+    }
+    // 与 TS（无 /u 正则）/ C# 一致：按 UTF-16 码元计数（astral 字符算 2 个）
+    $units = cyrene_utf16_units($value);
+    if ($units < 1 || $units > 200) {
+        return false;
+    }
+    // 拒绝 U+0000-U+001F 与 U+007F（ASCII 字节扫描；多字节序列字节均 >= 0x80，不受影响）
+    $length = strlen($value);
+    for ($i = 0; $i < $length; $i++) {
+        $byte = ord($value[$i]);
+        if ($byte < 0x20 || $byte === 0x7f) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function sync_is_iso_utc(mixed $value): bool
@@ -261,13 +277,13 @@ function sync_read_batch(string $text): array
     }
     usort($result['events'], static function (array $left, array $right): int {
         return $left['lamport'] <=> $right['lamport']
-            ?: strcmp($left['deviceId'], $right['deviceId'])
+            ?: cyrene_utf16_compare($left['deviceId'], $right['deviceId'])
             ?: $left['seq'] <=> $right['seq'];
     });
     return $result;
 }
 
-/** eventId → 0 基物理行号（与读取错误索引同一空间；首见生效）。 */
+/** eventId → 0 基物理行号（与读取错误索引同一空间；仅收录通过校验的事件行，首见生效）。 */
 function sync_build_line_index(string $text): array
 {
     $map = [];
@@ -280,7 +296,8 @@ function sync_build_line_index(string $text): array
             continue;
         }
         $value = json_decode($line, true);
-        if (is_array($value) && isset($value['eventId']) && is_string($value['eventId']) && !array_key_exists($value['eventId'], $map)) {
+        if (is_array($value) && isset($value['eventId']) && is_string($value['eventId'])
+            && sync_validate_event($value) === null && !array_key_exists($value['eventId'], $map)) {
             $map[$value['eventId']] = $index;
         }
     }

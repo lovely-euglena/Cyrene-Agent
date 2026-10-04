@@ -11,9 +11,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/util.php';
 require_once __DIR__ . '/../lib/config.php';
 require_once __DIR__ . '/../lib/protocol.php';
+require_once __DIR__ . '/../lib/storage.php';
 require_once __DIR__ . '/../lib/store.php';
 require_once __DIR__ . '/../lib/auth.php';
 require_once __DIR__ . '/../lib/dialog.php';
+
+cyrene_harden_umask(); // 与入口一致：测试建库前收紧 umask（Linux 权限断言依赖）
 
 $passed = 0;
 $failed = 0;
@@ -64,6 +67,14 @@ check('设备名：63a+emoji → 63a（不切断代理对）', cyrene_normalize_
 check('设备名：超长截断 64', cyrene_normalize_device_name(str_repeat('a', 80)) === str_repeat('a', 64));
 check('sha256 已知向量', cyrene_sha256_hex('abc') === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 check('base64url 无填充 / URL 安全', preg_match('/[+\/=]/', cyrene_base64url(random_bytes(32))) !== 1);
+check(
+    'id 校验：astral 按 UTF-16 码元计数（100 emoji 可 / 101 拒）',
+    sync_is_id(str_repeat('😀', 100)) && !sync_is_id(str_repeat('😀', 101))
+);
+check(
+    '规范序：UTF-16 码元序（U+10000 < U+E000；UTF-8 字节序相反）',
+    cyrene_utf16_compare("\u{10000}", "\u{E000}") < 0 && strcmp("\u{10000}", "\u{E000}") > 0
+);
 
 // ── 集成（临时 SQLite） ──
 $dataDir = sys_get_temp_dir() . '/cyrene-php-test-' . bin2hex(random_bytes(4));
@@ -71,6 +82,30 @@ mkdir($dataDir, 0700, true);
 $dbPath = $dataDir . '/events.db';
 $store = new EventStore($dbPath);
 $auth = new AuthStore($dbPath, 300);
+
+if (PHP_OS_FAMILY !== 'Windows') {
+    // P0 存储加固断言（Linux / CI）：目录 0700；库与 -wal/-shm 0600
+    check(
+        '权限：数据目录 0700',
+        substr(sprintf('%o', fileperms($dataDir)), -4) === '0700',
+        sprintf('%o', fileperms($dataDir))
+    );
+    check(
+        '权限：events.db 0600',
+        substr(sprintf('%o', fileperms($dbPath)), -4) === '0600',
+        sprintf('%o', fileperms($dbPath))
+    );
+    $walPath = $dbPath . '-wal';
+    $walMode = is_file($walPath) ? substr(sprintf('%o', fileperms($walPath)), -4) : null;
+    check('权限：-wal 0600（存在时）', $walMode === null || $walMode === '0600', (string)$walMode);
+}
+
+/** clone 流 → 事件数组（测试辅助；分页语义与线上一致）。 */
+function collect_clone(EventStore $store, ?string $sessionId = null): array
+{
+    $outcome = $store->cloneStream($sessionId);
+    return ['cursor' => $outcome['cursor'], 'events' => iterator_to_array($outcome['stream'], false)];
+}
 
 $mk = function (
     string $id,
@@ -110,7 +145,7 @@ $store->pushBatch([$mk('b3', 's2', 5, 'dev-b', 2), $mk('b1', 's2', 3, 'dev-b', 0
 $page1 = $store->fetch(0, 2, null);
 $page2 = $store->fetch($page1['cursor'], 2, null);
 $page3 = $store->fetch($page2['cursor'], 2, null);
-$all = $store->cloneEvents(null);
+$all = collect_clone($store);
 $pagedIds = array_merge(
     array_map(static fn(array $event): string => $event['eventId'], $page1['events']),
     array_map(static fn(array $event): string => $event['eventId'], $page2['events']),
@@ -122,7 +157,7 @@ check('clone 游标 = 全量上界', $all['cursor'] === $store->currentCursor())
 $h1 = str_repeat('a', 64);
 $h2 = str_repeat('b', 64);
 $h3 = str_repeat('c', 64);
-$baseline = count($store->cloneEvents(null)['events']);
+$baseline = count(collect_clone($store)['events']);
 check('链首接受', $store->pushBatch([$mk('ch1', 's4', 1, 'dev-c', 1, null, null, $h1)])['accepted'] === 1);
 check('链续接受', $store->pushBatch([$mk('ch2', 's4', 2, 'dev-c', 2, null, $h1, $h2)])['accepted'] === 1);
 $bad = $store->pushBatch([$mk('bad1', 's4', 3, 'dev-c', 3, null, $h3, $h3)]);
@@ -131,7 +166,7 @@ $bad = $store->pushBatch([$mk('bad2', 's4', 4, 'dev-c', 4, null, $h2, null)]);
 check('半链（prevHash 无 hash）→ E_SYNC_CHAIN', count($bad['errors']) === 1 && $bad['errors'][0]['code'] === 'E_SYNC_CHAIN');
 $bad = $store->pushBatch([$mk('bad3', 's4', 5, 'dev-c', 2)]);
 check('seq 非递增 → E_SYNC_SEQ', count($bad['errors']) === 1 && $bad['errors'][0]['code'] === 'E_SYNC_SEQ');
-check('失败批整批回滚（总数不变）', count($store->cloneEvents(null)['events']) === $baseline + 2);
+check('失败批整批回滚（总数不变）', count(collect_clone($store)['events']) === $baseline + 2);
 $lineText = json_encode($mk('lb1', 's9', 9, 'dev-e', 9, null, $h3, $h3)) . "\n"
     . json_encode($mk('lg1', 's9', 1, 'dev-e', 1));
 $bad = $store->pushBatch(

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/protocol.php';
+require_once __DIR__ . '/storage.php';
 
 /**
  * append-only 事件库（SQLite；IKJN7C）。语义与 .NET EventStore / CF CloudStore 对齐：
@@ -56,6 +57,8 @@ final class EventStore
             attempts INTEGER NOT NULL DEFAULT 0,
             next_attempt_at INTEGER NOT NULL
         )');
+        // 存储加固（P0）：目录 0700 / 库与 -wal/-shm 0600（best-effort；umask 由入口设置）
+        cyrene_harden_storage($dir, $dbPath);
     }
 
     /**
@@ -65,7 +68,9 @@ final class EventStore
      */
     public function pushBatch(array $events, ?array $lineByEventId = null): array
     {
-        $this->pdo->beginTransaction();
+        // BEGIN IMMEDIATE：先读（幂等/链校验）后写，WAL 下需立即取写锁，避免并发 worker
+        // 的 SQLITE_BUSY_SNAPSHOT（busy_timeout 对快照冲突无效）。
+        $this->pdo->exec('BEGIN IMMEDIATE');
         try {
             $accepted = 0;
             $duplicates = 0;
@@ -179,16 +184,41 @@ final class EventStore
         return ['events' => $events, 'cursor' => $cursor, 'hasMore' => $hasMore];
     }
 
-    /** 全量流（clone；插入序，以 maxId 为上界固定快照）。 */
-    public function cloneEvents(?string $sessionId): array
+    /**
+     * 全量流（clone；插入序，以 maxId 为上界固定快照）。
+     * 生成器按 id 分页（200/页），内存有界；客户端断连时输出失败即停止拉页。
+     * 返回 ['cursor' => int, 'stream' => Generator<int, array>]。
+     */
+    public function cloneStream(?string $sessionId): array
     {
         $cursor = $this->currentCursor();
-        $sql = $sessionId === null
-            ? 'SELECT * FROM events WHERE id <= ? ORDER BY id'
-            : 'SELECT * FROM events WHERE id <= ? AND session_id = ? ORDER BY id';
-        $statement = $this->pdo->prepare($sql);
-        $statement->execute($sessionId === null ? [$cursor] : [$cursor, $sessionId]);
-        return ['cursor' => $cursor, 'events' => array_map('cyrene_row_to_event', $statement->fetchAll())];
+        $pdo = $this->pdo;
+        $stream = (static function () use ($pdo, $sessionId, $cursor): Generator {
+            $lastId = 0;
+            $pageSize = 200;
+            while (true) {
+                if ($sessionId === null) {
+                    $statement = $pdo->prepare(
+                        'SELECT * FROM events WHERE id <= ? AND id > ? ORDER BY id LIMIT ?'
+                    );
+                    $statement->execute([$cursor, $lastId, $pageSize]);
+                } else {
+                    $statement = $pdo->prepare(
+                        'SELECT * FROM events WHERE id <= ? AND id > ? AND session_id = ? ORDER BY id LIMIT ?'
+                    );
+                    $statement->execute([$cursor, $lastId, $sessionId, $pageSize]);
+                }
+                $rows = $statement->fetchAll();
+                if (count($rows) === 0) {
+                    break;
+                }
+                $lastId = (int)$rows[count($rows) - 1]['id'];
+                foreach ($rows as $row) {
+                    yield cyrene_row_to_event($row);
+                }
+            }
+        })();
+        return ['cursor' => $cursor, 'stream' => $stream];
     }
 
     public function currentCursor(): int
@@ -217,7 +247,7 @@ final class EventStore
         $events = array_map('cyrene_row_to_event', $statement->fetchAll());
         usort($events, static function (array $left, array $right): int {
             return $left['lamport'] <=> $right['lamport']
-                ?: strcmp($left['deviceId'], $right['deviceId'])
+                ?: cyrene_utf16_compare($left['deviceId'], $right['deviceId'])
                 ?: $left['seq'] <=> $right['seq'];
         });
         return $events;

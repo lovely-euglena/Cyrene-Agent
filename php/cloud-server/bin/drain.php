@@ -9,9 +9,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/util.php';
 require_once __DIR__ . '/../lib/config.php';
 require_once __DIR__ . '/../lib/protocol.php';
+require_once __DIR__ . '/../lib/storage.php';
 require_once __DIR__ . '/../lib/store.php';
 require_once __DIR__ . '/../lib/auth.php';
 require_once __DIR__ . '/../lib/dialog.php';
+
+cyrene_harden_umask(); // 与入口一致：cron 建库前收紧 umask
 
 $config = cyrene_config();
 $dbPath = rtrim($config['data_dir'], '/\\') . DIRECTORY_SEPARATOR . 'events.db';

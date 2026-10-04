@@ -75,6 +75,15 @@ function cyrene_utf16_units(string $value): int
     return intdiv(strlen(mb_convert_encoding($value, 'UTF-16LE', 'UTF-8')), 2);
 }
 
+/** UTF-16 码元序比较（与 JS `<` / C# Ordinal 对齐；UTF-16BE 字节序即码元序）。 */
+function cyrene_utf16_compare(string $left, string $right): int
+{
+    return strcmp(
+        mb_convert_encoding($left, 'UTF-16BE', 'UTF-8'),
+        mb_convert_encoding($right, 'UTF-16BE', 'UTF-8'),
+    );
+}
+
 /** 设备名：空白 → 默认名；超 64 UTF-16 码元截断且不切断代理对（与 .NET / TS 一致）。 */
 function cyrene_normalize_device_name(mixed $input): string
 {

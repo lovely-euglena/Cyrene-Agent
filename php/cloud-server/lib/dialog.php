@@ -70,7 +70,14 @@ final class DialogLoop
             $processed++;
             $sessionId = $row['session_id'];
             $attempts = (int)$row['attempts'];
-            if ($this->processSession($sessionId, $this->inlineDeadline()) === 'done') {
+            try {
+                $result = $this->processSession($sessionId, $this->inlineDeadline());
+            } catch (Throwable $error) {
+                // 逐项兜底：单条异常不中断整轮（按 retry 处理，顺延重试）
+                error_log('drain 单项失败 session=' . $sessionId . ' ' . $error->getMessage());
+                $result = 'retry';
+            }
+            if ($result === 'done') {
                 $this->dequeue($sessionId);
                 continue;
             }
