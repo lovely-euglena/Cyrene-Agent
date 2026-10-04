@@ -1,6 +1,6 @@
-# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J / IKJK2K / IKJK2M）
+# cyrene-cloud-server —— 云端昔涟 Phase 1 服务端（IKJK2J / IKJK2K / IKJK2M / IKJK2L）
 
-事件库 + `/v1/sync` push / fetch / clone；契约 = 同步协议 v0
+事件库 + `/v1/sync` push / fetch / clone + 手机 PWA 静态托管；契约 = 同步协议 v0
 （`docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/`）。
 
 ## 裸跑（推荐主路线）
@@ -92,6 +92,23 @@ curl http://127.0.0.1:7789/healthz
 若改 bind mount 需自行 `chown 10001`。容器内可直接出码：
 `docker compose exec cloud-server dotnet cyrene-cloud-server.dll pair-code`（或 `devices` / `revoke <id>`）。
 
+## 手机 PWA（IKJK2L）
+
+构建（仓库根；产物进 `wwwroot`，随 `dotnet publish` / Docker 构建进镜像）：
+
+```bash
+npm --prefix src/pwa ci        # 首次
+npm --prefix src/pwa run build # → dotnet/cloud-server/wwwroot/
+```
+
+- 手机访问 `https://<域名>/`：配对码登录（CLI `pair-code` 或已配对设备生成）→ 会话列表 → 查看 / 续聊；
+- 同源 Bearer 鉴权；token 存 localStorage；HTML 附 CSP；`assets/`（带哈希）长缓存，
+  `index.html` / `sw.js` / manifest 不缓存；
+- 离线：Service Worker 应用壳 + localStorage 事件快照 → 只读浏览（不支持离线发送）；
+  前台 3s 轮询接收服务端生成回复；
+- 本地开发：`npm --prefix src/pwa run dev`（vite 代理 `/v1`、`/healthz` → 127.0.0.1:7789）；
+- 设计文档：`docs/design/2026-10-04-pwa-mobile-client-design.md`。
+
 ## API（camelCase JSON）
 
 鉴权（IKJK2K）：除 `POST /v1/pair`（兑换）外，`/v1/*` 需 `Authorization: Bearer <device token>`
@@ -142,6 +159,7 @@ SQLite WAL + `synchronous=FULL`：push 返回 200 的事件（已提交）断电
 
 ```bash
 dotnet build dotnet/cloud-server -c Release     # 或按「裸跑」先 publish
-python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌 + 生成闭环（Windows 48 / Linux 49 项）
+python scripts/dotnet-cloud-sync-test.py        # 起真实服务：同步收敛 + 配对/令牌 + 生成闭环 + PWA 静态托管（Windows 51 / Linux 52 项；wwwroot 未构建时跳过静态 3 项）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
+node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
 ```

@@ -9,6 +9,7 @@ using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Sync;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.FileProviders;
 
 // ── cyrene-cloud-server：事件库 + /v1/sync + 配对/设备令牌（IKJK2J / IKJK2K） ──
 // 契约：docs/specs/2026-10-04-sync-protocol-v0.md（事件信封/读取语义）
@@ -114,6 +115,35 @@ if (allowedHosts.Count > 0)
         }
         context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
         await context.Response.WriteAsJsonAsync(new { code = CloudApi.HostNotAllowed });
+    });
+}
+
+// ── PWA 静态托管（IKJK2L）──
+// wwwroot 存在即启用（构建：src/pwa → dotnet/cloud-server/wwwroot；Docker 构建阶段产出）。
+// 缓存策略：assets/ 下为带哈希产物（长缓存）；index.html / sw.js / manifest / 图标不缓存，
+// 保证升级即时生效；HTML 附 CSP（纯同源、无内联脚本/样式）。
+var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+if (Directory.Exists(webRoot))
+{
+    var fileProvider = new PhysicalFileProvider(webRoot);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = fileProvider,
+        OnPrepareResponse = context =>
+        {
+            var headers = context.Context.Response.Headers;
+            var hashed = context.Context.Request.Path.StartsWithSegments("/assets");
+            headers.CacheControl = hashed ? "public, max-age=31536000, immutable" : "no-cache";
+            headers["X-Content-Type-Options"] = "nosniff";
+            if (context.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            {
+                headers["Content-Security-Policy"] =
+                    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+                    "connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; " +
+                    "object-src 'none'; frame-ancestors 'none'";
+            }
+        },
     });
 }
 
