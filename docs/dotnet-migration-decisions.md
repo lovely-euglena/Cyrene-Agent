@@ -454,6 +454,57 @@
   PWA 单测 **39/39**（含能力解析/降级 6 项）；e2e **11/11**（Edge 通道）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN70 / #IKJN78。
 
+## 2026-10-04 增量：CF 版服务端（IKJN79）
+
+- **实现**：`cloudflare/cloud-server/`（Workers + Durable Objects SQLite，单租户单 DO `global`）；TS 复用
+  `src/main/sync/sync-protocol.ts` 校验器；端点与 .NET 版逐项对齐（healthz / capabilities(impl=cf-workers) /
+  pair(code) / devices(revoke/rotate) / sync(push/fetch/clone)），鉴权、链/序号校验、整批原子性由核心档
+  套件锁定；限流（DO 固定窗口）不在核心档内，由单测（`test/rate-limit.test.ts`）+ 工作流低阈值实例的
+  429 断言覆盖。
+- **生成**：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 回声 mock（测试部署）；
+  `CLOUD_LLM_API_KEY` 走 OpenAI 兼容接口（与 .NET ModelClient 同口径）。
+- **静态资产**：Workers 静态资产（构建 PWA → `assets/`）；Worker 统一缓存头 / CSP（与 .NET 静态托管一致）。
+- **部署**：`wrangler deploy`；自定义域 `cyrene-cloud.ygwill.asia`（3 级子域，通用证书即时覆盖——规避
+  IKJN3W 的 4 级子域 alert 40 证书问题）；测试部署 `--var CLOUD_LLM_MODE:echo`。
+- **Bot Fight Mode**：拦脚本 UA（403/1010）——套件 / e2e 新增 `--user-agent` 覆盖；生产建议关闭 BFM 或独立
+  zone（桌面端同步客户端同为非浏览器 UA）。
+- **套件鲁棒化**：核心档对启用服务端生成的实例鲁棒——计数 / 集合断言收敛到 run 前缀事件（生成事件 id
+  前缀 `gen-`）；clone 改快照单调夹逼 + run 集合 + 游标边界。
+- **验证（Windows 本地）**：CF 单测 **22/22**（含限流固定窗口 4 项）；本地 wrangler dev（回声 mock）
+  核心档 **35/35**、e2e **11/11**（持久实例可重复跑）；限流低阈值实例 `/v1/pair/code` 连续三次
+  **200 200 429**；.NET full 回归 **54/54**；部署实例（HTTPS）核心档 **35/35**、e2e **11/11**。
+- **评审修复**：限流口径修正（核心档不覆盖限流；单测 + 工作流 429 断言补验证）；clone 流式分页；
+  限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化（pnpm / 就绪断言 /
+  进程回收 / permissions）；README 已知差异清单补齐；`workers_dev` 关闭。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN79。
+
+## 2026-10-04 增量：Git 仓库版 remote 适配器（IKJN7B）
+
+- **实现**：`src/main/sync/git-remote.ts`（`GitRepoRemote`）——每设备 `events-<deviceId>.jsonl`
+  append-only 分片 + 字节偏移增量（无全局游标）；push = 追加 + commit + push；fetch = pull `--rebase` +
+  读新行；合并 = eventId 幂等 + 规范序并集（`mergeSyncEvents`）；`.gitattributes` 固定 `*.jsonl -text`
+  （禁用行尾转换，保字节偏移语义）。
+- **保守合并**：pull 失败/冲突一律 `rebase --abort` + 抛错（不 force、不重写远端历史）；
+  强制推送（历史重写）后前缀哈希失配 / 文件收缩 → 分片回退全量重读；半截尾行读取只到最后一个换行，
+  本设备追加前自愈修剪。
+- **鉴权**：仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，日志脱敏）；纯本地模式（无远端）可用。
+- **边界**：适配器不接线 UI / 不落盘同步状态（`FetchState` 由调用方持有）；桌面端同步客户端
+  （事件导出器 / 物化视图）属 IKJK2I，后续接入。
+- **评审修复（2026-10-05）**：init 错误统一脱敏（URL 变形覆盖）并补注入断言；push 失败自愈
+  （提交失败回滚追加 / 无新事件补提交补推送）；git 调用无输出超时 + AbortSignal 取消 + 默认隔离 env；
+  错误码可重试分级；`.gitattributes` 缺规则自动追加；错误 index 改分片物理行号（clone 同步上报）；
+  规范序比较器抽公共导出；测试计数修正并补 9 个用例。
+- **复审修复（2026-10-05）**：默认隔离 env 与 simple-git 3.36 安全拦截对齐（argv-parser 全集放行：
+  `PAGER`/`GIT_PAGER`/`GIT_EXTERNAL_DIFF`/`GIT_PROXY_COMMAND`/`GIT_TEMPLATE_DIR`/`GIT_CONFIG_COUNT` 等，
+  宿主含受限键仍可用，含用例）；`healPendingState` 先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例；文档注明隔离全局配置会停用用户 `credential.helper`（HTTPS 走内联 PAT）。
+- **验证（Windows 本地）**：适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
+  强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 /
+  提交回滚 / 未推送自愈 / 参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+  `vitest run src/main/sync src/pwa` **70/70**；
+  `tsc main` / `tsc preload` / `tsc renderer` 三端 0 错误。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。
+
 ## 2026-10-04 增量：PHP 空间版服务端（IKJN7C）
 
 - **实现**：`php/cloud-server/`（零依赖：PDO SQLite + 手写路由/静态托管）；协议读取器 PHP 移植，

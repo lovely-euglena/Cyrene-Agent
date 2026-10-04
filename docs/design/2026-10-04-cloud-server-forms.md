@@ -1,7 +1,7 @@
 # 服务端四形态与能力声明 · 设计（IKJN70 / IKJN78）
 
 > **日期**：2026-10-04
-> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，PR 待合并）；Git 版适配器已实现（IKJN7B，PR 待合并）；PHP 版已实现并通过本地验收（IKJN7C）
+> **状态**：能力声明与一致性套件已实现（IKJN78）；CF 版已实现并通过部署实例验收（IKJN79，已合并）；Git 版适配器已实现（IKJN7B，已合并）；PHP 版已实现并通过本地验收（IKJN7C，PR 待合并）
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（不变式 / Q8）· 总决策 IKJN70 ·
 > CF spike IKJN3W · 桌面端同步客户端 IKJK2I · PWA IKJK2L · 完整版运维 IKJK2N
 
@@ -59,17 +59,36 @@
 
 能力声明 `impl=dotnet-vps`；`generation` 随 `CLOUD_LLM_API_KEY` 动态；PWA 同源托管；运维见 IKJK2N。
 
-### 4.2 CF 版（IKJN79）
+### 4.2 CF 版（IKJN79，已实现）
 
-- TS 复用 `src/main/sync/sync-protocol.ts` 校验器；DO SQLite 承载事件表（spike IKJN3W 已验证协议子集 7/7）；
-- 注意：自定义域证书覆盖（4 级子域需独立子 zone / 已覆盖域名）；Bot Fight Mode 对脚本 UA 的 403/1010；
-- 生成走模型 API + DO alarm 重试；静态资产用 Workers 静态托管。
+- `cloudflare/cloud-server/`：Workers + DO SQLite（单租户单 DO `global`），TS 复用
+  `src/main/sync/sync-protocol.ts` 校验器；
+- 端点与 .NET 版逐项对齐：healthz / capabilities(impl=cf-workers) / pair(code) / devices(revoke/rotate) /
+  sync(push/fetch/clone)；鉴权（device token + 主控）、链/序号校验、整批原子性由核心档套件锁定；
+  限流（DO 固定窗口）不在核心档内，由 `test/rate-limit.test.ts` 单测 + cf-worker 工作流低阈值实例的
+  429 断言覆盖；
+- 生成：push 触发 → DO alarm 处理与退避重试；`CLOUD_LLM_MODE=echo` 为内置回声 mock（测试部署），
+  设置 `CLOUD_LLM_API_KEY` 后走 OpenAI 兼容接口；静态资产用 Workers 静态资产（Worker 统一缓存头 / CSP）；
+- 部署要点：自定义域用 3 级子域（通用证书即时覆盖；4 级子域 alert 40，见 IKJN3W）；Bot Fight Mode 会拦
+  脚本 UA（403/1010，套件 / e2e 用 `--user-agent` 传浏览器 UA，或关闭 BFM）；步骤见
+  `cloudflare/cloud-server/README.md`。
 
-### 4.3 Git 版（IKJN7B，桌面端）
+### 4.3 Git 版（IKJN7B，桌面端；适配器已实现）
 
-- 每设备 `events-<deviceId>.jsonl` append-only 分片；fetch = pull + 读新行（字节偏移），
-  强制推送后回退全量重读；
-- push = commit + push；合并 = eventId 幂等 + 规范序并集；无生成 / 无 PWA。
+- `src/main/sync/git-remote.ts`（`GitRepoRemote`）：每设备 `events-<deviceId>.jsonl` append-only 分片 +
+  字节偏移增量；`.gitattributes` 固定 `*.jsonl -text`（禁用行尾转换，保字节偏移语义）；
+- push = 追加分片 + commit + push；fetch = pull `--rebase` + 读新行；合并 = eventId 幂等 +
+  规范序并集（`mergeSyncEvents`）；无生成 / 无 PWA；
+- 保守合并：pull 失败/冲突一律中止（不 force、不重写远端历史）；强制推送（历史重写）后
+  前缀哈希失配 / 文件收缩 → 该分片回退全量重读；半截尾行只读到最后一个换行（本设备追加前自愈修剪）；
+- 鉴权 = 仓库权限（私库 + PAT/SSH，经 `remoteUrl` 传入，不外泄日志；init 错误同样脱敏并覆盖
+  URL 变形）；状态由调用方持有（`FetchState` 每分片 `{offset, prefixHash}`，模块不落盘额外状态）；
+- 失败路径：git 调用带无输出超时（`timeoutMs`）与取消（`signal`）；提交失败回滚追加（文件 + 暂存区）；
+  无新事件 / 同批重试自愈（补提交 / 补推送）；默认隔离用户全局 git 配置与终端凭证提示；
+  错误码可重试分级（git / timeout / push_rejected 可重试，conflict / aborted / invalid_config 需处理）；
+- 适配器测试（独立 bare 远端 + 双工作副本）：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
+  纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
+  参数校验 / 同设备冲突 / 宿主受限 env / 取消，**19/19**；桌面端接线（事件导出器 / 物化视图）属 IKJK2I，后续接入。
 
 ### 4.4 PHP 版（IKJN7C，已实现）
 
@@ -91,6 +110,31 @@
 - 本地 full 云冒烟：**54/54**（含 3 项能力声明检查）；
 - 核心档（本地实例）：**35/35**；远端核心档与本地核心档同一函数（CF 批次将直接对部署实例跑）；
 - PWA 单测：**39/39**（含能力解析/降级 6 项）；e2e（Edge 通道）：**11/11**（含能力声明检查）。
+
+### IKJN79 批次（CF 版）
+
+- 单测（重放 / 配对码 / 设备名 / 哈希 / 限流固定窗口）：**22/22**；
+- 本地 `wrangler dev`（回声 mock）：核心档 **35/35**、PWA e2e **11/11**（评审修复后复跑，持久实例可重复跑）；
+- 限流低阈值实例（`CLOUD_RATE_PAIR_PER_MIN=2`）：`/v1/pair/code` 连续三次 **200 200 429**；
+- 部署实例 `cyrene-cloud.ygwill.asia`（HTTPS，回声 mock）：核心档 **35/35**、PWA e2e **11/11**
+  （配对 / 查看 / 续聊 / 离线 / 生成闭环）；
+- .NET full 回归：**54/54**（套件鲁棒化后）。
+- 评审修复（2026-10-04）：限流口径修正 + 单测/工作流 429 断言；clone 流式分页（内存有界）；
+  限流分区只信已验证主体；chunked 请求体流式限长；畸形设备 id 回 4xx；工作流工程化；README 差异清单补齐。
+- 核心档鲁棒化（IKJN79 顺带）：对启用服务端生成的实例，计数 / 集合断言收敛到 run 前缀事件
+  （生成事件 id 前缀 `gen-`）；clone 改为快照单调夹逼 + run 集合 + 游标边界。
+
+### IKJN7B 批次（Git 版适配器）
+
+- 适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
+  纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
+  参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+- 组合回归：`vitest run src/main/sync src/pwa` **70/70**；`tsc main` / `tsc preload` /
+  `tsc renderer` 三端 0 错误。
+- 复审修复（2026-10-05）：默认隔离 env 与 simple-git 安全拦截对齐——按 argv-parser 全集补齐
+  `unsafe` 开关（`PAGER` / `GIT_EXTERNAL_DIFF` / `GIT_PROXY_COMMAND` / `GIT_TEMPLATE_DIR` /
+  `GIT_CONFIG_COUNT` 等），宿主含受限键仍可用（含用例）；自愈先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例。
 
 ### IKJN7C 批次（PHP 空间版）
 

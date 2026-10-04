@@ -1,6 +1,6 @@
 # Cyrene-Agent .NET 后端交接文档
 
-> 历史快照：初稿 2026-09-24 · `feature/dotnet-backend` @ `565ce62f`（2026-10-02 有增量补丁）。
+> 历史快照：初稿 2026-09-24 · `feature/dotnet-backend` @ `565ce62f`（2026-10-05 有增量补丁）。
 > 该分支已并入当前主线 `main`；文中测试数字为 Linux 构建机口径，构建/发版以
 > [build-guide.md](./build-guide.md) 为准，文档总索引见 [docs/README.md](./README.md)。
 > 前任维护者交接笔记——接手者从本文档出发可独立完成构建/测试/发版/排障全链路。
@@ -34,8 +34,8 @@ dotnet/
 php/cloud-server/          # PHP 空间版服务端（IKJN7C）：public/ 站点根 + SQLite + inline 生成降级
 src/main/dotnet-backend/   # TS 侧：config.ts（双轨开关唯一解析）、
                            # host-clients.ts（LineHostClient IPC）、native-tool-host
-src/main/sync/             # 同步协议 v0：读取器/校验器（fixtures/sync-protocol/ 双端向量；
-                           # 事件导出器/客户端/物化视图属 IKJK2I）
+src/main/sync/             # 同步协议 v0：读取器/校验器（fixtures/sync-protocol/ 双端向量）+
+                           # Git 仓库 remote 适配器（IKJN7B）；事件导出器/客户端/物化视图属 IKJK2I
 src/plugins/               # 插件层（含 dotnet-adapter.ts：.NET 插件进程适配）
 scripts/                   # 测试/发版脚本（见 §5）
 release/                   # 打包产物（gitignore 外的工作区）

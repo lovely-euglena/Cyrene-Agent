@@ -192,11 +192,13 @@ export function readSyncBatch(text: string): SyncReadResult {
     seen.add(event.eventId);
     result.events.push(event);
   }
-  result.events.sort((a, b) =>
-    a.lamport - b.lamport
-    || ordinalCompare(a.deviceId, b.deviceId)
-    || a.seq - b.seq);
+  result.events.sort(compareSyncEvents);
   return result;
+}
+
+/** 规范序比较器 (lamport, deviceId UTF-16 码元序, seq)；读取与合并路径共用，避免漂移。 */
+export function compareSyncEvents(a: SyncEventV0, b: SyncEventV0): number {
+  return a.lamport - b.lamport || ordinalCompare(a.deviceId, b.deviceId) || a.seq - b.seq;
 }
 
 /** UTF-16 码元序（与 C# StringComparer.Ordinal 对齐；JS `<` 即码元序）。 */
