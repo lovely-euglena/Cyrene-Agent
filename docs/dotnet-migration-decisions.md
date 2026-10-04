@@ -326,8 +326,11 @@
   （有链尾 ⇒ prevHash 必须等链尾；无链尾 ⇒ 必须缺省）；未上链事件缺省 prevHash（过渡期混用）；
   同对 seq 严格递增；**内容哈希重算待 Q3 定稿**。
   **安全过渡**：默认绑 127.0.0.1；`CLOUD_TOKEN` 非空时 /v1/* 需 Bearer（K 之前最小门闩）。
-  **容器**：Dockerfile + compose（mem_limit 512m、healthcheck、restart、日志上限 10m×3）+
-  Caddyfile.example；本机无 Docker，镜像/编排未实测（Linux 侧首跑）。
+  **部署（裸跑为主）**：`dotnet publish` + systemd 单元
+  （`deploy/cyrene-cloud-server.service`：MemoryMax=512M / UMask=0077 / ProtectSystem=strict /
+  Restart=always / journald）+ `deploy/Caddyfile.example`；容器为备选（Dockerfile + compose）。
+  SQLite WAL + `synchronous=FULL`：push 返回 200 即持久。本机无 Docker/systemd，单元与容器编排
+  未实测（Linux 侧首跑，CI 已加入发布产物直测）。
 - **验证（2026-10-04，Windows 本地）**：cloud-server 构建 0 错误；
   `scripts/dotnet-cloud-sync-test.py` 18/18（幂等/乱序/分页/双客户端并发收敛/链拒绝与
   整批回滚/畸形批/clone 游标对齐）。
