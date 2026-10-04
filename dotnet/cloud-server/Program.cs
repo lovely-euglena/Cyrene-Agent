@@ -223,7 +223,7 @@ sync.MapPost("/push", async (HttpContext context, EventStore store) =>
             errors = batch.Errors,
         });
     }
-    var outcome = await store.PushBatchAsync(batch.Events, BuildLineIndex(text), context.RequestAborted);
+    var outcome = await store.PushBatchAsync(batch.Events, batch.LineByEventId, context.RequestAborted);
     if (outcome.Errors.Count > 0)
     {
         return Results.BadRequest(new { code = CloudApi.BatchRejected, errors = outcome.Errors });
@@ -262,21 +262,27 @@ sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sess
     context.Response.Headers["X-Sync-Cursor"] = cursor.ToString();
     var options = new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     var newline = "\n"u8.ToArray();
+    var written = 0;
     try
     {
         foreach (var syncEvent in store.StreamAll(sessionId, cursor))
         {
             await JsonSerializer.SerializeAsync(context.Response.Body, syncEvent, options, context.RequestAborted);
             await context.Response.Body.WriteAsync(newline, context.RequestAborted);
+            written++;
         }
     }
     catch (OperationCanceledException)
     {
-        // 客户端断开：正常终止流（X-Sync-Cursor 已发出，客户端可凭已收数据续 fetch）
+        // 客户端断开：正常终止流；warning 留痕便于排查「半截 clone」（X-Sync-Cursor 已发出，可续 fetch）
+        app.Logger.LogWarning("clone 流被取消 sessionId={SessionId} cursor={Cursor} written={Written}",
+            sessionId, cursor, written);
     }
     catch (IOException)
     {
         // 连接中断（写失败）：同上
+        app.Logger.LogWarning("clone 写中断 sessionId={SessionId} cursor={Cursor} written={Written}",
+            sessionId, cursor, written);
     }
 });
 
@@ -313,75 +319,6 @@ static string PartitionKey(string prefix, HttpContext context)
         return $"{prefix}:t:{hash}";
     }
     return $"{prefix}:i:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
-}
-
-/// <summary>eventId → 0 基物理行号（与 ReadBatch 的错误索引语义对齐；批内重复取首见）。</summary>
-static Dictionary<string, int> BuildLineIndex(string text)
-{
-    var map = new Dictionary<string, int>(StringComparer.Ordinal);
-    var lines = text.Split('\n');
-    for (var i = 0; i < lines.Length; i++)
-    {
-        var line = lines[i].Trim().Trim('\uFEFF');
-        if (line.Length == 0) continue;
-        try
-        {
-            using var document = JsonDocument.Parse(line);
-            if (document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("eventId", out var id)
-                && id.ValueKind == JsonValueKind.String)
-            {
-                var eventId = id.GetString()!;
-                if (!map.ContainsKey(eventId)) map[eventId] = i;
-            }
-        }
-        catch (JsonException)
-        {
-            // 坏行已由 ReadBatch 计入 errors / truncatedTail，此处跳过
-        }
-    }
-    return map;
-}
-
-// 裸跑运维子命令（本地 shell 使用；容器：docker compose exec cloud-server dotnet cyrene-cloud-server.dll <cmd>）
-int RunCli(string[] cliArgs)
-{
-    try { Console.OutputEncoding = Encoding.UTF8; } catch { /* 控制台编码只影响显示 */ }
-    var auth = new AuthStore(dbPath, pairTtl);
-    switch (cliArgs[0])
-    {
-        case "pair-code":
-        {
-            var (code, expiresAt) = auth.CreatePairCode("cli");
-            Console.WriteLine($"配对码: {code}");
-            Console.WriteLine($"有效期至 {expiresAt}（单次使用；在新设备上兑换 device token）");
-            return 0;
-        }
-        case "devices":
-        {
-            var devices = auth.ListDevices();
-            if (devices.Count == 0)
-            {
-                Console.WriteLine("（暂无已配对设备）");
-                return 0;
-            }
-            foreach (var device in devices)
-            {
-                Console.WriteLine($"{device.DeviceId}  [{(device.Revoked ? "已撤销" : "有效")}]  {device.Name}  " +
-                                  $"created={device.CreatedAt}  lastSeen={device.LastSeenAt ?? "-"}");
-            }
-            return 0;
-        }
-        case "revoke" when cliArgs.Length >= 2:
-        {
-            var revoked = auth.Revoke(cliArgs[1]);
-            Console.WriteLine(revoked ? $"已撤销设备 {cliArgs[1]}" : $"未找到设备 {cliArgs[1]}");
-            return revoked ? 0 : 1;
-        }
-        default:
-            Console.Error.WriteLine("用法: cyrene-cloud-server pair-code | devices | revoke <deviceId>");
-            return 2;
-    }
 }
 
 /// <summary>HTTP 层的错误码与请求约束（集中定义，避免裸字面量）。</summary>
