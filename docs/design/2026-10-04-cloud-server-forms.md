@@ -79,7 +79,11 @@
 - 生成降级（inline）：push 内联尽力（`max_execution_time` 预算内），超时/失败挂起 `dialog_pending`，
   可选 cron 排空（`bin/drain.php`）+ 桌面兜底；`CLOUD_LLM_MODE=echo` 回声 mock；
 - 静态资产：`public/` 同空间托管（缓存头 / CSP 与 .NET / CF 口径一致）；Apache `.htaccess` 模板；
-- 虚拟主机约束：数据目录可写且不进 webroot；clone 逐行输出（低内存）；配置走 env / config.local.php。
+- 虚拟主机约束：数据目录可写且不进 webroot；clone 生成器分页流式（内存有界）；配置走 env / config.local.php；
+- 存储加固（评审 P0）：入口 / cron `umask(0077)` + 目录 0700 + 库/`-wal`/`-shm` 0600
+  （best-effort；Linux / CI 断言）；
+- 并发与语义：`BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名按 IP，回环信任 XFF）；
+  id 长度 / 规范序按 UTF-16 码元（与 TS / C# 一致，astral / emoji 亦对齐）。
 
 ## 5. 验证（IKJN78 批次，Windows 本地）
 
@@ -89,7 +93,10 @@
 
 ### IKJN7C 批次（PHP 空间版）
 
-- PHP 单测 **40/40**（含 11 个共享 fixtures：协议读取器与 TS / C# 逐字段一致）；
+- PHP 单测 **42/42**（含 11 个共享 fixtures：协议读取器与 TS / C# 逐字段一致；Linux / CI 另含 3 项权限加固断言）；
 - 核心档（生成关闭）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**（持久实例可重复跑）；
 - .NET 本地 e2e 回归 **11/11**；e2e 脚本顺带修复：seed 事件 id 唯一化 + `data-session-id` 精确定位 +
   生成断言接受 `inline`（PHP 形态）。
+- 评审修复（2026-10-05）：存储加固（P0）；CI 阶段 2 传参修复（`env`）+ pnpm 锁定 + permissions + 就绪断言；
+  clone 生成器分页流式；id / 排序 UTF-16 码元语义对齐（含 astral 单测）；`BEGIN IMMEDIATE`；
+  限流分区 / 回环 XFF；请求体限长；生成触发 / 排空异常兜底；静态拦截 `.php` / 点文件；README 差异补齐。

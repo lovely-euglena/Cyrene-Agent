@@ -465,6 +465,12 @@
   配置走环境变量或 `config.local.php`。
 - **e2e 脚本修复（共享工具）**：seed 事件 id 唯一化（持久实例可重复跑）+ `data-session-id` 精确定位 +
   生成断言接受 `inline`（PHP 形态）。
-- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **40/40**；核心档（生成关）**35/35**；
-  鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；.NET 本地 e2e 回归 **11/11**。
+- **评审修复（2026-10-05）**：P0 存储加固（`umask(0077)` + 目录 0700 + 库/`-wal`/`-shm` 0600，
+  Linux / CI 断言）；CI 阶段 2 环境变量传参修复（`env`）+ 就绪失败输出日志 + pnpm 锁定 + permissions；
+  clone 改生成器分页流式（兑现低内存声明）；id 长度 / 规范序改 UTF-16 码元（astral 与 TS / C# 一致）；
+  `BEGIN IMMEDIATE` 写事务；限流分区只信已验证主体（匿名 IP，回环信任 XFF）；请求体限长读取；
+  trigger / drain 异常兜底；静态不回显 `.php` / 点文件；README 差异清单与 Apache 2.4+ 注明。
+- **验证（Windows 本地，便携 PHP 8.4.26）**：PHP 单测 **42/42**（Linux / CI 另含 3 项权限断言）；
+  核心档（生成关）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；
+  .NET 本地 e2e 回归 **11/11**。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。

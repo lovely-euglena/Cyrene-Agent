@@ -48,6 +48,10 @@ python scripts/dotnet-cloud-sync-test.py --base-url http://127.0.0.1:8088 --mast
 node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8088 --master-token smoke-master --expect-echo
 ```
 
+> 注：`pair` 分组限流默认 10 次/分钟（与 .NET / CF 同口径）。同一实例 1 分钟内重复跑
+> 「套件 + e2e」可能触发 429（e2e 会给出明确诊断）；等待下一分钟或临时调大
+> `CLOUD_RATE_PAIR_PER_MIN` 即可。
+
 ## 配置（环境变量；或 `php/cloud-server/config.local.php` 返回覆盖数组）
 
 | 变量 | 默认 | 说明 |
@@ -65,7 +69,8 @@ node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8088 --master-token sm
 
 1. 上传 `php/cloud-server/` 到空间，**把域名站点根指向 `public/`**（`lib/`、`bin/`、`data/`
    在 webroot 之外）；`public/.htaccess` 已含 API 重写与静态缓存/CSP 头；
-2. `data/` 须可写（SQLite WAL）；若空间只允许单一 webroot，请把 `data/` 放到 webroot 之外，
+2. `data/` 须可写（SQLite WAL；入口 / cron 会 `umask(0077)` 并 best-effort 设目录 0700、库文件 0600）；
+   若空间只允许单一 webroot，请把 `data/` 放到 webroot 之外，
    并用 `CYRENE_CLOUD_DATA` 或 `config.local.php` 指定绝对路径（`data/.htaccess` 已含 deny 兜底）；
 3. 设 `CLOUD_TOKEN`（可在 `config.local.php` 返回 `['master_token' => '...']`）；
 4. 可选 cron：`* * * * * php /path/to/php/cloud-server/bin/drain.php >> /path/drain.log 2>&1`；
@@ -74,6 +79,11 @@ node scripts/pwa-e2e-test.mjs --base-url http://127.0.0.1:8088 --master-token sm
 ## 与 .NET / CF 版差异
 
 - 游标同为插入序（SQLite AUTOINCREMENT）；生成档 = `inline`（非 realtime）；PWA 同空间静态；
-- 限流为 SQLite 固定窗口（无 CF 边缘限流）；`healthz.rssMB` = PHP 内存峰值（非进程 RSS）；
+- 限流为 SQLite 固定窗口（绝对分钟对齐；匿名分区 = 客户端 IP，回环信任 `X-Forwarded-For` 首个地址；
+  已认证分区 = 主控 / deviceId）；无 CF 边缘限流；`healthz.rssMB` = PHP 内存峰值（非进程 RSS）；
 - 内联生成受 `max_execution_time` 约束：放不下即挂起（cron/桌面兜底），不阻塞同步；
-- 单请求单进程（`php -S` 串行）；生产建议 PHP-FPM + 反向代理。
+- 存储加固：入口 / cron `umask(0077)` + 目录 0700 + `events.db`/`-wal`/`-shm` 0600
+  （best-effort；Linux / CI 有权限断言）；
+- 并发写：`BEGIN IMMEDIATE` + `busy_timeout=5000`（`php -S` 串行；PHP-FPM 多 worker 下亦安全）；
+- 静态托管不回显 `.php` / `.htaccess` / 点文件（404）；
+- 单请求单进程（`php -S` 串行）；生产建议 PHP-FPM + 反向代理（`.htaccess` 模板为 Apache 2.4+ 语法）。
