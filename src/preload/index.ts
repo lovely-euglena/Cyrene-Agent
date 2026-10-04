@@ -438,6 +438,8 @@ const settingsApi = {
   openMusicWindow: () => ipcRenderer.invoke(IPC.MUSIC_OPEN_WINDOW) as Promise<boolean>,
   getGeneral: () => ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL),
   saveGeneral: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_GENERAL, config),
+  // 「一键复制全局配置」（IKJMO8）：全局 Git 配置 → 应用独立配置文件（返回 {ok,copied,path,message}）
+  copyGlobalGitConfig: () => ipcRenderer.invoke(IPC.SETTINGS_GIT_CONFIG_COPY_GLOBAL),
   // 便携模式：数据目录状态 / 选择目录 / 应用变更（主进程弹迁移确认后重启）
   getPortableStatus: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_GET),
   pickPortableDir: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_PICK_DIR) as Promise<string | null>,

@@ -93,6 +93,7 @@ export interface GitServiceDeps {
     workspaceRoot: string;
     executable: ResolvedGitExecutable;
     identity?: GitCommitIdentity;
+    configGlobal?: string;
   }) => GitClient;
   workspaceWatcher?: GitWorkspaceWatcher;
   /**
@@ -100,6 +101,11 @@ export interface GitServiceDeps {
    * 内置 git 禁用了全局配置，身份完全由此提供；缺省名 Cyrene、邮箱空。
    */
   getCommitIdentity?: () => GitCommitIdentity | null;
+  /**
+   * 独立 Git 配置文件路径（IKJMO8）：开关开时返回 `<userData>/git/config`，否则 null。
+   * 开启后所有 git 调用经 GIT_CONFIG_GLOBAL 指向该文件（身份/初始化统一、跨环境确定）。
+   */
+  getDedicatedConfigPath?: () => string | null;
 }
 
 /** Git 提交身份（作者/提交者） */
@@ -135,6 +141,20 @@ export function buildGitBaseConfig(
   return config;
 }
 
+/**
+ * git 子进程环境（IKJMO8）：独立配置文件开启时经 GIT_CONFIG_GLOBAL 指向应用文件。
+ * - 内置 git：保留 executable.env 的 NOSYSTEM 隔离，仅把 GLOBAL 从 NUL 换成应用文件；
+ * - 系统 git：仅在开启时注入 GIT_CONFIG_GLOBAL（基于当前进程环境）。
+ */
+export function buildGitClientEnv(
+  executable: ResolvedGitExecutable,
+  configGlobal?: string,
+): NodeJS.ProcessEnv | undefined {
+  if (!configGlobal) return executable.env;
+  const base = executable.env ?? { ...process.env };
+  return { ...base, GIT_CONFIG_GLOBAL: configGlobal };
+}
+
 export interface GitService {
   getStatusForSession(sessionId: string): Promise<CodeGitStatus>;
   onChanged(listener: (payload: { sessionId: string }) => void): () => void;
@@ -155,6 +175,8 @@ export interface GitService {
   getExecutableInfo(): Promise<ResolvedGitExecutable | null>;
   /** 提交身份设置（native 轨注入；与 commit 校验同源）。 */
   getCommitIdentity(): GitCommitIdentity | null;
+  /** 独立 Git 配置文件路径（native 轨注入 __gitConfigGlobal；开关关时为 null）。 */
+  getDedicatedConfigPath(): string | null;
 }
 
 export interface TrustedGitContext {
@@ -199,7 +221,13 @@ export function createGitService(deps: GitServiceDeps): GitService {
   ): Promise<GitClient> {
     const executable = await deps.resolveExecutable();
     if (!executable) throw new Error("未检测到可用 Git");
-    return createClient({ workspaceRoot: ctx.workspaceRoot, executable, ...(identity ? { identity } : {}) });
+    const configGlobal = deps.getDedicatedConfigPath?.() ?? null;
+    return createClient({
+      workspaceRoot: ctx.workspaceRoot,
+      executable,
+      ...(identity ? { identity } : {}),
+      ...(configGlobal ? { configGlobal } : {}),
+    });
   }
 
   async function trustedContextForSession(sessionId: string): Promise<TrustedGitContext> {
@@ -220,6 +248,7 @@ export function createGitService(deps: GitServiceDeps): GitService {
 
     getExecutableInfo: () => deps.resolveExecutable(),
     getCommitIdentity: () => deps.getCommitIdentity?.() ?? null,
+    getDedicatedConfigPath: () => deps.getDedicatedConfigPath?.() ?? null,
 
     async watchSession(sessionId) {
       const resolved = await resolveCodeSession(sessionId);
@@ -378,6 +407,7 @@ function createSimpleGitClient(input: {
   workspaceRoot: string;
   executable: ResolvedGitExecutable;
   identity?: GitCommitIdentity;
+  configGlobal?: string;
 }): GitClient {
   const git = simpleGit({
     baseDir: input.workspaceRoot,
@@ -385,7 +415,8 @@ function createSimpleGitClient(input: {
     maxConcurrentProcesses: 1,
     config: buildGitBaseConfig(input.workspaceRoot, input.identity),
   });
-  if (input.executable.env) git.env(input.executable.env);
+  const env = buildGitClientEnv(input.executable, input.configGlobal);
+  if (env) git.env(env);
 
   return {
     isRepository: () => git.checkIsRepo(),

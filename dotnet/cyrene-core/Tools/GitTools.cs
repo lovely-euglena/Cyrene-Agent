@@ -598,6 +598,16 @@ internal static class GitTools
         if (BoolArg(args, "__gitIsolated"))
         {
             psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        }
+        // 独立配置文件（IKJMO8）：开关开时 TS 注入 __gitConfigGlobal → 覆盖 GLOBAL 目标；
+        // 未注入时内置 git 维持 NUL 隔离（原行为）。
+        var configGlobal = Str(args, "__gitConfigGlobal");
+        if (configGlobal.Length > 0)
+        {
+            psi.Environment["GIT_CONFIG_GLOBAL"] = configGlobal;
+        }
+        else if (BoolArg(args, "__gitIsolated"))
+        {
             psi.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
         }
 

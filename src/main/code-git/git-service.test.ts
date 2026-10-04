@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ChatSession } from "../../shared/chat-types";
 import type { ResolvedGitExecutable } from "./git-executable";
-import { createGitService, buildGitBaseConfig, type GitClient, type GitStatusSnapshot } from "./git-service";
+import { createGitService, buildGitBaseConfig, buildGitClientEnv, type GitClient, type GitStatusSnapshot } from "./git-service";
 
 const executable: ResolvedGitExecutable = {
   command: "git",
@@ -235,6 +235,61 @@ describe("GitService commit identity", () => {
       workspaceRoot: "C:\\repo",
       identity: { name: "Cyrene", email: "cyrene@example.com" },
     }));
+  });
+});
+
+describe("buildGitClientEnv（独立 Git 配置文件，IKJMO8）", () => {
+  const bundled = {
+    command: "git",
+    source: "bundled" as const,
+    version: "2.50.0",
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "NUL" },
+  };
+  const system = { command: "git", source: "system" as const, version: "2.50.0" };
+
+  it("开关关：内置 git 保留隔离 env（NOSYSTEM/NUL），系统 git 不注入 env", () => {
+    expect(buildGitClientEnv(bundled)).toMatchObject({ GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "NUL" });
+    expect(buildGitClientEnv(system)).toBeUndefined();
+  });
+
+  it("开关开：GLOBAL 指向应用文件（内置 git 仍保留 NOSYSTEM 隔离）", () => {
+    expect(buildGitClientEnv(bundled, "C:\\data\\git\\config")).toMatchObject({
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "C:\\data\\git\\config",
+    });
+    expect(buildGitClientEnv(system, "C:\\data\\git\\config")).toMatchObject({
+      GIT_CONFIG_GLOBAL: "C:\\data\\git\\config",
+    });
+  });
+});
+
+describe("GitService 独立配置文件传递（IKJMO8）", () => {
+  const ctx = { sessionId: "session-1", mode: "code" as const, workspaceRoot: "C:\\repo" };
+
+  it("开关开：createClient 收到 configGlobal", async () => {
+    const createClient = vi.fn(() => client());
+    const current = createGitService({
+      getSession: () => session("code"),
+      resolveExecutable: async () => executable,
+      createClient,
+      getDedicatedConfigPath: () => "C:\\data\\git\\config",
+    });
+    await current.switchBranch(ctx, "feat", true);
+    expect(createClient).toHaveBeenCalledWith(expect.objectContaining({
+      configGlobal: "C:\\data\\git\\config",
+    }));
+  });
+
+  it("开关关：createClient 不带 configGlobal", async () => {
+    const createClient = vi.fn(() => client());
+    const current = createGitService({
+      getSession: () => session("code"),
+      resolveExecutable: async () => executable,
+      createClient,
+    });
+    await current.switchBranch(ctx, "feat", true);
+    const input = createClient.mock.calls[0]?.[0] as { configGlobal?: string } | undefined;
+    expect(input?.configGlobal).toBeUndefined();
   });
 });
 

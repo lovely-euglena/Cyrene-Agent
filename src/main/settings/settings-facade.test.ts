@@ -40,6 +40,28 @@ describe("general window state persistence setting", () => {
   });
 });
 
+describe("dedicated git config sync (IKJMO8)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-gitcfg-settings-"));
+  });
+
+  it("默认开：保存设置时同步独立配置文件（含身份与 include）", async () => {
+    const facade = await import("./settings-facade");
+    facade.saveGeneralSettings({ gitCommitAuthorName: "Sync", gitCommitAuthorEmail: "sync@example.com" });
+    const file = path.join(electronMock.userDataDir, "git", "config");
+    expect(fs.existsSync(file)).toBe(true);
+    const text = fs.readFileSync(file, "utf8");
+    expect(text).toContain('name = "Sync"');
+    expect(text).toContain("path = ~/.gitconfig");
+  });
+
+  it("默认值 true / 显式 false 保留", () => {
+    expect(normalizeGeneralSettings({}).gitUseDedicatedConfig).toBe(true);
+    expect(normalizeGeneralSettings({ gitUseDedicatedConfig: false }).gitUseDedicatedConfig).toBe(false);
+  });
+});
+
 describe("general theme choice persistence", () => {
   it("keeps the system choice while preserving the legacy light default", () => {
     expect(normalizeGeneralSettings({}).uiTheme).toBe("pearl-white");

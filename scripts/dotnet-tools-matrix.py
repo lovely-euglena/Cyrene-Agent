@@ -420,10 +420,15 @@ else:
     # 批 3：提交后修改/新增的 status + diff + log
     open(os.path.join(grepo, "a.txt"), "w", encoding="utf-8").write("alpha\nBETA\ngamma\n")
     open(os.path.join(grepo, "c.txt"), "w", encoding="utf-8").write("new file\nline2\n")
+    # 独立配置文件（IKJMO8）：__gitConfigGlobal 注入生效的可观察点（diff noprefix）
+    gcfg = os.path.join(gbase, "dedicated.gitconfig")
+    with open(gcfg, "w", encoding="utf-8") as cfg_handle:
+        cfg_handle.write("[diff]\n\tnoprefix = true\n")
     g = grun([
         ("g_status2", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
         ("g_diff1", "git_diff", {"__cyreneRoot": grepo, **GITC}),
         ("g_log1", "git_log", {"__cyreneRoot": grepo, **GITC}),
+        ("g_diff_cfg", "git_diff", {"__cyreneRoot": grepo, "__gitConfigGlobal": gcfg, **GITC}),
     ])
     d = gdata(g, "g_status2")
     check("git status 混合变更（modified/added + 行数）",
@@ -438,6 +443,12 @@ else:
           and "-beta" in d.get("patch", "") and "+BETA" in d.get("patch", "")
           and [c.get("kind") for c in d.get("changes", [])] == ["modified"]
           and g_types == ["hunk", "context", "remove", "add", "context", "context"], d)
+    patch_default = d.get("patch", "") if isinstance(d, dict) else ""
+    d = gdata(g, "g_diff_cfg")
+    patch_cfg = d.get("patch", "") if isinstance(d, dict) else ""
+    check("独立配置文件生效（__gitConfigGlobal → diff noprefix）",
+          "--- a/a.txt" in patch_default and "--- a.txt" in patch_cfg and "--- a/a.txt" not in patch_cfg,
+          f"default={patch_default[:60]!r} cfg={patch_cfg[:60]!r}")
     d = gdata(g, "g_log1")
     check("git log 单条（hash/日期/作者/信息）",
           isinstance(d, list) and len(d) == 1 and d[0]["message"] == "initial commit"

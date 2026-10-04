@@ -366,3 +366,19 @@
   `ZeroMemory`；② healthz 改 DI 注入（去闭包，风格统一）；③ `Rotate` 标注并发语义（仅最后写入 token 有效）；
   ④ chunked 探针 16KB chunk / timeout 30s 平衡 CI 耗时与 Windows RST 抖动。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。
+
+## 2026-10-04 增量：Git 独立配置文件（IKJMO8）
+
+- **背景**：提交身份此前逐命令注入（`-c user.name/email`，仅 commit/revert 覆盖），身份对「所有 git
+  操作」不统一；内置/系统 git 配置行为也不一致（内置禁全局配置、系统跟随用户全局）。
+- **方案**：设置新增开关「使用独立 Git 配置文件」（`gitUseDedicatedConfig`，**默认开**）；应用维护
+  `<userData>/git/config`，优先级（低 → 高）：全局配置副本（「一键复制」快照） → 实时 `[include]`
+  用户全局配置（`~/.gitconfig`、`~/.config/git/config`，保 credential helper 等） → `[user]` 身份 +
+  `[init] defaultBranch=main`（应用覆盖，永远最后生效）。
+- **生效**：开关开时所有 git 调用（系统+内置、TS+.NET）统一 `GIT_CONFIG_GLOBAL=<该文件>`（内置 git 仍
+  保留 `GIT_CONFIG_NOSYSTEM=1`）；TS 客户端经 `buildGitClientEnv` 注入 env，native 轨经
+  `__gitConfigGlobal` 内部参数（C# `RunGit` 设 env）；开关关维持原状（内置 NUL、系统跟随全局）。
+- **一键复制**：设置区按钮把用户全局配置文件内容写入独立文件快照（可重复刷新；无全局文件时提示）。
+- **验证（Windows 本地）**：tsc（main/preload/renderer）0 错误；`vitest` code-git/接线/facade **80/80**；
+  矩阵 **92/92**（含新增 `__gitConfigGlobal` 生效断言：diff noprefix）；dual-track **PASS**（两轨仍等价）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJMO8。
