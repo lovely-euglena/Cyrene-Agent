@@ -30,7 +30,7 @@ dotnet/
   voice/CyreneVoice/       # 语音独立 exe（TTS 四引擎+Silero VAD 三模式）
   plugin-sdk/Cyrene.PluginSdk/  # .NET 插件 SDK（CyrenePluginBase）
   smoke-host/              # Linux 冒烟壳（引用 cyrene-core，协议冒烟）
-  cloud-server/            # 云端昔涟服务端：事件库 + /v1/sync（裸跑 systemd；容器备选）
+  cloud-server/            # 云端昔涟服务端：事件库 + /v1/sync + 配对/设备令牌（裸跑 systemd；容器备选）
 src/main/dotnet-backend/   # TS 侧：config.ts（双轨开关唯一解析）、
                            # host-clients.ts（LineHostClient IPC）、native-tool-host
 src/main/sync/             # 同步协议 v0：读取器/校验器（fixtures/sync-protocol/ 双端向量；

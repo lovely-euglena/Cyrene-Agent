@@ -24,6 +24,7 @@ Environment=ASPNETCORE_URLS=http://127.0.0.1:7789
 Environment=CYRENE_CLOUD_DATA=/var/lib/cyrene-cloud
 Environment=Logging__LogLevel__Microsoft.AspNetCore=Warning
 # Environment=CLOUD_TOKEN=change-me
+# Environment=CLOUD_ALLOWED_HOSTS=cloud.example.com
 
 ExecStart=/usr/bin/dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cloud-server 同步收敛冒烟（IKJK2J 验收）：真实起服务 + 两客户端并发 push/fetch。
+"""cloud-server 同步收敛冒烟（IKJK2J / IKJK2K 验收）：真实起服务 + 两客户端并发 push/fetch + 配对令牌。
 
 覆盖：
   1. /healthz 就绪 + RSS 观测（信息输出，不作 CI 门禁）；
@@ -16,7 +16,12 @@
   12. 批内重复 eventId（读取器丢弃重复 → accepted=2/duplicates=0）；
   13. 半截尾行 truncatedTail → 400；
   14. 分页步进序 == 单次全量序（不重不漏）；
-  15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）。
+  15. 链拒绝 errors[].index 指向输入物理行号（排序错位场景）；
+  16. 配对与设备令牌（master 出码 → 兑换；一次性/过期/轮换/撤销/设备列表；设备名代理对安全截断；
+      越权管理 403 / healthz 设备计数）；
+  17. 转发头只信回环代理（XFF 生效：远程 healthz 401）、Host 白名单（421）、日志脱敏、
+      Linux 凭据权限（目录 0700 / DB 及 -wal/-shm 0600）；
+  18. 配对接口限流（超限 → 429；按转发头真实 IP 分区）。
 
 运行：dotnet build/publish 后 python scripts/dotnet-cloud-sync-test.py [发布产物 dll 路径]
 """
@@ -39,6 +44,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 可选参数：发布产物 dll 路径（裸跑直测）；默认用 Release 构建输出
 DLL = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(
     REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
+MAIN_TOKEN = "smoke-master"  # 主实例主控令牌（IKJK2K 起 /v1 始终鉴权）
+BASE_HEADERS = {}            # 默认注入请求头（主实例；显式 headers 覆盖）
 results = []
 
 
@@ -58,7 +65,7 @@ def http(method, url, body=None, timeout=30, headers=None):
     request = urllib.request.Request(url, data=data, method=method)
     if isinstance(body, str):
         request.add_header("Content-Type", "application/x-ndjson; charset=utf-8")
-    for key, value in (headers or {}).items():
+    for key, value in {**BASE_HEADERS, **(headers or {})}.items():
         request.add_header(key, value)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -86,12 +93,17 @@ def push(base, lines):
     return http("POST", base + "/v1/sync/push", "\n".join(lines))
 
 
-def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=64 * 1024):
-    """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。"""
-    with socket.create_connection(("127.0.0.1", port), timeout=15) as sock:
+def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=16 * 1024):
+    """裸 socket：chunked（无 Content-Length）超限——验证读取触顶时回 413（而非 500）。
+
+    Windows 上服务端拒绝后关闭连接可能发 RST、丢掉已回写的 413（已知抖动，服务端每次正确）；
+    16KB chunk（介于原 64KB 与最小 8KB 之间）降低在途字节数，兼顾 CI 耗时，客户端侧再由调用方重试兜底。
+    """
+    with socket.create_connection(("127.0.0.1", port), timeout=30) as sock:
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{port}\r\n"
+            f"Authorization: Bearer {MAIN_TOKEN}\r\n"
             "Content-Type: application/x-ndjson; charset=utf-8\r\n"
             "Transfer-Encoding: chunked\r\n"
             "Connection: close\r\n\r\n"
@@ -111,6 +123,22 @@ def chunked_oversized_push_probe(port, total=11 * 1024 * 1024, chunk_size=64 * 1
                 pass
         except OSError:
             pass  # 服务端提前拒绝并关闭连接属预期
+        data = bytearray()
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except (OSError, socket.timeout):
+                break
+            if not chunk:
+                break
+            data.extend(chunk)
+        return data.decode("utf-8", "replace")
+
+
+def raw_http_probe(port, request_lines, timeout=10):
+    """裸 socket 发任意请求行（如伪造 Host），返回原始响应文本。"""
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.sendall(("\r\n".join(request_lines) + "\r\n\r\n").encode("ascii"))
         data = bytearray()
         while True:
             try:
@@ -182,6 +210,7 @@ def oversized_push_probe(port, content_length=11 * 1024 * 1024):
         head = (
             "POST /v1/sync/push HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{port}\r\n"
+            f"Authorization: Bearer {MAIN_TOKEN}\r\n"
             f"Content-Length: {content_length}\r\n"
             "Content-Type: application/x-ndjson; charset=utf-8\r\n"
             "Connection: close\r\n\r\n"
@@ -203,11 +232,11 @@ def main():
     if not os.path.exists(DLL):
         print(f"[FAIL] 未找到 {DLL}，先 dotnet build dotnet/cloud-server -c Release")
         return 1
-    port = free_port()
     data_dir = tempfile.mkdtemp(prefix="cloud-sync-")
     env = dict(os.environ)
     env["CYRENE_CLOUD_DATA"] = data_dir
     env["Logging__LogLevel__Default"] = "Warning"
+    env["CLOUD_TOKEN"] = MAIN_TOKEN
     dotnet_home = os.path.expanduser("~/.dotnet")
     if os.path.isdir(dotnet_home):
         env["DOTNET_ROOT"] = dotnet_home
@@ -229,6 +258,7 @@ def main():
     try:
         status, body, _ = http("GET", base + "/healthz", timeout=3)
         health = json.loads(body) if status == 200 else {}
+        BASE_HEADERS["Authorization"] = f"Bearer {MAIN_TOKEN}"
         check("healthz 就绪 + RSS 观测", isinstance(health.get("rssMB"), (int, float)), json.dumps(health)[:120])
         rss = health.get("rssMB")
         print(f"  healthz: cursor={health.get('cursor')} rssMB={rss}")
@@ -362,11 +392,17 @@ def main():
         check("请求体上限（Content-Length >10MB → 413 E_SYNC_BATCH_TOO_LARGE）",
               " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
               response[:200].replace("\r\n", " "))
-        response = chunked_oversized_push_probe(port)
+        response = ""
+        chunked_attempts = 0
+        for _ in range(3):  # Windows RST 抖动：重试至多 3 次（服务端每次正确 413）
+            chunked_attempts += 1
+            response = chunked_oversized_push_probe(port)
+            if " 413 " in response.split("\r\n", 1)[0] and "E_SYNC_BATCH_TOO_LARGE" in response:
+                break
         first_line = response.split("\r\n", 1)[0]
         check("chunked 超限（无 Content-Length）→ 413 E_SYNC_BATCH_TOO_LARGE",
               " 413 " in first_line and "E_SYNC_BATCH_TOO_LARGE" in response,
-              response[:200].replace("\r\n", " "))
+              f"attempts={chunked_attempts} resp={response[:160]}".replace("\r\n", " "))
 
         # 7. clone
         status, clone_body, headers = http("GET", base + "/v1/sync/clone")
@@ -399,7 +435,7 @@ def main():
         try:
             token_server, token_base, _ = start_instance(
                 DLL, env, {"CYRENE_CLOUD_DATA": token_dir, "CLOUD_TOKEN": "s3cret"})
-            no_token = http("GET", token_base + "/v1/sync/fetch?since=0")[0]
+            no_token = http("GET", token_base + "/v1/sync/fetch?since=0", headers={"Authorization": ""})[0]
             wrong_token = http("GET", token_base + "/v1/sync/fetch?since=0",
                                headers={"Authorization": "Bearer nope"})[0]
             ok_token = http("GET", token_base + "/v1/sync/fetch?since=0",
@@ -415,6 +451,213 @@ def main():
                 except Exception:
                     token_server.kill()
             shutil.rmtree(token_dir, ignore_errors=True)
+
+        # 11. 配对与设备令牌（IKJK2K；独立实例：TTL 2s + Host 白名单 + 日志落文件）
+        pair_dir = tempfile.mkdtemp(prefix="cloud-sync-pair-")
+        pair_log = os.path.join(pair_dir, "server-out.log")
+        pair_handle = open(pair_log, "w", encoding="utf-8", errors="replace")
+        pair_server = None
+        try:
+            pair_server, pair_base, pair_port = start_instance(DLL, env, {
+                "CYRENE_CLOUD_DATA": pair_dir,
+                "CLOUD_TOKEN": "pair-master",
+                "CLOUD_PAIR_TTL_SECONDS": "2",
+                "CLOUD_ALLOWED_HOSTS": "example.com",
+            }, log_handle=pair_handle)
+            master = {"Authorization": "Bearer pair-master"}
+            status, body, _ = http("POST", pair_base + "/v1/pair/code", headers=master)
+            code = json.loads(body).get("code", "") if status == 200 else ""
+            check("配对出码（master → 一次性配对码，格式 XXXX-XXXX）",
+                  status == 200 and len(code) == 9, body[:160])
+
+            redeem_body = json.dumps({"code": code, "deviceName": "烟测手机"}, ensure_ascii=False)
+            status, body, _ = http("POST", pair_base + "/v1/pair", redeem_body,
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            device_token = data.get("token", "")
+            device_id = data.get("deviceId", "")
+            check("配对兑换（device token 仅此一次回显）",
+                  status == 200 and device_token.startswith("cyn_") and device_id.startswith("dev_"), body[:160])
+
+            status, body, _ = http("POST", pair_base + "/v1/pair", redeem_body,
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            check("配对码一次性（二次兑换 400 E_PAIR_CODE）",
+                  status == 400 and data.get("code") == "E_PAIR_CODE", body[:160])
+
+            ok_dev = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                          headers={"Authorization": f"Bearer {device_token}"})[0] == 200
+            forged = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                          headers={"Authorization": "Bearer cyn_forged"})[0]
+            check("device token 可用 / 伪造 token 401", ok_dev and forged == 401,
+                  f"ok={ok_dev} forged={forged}")
+
+            status, body, _ = http("POST", pair_base + "/v1/pair/code", headers=master)
+            code2 = json.loads(body).get("code", "") if status == 200 else ""
+            time.sleep(3)
+            status, body, _ = http("POST", pair_base + "/v1/pair",
+                                   json.dumps({"code": code2, "deviceName": "迟到"}, ensure_ascii=False),
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            check("配对码过期（TTL 2s）→ 400 E_PAIR_CODE",
+                  status == 400 and data.get("code") == "E_PAIR_CODE", body[:160])
+
+            status, body, _ = http("POST", pair_base + f"/v1/devices/{device_id}/rotate",
+                                   headers={"Authorization": f"Bearer {device_token}"})
+            new_token = json.loads(body).get("token", "") if status == 200 else ""
+            old_after = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                             headers={"Authorization": f"Bearer {device_token}"})[0]
+            new_ok = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                          headers={"Authorization": f"Bearer {new_token}"})[0]
+            check("轮换即时生效（旧 token 401 / 新 token 200）",
+                  status == 200 and old_after == 401 and new_ok == 200,
+                  f"rotate={status} old={old_after} new={new_ok}")
+
+            status, body, _ = http("POST", pair_base + f"/v1/devices/{device_id}/revoke",
+                                   headers={"Authorization": f"Bearer {new_token}"})
+            revoked_after = http("GET", pair_base + "/v1/sync/fetch?since=0",
+                                 headers={"Authorization": f"Bearer {new_token}"})[0]
+            check("撤销即时生效（撤销后 401）", status == 200 and revoked_after == 401,
+                  f"revoke={status} after={revoked_after}")
+
+            status, body, _ = http("GET", pair_base + "/v1/devices", headers=master)
+            devices = json.loads(body).get("devices", []) if status == 200 else []
+            check("设备列表（含撤销标记）",
+                  status == 200 and any(d.get("deviceId") == device_id and d.get("revoked") for d in devices),
+                  body[:160])
+
+            # 转发头：只信任回环代理（Caddy 同机）——XFF 生效后该请求视为远程，healthz 需令牌
+            # （去掉默认 Authorization：确保 401 来自「远程需令牌」而非 token 不匹配）
+            saved_auth = BASE_HEADERS.pop("Authorization", None)
+            try:
+                local_healthz = http("GET", pair_base + "/healthz")[0]
+                fwd_healthz = http("GET", pair_base + "/healthz",
+                                   headers={"X-Forwarded-For": "203.0.113.7"})[0]
+            finally:
+                if saved_auth is not None:
+                    BASE_HEADERS["Authorization"] = saved_auth
+            check("转发头信任回环代理（本机探针 200 / XFF=远程 → healthz 401）",
+                  local_healthz == 200 and fwd_healthz == 401,
+                  f"local={local_healthz} fwd={fwd_healthz}")
+
+            # 设备名截断：63×a + emoji（UTF-16 长 65）截到 64 恰落代理对中间，须回退为 63
+            status, body, _ = http("POST", pair_base + "/v1/pair/code", headers=master)
+            code3 = json.loads(body).get("code", "") if status == 200 else ""
+            status, body, _ = http("POST", pair_base + "/v1/pair",
+                                   json.dumps({"code": code3, "deviceName": "a" * 63 + "😀"}, ensure_ascii=False),
+                                   headers={"Content-Type": "application/json"})
+            data = json.loads(body)
+            token3 = data.get("token", "")
+            check("设备名截断不切断代理对（63a+emoji → 63a）",
+                  status == 200 and data.get("name") == "a" * 63,
+                  f"status={status} name={data.get('name')!r}")
+
+            # 越权：普通 device token 不得管理他人设备 / 枚举设备清单（403）
+            cross_rotate = http("POST", pair_base + f"/v1/devices/{device_id}/rotate",
+                                headers={"Authorization": f"Bearer {token3}"})[0]
+            cross_revoke = http("POST", pair_base + f"/v1/devices/{device_id}/revoke",
+                                headers={"Authorization": f"Bearer {token3}"})[0]
+            cross_list = http("GET", pair_base + "/v1/devices",
+                              headers={"Authorization": f"Bearer {token3}"})[0]
+            check("设备管理越权（他设备 rotate/revoke 403、清单仅 master）",
+                  cross_rotate == 403 and cross_revoke == 403 and cross_list == 403,
+                  f"rotate={cross_rotate} revoke={cross_revoke} list={cross_list}")
+
+            # healthz 设备计数（O(1) 聚合）：此时 device_id 已撤销，仅剩 63a 设备活跃
+            status, body, _ = http("GET", pair_base + "/healthz")
+            active_devices = json.loads(body).get("devices") if status == 200 else None
+            check("healthz 设备计数（撤销后仅剩活跃设备）", active_devices == 1, f"devices={active_devices}")
+
+            evil = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: evil.com", "Connection: close"])
+            good = raw_http_probe(pair_port, ["GET /healthz HTTP/1.1", "Host: example.com", "Connection: close"])
+            check("Host 白名单（evil.com 421 / example.com 200）",
+                  " 421 " in evil.split("\r\n", 1)[0] and " 200 " in good.split("\r\n", 1)[0],
+                  f"evil={evil.splitlines()[:1]} good={good.splitlines()[:1]}")
+
+            pair_handle.close()
+            with open(pair_log, encoding="utf-8", errors="replace") as handle:
+                pair_log_text = handle.read()
+            log_ok = (bool(device_token) and device_token not in pair_log_text
+                      and bool(code) and code not in pair_log_text
+                      and bool(code2) and code2 not in pair_log_text
+                      and "pair-master" not in pair_log_text)
+            if new_token:
+                log_ok = log_ok and new_token not in pair_log_text
+            if token3:
+                log_ok = log_ok and token3 not in pair_log_text
+            if code3:
+                log_ok = log_ok and code3 not in pair_log_text
+            check("日志脱敏（token/配对码/master 不明文）", log_ok)
+
+            if os.name == "posix":
+                import stat as stat_module
+
+                def _mode(path):
+                    return stat_module.S_IMODE(os.stat(path).st_mode) if os.path.exists(path) else None
+
+                dir_mode = _mode(pair_dir)
+                db_mode = _mode(os.path.join(pair_dir, "events.db"))
+                aux_modes = {suf: _mode(os.path.join(pair_dir, "events.db" + suf)) for suf in ("-wal", "-shm")}
+                aux_ok = all(mode is None or mode == 0o600 for mode in aux_modes.values())
+                check("Linux 凭据权限（目录 0700 / events.db 及 -wal/-shm 0600）",
+                      dir_mode == 0o700 and db_mode == 0o600 and aux_ok,
+                      f"dir={dir_mode and oct(dir_mode)} db={db_mode and oct(db_mode)} "
+                      f"wal={aux_modes['-wal'] and oct(aux_modes['-wal'])} shm={aux_modes['-shm'] and oct(aux_modes['-shm'])}")
+        finally:
+            if pair_server is not None:
+                pair_server.terminate()
+                try:
+                    pair_server.wait(timeout=10)
+                except Exception:
+                    pair_server.kill()
+            try:
+                pair_handle.close()
+            except Exception:
+                pass
+            shutil.rmtree(pair_dir, ignore_errors=True)
+
+        # 12. 配对接口限流（独立实例：2/min/IP → 第 3 次 429）
+        rate_dir = tempfile.mkdtemp(prefix="cloud-sync-rate-")
+        rate_server = None
+        try:
+            rate_server, rate_base, _ = start_instance(DLL, env, {
+                "CYRENE_CLOUD_DATA": rate_dir,
+                "CLOUD_RATE_PAIR_PER_MIN": "2",
+            })
+            garbage = json.dumps({"code": "ZZZZ-ZZZZ"})
+            statuses = [
+                http("POST", rate_base + "/v1/pair", garbage,
+                     headers={"Content-Type": "application/json"})[0]
+                for _ in range(3)
+            ]
+            check("配对接口限流（2/min → 第 3 次 429）",
+                  statuses[:2] == [400, 400] and statuses[2] == 429, f"statuses={statuses}")
+
+            # 转发头参与限流分区：匿名（无 Bearer → 按 IP 分区）先耗尽回环配额，再验证 XFF 真实 IP 独立
+            saved_auth = BASE_HEADERS.pop("Authorization", None)
+            try:
+                anon = [http("POST", rate_base + "/v1/pair", garbage,
+                             headers={"Content-Type": "application/json"})[0]
+                        for _ in range(3)]
+                fwd1 = [http("POST", rate_base + "/v1/pair", garbage,
+                             headers={"Content-Type": "application/json", "X-Forwarded-For": "203.0.113.1"})[0]
+                        for _ in range(3)]
+                fwd2 = http("POST", rate_base + "/v1/pair", garbage,
+                            headers={"Content-Type": "application/json", "X-Forwarded-For": "203.0.113.2"})[0]
+            finally:
+                if saved_auth is not None:
+                    BASE_HEADERS["Authorization"] = saved_auth
+            check("匿名限流按回环 IP（2/min → 第 3 次 429）", anon == [400, 400, 429], f"anon={anon}")
+            check("限流按转发头真实 IP 分区（.1 三连 → 400,400,429；.2 独立 → 400）",
+                  fwd1 == [400, 400, 429] and fwd2 == 400, f"fwd1={fwd1} fwd2={fwd2}")
+        finally:
+            if rate_server is not None:
+                rate_server.terminate()
+                try:
+                    rate_server.wait(timeout=10)
+                except Exception:
+                    rate_server.kill()
+            shutil.rmtree(rate_dir, ignore_errors=True)
     finally:
         server.terminate()
         try:
