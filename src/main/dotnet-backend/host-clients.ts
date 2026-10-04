@@ -77,9 +77,13 @@ export class LineHostClient {
       return true;
     })();
     this.starting = starting;
-    const ok = await starting;
-    this.starting = null;
-    return ok;
+    // 复审 P2-2⑥：同步/异步 reject 也必须清 starting——否则失败 promise 被永久缓存，
+    // 后续 ensureStarted 永远拿到同一次失败（宿主再也拉不起来）。
+    try {
+      return await starting;
+    } finally {
+      this.starting = null;
+    }
   }
 
   /** 保存路径门控用（IKJNX1 #1）：同步判定宿主进程当前是否存活（不触发拉起）。 */

@@ -35,14 +35,18 @@ class StubLlmHostClient {
   startedCalls = 0;
   cancelledJobIds: string[] = [];
   failStart = false;
-  script: Array<{ events: Array<{ type: string; text?: string; reason?: string; code?: string; message?: string; inputTokens?: number; outputTokens?: number; attempt?: number; delayMs?: number; category?: string }> }> = [];
+  submitPayloads: Array<Record<string, unknown>> = [];
+  submitImpl: ((payload: Record<string, unknown>) => Promise<string>) | null = null;
+  script: Array<{ events: Array<{ type: string; text?: string; reason?: string; code?: string; message?: string; inputTokens?: number; outputTokens?: number; attempt?: number; delayMs?: number; category?: string; retryable?: boolean }> }> = [];
   enabled() { return true; }
   async ensureStarted() {
     this.startedCalls++;
     if (this.failStart) return false;
     return true;
   }
-  async submit(_payload: unknown): Promise<string> {
+  async submit(payload: unknown): Promise<string> {
+    this.submitPayloads.push(payload as Record<string, unknown>);
+    if (this.submitImpl) return this.submitImpl(payload as Record<string, unknown>);
     if (this.failStart) throw new Error("host 未运行");
     return "j-test";
   }
@@ -173,5 +177,98 @@ describe("callLLMViaLlmHost（宿主拉起 + 事件翻译）", () => {
     __setLlmHostClientForTests(stub as unknown as LlmHostClient);
     await expect(callLLMViaLlmHost(options())).rejects.toMatchObject({ code: "E_LLM_HOST_LOST" });
     expect(stub.cancelledJobIds).toEqual(["j-test"]);
+  });
+});
+
+describe("复审 P1-3：submit/poll 错误码分类（业务码不回退直连）", () => {
+  it("submit 业务码（E_LLM_HOST_BAD_REQUEST）→ E_MODEL_REQUEST_FAILED，非 host-lost", async () => {
+    const stub = new StubLlmHostClient();
+    stub.submitImpl = async () => {
+      throw Object.assign(new Error("submit 帧解析失败"), { errorCode: "E_LLM_HOST_BAD_REQUEST", retryable: false });
+    };
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const err = await callLLMViaLlmHost(options()).catch((e: unknown) => e) as { code?: string; message?: string };
+    expect(err.code).toBe("E_MODEL_REQUEST_FAILED");
+    expect(err.message).toContain("E_LLM_HOST_BAD_REQUEST");
+  });
+
+  it("poll 业务码（E_LLM_HOST_JOB_MISSING，无可见增量）→ E_MODEL_REQUEST_FAILED + 尽力 cancel", async () => {
+    const stub = new StubLlmHostClient();
+    stub.poll = async () => {
+      throw Object.assign(new Error("job not found"), { errorCode: "E_LLM_HOST_JOB_MISSING" });
+    };
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const err = await callLLMViaLlmHost(options()).catch((e: unknown) => e) as { code?: string; message?: string };
+    expect(err.code).toBe("E_MODEL_REQUEST_FAILED");
+    expect(err.message).toContain("E_LLM_HOST_JOB_MISSING");
+    expect(stub.cancelledJobIds).toEqual(["j-test"]);
+  });
+
+  it("无 errorCode（进程失败）仍归宿主丢失 → E_LLM_HOST_LOST（回退直连）", async () => {
+    const stub = new StubLlmHostClient();
+    stub.submitImpl = async () => { throw new Error("host 退出"); };
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    await expect(callLLMViaLlmHost(options())).rejects.toMatchObject({ code: "E_LLM_HOST_LOST" });
+  });
+});
+
+describe("复审 P1-4：取消窗口（入口预检 + submit 期间补发 cancel）", () => {
+  it("入口已中止 signal → 不拉宿主、不 submit，抛取消", async () => {
+    const stub = new StubLlmHostClient();
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const ac = new AbortController();
+    ac.abort();
+    await expect(callLLMViaLlmHost(options({ signal: ac.signal }))).rejects.toThrow(/E_SOUL_ONLY_CANCELLED/);
+    expect(stub.startedCalls).toBe(0);
+    expect(stub.submitPayloads.length).toBe(0);
+  });
+
+  it("submit 窗口内中止 → 作业创建后立即 cancel（不让 .NET 跑到自然终态）", async () => {
+    const stub = new StubLlmHostClient();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    stub.submitImpl = async () => { await gate; return "j-test"; };
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const ac = new AbortController();
+    const pending = callLLMViaLlmHost(options({ signal: ac.signal }));
+    await new Promise((r) => setTimeout(r, 10)); // 让 submit 挂起
+    ac.abort();
+    release();
+    await expect(pending).rejects.toThrow(/E_SOUL_ONLY_CANCELLED/);
+    expect(stub.cancelledJobIds).toEqual(["j-test"]);
+  });
+});
+
+describe("复审 P1-5 / P2-2：maxRetries 透传与错误分类消费", () => {
+  it("maxRetries 同值透传 submit 与 retry 事件分母", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [
+      { events: [{ type: "retry", attempt: 2, delayMs: 1000, category: "RATE_LIMIT" }] },
+      { events: [{ type: "delta", text: "ok" }, { type: "finish", reason: "stop" }, { type: "done" }] },
+    ];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const statuses: Array<{ maxRetries: number; retryNumber: number }> = [];
+    await callLLMViaLlmHost(options({
+      maxRetries: 7,
+      onRetryStatus: (s) => statuses.push({ maxRetries: s.maxRetries, retryNumber: s.retryNumber }),
+    }));
+    expect(stub.submitPayloads[0].maxRetries).toBe(7);
+    expect(statuses).toEqual([{ maxRetries: 7, retryNumber: 2 }]);
+  });
+
+  it("终态 error 事件消费 C# category/retryable（不再固定 SERVER_ERROR）", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [{ events: [{ type: "error", code: "E_LLM_HTTP_0", message: "断网", category: "NETWORK", retryable: false }] }];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const err = await callLLMViaLlmHost(options()).catch((e: unknown) => e) as { modelFailure?: { category?: string; retryable?: boolean } };
+    expect(err.modelFailure?.category).toBe("NETWORK");
+    expect(err.modelFailure?.retryable).toBe(false);
+  });
+
+  it("取消与 E_LLM_CANCELLED 竞态 → 归取消（不显示为模型错误）", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [{ events: [{ type: "error", code: "E_LLM_CANCELLED", message: "cancelled" }] }];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    await expect(callLLMViaLlmHost(options())).rejects.toThrow(/E_SOUL_ONLY_CANCELLED/);
   });
 });

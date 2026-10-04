@@ -14,10 +14,11 @@
 import { AgentRuntimeError } from "../agent-runtime-error";
 import { llmHostClient as defaultLlmHostClient, type LlmHostClient } from "../../dotnet-backend/llm-host-client";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
-import { LLM_EVENTS, LLM_LANES, type LlmHostEvent } from "../../dotnet-backend/llm-host-protocol";
+import { LLM_ERRORS, LLM_EVENTS, LLM_LANES, type LlmHostEvent } from "../../dotnet-backend/llm-host-protocol";
 import { isKeyringHydrated, isVaultMode, resolveVaultKeyForVendor } from "../../settings/secrets-keyring";
 import { resolveTransport } from "./transport-detector";
 import type { ModelRetryStatus } from "../../../shared/model-retry";
+import type { ModelErrorCategory } from "../../../shared/model-error";
 import type { ChatMessage, ChatRequest, ChatResponse, ChatVendorAdapter, ToolCall, VendorConfig } from "./types";
 
 const AUTH_HEADER_PATTERN = /^(authorization|x-api-key|api-key|cookie)$/i;
@@ -33,6 +34,8 @@ export interface LlmHostCallOptions {
   request: ChatRequest;
   config: VendorConfig;
   timeoutMs: number;
+  /** 复审 P1-5：HarnessConfig.modelRequestMaxRetries 透传（submit 与 retry 事件同值）。 */
+  maxRetries?: number;
   signal?: AbortSignal;
   onDelta: (delta: { type: "text_delta" | "reasoning_delta"; delta: string }) => void;
   onRetryStatus?: (status: ModelRetryStatus) => void;
@@ -61,6 +64,9 @@ export async function callLLMViaLlmHost(options: LlmHostCallOptions): Promise<Ch
   const { adapter, request, config } = options;
   const signal = options.signal ?? new AbortController().signal; // 缺省 = 不可取消（后台通道）
 
+  // 复审 P1-4：入口先判已中止——不拉起宿主、不创建 .NET 作业（白耗上游额度）
+  if (signal.aborted) throw cancelledError();
+
   // 复审 P0-1：生产链路显式拉起宿主（既有 host 模式同构——ensureStarted 幂等），
   // 失败按宿主丢失回退 TS 直连
   try {
@@ -88,6 +94,12 @@ export async function callLLMViaLlmHost(options: LlmHostCallOptions): Promise<Ch
   }
 
   let jobId = "";
+  // 复审 P1-4：监听提前到 submit 之前——submit 窗口（宿主冷启动可达秒级）中止时，
+  // 作业一旦创建立即补发 cancel，不让 .NET 作业跑到自然终态。
+  const onAbort = () => {
+    if (jobId) void llmHostClient.cancel(jobId).catch(() => { });
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
   try {
     jobId = await llmHostClient.submit({
       lane: LLM_LANES.interactive,
@@ -100,18 +112,19 @@ export async function callLLMViaLlmHost(options: LlmHostCallOptions): Promise<Ch
       body: http.body,
       protocol: "openai",
       timeoutMs: Math.max(30_000, options.timeoutMs || 120_000),
-      maxRetries: 5, // 对齐 modelRequestMaxRetries 默认（复审 P1-11）
+      maxRetries: options.maxRetries ?? 5, // 复审 P1-5：与 translate retry 事件同源
       idleTimeoutMs: 45_000,
     });
     if (!jobId) throw new Error("submit 未返回 jobId");
+    if (signal.aborted) onAbort(); // submit 期间已中止：立即补发 cancel（listener 只会在 jobId 就绪后生效）
   } catch (err) {
-    // submit 失败 = 作业未创建（jobId 为空），无 .NET 侧资源需取消；由 hostLost
-    // 统一 → 调用方回退直连（E_LLM_HOST_LOST）
+    signal.removeEventListener("abort", onAbort);
+    // 复审 P1-3：submit 失败按 errorCode 分类——仅宿主丢失类（无 errorCode /
+    // E_LLM_HOST_LOST）回退直连；业务码（协议漂移/参数非法/vault 缺失等）原样上抛，
+    // 不被静默回退掩盖（作业未创建，无 .NET 侧资源需取消）。
+    if (!isHostLostError(err)) throw hostBusinessError(err, "submit", config.model);
     throw hostLost(err, "submit");
   }
-
-  const onAbort = () => { void llmHostClient.cancel(jobId).catch(() => { }); };
-  signal.addEventListener("abort", onAbort, { once: true });
 
   try {
     return await collectJob(jobId, options, signal);
@@ -141,26 +154,34 @@ async function collectJob(
       // host 丢失：先尽力取消 .NET 侧作业（幂等；host 已死则 no-op，复审 P1-11 防双计费），
       // 无可见增量 → 明确收口（调用方可回退直连）；已有增量 → 如实失败
       void llmHostClient.cancel(jobId).catch(() => { });
+      // 复审 P1-3：业务码（协议/参数/job 丢失）不回退直连，按模型失败上抛
+      if (!isHostLostError(err)) throw hostBusinessError(err, "poll", options.config.model);
       if (text.length === 0 && thinking.length === 0 && toolAcc.size === 0) throw hostLost(err, "poll");
       throw err;
     }
     cursor = result.nextCursor;
 
     for (const ev of result.events) {
-      const mapped = translate(ev, onDelta, onRetryStatus, toolAcc);
+      const mapped = translate(ev, onDelta, onRetryStatus, toolAcc, options.maxRetries ?? 5);
       if (mapped.text !== undefined) text += mapped.text;
       if (mapped.thinking !== undefined) thinking += mapped.thinking;
       if (mapped.finishReason) finishReason = mapped.finishReason;
       if (mapped.usage) usage = mapped.usage;
-      if (mapped.terminalError) throw terminalError(ev, options.config.model);
+      if (mapped.terminalError) {
+        // 复审 P2-2④：取消与 E_LLM_CANCELLED 竞态 → 归取消，不显示为模型错误
+        if (ev.code === LLM_ERRORS.cancelled) throw cancelledError();
+        throw terminalError(ev, options.config.model);
+      }
     }
+    // 复审 P2-2④：批处理后再判一次——取消优先于本批 finish/done（不进成功收口）
+    if (signal.aborted) throw cancelledError();
     // 节流（复审提示项 · H4 验收 §8-1）：有事件时也按 ~66ms 节奏轮询，
     // 事件流量 ≤15/s——主线程事件循环保护（400 TPS 上游由 .NET 缓冲摊平）
     if (result.events.length > 0) await new Promise((r) => setTimeout(r, 66));
     if (result.final) break;
   }
 
-  if (signal.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
+  if (signal.aborted) throw cancelledError();
 
   const toolCalls: ToolCall[] = [...toolAcc.entries()]
     .sort((a, b) => a[0] - b[0])
@@ -196,6 +217,7 @@ function translate(
   onDelta: LlmHostCallOptions["onDelta"],
   onRetryStatus: LlmHostCallOptions["onRetryStatus"],
   toolAcc: Map<number, { id: string; name: string; arguments: string }>,
+  maxRetries: number,
 ): Translated {
   switch (ev.type) {
     case LLM_EVENTS.delta:
@@ -233,7 +255,7 @@ function translate(
       onRetryStatus?.({
         phase: "waiting",
         retryNumber: ev.attempt ?? 1,
-        maxRetries: 3,
+        maxRetries, // 复审 P1-5：与 submit 载荷同源（不再写死 3）
         delayMs: ev.delayMs ?? 0,
         category: (ev.category ?? "UNKNOWN") as ModelRetryStatus["category"],
       });
@@ -247,14 +269,49 @@ function translate(
   }
 }
 
+/** 终态 error 事件 → AgentRuntimeError（复审 P2-2⑤：消费 C# 已带的 NETWORK/RATE_LIMIT 分类）。 */
+const MODEL_ERROR_CATEGORIES = new Set([
+  "AUTH", "PERMISSION", "BILLING", "QUOTA", "RATE_LIMIT", "INVALID_REQUEST",
+  "NOT_FOUND", "CONTEXT_LIMIT", "PAYLOAD_TOO_LARGE", "CONTENT_POLICY", "CONFLICT",
+  "TIMEOUT", "NETWORK", "OVERLOADED", "SERVER_ERROR", "UNAVAILABLE", "CANCELLED", "UNKNOWN",
+]);
+
 function terminalError(ev: LlmHostEvent, model: string): AgentRuntimeError {
   const message = ev.message ?? "llm-host 作业失败";
+  const rawCategory = ev.category ?? "";
+  const category: ModelErrorCategory = MODEL_ERROR_CATEGORIES.has(rawCategory)
+    ? rawCategory as ModelErrorCategory
+    : "SERVER_ERROR";
   return new AgentRuntimeError("E_MODEL_REQUEST_FAILED", `[${ev.code ?? "E_LLM_HOST_ERROR"}] ${message}`, {
     modelFailure: {
       provider: "llm-host",
       model,
-      category: "SERVER_ERROR", // ModelFailureInfo 合法枚举（复审提示项；原 "PROVIDER"/无 model 不合规）
+      category,
+      ...(typeof ev.retryable === "boolean" ? { retryable: ev.retryable } : {}),
     },
+  });
+}
+
+function cancelledError(): Error {
+  return new Error("E_SOUL_ONLY_CANCELLED");
+}
+
+/**
+ * 宿主丢失类错误：无 errorCode（LineHostClient 的进程退出/超时/未运行等传输失败）。
+ * 带 errorCode 的一律视为业务失败（协议/参数/vault 缺失/job 丢失）——不回退直连。
+ */
+function isHostLostError(err: unknown): boolean {
+  return (err as { errorCode?: unknown } | null)?.errorCode === undefined;
+}
+
+/** 宿主业务码（协议/参数/vault 缺失/job 丢失等）→ 模型失败上抛，不回退直连（复审 P1-3）。 */
+function hostBusinessError(err: unknown, phase: string, model: string): AgentRuntimeError {
+  const code = typeof (err as { errorCode?: unknown } | null)?.errorCode === "string"
+    ? (err as { errorCode: string }).errorCode
+    : "E_LLM_HOST_ERROR";
+  return new AgentRuntimeError("E_MODEL_REQUEST_FAILED", `[${code}] llm-host ${phase} 失败: ${err instanceof Error ? err.message : String(err)}`, {
+    cause: err,
+    modelFailure: { provider: "llm-host", model, category: "SERVER_ERROR" },
   });
 }
 

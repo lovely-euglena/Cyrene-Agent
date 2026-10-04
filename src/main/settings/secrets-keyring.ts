@@ -193,10 +193,16 @@ export async function initSecretsVault(
     return { mode: true, hostUp: false, migrated: 0, hydrated };
   }
 
-  // 已迁移判定（vault 里 migratedAt 标记）
+  // 已迁移判定（vault 里 migratedAt 标记）+ 保护器可用性（复审 P2-2⑦）
   try {
     const status = await client.status();
     vaultMigrated = status.migrated === true;
+    // 保护器不可用（非 Windows / DPAPI 故障）：put 必失败。若继续 hydrate，掩码会
+    // 按「已激活」清空 UI、保存 put 静默失败 + 磁盘清痕 → 丢钥。此处维持未激活回退态。
+    if (status.available === false) {
+      console.error("[secrets] 值保护器不可用（available=false）：跳过迁移与 hydrate，保存维持明文回退");
+      return { mode: true, hostUp: true, migrated: 0, hydrated };
+    }
   } catch { /* status 失败按未迁移处理 */ }
 
   let migrated = 0;
@@ -226,7 +232,14 @@ export async function hydrateKeyring(): Promise<void> {
     for (const [k, v] of next) keyring.set(k, v);
     const wasHydrated = hydrated;
     hydrated = true;
-    if (!wasHydrated) for (const cb of hydratedListeners.splice(0)) cb();
+    if (!wasHydrated) {
+      // 复审 P2-2⑦：单个回调抛错不得中断其余回调（回填链独立）
+      for (const cb of hydratedListeners.splice(0)) {
+        try { cb(); } catch (err) {
+          console.error("[secrets] hydrate 回调失败:", err instanceof Error ? err.message : err);
+        }
+      }
+    }
   } catch (err) {
     console.error("[secrets] hydrate 失败:", err instanceof Error ? err.message : err);
   }

@@ -40,9 +40,10 @@ const vault = new Map<string, string>();
 class StubSecretsClient {
   hostUp = true;
   alive = true;
+  available = true;
   async ensureStarted() { return this.hostUp; }
   isAlive() { return this.alive; }
-  async status() { return { count: vault.size, migrated: true, migratedAt: "2026-10-04T00:00:00Z", protector: "stub", available: true }; }
+  async status() { return { count: vault.size, migrated: true, migratedAt: "2026-10-04T00:00:00Z", protector: "stub", available: this.available }; }
   async get(name: string) { return vault.get(name) ?? null; }
   async put(name: string, value: string) { vault.set(name, value); }
   async remove(name: string) { return vault.delete(name); }
@@ -77,6 +78,7 @@ function reset(): void {
   __resetKeyringForTests();
   stub.hostUp = true;
   stub.alive = true;
+  stub.available = true;
 }
 
 describe("vaultifyModelSettingsForSave（空=不改 / SENTINEL=清 / 新值入 vault）", () => {
@@ -245,6 +247,34 @@ describe("复审 P0-8 / P0-6（host 缺失保存回退 + 冷启动回填）", ()
     const cached: Record<string, unknown> = { ttsMimoKey: "" }; // 模拟 pre-ready 已建的空缓存
     applyKeyringToGeneralSettings(cached);
     expect(cached.ttsMimoKey).toBe("sk-cold");
+  });
+
+  it("P2-2⑦：单个 hydrate 回调抛错不阻断其余回调（回填链独立）", async () => {
+    reset();
+    const fired: string[] = [];
+    onKeyringHydrated(() => { fired.push("a"); throw new Error("boom"); });
+    onKeyringHydrated(() => { fired.push("b"); });
+    vault.set("tts:mimo", "sk-cold");
+    await hydrateKeyring();
+    expect(fired).toEqual(["a", "b"]);
+  });
+
+  it("P2-2⑦：保护器不可用（status.available=false）→ 不迁移、不 hydrate（保存维持明文回退）", async () => {
+    reset();
+    stub.available = false;
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-noprotector-"));
+    const modelPath = path.join(dir, "model-settings.json");
+    writeFileSync(modelPath, JSON.stringify({ provider: "PA", perProvider: { PA: { apiKey: "sk-plain" } } }));
+    try {
+      const r = await initSecretsVault(modelPath, path.join(dir, "general-settings.json"));
+      expect(r.hostUp).toBe(true);
+      expect(r.hydrated).toBe(false); // 不 hydrate：掩码不激活，UI 持明文
+      expect(vault.size).toBe(0);     // 未尝试迁移（put 必失败）
+      const raw = readFileSync(modelPath, "utf8");
+      expect(raw.includes("sk-plain")).toBe(true); // 源明文未被清痕
+    } finally {
+      reset();
+    }
   });
 });
 

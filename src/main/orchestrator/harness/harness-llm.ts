@@ -145,6 +145,8 @@ export async function callLLM(
         request: chatRequest,
         config: vendorConfig,
         timeoutMs: config.totalTimeoutMs,
+        // 复审 P1-5：maxRetries 与直连同源（config.modelRequestMaxRetries），不再写死
+        maxRetries: config.modelRequestMaxRetries ?? 5,
         signal,
         onDelta: (delta) => {
           if (delta.type === "reasoning_delta") onReasoningDelta?.(delta.delta);
