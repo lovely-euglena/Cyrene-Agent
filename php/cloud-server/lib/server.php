@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/protocol.php';
+require_once __DIR__ . '/storage.php';
 require_once __DIR__ . '/store.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/dialog.php';
@@ -13,6 +14,7 @@ const CYRENE_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img
 /** 入口：路由（API + 能力声明 + 静态托管）。 */
 function cyrene_run(string $publicDir): void
 {
+    cyrene_harden_umask(); // 建库 / 写文件前收紧 umask（Windows 无效果）
     $config = cyrene_config();
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -71,15 +73,17 @@ function cyrene_handle_api(string $method, string $path, array $config): void
     $events = $stores['events'];
     $auth = $stores['auth'];
 
-    $limited = cyrene_enforce_rate_limit($config, $path, $events);
+    // 先鉴权后限流：分区键只信任已验证主体（避免随机 Bearer 换桶），匿名固定按客户端 IP。
+    $principal = cyrene_authenticate($config, $auth, cyrene_extract_bearer());
+    $limited = cyrene_enforce_rate_limit($config, $path, $events, $principal);
     if ($limited !== null) {
         cyrene_send_json($limited, 429);
         return;
     }
 
-    $principal = cyrene_authenticate($config, $auth, cyrene_extract_bearer());
     $isPairRedeem = $method === 'POST' && $path === '/v1/pair';
-    if (!$isPairRedeem && $principal === null) {
+    $isLoopbackHealthz = $method === 'GET' && $path === '/healthz' && cyrene_is_loopback();
+    if (!$isPairRedeem && !$isLoopbackHealthz && $principal === null) {
         cyrene_send_json(['code' => 'E_UNAUTHORIZED'], 401);
         return;
     }
@@ -163,11 +167,8 @@ function cyrene_handle_push(array $config, EventStore $events): void
         cyrene_send_json(['code' => 'E_SYNC_BATCH_TOO_LARGE'], 413);
         return;
     }
-    $text = file_get_contents('php://input');
-    if ($text === false) {
-        $text = '';
-    }
-    if (strlen($text) > $config['max_push_bytes']) {
+    $text = cyrene_read_body_limited((int)$config['max_push_bytes']);
+    if ($text === null) {
         cyrene_send_json(['code' => 'E_SYNC_BATCH_TOO_LARGE'], 413);
         return;
     }
@@ -186,7 +187,12 @@ function cyrene_handle_push(array $config, EventStore $events): void
         return;
     }
     if ($outcome['accepted'] > 0) {
-        (new DialogLoop($events, $config))->trigger($batch['events']);
+        try {
+            (new DialogLoop($events, $config))->trigger($batch['events']);
+        } catch (Throwable $error) {
+            // 内联生成尽力而为：失败不影响同步结果（挂起 / 桌面兜底由 trigger 内部与 cron 承担）
+            error_log('生成触发失败（不影响同步）：' . $error->getMessage());
+        }
     }
     cyrene_send_json([
         'accepted' => $outcome['accepted'],
@@ -217,15 +223,16 @@ function cyrene_handle_fetch(EventStore $events): void
 function cyrene_handle_clone(EventStore $events): void
 {
     $sessionId = (isset($_GET['sessionId']) && is_string($_GET['sessionId'])) ? $_GET['sessionId'] : null;
-    $outcome = $events->cloneEvents($sessionId);
+    $outcome = $events->cloneStream($sessionId);
     header('Content-Type: application/x-ndjson; charset=utf-8');
     header('X-Sync-Cursor: ' . $outcome['cursor']);
-    foreach ($outcome['events'] as $event) {
+    // 逐行流式输出（生成器按 id 分页；内存有界）
+    foreach ($outcome['stream'] as $event) {
         echo json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), "\n";
     }
 }
 
-function cyrene_enforce_rate_limit(array $config, string $path, EventStore $events): ?array
+function cyrene_enforce_rate_limit(array $config, string $path, EventStore $events, ?array $principal): ?array
 {
     if ($path === '/v1/pair' || $path === '/v1/pair/code') {
         $prefix = 'pair';
@@ -236,11 +243,31 @@ function cyrene_enforce_rate_limit(array $config, string $path, EventStore $even
     } else {
         return null;
     }
-    $token = cyrene_extract_bearer();
-    $partition = $token !== null
-        ? 't:' . substr(cyrene_sha256_hex($token), 0, 16)
-        : 'i:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    $partition = $principal === null
+        ? 'i:' . cyrene_client_ip()
+        : ($principal['kind'] === 'master' ? 'p:master' : 'p:' . $principal['deviceId']);
     return $events->rateLimitHit($prefix . ':' . $partition, $limit) ? ['code' => 'E_RATE_LIMITED'] : null;
+}
+
+/** 客户端 IP：反向代理（默认信任回环）下取 X-Forwarded-For 首个地址；其余场景用 REMOTE_ADDR。 */
+function cyrene_client_ip(): string
+{
+    $remote = (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    if (in_array($remote, ['127.0.0.1', '::1'], true)) {
+        $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+        if (is_string($forwarded) && $forwarded !== '') {
+            $first = trim(explode(',', $forwarded)[0]);
+            if ($first !== '') {
+                return $first;
+            }
+        }
+    }
+    return $remote;
+}
+
+function cyrene_is_loopback(): bool
+{
+    return in_array((string)($_SERVER['REMOTE_ADDR'] ?? ''), ['127.0.0.1', '::1'], true);
 }
 
 function cyrene_extract_bearer(): ?string
@@ -277,6 +304,7 @@ function cyrene_host_allowed(array $config): bool
     }
     $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
     $host = preg_replace('/:\d+$/', '', $host) ?? $host;
+    $host = trim($host, '[]'); // [::1]:8080 → ::1
     if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1' || str_ends_with($host, '.localhost')) {
         return true;
     }
@@ -301,7 +329,15 @@ function cyrene_serve_static(string $path, string $publicDir): void
         echo 'Not Found';
         return;
     }
+    $basename = basename($target);
     $extension = strtolower(pathinfo($target, PATHINFO_EXTENSION));
+    if ($extension === 'php' || str_starts_with($basename, '.')) {
+        // 不回显入口源码 / .htaccess / 点文件
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Not Found';
+        return;
+    }
     $types = [
         'html' => 'text/html; charset=utf-8', 'js' => 'text/javascript; charset=utf-8',
         'mjs' => 'text/javascript; charset=utf-8', 'css' => 'text/css; charset=utf-8',
@@ -319,11 +355,21 @@ function cyrene_serve_static(string $path, string $publicDir): void
     readfile($target);
 }
 
-function cyrene_read_json_body(): array
+function cyrene_read_json_body(int $maxBytes = 65536): array
 {
-    $text = file_get_contents('php://input');
-    $decoded = json_decode($text === false ? '' : $text, true);
+    $text = cyrene_read_body_limited($maxBytes);
+    $decoded = json_decode($text === null ? '' : $text, true);
     return is_array($decoded) ? $decoded : [];
+}
+
+/** 请求体限长读取（超限返回 null）；chunked 请求同样受 maxlen 约束。 */
+function cyrene_read_body_limited(int $maxBytes): ?string
+{
+    $data = file_get_contents('php://input', false, null, 0, $maxBytes + 1);
+    if ($data === false) {
+        return '';
+    }
+    return strlen($data) > $maxBytes ? null : $data;
 }
 
 function cyrene_send_json(mixed $body, int $status = 200): void
