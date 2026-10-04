@@ -42,24 +42,18 @@ public sealed class RerankerEngine : IDisposable
         Console.Error.WriteLine($"[rerank] loading tokenizer: {tokenizerPath}");
         var tokenizer = HfUnigramTokenizer.FromTokenizerJson(tokenizerPath);
         Console.Error.WriteLine($"[rerank] loading onnx session: {onnxPath}");
-        var options = new SessionOptions();
-        // 线程语义与 EmbeddingEngine 一致：未设置 = 默认半核（max 4）；
-        // 0 = ORT 默认全核（不设置）；>0 = 显式上限（CYRENE_EMBED_THREADS）
-        var threads = EmbeddingEngine.ReadThreadsEnv();
-        if (threads > 0)
-        {
-            options.IntraOpNumThreads = Math.Min(threads, Environment.ProcessorCount);
-        }
-        else if (threads < 0 && Environment.ProcessorCount > 1)
-        {
-            options.IntraOpNumThreads = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
-        }
-        options.AppendExecutionProvider_CPU();
+        var options = CreateSessionOptions();
         var session = new InferenceSession(onnxPath, options);
         Console.Error.WriteLine(
             $"[rerank] session ready (inputs={string.Join(",", session.InputMetadata.Keys)}, threads={(options.IntraOpNumThreads > 0 ? options.IntraOpNumThreads.ToString() : "default")})");
         return new RerankerEngine(session, tokenizer, maxLength);
     }
+
+    /// <summary>
+    /// 会话选项（线程语义与 EmbeddingEngine 共用同一入口；verify-threads
+    /// 自检对两侧 IntraOpNumThreads 对账，防止以后单侧改动产生分歧）。
+    /// </summary>
+    internal static SessionOptions CreateSessionOptions() => EmbeddingEngine.CreateSessionOptions();
 
     /// <summary>逐条打分（输入顺序返回）。score = 相关性 logit，越大越相关。</summary>
     public float[] Score(string query, IReadOnlyList<string> documents)

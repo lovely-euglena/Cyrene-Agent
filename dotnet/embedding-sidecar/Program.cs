@@ -6,6 +6,7 @@ using CyreneEmbedSidecar;
 //   verify-rerank <rerankerDir> <dump.json>  reranker 句对 tokenIds + logits 对账
 //   verify-sqlite [workDir]         SQLite 向量库自检（schema/迁移/rev/检索对账）
 //   verify-pandoc [pandocPath]      Pandoc 转换自检（纯函数 + 本机真实转换）
+//   verify-threads                  CYRENE_EMBED_THREADS 线程语义三分支自检（无需模型）
 //   pandoc-probe [pandocPath]       探测 Pandoc 版本与可读格式（设置页检测，JSON 输出）
 //   bench  <modelDir> [textCount]   性能基准（自生成混合长短文本）
 //   serve  <modelDir>               stdio 帧协议服务（Electron spawn）
@@ -39,6 +40,8 @@ switch (command)
         return 0;
     case "verify-pandoc":
         return PandocSelfTest.Run(args.Length > 1 ? args[1] : null);
+    case "verify-threads":
+        return ThreadsSelfTest.Run();
     case "pandoc-probe":
         return PandocProbeCommand.Run(args.Length > 1 ? args[1] : null);
     case "bench":
