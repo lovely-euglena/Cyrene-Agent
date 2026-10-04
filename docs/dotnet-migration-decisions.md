@@ -470,8 +470,13 @@
   （提交失败回滚追加 / 无新事件补提交补推送）；git 调用无输出超时 + AbortSignal 取消 + 默认隔离 env；
   错误码可重试分级；`.gitattributes` 缺规则自动追加；错误 index 改分片物理行号（clone 同步上报）；
   规范序比较器抽公共导出；测试计数修正并补 9 个用例。
-- **验证（Windows 本地）**：适配器测试 **17/17**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
+- **复审修复（2026-10-05）**：默认隔离 env 与 simple-git 3.36 安全拦截对齐（argv-parser 全集放行：
+  `PAGER`/`GIT_PAGER`/`GIT_EXTERNAL_DIFF`/`GIT_PROXY_COMMAND`/`GIT_TEMPLATE_DIR`/`GIT_CONFIG_COUNT` 等，
+  宿主含受限键仍可用，含用例）；`healPendingState` 先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例；文档注明隔离全局配置会停用用户 `credential.helper`（HTTPS 走内联 PAT）。
+- **验证（Windows 本地）**：适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 /
   强推恢复 / 半截行 / 幂等 / 纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 /
-  提交回滚 / 未推送自愈 / 参数校验 / 同设备冲突）；`vitest run src/main/sync src/pwa` **68/68**；
+  提交回滚 / 未推送自愈 / 参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+  `vitest run src/main/sync src/pwa` **70/70**；
   `tsc main` / `tsc preload` / `tsc renderer` 三端 0 错误。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7B。

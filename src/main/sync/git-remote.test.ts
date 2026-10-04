@@ -382,4 +382,56 @@ describe("GitRepoRemote（IKJN7B）", () => {
     expect(existsSync(path.join(root, "conflict-a2", ".git", "rebase-merge"))).toBe(false);
     expect(existsSync(path.join(root, "conflict-a2", ".git", "rebase-apply"))).toBe(false);
   }, TIMEOUT);
+
+  it("宿主 env 含受限键（PAGER / GIT_*）时仍可 init/push（unsafe 放行覆盖全集）", async () => {
+    const remote = await newRemote("hostenv");
+    const templateDir = path.join(root, "empty-templates");
+    mkdirSync(templateDir, { recursive: true });
+    const saved = {
+      PAGER: process.env.PAGER,
+      GIT_PAGER: process.env.GIT_PAGER,
+      GIT_EXTERNAL_DIFF: process.env.GIT_EXTERNAL_DIFF,
+      GIT_PROXY_COMMAND: process.env.GIT_PROXY_COMMAND,
+      GIT_TEMPLATE_DIR: process.env.GIT_TEMPLATE_DIR,
+      GIT_CONFIG_COUNT: process.env.GIT_CONFIG_COUNT,
+    };
+    process.env.PAGER = "cat";
+    process.env.GIT_PAGER = "cat";
+    process.env.GIT_EXTERNAL_DIFF = "";
+    process.env.GIT_PROXY_COMMAND = "";
+    process.env.GIT_TEMPLATE_DIR = templateDir;
+    process.env.GIT_CONFIG_COUNT = "0";
+    try {
+      const a = adapter("hostenv", "hostenv-a", remote);
+      await a.init();
+      const outcome = await a.push([ev("he1", "hostenv-a", 1, 1)]);
+      expect(outcome.appended).toBe(1);
+      expect(outcome.pushed).toBe(true);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }, TIMEOUT);
+
+  it("取消：signal 已中止时 git 调用以 aborted 错误码失败", async () => {
+    const remote = await newRemote("abort");
+    const controller = new AbortController();
+    const a = new GitRepoRemote({
+      dir: path.join(root, "abort"),
+      deviceId: "abort-a",
+      remoteUrl: remote,
+      author: { name: "tester", email: "tester@example.com" },
+      signal: controller.signal,
+    });
+    controller.abort();
+    let code = "";
+    try {
+      await a.push([ev("ab1", "abort-a", 1, 1)]);
+    } catch (error) {
+      code = (error as GitRemoteError).code;
+    }
+    expect(code).toBe("aborted");
+  }, TIMEOUT);
 });

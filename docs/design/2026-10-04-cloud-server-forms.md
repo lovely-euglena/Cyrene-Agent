@@ -80,7 +80,7 @@
   错误码可重试分级（git / timeout / push_rejected 可重试，conflict / aborted / invalid_config 需处理）；
 - 适配器测试（独立 bare 远端 + 双工作副本）：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
   纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
-  参数校验 / 同设备冲突，**17/17**；桌面端接线（事件导出器 / 物化视图）属 IKJK2I，后续接入。
+  参数校验 / 同设备冲突 / 宿主受限 env / 取消，**19/19**；桌面端接线（事件导出器 / 物化视图）属 IKJK2I，后续接入。
 
 ### 4.4 PHP 版（IKJN7C）
 
@@ -96,8 +96,12 @@
 
 ### IKJN7B 批次（Git 版适配器）
 
-- 适配器测试 **17/17**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
+- 适配器测试 **19/19**（独立 bare 远端 + 双工作副本：收敛 / 离线分叉 / 强推恢复 / 半截行 / 幂等 /
   纯本地 / 行尾规则 / 收缩重读 / 追加自愈 / 坏行物理行号 / init 脱敏 / 提交回滚 / 未推送自愈 /
-  参数校验 / 同设备冲突）；
-- 组合回归：`vitest run src/main/sync src/pwa` **68/68**；`tsc main` / `tsc preload` /
+  参数校验 / 同设备冲突 / 宿主受限 env / 取消）；
+- 组合回归：`vitest run src/main/sync src/pwa` **70/70**；`tsc main` / `tsc preload` /
   `tsc renderer` 三端 0 错误。
+- 复审修复（2026-10-05）：默认隔离 env 与 simple-git 安全拦截对齐——按 argv-parser 全集补齐
+  `unsafe` 开关（`PAGER` / `GIT_EXTERNAL_DIFF` / `GIT_PROXY_COMMAND` / `GIT_TEMPLATE_DIR` /
+  `GIT_CONFIG_COUNT` 等），宿主含受限键仍可用（含用例）；自愈先修剪半截尾行；`ext::` 等 `::` 协议形式拒绝；
+  补取消（aborted）用例。

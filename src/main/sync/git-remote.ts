@@ -21,7 +21,11 @@
  * - 所有 git 调用带无输出超时（`timeoutMs`，默认 120s；simple-git timeout.block）；
  * - 可经 `signal`（AbortSignal）取消（simple-git abort 插件）；
  * - 默认注入隔离环境：`GIT_CONFIG_NOSYSTEM=1` + 专用 `GIT_CONFIG_GLOBAL`（`<dir>/.git/cyrene-sync.gitconfig`）
- *   + `GIT_TERMINAL_PROMPT=0`（隔离用户全局配置与凭证提示；`env` 传入则完全覆盖默认）。
+ *   + `GIT_TERMINAL_PROMPT=0`（隔离用户全局配置与凭证提示；`env` 传入则完全覆盖默认）；
+ * - simple-git 3.36 对可执行外部程序的 env/config 键默认拦截；本适配器按 argv-parser 全集显式放行
+ *   对应 `unsafe` 开关（env 来源为可信进程环境），避免宿主 `PAGER` / `GIT_*` 键导致调用失败；
+ * - 隔离全局配置会一并停用用户 `credential.helper`：HTTPS 鉴权走 `remoteUrl` 内联 PAT，SSH 走 agent
+ *   （`SSH_AUTH_SOCK` 等进程 env 仍继承）——接线（IKJK2I）时需确认 token 路径已覆盖。
  *
  * 错误可重试分级（`GitRemoteError.code`）：
  * - 可重试：`git`（网络 / 未知）、`timeout`（无输出超时）、`push_rejected`（重推仍被拒）；
@@ -142,7 +146,7 @@ export class GitRepoRemote {
     if (config.remoteUrl !== undefined && !isValidRemoteUrl(config.remoteUrl)) {
       throw new GitRemoteError(
         "invalid_config",
-        "remoteUrl 仅支持 http(s)/ssh/git/file / 本地路径 / scp 风格，且不得以 - 开头或含空白",
+        "remoteUrl 仅支持 http(s)/ssh/git/file / 本地路径 / scp 风格，且不得以 - 开头、含空白或 :: 协议形式",
       );
     }
     const branch = config.branch?.trim();
@@ -166,11 +170,17 @@ export class GitRepoRemote {
         timeout: { block: this.timeoutMs },
         // simple-git 默认拦截可执行外部程序的 env/config 键（来源不可信假设）。本适配器的
         // env 来自应用进程 / 调用方（可信），且隔离配置路径由本适配器构造；命令均非交互。
+        // 开关覆盖 @simple-git/argv-parser 的 env 键全集（避免宿主 PAGER / GIT_* 等键导致全部调用失败）：
         unsafe: {
-          allowUnsafeConfigPaths: true, // GIT_CONFIG_GLOBAL / GIT_CONFIG_NOSYSTEM（隔离用户全局配置）
-          allowUnsafeEditor: true, // 继承进程 env（命令均带 -m / 非交互，不会实际打开编辑器）
-          allowUnsafeSshCommand: true, // 保留用户 GIT_SSH_COMMAND（SSH remote 依赖）
-          allowUnsafeAskPass: true, // 保留 GIT_ASKPASS / SSH_ASKPASS（凭证助手）
+          allowUnsafeConfigPaths: true, // GIT_CONFIG_GLOBAL / GIT_CONFIG_NOSYSTEM / GIT_EXEC_PATH / PREFIX
+          allowUnsafeConfigEnvCount: true, // GIT_CONFIG_COUNT / GIT_CONFIG_KEY_* / GIT_CONFIG_VALUE_*
+          allowUnsafeEditor: true, // EDITOR / GIT_EDITOR / GIT_SEQUENCE_EDITOR（命令均带 -m / 非交互）
+          allowUnsafePager: true, // PAGER / GIT_PAGER（子进程 stdout 为管道，不会实际分页）
+          allowUnsafeDiffExternal: true, // GIT_EXTERNAL_DIFF（本适配器只跑 --name-only，不触发内容 diff）
+          allowUnsafeGitProxy: true, // GIT_PROXY_COMMAND（仅 git:// 传输使用）
+          allowUnsafeTemplateDir: true, // GIT_TEMPLATE_DIR（init/clone 模板目录）
+          allowUnsafeSshCommand: true, // GIT_SSH / GIT_SSH_COMMAND（SSH remote 依赖）
+          allowUnsafeAskPass: true, // GIT_ASKPASS / SSH_ASKPASS（凭证助手）
         },
         ...(this.config.signal !== undefined ? { abort: this.config.signal } : {}),
       });
@@ -386,6 +396,8 @@ export class GitRepoRemote {
    */
   private async healPendingState(): Promise<{ pushed: boolean; commit: string | null }> {
     let commit: string | null = null;
+    // 先按 appendShard 同规则修剪半截尾行，避免自愈把未完成行固化进历史
+    this.trimPartialTail(this.shardPath);
     const status = (await this.git.raw(["status", "--porcelain", "--", this.shardName])).trim();
     if (status.length > 0) {
       await this.runGit(["add", "--", this.shardName], "add");
@@ -415,14 +427,21 @@ export class GitRepoRemote {
   // ── 分片文件 ──
 
   private appendShard(shardPath: string, events: readonly SyncEventV0[]): void {
-    if (existsSync(shardPath)) {
-      // 自愈：上次写入中断留下半截尾行 → 先修剪到最后一个换行
-      const bytes = readFileSync(shardPath);
-      const end = lastNewlineEnd(bytes);
-      if (end < bytes.length) writeFileSync(shardPath, bytes.subarray(0, end));
-    }
+    this.trimPartialTail(shardPath);
     const text = events.map((event) => JSON.stringify(event)).join("\n") + "\n";
     appendFileSync(shardPath, Buffer.from(text, "utf8"));
+  }
+
+  /** 修剪半截尾行（写入中断自愈：只保留到最后一个换行）；返回是否发生修剪。 */
+  private trimPartialTail(shardPath: string): boolean {
+    if (!existsSync(shardPath)) return false;
+    const bytes = readFileSync(shardPath);
+    const end = lastNewlineEnd(bytes);
+    if (end < bytes.length) {
+      writeFileSync(shardPath, bytes.subarray(0, end));
+      return true;
+    }
+    return false;
   }
 
   private readExistingEventIds(shardPath: string): Set<string> {
@@ -540,7 +559,10 @@ function hasShardAttributeRule(content: string): boolean {
 }
 
 function isValidRemoteUrl(url: string): boolean {
+  // 拒绝：空 / 前导 -（选项注入）/ 空白（含空格路径不受支持——如需要请传自定义 gitBinary 方案）/
+  // transport::address 形式（如 ext::<cmd> 可执行任意命令；IPv6 字面量不受影响）
   if (url.length === 0 || url.startsWith("-") || /[\s\u0000-\u001f]/u.test(url)) return false;
+  if (/^[a-z][a-z0-9+.-]*::/iu.test(url)) return false;
   if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(url)) {
     return /^(https?|ssh|git|file):\/\//iu.test(url);
   }
