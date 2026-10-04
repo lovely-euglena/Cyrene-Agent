@@ -25,6 +25,10 @@ import { AgentRuntimeError } from "../agent-runtime-error";
 import { classifyModelFailure } from "../vendors/model-error-classifier";
 import { runModelRequestWithRetry } from "../vendors/model-retry-runner";
 import { readRetryAfterMs } from "../vendors/model-retry-policy";
+import { callLLMViaLlmHost, shouldRouteViaLlmHost } from "../vendors/llm-host-facade";
+
+/** llm-host 回退告警只发一次（进程级；host 恢复后由重启自然复位）。 */
+let warnedLlmHostFallback = false;
 import type { ModelRetryStatus } from "../../../shared/model-retry";
 import {
   composePromptLayers,
@@ -131,6 +135,31 @@ export async function callLLM(
   };
 
   let forceNonStreaming = false;
+  // 双轨接入（Phase 2 / H3）：llm-host 双开 + openai 流式 → 作业式 .NET 通道。
+  // host 丢失（E_LLM_HOST_LOST）且无可见增量 → 回退 TS 直连（告警一次）。
+  if (shouldRouteViaLlmHost(vendorConfig, chatRequest)) {
+    try {
+      return await callLLMViaLlmHost({
+        adapter,
+        request: chatRequest,
+        config: vendorConfig,
+        timeoutMs: config.totalTimeoutMs,
+        signal,
+        onDelta: (delta) => {
+          if (delta.type === "reasoning_delta") onReasoningDelta?.(delta.delta);
+          if (delta.type === "text_delta") onTextDelta?.(delta.delta);
+        },
+        onRetryStatus,
+      });
+    } catch (error) {
+      const isHostLost = error instanceof AgentRuntimeError && error.code === "E_LLM_HOST_LOST";
+      if (!isHostLost) throw error;
+      if (!warnedLlmHostFallback) {
+        warnedLlmHostFallback = true;
+        console.warn("[llm-host] 宿主不可用，本会话回退 TS 直连（双轨回退）:", error.message);
+      }
+    }
+  }
   const response = await runModelRequestWithRetry(async (attempt) => {
     if (forceNonStreaming) return requestNonStreaming(attempt.signal);
     let receivedStreamDelta = false;

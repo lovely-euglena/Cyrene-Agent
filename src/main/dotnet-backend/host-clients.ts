@@ -33,6 +33,11 @@ export class LineHostClient {
     this.timeoutMs = timeoutMs;
   }
 
+  /** 子类追加启动参数（如 --data-dir）。 */
+  protected extraArgs(): string[] {
+    return [];
+  }
+
   async ensureStarted(): Promise<boolean> {
     if (this.proc && !this.exited) return true;
     if (this.starting) return this.starting;
@@ -41,7 +46,7 @@ export class LineHostClient {
       if (!exe) return false;
       // mode 支持数组（["dotnet", dll, "--tool-host"] 形态——argv[0] 是
       // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）
-      const argv = Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode];
+      const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode]), ...this.extraArgs()];
       const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       if (!child?.stdout?.readable || !child?.stdin) return false;
       this.proc = child;
