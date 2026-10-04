@@ -125,7 +125,12 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
     /** IKJK51：headless 执行——host 模式先确保管道连接（历史经 sched.report 回写宿主）。 */
     async runScheduledTaskForHeadless(taskId: string, historyId?: string, fireAt?: string) {
       if (deps.hostClient) await deps.hostClient.ensureConnected();
-      const task = store.getTasks().find((t) => t.id === taskId);
+      let task = store.getTasks().find((t) => t.id === taskId);
+      if (!task && deps.hostClient) {
+        // 连接成功但快照未到位（握手竞态）：补拉一次
+        await deps.hostClient.refreshTasks();
+        task = store.getTasks().find((t) => t.id === taskId);
+      }
       if (!task) return { ok: false, error: "task not found" };
       try {
         await runner.runScheduledTask(task, fireAt ? new Date(fireAt) : new Date(), false, historyId);
