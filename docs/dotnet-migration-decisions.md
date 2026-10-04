@@ -359,4 +359,7 @@
   客户端 IP 分区、远程 healthz 鉴权语义恢复（冒烟新增 XFF 断言）；② Linux `umask(0o077)`（建库前）+
   目录 0700 提前至首次连接前 + DB/-wal/-shm 全部 0600（附属文件不再以宽松权限落盘）；③ 设备名
   UTF-16 截断代理对安全（63a+emoji → 63a）。冒烟 **39/39**（Windows；Linux 40，含 -wal/-shm 权限）。
+- **#9 复审补丁（⛔ 1 阻断 + 1 改进，均已修复）**：① 设备管理端点补 principal 校验——`GET /v1/devices`
+  仅 master；rotate/revoke = master 任意 / device 仅自身，越权 403（`E_FORBIDDEN`），冒烟含反向断言；
+  ② healthz 设备计数改 `COUNT(*)` 聚合（O(1)，不再物化整表）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2K。

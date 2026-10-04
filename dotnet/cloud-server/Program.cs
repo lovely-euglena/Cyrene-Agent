@@ -149,7 +149,7 @@ app.MapGet("/healthz", (EventStore store) =>
         status = "ok",
         rssMB = Math.Round(process.WorkingSet64 / 1024.0 / 1024.0, 1),
         cursor = store.CurrentCursor(), // O(1)：替代全表 COUNT(*)
-        devices = authStore.ListDevices().Count(d => !d.Revoked),
+        devices = authStore.CountActiveDevices(), // O(1)：COUNT 聚合，不物化整表
     });
 });
 
@@ -174,11 +174,20 @@ app.MapPost("/v1/pair", (AuthStore auth, PairRedeemRequest request) =>
     return Results.Json(new { deviceId = outcome.DeviceId, name = outcome.Name, token = outcome.Token });
 }).RequireRateLimiting("pair");
 
-app.MapGet("/v1/devices", (AuthStore auth) =>
-    Results.Json(new { devices = auth.ListDevices() })).RequireRateLimiting("sync");
+// GET /v1/devices：设备清单仅主控（device token → 403，防越权枚举）
+app.MapGet("/v1/devices", (HttpContext context, AuthStore auth) =>
+    IsMaster(context)
+        ? Results.Json(new { devices = auth.ListDevices() })
+        : Results.Json(new { code = CloudApi.Forbidden }, statusCode: StatusCodes.Status403Forbidden))
+    .RequireRateLimiting("sync");
 
-app.MapPost("/v1/devices/{deviceId}/revoke", (AuthStore auth, string deviceId) =>
+// POST /v1/devices/{id}/revoke：master 任意；device 仅自身（越权 → 403）
+app.MapPost("/v1/devices/{deviceId}/revoke", (HttpContext context, AuthStore auth, string deviceId) =>
 {
+    if (!CanManageDevice(context, deviceId))
+    {
+        return Results.Json(new { code = CloudApi.Forbidden }, statusCode: StatusCodes.Status403Forbidden);
+    }
     if (!auth.Revoke(deviceId))
     {
         return Results.NotFound(new { code = CloudApi.DeviceNotFound });
@@ -186,8 +195,13 @@ app.MapPost("/v1/devices/{deviceId}/revoke", (AuthStore auth, string deviceId) =
     return Results.Json(new { deviceId, revoked = true });
 }).RequireRateLimiting("sync");
 
-app.MapPost("/v1/devices/{deviceId}/rotate", (AuthStore auth, string deviceId) =>
+// POST /v1/devices/{id}/rotate：master 任意；device 仅自身（越权 → 403，防明文 token 被窃取）
+app.MapPost("/v1/devices/{deviceId}/rotate", (HttpContext context, AuthStore auth, string deviceId) =>
 {
+    if (!CanManageDevice(context, deviceId))
+    {
+        return Results.Json(new { code = CloudApi.Forbidden }, statusCode: StatusCodes.Status403Forbidden);
+    }
     var (ok, token) = auth.Rotate(deviceId);
     if (!ok)
     {
@@ -305,6 +319,17 @@ static string? ExtractBearer(HttpContext context)
         : null;
 }
 
+static bool IsMaster(HttpContext context) =>
+    context.Items["principal"]?.ToString() == "master";
+
+// 设备管理权限：master 可管理全部；device 仅能操作自身（rotate/revoke 自己）
+static bool CanManageDevice(HttpContext context, string deviceId)
+{
+    var principal = context.Items["principal"]?.ToString();
+    return principal == "master"
+        || (principal is not null && string.Equals(principal, deviceId, StringComparison.Ordinal));
+}
+
 static bool TokenEquals(string left, string right) =>
     CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(left), Encoding.UTF8.GetBytes(right));
 
@@ -375,6 +400,7 @@ internal static class CloudApi
     public const long MaxPushBodyBytes = 10 * 1024 * 1024;
 
     public const string Unauthorized = "E_UNAUTHORIZED";
+    public const string Forbidden = "E_FORBIDDEN";
     public const string RateLimited = "E_RATE_LIMITED";
     public const string HostNotAllowed = "E_HOST_NOT_ALLOWED";
     public const string PairCode = "E_PAIR_CODE";
