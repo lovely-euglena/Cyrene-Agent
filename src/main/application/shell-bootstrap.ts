@@ -53,6 +53,8 @@ export interface ShellDependencies {
     togglePetWindow(): void;
     /** 桌宠拖动模式兜底（Windows 透明窗 forward 竞态保险）。 */
     setPetDragMode?(enabled: boolean): boolean;
+    /** 桌宠拖动模式当前状态（分离托盘连接建立时同步勾选）。 */
+    getPetDragMode?(): boolean;
   }): Tray | import("../tray-detached").TrayLike;
   flushTokenUsage(): void;
   /** banner + 启动日志；测试可覆盖避免控制台噪声。 */
@@ -142,6 +144,7 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
     requestActivation: (request) => activation.request(request),
     togglePetWindow: () => windowManager.togglePetWindow(),
     setPetDragMode: (enabled) => windowManager.setPetDragMode(enabled),
+    getPetDragMode: () => windowManager.getPetDragMode(),
   });
 
   // 9. 注册已创建资源的退出清理（固定阶段）

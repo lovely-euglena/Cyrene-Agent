@@ -1543,6 +1543,7 @@ createTray: (input) => {
             requestActivation: input.requestActivation,
             togglePetWindow: input.togglePetWindow,
             setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
+            getPetDragMode: () => input.getPetDragMode?.() ?? false,
             quit: () => app.quit(),
           });
           if (detached) return detached;

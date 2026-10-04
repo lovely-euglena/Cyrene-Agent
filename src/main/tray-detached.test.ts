@@ -14,7 +14,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import * as fs from "node:fs";
-import { dispatchLine, isDetachedTrayPipeAvailable, showTrayBalloon } from "./tray-detached";
+import { buildConnectFrames, dispatchLine, isDetachedTrayPipeAvailable, showTrayBalloon } from "./tray-detached";
 
 const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
 const originalPlatform = process.platform;
@@ -104,6 +104,28 @@ describe("dispatchLine（托盘命令路由）", () => {
     expect(input.setPetDragMode).toHaveBeenCalledWith(true);
   });
 
+  it("drag-mode 结果回执：应用成功 → 回执 checked=true", () => {
+    const input = makeInput();
+    const notify = vi.fn();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode", checked: true }), input, notify);
+    expect(notify).toHaveBeenCalledWith({ op: "tray.drag-mode-state", checked: true });
+  });
+
+  it("drag-mode 结果回执：宿主拒绝 → 回执 checked=false（勾选回退对齐）", () => {
+    const input = makeInput();
+    input.setPetDragMode.mockReturnValue(false);
+    const notify = vi.fn();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode", checked: true }), input, notify);
+    expect(notify).toHaveBeenCalledWith({ op: "tray.drag-mode-state", checked: false });
+  });
+
+  it("非 drag-mode 命令不回执状态帧", () => {
+    const input = makeInput();
+    const notify = vi.fn();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "chat" }), input, notify);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("基础动作路由：chat / toggle-pet / quit；坏帧与非 cmd 帧静默", () => {
     const input = makeInput();
     dispatchLine(JSON.stringify({ op: "cmd", action: "chat" }), input);
@@ -116,5 +138,21 @@ describe("dispatchLine（托盘命令路由）", () => {
     expect(() => dispatchLine("{bad json", input)).not.toThrow();
     dispatchLine(JSON.stringify({ op: "tray.ready" }), input);
     expect(input.requestActivation).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildConnectFrames（连接建立握手帧）", () => {
+  it("tray.ready + 拖动模式勾选同步（缺省 false）", () => {
+    expect(buildConnectFrames({})).toEqual([
+      { op: "tray.ready" },
+      { op: "tray.drag-mode-state", checked: false },
+    ]);
+  });
+
+  it("getPetDragMode=true → 同步 checked=true", () => {
+    expect(buildConnectFrames({ getPetDragMode: () => true })).toContainEqual({
+      op: "tray.drag-mode-state",
+      checked: true,
+    });
   });
 });

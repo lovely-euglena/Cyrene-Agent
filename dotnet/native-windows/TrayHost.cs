@@ -16,7 +16,9 @@ namespace CyreneNative;
 /// 用户把桌宠/窗口全关后 Electron 可整体退出，仅托盘驻留，从托盘再拉起。
 /// 通信：named pipe cyrene-tray（JSON 行协议，\n 分隔）：
 ///   Electron → tray：{"op":"tray.ready"} / {"op":"tray.icon","path":...} /
-///                    {"op":"tray.notify","text":...} / {"op":"tray.byefrom.electron"}
+///                    {"op":"tray.notify","text":...} /
+///                    {"op":"tray.drag-mode-state","checked":bool}（勾选对齐）/
+///                    {"op":"tray.byefrom.electron"}
 ///   tray → Electron：{"op":"cmd","action":"chat|sidebar|settings|toggle-pet|show-pet|quit"}
 /// Electron 直启（未经过托盘 spawn）或 pipe 断开时走 Electron 内置 Tray 兜底，
 /// 两种模式对用户等价。
@@ -25,6 +27,8 @@ public sealed class TrayHost
 {
     private const string PipeName = "cyrene-tray";
     private WF.NotifyIcon? _notifyIcon;
+    /// <summary>「桌宠拖动模式」菜单项（Electron 状态帧按实际结果对齐勾选）。</summary>
+    private WF.ToolStripMenuItem? _dragModeItem;
     private System.Diagnostics.Process? _electron;
     private NamedPipeServerStream? _pipe;
     private CancellationTokenSource? _pipeCts;
@@ -122,10 +126,12 @@ public sealed class TrayHost
         menu.Items.Add("显示/隐藏桌宠", null, (_, _) => SendCmd("toggle-pet"));
         // 桌宠拖动模式（对齐 Electron 内置托盘菜单项；宿主 setPetDragMode 设置目标状态）
         var dragItem = new WF.ToolStripMenuItem("桌宠拖动模式") { CheckOnClick = false };
+        _dragModeItem = dragItem;
         dragItem.Click += (_, _) =>
         {
             // 勾选状态即目标状态，随指令透传（修复「只能开不能关」）；
-            // 托盘侧保守翻转勾选，宿主指令失败时不回滚（下一轮菜单会重新对齐）。
+            // 点击先保守翻转给即时反馈，宿主执行后回执 tray.drag-mode-state
+            // 帧（见 HandleElectronMessage），按实际结果再次对齐。
             dragItem.Checked = !dragItem.Checked;
             SendCmd("drag-mode", dragItem.Checked);
         };
@@ -394,6 +400,20 @@ public sealed class TrayHost
                         try { if (_notifyIcon is not null) _notifyIcon.Text = text.Length > 63 ? text[..63] : text; }
                         catch { /* 提示更新失败不致命 */ }
                     }));
+                    break;
+                case "tray.drag-mode-state":
+                    // Electron 侧拖动模式实际状态（连接建立时同步 / 命令执行结果回执）：
+                    // 勾选按宿主真实结果对齐，不再只靠点击时的保守翻转。
+                    if (doc.RootElement.TryGetProperty("checked", out var dragEl)
+                        && dragEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    {
+                        var dragChecked = dragEl.GetBoolean();
+                        _dispatcher?.BeginInvoke(new Action(() =>
+                        {
+                            try { if (_dragModeItem is not null) _dragModeItem.Checked = dragChecked; }
+                            catch { /* 菜单更新失败不致命 */ }
+                        }));
+                    }
                     break;
                 default:
                     System.Diagnostics.Debug.WriteLine($"[TrayHost] unknown op: {op}");
