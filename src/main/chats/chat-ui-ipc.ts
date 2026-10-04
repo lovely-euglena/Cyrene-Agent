@@ -1,4 +1,6 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, clipboard } from "electron";
+import { stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors";
@@ -177,6 +179,36 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       console.error("[Cyrene] ingestFiles ERROR:", err?.message || err);
       return [];
     }
+  });
+
+  ipc.handle(IPC.CHAT_PASTE_FILES, async () => {
+    const attachments: ReturnType<typeof describePendingAttachment>[] = [];
+    const seenPaths = new Set<string>();
+    try {
+      for (const item of await clipboard.read()) {
+        if (!item.types.includes("text/uri-list")) continue;
+        const uriList = await (await item.getType("text/uri-list")).text();
+        for (const line of uriList.split(/\r?\n/)) {
+          const value = line.trim();
+          if (!value || value.startsWith("#")) continue;
+          try {
+            const url = new URL(value);
+            if (url.protocol !== "file:") continue;
+            const filePath = fileURLToPath(url);
+            if (seenPaths.has(filePath)) continue;
+            const fileStat = await stat(filePath);
+            if (!fileStat.isFile()) continue;
+            seenPaths.add(filePath);
+            attachments.push(describePendingAttachment(filePath));
+          } catch {
+            // 忽略无效 URI、已删除文件和目录。
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("[Cyrene] pasteClipboardFiles ERROR:", err?.message || err);
+    }
+    return attachments;
   });
 
   ipc.handle(IPC.CHAT_PROCESS_DOCUMENTS, async (event, payload: unknown) => {

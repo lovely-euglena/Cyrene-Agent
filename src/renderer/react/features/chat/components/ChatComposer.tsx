@@ -20,6 +20,8 @@ import chatWelcomeUrl from "../../../assets/welcome/chat.png?url";
 import codeWelcomeUrl from "../../../assets/welcome/code.png?url";
 import learnWelcomeUrl from "../../../assets/welcome/learn.png?url";
 import workWelcomeUrl from "../../../assets/welcome/work.png?url";
+import { FileIcon, hasFileIconMapping } from "./file-icon";
+import { vscodeIconForFile } from "./vscodeFileIcon";
 
 interface ChatComposerProps {
   value: string;
@@ -55,6 +57,8 @@ interface ChatComposerProps {
   onScreenshot: () => void;
   /** 粘贴图片（Ctrl+V 剪贴板含图片且无文本时触发）；由父级落临时文件并追加附件。 */
   onPasteImage?: (file: File) => void;
+  /** 粘贴文件管理器复制的本地文件；路径由主进程从系统剪贴板读取。 */
+  onPasteFiles?: () => void;
   onChooseSticker: (id: string) => void;
   activeModelProfileId?: string;
   onSelectModelProfile?: (id: string) => void;
@@ -119,6 +123,13 @@ function getNextWelcomeGreetingDelayMs(date: Date) {
 
 /** 粘贴图片 MIME 白名单：与主进程截图临时文件的校验口径一致。 */
 const PASTE_IMAGE_MIME_WHITELIST = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+function ComposerAttachmentFileIcon({ fileName }: { fileName: string }) {
+  const editorIcon = hasFileIconMapping(fileName) ? null : vscodeIconForFile(fileName);
+  return editorIcon
+    ? <img src={editorIcon} alt="" aria-hidden="true" draggable={false} className="cy-composer__attachment-icon" />
+    : <FileIcon fileName={fileName} className="cy-composer__attachment-icon" />;
+}
 
 interface EnabledSticker {
   id: string;
@@ -284,6 +295,7 @@ export function ChatComposer({
   onRemoveAttachment,
   onScreenshot,
   onPasteImage,
+  onPasteFiles,
   onChooseSticker,
   activeModelProfileId,
   onSelectModelProfile,
@@ -379,9 +391,41 @@ export function ChatComposer({
   // 浏览器剪贴板常同时带 text/plain + image/png（复制网页富文本），
   // 粗暴拦截会把用户想粘的文字吃掉。大小/临时文件由父级 handlePastedImage 负责。
   const handlePaste = (event: ClipboardEvent<HTMLElement>) => {
-    if (!onPasteImage) return;
     const data = event.clipboardData;
-    if (!data || Array.from(data.types).includes("text/plain")) return;
+    if (!data) return;
+    const types = Array.from(data.types);
+    const hasPlainText = types.includes("text/plain");
+    const uriList = types.includes("text/uri-list") ? data.getData("text/uri-list") : "";
+    const hasFileUri = uriList.split(/\r?\n/).some((line) => line.trim().toLowerCase().startsWith("file://"));
+    const clipboardFiles = Array.from(data.files);
+    const hasImageFileItem = Array.from(data.items).some((item) => item.kind === "file" && item.type.startsWith("image/"));
+
+    // 文件管理器复制的本地文件使用系统 URI 列表；路径由主进程安全读取。
+    if (onPasteFiles && (
+      hasFileUri
+      || (types.includes("text/uri-list") && !hasPlainText && !hasImageFileItem)
+      || (types.includes("Files") && clipboardFiles.length === 0 && !hasImageFileItem)
+    )) {
+      event.preventDefault();
+      onPasteFiles();
+      return;
+    }
+
+    const itemFiles = clipboardFiles.length > 0
+      ? clipboardFiles
+      : Array.from(data.items)
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null);
+    const nonImageFiles = itemFiles.filter((file) =>
+      !file.type.startsWith("image/") && !/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name));
+    if (nonImageFiles.length > 0) {
+      event.preventDefault();
+      onChooseFiles(itemFiles);
+      return;
+    }
+
+    if (!onPasteImage || hasPlainText) return;
     const imageItem = Array.from(data.items).find((item) =>
       item.kind === "file" && PASTE_IMAGE_MIME_WHITELIST.has(item.type));
     if (!imageItem) return;
@@ -458,7 +502,10 @@ export function ChatComposer({
                 ) : attachment.kind === "image" && attachment.previewUrl ? (
                   <img src={attachment.previewUrl} alt="" draggable={false} />
                 ) : (
-                  <span title={attachment.name}>{attachment.name}</span>
+                  <>
+                    <ComposerAttachmentFileIcon fileName={attachment.name} />
+                    <span title={attachment.name}>{attachment.name}</span>
+                  </>
                 )}
                 <button type="button" aria-label={t("composer.removeAttachment", { name: attachment.name })} onClick={() => onRemoveAttachment(index)}>×</button>
               </div>
