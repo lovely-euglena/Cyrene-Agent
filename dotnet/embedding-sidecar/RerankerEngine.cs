@@ -43,19 +43,21 @@ public sealed class RerankerEngine : IDisposable
         var tokenizer = HfUnigramTokenizer.FromTokenizerJson(tokenizerPath);
         Console.Error.WriteLine($"[rerank] loading onnx session: {onnxPath}");
         var options = new SessionOptions();
+        // 线程语义与 EmbeddingEngine 一致：未设置 = 默认半核（max 4）；
+        // 0 = ORT 默认全核（不设置）；>0 = 显式上限（CYRENE_EMBED_THREADS）
         var threads = EmbeddingEngine.ReadThreadsEnv();
         if (threads > 0)
         {
             options.IntraOpNumThreads = Math.Min(threads, Environment.ProcessorCount);
         }
-        else if (Environment.ProcessorCount > 1)
+        else if (threads < 0 && Environment.ProcessorCount > 1)
         {
             options.IntraOpNumThreads = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
         }
         options.AppendExecutionProvider_CPU();
         var session = new InferenceSession(onnxPath, options);
         Console.Error.WriteLine(
-            $"[rerank] session ready (inputs={string.Join(",", session.InputMetadata.Keys)}, threads={options.IntraOpNumThreads})");
+            $"[rerank] session ready (inputs={string.Join(",", session.InputMetadata.Keys)}, threads={(options.IntraOpNumThreads > 0 ? options.IntraOpNumThreads.ToString() : "default")})");
         return new RerankerEngine(session, tokenizer, maxLength);
     }
 
