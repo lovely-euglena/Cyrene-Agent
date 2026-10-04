@@ -1,0 +1,9 @@
+{
+  "name": "重复批：同 eventId 重发（幂等，首见生效）",
+  "description": "e2 在第 3 行重复（文本不同），按输入序首见保留，重复进 droppedDuplicates。",
+  "input": "{\"eventId\":\"e1\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-04T02:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"第一条\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"e2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-04T02:00:02.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"第二条\",\"turnId\":\"turn-2\"}}\n{\"eventId\":\"e2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":3,\"ts\":\"2026-10-04T02:00:03.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"第二条（重复副本）\",\"turnId\":\"turn-2\"}}",
+  "expect": {
+    "events": ["e1", "e2"],
+    "droppedDuplicates": ["e2"]
+  }
+}

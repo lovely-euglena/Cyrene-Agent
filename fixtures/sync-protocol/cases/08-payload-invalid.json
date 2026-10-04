@@ -1,0 +1,17 @@
+{
+  "name": "载荷非法：各类型违反字段级规则 → E_SYNC_PAYLOAD",
+  "description": "0 user 缺 turnId；1 role 非法；2 replace_user 缺 replacementUser/revision；3 keep_user 带 replacementUser/revision；4 tombstone reason 非法；5 title 非串；6 多余载荷键；7 合法（assistant 无 turnId 可省）。",
+  "input": "{\"eventId\":\"p1\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-04T02:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"缺 turnId\"}}\n{\"eventId\":\"p2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-04T02:00:02.000Z\",\"payload\":{\"role\":\"system\",\"text\":\"非法 role\"}}\n{\"eventId\":\"p3\",\"sessionId\":\"s1\",\"type\":\"turn_rewind\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":3,\"ts\":\"2026-10-04T02:00:03.000Z\",\"payload\":{\"anchorUserTurnId\":\"turn-1\",\"disposition\":\"replace_user\",\"reason\":\"edit\"}}\n{\"eventId\":\"p4\",\"sessionId\":\"s1\",\"type\":\"turn_rewind\",\"lamport\":4,\"deviceId\":\"dev-a\",\"seq\":4,\"ts\":\"2026-10-04T02:00:04.000Z\",\"payload\":{\"anchorUserTurnId\":\"turn-1\",\"disposition\":\"keep_user\",\"reason\":\"regenerate\",\"replacementUser\":{\"text\":\"不该带\"},\"revision\":2}}\n{\"eventId\":\"p5\",\"sessionId\":\"s1\",\"type\":\"tombstone\",\"lamport\":5,\"deviceId\":\"dev-a\",\"seq\":5,\"ts\":\"2026-10-04T02:00:05.000Z\",\"payload\":{\"targetUserTurnId\":\"turn-1\",\"reason\":\"deleted\"}}\n{\"eventId\":\"p6\",\"sessionId\":\"s1\",\"type\":\"session.create\",\"lamport\":6,\"deviceId\":\"dev-a\",\"seq\":6,\"ts\":\"2026-10-04T02:00:06.000Z\",\"payload\":{\"title\":123,\"createdAt\":\"2026-10-04T02:00:06.000Z\"}}\n{\"eventId\":\"p7\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":7,\"deviceId\":\"dev-a\",\"seq\":7,\"ts\":\"2026-10-04T02:00:07.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"多余载荷键\",\"turnId\":\"turn-7\",\"x\":1}}\n{\"eventId\":\"e-ok\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":8,\"deviceId\":\"dev-a\",\"seq\":8,\"ts\":\"2026-10-04T02:00:08.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"合法\"}}",
+  "expect": {
+    "events": ["e-ok"],
+    "errors": [
+      { "index": 0, "code": "E_SYNC_PAYLOAD" },
+      { "index": 1, "code": "E_SYNC_PAYLOAD" },
+      { "index": 2, "code": "E_SYNC_PAYLOAD" },
+      { "index": 3, "code": "E_SYNC_PAYLOAD" },
+      { "index": 4, "code": "E_SYNC_PAYLOAD" },
+      { "index": 5, "code": "E_SYNC_PAYLOAD" },
+      { "index": 6, "code": "E_SYNC_PAYLOAD" }
+    ]
+  }
+}
