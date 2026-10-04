@@ -94,10 +94,11 @@ src/pwa/
 
 ## 7. 验证（2026-10-04，Windows 本地）
 
-- PWA 单测：`npx vitest run src/pwa` —— **33/33**（重放 / 合并排序 / 事件构造 / 客户端 / 缓存）；
+- PWA 单测：`npx vitest run src/pwa` —— **39/39**（IKJK2L 批次 33/33；IKJN78 增能力解析/降级 6 项）；
   实现期由单测抓到并修复 `saveCache` 配额兜底死循环（`Math.floor(1/2)=0` → `slice(0)` 不收缩）；
-- 云冒烟：`python scripts/dotnet-cloud-sync-test.py <dll>` —— **51/51**
-  （Windows；含 3 项 PWA 静态托管断言）；
-- 端到端（Microsoft Edge 通道）：`node scripts/pwa-e2e-test.mjs <dll>` —— **10/10**：配对登录 →
+- 云冒烟：`python scripts/dotnet-cloud-sync-test.py <dll>` —— **54/54**
+  （IKJK2L 批次 51/51；IKJN78 增 3 项能力声明；Windows，含 3 项 PWA 静态托管断言）；
+- 端到端（Microsoft Edge 通道）：`node scripts/pwa-e2e-test.mjs <dll>` —— **11/11**
+  （IKJK2L 批次 10/10；IKJN78 增能力声明检查）：配对登录 →
   打开桌面会话（桌面离线）→ 手机发送 → 收到服务端生成回复 → 刷新保持登录态 → 离线只读缓存；
 - 构建：`npm run build`（tsc + vite）0 错误；产物 ~17KB JS（gzip ~6.4KB）/ 3.5KB CSS（gzip ~1.2KB）。

@@ -33,6 +33,8 @@
   python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN [--profile core]
                                                                 # 远端/核心档：对任意 HTTP 形态跑同步核心 + 配对 + 能力声明
                                                                 # （跳过生成闭环/限流/环境注入类检查；本地 --profile core 亦可）
+                                                                # 注意：会向实例累积测试事件/设备（id 带运行前缀，可重复跑；
+                                                                # CI 定期跑建议用独立实例）
 """
 import argparse
 import http.server as http_server
@@ -53,9 +55,9 @@ import urllib.request
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 可选参数：发布产物 dll 路径（裸跑直测）；默认用 Release 构建输出
-DLL = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(
-    REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
+# 默认发布产物（Release 构建输出）；positional dll 由 parse_args 解析后在 main 覆盖（勿直接读 sys.argv）
+DEFAULT_DLL = os.path.join(REPO_ROOT, "dotnet/cloud-server/bin/Release/net10.0/cyrene-cloud-server.dll")
+DLL = DEFAULT_DLL
 MAIN_TOKEN = "smoke-master"  # 主实例主控令牌（IKJK2K 起 /v1 始终鉴权）
 BASE_HEADERS = {}            # 默认注入请求头（主实例；显式 headers 覆盖）
 results = []
@@ -534,14 +536,19 @@ def run_core_checks(base, master_token):
 
 
 def main():
+    global DLL
     args = parse_args()
+    DLL = os.path.abspath(args.dll) if args.dll else DEFAULT_DLL
     remote = bool(args.base_url)
     profile = args.profile or ("core" if remote else "full")
     master_token = args.master_token or MAIN_TOKEN
+    if remote and not args.master_token:
+        print("[FAIL] 远端模式需显式 --master-token（避免静默回退 smoke-master 造成连续 401）")
+        return 1
 
     if remote or profile == "core":
         # 核心档：对任意 HTTP 形态（远端或本地实例）跑同步核心 + 配对 + 能力声明
-        dll = os.path.abspath(args.dll) if args.dll else DLL
+        dll = DLL
         server = None
         data_dir = None
         log_file = None
