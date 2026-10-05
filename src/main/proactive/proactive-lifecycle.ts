@@ -1,4 +1,5 @@
 import { powerMonitor } from "electron";
+import { createHash } from "node:crypto";
 import * as chatsStore from "../chats/chats-store";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
 import type { ConversationJournalService } from "../orchestrator/conversation-journal-service";
@@ -8,6 +9,7 @@ import {
   canStartProactiveChannelDelivery,
   sendProactiveChannelMessage,
 } from "../channels/proactive-delivery";
+import { getActiveOwnershipClient } from "../channels/ownership";
 import { resolveChatContextTimezone } from "../chat-time-context";
 import { buildAlwaysOnContext, buildMemoryInjection } from "../orchestrator";
 import { loadPromptFile } from "../prompts/prompt-loader";
@@ -220,10 +222,12 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     const result = await routeProactiveDelivery(target, {
       commitLocal: () => commitLocalProactiveMessage(input),
       commitChannel: async (channel) => {
-        // External channel delivery remains the legacy direct path until Task 11.
+        // External channel delivery remains the legacy direct path until Task 11;
+        // owner=server 时 sendProactiveChannelMessage 内部改走服务端转发（§5.4）。
         const channelResult = await sendProactiveChannelMessage({
           channel,
           text: input.text,
+          intentId: resolveProactiveIntentId(input),
           mobileMessageSegmentation: settings.mobileMessageSegmentation,
           manager: channelManager,
           canContinue: () => {
@@ -239,6 +243,16 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
 
     if (result.kind === "committed") recordProactiveDeliveryMetadata(input);
     return result;
+  }
+
+  /**
+   * 转发幂等键（§5.4）：local 路径已有 durable intentId；渠道直发路径没有，
+   * 按 (sceneId, intentAt, text) 派生稳定键，同一提交的网络级重试同键不双发。
+   */
+  function resolveProactiveIntentId(input: ProactiveCommitInput): string {
+    if (input.intentId) return input.intentId;
+    const seed = `${input.candidate.sceneId}:${input.intentAt ?? 0}:${input.text}`;
+    return `proactive-remote-${createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 24)}`;
   }
 
   function initializeProactiveChatService(): void {
@@ -270,7 +284,10 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
       getFallback: async () => null,
       canStartDelivery: () => {
         const target = options.loadGeneralSettings().proactiveDeliveryTarget;
-        return target === "local" || canStartProactiveChannelDelivery(target, channelManager);
+        if (target === "local") return true;
+        // owner=server：桌面不启动本机适配器，但转发路径可用（§5.4）
+        if (getActiveOwnershipClient()?.shouldForwardProactive(target)) return true;
+        return canStartProactiveChannelDelivery(target, channelManager);
       },
       requiresDurableIntent: () => options.loadGeneralSettings().proactiveDeliveryTarget === "local",
       getDeliveryTarget: () => options.loadGeneralSettings().proactiveDeliveryTarget,

@@ -17,7 +17,13 @@ import {
   saveChannelsSettings,
 } from "./settings-store";
 import { channelManager } from "./manager";
-import type { MessageHandler } from "./types";
+import {
+  createChannelOwnershipController,
+  setActiveOwnershipClient,
+  setChannelProcessGate,
+  type ChannelOwnershipController,
+} from "./ownership";
+import type { ChannelStatus, MessageHandler } from "./types";
 import { getChannelConversationBindingStore } from "./conversation-binding-store";
 import { listSessions, getSession } from "../chats/chats-store";
 import {
@@ -51,6 +57,8 @@ export function setChannelsConversationLifecycle(lifecycle: typeof conversationL
 let wxAdapter: ILinkBotAdapter | null = null;
 let qqAdapter: NapCatAdapter | null = null;
 let qqBotAdapter: QqBotAdapter | null = null;
+/** 归属控制器（channels.remote.enabled 时驱动启停；§5） */
+let ownershipController: ChannelOwnershipController | null = null;
 
 export interface InitializeChannelsOptions {
   ipc?: IpcScope;
@@ -71,6 +79,11 @@ function getPublicChannelsSettings(): Record<string, unknown> {
       ...settings.qqbot,
       appSecret: undefined,
       hasAppSecret: Boolean(settings.qqbot.appSecret),
+    },
+    remote: {
+      ...settings.remote,
+      token: undefined,
+      hasToken: Boolean(settings.remote.token),
     },
   };
 }
@@ -93,6 +106,16 @@ export function initializeChannels(options: InitializeChannelsOptions): void {
 
   // 注册 adapter（不启动，startChannels 时统一 startAll）
   registerAdapters();
+
+  // 归属接线（§5）：manager 启动门闩（第一道）+ dispatcher 处理门闩（第二道）
+  // + proactive 转发端口。channels.remote.enabled=false 时决策恒为 local，行为零变化。
+  ownershipController = createChannelOwnershipController({
+    manager: channelManager,
+    loadConfig: () => loadChannelsSettings().remote,
+  });
+  channelManager.setStartGate((id) => ownershipController?.shouldRunLocal(id) ?? true);
+  setChannelProcessGate((channel) => ownershipController?.shouldProcess(channel) ?? true);
+  setActiveOwnershipClient(ownershipController.client);
 
   // 注册全局 IPC
   registerChannelsIpc(options.ipc, options.reloadDispatcherSettings);
@@ -136,8 +159,14 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
     throw signal.reason;
   }
 
-  // 启动所有已注册 adapter
-  await channelManager.startAll();
+  // 归属感知启动（§5）：remote.enabled 时由控制器按服务端归属逐个启停
+  // （owner=server 的渠道绝不本机启动，R4）；否则保持既有 startAll 行为。
+  const remote = loadChannelsSettings().remote;
+  if (remote.enabled && ownershipController) {
+    await ownershipController.start();
+  } else {
+    await channelManager.startAll();
+  }
 
   logger.info(LogTag.Channels, "channels module started");
   broadcastChannelsStatus();
@@ -145,6 +174,8 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
 
 /** app.on('before-quit') 调 */
 export async function shutdownChannels(): Promise<void> {
+  // 先交回本机租约（服务端可立即恢复，不用等 TTL），再停适配器
+  await ownershipController?.stop();
   await channelManager.stopAll();
   await stopInboundServer();
   initialized = false;
@@ -167,7 +198,7 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_LIST, () => channelManager.listChannels());
 
-  ipc.handle(IPC.CHANNELS_GET_STATUS, () => channelManager.getAllStatus());
+  ipc.handle(IPC.CHANNELS_GET_STATUS, () => getChannelsStatus());
 
   // QQ 监听鉴权预检：渲染进程看不到网络接口，无法自行判断监听地址是否回环，
   // 因此「是否需要 Access Token」只能由主进程给出（与启动时的硬校验同一实现）。
@@ -179,7 +210,11 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_RESTART, async () => {
     await channelManager.stopAll();
-    await channelManager.startAll();
+    if (ownershipController) {
+      await ownershipController.syncNow();
+    } else {
+      await channelManager.startAll();
+    }
     broadcastChannelsStatus();
     return { ok: true };
   });
@@ -337,9 +372,23 @@ function registerChannelsIpc(
   });
 }
 
+/** UI 状态 = adapter 实时状态 + 归属相位（§5.6 状态广播）。 */
+export function getChannelsStatus(): Record<string, ChannelStatus> {
+  const status = channelManager.getAllStatus();
+  const ownership = ownershipController?.getStatusDetail() ?? {};
+  const out: Record<string, ChannelStatus> = {};
+  for (const [id, value] of Object.entries(status)) {
+    const ownerDetail = ownership[id];
+    out[id] = ownerDetail
+      ? { ...value, detail: { ...(value.detail ?? {}), ownership: ownerDetail } }
+      : value;
+  }
+  return out;
+}
+
 /** 工具：把所有 BrowserWindow 广播 channels 状态变更（UI 轮询用）。 */
 export function broadcastChannelsStatus(): void {
-  const status = channelManager.getAllStatus();
+  const status = getChannelsStatus();
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     try {
