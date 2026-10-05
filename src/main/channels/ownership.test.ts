@@ -8,6 +8,8 @@ import {
   decideChannelOwnership,
   normalizeChannelsRemoteConfig,
   OWNERSHIP_CONFIG_CACHE_MS,
+  planChannelsRestart,
+  planOwnershipRuntimeAction,
   type ChannelsRemoteConfig,
   type OwnershipDecisionInput,
 } from "./ownership";
@@ -288,6 +290,25 @@ describe("channels/ownership 客户端 HTTP（§5.2/§5.7）", () => {
     expect(released.released).toEqual(["wechat"]);
     expect(client.wantsLocal("wechat")).toBe(false);
     expect(client.getChannelState("wechat")?.owner).toBe("server");
+  });
+
+  it("release 返回空集（服务端已 sweep，owner≠desktop 被跳过）：无 error 即清意图（P1-1）", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const path = String(url);
+      if (path.endsWith("/claim")) {
+        return jsonResponse({ granted: ["wechat"], denied: [], leaseExpiresAt: "2026-10-05T00:03:00.000Z" });
+      }
+      if (path.endsWith("/release")) return jsonResponse({ released: [] });
+      return jsonResponse({ serverId: "s1", leaseTtlSeconds: 180, channels: {} });
+    }) as unknown as typeof fetch;
+    const client = makeClient(fetchImpl);
+    await client.poll();
+    await client.claim(["wechat"]);
+    const outcome = await client.release(["wechat"]);
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.released).toEqual([]);
+    // 残留 desiredLocal 会让下一轮 reclaim 立即重新占用；空集也必须清
+    expect(client.wantsLocal("wechat")).toBe(false);
   });
 
   it("deliverProactive：转发 body 带 intentId，duplicate/错误码正确映射", async () => {
@@ -623,6 +644,72 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
     expect(controller.getPhase("wechat" as never)).toBe("paused_remote");
   });
 
+  it("preferServer=true：release 返回空集（服务端已 sweep）仍清意图、同轮不 re-claim（P1-1）", async () => {
+    const { manager, controller } = makeController({ failover: "local", failoverGraceSeconds: 300 });
+    await controller.start();
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    await controller.syncNow();
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+
+    pollFails = true;
+    now += 310_000;
+    await controller.syncNow(); // 自动兜底启动
+    expect(controller.getPhase("wechat" as never)).toBe("failover_local");
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    // 模拟残留的本机意图（进程重启心跳回租/曾 claim）：旧实现会据此在同轮 re-claim
+    controller.client.markDesiredLocal(["wechat" as never]);
+
+    // 服务端恢复：租约已被 sweep 收回（owner=server），release 返回空集且无 error；
+    // 若 reclaim 被触发，服务端此刻仍会 grant（重现 P1-1「交回失效」）
+    pollFails = false;
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    releasePayload = { released: [] };
+    claimPayload = { granted: ["wechat"], denied: [], leaseExpiresAt: "2026-10-05T00:10:00.000Z" };
+    const claimSpy = vi.spyOn(controller.client, "claim");
+    await controller.syncNow();
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+    expect(controller.getPhase("wechat" as never)).toBe("paused_remote");
+    expect(controller.client.wantsLocal("wechat" as never)).toBe(false);
+    expect(claimSpy).not.toHaveBeenCalled(); // 同轮 reclaim 不得把它捡回
+
+    await controller.syncNow(); // 下一轮也不得重新占用
+    expect(claimSpy).not.toHaveBeenCalled();
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+  });
+
+  it("preferServer=true：release 失败保留意图重试，成功后才交回（P1-1）", async () => {
+    const { manager, controller } = makeController({ failover: "local", failoverGraceSeconds: 300 });
+    await controller.start();
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    await controller.syncNow();
+
+    pollFails = true;
+    now += 310_000;
+    await controller.syncNow();
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    controller.client.markDesiredLocal(["wechat" as never]);
+
+    // 服务端恢复但 release 请求失败：保留意图与 autoFailover，下一轮重试
+    pollFails = false;
+    let releaseFails = true;
+    const releaseSpy = vi.spyOn(controller.client, "release").mockImplementation(async () => {
+      if (releaseFails) return { released: [], error: "release unreachable" };
+      return { released: [] };
+    });
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "desktop", holder: "me" } } };
+    await controller.syncNow();
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+    expect(manager.isStarted("wechat" as never)).toBe(true); // 仍持租约：保持本机
+    expect(controller.client.wantsLocal("wechat" as never)).toBe(true);
+
+    releaseFails = false;
+    await controller.syncNow();
+    expect(releaseSpy).toHaveBeenCalledTimes(2);
+    expect(controller.client.wantsLocal("wechat" as never)).toBe(false);
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+    expect(controller.getPhase("wechat" as never)).toBe("paused_remote");
+  });
+
   it("preferServer=false：兜底后服务端恢复 → claim 维持本机（§5.5）", async () => {
     const { manager, controller } = makeController({
       failover: "local", failoverGraceSeconds: 300, preferServer: false,
@@ -687,6 +774,65 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
     expect(controller.getPhase("wechat" as never)).toBe("paused_remote");
   });
 
+  it("syncNow 单飞：并发触发不产生并发轮次，在途触发合并为一次串行补跑（P2-1）", async () => {
+    const manager = new ChannelManager();
+    manager.register(fakeAdapter("wechat"));
+    const config: ChannelsRemoteConfig = { ...REMOTE_ON };
+    let pollCalls = 0;
+    let activePolls = 0;
+    let maxActivePolls = 0;
+    let releaseFirstPoll: (() => void) | null = null;
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/v1/channels/ownership")) {
+        pollCalls += 1;
+        activePolls += 1;
+        maxActivePolls = Math.max(maxActivePolls, activePolls);
+        if (pollCalls === 1) {
+          await new Promise<void>((resolve) => { releaseFirstPoll = resolve; });
+        }
+        activePolls -= 1;
+      }
+      return jsonResponse({ serverId: "s1", leaseTtlSeconds: 180, channels: {} });
+    }) as unknown as typeof fetch;
+    const client = new ChannelOwnershipClient({
+      loadConfig: () => config,
+      fetchImpl,
+      now: () => now,
+      log: () => undefined,
+    });
+    const controller = createChannelOwnershipController({
+      manager,
+      loadConfig: () => config,
+      client,
+      setIntervalImpl: (() => 1) as unknown as typeof setInterval,
+      clearIntervalImpl: (() => undefined) as unknown as typeof clearInterval,
+      log: () => undefined,
+    });
+
+    const starting = controller.start(); // 首次同步挂起在 poll#1
+    expect(pollCalls).toBe(1);
+    const second = controller.syncNow(); // 在途触发：登记补跑
+    const third = controller.syncNow(); // 再次触发：合并进同一次补跑
+    releaseFirstPoll!();
+    await starting;
+    await second;
+    await third;
+    expect(maxActivePolls).toBe(1); // 全程无并发轮次
+    expect(pollCalls).toBe(2); // 首次 + 合并后的一次串行补跑
+  });
+
+  it("server 不可达时 remote 开启（start-controller 分支）：门闩关闭、渠道保持停用（P1-4）", async () => {
+    pollFails = true;
+    const { manager, controller } = makeController();
+    expect(planOwnershipRuntimeAction({
+      started: true, remoteEnabled: true, controllerRunning: false,
+    })).toBe("start-controller");
+    await controller.start();
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+    expect(manager.isStarted("feishu" as never)).toBe(false);
+    expect(controller.shouldRunLocal("wechat" as never)).toBe(false);
+  });
+
   it("manager 启动门闩：startAll/startOne 跳过 owner=server 渠道", async () => {
     const manager = new ChannelManager();
     const adapter = fakeAdapter("wechat");
@@ -701,5 +847,43 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
     expect(manager.isStarted("wechat" as never)).toBe(true);
     await manager.pauseOne("wechat" as never);
     expect(manager.isStarted("wechat" as never)).toBe(false);
+  });
+});
+
+describe("channels/ownership 运行期分流判定（P1-4）", () => {
+  it("syncOwnershipRuntime：本地→remote 开启走 start-controller，remote→关闭走 stop-controller-and-start-all", () => {
+    expect(planOwnershipRuntimeAction({
+      started: true, remoteEnabled: true, controllerRunning: false,
+    })).toBe("start-controller");
+    expect(planOwnershipRuntimeAction({
+      started: true, remoteEnabled: false, controllerRunning: true,
+    })).toBe("stop-controller-and-start-all");
+  });
+
+  it("syncOwnershipRuntime：未启动/已在 remote/本就本地不产生多余动作", () => {
+    expect(planOwnershipRuntimeAction({
+      started: false, remoteEnabled: true, controllerRunning: false,
+    })).toBe("noop");
+    expect(planOwnershipRuntimeAction({
+      started: true, remoteEnabled: true, controllerRunning: true,
+    })).toBe("reload-config");
+    expect(planOwnershipRuntimeAction({
+      started: true, remoteEnabled: false, controllerRunning: false,
+    })).toBe("noop");
+  });
+
+  it("CHANNELS_RESTART：本地走 start-all；remote 已运行 sync、未运行起控制器、控制器缺失回退本地", () => {
+    expect(planChannelsRestart({
+      remoteEnabled: false, controllerAvailable: true, controllerRunning: false,
+    })).toBe("start-all");
+    expect(planChannelsRestart({
+      remoteEnabled: true, controllerAvailable: false, controllerRunning: false,
+    })).toBe("start-all");
+    expect(planChannelsRestart({
+      remoteEnabled: true, controllerAvailable: true, controllerRunning: true,
+    })).toBe("sync");
+    expect(planChannelsRestart({
+      remoteEnabled: true, controllerAvailable: true, controllerRunning: false,
+    })).toBe("start-controller");
   });
 });

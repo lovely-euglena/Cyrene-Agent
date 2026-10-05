@@ -386,9 +386,13 @@ export class ChannelOwnershipClient {
       if (!response.ok) throw new Error(await this.readError(response));
       const body = (await response.json()) as { released?: string[] };
       const released = (body.released ?? []) as ChannelId[];
-      for (const channel of released) {
+      // 无 error 即视为交回完成：服务端对 owner≠desktop（已被 sweep 收回）直接跳过且不报错，
+      // 只按 released 清意图会让残留 desiredLocal 在下一轮 reclaim 立即重新占用（P1-1）。
+      for (const channel of channels) {
         this.desiredLocal.delete(channel);
         this.forceLocal.delete(channel);
+      }
+      for (const channel of released) {
         this.setChannelState(channel, { owner: "server" });
       }
       return { released };
@@ -510,6 +514,9 @@ export class ChannelOwnershipController {
   /** 自动兜底（非手动）中的渠道：服务端恢复后按 preferServer 交回或维持本机（§5.5）。 */
   private readonly autoFailover = new Set<ChannelId>();
   private readonly phases = new Map<ChannelId, LocalChannelPhase>();
+  /** syncNow 单飞（P2-1）：在途轮次与在途期间登记的一次补跑。 */
+  private syncInFlight: Promise<void> | null = null;
+  private syncQueued = false;
 
   constructor(options: ChannelOwnershipControllerOptions) {
     this.manager = options.manager;
@@ -559,8 +566,35 @@ export class ChannelOwnershipController {
     if (desired.length > 0) await this.client.release(desired);
   }
 
+  /**
+   * 一轮同步（P2-1 单飞 + 排队）：定时轮询 / IPC 重启 / 运行期开关 / 启动多源触发时，
+   * 已有同步在途则并入当前轮并登记一次补跑，避免并发对同一渠道重复 claim/startOne。
+   */
+  syncNow(): Promise<void> {
+    if (this.syncInFlight) {
+      this.syncQueued = true;
+      return this.syncInFlight;
+    }
+    this.syncInFlight = this.drainSync().finally(() => {
+      this.syncInFlight = null;
+      // 关窗：drain 退出与 finally 之间到达的触发不丢，串行补跑（P2-1）
+      if (this.syncQueued && this.running) {
+        this.syncQueued = false;
+        void this.syncNow();
+      }
+    });
+    return this.syncInFlight;
+  }
+
+  private async drainSync(): Promise<void> {
+    do {
+      this.syncQueued = false;
+      await this.runSync();
+    } while (this.syncQueued && this.running);
+  }
+
   /** 一轮同步：poll → 同设备租约探测 → 兜底恢复判定 → 意图重 claim → 落地启停。 */
-  async syncNow(): Promise<void> {
+  private async runSync(): Promise<void> {
     if (!this.running) return;
     const snapshot = await this.client.poll();
     if (!this.running) return; // stop 后不得再落地启停
@@ -581,7 +615,12 @@ export class ChannelOwnershipController {
         if (recovering.length > 0) {
           if (this.client.prefersServer()) {
             const outcome = await this.client.release(recovering);
-            if (!outcome.error) for (const id of recovering) this.autoFailover.delete(id);
+            if (!outcome.error) {
+              // 不依赖 released 列表：服务端 sweep 已收回时返回空集且无 error，
+              // 此处无条件清意图，确保同轮 reclaim 不再把它捡回（P1-1）。
+              this.client.clearDesiredLocal(recovering);
+              for (const id of recovering) this.autoFailover.delete(id);
+            }
           } else {
             const outcome = await this.client.claim(recovering);
             if (!outcome.error) for (const id of recovering) this.autoFailover.delete(id);
@@ -684,6 +723,41 @@ export function createChannelOwnershipController(
   options: ChannelOwnershipControllerOptions,
 ): ChannelOwnershipController {
   return new ChannelOwnershipController(options);
+}
+
+// ── 运行期分流判定（init.ts 调用；抽成纯函数便于覆盖，P1-4）──────────────────
+
+/** syncOwnershipRuntime 的动作：开启控制器 / 停控制器回本地 / 仅刷新配置 / 无动作。 */
+export type OwnershipRuntimeAction =
+  | "noop"
+  | "reload-config"
+  | "start-controller"
+  | "stop-controller-and-start-all";
+
+export function planOwnershipRuntimeAction(input: {
+  /** channels 子系统是否已启动（未启动时开关只落盘，不产生运行时动作）。 */
+  started: boolean;
+  remoteEnabled: boolean;
+  controllerRunning: boolean;
+}): OwnershipRuntimeAction {
+  if (!input.started) return "noop";
+  if (input.remoteEnabled) {
+    // 已运行也要 invalidateConfig：保存的 baseUrl/token/preferServer 需立即生效
+    return input.controllerRunning ? "reload-config" : "start-controller";
+  }
+  return input.controllerRunning ? "stop-controller-and-start-all" : "noop";
+}
+
+/** CHANNELS_RESTART 的动作：本地 startAll / remote 已运行 syncNow / remote 未运行起控制器。 */
+export type ChannelsRestartAction = "start-all" | "sync" | "start-controller";
+
+export function planChannelsRestart(input: {
+  remoteEnabled: boolean;
+  controllerAvailable: boolean;
+  controllerRunning: boolean;
+}): ChannelsRestartAction {
+  if (!input.remoteEnabled || !input.controllerAvailable) return "start-all";
+  return input.controllerRunning ? "sync" : "start-controller";
 }
 
 // ── 模块级接线（init.ts 注入；dispatcher.ts 读取门闩）──────────────────────

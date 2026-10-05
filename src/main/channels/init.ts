@@ -19,11 +19,13 @@ import {
 import { channelManager } from "./manager";
 import {
   createChannelOwnershipController,
+  planChannelsRestart,
+  planOwnershipRuntimeAction,
   setActiveOwnershipClient,
   setChannelProcessGate,
   type ChannelOwnershipController,
 } from "./ownership";
-import type { ChannelStatus, MessageHandler } from "./types";
+import type { ChannelId, ChannelStatus, MessageHandler } from "./types";
 import { getChannelConversationBindingStore } from "./conversation-binding-store";
 import { listSessions, getSession } from "../chats/chats-store";
 import {
@@ -41,6 +43,18 @@ import { getRecentLog, clearLog, reloadLogFromDisk } from "./message-log";
 import { logger, LogTag } from "../logger";
 
 const LOG = "[ChannelsInit]";
+
+/** 手动 IPC 直启被归属门闩拒绝时的统一提示（P1-3）。 */
+export const CLOUD_MANAGED_START_ERROR = "云端托管中，请先在本机运行";
+
+/**
+ * 手动 IPC 启动路径的归属前置检查（P1-3）：
+ * owner=server 时这些入口会绕开 manager.startAll/startOne 的 allowedToStart 检查直启适配器，
+ * 可能造成与服务端适配器双连接。返回 null 表示放行。
+ */
+function denyManualStart(id: ChannelId): { ok: false; error: string } | null {
+  return channelManager.allowedToStart(id) ? null : { ok: false, error: CLOUD_MANAGED_START_ERROR };
+}
 
 let initialized = false;
 let started = false;
@@ -191,15 +205,29 @@ export async function shutdownChannels(): Promise<void> {
 async function syncOwnershipRuntime(): Promise<void> {
   if (!started || !ownershipController) return;
   const remote = loadChannelsSettings().remote;
-  if (remote.enabled) {
-    ownershipController.client.invalidateConfig();
-    if (!ownershipController.isRunning) await ownershipController.start();
-    return;
+  // 分流判定抽成纯函数（P1-4）：本地→remote 开启 / remote→关闭 / 仅刷新配置
+  const action = planOwnershipRuntimeAction({
+    started,
+    remoteEnabled: remote.enabled,
+    controllerRunning: ownershipController.isRunning,
+  });
+  switch (action) {
+    case "reload-config":
+      ownershipController.client.invalidateConfig();
+      return;
+    case "start-controller":
+      ownershipController.client.invalidateConfig();
+      await ownershipController.start();
+      return;
+    case "stop-controller-and-start-all":
+      // 缓存失效顺序：关闭时先 stop（用旧配置尽力 release）再 invalidate，最后 startAll 用新配置判定。
+      await ownershipController.stop();
+      ownershipController.client.invalidateConfig();
+      await channelManager.startAll();
+      return;
+    default:
+      return;
   }
-  if (!ownershipController.isRunning) return; // 本来就是本地模式：行为零变化
-  await ownershipController.stop();
-  ownershipController.client.invalidateConfig();
-  await channelManager.startAll();
 }
 
 /** 注册进程间通信处理器。 */
@@ -232,14 +260,17 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_RESTART, async () => {
     await channelManager.stopAll();
-    // 本地模式必须走 startAll（syncNow 依赖控制器运行态，且本地模式不应受归属门闩牵制）
+    // 分流判定抽成纯函数（P1-4）：本地走 startAll；remote 已运行 syncNow，未运行则起控制器
     const remote = loadChannelsSettings().remote;
-    if (remote.enabled && ownershipController) {
-      if (ownershipController.isRunning) {
-        await ownershipController.syncNow();
-      } else {
-        await ownershipController.start();
-      }
+    const action = planChannelsRestart({
+      remoteEnabled: remote.enabled,
+      controllerAvailable: ownershipController !== null,
+      controllerRunning: ownershipController?.isRunning ?? false,
+    });
+    if (action === "sync") {
+      await ownershipController!.syncNow();
+    } else if (action === "start-controller") {
+      await ownershipController!.start();
     } else {
       await channelManager.startAll();
     }
@@ -257,6 +288,9 @@ function registerChannelsIpc(
 	  // 扫码登录：Main Process 生成 PNG dataURL，推给 Renderer 显示 <img>
 	  ipc.handle(IPC.CHANNELS_WECHAT_LOGIN_START, async () => {
 	    if (!wxAdapter) return { ok: false, error: "adapter 未初始化" };
+	    // 归属门闩（P1-3）：云端托管时不进入扫码直启流程，避免与服务端适配器双连接
+	    const denied = denyManualStart("wechat");
+	    if (denied) return denied;
 	    try {
 	      const { fetchQrCode } = await import("./adapters/wechat/ilink-protocol-client");
 	      const { createQrDataUrl } = await import("./adapters/wechat/qr");
@@ -278,6 +312,11 @@ function registerChannelsIpc(
 	      void (async () => {
 	        try {
 	          const creds = await wxAdapter!.login(qrcode);
+	          // 扫码期间归属可能变化：启动前复查门闩（P1-3）
+	          if (!channelManager.allowedToStart("wechat")) {
+	            win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: false, error: CLOUD_MANAGED_START_ERROR });
+	            return;
+	          }
 	          await wxAdapter!.stop();
 	          await wxAdapter!.start();
 	          win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: true, botId: creds.ilinkBotId });
@@ -328,6 +367,8 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_WECHAT_INSTALL, async () => {
     if (!wxAdapter) return { ok: false };
+    const denied = denyManualStart("wechat");
+    if (denied) return denied;
     await wxAdapter.stop();
     await wxAdapter.start();
     return { ok: true, phase: "ready" };
@@ -337,6 +378,9 @@ function registerChannelsIpc(
   ipc.handle(IPC.CHANNELS_FEISHU_TEST_CONNECTION, async () => {
     const adapter = channelManager.getAdapter("feishu") as FeishuAdapter | undefined;
     if (!adapter) return { ok: false, error: "飞书 adapter 未注册" };
+    // 归属门闩（P1-3）：rebuild 内部会 start()，云端托管时拒绝直启
+    const denied = denyManualStart("feishu");
+    if (denied) return denied;
     const status = adapter.getStatus();
     if (!status.enabled) return { ok: false, error: "飞书渠道未启用" };
     if (!loadChannelsSettings().feishu.appId || !loadChannelsSettings().feishu.appSecret) {
