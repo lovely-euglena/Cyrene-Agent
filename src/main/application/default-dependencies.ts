@@ -32,7 +32,7 @@ import {
   sidebarWindow,
   tasksWindow,
 } from "../windows/window-state";
-import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile, resolveTestConnectionApiKey, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings, getPublicModelConfig, resolveModelSettingsProfile, resolveTestConnectionApiKey, resolveVisionTestApiKey, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { createModelBackedConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
@@ -681,9 +681,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       }
       case "test-vision": {
         const config = asObj(payload.config);
+        // 复审 P1-2：与 Electron settings-ipc 同口径——掩码空 key 用 vault vision 槽回填
+        const apiKey = resolveVisionTestApiKey(asStr(config.apiKey));
         void testVisionConnection({
           baseUrl: asStr(config.baseUrl),
-          apiKey: asStr(config.apiKey),
+          apiKey,
           model: asStr(config.model),
         }).then((result) => {
           nativeNotice(

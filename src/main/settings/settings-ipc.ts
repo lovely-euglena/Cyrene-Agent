@@ -21,7 +21,7 @@ import {
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
-import { getSecret, isVaultMode, maskGeneralSettingsForUi, maskModelSettingsForUi, VAULT_KEY_VISION } from "./secrets-keyring";
+import { maskGeneralSettingsForUi, maskModelSettingsForUi } from "./secrets-keyring";
 import { switchEmbeddingModel } from "../rag";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
@@ -30,7 +30,7 @@ import { testVendorConnection } from "../orchestrator/vendors/test-connection";
 import { testVisionConnection } from "./vision-test";
 import { getAdapterForConfig } from "../orchestrator/vendors";
 import type { VendorConfig } from "../orchestrator/vendors";
-import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, resolveTestConnectionApiKey, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
+import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, resolveTestConnectionApiKey, resolveVisionTestApiKey, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
 import type { ModelSettings } from "./model-settings";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
@@ -402,13 +402,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   // 视觉模型连通性测试（实现与 native 设置窗共用：settings/vision-test.ts）
-  // vault 模式：渲染端拿到的是掩码（apiKey 空）——空值时由 keyring 原地补真值，明文不出主进程
+  // vault 模式下掩码空 key → keyring vision 槽回填（resolveVisionTestApiKey，与 WPF 同口径）
   ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) => {
-    if (isVaultMode() && !cfg.apiKey?.trim()) {
-      const real = getSecret(VAULT_KEY_VISION);
-      if (real) return testVisionConnection({ ...cfg, apiKey: real });
-    }
-    return testVisionConnection(cfg);
+    return testVisionConnection({ ...cfg, apiKey: resolveVisionTestApiKey(cfg.apiKey ?? "") });
   });
 
   ipc.handle(IPC.EMBEDDING_SET_MODEL, async (_event, modelKey: string) => {

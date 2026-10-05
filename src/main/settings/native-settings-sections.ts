@@ -10,7 +10,7 @@ import type { GeneralSettings } from "./general-settings";
 import type { ModelSettings } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
 import type { ObsidianVaultConfig } from "../memory/obsidian-vault-config";
-import { isVaultMode, maskGeneralSettingsForUi } from "./secrets-keyring";
+import { isVaultAuthoritative, maskGeneralSettingsForUi } from "./secrets-keyring";
 import type { RendererScheduledTask, SchedulerToolInfo } from "../scheduler/scheduler-actions";
 
 /** L2 事件片段投影上限（防御异常大的记忆库撑爆帧；正常量级远小于此） */
@@ -328,8 +328,9 @@ export function buildApiSectionSnapshot(
       displayName: settings.displayName ?? "",
       baseUrl: settings.baseUrl,
       model: settings.model,
-      // vault 模式（A3）：WPF 快照去明文——api key 只回掩码（空串），写入空=不改（saveModelSettings 语义）
-      apiKey: isVaultMode() ? "" : settings.apiKey,
+      // vault 事实源（A3 + PR19 P1-1/P1-2）：WPF 快照去明文——api key 只回掩码（空串），
+      // 写入空=不改（saveModelSettings 语义）；门控与 Electron maskForUi 统一为 vaultAuthoritative
+      apiKey: isVaultAuthoritative() ? "" : settings.apiKey,
       contextWindowTokens: typeof settings.contextWindowTokens === "number" ? settings.contextWindowTokens : null,
       transport,
       multimodal: settings.multimodal !== false,
@@ -341,7 +342,7 @@ export function buildApiSectionSnapshot(
       // 视觉配置是全局的（不随档案走）
       vision: {
         baseUrl: vision?.baseUrl ?? "",
-        apiKey: isVaultMode() ? "" : vision?.apiKey ?? "",
+        apiKey: isVaultAuthoritative() ? "" : vision?.apiKey ?? "",
         model: vision?.model ?? "",
       },
     },
@@ -365,7 +366,7 @@ export function buildApiSectionSnapshot(
       displayName: profile.displayName ?? "",
       model: profile.model,
       baseUrl: profile.baseUrl,
-      apiKey: isVaultMode() ? "" : profile.apiKey,
+      apiKey: isVaultAuthoritative() ? "" : profile.apiKey,
       transport: profile.explicitTransport === "anthropic" || profile.explicitTransport === "responses"
         ? profile.explicitTransport
         : "openai",
@@ -573,8 +574,8 @@ export type TtsSettingsView = Pick<
 
 /** TTS 快照：旧页 loadTtsConfig 同款默认回填（缺省/非法值回落旧页默认）。 */
 export function buildTtsSectionSnapshot(settingsView: TtsSettingsView): NativeTtsSnapshot {
-  // 复审 P1-3：vault 模式下 WPF 快照 TTS/ASR 去明文（掩码副本进 section 组装）
-  const settings = isVaultMode() ? maskGeneralSettingsForUi(settingsView) : settingsView;
+  // 复审 P1-3 + PR19 P1-1：vault 事实源下 WPF 快照 TTS/ASR 去明文（mask 内部按 vaultAuthoritative 门控）
+  const settings = maskGeneralSettingsForUi(settingsView);
   return {
     engine: (["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland"] as const)
       .find((engine) => engine === settings.ttsEngine) ?? "off",
@@ -642,8 +643,8 @@ export function buildAsrSectionSnapshot(
   settingsView: AsrSettingsView,
   localPlugins: string[] = [],
 ): NativeAsrSnapshot {
-  // 复审 P1-3：同 TTS——vault 模式 ASR 快照去明文
-  const settings = isVaultMode() ? maskGeneralSettingsForUi(settingsView) : settingsView;
+  // 复审 P1-3 + PR19 P1-1：同 TTS——vault 事实源下 ASR 快照去明文
+  const settings = maskGeneralSettingsForUi(settingsView);
   return {
     engine: (["off", "aliyun", "mossland", "local"] as const)
       .find((engine) => engine === settings.asrEngine) ?? "off",
