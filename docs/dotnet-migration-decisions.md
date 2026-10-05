@@ -557,7 +557,7 @@
   正式写入前先预演一遍拿变更清单，捕获 review 基线（runId 存在时）。
   **顺带修复：TS napi 展开 `$$$` 多捕获重复逗号的真实 bug**（`console.log($$$A)` → `logger.info("a", ,, x)`；
   改为源文本切片重建后与 CLI 一致 `logger.info("a", x)`）。
-- **测试**：矩阵 **145/0**（新增 fetch_url / 文档四件 / 邮件四件 / ast_grep 用例；含本地 fake 服务器、
+- **测试**：矩阵 **146/146**（T2 批新增 fetch_url / 文档四件 / 邮件四件 / ast_grep 用例，复审 P1 补 SMTP 连接拒绝用例；含本地 fake 服务器、
   zip 结构断言、PdfPig 文本提取探针、CLI 缺失错误帧）；dual-track **PASS**（新增 fetch_url 5 / 文档 6 /
   邮件 12 / ast_grep 10：raw 逐字、读回投影、docx run 属性、落盘字节、校验路径逐字、TS↔CLI 逐字）；
   vitest native 新增 **26 项**（fetch_url 3 / 文档 9 / 邮件 8 / ast_grep 6）；
@@ -591,7 +591,8 @@
 - **P1-3 send_email 重复投递**：C# 把 `Disconnect` 移出发送失败判定（发送成功后的
   断开失败仅日志）；TS 走 `nativeFirst(fallbackOnError:false)`——native 失败
   （超时/进程崩溃/错误帧）不自动重发，返回「发送状态未知」明确提示；仅宿主未启动
-  （call 返回 null）时安全回退 TS（确定未发送）。
+  （call 返回 null）时安全回退 TS（确定未发送）。后续 P2 加固已扩展安全回退情形
+  （+`E_EMAIL_PRECONDITION`、+`E_TOOL_NOT_DISPATCHED`，见下节）。
 - **P1-4 邮件取消**：`email_list` / `email_read` / `email_mark` execute 接收 ctx 并
   透传 `signal: ctx?.signal`；补取消信号透传与 AbortError 原样上抛用例。
 - **P2 顺带**：workflow 加 `permissions: contents: read`、`pull_request` paths 补
@@ -612,8 +613,8 @@
     部分写失败的基线时序缺口、ast-grep 取消不杀孙进程（杀 host 语义同 git）：按 issue
     计划跟踪（`ToolHostException.errorCode` 自 P2 加固批起经 `handleFrame` 透传，
     `send_email` 已消费 `E_EMAIL_PRECONDITION`）。
-- **CI 口径**：matrix 在 CI 先于 npm ci，ast-grep 段 SKIP → **131/0**（本地全量
-  145/145）；ast-grep 由 npm ci 之后的 dual-track 步骤覆盖；`docs/dotnet-backend.md`
+- **CI 口径**：matrix 在 CI 先于 npm ci，ast-grep 段 SKIP → **132/0**（本地全量
+  146/146）；ast-grep 由 npm ci 之后的 dual-track 步骤覆盖；`docs/dotnet-backend.md`
   已注明。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 审查修复）。
 
@@ -632,8 +633,8 @@
 - **P2-3 发送前置/发送阶段区分**：C# `EmailTools.Send` 组装/连接/认证等前置失败抛
   `E_EMAIL_PRECONDITION`（确定未发出），`Send` 阶段失败保持 `E_EMAIL_SEND`（状态
   未知）；TS `handleFrame` 透传错误帧 `errorCode` 到 `Error.code`，`send_email` 以
-  `safeFallbackCodes:["E_EMAIL_PRECONDITION"]` 安全回退 nodemailer；smoke-host 实测
-  连接拒绝返回 `E_EMAIL_PRECONDITION`。
+  `safeFallbackCodes:["E_EMAIL_PRECONDITION"]` 安全回退 nodemailer；矩阵邮件段补
+  「SMTP 连接拒绝（临时关闭端口）→ `ok=false` + `errorCode=E_EMAIL_PRECONDITION`」用例锁定（复审 P1）。
 - **P2-4 信任边界用例判别力**：ast-grep 伪造 `__` 用例改断言「无后置可信覆盖的键被
   剥离」（修复前失败）；fs / git wire mock 改用 `vi.importActual` 复用真实
   `stripInternalArgs`，不再自行重实现剥离逻辑。
@@ -642,9 +643,11 @@
 - **P2-6 小边界**：① ast-grep 平台包补 win32-ia32 映射并注释支持范围（linux musl
   无官方包 → 静默回退 TS）；② `formatEmailDate` Invalid Date 回退 `(未知)`（补断言）；
   ③ `AstGrepTool.RunCli` 补 `GetResult()` 理论长挂注释（对照 GitTools 既有模式，
-  不改行为）；④ `withNativeFirst` / `nativeFirst` 的 TS 回退统一只拿已剥离 `__` 的
-  args（补 prepare 返回 null 路径用例）。
+  不改行为）；④ `withNativeFirst` / `nativeFirst` 的 TS 回退统一不向 TS 透传**模型
+  伪造的** `__` 键（可信 `internalArgs` 仍随 prepare 结果传入；git/ast-grep 回退闭包
+  忽略入参为预存在接线、TS 实现不读 `__` 键，无实际暴露，后续收口顺带消费回退入参）
+  （补 prepare 返回 null 路径用例）。
 - **验证**：`vitest run src/main/orchestrator/tools` **504/504**（P2 加固批 +8）；
-  `tsc -p tsconfig.main.json` 0；cyrene-core build 0 错误；矩阵 **145/0**（重建
-  smoke-host 后复跑）；dual-track **PASS**。
+  `tsc -p tsconfig.main.json` 0；cyrene-core build 0 错误；矩阵 **146/146**（重建
+  smoke-host 后复跑；复审 P1 补 SMTP 连接拒绝用例）；dual-track **PASS**。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 复审 P2 加固）。
