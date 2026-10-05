@@ -25,12 +25,15 @@ namespace CyreneNative.Llm;
 ///   ← {"op":"ready"}
 ///   ← {"op":"result","callId","ok":true,"data":…} / {"op":"result","callId","ok":false,"error":"…","errorCode":"E_…","retryable":false}
 ///   （MVP 纯 poll 拉取，无推送帧；retry/done/error 终态经 poll 事件下发；
-///    poll data 另带 dropped/truncated 反映 ring 溢出，见 §4.4）
+///    poll data 另带 dropped（ring 回收累计，含已消费事件）/truncated（请求 cursor 落在
+///    已丢弃段 = 真实增量缺口），见 §4.4）
 ///
 /// 事件（event.type，LlmEvent）：
 ///   delta            {"type":"delta","text":…}                  文本增量
 ///   reasoning_delta  {"type":"reasoning_delta","text":…}        思考增量
-///   tool_calls_delta {"type":"tool_calls_delta","calls":[{index,id,name,argsDelta}]}
+///   tool_calls_delta {"type":"tool_calls_delta","calls":[choices[0].delta.tool_calls 原样透传]}
+///                    （OpenAI chunk 数组：每元素 index/id/type/function{name,arguments 分片}，
+///                     聚合在 TS 侧按 index 完成）
 ///   usage            {"type":"usage","inputTokens":…,"outputTokens":…,"cachedInputTokens":…}
 ///   finish           {"type":"finish","reason":"stop|length|tool_calls|…"}
 ///   retry            {"type":"retry","attempt":1,"delayMs":3000,"category":"RATE_LIMIT"}
@@ -49,7 +52,7 @@ namespace CyreneNative.Llm;
 ///   E_LLM_IDLE_TIMEOUT        上游静默超限（含连接/响应头阶段）
 ///   E_LLM_REQUEST_TIMEOUT     总时长超限（timeoutMs，不可重试）
 ///   E_LLM_CANCELLED           用户取消
-///   E_LLM_TRUNCATED           反压暂停兜底（消费者死亡 60s；ring 溢出走 poll.dropped/truncated）
+///   E_LLM_TRUNCATED           反压暂停兜底（消费者死亡 60s；ring 真实缺口走 poll.truncated）
 ///
 /// 重试语义（与 TS model-retry-runner 对齐）：
 ///   首个可见增量（delta/reasoning_delta/tool_calls_delta）到达前失败

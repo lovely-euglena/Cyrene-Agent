@@ -170,7 +170,7 @@ public sealed class LlmJobService : IDisposable
                     MarkTerminal(job, LlmJobState.Error, new LlmEvent
                     {
                         Type = LlmContracts.EvError, Code = LlmContracts.ErrAuthMissing,
-                        Message = $"vault 缺少 key: {job.AuthVaultKey}", Retryable = false,
+                        Message = $"vault 缺少 key: {job.AuthVaultKey}", Retryable = false, Category = "AUTH",
                     });
                     return;
                 }
@@ -209,11 +209,11 @@ public sealed class LlmJobService : IDisposable
                 }
                 else
                 {
-                    // attemptCts 超时（总时长）→ 不可重试终态（P1-5）
+                    // attemptCts 超时（总时长）→ 不可重试终态（P1-5）；P2-1③：Category 供 TS 消费
                     MarkTerminal(job, LlmJobState.Error, new LlmEvent
                     {
                         Type = LlmContracts.EvError, Code = LlmContracts.ErrRequestTimeout,
-                        Message = $"总时长超限（{job.TimeoutMs}ms）", Retryable = false,
+                        Message = $"总时长超限（{job.TimeoutMs}ms）", Retryable = false, Category = "TIMEOUT",
                     });
                     return;
                 }
@@ -296,8 +296,8 @@ public sealed class LlmJobService : IDisposable
             var mapped = MapWire(ev, ref finish, ref usage);
             if (mapped == null) return true;
 
-            // 反压：未确认量 ≥ 高水位 → 暂停上游读（TCP 反压），poll 消费推进至低水位恢复
-            //（迟滞：暂停后降至 ≤LowWater 才恢复，复审 P2-3）；消费者死亡 60s → truncated 终态
+            // 反压：未确认量 > LowWater（1024）→ 暂停上游读（TCP 反压），poll 消费推进后恢复
+            //（单一阈值，无迟滞——P2-1① 按实现订正）；消费者死亡 60s → truncated 终态
             var pausedAt = Stopwatch.StartNew();
             while (job.Unconfirmed() > LlmJob.LowWater && !job.IsTerminal)
             {

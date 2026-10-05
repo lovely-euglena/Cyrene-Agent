@@ -66,7 +66,8 @@ public static class LlmHost
                 {
                     var callId = frame.TryGetProperty("callId", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
                     if (callId != null)
-                        WriteFrame(new { op = LlmContracts.OpResult, callId, ok = false, error = Trunc(ex.Message), errorCode = LlmContracts.ErrBadRequest, retryable = false });
+                        // P2-1④：分发级兜底是宿主执行期内部错误（BAD_REQUEST 仅保留给帧/body 非法）
+                        WriteFrame(new { op = LlmContracts.OpResult, callId, ok = false, error = Trunc(ex.Message), errorCode = LlmContracts.ErrInternal, retryable = false });
                 }
                 finally { Interlocked.Decrement(ref _inflight); }
             });
@@ -122,7 +123,10 @@ public static class LlmHost
                 // 复审 P2-1①：nextCursor 用 Poll clamp 后的有效位点（cursor 落在丢弃段时
                 // 不能按 cursor+events.Count 自算，否则同批事件重复投递）
                 var nextCursor = slice.NextCursor;
+                // P2-2：dropped = ring 回收累计（含已消费事件，不等于缺口）；truncated = 请求 cursor
+                // 落在已丢弃段（真实增量缺口，来自 Poll 的 Gap）。消费侧按 truncated 告警。
                 var dropped = job.DroppedEvents;
+                var truncated = slice.Gap;
                 // done 之后 final=true（TS 据此停止轮询）；error/cancelled 终态同样 final
                 var final = job.IsTerminal && nextCursor >= job.EventCount;
                 if (callId != null)
@@ -131,8 +135,7 @@ public static class LlmHost
                         op = LlmContracts.OpResult,
                         callId,
                         ok = true,
-                        // truncated：ring 曾 drop-oldest（丢弃段不可恢复）——TS 侧告警增量缺口
-                        data = new { jobId = job.Id, cursor = nextCursor, nextCursor, final, dropped, truncated = dropped > 0, events = slice.Events },
+                        data = new { jobId = job.Id, cursor = nextCursor, nextCursor, final, dropped, truncated, events = slice.Events },
                     });
                 return;
             }
