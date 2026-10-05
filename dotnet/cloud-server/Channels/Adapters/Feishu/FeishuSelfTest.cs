@@ -1,7 +1,9 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Channels;
 using CyreneNative.Channels.Normalizers;
@@ -20,7 +22,7 @@ namespace CyreneCloud.Channels.Adapters.Feishu;
 /// 3. 去重表：message_id + event_id 双键；
 /// 4. 媒体转码两态：ffmpeg 不可用（降级路径）与 mock 可用（OggS 输出）；本机有 ffmpeg 时加测真实转码；
 /// 5. REST 客户端：token 缓存/并发去重、发送、上传（file_type=opus）、下载/超限、错误码透传；
-/// 6. 适配器：文本/图片/音频两态发送、降级文本、状态 detail。
+/// 6. 适配器：文本/图片/音频两态发送、降级文本、状态 detail；dispatcher→adapter（oc_ 目标）集成。
 /// </summary>
 internal static class FeishuSelfTest
 {
@@ -55,6 +57,7 @@ internal static class FeishuSelfTest
         await CheckTranscoderAsync(Check);
         await CheckApiClientAsync(Check);
         await CheckAdapterAsync(Check);
+        await CheckDispatcherIntegrationAsync(Check);
 
         Console.WriteLine(failures == 0
             ? "SELFTEST channel feishu: ALL PASS"
@@ -98,9 +101,16 @@ internal static class FeishuSelfTest
             && !crypto.IsTimestampFresh("1791187501")
             && !crypto.IsTimestampFresh("not-a-number")
             && !crypto.IsTimestampFresh(null), "");
+        check("crypto: 越界时间戳（15 位数字）判不新鲜、不抛异常",
+            !crypto.IsTimestampFresh("999999999999999")
+            && !crypto.IsTimestampFresh("-999999999999999"), "");
 
         var stale = crypto.Verify("1791186600", "nonce", "x", body);
         check("crypto: 过期时间戳拒绝", !stale.Ok && stale.Error == FeishuEventCrypto.ErrorTimestamp, stale.Error ?? "");
+
+        var overflow = crypto.Verify("999999999999999", "nonce", null, body);
+        check("crypto: 越界时间戳走 401（E_FEISHU_TIMESTAMP，不抛 500）",
+            !overflow.Ok && overflow.Error == FeishuEventCrypto.ErrorTimestamp, overflow.Error ?? "exception");
 
         var badSignature = crypto.Verify("1791187200", "nonce", new string('a', 64), body);
         check("crypto: 坏签名拒绝", !badSignature.Ok && badSignature.Error == FeishuEventCrypto.ErrorSignature, badSignature.Error ?? "");
@@ -285,6 +295,22 @@ internal static class FeishuSelfTest
             check("transcoder: mock 转码输出 OggS",
                 File.Exists(output) && FeishuMediaTranscoder.IsOggOpusFile(output), output);
 
+            // Ogg granule_position → duration（上传 opus 显式 duration；与桌面 SDK parseOpusDuration 同口径）
+            var ogg = new byte[64];
+            Encoding.ASCII.GetBytes("OggS").CopyTo(ogg, 0);
+            ogg[4] = 0;
+            ogg[5] = 2;
+            BinaryPrimitives.WriteInt64LittleEndian(ogg.AsSpan(6), 48000L);
+            var oggPath = Path.Combine(dir, "duration.ogg");
+            File.WriteAllBytes(oggPath, ogg);
+            check("transcoder: Ogg granule → duration（48000/48=1000ms）",
+                FeishuMediaTranscoder.TryReadOggOpusDurationMs(oggPath) == 1000,
+                FeishuMediaTranscoder.TryReadOggOpusDurationMs(oggPath)?.ToString() ?? "null");
+            var notOggPath = Path.Combine(dir, "not-ogg.bin");
+            File.WriteAllBytes(notOggPath, new byte[64]);
+            check("transcoder: 非 Ogg 文件 duration=null",
+                FeishuMediaTranscoder.TryReadOggOpusDurationMs(notOggPath) is null, "");
+
             // 真实 ffmpeg（本机/镜像安装时）：1s 静音 WAV → Ogg Opus 实测
             var real = new FeishuMediaTranscoder();
             if (await real.IsAvailableAsync())
@@ -425,27 +451,30 @@ internal static class FeishuSelfTest
                 var textResult = await adapter.SendAsync(new OutgoingMessage
                 {
                     Channel = ChannelIds.Feishu,
-                    TargetId = "ou_user_1",
+                    TargetId = "oc_user_1",
                     Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = "你好，昔涟" }],
                 });
                 var textMessage = textHandler.Messages.FirstOrDefault();
-                check("adapter: 文本发送（msg_type=text + content）",
+                check("adapter: 文本发送（msg_type=text + content + receive_id_type=chat_id）",
                     textResult.Ok && textHandler.Messages.Count == 1
+                    && textMessage.Query.Contains("receive_id_type=chat_id", StringComparison.Ordinal)
+                    && MessageField(textMessage.Body, "receive_id") == "oc_user_1"
                     && MessageField(textMessage.Body, "msg_type") == "text"
                     && MessageContent(textMessage.Body).Contains("你好，昔涟", StringComparison.Ordinal),
-                    textMessage.Body ?? "none");
+                    $"{textMessage.Query} {textMessage.Body}");
 
                 var imagePath = Path.Combine(dir, "pic.png");
                 File.WriteAllBytes(imagePath, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]);
                 var imageResult = await adapter.SendAsync(new OutgoingMessage
                 {
                     Channel = ChannelIds.Feishu,
-                    TargetId = "ou_user_1",
+                    TargetId = "oc_user_1",
                     Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Image, FilePath = imagePath }],
                 });
                 var imageMessage = textHandler.Messages.LastOrDefault();
                 check("adapter: 图片发送（上传 image_key → msg_type=image）",
                     imageResult.Ok && textHandler.ImageUploads == 1
+                    && MessageField(imageMessage.Body, "receive_id") == "oc_user_1"
                     && MessageField(imageMessage.Body, "msg_type") == "image"
                     && MessageContent(imageMessage.Body).Contains("img_key_1", StringComparison.Ordinal),
                     imageMessage.Body ?? "none");
@@ -453,7 +482,7 @@ internal static class FeishuSelfTest
                 var missing = await adapter.SendAsync(new OutgoingMessage
                 {
                     Channel = ChannelIds.Feishu,
-                    TargetId = "ou_user_1",
+                    TargetId = "oc_user_1",
                     Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Image, Url = "https://example.com/x.png" }],
                 });
                 check("adapter: 缺上传结果 → 失败（缺图片上传结果）",
@@ -492,9 +521,11 @@ internal static class FeishuSelfTest
                 check("adapter: 音频两态 B（mock 转码 → opus 上传 + msg_type=audio）",
                     result.Ok && mockHandler.FileUploads.Count == 1
                     && mockHandler.FileUploads[0].FileType == "opus"
+                    && mockHandler.FileUploads[0].FileName == "voice.ogg"
+                    && MessageField(sent.Body, "receive_id") == "oc_user_1"
                     && MessageField(sent.Body, "msg_type") == "audio"
                     && MessageContent(sent.Body).Contains("file_key_1", StringComparison.Ordinal),
-                    sent.Body ?? "none");
+                    $"{JsonSerializer.Serialize(mockHandler.FileUploads)} {sent.Body ?? "none"}");
                 check("adapter: 转码后 VoiceAvailable=true", adapter.VoiceAvailable, "");
             }
 
@@ -526,6 +557,69 @@ internal static class FeishuSelfTest
         }
     }
 
+    // ── 7. dispatcher → adapter（oc_ 目标）集成 ───────────────────────────────
+
+    /// <summary>
+    /// 真实链路（§6.4）：webhook 事件 → 适配器归一化/去重 → dispatcher 生成回复 →
+    /// 适配器出站。锁定私聊目标为 chatId（oc_）时 receive_id_type=chat_id——
+    /// 桌面 SDK 按 oc_ 前缀自动识别，自研 REST 客户端没有识别，必须由计划显式对齐。
+    /// </summary>
+    private static async Task CheckDispatcherIntegrationAsync(Action<string, bool, string> check)
+    {
+        var dir = NewTempDir("feishu-dispatcher");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var eventStore = new EventStore(Path.Combine(dir, "events.db"));
+            var writer = new ServerEventWriter(eventStore);
+            var handler = new FakeFeishuHandler();
+            using var api = new FeishuApiClient("cli_test_app", "secret_test", handler);
+            var adapter = new FeishuAdapter(
+                new ChannelOptions
+                {
+                    FeishuAppId = "cli_test_app",
+                    FeishuAppSecret = "secret_test",
+                    FeishuVerificationToken = FixtureToken,
+                },
+                store,
+                api,
+                new FeishuMediaTranscoder("__missing_ffmpeg__", runner: UnavailableRunner),
+                Path.Combine(dir, "media"),
+                NullLogger<FeishuAdapter>.Instance);
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            manager.Register(adapter);
+            var delivery = new ChannelDeliveryService(
+                manager, NullLogger<ChannelDeliveryService>.Instance, TimeSpan.Zero);
+            var dispatcher = new ChannelDispatcher(
+                store, writer, new FakeDialogEngine(), delivery, NullLogger<ChannelDispatcher>.Instance);
+            adapter.OnMessage = dispatcher.HandleIncomingAsync;
+
+            using var document = JsonDocument.Parse(
+                """
+                {"header":{"event_id":"evt-dispatch-1","event_type":"im.message.receive_v1","create_time":"1787889600000"},
+                 "event":{"sender":{"sender_id":{"open_id":"ou_user_1"}},
+                 "message":{"message_id":"om_dispatch_1","chat_id":"oc_chat_1","chat_type":"p2p","message_type":"text","content":"{\"text\":\"你好\"}","timestamp":1787889600000}}}
+                """);
+            var result = await adapter.HandleEventAsync(document.RootElement);
+            var sent = handler.Messages.FirstOrDefault();
+            check("dispatcher→adapter: 私聊 oc_ 目标 receive_id_type=chat_id",
+                result.Outgoing is not null && result.Outgoing.TargetId == "oc_chat_1"
+                && handler.Messages.Count == 1
+                && sent.Query.Contains("receive_id_type=chat_id", StringComparison.Ordinal)
+                && MessageField(sent.Body, "receive_id") == "oc_chat_1"
+                && MessageContent(sent.Body).Contains("飞书回复", StringComparison.Ordinal),
+                $"{sent.Query} {sent.Body}");
+            var receipts = await store.ListReceiptsAsync(ChannelIds.Feishu);
+            check("dispatcher→adapter: delivered 回执",
+                receipts.Count == 1 && receipts[0].Status == ChannelStore.StatusDelivered,
+                JsonSerializer.Serialize(receipts));
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
     // ── 测试替身 ─────────────────────────────────────────────────────────────
 
     private static FeishuAdapter BuildAdapter(
@@ -549,7 +643,7 @@ internal static class FeishuSelfTest
     private static OutgoingMessage AudioMessage(string filePath) => new()
     {
         Channel = ChannelIds.Feishu,
-        TargetId = "ou_user_1",
+        TargetId = "oc_user_1",
         Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Audio, FilePath = filePath, Mime = "audio/mpeg" }],
     };
 
@@ -650,6 +744,19 @@ internal static class FeishuSelfTest
         }
 
         public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    /// <summary>固定回复的 DialogEngine（dispatcher 集成链路用）。</summary>
+    private sealed class FakeDialogEngine : IDialogEngine
+    {
+        public Task<GeneratedReply?> GenerateAsync(string sessionId, CancellationToken cancellationToken = default)
+        {
+            const string anchor = "anchor-feishu-1";
+            return Task.FromResult<GeneratedReply?>(new GeneratedReply(
+                "飞书回复", anchor,
+                ChannelSessionId.MakeAssistantEventId(sessionId, anchor),
+                "turn-feishu-1"));
+        }
     }
 
     // ── 辅助 ─────────────────────────────────────────────────────────────────

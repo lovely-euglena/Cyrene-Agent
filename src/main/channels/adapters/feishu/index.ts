@@ -208,6 +208,23 @@ async function sendLark(channel: LarkChannel, targetId: string, part: OutgoingPa
       } as SendInput)) ?? null;
       break;
     }
+    case "file": {
+      // SDK 内置文件上传（file_type=stream）；fileName 必填，缺省用路径末段
+      result = (await channel.send(targetId, {
+        file: {
+          source: part.filePath,
+          fileName: part.name ?? path.basename(part.filePath),
+        },
+      } as SendInput)) ?? null;
+      break;
+    }
+    case "video": {
+      // SDK 内置视频上传（file_type=mp4，时长自解析）；封面可选，当前出站模型不携带
+      result = (await channel.send(targetId, {
+        video: { source: part.filePath },
+      } as SendInput)) ?? null;
+      break;
+    }
     case "card": {
       result = (await channel.send(targetId, {
         card: {

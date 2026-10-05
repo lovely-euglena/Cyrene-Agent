@@ -1,0 +1,24 @@
+{
+  "name": "越界时间戳（15 位数字）拒绝 401（不抛 500）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "999999999999999",
+      "nonce": "nonce-overflow",
+      "signature": null,
+      "body": "{\"encrypt\":\"x\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 401,
+      "body": {
+        "code": "E_FEISHU_TIMESTAMP"
+      }
+    }
+  ]
+}

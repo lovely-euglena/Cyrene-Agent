@@ -244,6 +244,7 @@ public sealed class FeishuAdapter : IChannelAdapter
         try
         {
             var uploads = new Dictionary<string, FeishuUploadResult>();
+            var durations = new Dictionary<string, double>();
             var parts = new List<OutgoingPart>();
             foreach (var part in message.Parts)
             {
@@ -301,7 +302,7 @@ public sealed class FeishuAdapter : IChannelAdapter
                         break;
                     case OutgoingPartKinds.Audio:
                     {
-                        var fallback = await PrepareAudioAsync(part, uploads, cancellationToken)
+                        var fallback = await PrepareAudioAsync(part, uploads, durations, cancellationToken)
                             .ConfigureAwait(false);
                         parts.Add(fallback ?? part);
                         break;
@@ -324,6 +325,7 @@ public sealed class FeishuAdapter : IChannelAdapter
             var plan = FeishuNormalizer.BuildSendRequests(effective, new FeishuSendContext
             {
                 Uploads = uploads,
+                Durations = durations,
             });
             if (plan.Error is not null)
             {
@@ -374,9 +376,12 @@ public sealed class FeishuAdapter : IChannelAdapter
     /// <summary>
     /// 语音 part 处理：已是 Ogg Opus 直接上传；否则 ffmpeg 转码后上传；
     /// 开关关闭/ffmpeg 不可用/转码失败 → 返回文本降级 part（§6.3）。
+    /// 上传 opus 时显式带 duration（从 Ogg granule 读取，飞书上传要求）；转码产物文件名
+    /// 扩展名改为 .ogg；duration 同时注入发送计划（audio content 字段）。
     /// </summary>
     private async Task<OutgoingPart?> PrepareAudioAsync(
-        OutgoingPart part, Dictionary<string, FeishuUploadResult> uploads, CancellationToken cancellationToken)
+        OutgoingPart part, Dictionary<string, FeishuUploadResult> uploads,
+        Dictionary<string, double> durations, CancellationToken cancellationToken)
     {
         if (part.FilePath is null) return null; // 交给 Normalizer 报「缺少音频上传结果」
         if (!_options.FeishuAudio)
@@ -401,19 +406,31 @@ public sealed class FeishuAdapter : IChannelAdapter
             }
         }
 
+        var transcoded = !string.Equals(uploadPath, part.FilePath, StringComparison.Ordinal);
+        var fileName = ResolveFileName(part, ".ogg");
+        if (transcoded)
+        {
+            // 转码产物：上传的是 Ogg Opus，扩展名同步改为 .ogg（不沿用原 mp3 名）
+            fileName = Path.ChangeExtension(fileName, ".ogg");
+        }
         try
         {
+            var durationMs = FeishuMediaTranscoder.TryReadOggOpusDurationMs(uploadPath);
+            if (durationMs is not null)
+            {
+                durations[part.FilePath] = durationMs.Value;
+            }
             uploads[part.FilePath] = new FeishuUploadResult
             {
                 FileKey = await _api.UploadFileAsync(
-                    uploadPath, ResolveFileName(part, ".ogg"), "opus", null, cancellationToken)
+                    uploadPath, fileName, "opus", durationMs, cancellationToken)
                     .ConfigureAwait(false),
             };
             return null;
         }
         finally
         {
-            if (!string.Equals(uploadPath, part.FilePath, StringComparison.Ordinal))
+            if (transcoded)
             {
                 TryDelete(uploadPath);
             }

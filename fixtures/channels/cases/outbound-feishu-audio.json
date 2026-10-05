@@ -5,17 +5,17 @@
   "input": {
     "message": {
       "channel": "feishu",
-      "targetId": "ou_user_1",
+      "targetId": "oc_user_1",
       "parts": [{ "kind": "audio", "filePath": "C:/tmp/voice.opus", "mime": "audio/ogg" }]
     },
     "uploads": { "C:/tmp/voice.opus": { "file_key": "file_key_1" } },
     "durations": { "C:/tmp/voice.opus": 1200 }
   },
   "expect": {
-    "receiveIdType": "open_id",
+    "receiveIdType": "chat_id",
     "requests": [
       {
-        "receive_id": "ou_user_1",
+        "receive_id": "oc_user_1",
         "msg_type": "audio",
         "content": "{\"file_key\":\"file_key_1\",\"duration\":1200}"
       }

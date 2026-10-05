@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 
 namespace CyreneCloud.Channels.Adapters.Feishu;
@@ -159,6 +160,41 @@ public sealed class FeishuMediaTranscoder
         catch (IOException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 读取 Ogg Opus 时长（毫秒，与桌面 SDK parseOpusDuration 同口径：从文件尾部找最后一个
+    /// OggS 页，granule_position（48kHz 采样数）/ 48）。上传 opus 时飞书要求显式 duration。
+    /// 无法解析返回 null（调用方按缺省处理）。
+    /// </summary>
+    public static long? TryReadOggOpusDurationMs(string path)
+    {
+        try
+        {
+            var buffer = File.ReadAllBytes(path);
+            if (buffer.Length < 27) return null;
+            for (var i = buffer.Length - 27; i >= 0; i--)
+            {
+                if (buffer[i] != (byte)'O' || buffer[i + 1] != (byte)'g'
+                    || buffer[i + 2] != (byte)'g' || buffer[i + 3] != (byte)'S')
+                {
+                    continue;
+                }
+                var granule = BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(i + 6));
+                if (granule < 0) return null;
+                // JS Math.round 为四舍五入（非 banker's rounding）
+                return (long)Math.Floor((double)granule / 48 + 0.5);
+            }
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

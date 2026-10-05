@@ -1,0 +1,23 @@
+{
+  "name": "feishu 出站显式 receive_id_type=open_id（override）",
+  "kind": "outbound",
+  "channel": "feishu",
+  "input": {
+    "message": {
+      "channel": "feishu",
+      "targetId": "ou_user_1",
+      "parts": [{ "kind": "text", "text": "你好" }]
+    },
+    "receiveIdType": "open_id"
+  },
+  "expect": {
+    "receiveIdType": "open_id",
+    "requests": [
+      {
+        "receive_id": "ou_user_1",
+        "msg_type": "text",
+        "content": "{\"text\":\"你好\"}"
+      }
+    ]
+  }
+}

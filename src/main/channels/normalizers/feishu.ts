@@ -144,7 +144,7 @@ export interface FeishuUploadResult {
 }
 
 export interface FeishuSendContext {
-  /** receive_id_type（缺省：私聊 open_id / 群 chat_id） */
+  /** receive_id_type（缺省：chat_id；dispatcher 的 targetId 恒为 chatId，私聊/群聊一致） */
   receiveIdType?: "open_id" | "chat_id";
   /** filePath/imagePath → 上传结果（image_key / file_key） */
   uploads?: Record<string, FeishuUploadResult>;
@@ -209,7 +209,9 @@ export function buildFeishuSendRequests(
   message: OutgoingMessage,
   context: FeishuSendContext = {},
 ): FeishuSendPlan {
-  const receiveIdType = context.receiveIdType ?? (message.chatType === "group" ? "chat_id" : "open_id");
+  // 缺省 chat_id：dispatcher 的 targetId 恒为 chatId（oc_…，私聊/群聊一致，与桌面 SDK
+  // 对 oc_ 前缀的识别结果一致）；open_id 目标需调用方显式传 receiveIdType。
+  const receiveIdType = context.receiveIdType ?? "chat_id";
   const requests: FeishuSendRequest[] = [];
   const fail = (error: string): FeishuSendPlan => ({ receiveIdType, requests: [], error });
   for (const part of message.parts) {
