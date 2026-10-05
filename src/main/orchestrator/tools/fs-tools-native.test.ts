@@ -18,11 +18,15 @@ const nativeMocks = vi.hoisted(() => ({
   captureBefore: vi.fn(),
 }));
 
-vi.mock("./native-tool-host", () => ({
-  nativeToolHost: { call: nativeMocks.call },
-  stripInternalArgs: (args: Record<string, unknown>) =>
-    Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__"))),
-}));
+// 只替换 nativeToolHost.call；stripInternalArgs 复用真实实现（vi.importActual），
+// 避免 mock 自行重实现剥离逻辑——真实实现退化时本文件用例仍会失败（复审 P2-4）
+vi.mock("./native-tool-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./native-tool-host")>();
+  return {
+    ...actual,
+    nativeToolHost: { call: nativeMocks.call },
+  };
+});
 
 vi.mock("../../dotnet-backend/config", () => ({
   resolveDotnetConfig: vi.fn(() => ({ toolHost: true })),

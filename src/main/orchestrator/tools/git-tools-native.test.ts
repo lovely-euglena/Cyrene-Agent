@@ -16,22 +16,31 @@ const nativeMocks = vi.hoisted(() => ({
   nativeError: null as Error | null,
 }));
 
-vi.mock("./native-tool-host", () => ({
-  nativeFirst: async (
-    tool: string,
-    args: Record<string, unknown>,
-    fallback: (a: Record<string, unknown>) => unknown,
-    options?: { signal?: AbortSignal; internalArgs?: Record<string, unknown> },
-  ) => {
-    // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
-    const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
-    const nativeArgs = { ...clean, ...(options?.internalArgs ?? {}) };
-    nativeMocks.calls.push({ tool, args: nativeArgs, options });
-    if (nativeMocks.nativeError) throw nativeMocks.nativeError;
-    if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
-    return fallback(nativeArgs);
-  },
-}));
+// electron mock：importActual 加载真实 native-tool-host 链时
+// native-windows-host 顶层 import electron（仅需存在，测试不触达）
+vi.mock("electron", () => ({ app: { getPath: () => "" } }));
+
+// 只替换 nativeFirst；剥离逻辑复用真实 stripInternalArgs（vi.importActual），
+// 避免 mock 自行重实现——真实实现退化时本文件信任边界用例仍会失败（复审 P2-4）
+vi.mock("./native-tool-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./native-tool-host")>();
+  return {
+    ...actual,
+    nativeFirst: async (
+      tool: string,
+      args: Record<string, unknown>,
+      fallback: (a: Record<string, unknown>) => unknown,
+      options?: { signal?: AbortSignal; internalArgs?: Record<string, unknown> },
+    ) => {
+      // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+      const nativeArgs = { ...actual.stripInternalArgs(args), ...(options?.internalArgs ?? {}) };
+      nativeMocks.calls.push({ tool, args: nativeArgs, options });
+      if (nativeMocks.nativeError) throw nativeMocks.nativeError;
+      if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
+      return fallback(nativeArgs);
+    },
+  };
+});
 
 import { createCodeGitTools } from "./git-tools";
 

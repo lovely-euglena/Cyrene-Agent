@@ -132,13 +132,20 @@ describe("ast_grep native 轨", () => {
     expect(fs.existsSync(baselineDir)).toBe(true);
   });
 
-  it("信任边界：模型伪造 __astGrepCommand / __cyreneWorkspaceRoot 被可信值覆盖", async () => {
+  it("信任边界：伪造 __ 键被剥离；可信注入覆盖同名伪造值（无后置覆盖的键不得出现在 native 帧）", async () => {
     if (!CLI) return;
     h.nativeResults = [JSON.stringify({ success: true, matchCount: 0, matches: [] })];
     await getTool("ast_grep_search").execute(
-      { pattern: "x", __astGrepCommand: "C:\\evil.exe", __cyreneWorkspaceRoot: "C:\\evil" },
+      {
+        pattern: "x",
+        __astGrepCommand: "C:\\evil.exe",
+        __cyreneWorkspaceRoot: "C:\\evil",
+        // 无后置可信覆盖的伪造键：剥离失效会原样进入 native 帧（修复前本用例失败）
+        __modelForgedInternal: "evil",
+      },
       { resolvedWorkspaceRoot: tmpDir },
     );
+    expect(h.nativeCalls[0].args.__modelForgedInternal).toBeUndefined();
     expect(h.nativeCalls[0].args.__astGrepCommand).toBe(CLI);
     expect(h.nativeCalls[0].args.__cyreneWorkspaceRoot).toBe(tmpDir);
   });
