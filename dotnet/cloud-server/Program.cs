@@ -60,12 +60,21 @@ var modelClient = new ModelClient(
 var dialogSystemPrompt = Environment.GetEnvironmentVariable("CLOUD_LLM_SYSTEM_PROMPT");
 var dialogContextChars = ReadIntEnv("CLOUD_LLM_CONTEXT_CHARS", 24000);
 builder.Services.AddSingleton(modelClient);
-builder.Services.AddSingleton(sp => new DialogLoop(
+// 生成核心（DialogEngine）与事件写者（ServerEventWriter）抽出（§2.4 R3/R4）：
+// DialogLoop 只留队列/重试/写回；渠道路径复用同一生成与写库语义。
+builder.Services.AddSingleton(sp => new ServerEventWriter(sp.GetRequiredService<EventStore>()));
+builder.Services.AddSingleton(sp => new DialogEngine(
     sp.GetRequiredService<EventStore>(),
     modelClient,
-    sp.GetRequiredService<ILogger<DialogLoop>>(),
+    sp.GetRequiredService<ILogger<DialogEngine>>(),
     dialogSystemPrompt,
     dialogContextChars));
+builder.Services.AddSingleton<IDialogEngine>(sp => sp.GetRequiredService<DialogEngine>());
+builder.Services.AddSingleton(sp => new DialogLoop(
+    sp.GetRequiredService<IDialogEngine>(),
+    sp.GetRequiredService<ServerEventWriter>(),
+    modelClient,
+    sp.GetRequiredService<ILogger<DialogLoop>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DialogLoop>());
 
 var masterToken = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
