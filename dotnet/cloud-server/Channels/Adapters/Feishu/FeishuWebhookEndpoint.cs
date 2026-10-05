@@ -39,18 +39,25 @@ public static class FeishuWebhookEndpoint
         byte[] rawBody;
         try
         {
+            // 带上限的分块读取：无 Content-Length 的 chunked 请求超限即拒，
+            // 不再先整体缓冲再判 1MB（防内存放大）。
             using var buffer = new MemoryStream();
-            await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
-            if (buffer.Length > MaxBodyBytes)
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await context.Request.Body.ReadAsync(chunk.AsMemory(), context.RequestAborted)) > 0)
             {
-                await WriteJsonAsync(context, StatusCodes.Status413PayloadTooLarge, new { code = "E_FEISHU_BODY_TOO_LARGE" });
-                return;
+                if (buffer.Length + read > MaxBodyBytes)
+                {
+                    await WriteJsonAsync(context, StatusCodes.Status413PayloadTooLarge, new { code = "E_FEISHU_BODY_TOO_LARGE" });
+                    return;
+                }
+                await buffer.WriteAsync(chunk.AsMemory(0, read), context.RequestAborted);
             }
             rawBody = buffer.ToArray();
         }
         catch (BadHttpRequestException)
         {
-            // chunked（无 Content-Length）到读取时才触顶
+            // 服务器层请求体上限（Kestrel）触顶
             await WriteJsonAsync(context, StatusCodes.Status413PayloadTooLarge, new { code = "E_FEISHU_BODY_TOO_LARGE" });
             return;
         }

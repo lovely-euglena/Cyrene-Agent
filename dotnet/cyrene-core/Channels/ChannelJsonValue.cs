@@ -19,6 +19,27 @@ public static class ChannelJsonValue
         };
     }
 
+    /// <summary>
+    /// JS `String(value ?? "")` 全语义：string 原样、number/bool 字面量、数组逗号连接、
+    /// 对象 "[object Object]"、null/缺省空串（飞书 text 兜底等畸形输入对齐 TS 用）。
+    /// </summary>
+    public static string JsStringOrEmpty(JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var value)) return "";
+        return JsString(value);
+    }
+
+    private static string JsString(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? "",
+        JsonValueKind.Number => value.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Array => string.Join(",", value.EnumerateArray().Select(JsString)),
+        JsonValueKind.Object => "[object Object]",
+        _ => "",
+    };
+
     /// <summary>JS `typeof x === "string" ? x : undefined`。</summary>
     public static string? OptionalString(JsonElement parent, string name) =>
         parent.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

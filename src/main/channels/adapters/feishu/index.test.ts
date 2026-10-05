@@ -34,6 +34,40 @@ describe("FeishuAdapter outgoing media", () => {
     });
   });
 
+  it("uploads a local file through the SDK file input", async () => {
+    const send = vi.fn(async () => ({ messageId: "om_file" }));
+    const adapter = new FeishuAdapter();
+    (adapter as any).channel = { send };
+
+    const result = await adapter.send({
+      channel: "feishu",
+      targetId: "oc_chat",
+      parts: [{ kind: "file", filePath: "C:/tmp/报告.pdf", name: "报告.pdf" }],
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledWith("oc_chat", {
+      file: { source: "C:/tmp/报告.pdf", fileName: "报告.pdf" },
+    });
+  });
+
+  it("uploads a local video through the SDK video input", async () => {
+    const send = vi.fn(async () => ({ messageId: "om_video" }));
+    const adapter = new FeishuAdapter();
+    (adapter as any).channel = { send };
+
+    const result = await adapter.send({
+      channel: "feishu",
+      targetId: "oc_chat",
+      parts: [{ kind: "video", filePath: "C:/tmp/clip.mp4" }],
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledWith("oc_chat", {
+      video: { source: "C:/tmp/clip.mp4" },
+    });
+  });
+
   it("transcodes an audio file to Ogg Opus with mpv", async () => {
     const inputPath = path.join(os.tmpdir(), `cyrene-feishu-input-${Date.now()}.wav`);
     fs.writeFileSync(inputPath, Buffer.from("RIFF-test-audio"));

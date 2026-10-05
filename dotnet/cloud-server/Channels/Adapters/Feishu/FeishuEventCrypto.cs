@@ -28,6 +28,10 @@ public sealed class FeishuEventCrypto
     /// <summary>时间戳新鲜度窗口（§6.2：±5 分钟）。</summary>
     public static readonly TimeSpan DefaultMaxSkew = TimeSpan.FromMinutes(5);
 
+    /// <summary>DateTimeOffset.FromUnixTimeSeconds 的可表示范围（0001-01-01 ~ 9999-12-31 UTC）。</summary>
+    private const long UnixSecondsMin = -62135596800L;
+    private const long UnixSecondsMax = 253402300799L;
+
     private readonly string _verificationToken;
     private readonly string? _encryptKey;
     private readonly TimeProvider _clock;
@@ -64,17 +68,23 @@ public sealed class FeishuEventCrypto
         }
         finally
         {
+            CryptographicOperations.ZeroMemory(expected);
             CryptographicOperations.ZeroMemory(actual);
         }
     }
 
-    /// <summary>请求时间戳（Unix 秒）是否落在 ±maxSkew 窗口内。</summary>
+    /// <summary>
+    /// 请求时间戳（Unix 秒）是否落在 ±maxSkew 窗口内。
+    /// 越界数值（超出 DateTimeOffset 可表示范围，如 15 位数字）直接判不新鲜——
+    /// 公开路由必须在签名/解析前拿到 401，而不是 FromUnixTimeSeconds 抛异常变 500。
+    /// </summary>
     public bool IsTimestampFresh(string? timestamp)
     {
         if (!long.TryParse(timestamp, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
         {
             return false;
         }
+        if (seconds < UnixSecondsMin || seconds > UnixSecondsMax) return false;
         var at = DateTimeOffset.FromUnixTimeSeconds(seconds);
         return (_clock.GetUtcNow() - at).Duration() <= _maxSkew;
     }

@@ -41,7 +41,7 @@ public static class FeishuNormalizer
             case "text":
                 text = content is not null && ChannelJsonValue.OptionalString(content.Value, "text") is { } parsedText
                     ? parsedText
-                    : ChannelJsonValue.OptionalString(message, "content") ?? "";
+                    : ChannelJsonValue.JsStringOrEmpty(message, "content");
                 break;
             case "image":
                 text = "[image]";
@@ -64,12 +64,13 @@ public static class FeishuNormalizer
                 text = "[audio]";
                 if (content is not null && ChannelJsonValue.OptionalString(content.Value, "file_key") is { } audioKey)
                 {
+                    // 保留原始数值（TS 同口径：非整数 duration 不截断）
                     var duration = ChannelJsonValue.NumberOrNull(content.Value, "duration");
                     media.Add(new FeishuInboundMedia
                     {
                         Kind = "audio",
                         FileKey = audioKey,
-                        Duration = duration is null ? null : (long)duration.Value,
+                        Duration = duration,
                     });
                 }
                 break;
@@ -148,8 +149,9 @@ public static class FeishuNormalizer
     public static FeishuSendPlan BuildSendRequests(OutgoingMessage message, FeishuSendContext? context = null)
     {
         context ??= new FeishuSendContext();
-        var receiveIdType = context.ReceiveIdType
-            ?? (message.ChatType == ChannelChatTypes.Group ? "chat_id" : "open_id");
+        // 缺省 chat_id：dispatcher/主动消息的 TargetId 恒为 chatId（oc_…，私聊/群聊一致，
+        // 与桌面 SDK 对 oc_ 前缀的识别结果一致）；open_id 目标需调用方显式传 ReceiveIdType。
+        var receiveIdType = context.ReceiveIdType ?? "chat_id";
         var requests = new List<FeishuSendRequest>();
         FeishuSendPlan Fail(string error) => new(receiveIdType, [], error);
 
@@ -231,7 +233,8 @@ public static class FeishuNormalizer
                     if (string.IsNullOrEmpty(upload?.FileKey))
                         return Fail($"缺少视频上传结果: {part.FilePath}");
                     var payload = new JsonObject { ["file_key"] = upload.FileKey };
-                    if (!string.IsNullOrEmpty(upload.ImageKey)) payload["image_key"] = upload.ImageKey;
+                    // 与 TS 同口径：image_key 键存在即保留（空串也保留，不静默丢弃）
+                    if (upload.ImageKey is not null) payload["image_key"] = upload.ImageKey;
                     requests.Add(new FeishuSendRequest
                     {
                         ReceiveId = message.TargetId,
@@ -319,7 +322,7 @@ public sealed class FeishuInboundMedia
     [JsonPropertyName("kind")] public required string Kind { get; init; }
     [JsonPropertyName("fileKey")] public required string FileKey { get; init; }
     [JsonPropertyName("fileName")] public string? FileName { get; init; }
-    [JsonPropertyName("duration")] public long? Duration { get; init; }
+    [JsonPropertyName("duration")] public double? Duration { get; init; }
 }
 
 public sealed class FeishuUploadResult
@@ -330,10 +333,11 @@ public sealed class FeishuUploadResult
 
 public sealed class FeishuSendContext
 {
-    /// <summary>receive_id_type（缺省：私聊 open_id / 群 chat_id）</summary>
+    /// <summary>receive_id_type（缺省：chat_id；dispatcher 的 TargetId 恒为 chatId）</summary>
     public string? ReceiveIdType { get; init; }
     public Dictionary<string, FeishuUploadResult>? Uploads { get; init; }
-    public Dictionary<string, long>? Durations { get; init; }
+    /// <summary>filePath → 音频时长（ms；与 TS 同为原始数值，非整数不截断）</summary>
+    public Dictionary<string, double>? Durations { get; init; }
 }
 
 public sealed class FeishuSendRequest

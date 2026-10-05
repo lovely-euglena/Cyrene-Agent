@@ -5,7 +5,7 @@
   "input": {
     "message": {
       "channel": "feishu",
-      "targetId": "ou_user_1",
+      "targetId": "oc_user_1",
       "parts": [
         { "kind": "text", "text": "看图" },
         { "kind": "image", "filePath": "C:/tmp/pic.png" }
@@ -14,15 +14,15 @@
     "uploads": { "C:/tmp/pic.png": { "image_key": "img_key_1" } }
   },
   "expect": {
-    "receiveIdType": "open_id",
+    "receiveIdType": "chat_id",
     "requests": [
       {
-        "receive_id": "ou_user_1",
+        "receive_id": "oc_user_1",
         "msg_type": "text",
         "content": "{\"text\":\"看图\"}"
       },
       {
-        "receive_id": "ou_user_1",
+        "receive_id": "oc_user_1",
         "msg_type": "image",
         "content": "{\"image_key\":\"img_key_1\"}"
       }

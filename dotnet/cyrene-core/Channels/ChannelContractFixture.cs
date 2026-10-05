@@ -143,7 +143,7 @@ public static class ChannelContractFixture
                 {
                     ReceiveIdType = GetString(input, "receiveIdType"),
                     Uploads = TryDeserialize<Dictionary<string, FeishuUploadResult>>(input, "uploads"),
-                    Durations = TryDeserialize<Dictionary<string, long>>(input, "durations"),
+                    Durations = TryDeserialize<Dictionary<string, double>>(input, "durations"),
                 };
                 return JsonSerializer.SerializeToElement(FeishuNormalizer.BuildSendRequests(message, context), ChannelJson.Options);
             }
