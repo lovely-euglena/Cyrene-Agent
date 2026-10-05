@@ -15,6 +15,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 微信 iLink 扫码登录 PNG 渲染（设计 §3.4；只用托管 PngByteQRCode，不依赖 System.Drawing） -->
+    <PackageReference Include="QRCoder" Version="1.8.0" />
     <ProjectReference Include="../cyrene-core/CyreneCore.csproj" />
     <!-- 显式声明（不依赖 core 的传递引用）：core 调整包依赖时不静默破坏服务端 -->
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />

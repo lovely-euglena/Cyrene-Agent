@@ -24,6 +24,9 @@ public sealed class ChannelOptions
     public string WeChatBaseUrl { get; init; } = "https://ilinkai.weixin.qq.com";
     public int WeChatMediaMaxMb { get; init; } = 20;
 
+    /// <summary>数据目录根（媒体缓存等；Program 传 CYRENE_CLOUD_DATA，测试传临时目录）。</summary>
+    public string DataDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "data");
+
     public string? FeishuAppId { get; init; }
     public string? FeishuAppSecret { get; init; }
     public string? FeishuVerificationToken { get; init; }
@@ -53,7 +56,7 @@ public sealed class ChannelOptions
     public bool IsChannelEnabled(string id) =>
         EnabledChannels.Contains(id, StringComparer.OrdinalIgnoreCase);
 
-    public static ChannelOptions FromEnvironment()
+    public static ChannelOptions FromEnvironment(string? dataDir = null)
     {
         var enabled = (Environment.GetEnvironmentVariable("CLOUD_CHANNELS") ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -63,6 +66,9 @@ public sealed class ChannelOptions
         return new ChannelOptions
         {
             EnabledChannels = enabled,
+            DataDir = dataDir
+                ?? Environment.GetEnvironmentVariable("CYRENE_CLOUD_DATA")
+                ?? Path.Combine(AppContext.BaseDirectory, "data"),
             OwnershipTtlSeconds = ReadInt("CLOUD_CHANNEL_OWNERSHIP_TTL_SECONDS", 180),
             FailoverGraceSeconds = ReadInt("CLOUD_CHANNEL_FAILOVER_GRACE_SECONDS", 300),
             WeChatBaseUrl = ReadString("CLOUD_CHANNEL_WECHAT_BASE_URL") ?? "https://ilinkai.weixin.qq.com",
