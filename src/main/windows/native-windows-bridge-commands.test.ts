@@ -49,6 +49,7 @@ function initBridge() {
     preferencesAction: vi.fn(),
     cyreneAction: vi.fn(),
     portableAction: vi.fn(),
+    cacheAction: vi.fn(),
   };
   const client = initNativeWindowsBridge(actions as never);
   expect(client).not.toBeNull();
@@ -149,6 +150,21 @@ describe("native-windows-bridge · cmd 动作分发", () => {
       migrationChoice: "migrate",
       overwrite: true,
     });
+  });
+
+  it("portable 不再穿透触发 cache（缺 break 回归）；cache 自身仍透传", () => {
+    const actions = initBridge();
+    dispatch({
+      kind: "settings",
+      action: "portable",
+      verb: "apply",
+      payload: { enabled: true },
+    });
+    expect(actions.portableAction).toHaveBeenCalledWith("apply", { enabled: true });
+    expect(actions.cacheAction).not.toHaveBeenCalled();
+
+    dispatch({ kind: "settings", action: "cache", verb: "clear" });
+    expect(actions.cacheAction).toHaveBeenCalledWith("clear", {});
   });
 
   it("settings set / set-user-profile / pick-avatar → 对应回调", () => {

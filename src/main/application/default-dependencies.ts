@@ -1563,6 +1563,7 @@ createTray: (input) => {
             requestActivation: input.requestActivation,
             togglePetWindow: input.togglePetWindow,
             setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
+            getPetDragMode: () => input.getPetDragMode?.() ?? false,
             hideWindows: () => {
               for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) win.hide();
