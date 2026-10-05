@@ -189,6 +189,9 @@ public sealed partial class SettingsWindow
         Border? rerankerStandardCard = null;
         Border? rerankerV2M3Card = null;
         Border? rerankerNoneCard = null;
+        // 点击守卫用可变选中态而非构建期快照局部变量：reranker 保存成功后宿主不推设置快照，
+        // 本窗口内快照值不会刷新，过期值会让「切走后再切回初始档位」被早退守卫吞掉。
+        var rerankerSelected = rerankerMode;
         void ApplyRerankerSelection(string mode)
         {
             if (rerankerStandardCard is not null) ApplyModelCardSelected(rerankerStandardCard, mode == "standard");
@@ -202,7 +205,8 @@ public sealed partial class SettingsWindow
             rerankerMode == "standard",
             () =>
             {
-                if (rerankerMode == "standard") return;
+                if (rerankerSelected == "standard") return;
+                rerankerSelected = "standard";
                 ApplyRerankerSelection("standard");
                 SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "standard" });
             });
@@ -213,7 +217,8 @@ public sealed partial class SettingsWindow
             rerankerMode == "v2-m3",
             () =>
             {
-                if (rerankerMode == "v2-m3") return;
+                if (rerankerSelected == "v2-m3") return;
+                rerankerSelected = "v2-m3";
                 ApplyRerankerSelection("v2-m3");
                 SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "v2-m3" });
             });
@@ -224,7 +229,8 @@ public sealed partial class SettingsWindow
             rerankerMode == "none",
             () =>
             {
-                if (rerankerMode == "none") return;
+                if (rerankerSelected == "none") return;
+                rerankerSelected = "none";
                 ApplyRerankerSelection("none");
                 SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "none" });
             });
