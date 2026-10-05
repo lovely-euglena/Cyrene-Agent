@@ -106,15 +106,28 @@ if (channelOptions.ChannelsEnabled)
     builder.Services.AddSingleton(new ChannelStore(
         channelsDbPath, ChannelCredentialProtector.Create(masterToken, dataDir)));
     builder.Services.AddSingleton<ChannelManager>();
+    builder.Services.AddSingleton(sp => new ChannelOwnershipService(
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ChannelManager>(),
+        sp.GetRequiredService<ILogger<ChannelOwnershipService>>(),
+        ChannelOwnershipService.ComputeServerId(dataDir),
+        TimeSpan.FromSeconds(channelOptions.OwnershipTtlSeconds)));
     builder.Services.AddSingleton(sp => new ChannelDeliveryService(
         sp.GetRequiredService<ChannelManager>(),
         sp.GetRequiredService<ILogger<ChannelDeliveryService>>()));
+    builder.Services.AddSingleton(sp => new ChannelProactiveService(
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ServerEventWriter>(),
+        sp.GetRequiredService<ChannelDeliveryService>(),
+        sp.GetRequiredService<ChannelOwnershipService>(),
+        sp.GetRequiredService<ILogger<ChannelProactiveService>>()));
     builder.Services.AddSingleton(sp => new ChannelDispatcher(
         sp.GetRequiredService<ChannelStore>(),
         sp.GetRequiredService<ServerEventWriter>(),
         sp.GetRequiredService<IDialogEngine>(),
         sp.GetRequiredService<ChannelDeliveryService>(),
-        sp.GetRequiredService<ILogger<ChannelDispatcher>>()));
+        sp.GetRequiredService<ILogger<ChannelDispatcher>>(),
+        sp.GetRequiredService<ChannelOwnershipService>()));
     // 适配器注册表（阶段 3-6 在 ChannelAdapterCatalog 追加；本批为空）
     foreach (var registration in ChannelAdapterCatalog.All)
     {
@@ -302,6 +315,13 @@ app.MapGet("/v1/capabilities", () => Results.Json(new
 }));
 
 // ── 配对与设备（IKJK2K） ──
+
+// 渠道控制面（§5.2）：/v1/channels/ownership|status|{id}/proactive（复用 Bearer 鉴权 + sync 限流桶）。
+// CLOUD_CHANNELS 为空时渠道层关闭，端点不挂载（客户端据 capabilities.channels.hosted=[] 降级）。
+if (channelOptions.ChannelsEnabled)
+{
+    app.MapChannelApi();
+}
 
 // POST /v1/pair/code：已配对设备（或主控令牌）签发一次性配对码（TTL 默认 5 分钟）
 app.MapPost("/v1/pair/code", (HttpContext context, AuthStore auth) =>
