@@ -283,7 +283,8 @@ export function createSchedulerHostClient(): SchedulerHostClient {
     sendReport,
     flushReports,
     getTasks,
-    refreshTasks: refreshSnapshot,    onChanged: (cb) => {
+    refreshTasks: refreshSnapshot,
+    onChanged: (cb) => {
       changedListeners.add(cb);
       return () => changedListeners.delete(cb);
     },
