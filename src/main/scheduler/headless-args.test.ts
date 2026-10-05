@@ -24,4 +24,12 @@ describe("parseHeadlessScheduledArgs（IKJK51 headless 参数）", () => {
     expect(parseHeadlessScheduledArgs(["Cyrene.exe", "--scheduled-task"])).toBeNull();
     expect(parseHeadlessScheduledArgs(["Cyrene.exe", "--scheduled-task", "--scheduled-history", "h"])).toBeNull();
   });
+
+  it("非法 --scheduled-fire-at → 忽略（不产生 Invalid Date）（复审 P2-4）", () => {
+    expect(parseHeadlessScheduledArgs([
+      "Cyrene.exe",
+      "--scheduled-task", "t1",
+      "--scheduled-fire-at", "not-a-date",
+    ])).toEqual({ taskId: "t1", historyId: undefined, fireAt: undefined });
+  });
 });

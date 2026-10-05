@@ -63,6 +63,8 @@ export interface HostModeDeps {
   onChanged?: () => void;
   /** 运行期回退/接管日志（测试/排障）。 */
   onModeChange?: (mode: "host" | "local", reason: string) => void;
+  /** 本地模式重连 watchdog 周期（缺省 15s；测试注入缩短）。 */
+  watchdogIntervalMs?: number;
 }
 
 export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
@@ -76,6 +78,8 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
   let mode: "host" | "local" = "host";
   let localEngine: SchedulerEngine | null = null;
   let lastPluginState: Record<string, boolean> = {};
+  let disposed = false;
+  let watchdogTimer: NodeJS.Timeout | null = null;
   const running = new Set<string>();
 
   // ── host 侧实现 ──
@@ -88,7 +92,7 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
     deleteTask: (id) => client.request<boolean>("sched.delete", { taskId: id }),
     toggleTask: (id, enabled) => client.request<ScheduledTask>("sched.update", { taskId: id, patch: { enabled } }),
     deleteTasksByOwner: (pluginId) => client.request<number>("sched.delete-owner", { pluginId }),
-    recordHistory: (entry) => client.send("sched.report", { entry }),
+    recordHistory: (entry) => client.sendReport(entry),
     getHistory: (taskId, limit) => client.request<ScheduledTaskHistoryEntry[]>("sched.history", { taskId, limit }),
     onChange: (cb) => client.onChanged(cb),
   };
@@ -105,7 +109,13 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
     deleteTasksByOwner: (pluginId) =>
       (mode === "host" ? hostStore.deleteTasksByOwner(pluginId) : local().deleteTasksByOwner(pluginId)),
     recordHistory: (entry) => {
-      if (mode === "host") hostStore.recordHistory(entry);
+      if (mode !== "host") {
+        local().recordHistory(entry);
+        return;
+      }
+      // 复审 P1-1：host 在线经 sched.report（客户端断线时缓冲补发）；
+      // 断线/宿主不在时落本地文件（headless 离线主场景；托盘重启读同一文件对账）。
+      if (client.isConnected()) client.sendReport(entry);
       else local().recordHistory(entry);
     },
     getHistory: (taskId, limit) =>
@@ -182,7 +192,17 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
         task = store.getTasks().find((t) => t.id === ev.taskId);
       }
       if (!task) return;
-      await runOne(task, new Date(ev.scheduledFireAt), false);
+      const scheduledFireAt = new Date(ev.scheduledFireAt);
+      // 复审 P2-7：执行路径复核启用/运行条件（与 fireNow 对齐，不信任管道写入者）。
+      if (!isTaskEnabled(task)) {
+        store.recordHistory(skippedEntry(task, scheduledFireAt, "task is disabled"));
+        return;
+      }
+      if (deps.canRunTask && !deps.canRunTask(task)) {
+        store.recordHistory(skippedEntry(task, scheduledFireAt, "plugin not running"));
+        return;
+      }
+      await runOne(task, scheduledFireAt, false);
     })();
   });
   const offChanged = client.onChanged(() => deps.onChanged?.());
@@ -207,6 +227,10 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
       ...(deps.canRunTask ? { canRunTask: deps.canRunTask } : {}),
     });
     localEngine.start();
+    // 复审 P1-2：本地模式常驻 watchdog——周期尝试 connect，成功即切回 host
+    // （托盘可能在 Electron 之后才启动/重启；首次 ensureConnected 失败后
+    //  共享链路不会自动重连，必须由这里持续发起）。
+    startWatchdog();
     deps.onModeChange?.("local", reason);
     deps.onChanged?.();
   }
@@ -214,10 +238,33 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
   function demote(reason: string): void {
     if (mode !== "local") return;
     mode = "host";
+    stopWatchdog();
     localEngine?.stop();
     localEngine = null;
     deps.onModeChange?.("host", reason);
     deps.onChanged?.();
+  }
+
+  function startWatchdog(): void {
+    if (disposed || watchdogTimer) return;
+    const timer = setInterval(() => {
+      if (disposed || mode !== "local") {
+        stopWatchdog();
+        return;
+      }
+      void client.ensureConnected().then((ok) => {
+        // 连接事件通常已触发 demote；这里兜底（监听器缺失/连接已建立但未广播）。
+        if (ok && mode === "local") demote("scheduler host recovered (watchdog)");
+      }).catch(() => undefined);
+    }, deps.watchdogIntervalMs ?? 15_000);
+    (timer as { unref?: () => void }).unref?.();
+    watchdogTimer = timer;
+  }
+
+  function stopWatchdog(): void {
+    if (!watchdogTimer) return;
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
   }
 
   function syncPluginState(): void {
@@ -233,6 +280,8 @@ export function createHostModeAdapter(deps: HostModeDeps): HostModeAdapter {
       syncPluginState();
     },
     dispose: () => {
+      disposed = true;
+      stopWatchdog();
       offFire();
       offChanged();
       offHostLost();

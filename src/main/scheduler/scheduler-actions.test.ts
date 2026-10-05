@@ -68,6 +68,20 @@ describe("createSchedulerActions", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
+  it("写操作必须 await store Promise（resolve 前不通知）（复审 P2-5）", async () => {
+    const { actions, store, notify } = harness();
+    let resolveUpdate: (value: unknown) => void = () => { /* 占位 */ };
+    store.updateTask.mockReturnValueOnce(new Promise((resolve) => { resolveUpdate = resolve; }));
+
+    const pending = actions.update("task-1", { enabled: false });
+    await Promise.resolve();
+    expect(notify).not.toHaveBeenCalled();
+
+    resolveUpdate({ id: "task-1" });
+    await pending;
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it("插件任务 toggle 走授权位（pluginTaskTogglePatch）+ 通知", async () => {
     const { actions, store, notify } = harness([task({ ownerPluginId: "plugin-a", enabled: false })]);
     await actions.toggle("task-1", true);

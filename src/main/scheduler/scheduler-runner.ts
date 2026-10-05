@@ -74,9 +74,13 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     manual: boolean,
     /** headless（IKJK51）：复用托盘预建历史 id；缺省自生成。 */
     historyIdOverride?: string,
+    /** headless（IKJK51）：托盘传入的计划触发时刻（ISO）——历史 firedAt 以它为准，
+     *  与托盘预建的 running 条目保持一致；缺省取实际开始时刻。 */
+    firedAtOverride?: string,
   ): Promise<ScheduledRunResult> {
     const historyId = historyIdOverride ?? deps.id();
     const startedAt = deps.now();
+    const historyFiredAt = firedAtOverride ?? startedAt.toISOString();
     const allTools = toolRegistry.getAllTools();
     const effectiveTools = filterToolsForTask(task, allTools);
     const effectiveToolIds = effectiveTools.map(t => t.id);
@@ -113,7 +117,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       id: historyId,
       taskId: task.id,
       taskTitle: task.title,
-      firedAt: startedAt.toISOString(),
+      firedAt: historyFiredAt,
       status: "running",
       reason: manual ? "manual fireNow" : undefined,
       effectiveToolIds,
@@ -135,7 +139,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           id: historyId,
           taskId: task.id,
           taskTitle: task.title,
-          firedAt: startedAt.toISOString(),
+          firedAt: historyFiredAt,
           finishedAt: finishedAt.toISOString(),
           durationMs,
           status: "failed",
@@ -352,7 +356,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         id: historyId,
         taskId: task.id,
         taskTitle: task.title,
-        firedAt: startedAt.toISOString(),
+        firedAt: historyFiredAt,
         finishedAt: finishedAt.toISOString(),
         durationMs,
         status: status === "success" ? "success" : "failed",

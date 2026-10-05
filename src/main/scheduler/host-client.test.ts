@@ -8,9 +8,9 @@ vi.mock("../tray-pipe", () => ({
   isTrayPipeAvailable: () => false,
 }));
 
-import { createSchedulerHostClient } from "./host-client";
+import { createSchedulerHostClient, disarmSchedulerHost } from "./host-client";
 import type { TrayPipeLink } from "../tray-pipe";
-import type { ScheduledTask } from "./types";
+import type { ScheduledTask, ScheduledTaskHistoryEntry } from "./types";
 
 class FakeLink implements TrayPipeLink {
   connected = false;
@@ -148,5 +148,74 @@ describe("createSchedulerHostClient（IKJK51 sched.* 协议）", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("请求超时：reject 并清理 pending（复审 P2-5）", async () => {
+    const { client } = await setupConnected();
+    vi.useFakeTimers();
+    try {
+      const pending = client.request("sched.add", {});
+      const assertion = expect(pending).rejects.toThrow("timeout");
+      await vi.advanceTimersByTimeAsync(8_100);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("断线：pending 全部 reject；迟到回执静默忽略（复审 P2-5）", async () => {
+    const { link, client } = await setupConnected();
+    const pending = client.request("sched.add", {});
+    const assertion = expect(pending).rejects.toThrow("disconnected");
+    link.setConnected(false);
+    await assertion;
+    expect(() => link.emit(JSON.stringify({ op: "reply", id: "sreq-1", ok: true, data: {} }))).not.toThrow();
+  });
+
+  it("重连：重新拉取快照刷新镜像（复审 P2-5）", async () => {
+    const { link, client } = await setupConnected([task({ id: "old" })]);
+    link.setConnected(false);
+    link.setConnected(true);
+    await tick();
+    link.replyFor("sched.snapshot", { tasks: [task({ id: "new" })] });
+    await tick();
+    expect(client.getTasks()[0].id).toBe("new");
+  });
+
+  it("sendReport：断线缓冲、重连补发；flushReports 等待补发（复审 P1-1）", async () => {
+    const { link, client } = await setupConnected();
+    link.setConnected(false);
+    client.sendReport({ id: "h1" } as ScheduledTaskHistoryEntry);
+    expect(link.sent.some((f) => f.op === "sched.report")).toBe(false);
+
+    link.setConnected(true);
+    expect(link.sent.filter((f) => f.op === "sched.report").length).toBe(1);
+
+    // 缓冲 + flushReports：重连后补发完成
+    link.setConnected(false);
+    client.sendReport({ id: "h2" } as ScheduledTaskHistoryEntry);
+    const flush = client.flushReports(1_000);
+    await tick();
+    link.setConnected(true);
+    await flush;
+    expect(link.sent.filter((f) => f.op === "sched.report").length).toBe(2);
+  });
+
+  it("disarm：带 id 回执确认成功（复审 P1-2）", async () => {
+    const link = new FakeLink();
+    hoisted.link = link;
+    const pending = disarmSchedulerHost({ attempts: 2, replyTimeoutMs: 500 });
+    await tick();
+    const frame = link.lastFrame("sched.mode");
+    expect(frame).toMatchObject({ op: "sched.mode", enabled: false });
+    link.emit(JSON.stringify({ op: "reply", id: frame?.id, ok: true }));
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it("disarm：connect 失败重试耗尽返回 false（不静默成功）", async () => {
+    const link = new FakeLink();
+    link.connect = async () => false;
+    hoisted.link = link;
+    await expect(disarmSchedulerHost({ attempts: 1, replyTimeoutMs: 50 })).resolves.toBe(false);
   });
 });

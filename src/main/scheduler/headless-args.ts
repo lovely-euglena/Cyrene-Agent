@@ -10,7 +10,7 @@ export interface HeadlessScheduledArgs {
   taskId: string;
   /** 托盘预建的历史 id（running 条目复用；缺省由 runner 自生成）。 */
   historyId?: string;
-  /** 计划触发时刻（ISO；缺省 now）。 */
+  /** 计划触发时刻（ISO，已校验；非法/缺省按 now，且作为历史 firedAt 写入）。 */
   fireAt?: string;
 }
 
@@ -23,7 +23,10 @@ export function parseHeadlessScheduledArgs(argv: readonly string[]): HeadlessSch
     const i = argv.indexOf(name);
     return i >= 0 && i + 1 < argv.length && !argv[i + 1].startsWith("--") ? argv[i + 1] : undefined;
   };
-  return { taskId, historyId: readArg("--scheduled-history"), fireAt: readArg("--scheduled-fire-at") };
+  // fireAt 必须是可解析 ISO：非法值不传入（避免 Invalid Date 落历史）。
+  const rawFireAt = readArg("--scheduled-fire-at");
+  const fireAt = rawFireAt && !Number.isNaN(new Date(rawFireAt).getTime()) ? rawFireAt : undefined;
+  return { taskId, historyId: readArg("--scheduled-history"), fireAt };
 }
 
 export function headlessScheduledArgs(): HeadlessScheduledArgs | null {

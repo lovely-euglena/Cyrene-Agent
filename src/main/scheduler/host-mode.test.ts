@@ -32,6 +32,7 @@ async function tick(): Promise<void> {
 
 function fakeClient(initial: ScheduledTask[] = []) {
   let tasks = initial;
+  let connected = true;
   const sent: Array<{ op: string; payload?: Record<string, unknown> }> = [];
   const requests: Array<{ op: string; payload?: Record<string, unknown> }> = [];
   const sets = {
@@ -41,8 +42,8 @@ function fakeClient(initial: ScheduledTask[] = []) {
     lost: new Set<() => void>(),
   };
   const client: SchedulerHostClient = {
-    isConnected: () => true,
-    ensureConnected: async () => true,
+    isConnected: () => connected,
+    ensureConnected: async () => connected,
     request: async (op, payload) => {
       requests.push({ op, payload });
       switch (op) {
@@ -55,6 +56,8 @@ function fakeClient(initial: ScheduledTask[] = []) {
       }
     },
     send: (op, payload) => { sent.push({ op, payload }); },
+    sendReport: (entry) => { sent.push({ op: "sched.report", payload: { entry } }); },
+    flushReports: async () => { /* noop */ },
     getTasks: () => tasks.map((t) => ({ ...t, allowedToolIds: [...t.allowedToolIds] })),
     refreshTasks: async () => { /* noop */ },
     onChanged: (cb) => { sets.changed.add(cb); return () => sets.changed.delete(cb); },
@@ -69,6 +72,10 @@ function fakeClient(initial: ScheduledTask[] = []) {
     requests,
     sets,
     setTasks: (next: ScheduledTask[]) => { tasks = next; },
+    setConnected: (value: boolean) => {
+      connected = value;
+      for (const cb of [...sets.conn]) cb(value);
+    },
   };
 }
 
@@ -180,5 +187,72 @@ describe("createHostModeAdapter（IKJK51 host 模式适配）", () => {
     const adapter = createHostModeAdapter({ client, runTask: vi.fn(async () => runOk()) });
     adapter.syncPluginRunningState({ "plugin-a": true });
     expect(sent).toContainEqual({ op: "sched.plugin-state", payload: { running: { "plugin-a": true } } });
+  });
+
+  it("历史回写：在线经 sched.report；断线落本地回退（复审 P1-1）", () => {
+    const { client, sent, setConnected } = fakeClient();
+    const local = fakeLocalStore();
+    const adapter = createHostModeAdapter({ client, runTask: vi.fn(async () => runOk()), localStore: local.store });
+    try {
+      adapter.store.recordHistory({ id: "h1" } as ScheduledTaskHistoryEntry);
+      expect(sent).toContainEqual({ op: "sched.report", payload: { entry: { id: "h1" } } });
+
+      setConnected(false);
+      adapter.store.recordHistory({ id: "h2" } as ScheduledTaskHistoryEntry);
+      expect(sent).not.toContainEqual({ op: "sched.report", payload: { entry: { id: "h2" } } });
+      expect(local.calls).toContain("record");
+    } finally {
+      adapter.dispose();
+    }
+  });
+
+  it("sched.fire：停用任务写 skipped 不执行（复审 P2-7）", async () => {
+    const runTask = vi.fn(async () => runOk());
+    const { client, sent, sets } = fakeClient([task({ enabled: false })]);
+    createHostModeAdapter({ client, runTask });
+    for (const cb of sets.fire) cb({ taskId: "task-1", scheduledFireAt: "2026-10-06T00:00:00.000Z" });
+    await tick();
+    expect(runTask).not.toHaveBeenCalled();
+    const entry = sent
+      .map((f) => f.payload?.entry as ScheduledTaskHistoryEntry | undefined)
+      .find((e) => e?.reason === "task is disabled");
+    expect(entry).toMatchObject({ status: "skipped", taskId: "task-1" });
+  });
+
+  it("sched.fire：插件未运行写 skipped 不执行（复审 P2-7）", async () => {
+    const runTask = vi.fn(async () => runOk());
+    const pluginTaskObj = task({ ownerPluginId: "plugin-a", pluginUserEnabled: true, enabled: false });
+    pluginTaskObj.approvalFingerprint = computeExecutionSpecFingerprint(taskExecutionSpec(pluginTaskObj));
+    const { client, sent, sets } = fakeClient([pluginTaskObj]);
+    createHostModeAdapter({ client, runTask, canRunTask: () => false });
+    for (const cb of sets.fire) cb({ taskId: "task-1", scheduledFireAt: "2026-10-06T00:00:00.000Z" });
+    await tick();
+    expect(runTask).not.toHaveBeenCalled();
+    const entry = sent
+      .map((f) => f.payload?.entry as ScheduledTaskHistoryEntry | undefined)
+      .find((e) => e?.reason === "plugin not running");
+    expect(entry).toMatchObject({ status: "skipped", taskId: "task-1" });
+  });
+
+  it("watchdog：本地模式周期重连成功后切回 host（复审 P1-2）", async () => {
+    const local = fakeLocalStore([task({ id: "local-1" })]);
+    const { client, sets } = fakeClient([task({ id: "host-1" })]);
+    const modes: string[] = [];
+    const adapter = createHostModeAdapter({
+      client,
+      runTask: vi.fn(async () => runOk()),
+      localStore: local.store,
+      watchdogIntervalMs: 5,
+      onModeChange: (mode) => modes.push(mode),
+    });
+    try {
+      for (const cb of sets.lost) cb();
+      expect(modes).toEqual(["local"]);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(modes).toContain("host");
+      expect(adapter.store.getTasks()[0].id).toBe("host-1");
+    } finally {
+      adapter.dispose();
+    }
   });
 });

@@ -12,7 +12,7 @@
  */
 
 import { acquireTrayPipeLink, isTrayPipeAvailable, type TrayPipeLink } from "../tray-pipe";
-import type { ScheduledTask } from "./types";
+import type { ScheduledTask, ScheduledTaskHistoryEntry } from "./types";
 
 export interface SchedulerHostFireEvent {
   taskId: string;
@@ -31,6 +31,10 @@ export interface SchedulerHostClient {
   ensureConnected(timeoutMs?: number): Promise<boolean>;
   request<T = unknown>(op: string, payload?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
   send(op: string, payload?: Record<string, unknown>): void;
+  /** 历史回写（sched.report）：断线时入队缓冲，重连后补发（IKJK51 复审 P1-1）。 */
+  sendReport(entry: ScheduledTaskHistoryEntry): void;
+  /** 等待缓冲的历史补发完成（headless 退出前调用；超时返回，不抛）。 */
+  flushReports(timeoutMs?: number): Promise<void>;
   /** 任务镜像（含宿主内部字段；投影归调用方）。 */
   getTasks(): ScheduledTask[];
   /** 补拉快照（fire 事件与快照握手的竞态兜底）。 */
@@ -71,6 +75,8 @@ export function createSchedulerHostClient(): SchedulerHostClient {
   let hostLostTimer: NodeJS.Timeout | null = null;
   let hostLostEmitted = false;
   let refreshInFlight: Promise<void> | null = null;
+  /** 断线期间的历史回写缓冲（sched.report；重连后补发）。 */
+  const reportOutbox: ScheduledTaskHistoryEntry[] = [];
 
   const offLine = link.onLine(handleLine);
   const offConn = link.onConnectionChange((connected) => {
@@ -79,6 +85,7 @@ export function createSchedulerHostClient(): SchedulerHostClient {
       clearHostLostTimer();
       hostLostEmitted = false;
       void refreshSnapshot();
+      flushOutbox();
     } else {
       snapshotLoaded = false;
       rejectPending(new Error("scheduler host disconnected"));
@@ -194,6 +201,34 @@ export function createSchedulerHostClient(): SchedulerHostClient {
     link.send({ op, ...(payload ?? {}) });
   }
 
+  /**
+   * 历史回写（sched.report）：连接可写即发；断线入缓冲，重连后补发。
+   * 与 host-mode 的本地落盘回退互补——保证终态不静默丢失（IKJK51 复审 P1-1）。
+   */
+  function sendReport(entry: ScheduledTaskHistoryEntry): void {
+    if (disposed) return;
+    if (!link.isConnected()) {
+      reportOutbox.push(entry);
+      return;
+    }
+    link.send({ op: "sched.report", entry });
+  }
+
+  function flushOutbox(): void {
+    if (disposed || reportOutbox.length === 0 || !link.isConnected()) return;
+    const pending = reportOutbox.splice(0, reportOutbox.length);
+    for (const entry of pending) link.send({ op: "sched.report", entry });
+  }
+
+  async function flushReports(timeoutMs = 5_000): Promise<void> {
+    if (disposed || reportOutbox.length === 0) return;
+    const deadline = Date.now() + timeoutMs;
+    while (reportOutbox.length > 0 && Date.now() < deadline && !disposed) {
+      if (link.isConnected()) flushOutbox();
+      else await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
   function getTasks(): ScheduledTask[] {
     return tasks.map((task) => ({ ...task, allowedToolIds: [...(task.allowedToolIds ?? [])] }));
   }
@@ -245,6 +280,8 @@ export function createSchedulerHostClient(): SchedulerHostClient {
     ensureConnected,
     request,
     send,
+    sendReport,
+    flushReports,
     getTasks,
     refreshTasks: refreshSnapshot,    onChanged: (cb) => {
       changedListeners.add(cb);
@@ -275,10 +312,45 @@ export function createSchedulerHostClient(): SchedulerHostClient {
 /**
  * TS 模式（开关关闭）下的保险（IKJK51）：通知托盘停用其调度，
  * 防止「登录项残留 + CYRENE_SCHEDULER_HOST 关闭」造成双调度。
+ *
+ * 复审 P1-2：原实现一次性 fire-and-forget（connect 失败即放弃）。现在带
+ * 退避重试 + reply 回执；返回是否确认停用（调用方决定告警，失败不再静默）。
  */
-export function disarmSchedulerHost(): void {
+export async function disarmSchedulerHost(options: {
+  attempts?: number;
+  replyTimeoutMs?: number;
+} = {}): Promise<boolean> {
+  const attempts = options.attempts ?? 5;
+  const replyTimeoutMs = options.replyTimeoutMs ?? 3_000;
   const link = acquireTrayPipeLink();
-  void link.connect().then((ok) => {
-    if (ok) link.send({ op: "sched.mode", enabled: false });
-  }).catch(() => undefined);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, Math.min(500 * 2 ** (attempt - 1), 4_000)));
+    }
+    const connected = await link.connect();
+    if (!connected) continue;
+    const id = `sched-disarm-${Date.now()}-${attempt}`;
+    const acked = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      let off: () => void = () => { /* 占位：注册前同步回执时安全 */ };
+      let timer: NodeJS.Timeout | null = null;
+      const finish = (value: boolean): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        off();
+        resolve(value);
+      };
+      timer = setTimeout(() => finish(false), replyTimeoutMs);
+      off = link.onLine((line) => {
+        try {
+          const msg = JSON.parse(line) as { op?: string; id?: string; ok?: boolean };
+          if (msg.op === "reply" && msg.id === id) finish(msg.ok !== false);
+        } catch { /* 非 JSON 行忽略 */ }
+      });
+      link.send({ id, op: "sched.mode", enabled: false });
+    });
+    if (acked) return true;
+  }
+  return false;
 }
