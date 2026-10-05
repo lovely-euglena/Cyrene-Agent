@@ -368,18 +368,25 @@ export function getEmbeddingWorkerConfig(): EmbeddingWorkerConfig {
 export { getCurrentModelKey };
 
 export function getCurrentModelDims(): number {
-  const config = LOCAL_MODELS[getCurrentModelKey()];
-  return config ? config.dims : 1024;
+  const config = LOCAL_MODELS[getCurrentModelKey()] ?? LOCAL_MODELS[DEFAULT_MODEL_KEY];
+  return config.dims;
 }
 
+/**
+ * 切换本地 embedding 模型（注册表驱动，bgem3 / e5-small 均可）。
+ * 仅负责进程内状态（provider 缓存 + pipeline + current key）；
+ * 索引迁移（rebuild/clear/默认拒绝）在 rag/index.ts 的 switchEmbeddingModel 处理。
+ */
 export function switchEmbeddingModel(modelKey: string): void {
-  if (modelKey !== "bgem3") {
-    console.warn(`[Embedding] ignoring model switch to "${modelKey}" — bge-m3 is the only supported model`);
+  if (!LOCAL_MODELS[modelKey]) {
+    console.warn(`[Embedding] ignoring model switch to "${modelKey}" — not a registered local model`);
     return;
   }
   cachedProvider = null;
-  dropLocalPipeline(getCurrentModelKey());
-  setCurrentModelKey(modelKey);
+  if (modelKey !== getCurrentModelKey()) {
+    dropLocalPipeline(getCurrentModelKey());
+    setCurrentModelKey(modelKey);
+  }
 }
 
 export function resetEmbeddingProvider(): void {

@@ -19,6 +19,18 @@ import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type S
 import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
 
 /**
+ * 本地 embedding 模型键（与 rag/embedding-pipeline.ts 的 LOCAL_MODELS 对齐）。
+ * bgem3 = BGE-M3（1024 维，默认）；e5-small = multilingual-e5-small（384 维）。
+ */
+export type EmbeddingModelKey = "bgem3" | "e5-small";
+
+/**
+ * Reranker 模式：standard = bge-reranker-base；v2-m3 = bge-reranker-v2-m3；
+ * none = 关闭。v2-m3 未安装时由 reranker 模块自动降级 none。
+ */
+export type RerankerMode = "standard" | "v2-m3" | "none";
+
+/**
  * 统一模型配置入口：所有模块（包括 Code 模式）必须通过此函数读取。
  * 禁止在 Code 模块本地复制读取 JSON 逻辑。
  */
@@ -33,7 +45,7 @@ export interface PublicModelConfig {
   connected: boolean;
   runtimeSync: "off" | "local" | "llm";
   stickerSize: StickerSize;
-  rerankerMode: "standard" | "none";
+  rerankerMode: RerankerMode;
 }
 
 // 单个厂商的可缓存配置：用户切到别的厂商再切回来，这三个字段从这里恢复。
@@ -164,8 +176,8 @@ export interface ModelSettings {
   modelRequestMaxRetries: number;
   /** CITA 结构化输出重试总预算（秒）。4-30，默认 8。 */
   citaRepairBudgetSec: number;
-  rerankerMode: "standard" | "none";
-  embeddingModel: "bgem3";
+  rerankerMode: RerankerMode;
+  embeddingModel: EmbeddingModelKey;
   /**
    * Embedding 维度（可选，仅 cloud 模式有效）。
    * 留空 = 首次请求自动探测；填写 = 作为严格声明并与实际响应校验。
@@ -447,8 +459,12 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
     citaRepairBudgetSec: typeof input?.citaRepairBudgetSec === "number" && Number.isFinite(input.citaRepairBudgetSec)
       ? Math.max(4, Math.min(30, Math.round(input.citaRepairBudgetSec)))
       : 8,
-    rerankerMode: input?.rerankerMode === "none" ? "none" : "standard",
-    embeddingModel: "bgem3",
+    rerankerMode: input?.rerankerMode === "none"
+      ? "none"
+      : input?.rerankerMode === "v2-m3"
+        ? "v2-m3"
+        : "standard",
+    embeddingModel: input?.embeddingModel === "e5-small" ? "e5-small" : "bgem3",
     embeddingDimensions: typeof input?.embeddingDimensions === "number"
       && Number.isFinite(input.embeddingDimensions)
       && input.embeddingDimensions > 0

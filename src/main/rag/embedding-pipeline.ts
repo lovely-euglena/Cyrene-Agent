@@ -19,9 +19,19 @@ export interface ModelConfig {
 
 export const LOCAL_MODELS: Record<string, ModelConfig> = {
   bgem3: { key: "bgem3", hfName: "Xenova/bge-m3", dims: 1024 },
+  // 第二 embedding 引擎（IKIH28）：多语言小模型，384 维；与 bgem3 共用同一套
+  // pipeline/worker/sidecar 链路，切换走索引迁移（rebuild/clear），不静默清库。
+  "e5-small": { key: "e5-small", hfName: "Xenova/multilingual-e5-small", dims: 384 },
 };
 
 export const DEFAULT_MODEL_KEY = "bgem3";
+
+/** 已注册的 embedding modelKey 列表（设置归一化 / 白名单共用）。 */
+export const LOCAL_MODEL_KEYS: string[] = Object.keys(LOCAL_MODELS);
+
+export function isLocalModelKey(modelKey: unknown): modelKey is string {
+  return typeof modelKey === "string" && Object.prototype.hasOwnProperty.call(LOCAL_MODELS, modelKey);
+}
 
 // ── 本地 Pipeline ──
 // bge-m3 是唯一的 embedding 模型，同时服务于 RAG 记忆/文档检索和场景识别

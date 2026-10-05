@@ -166,6 +166,8 @@ export type StoreChange =
   | { kind: "insert"; entries: MemoryEntry[] }
   | { kind: "recall"; entries: MemoryEntry[] }
   | { kind: "remove"; ids: string[] }
+  // 模型迁移重嵌入：按 id 原地更新 embedding（不清库、不触碰期间新增条目）
+  | { kind: "reembed"; entries: MemoryEntry[] }
   | { kind: "replace" };
 
 export type VectorStoreMode = "sqlite" | "json";
@@ -424,6 +426,9 @@ class SqliteStoreBackend implements VectorStoreBackend {
           case "remove":
             if (change.ids.length > 0) this.deleteRows(change.ids);
             break;
+          case "reembed":
+            this.updateEmbeddingRows(change.entries);
+            break;
           case "replace":
             this.db.exec("DELETE FROM entries");
             this.insertRows(all, "replace");
@@ -511,6 +516,15 @@ class SqliteStoreBackend implements VectorStoreBackend {
     const stmt = this.db.prepare("UPDATE entries SET weight = ?, last_recalled_at = ? WHERE id = ?");
     for (const entry of entries) {
       stmt.run(entry.weight, entry.lastRecalledAt, entry.id);
+    }
+  }
+
+  /** 模型迁移：原地替换 embedding + dim（文本/权重/时间戳保持不变）。 */
+  private updateEmbeddingRows(entries: MemoryEntry[]): void {
+    if (entries.length === 0) return;
+    const stmt = this.db.prepare("UPDATE entries SET embedding = ?, dim = ? WHERE id = ?");
+    for (const entry of entries) {
+      stmt.run(embeddingToBlob(entry.embedding), entry.embedding.length, entry.id);
     }
   }
 
@@ -778,6 +792,18 @@ export abstract class VectorStore {
     console.log("[RAG] created index metadata:", this.indexMeta);
   }
 
+  /**
+   * 强制写入 provider 对应的索引元数据（模型切换 rebuild/clear 完成后调用）。
+   * 与 ensureIndexMeta 不同：即使已有旧 meta 也覆盖（旧模型身份 → 新模型身份）。
+   */
+  setIndexMetaForProvider(provider: EmbeddingProvider): void {
+    const dims = provider.resolvedDimensions ?? provider.declaredDimensions;
+    if (dims === undefined) return;
+    this.indexMeta = this.buildIndexMeta(provider, dims);
+    this.backend.saveMeta(this.indexMeta);
+    console.log("[RAG] index metadata updated for provider:", this.indexMeta);
+  }
+
   private buildIndexMeta(provider: EmbeddingProvider, dimensions: number): EmbeddingIndexMetadata {
     const identity = provider.cacheIdentity;
     return {
@@ -802,6 +828,72 @@ export abstract class VectorStore {
     const t0 = Date.now();
     this.ivf = buildIvfIndex(this.entries, K);
     console.log(`[RAG] IVF index rebuilt: K=${K}, entries=${n}, took ${Date.now() - t0}ms`);
+  }
+
+  /**
+   * 模型迁移：遍历全部 entries 分批重新 embed 并原地 upsert（不清库）。
+   *
+   * - 快照 id 后分批推理；每批间 ensureFresh，期间新增/外部写入的条目不被
+   *   覆盖（按 id 匹配写入）。
+   * - 快照之后新增的条目若维度与目标模型不符（仍是旧模型产物），后续轮次
+   *   补算（最多 3 轮，正常并发量下一轮即收敛）。
+   * - 全部完成后一次性持久化（sqlite 事务 / JSON 原子写）并重建 IVF，
+   *   最后写入新模型的 index_meta。
+   * - 取消/失败：中途不落盘，旧数据保持原样（调用方应先备份）。
+   */
+  async reembedAll(
+    provider: EmbeddingProvider,
+    options?: {
+      batchSize?: number;
+      onProgress?: (completed: number, total: number) => void;
+      isCancelled?: () => boolean;
+    },
+  ): Promise<number> {
+    const targetDims = provider.resolvedDimensions ?? provider.declaredDimensions;
+    if (targetDims === undefined) throw new Error("Embedding provider dimensions not resolved");
+    const batchSize = Math.max(1, options?.batchSize ?? 16);
+    const embeddingsById = new Map<string, number[]>();
+    let total = 0;
+
+    for (let pass = 0; pass < 3; pass++) {
+      this.ensureFresh();
+      total = this.entries.length;
+      const pending = this.entries.filter(
+        (entry) => !embeddingsById.has(entry.id) && entry.embedding.length !== targetDims,
+      );
+      if (pending.length === 0) break;
+      for (let start = 0; start < pending.length; start += batchSize) {
+        if (options?.isCancelled?.()) throw new Error("rebuild cancelled");
+        const batch = pending.slice(start, start + batchSize);
+        const vectors = await provider.embedBatch(batch.map((entry) => entry.text));
+        if (vectors.length !== batch.length) {
+          throw new Error(
+            `Embedding batch size mismatch during rebuild: expected ${batch.length}, got ${vectors.length}`,
+          );
+        }
+        for (let i = 0; i < batch.length; i++) {
+          embeddingsById.set(batch[i].id, vectors[i]);
+        }
+        options?.onProgress?.(embeddingsById.size, total);
+      }
+    }
+
+    // 基于最新盘面应用（只覆盖重算过的 id；期间新增条目不受影响）
+    this.ensureFresh();
+    const touched: MemoryEntry[] = [];
+    for (const entry of this.entries) {
+      const embedding = embeddingsById.get(entry.id);
+      if (!embedding) continue;
+      entry.embedding = embedding;
+      touched.push(entry);
+    }
+    if (touched.length > 0) {
+      this.markIndexDirty();
+      this.persistNow({ kind: "reembed", entries: touched });
+      this.rebuildIndex();
+    }
+    this.setIndexMetaForProvider(provider);
+    return touched.length;
   }
 
   /** 检查是否需重建索引，每次数据库变化后调用 */

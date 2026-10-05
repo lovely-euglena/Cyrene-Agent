@@ -12,7 +12,7 @@ import * as path from "path";
 import { app } from "electron";
 import { getEmbeddingSidecarClient } from "./embedding-sidecar";
 import { getChosenStoreMode } from "./vectorstore";
-import { DEFAULT_MODEL_KEY } from "./embedding-pipeline";
+import { getCurrentModelKey } from "./embedding-pipeline";
 import type {
   DocumentIndexJobResult,
   DocumentIndexJobStatus,
@@ -49,7 +49,7 @@ export async function runDocumentImportJobViaSidecar(
 
   try {
     const header = await client.docImport(
-      DEFAULT_MODEL_KEY,
+      getCurrentModelKey(),
       { filePath: job.input.filePath, ragDataDir: getRagDataDir(), storeMode: getChosenStoreMode(), pandocPath: readPandocPath() },
       {
         onProgress: (progress) => {

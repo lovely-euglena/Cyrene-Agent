@@ -10,8 +10,8 @@ import { app } from "electron";
 const HF_CACHE_DIR = path.join(hfModelCacheDir(), "Xenova");
 
 export interface ModelInstallStatus {
-  embedding: { bgem3: boolean };
-  reranker: { standard: boolean };
+  embedding: { bgem3: boolean; "e5-small": boolean };
+  reranker: { standard: boolean; "v2-m3": boolean };
 }
 
 // All models require these files to be considered "installed"
@@ -30,19 +30,36 @@ const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.o
 //     sub-dir there is therefore just `bge-m3/` (not `Xenova/bge-m3/`).
 //
 // PROJECT_SUB_PATHS layout:
-//   models/Xenova/bge-m3/                 ← bgem3
-//   models/bge-reranker-base/             ← reranker-standard
+//   models/Xenova/bge-m3/                     ← bgem3
+//   models/Xenova/multilingual-e5-small/      ← e5-small
+//   models/bge-reranker-base/                 ← reranker-standard
+//   models/bge-reranker-v2-m3/                ← reranker-v2-m3
 //
 // HF_CACHE_SUB_PATHS layout (~/.cache/huggingface/Xenova/):
-//   bge-m3/                               ← bgem3
+//   bge-m3/                                   ← bgem3
+//   multilingual-e5-small/                    ← e5-small
+//   （reranker-v2-m3 源为 onnx-community/*，HF 缓存不在 Xenova/ 下——
+//     由应用内下载器装到项目目录，无 HF 缓存兜底）
 const PROJECT_SUB_PATHS: Record<string, string[]> = {
   "embedding-bgem3": ["Xenova/bge-m3"],
+  "embedding-e5-small": ["Xenova/multilingual-e5-small"],
   "reranker-standard": ["bge-reranker-base"],
+  "reranker-v2-m3": ["bge-reranker-v2-m3"],
 };
 
 const HF_CACHE_SUB_PATHS: Record<string, string[]> = {
   "embedding-bgem3": ["bge-m3"],
+  "embedding-e5-small": ["multilingual-e5-small"],
 };
+
+/**
+ * (kind, modelKey) → 探测用 modelId。modelKey 必须命中注册表，
+ * 否则返回 null（未知 key 不再静默回落到 bgem3/standard）。
+ */
+function resolveModelId(kind: "embedding" | "reranker", modelKey: string): string | null {
+  const modelId = `${kind}-${modelKey}`;
+  return Object.prototype.hasOwnProperty.call(PROJECT_SUB_PATHS, modelId) ? modelId : null;
+}
 
 /** Result of probing one (baseDir, subPath) candidate. */
 interface CandidateCheck {
@@ -155,7 +172,8 @@ export function getProjectModelsDir(): string {
  * and the runtime loader can never disagree about its location.
  */
 export function getProjectModelBaseDir(kind: "embedding" | "reranker", modelKey: string): string | null {
-  const modelId = kind === "embedding" ? "embedding-bgem3" : "reranker-standard";
+  const modelId = resolveModelId(kind, modelKey);
+  if (!modelId) return null;
   for (const baseDir of getProjectModelsDirCandidates()) {
     const probe = probeCandidates(modelId, baseDir, PROJECT_SUB_PATHS);
     if (probe.installed) return baseDir;
@@ -169,7 +187,8 @@ export function getProjectModelBaseDir(kind: "embedding" | "reranker", modelKey:
  * rerank op, which is spawned with a modelDir rather than a transformers.js key).
  */
 export function getProjectModelDir(kind: "embedding" | "reranker", modelKey: string): string | null {
-  const modelId = kind === "embedding" ? "embedding-bgem3" : "reranker-standard";
+  const modelId = resolveModelId(kind, modelKey);
+  if (!modelId) return null;
   for (const baseDir of getProjectModelsDirCandidates()) {
     const probe = probeCandidates(modelId, baseDir, PROJECT_SUB_PATHS);
     const hit = probe.candidates.find((c) => c.missingFiles.length === 0);
@@ -220,10 +239,7 @@ export function getModelInstallStatusDetail(
   kind: "embedding" | "reranker",
   modelKey: string,
 ): ModelStatusDetail {
-  const modelId =
-    kind === "embedding"
-      ? "embedding-bgem3"
-      : "reranker-standard";
+  const modelId = resolveModelId(kind, modelKey) ?? `${kind}-${modelKey}`;
 
   const subPaths = PROJECT_SUB_PATHS[modelId] ?? [];
   const projectBaseDirs = getProjectModelsDirCandidates();
@@ -311,9 +327,11 @@ export function getModelInstallStatus(): ModelInstallStatus {
   return {
     embedding: {
       bgem3: getModelInstallStatusDetail("embedding", "bgem3").installed,
+      "e5-small": getModelInstallStatusDetail("embedding", "e5-small").installed,
     },
     reranker: {
       standard: getModelInstallStatusDetail("reranker", "standard").installed,
+      "v2-m3": getModelInstallStatusDetail("reranker", "v2-m3").installed,
     },
   };
 }
@@ -323,7 +341,7 @@ export function checkEmbeddingModelInstalled(modelKey: string): boolean {
   return detail.installed;
 }
 
-export function checkRerankerModelInstalled(): boolean {
-  const detail = getModelInstallStatusDetail("reranker", "standard");
+export function checkRerankerModelInstalled(modelKey = "standard"): boolean {
+  const detail = getModelInstallStatusDetail("reranker", modelKey);
   return detail.installed;
 }

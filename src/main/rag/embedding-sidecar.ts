@@ -5,13 +5,14 @@
 //   2. sidecar exe 存在（见 resolveSidecarPath）
 //
 // 帧协议见 dotnet/embedding-sidecar/Program.cs：
-//   请求 [4B LE 头长][JSON {id,op:"embed",texts}]
+//   请求 [4B LE 头长][JSON {id,op:"embed",texts,modelDir,modelKey}]
 //   响应 [4B LE 头长][JSON {id,ok,count,dim}][float32 LE count×dim×4]
 //   就绪 {id:0,op:ready,modelKey,dim}
 //
-// 数值与 transformers.js WASM 逐位一致（verify cosine=1.0，
-// max|diff|≈5e-7），因此 cacheIdentity 沿用 "local"——LanceDB
-// 索引零迁移。同机性能：WASM 749ms/条 → ORT native 173ms/条。
+// 第二引擎（IKIH28）：embed/search/doc-import 请求携带可选 modelDir + modelKey
+// （缺省 = 启动默认），C# 侧池按 modelDir 路由；rerank 已有 rerankerDir。
+// 客户端不再因 modelKey 变化无条件 dispose 重启；对旧 sidecar（无池）用
+// 「ready modelKey 不符 + 请求失败/响应维度不符」检测并回退重启一次。
 //
 // ⚠️ 实现要点（都是复查时踩过的坑）：
 //   - 帧解析统一走 SidecarFrameDecoder（sidecar-frame-decoder.ts）：
@@ -36,6 +37,7 @@ import { app } from "electron";
 import { trackChildProcess } from "../child-processes";
 import { DecodedFrame, SidecarFrameDecoder } from "./sidecar-frame-decoder";
 import { getProjectModelDir } from "./model-status";
+import { getCurrentModelKey, LOCAL_MODELS } from "./embedding-pipeline";
 
 interface SidecarResponse {
   header: Record<string, unknown>;
@@ -168,25 +170,32 @@ export class EmbeddingSidecarClient {
     if (texts.length === 0) return [];
     const timeoutMs =
       REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(texts.length, 256);
-    const response = await this.request(modelKey, { op: "embed", texts }, timeoutMs, `texts=${texts.length}`);
+    const expectedDims = LOCAL_MODELS[modelKey]?.dims;
+    const response = await this.requestRouted(
+      modelKey,
+      { op: "embed", texts },
+      timeoutMs,
+      `texts=${texts.length}`,
+      { expectedDims },
+    );
     return response.vectors;
   }
 
   /**
    * rerank（.NET RerankerEngine）：返回与 documents 对齐的原始 logits（越大越相关）。
-   * rerankerDir = 完整模型目录（models/bge-reranker-base，由调用方解析后显式传入）。
+   * rerankerDir = 完整模型目录（models/bge-reranker-base 或 models/bge-reranker-v2-m3，
+   * 由调用方按 mode 解析后显式传入）；sidecar 按 dir 惰性加载/热切换，无需重启进程。
    */
   async rerankScores(
-    modelKey: string,
     query: string,
     documents: string[],
     rerankerDir: string,
   ): Promise<number[]> {
     if (documents.length === 0) return [];
+    await this.ensureStarted(getCurrentModelKey());
     const timeoutMs =
       REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(documents.length, 256);
     const { vectors } = await this.request(
-      modelKey,
       { op: "rerank", query, documents, rerankerDir },
       timeoutMs,
       `docs=${documents.length}`,
@@ -201,11 +210,13 @@ export class EmbeddingSidecarClient {
    */
   async searchHybrid(modelKey: string, payload: SidecarSearchRequest): Promise<SidecarSearchResponse> {
     // 耗时与候选量相关（全库分词 + 扫描）；后续可做 token 缓存优化
-    const { header, vectors } = await this.request(
+    const expectedDims = LOCAL_MODELS[modelKey]?.dims;
+    const { header, vectors } = await this.requestRouted(
       modelKey,
       { op: "search", ...payload },
       REQUEST_TIMEOUT_BASE_MS,
       `search="${payload.query.slice(0, 24)}"`,
+      { expectedDims },
     );
     const entries = Array.isArray(header.results) ? (header.results as SidecarSearchEntry[]) : [];
     return { entries, embeddings: vectors };
@@ -223,22 +234,25 @@ export class EmbeddingSidecarClient {
       onStarted?: (requestId: number) => void;
     } = {},
   ): Promise<DocImportResponse> {
-    let requestId = -1;
+    const startedIds: number[] = [];
     try {
-      const { header } = await this.request(
+      const { header } = await this.requestRouted(
         modelKey,
         { op: "doc-import", ...payload },
         DOC_IMPORT_TIMEOUT_MS,
         `doc="${payload.filePath.slice(-32)}"`,
-        (id) => {
-          requestId = id;
-          if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
-          callbacks.onStarted?.(id);
+        {
+          onStarted: (id) => {
+            startedIds.push(id);
+            if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
+            callbacks.onStarted?.(id);
+          },
         },
       );
       return header as DocImportResponse;
     } finally {
-      if (requestId >= 0) this.progressHandlers.delete(requestId);
+      // 含旧 sidecar 回退重试产生的多个 requestId，全部清理
+      for (const id of startedIds) this.progressHandlers.delete(id);
     }
   }
 
@@ -251,20 +265,73 @@ export class EmbeddingSidecarClient {
     }
   }
 
-  /** 请求公共路径：模型一致性检查 + 懒启动 + 超时 + pending 路由。 */
-  private async request(
+  /**
+   * 模型路由请求（embed/search/doc-import 公共路径）：
+   *   - 请求携带 modelDir + modelKey，C# 侧池按 modelDir 路由，不再因 modelKey
+   *     变化无条件 dispose 重启；
+   *   - 旧 sidecar（无池）兼容：当前进程 ready 的 modelKey 与请求不符时，先按
+   *     新协议试发；请求失败或返回维度不符（旧进程用错模型静默计算）则回退
+   *     重启一次（以请求的 modelDir 重新 spawn）。
+   */
+  private async requestRouted(
     modelKey: string,
+    header: Record<string, unknown>,
+    timeoutMs: number,
+    label: string,
+    opts: { expectedDims?: number; onStarted?: (id: number) => void } = {},
+  ): Promise<SidecarResponse> {
+    const modelDir = this.modelDirArg(modelKey);
+    const payload = { ...header, modelDir, modelKey };
+
+    await this.ensureStarted(modelKey);
+    // 运行中的进程可能是按其他模型启动的（旧 sidecar 无池，无法路由）
+    const possiblyUnrouted = this.modelKey !== null && this.modelKey !== modelKey;
+
+    const attempt = async (): Promise<SidecarResponse> => {
+      const response = await this.request(payload, timeoutMs, label, opts.onStarted);
+      this.assertResponseModel(response, modelKey, opts.expectedDims);
+      return response;
+    };
+
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!possiblyUnrouted) throw error;
+      console.warn(
+        `[EmbeddingSidecar] request for "${modelKey}" failed on sidecar ready with "${this.modelKey}" ` +
+        `(${error instanceof Error ? error.message : String(error)}); restarting with the requested model`,
+      );
+      await this.dispose("model-routing-fallback");
+      await this.ensureStarted(modelKey);
+      return attempt();
+    }
+  }
+
+  /** 响应模型校验：header.dim / 向量长度与请求模型的注册维度不一致 = 旧进程算错模型。 */
+  private assertResponseModel(response: SidecarResponse, modelKey: string, expectedDims?: number): void {
+    if (expectedDims === undefined) return;
+    const headerDim = response.header.dim;
+    if (typeof headerDim === "number" && headerDim > 0 && headerDim !== expectedDims) {
+      throw new Error(
+        `Embedding sidecar returned ${headerDim}-dim output for "${modelKey}" (expected ${expectedDims})`,
+      );
+    }
+    for (const vector of response.vectors) {
+      if (vector.length !== expectedDims) {
+        throw new Error(
+          `Embedding sidecar returned ${vector.length}-dim vectors for "${modelKey}" (expected ${expectedDims})`,
+        );
+      }
+    }
+  }
+
+  /** 请求公共路径：超时 + pending 路由（进程生命周期由 ensureStarted 管理）。 */
+  private async request(
     header: Record<string, unknown>,
     timeoutMs: number,
     label: string,
     onStarted?: (id: number) => void,
   ): Promise<SidecarResponse> {
-    if (this.modelKey && this.modelKey !== modelKey) {
-      // 当前 sidecar 加载的模型不同：重启换模型（现阶段只有 bgem3，防御式处理）
-      await this.dispose("model-switch");
-    }
-    await this.ensureStarted(modelKey);
-
     const id = this.nextId++;
     onStarted?.(id);
     return new Promise<SidecarResponse>((resolve, reject) => {
@@ -287,13 +354,20 @@ export class EmbeddingSidecarClient {
     });
   }
 
+  /**
+   * 懒启动。运行中的进程直接复用（模型路由交给 C# 池；旧协议兼容重启
+   * 只发生在 requestRouted 检测到行为不符时）；启动握手进行中则等待完成，
+   * 避免在 ready 之前写入请求帧。
+   */
   private async ensureStarted(modelKey: string): Promise<void> {
-    if (this.child && this.child.exitCode === null && this.modelKey === modelKey) return;
-    if (!this.startup) {
-      this.startup = this.launch(modelKey).finally(() => {
-        this.startup = null;
-      });
+    if (this.startup) {
+      await this.startup;
+      return;
     }
+    if (this.child && this.child.exitCode === null) return;
+    this.startup = this.launch(modelKey).finally(() => {
+      this.startup = null;
+    });
     await this.startup;
   }
 
@@ -301,7 +375,9 @@ export class EmbeddingSidecarClient {
     this.disposeSync("relaunch");
 
     return new Promise<void>((resolve, reject) => {
-      const child = spawn(this.exePath, ["serve", this.modelDirArg(modelKey)], {
+      // 第 3 参数 = modelKey（显式启动键，ready 帧回显；旧 exe 忽略多余参数）。
+      // 第 4 参数（rerankerDir 默认目录）暂不传：rerank 每次都显式带 dir。
+      const child = spawn(this.exePath, ["serve", this.modelDirArg(modelKey), modelKey], {
         stdio: ["pipe", "pipe", "inherit"],
         env: this.buildEnv(),
       });

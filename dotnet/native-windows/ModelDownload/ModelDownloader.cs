@@ -56,10 +56,20 @@ public static class ModelDownloadSpecs
 
     public static readonly ModelSpec Reranker = new("reranker", "Xenova/bge-reranker-base", "bge-reranker-base", CommonFiles());
 
+    // 第二引擎（IKIH28）：e5-small（384 维，多语言）与 bge-reranker-v2-m3。
+    // SubDir 与 TS 侧 rag/model-status.ts 的 PROJECT_SUB_PATHS 对齐
+    // （embedding 用 canonical Xenova 布局；reranker 用 bare 布局）。
+    // bge-reranker-v2-m3 的 ONNX 源在 onnx-community（Xenova/bge-reranker-v2-m3 不存在）。
+    public static readonly ModelSpec E5Small = new("e5-small", "Xenova/multilingual-e5-small", "Xenova/multilingual-e5-small", CommonFiles());
+
+    public static readonly ModelSpec RerankerV2M3 = new("reranker-v2-m3", "onnx-community/bge-reranker-v2-m3-ONNX", "bge-reranker-v2-m3", CommonFiles());
+
     public static ModelSpec? Resolve(string kind) => kind switch
     {
         "bgem3" => BgeM3,
+        "e5-small" => E5Small,
         "reranker" => Reranker,
+        "reranker-v2-m3" => RerankerV2M3,
         _ => null,
     };
 
@@ -75,9 +85,12 @@ public static class ModelDownloadSpecs
 public sealed record ModelDownloadResult(string Kind, string Dir, IReadOnlyList<string> Files, IReadOnlyList<string> Skipped);
 
 /// <summary>
-/// RAG 模型一键下载器：把 BGE-M3 / bge-reranker-base 直接装到「项目模型目录」。
+/// RAG 模型一键下载器：把 BGE-M3 / multilingual-e5-small / bge-reranker-base /
+/// bge-reranker-v2-m3 直接装到「项目模型目录」。
 ///
-/// - 落点 = &lt;模型目录&gt;/Xenova/bge-m3 或 &lt;模型目录&gt;/bge-reranker-base（运行链路唯一认的位置）；
+/// - 落点 = &lt;模型目录&gt;/Xenova/bge-m3、&lt;模型目录&gt;/Xenova/multilingual-e5-small、
+///   &lt;模型目录&gt;/bge-reranker-base 或 &lt;模型目录&gt;/bge-reranker-v2-m3
+///   （运行链路唯一认的位置，见 TS 侧 rag/model-status.ts）；
 /// - 必装三件套缺失即失败；附属文件失败仅跳过（与安装脚本同口径）；
 /// - 断点续传（.part + HTTP Range）、可取消（CancellationToken；已下载部分保留）；
 /// - 先 HEAD（失败退 Range: 0-0）探测大小，用于整体进度估算。
