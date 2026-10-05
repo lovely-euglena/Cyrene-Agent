@@ -40,21 +40,10 @@ public sealed class EmbeddingEngine : IDisposable
         Console.Error.WriteLine($"[engine] tokenizer ready: vocab={tokenizer.VocabSize}");
 
         Console.Error.WriteLine($"[engine] loading onnx session: {onnxPath}");
-        var options = new SessionOptions();
-        // 线程数：默认物理核一半（max 4）——桌宠场景 sidecar 满核推理会与
-        // Electron 渲染/Live2D 抢核；CYRENE_EMBED_THREADS 可覆盖（0 = ORT 默认全核）
-        var threads = ReadThreadsEnv();
-        if (threads > 0)
-        {
-            options.IntraOpNumThreads = Math.Min(threads, Environment.ProcessorCount);
-        }
-        else if (Environment.ProcessorCount > 1)
-        {
-            options.IntraOpNumThreads = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
-        }
-        options.AppendExecutionProvider_CPU();
+        var options = CreateSessionOptions();
         var session = new InferenceSession(onnxPath, options);
-        Console.Error.WriteLine($"[engine] session ready (intra-op threads={options.IntraOpNumThreads})");
+        Console.Error.WriteLine(
+            $"[engine] session ready (intra-op threads={(options.IntraOpNumThreads > 0 ? options.IntraOpNumThreads.ToString() : "default")})");
 
         var dims = session.OutputMetadata["last_hidden_state"].Dimensions;
         // [batch, seq, dim] → 取最后一维
@@ -98,8 +87,38 @@ public sealed class EmbeddingEngine : IDisposable
 
     internal static int ReadThreadsEnv()
     {
+        // -1 = 未设置/非法（走默认策略）；0 = ORT 默认（不设置 IntraOpNumThreads）；>0 = 显式上限
         var raw = Environment.GetEnvironmentVariable("CYRENE_EMBED_THREADS");
         return int.TryParse(raw, out var v) && v >= 0 ? v : -1;
+    }
+
+    /// <summary>
+    /// 线程数决策（纯函数，verify-threads 自检直接断言三分支；embedding/reranker 共用）：
+    ///   raw &gt; 0  → 显式上限，封顶物理核数
+    ///   raw == 0 → null：不设置 IntraOpNumThreads，走 ORT 默认全核
+    ///   raw &lt; 0  → 默认策略：物理核一半（上限 4）；单核不设置（返回 null）
+    /// </summary>
+    internal static int? ResolveIntraOpThreads(int raw, int processorCount)
+    {
+        if (raw > 0) return Math.Min(raw, processorCount);
+        if (raw < 0 && processorCount > 1) return Math.Min(4, Math.Max(1, processorCount / 2));
+        return null;
+    }
+
+    /// <summary>
+    /// 会话选项（线程策略 + CPU EP；不加载模型文件，verify-threads 自检可用）。
+    /// embedding 与 reranker 共用本入口，保证两侧线程语义一致。
+    /// </summary>
+    internal static SessionOptions CreateSessionOptions()
+    {
+        // 线程数：默认物理核一半（max 4）——桌宠场景 sidecar 满核推理会与
+        // Electron 渲染/Live2D 抢核。CYRENE_EMBED_THREADS 覆盖语义：
+        //   未设置/非法 = 默认策略；0 = 不设置（走 ORT 默认全核）；>0 = 显式上限
+        var options = new SessionOptions();
+        var threads = ResolveIntraOpThreads(ReadThreadsEnv(), Environment.ProcessorCount);
+        if (threads is { } value) options.IntraOpNumThreads = value;
+        options.AppendExecutionProvider_CPU();
+        return options;
     }
 
     /// <summary>单条前向：tokenize 后的 ids → 归一化向量（n=1，无 padding）。</summary>

@@ -14,7 +14,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import * as fs from "node:fs";
-import { isDetachedTrayPipeAvailable, showTrayBalloon } from "./tray-detached";
+import { buildConnectFrames, dispatchLine, isDetachedTrayPipeAvailable, showTrayBalloon } from "./tray-detached";
 
 const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
 const originalPlatform = process.platform;
@@ -73,5 +73,86 @@ describe("showTrayBalloon（系统级托盘气泡入口）", () => {
       { displayBalloon: () => { throw new Error("boom"); } } as never,
       { title: "t", content: "c" },
     )).toBe(false);
+  });
+});
+
+describe("dispatchLine（托盘命令路由）", () => {
+  function makeInput() {
+    return {
+      requestActivation: vi.fn(),
+      togglePetWindow: vi.fn(),
+      setPetDragMode: vi.fn(() => true),
+      quit: vi.fn(),
+    };
+  }
+
+  it("drag-mode 透传勾选状态：checked=true → 开启", () => {
+    const input = makeInput();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode", checked: true }), input);
+    expect(input.setPetDragMode).toHaveBeenCalledWith(true);
+  });
+
+  it("drag-mode 透传勾选状态：checked=false → 关闭（修复「只能开不能关」）", () => {
+    const input = makeInput();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode", checked: false }), input);
+    expect(input.setPetDragMode).toHaveBeenCalledWith(false);
+  });
+
+  it("旧版托盘无 checked 字段 → 按 true 兼容（旧行为不变）", () => {
+    const input = makeInput();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode" }), input);
+    expect(input.setPetDragMode).toHaveBeenCalledWith(true);
+  });
+
+  it("drag-mode 结果回执：应用成功 → 回执 checked=true", () => {
+    const input = makeInput();
+    const notify = vi.fn();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode", checked: true }), input, notify);
+    expect(notify).toHaveBeenCalledWith({ op: "tray.drag-mode-state", checked: true });
+  });
+
+  it("drag-mode 结果回执：宿主拒绝 → 回执 checked=false（勾选回退对齐）", () => {
+    const input = makeInput();
+    input.setPetDragMode.mockReturnValue(false);
+    const notify = vi.fn();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "drag-mode", checked: true }), input, notify);
+    expect(notify).toHaveBeenCalledWith({ op: "tray.drag-mode-state", checked: false });
+  });
+
+  it("非 drag-mode 命令不回执状态帧", () => {
+    const input = makeInput();
+    const notify = vi.fn();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "chat" }), input, notify);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("基础动作路由：chat / toggle-pet / quit；坏帧与非 cmd 帧静默", () => {
+    const input = makeInput();
+    dispatchLine(JSON.stringify({ op: "cmd", action: "chat" }), input);
+    dispatchLine(JSON.stringify({ op: "cmd", action: "toggle-pet" }), input);
+    dispatchLine(JSON.stringify({ op: "cmd", action: "quit" }), input);
+    expect(input.requestActivation).toHaveBeenCalledWith({ kind: "chat" });
+    expect(input.togglePetWindow).toHaveBeenCalledTimes(1);
+    expect(input.quit).toHaveBeenCalledTimes(1);
+
+    expect(() => dispatchLine("{bad json", input)).not.toThrow();
+    dispatchLine(JSON.stringify({ op: "tray.ready" }), input);
+    expect(input.requestActivation).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildConnectFrames（连接建立握手帧）", () => {
+  it("tray.ready + 拖动模式勾选同步（缺省 false）", () => {
+    expect(buildConnectFrames({})).toEqual([
+      { op: "tray.ready" },
+      { op: "tray.drag-mode-state", checked: false },
+    ]);
+  });
+
+  it("getPetDragMode=true → 同步 checked=true", () => {
+    expect(buildConnectFrames({ getPetDragMode: () => true })).toContainEqual({
+      op: "tray.drag-mode-state",
+      checked: true,
+    });
   });
 });

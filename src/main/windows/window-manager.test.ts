@@ -50,6 +50,7 @@ function createFakeWindow() {
     isDestroyed: vi.fn(() => destroyed),
     isVisible: vi.fn(() => visible),
     setAlwaysOnTop: vi.fn(),
+    setIgnoreMouseEvents: vi.fn(),
     getPosition: vi.fn(() => [0, 0]),
     webContents: { send: vi.fn() },
   };
@@ -160,5 +161,45 @@ describe("window-manager · 设置入口冷启动定位", () => {
     reactChatSettingsSection.reset();
     expect(reactChatSettingsSection.getPending()).toBeNull();
     expect(reactChatSettingsSection.markReady()).toBeNull();
+  });
+});
+
+describe("window-manager · 桌宠拖动模式状态", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    mocks.createdWindows = [];
+    mocks.createPetWindow.mockImplementation(() => {
+      const window = createFakeWindow();
+      mocks.createdWindows.push(window);
+      return window;
+    });
+  });
+
+  function makeManager() {
+    return createWindowManager({
+      getCurrentAppIconPath: () => "icon",
+      isDev: false,
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: "current" }),
+      persistPetWindowPosition: vi.fn(),
+    });
+  }
+
+  it("getPetDragMode 跟踪成功应用的目标状态（分离托盘连接同步用）", () => {
+    const manager = makeManager();
+    expect(manager.getPetDragMode()).toBe(false);
+
+    manager.createPetWindow();
+    expect(manager.setPetDragMode(true)).toBe(true);
+    expect(manager.getPetDragMode()).toBe(true);
+
+    manager.setPetDragMode(false);
+    expect(manager.getPetDragMode()).toBe(false);
+  });
+
+  it("无桌宠窗口时拒绝应用，状态保持 false", () => {
+    const manager = makeManager();
+    expect(manager.setPetDragMode(true)).toBe(false);
+    expect(manager.getPetDragMode()).toBe(false);
   });
 });
