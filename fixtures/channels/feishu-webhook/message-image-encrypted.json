@@ -1,0 +1,29 @@
+{
+  "name": "图片事件加密入站（资源下载 + 附件注入）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-image-1",
+      "signature": "65475bb04b36d6a57e63eb10bf267e664665ab55a91591ba360209b3ee217497",
+      "body": "{\"encrypt\":\"CLfByVv19iUkUf+497ix0h4/8Kt1DL80LnzFg1+Lh6xm259G0RY2AipoQYcl2IQ0b97LEYIdbN+ZM9LRNYMz7xqYXN2uWovWtpf8xF4HWWZ17AQOkAlbPpw2ldE3v3dj7M/EpjOre8cGlwVozjXZxeEGSI9MZnP20EgSbSHg/zOnSXjVCtP4AST/gSW02k2ghn07UFFM0wm1P6+eomcWEG67LXnDEn+dUhksurRoE8fHGq6SEnuHLl8e4lnfF42VykMHicxQFRXWsZf1UveWkXyrQGeRtBQXQyYIUOkbeGrccXllukP/SagAvsGwXtsJ6R0fQ9A3XAUakpEN+rljHwbSyI22EZxMj67xr6eMTLIB31DiwD2I8mJT4wnmV70ZHDFSkyYR5BTvaJ0/Q14HZHowcTrJK7BGWKcV88CUX+0GdYtvVqy/p7IZyDOaLdegTiUgwXUH8bLMffc3ILDv8+P1gF9nBdJ8aXkd0k/x+5sgW0b4rdBHHUdGrEphbKXo4/XNMT5+iqO1eBnCkuXQbT644rTxvpn32+r2swDqqpj/Pu9b8mC0shNGLCTh+iW7\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "duplicate": false,
+        "ignored": false,
+        "messageId": "om_image_1",
+        "textContains": "[image]",
+        "media": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "challenge 加密（Encrypt Key 配置）解密后回显",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-challenge-2",
+      "signature": "607d66af3125cc8e991230b8473fb82849388be7a51e54309b7fde9106f3b367",
+      "body": "{\"encrypt\":\"riKSc/SxsfCkDD/VENzi6Sjmxo9vtXIwZ+pvIak0xLa75wDwF0DZpxtZpRhubNW1wFCm5YLvgey2++xevey7GwUm3RTAOEvSMucQ509Re/3IzhA/eaJaxWYLia8cdyK8WEW+rR1NdzcLvQqEzTRsSA==\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "challenge": "cyrene-challenge-2"
+      }
+    }
+  ]
+}

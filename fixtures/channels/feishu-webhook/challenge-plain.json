@@ -1,0 +1,24 @@
+{
+  "name": "challenge 明文（token-only 配置）原样回显",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": null,
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-challenge-1",
+      "signature": null,
+      "body": "{\"challenge\":\"cyrene-challenge-1\",\"token\":\"cyrene-test-token\",\"type\":\"url_verification\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "challenge": "cyrene-challenge-1"
+      }
+    }
+  ]
+}

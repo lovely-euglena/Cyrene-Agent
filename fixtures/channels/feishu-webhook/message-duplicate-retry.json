@@ -1,0 +1,40 @@
+{
+  "name": "平台重试去重（message_id + event_id 双键）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-dup-1",
+      "signature": "5218154b53de1985c10117204d4035a214e420f4b8de0dc3ac58f5d6a1d510ae",
+      "body": "{\"encrypt\":\"I9tDFKkgQBpEv/la/HVdhPfTfdjLeqkdc97PQcgXvw5JZ05/9jKitq1A9up0vymqncElQ+Epyb8hFu4EwXzL/j3t3grnD2VDs4Ia+ZbF8q5Fs7aUqhpC2YcnA+BOshyDmsJY4jFF+vscMKCjNPEW1+H/y5hKvJdO5s+gKsByQaPrtQ97kg62M2VxH+gddGqj5Co32ff/wUFCtsAZiniYizMO+2j3r3qMrEiRqTcVrt64jr/4cMUhGrxaUiXYgDjegjKWG44NsD58b/Khw6LrQEHzyDdpDNYf8kk2FCB4zG4eCN3MWt+JakOI/EaiSA7NwnX3W6cWNqj3YuuXOq9OOakcHDqoLvtN9MoefaDkKjx6oHu7LGVjXX/RT/nWLiIPtM6Skc0FsaCR80eOPsbM+Z5vTsWdSAONNUo3znZXaCHorGRg9EQ6d1emJK/VbbZ+54t/tFZyz1KZKp3iZnKBIYaHZM7XtP1lC5jkCvPf7Rg8zwhtjvs9i/bb4qcbylfPku5XBKuG/VIpgSKFYVkMdwAoLIk32cm5FWUXFXyuQP0m17/PJrD3H5tSYKtH5FeN\"}"
+    },
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-dup-2",
+      "signature": "859fcfc9ac8e22d55174fb342689dd90a4869a97edaa2eb445cac21a76803bc4",
+      "body": "{\"encrypt\":\"pmZ7dJq/xnRg3h3oyNj4NtxM64+hwaWoRsHuqYet1+FOce8fY1nt/7+PX/naowRa7am/PE+UnPA+w+B+whry2KwjgYcYBRoV6RrljG8XDuFfqJcdj+tvuMcPQmJ1a1IJQtXD5sXHronNTjYg07fIjIlZVYw8N3aP4JLySbsVg1MR6pTW0DSYCbAMcJHsOu8U5DUn4HZ0PVOmbSeCaxhfgkiziImeIHfgfXnro8Cpy6SuxSdBaup0k7M58V9IGrZpd5EV9dP64j2VQUyqBIUsuq+a2hCvQtdLlAa5fuRDUYJ+a+I5N/i4Abj1gL3yQGHIZwF+ar8wJ++59vc7rD8nLxIHrk/rGufpEbf2fFG+Ru5iBbnWtI3GYPX7Pdbje7QGRmSuIvspWC7DrqaPpnz3hqYlRczEUHOKBXvZ/VxiBE/fGlTY8WbW5mnBJ6uLK4BodAPCr+RsWwXf5KhLcQZwEKRrEsAMkPAwS2VNW+BwclKtDdrpOPWzr84TmDylKheVtIa4I5NmLDM795PFgOwup/77JPwIYNszn/+0AaauKU3txSfZeHGd+PP07q1/jmxU\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "duplicate": false,
+        "messageId": "om_dup_1"
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "duplicate": true,
+        "messageId": "om_dup_1"
+      }
+    }
+  ]
+}

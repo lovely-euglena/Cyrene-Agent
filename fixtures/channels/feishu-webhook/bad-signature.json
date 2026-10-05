@@ -1,0 +1,24 @@
+{
+  "name": "签名错误拒绝（401）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-bad-sig",
+      "signature": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "body": "{\"encrypt\":\"lek4EJ8lZMXQRJZi91y3ogIguGekZ+T/xuCUdvyPy3drwjln4RAIN70isg4uEYo8zjCnAyc6s8rfi2Rm1YJo7/VV7l8UcBftjd22BwtZARaCqBIhKO0xj4OL7s6AcwKvlyIVBP+Pf5Itg4xUbpYhBV2VNV16CNmLqUsguyXPfsWJT3cyTRmi/wWmoxtlpUZYpiDnlCsiBJ0maYUYrA8hrQ9igmTCZHRw3P8GG+F1mEmDXOm3BxX0RnbmK1pOHGO3+9qUG/Tg+ENMUmBqHM5uzHIpFPIT1gLwTYO9xeCIeRc70/CXM/joBfS/TKdCXD/b8Y92fwcq0QivYE+igLL1YFENLAbbNoza1/MrY0fzlfnE6NqmsB/wxWEYR+tx5qCJYz+ZhFpo/f6tnuV0vR8pBnrL3tbYkrYY3KfpdR0uBBjaRRQXrkVSvncTkdwx38RABM5V2KD3HEcuw87PefQVfJP1Tu4kG0t2SdZIEkEEeY6PMDggUJgCA83cmI8O0dc2TVc6VjKYcvFp0rG1s1Qiiba5dwSYOcKNGUbvRRDAN2YgLBKsVTgpFjjdqbocGBs3h7pUxdCX3xyW0MwGi3XSBg==\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 401,
+      "body": {
+        "code": "E_FEISHU_SIGNATURE"
+      }
+    }
+  ]
+}
