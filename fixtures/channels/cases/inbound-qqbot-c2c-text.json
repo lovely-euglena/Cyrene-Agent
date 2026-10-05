@@ -1,0 +1,30 @@
+{
+  "name": "qqbot C2C 文本事件（私聊）",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "C2C_MESSAGE_CREATE",
+      "data": {
+        "id": "ROBOT1.0_c2c_msg_001",
+        "author": { "user_openid": "OPENUSER0000000000000000000001", "username": "小昔" },
+        "content": "你好",
+        "timestamp": "2026-08-28T12:00:00+08:00"
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "qqbot",
+      "chatType": "private",
+      "messageId": "ROBOT1.0_c2c_msg_001",
+      "senderId": "OPENUSER0000000000000000000001",
+      "senderName": "小昔",
+      "chatId": "OPENUSER0000000000000000000001",
+      "text": "你好",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

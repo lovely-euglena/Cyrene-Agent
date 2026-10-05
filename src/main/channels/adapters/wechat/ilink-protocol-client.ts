@@ -9,6 +9,7 @@
 // weclaw (Go): github.com/fastclaw-ai/weclaw
 // 协议文档:    https://www.wechatbot.dev/zh/protocol
 import { randomUUID } from "node:crypto";
+import { extractWechatText } from "../../normalizers/wechat";
 
 const BASE_URL = "https://ilinkai.weixin.qq.com";
 const LONG_POLL_TIMEOUT_MS = 35_000;
@@ -188,11 +189,8 @@ export class ILinkClient {
 
   /** 把 iLink WireMessage（snake_case + item_list）转成我们用的 WeixinMessage */
   #wireToMessage(w: WireMessage): WeixinMessage {
-    // 提取文本：遍历 item_list 找 text_item.text
-    const text = (w.item_list ?? [])
-      .filter((it) => it.type === 1 && it.text_item?.text)
-      .map((it) => it.text_item!.text)
-      .join("");
+    // 提取文本：遍历 item_list 找 text_item.text（实现见 normalizers/wechat）
+    const text = extractWechatText(w.item_list);
     return {
       msgId: String(w.message_id ?? ""),
       fromUserId: w.from_user_id,

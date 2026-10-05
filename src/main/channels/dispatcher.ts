@@ -33,12 +33,14 @@ import {
   type ChannelConversationTarget,
   resolveChannelConversationTarget,
 } from "./channel-context";
+import { makeChannelTurnId } from "./normalizers/ids";
 
 export {
   formatChannelUserText,
   lookupOriginalSender,
   makeSessionId,
 } from "./channel-context";
+export { makeChannelTurnId } from "./normalizers/ids";
 export type {
   DispatchContext,
   ChannelConversationTarget,
@@ -390,13 +392,6 @@ export class ChannelDispatcher {
     try { appendLog({ dir: "error", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text: `[发送失败] ${error}` }); }
     catch (logErr) { console.warn(LOG, "appendLog (delivery error) 失败:", logErr); }
   }
-}
-
-export function makeChannelTurnId(msg: IncomingMessage, role: "user" | "assistant"): string {
-  // 回退源（时间+正文）可能含换行：多行/附件正文会生成非法 entry ID 被拒绝写入 journal，
-  // 这里压成单行空格，保证任何适配器都能得到合法的 turn ID
-  const source = (msg.messageId || `${msg.at.getTime()}:${msg.text}`).replace(/[\r\n]+/g, " ");
-  return `${msg.channel}:${msg.chatId}:${source}:${role}`;
 }
 
 function toJournalAttachments(msg: IncomingMessage): Array<{ kind: "image" | "document"; name: string; filePath: string; mime?: string; caption?: string }> | undefined {

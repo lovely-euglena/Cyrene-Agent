@@ -1,0 +1,17 @@
+{
+  "name": "能力表：feishu（audio 分期，其余可用）",
+  "kind": "capability",
+  "channel": "feishu",
+  "input": { "channel": "feishu" },
+  "expect": {
+    "text": true,
+    "image": true,
+    "audio": false,
+    "file": true,
+    "video": true,
+    "markdown": true,
+    "card": true,
+    "sticker": true,
+    "maxTextLength": 4000
+  }
+}

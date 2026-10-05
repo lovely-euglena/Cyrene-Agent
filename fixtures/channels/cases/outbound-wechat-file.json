@@ -1,0 +1,49 @@
+{
+  "name": "wechat 出站文件（file_name 取 name）",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [
+        { "kind": "file", "filePath": "C:/tmp/report.pdf", "name": "report.pdf", "mime": "application/pdf" }
+      ]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000003",
+    "uploads": {
+      "C:/tmp/report.pdf": {
+        "encrypt_query_param": "enc-param-upload-2",
+        "aes_key": "aes-key-upload-2"
+      }
+    }
+  },
+  "expect": {
+    "requests": [
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000003",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [
+            {
+              "type": 4,
+              "file_item": {
+                "file_name": "report.pdf",
+                "media": {
+                  "encrypt_query_param": "enc-param-upload-2",
+                  "aes_key": "aes-key-upload-2"
+                }
+              }
+            }
+          ]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "qqbot 附件（图片 + 语音优先 wav url）",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "C2C_MESSAGE_CREATE",
+      "data": {
+        "id": "ROBOT1.0_c2c_media_001",
+        "author": { "user_openid": "OPENUSER0000000000000000000001" },
+        "content": "",
+        "timestamp": "2026-08-28T12:00:00+08:00",
+        "attachments": [
+          { "content_type": "image/png", "url": "https://cdn.qq.com/img.png", "filename": "a.png" },
+          { "content_type": "voice", "url": "https://cdn.qq.com/silk", "voice_wav_url": "https://cdn.qq.com/wav" }
+        ]
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "qqbot",
+      "chatType": "private",
+      "messageId": "ROBOT1.0_c2c_media_001",
+      "senderId": "OPENUSER0000000000000000000001",
+      "chatId": "OPENUSER0000000000000000000001",
+      "text": "",
+      "attachments": [
+        { "kind": "image", "url": "https://cdn.qq.com/img.png", "mime": "image/png", "caption": "a.png" },
+        { "kind": "audio", "url": "https://cdn.qq.com/wav", "mime": "voice" }
+      ],
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

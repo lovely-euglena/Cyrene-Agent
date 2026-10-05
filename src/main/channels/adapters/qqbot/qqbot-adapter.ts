@@ -14,7 +14,6 @@ import * as path from "node:path";
 import { app } from "electron";
 import type { ChannelAdapter } from "../base";
 import type {
-  ChannelAttachment,
   ChannelCapability,
   ChannelStatus,
   IncomingMessage,
@@ -25,7 +24,10 @@ import type {
 import { loadChannelsSettings, type QqBotChannelConfig } from "../../settings-store";
 import { QqBotApiClient, QqBotApiError } from "./qqbot-api-client";
 import { QqBotWsClient, type QqBotEventType } from "./qqbot-ws-client";
-import { splitQqText } from "../qq/napcat-adapter";
+import { normalizeQqBotEvent } from "../../normalizers/qqbot";
+import { splitQqText } from "../../normalizers/qq-text";
+
+export { normalizeQqBotEvent } from "../../normalizers/qqbot";
 
 const CAPABILITY: ChannelCapability = {
   text: true,
@@ -70,65 +72,7 @@ export function isQqBotEventAllowed(
 }
 
 /** 事件体 → IncomingMessage（导出便于测试；attachments 由 adapter 侧下载后补 filePath） */
-export function normalizeQqBotEvent(
-  type: QqBotEventType,
-  data: Record<string, unknown>,
-): IncomingMessage | null {
-  if (type !== "C2C_MESSAGE_CREATE" && type !== "GROUP_AT_MESSAGE_CREATE" && type !== "GROUP_MESSAGE_CREATE") {
-    return null;
-  }
-  const author = (data.author ?? {}) as Record<string, unknown>;
-  const isGroup = type !== "C2C_MESSAGE_CREATE";
-  const senderId = String(author[isGroup ? "member_openid" : "user_openid"] ?? "");
-  const chatId = isGroup ? String(data.group_openid ?? "") : senderId;
-  if (!senderId || !chatId) return null;
-  const content = String(data.content ?? "").trim();
-  const attachments = parseAttachments(data.attachments);
-  if (!content && attachments.length === 0) return null;
-  const at = parseTimestamp(String(data.timestamp ?? ""));
-  return {
-    channel: "qqbot",
-    chatType: isGroup ? "group" : "private",
-    messageId: String(data.id ?? ""),
-    senderId,
-    senderName: typeof author.username === "string" && author.username ? author.username : undefined,
-    chatId,
-    text: content,
-    attachments: attachments.length > 0 ? attachments : undefined,
-    at,
-    _raw: data,
-  };
-}
-
-function parseAttachments(raw: unknown): ChannelAttachment[] {
-  if (!Array.isArray(raw)) return [];
-  const out: ChannelAttachment[] = [];
-  for (const item of raw) {
-    const a = (item ?? {}) as Record<string, unknown>;
-    const contentType = String(a.content_type ?? "");
-    const url = String(a.voice_wav_url ?? a.url ?? "");
-    if (!url) continue;
-    let kind: ChannelAttachment["kind"] = "file";
-    if (contentType.startsWith("image/")) kind = "image";
-    else if (contentType === "voice") kind = "audio";
-    else if (contentType.startsWith("video/")) kind = "video";
-    out.push({
-      kind,
-      url,
-      mime: contentType || undefined,
-      caption: typeof a.filename === "string" && a.filename ? a.filename : undefined,
-    });
-  }
-  return out;
-}
-
-function parseTimestamp(value: string): Date {
-  if (value) {
-    const t = Date.parse(value);
-    if (Number.isFinite(t)) return new Date(t);
-  }
-  return new Date();
-}
+// 归一化实现已抽到 ../../normalizers/qqbot（契约 fixtures 锁定），本文件顶部 re-export。
 
 export class QqBotAdapter implements ChannelAdapter {
   readonly id = "qqbot" as const;

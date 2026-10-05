@@ -1,0 +1,27 @@
+{
+  "name": "wechat 缺 create_time_ms 用注入 now 兜底",
+  "kind": "inbound",
+  "channel": "wechat",
+  "input": {
+    "raw": {
+      "message_id": "msg-006",
+      "from_user_id": "wx-user-1",
+      "to_user_id": "bot-1",
+      "message_type": 1,
+      "context_token": "ctx-abc",
+      "item_list": [{ "type": 1, "text_item": { "text": "没有时间戳" } }]
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "wechat",
+      "senderId": "wx-user-1",
+      "chatId": "wx-user-1",
+      "messageId": "msg-006",
+      "text": "没有时间戳",
+      "at": "2026-09-01T00:00:00.000Z"
+    },
+    "media": []
+  }
+}

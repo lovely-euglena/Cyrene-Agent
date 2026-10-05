@@ -1,0 +1,29 @@
+{
+  "name": "qqbot 非法时间戳用注入 now 兜底",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "C2C_MESSAGE_CREATE",
+      "data": {
+        "id": "ROBOT1.0_c2c_bad_time",
+        "author": { "user_openid": "OPENUSER0000000000000000000001" },
+        "content": "时间戳坏了",
+        "timestamp": "not-a-date"
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "qqbot",
+      "chatType": "private",
+      "messageId": "ROBOT1.0_c2c_bad_time",
+      "senderId": "OPENUSER0000000000000000000001",
+      "chatId": "OPENUSER0000000000000000000001",
+      "text": "时间戳坏了",
+      "at": "2026-09-01T00:00:00.000Z"
+    },
+    "media": []
+  }
+}

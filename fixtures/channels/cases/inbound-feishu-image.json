@@ -1,0 +1,38 @@
+{
+  "name": "feishu 私聊图片事件（media 描述符 + [image] 占位）",
+  "kind": "inbound",
+  "channel": "feishu",
+  "input": {
+    "raw": {
+      "schema": "2.0",
+      "header": {
+        "event_id": "evt-2",
+        "event_type": "im.message.receive_v1",
+        "create_time": "1787889600000"
+      },
+      "event": {
+        "sender": { "sender_id": { "open_id": "ou_user_1" } },
+        "message": {
+          "message_id": "om_2",
+          "chat_id": "oc_1",
+          "chat_type": "p2p",
+          "message_type": "image",
+          "content": "{\"image_key\":\"img_key_1\"}"
+        },
+        "timestamp": "1787889600000"
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "feishu",
+      "senderId": "ou_user_1",
+      "chatId": "oc_1",
+      "messageId": "om_2",
+      "text": "[image]",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": [{ "kind": "image", "fileKey": "img_key_1" }]
+  }
+}

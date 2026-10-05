@@ -1,0 +1,38 @@
+{
+  "name": "feishu 私聊文本事件",
+  "kind": "inbound",
+  "channel": "feishu",
+  "input": {
+    "raw": {
+      "schema": "2.0",
+      "header": {
+        "event_id": "evt-1",
+        "event_type": "im.message.receive_v1",
+        "create_time": "1787889600000"
+      },
+      "event": {
+        "sender": { "sender_id": { "open_id": "ou_user_1" }, "sender_type": "user" },
+        "message": {
+          "message_id": "om_1",
+          "chat_id": "oc_1",
+          "chat_type": "p2p",
+          "message_type": "text",
+          "content": "{\"text\":\"你好\"}"
+        },
+        "timestamp": "1787889600000"
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "feishu",
+      "senderId": "ou_user_1",
+      "chatId": "oc_1",
+      "messageId": "om_1",
+      "text": "你好",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

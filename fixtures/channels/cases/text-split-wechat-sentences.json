@@ -1,0 +1,12 @@
+{
+  "name": "文本分片：wechat/feishu 句末断点（maxParts=10）",
+  "kind": "text-split",
+  "channel": "wechat",
+  "input": {
+    "text": "你好。今天天气不错！要出门吗？",
+    "limit": 10
+  },
+  "expect": {
+    "parts": ["你好。", "今天天气不错！", "要出门吗？"]
+  }
+}

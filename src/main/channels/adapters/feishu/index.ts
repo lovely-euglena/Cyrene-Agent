@@ -43,6 +43,7 @@ import type {
 } from "../../types";
 import { loadChannelsSettings } from "../../settings-store";
 import { getAudioDurationMs } from "./audio-duration";
+import { resourceKindToExt } from "../../normalizers/feishu";
 import { logger, LogTag } from "../../../logger";
 
 export { transcodeAudioFileToFeishuOpus } from "./audio-transcode";
@@ -61,18 +62,6 @@ const FEISHU_CAPABILITY: ChannelCapability = {
   sticker: true,
   maxTextLength: 4000,
 };
-
-/** 飞书资源类型 → 我们的附件类型 + 扩展名 */
-function resourceKindToExt(ktype: string): { ext: string; mime: string } {
-  switch (ktype) {
-    case "image": return { ext: ".png", mime: "image/png" };
-    case "audio": return { ext: ".mp3", mime: "audio/mpeg" };
-    case "video": return { ext: ".mp4", mime: "video/mp4" };
-    case "file":  return { ext: ".bin", mime: "application/octet-stream" };
-    case "sticker": return { ext: ".png", mime: "image/png" };
-    default: return { ext: ".bin", mime: "application/octet-stream" };
-  }
-}
 
 /** 把飞书资源下载到本地缓存目录。返回本地文件路径或 null（失败时）。 */
 async function downloadLarkResource(

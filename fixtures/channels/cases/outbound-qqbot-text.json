@@ -1,0 +1,23 @@
+{
+  "name": "qqbot 被动回复单条文本（msg_seq 从 1 起）",
+  "kind": "outbound",
+  "channel": "qqbot",
+  "input": {
+    "message": {
+      "channel": "qqbot",
+      "targetId": "OPENUSER0000000000000000000001",
+      "parts": [{ "kind": "text", "text": "你好" }]
+    },
+    "messageId": "ROBOT1.0_c2c_msg_001"
+  },
+  "expect": {
+    "requests": [
+      {
+        "msg_type": 0,
+        "content": "你好",
+        "msg_id": "ROBOT1.0_c2c_msg_001",
+        "msg_seq": 1
+      }
+    ]
+  }
+}

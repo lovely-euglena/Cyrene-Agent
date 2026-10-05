@@ -1,0 +1,17 @@
+{
+  "name": "能力表：qqbot（仅文本被动回复）",
+  "kind": "capability",
+  "channel": "qqbot",
+  "input": { "channel": "qqbot" },
+  "expect": {
+    "text": true,
+    "image": false,
+    "audio": false,
+    "file": false,
+    "video": false,
+    "markdown": false,
+    "card": false,
+    "sticker": false,
+    "maxTextLength": 0
+  }
+}
