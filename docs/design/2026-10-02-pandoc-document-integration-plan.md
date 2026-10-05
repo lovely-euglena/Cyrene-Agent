@@ -155,6 +155,7 @@ pandoc 输出是给人看的 Markdown，直接喂模型会有噪音，统一清�
 - TS：`file-ingest.ts` 路由与 `PANDOC_EXTS`；`document-import-sidecar.ts` 下发 `pandocPath`；
   `document-index-worker.ts` 回退提示；设置字段/IPC/React UI/WPF 行/三语 i18n。
 - 验证：本机安装 Pandoc 3.12（winget，user scope）后
-  `verify-pandoc` 27/27、`pandoc-sidecar-smoke.mjs` 7/7（rst + 真实 docx OOXML）。
+  `verify-pandoc` 27/27、`pandoc-sidecar-smoke.mjs` 8/8（rst + 真实 docx OOXML；
+  另断言 doc-import 回显 modelKey/dim）。
 - 已知边界：无 sidecar 的 worker 回退路径不提供转换（默认链路 sidecar 恒可用，打包态内置）；
   `.pdf/.xls/.ppt` 等仍按 §2 进入 P2。
