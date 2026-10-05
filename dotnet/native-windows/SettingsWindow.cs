@@ -932,6 +932,19 @@ public sealed partial class SettingsWindow : NativeWindow
             var savedProfileId = GetString(data, "savedProfileId");
             if (savedProfileId.Length > 0 && _apiForm is not null) _apiForm.ProfileId = savedProfileId;
         }
+        // 昔涟 section：embedding 切换回执 → rebuild-required 弹迁移确认（重建/清空/取消）；
+        // 其它失败（模型未安装等）刷新 section 撤销卡片乐观选中
+        if (section == "cyrene" && notice.TryGetProperty("data", out var cyreneData) && cyreneData.ValueKind == JsonValueKind.Object)
+        {
+            if (GetBool(cyreneData, "rebuildRequired"))
+            {
+                HandleCyreneRebuildRequired(cyreneData);
+            }
+            else if (GetBool(cyreneData, "embeddingSwitchFailed"))
+            {
+                RefreshSection("cyrene");
+            }
+        }
         RenderNotice(section);
     }
 

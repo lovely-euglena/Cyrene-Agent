@@ -69,6 +69,10 @@ export interface ModelSettings {
   };
   /** Embedding 维度（可选，仅 cloud 模式）。留空 = 自动探测。 */
   embeddingDimensions?: number;
+  /** 本地 embedding 模型（第二引擎 IKIH28；bgem3 = BGE-M3 1024 维，e5-small = 384 维）。 */
+  embeddingModel?: "bgem3" | "e5-small";
+  /** Reranker 模式：standard = bge-reranker-base；v2-m3 = bge-reranker-v2-m3；none = 关闭。 */
+  rerankerMode?: "standard" | "v2-m3" | "none";
   multimodal: boolean;
   thinkingOverride?: -1 | 0 | 1;
   /** 禁用 max_tokens 注入。仅对自定义端点生效（与主进程 model-settings.ts 对齐）。 */
@@ -251,7 +255,23 @@ export interface SettingsApi {
   openStickerManager: () => Promise<{ ok: boolean; error?: string }>;
   stickerPickFile?: () => Promise<string | null>;
   stickerAdd?: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) => Promise<unknown>;
-  embeddingSetModel?: (model: string) => Promise<{ ok: boolean; clearedEntries?: number; error?: string }>;
+  /**
+   * 切换本地 embedding 模型（第二引擎）。
+   * 无 action 且模型/维度变化时返回 { ok:false, reason:"rebuild-required", requires } 且不落盘；
+   * 带 action 后走备份→重嵌入（rebuild）或显式清空（clear）。
+   */
+  embeddingSetModel?: (
+    model: "bgem3" | "e5-small",
+    action?: "rebuild" | "clear",
+  ) => Promise<{
+    ok: boolean;
+    modelKey?: string;
+    clearedEntries?: number;
+    rebuiltEntries?: number;
+    requires?: "rebuild" | "clear";
+    reason?: string;
+    error?: string;
+  }>;
   rerankerSetMode?: (mode: string) => Promise<boolean>;
   setToolEnabled?: (id: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
   getToolEnabled?: () => Promise<Record<string, boolean>>;

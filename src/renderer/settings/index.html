@@ -787,6 +787,11 @@
                     <span class="rag-model-card__desc"><span data-i18n="panel.cyrene.embedding.bgem3Desc">中文效果优秀，支持贴纸语义匹配和场景语气注入。</span></span>
                     <em id="embedding-bgem3-status">检测中...</em>
                   </button>
+                  <button type="button" class="rag-model-card" data-value="e5-small">
+                    <span class="rag-model-card__title"><span data-i18n="panel.cyrene.embedding.e5Title">Multilingual-E5-Small</span></span>
+                    <span class="rag-model-card__desc"><span data-i18n="panel.cyrene.embedding.e5Desc">384 维，体积小（约 120MB），多语言效果均衡。</span></span>
+                    <em id="embedding-e5-small-status">检测中...</em>
+                  </button>
                 </div>
               </div>
 
@@ -806,6 +811,11 @@
                     <span class="rag-model-card__desc"><span data-i18n="panel.cyrene.embedding.rerankBaseDesc">精准重排，适合长文档和专业检索，约 200ms/对。</span></span>
                     <em id="reranker-standard-status">检测中...</em>
                   </button>
+                  <button type="button" class="rag-model-card" data-value="v2-m3" data-reranker="1">
+                    <span class="rag-model-card__title"><span data-i18n="panel.cyrene.embedding.rerankV2M3">bge-reranker-v2-m3</span></span>
+                    <span class="rag-model-card__desc"><span data-i18n="panel.cyrene.embedding.rerankV2M3Desc">多语言重排，效果更强，约 570MB。</span></span>
+                    <em id="reranker-v2-m3-status">检测中...</em>
+                  </button>
                   <button type="button" class="rag-model-card" data-value="none" data-reranker="1">
                     <span class="rag-model-card__title"><span data-i18n="panel.cyrene.embedding.rerankOff">关闭</span></span>
                     <span class="rag-model-card__desc"><span data-i18n="panel.cyrene.embedding.rerankOffDesc">不进行重排序，检索后直接使用。</span></span>
@@ -816,7 +826,7 @@
 
               <div class="agent-status-row rag-status-row">
                 <strong><span data-i18n="panel.cyrene.embedding.modeTitle">当前模式</span></strong>
-                <em><span data-i18n="panel.cyrene.embedding.modeAuto">自动（优先使用已安装模型）</span></em>
+                <em><span id="rag-current-mode" data-i18n="panel.cyrene.embedding.modeAuto">自动（优先使用已安装模型）</span></em>
               </div>
 
               <div class="agent-actions-row rag-actions-row">
