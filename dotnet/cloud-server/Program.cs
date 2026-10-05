@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using CyreneCloud.Auth;
+using CyreneCloud.Channels;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Sync;
@@ -31,6 +32,19 @@ StorageHardening.EnforceProcessUmask();
 if (args.Length > 0 && args[0] is "pair-code" or "devices" or "revoke")
 {
     Environment.ExitCode = RunCli(args);
+    return;
+}
+
+// 裸跑渠道自测（不进 Web 管线）：channel-selftest [all|framework]；--selftest framework 同义
+// （阶段 3-6 追加 wechat/feishu/qqbot 子集；见 §8.2）
+if (args.Length > 0 && args[0] == "channel-selftest")
+{
+    Environment.ExitCode = ChannelSelfTest.Run(args.Length > 1 ? args[1] : "all");
+    return;
+}
+if (args.Length > 1 && args[0] == "--selftest" && args[1] == "framework")
+{
+    Environment.ExitCode = ChannelSelfTest.Run("framework");
     return;
 }
 
@@ -80,6 +94,50 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DialogLoop>());
 var masterToken = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
 // 主控令牌字节预转换（鉴权热路径不重复分配；比较后临时数组清零）
 var masterTokenBytes = string.IsNullOrEmpty(masterToken) ? null : Encoding.UTF8.GetBytes(masterToken);
+
+// ── 服务端渠道层（Phase 2 渠道批，§2.3/§2.4）──
+// CLOUD_CHANNELS 为空 = 渠道层整体关闭（不注册存储/托管，零内存占用）；
+// capabilities.channels 仍声明（hosted=[]），老客户端宽容解析。
+var channelOptions = ChannelOptions.FromEnvironment();
+builder.Services.AddSingleton(channelOptions);
+if (channelOptions.ChannelsEnabled)
+{
+    var channelsDbPath = Path.Combine(dataDir, "channels.db");
+    builder.Services.AddSingleton(new ChannelStore(
+        channelsDbPath, ChannelCredentialProtector.Create(masterToken, dataDir)));
+    builder.Services.AddSingleton<ChannelManager>();
+    builder.Services.AddSingleton(sp => new ChannelDeliveryService(
+        sp.GetRequiredService<ChannelManager>(),
+        sp.GetRequiredService<ILogger<ChannelDeliveryService>>()));
+    builder.Services.AddSingleton(sp => new ChannelDispatcher(
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ServerEventWriter>(),
+        sp.GetRequiredService<IDialogEngine>(),
+        sp.GetRequiredService<ChannelDeliveryService>(),
+        sp.GetRequiredService<ILogger<ChannelDispatcher>>()));
+    // 适配器注册表（阶段 3-6 在 ChannelAdapterCatalog 追加；本批为空）
+    foreach (var registration in ChannelAdapterCatalog.All)
+    {
+        builder.Services.AddSingleton<IChannelAdapterRegistration>(registration);
+    }
+    builder.Services.AddHostedService<ChannelHostedService>();
+}
+
+// capabilities.channels（§2.6）：hosted = 已配置且生成可用的渠道（R6：无生成则空）。
+// 阶段 3-6 适配器注册后自动点亮；ownership/proactive 供桌面降级 UI。
+var channelRegistrations = ChannelAdapterCatalog.All;
+var hostedChannels = modelClient.Enabled
+    ? channelRegistrations
+        .Where(item => channelOptions.IsChannelEnabled(item.ChannelId) && item.IsConfigured(channelOptions))
+        .Select(item => item.ChannelId)
+        .ToArray()
+    : [];
+var proactiveChannels = modelClient.Enabled
+    ? channelRegistrations
+        .Where(item => channelOptions.IsChannelEnabled(item.ChannelId) && item.IsConfigured(channelOptions) && item.SupportsProactive)
+        .Select(item => item.ChannelId)
+        .ToArray()
+    : [];
 var allowedHosts = (Environment.GetEnvironmentVariable("CLOUD_ALLOWED_HOSTS") ?? "")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -232,6 +290,15 @@ app.MapGet("/v1/capabilities", () => Results.Json(new
     pairing = "device-token",
     pwa = hasWebRoot,
     maxBatchBytes = CloudApi.MaxPushBodyBytes,
+    // §2.6 渠道能力声明：hosted 为空 = 服务端无渠道托管（桌面按本机运行处理）
+    channels = new
+    {
+        hosted = hostedChannels,
+        ownership = "lease",
+        proactive = proactiveChannels,
+        voice = false,
+        mediaMaxMB = channelOptions.WeChatMediaMaxMb,
+    },
 }));
 
 // ── 配对与设备（IKJK2K） ──
