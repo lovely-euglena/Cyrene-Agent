@@ -49,7 +49,7 @@ public static class WeChatNormalizer
             Channel = ChannelIds.WeChat,
             SenderId = fromUserId,
             ChatId = fromUserId,
-            MessageId = ChannelJsonValue.StringOrEmpty(raw, "message_id"),
+            MessageId = ChannelJsonValue.JsStringOrEmpty(raw, "message_id"),
             Text = ExtractText(items),
             At = createTimeMs is not null && double.IsFinite(createTimeMs.Value)
                 ? ChannelJsonValue.FromUnixTimeMilliseconds(createTimeMs.Value)
@@ -66,7 +66,8 @@ public static class WeChatNormalizer
         foreach (var item in items.EnumerateArray())
         {
             if (item.ValueKind != JsonValueKind.Object) continue;
-            if (ChannelJsonValue.NumberOrNull(item, "type") is not { } type || (int)type != 1) continue;
+            // P2-2：TS `record.type === 1` 严格比较（1.5 不放行；此处不做 (int) 截断）
+            if (ChannelJsonValue.NumberOrNull(item, "type") is not { } type || type != 1) continue;
             if (!item.TryGetProperty("text_item", out var textItem) || textItem.ValueKind != JsonValueKind.Object) continue;
             var text = ChannelJsonValue.OptionalString(textItem, "text");
             if (!string.IsNullOrEmpty(text)) builder.Append(text);
@@ -83,7 +84,8 @@ public static class WeChatNormalizer
             if (item.ValueKind != JsonValueKind.Object) continue;
             var type = ChannelJsonValue.NumberOrNull(item, "type");
             if (type is null) continue;
-            switch ((int)type.Value)
+            // P2-2：TS `item.type === 2/3/4/5` 严格比较（1.5/2.5 不匹配，不截断）
+            switch (type.Value)
             {
                 case 2 when item.TryGetProperty("image_item", out var image) && image.ValueKind == JsonValueKind.Object:
                 {
@@ -95,8 +97,7 @@ public static class WeChatNormalizer
                 {
                     var fileName = AsFileName(voice, "微信语音");
                     var sampleRate = ChannelJsonValue.NumberOrNull(voice, "sample_rate");
-                    media.Add(NewMedia("voice", fileName, analyzable: false, AsCdnMedia(voice),
-                        sampleRate is null ? null : (int)sampleRate.Value));
+                    media.Add(NewMedia("voice", fileName, analyzable: false, AsCdnMedia(voice), sampleRate));
                     break;
                 }
                 case 4 when item.TryGetProperty("file_item", out var file) && file.ValueKind == JsonValueKind.Object:
@@ -116,7 +117,7 @@ public static class WeChatNormalizer
         return media;
     }
 
-    private static WeChatInboundMedia NewMedia(string kind, string fileName, bool analyzable, WeChatCdnMedia? media, int? sampleRate) => new()
+    private static WeChatInboundMedia NewMedia(string kind, string fileName, bool analyzable, WeChatCdnMedia? media, double? sampleRate) => new()
     {
         Kind = kind,
         FileName = fileName,
@@ -128,12 +129,16 @@ public static class WeChatNormalizer
 
     private static string AsFileName(JsonElement item, string fallback)
     {
-        var value = ChannelJsonValue.OptionalString(item, "file_name")
-            ?? ChannelJsonValue.OptionalString(item, "name");
-        if (value is null) return fallback;
-        var trimmed = value.Trim();
+        // TS `asFileName(file_name ?? name, fallback)`：nullish 才回退；非字符串（含数字）→ fallback
+        var value = FirstNonNull(item, "file_name") ?? FirstNonNull(item, "name");
+        if (value is not { ValueKind: JsonValueKind.String } element) return fallback;
+        var trimmed = (element.GetString() ?? "").Trim();
         return trimmed.Length == 0 ? fallback : BaseName(trimmed);
     }
+
+    /// <summary>属性存在且非 JSON null 时返回原始元素；缺省/null 返回 null。</summary>
+    private static JsonElement? FirstNonNull(JsonElement parent, string name) =>
+        parent.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null ? value : null;
 
     private static bool IsAnalyzableFile(string fileName)
     {
@@ -172,7 +177,8 @@ public static class WeChatNormalizer
         {
             EncryptQueryParam = encryptQueryParam,
             AesKey = aesKey,
-            EncryptType = encryptType is null ? null : (int)encryptType.Value,
+            // P2-2：TS `encrypt_type === 0 || encrypt_type === 1` 才保留（2/1.5 一律省略）
+            EncryptType = encryptType is 0 or 1 ? (int)encryptType.Value : null,
             FullUrl = ChannelJsonValue.OptionalString(media, "full_url"),
         };
     }
@@ -208,7 +214,7 @@ public static class WeChatNormalizer
                 case OutgoingPartKinds.Sticker:
                 {
                     if (!TryGetUpload(context.Uploads, part.ImagePath, out var media))
-                        return new WeChatSendPlan([], $"缺少上传结果: {part.ImagePath}");
+                        return new WeChatSendPlan([], $"缺少上传结果: {part.ImagePath ?? "undefined"}");
                     requests.Add(Request(message.TargetId, context,
                         new JsonArray { ImageItem(media) }));
                     break;
@@ -218,23 +224,24 @@ public static class WeChatNormalizer
                     if (string.IsNullOrEmpty(part.FilePath) || context.Voices is null
                         || !context.Voices.TryGetValue(part.FilePath, out var voice))
                     {
-                        return new WeChatSendPlan([], $"缺少语音编码结果: {part.FilePath}");
+                        return new WeChatSendPlan([], $"缺少语音编码结果: {part.FilePath ?? "undefined"}");
                     }
                     requests.Add(Request(message.TargetId, context, new JsonArray { VoiceItem(voice) }));
                     break;
                 }
                 case OutgoingPartKinds.File:
                 {
-                    if (string.IsNullOrEmpty(part.FilePath) || !TryGetUpload(context.Uploads, part.FilePath, out var media))
-                        return new WeChatSendPlan([], $"缺少上传结果: {part.FilePath}");
-                    var fileName = BaseName(string.IsNullOrEmpty(part.Name) ? part.FilePath : part.Name);
+                    if (!TryGetUpload(context.Uploads, part.FilePath, out var media))
+                        return new WeChatSendPlan([], $"缺少上传结果: {part.FilePath ?? "undefined"}");
+                    // P2-2：TS `basename(part.name ?? part.filePath)`——仅 null 回退；空串按空串
+                    var fileName = BaseName(part.Name ?? part.FilePath ?? "");
                     requests.Add(Request(message.TargetId, context, new JsonArray { FileItem(media, fileName) }));
                     break;
                 }
                 case OutgoingPartKinds.Video:
                 {
-                    if (string.IsNullOrEmpty(part.FilePath) || !TryGetUpload(context.Uploads, part.FilePath, out var media))
-                        return new WeChatSendPlan([], $"缺少上传结果: {part.FilePath}");
+                    if (!TryGetUpload(context.Uploads, part.FilePath, out var media))
+                        return new WeChatSendPlan([], $"缺少上传结果: {part.FilePath ?? "undefined"}");
                     requests.Add(Request(message.TargetId, context, new JsonArray { VideoItem(media) }));
                     break;
                 }
@@ -319,7 +326,7 @@ public sealed class WeChatInboundMedia
     [JsonPropertyName("extension")] public required string Extension { get; init; }
     [JsonPropertyName("analyzable")] public required bool Analyzable { get; init; }
     [JsonPropertyName("media")] public WeChatCdnMedia? Media { get; init; }
-    [JsonPropertyName("sampleRate")] public int? SampleRate { get; init; }
+    [JsonPropertyName("sampleRate")] public double? SampleRate { get; init; }
 }
 
 /// <summary>iLink CDN 媒体（wire 命名 snake_case）。</summary>

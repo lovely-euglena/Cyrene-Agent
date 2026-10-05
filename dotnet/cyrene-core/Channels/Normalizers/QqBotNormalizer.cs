@@ -28,15 +28,16 @@ public static class QqBotNormalizer
             ? authorElement
             : default;
         var isGroup = eventType != "C2C_MESSAGE_CREATE";
+        // P2-2：对齐 TS `String(author[...] ?? "")` 全语义（array → "a,b"、object → "[object Object]"）
         var senderId = author.ValueKind == JsonValueKind.Object
-            ? ChannelJsonValue.StringOrEmpty(author, isGroup ? "member_openid" : "user_openid")
+            ? ChannelJsonValue.JsStringOrEmpty(author, isGroup ? "member_openid" : "user_openid")
             : "";
         var chatId = isGroup
-            ? ChannelJsonValue.StringOrEmpty(data, "group_openid")
+            ? ChannelJsonValue.JsStringOrEmpty(data, "group_openid")
             : senderId;
         if (senderId.Length == 0 || chatId.Length == 0) return null;
 
-        var content = ChannelJsonValue.StringOrEmpty(data, "content").Trim();
+        var content = ChannelJsonValue.JsStringOrEmpty(data, "content").Trim();
         var attachments = ParseAttachments(data);
         if (content.Length == 0 && attachments.Count == 0) return null;
 
@@ -47,7 +48,7 @@ public static class QqBotNormalizer
         {
             Channel = ChannelIds.QqBot,
             ChatType = isGroup ? ChannelChatTypes.Group : ChannelChatTypes.Private,
-            MessageId = ChannelJsonValue.StringOrEmpty(data, "id"),
+            MessageId = ChannelJsonValue.JsStringOrEmpty(data, "id"),
             SenderId = senderId,
             SenderName = string.IsNullOrEmpty(senderName) ? null : senderName,
             ChatId = chatId,
@@ -64,10 +65,9 @@ public static class QqBotNormalizer
         foreach (var item in raw.EnumerateArray())
         {
             if (item.ValueKind != JsonValueKind.Object) continue;
-            var contentType = ChannelJsonValue.StringOrEmpty(item, "content_type");
-            var url = ChannelJsonValue.OptionalString(item, "voice_wav_url")
-                ?? ChannelJsonValue.OptionalString(item, "url")
-                ?? "";
+            var contentType = ChannelJsonValue.JsStringOrEmpty(item, "content_type");
+            // TS `String(a.voice_wav_url ?? a.url ?? "")`：nullish 才回退，其余按 JS String 语义
+            var url = JsStringOrFallback(item, "voice_wav_url", "url");
             if (url.Length == 0) continue;
             var kind = ChannelAttachmentKinds.File;
             if (contentType.StartsWith("image/", StringComparison.Ordinal)) kind = ChannelAttachmentKinds.Image;
@@ -87,7 +87,8 @@ public static class QqBotNormalizer
 
     private static DateTimeOffset ParseTimestamp(JsonElement data, DateTimeOffset now)
     {
-        var value = ChannelJsonValue.OptionalString(data, "timestamp");
+        // TS `parseTimestamp(String(data.timestamp ?? ""), now)`：非字符串也先按 JS String 语义转换
+        var value = ChannelJsonValue.JsStringOrEmpty(data, "timestamp");
         if (!string.IsNullOrEmpty(value) && DateTimeOffset.TryParse(
                 value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
         {
@@ -95,6 +96,28 @@ public static class QqBotNormalizer
         }
         return now;
     }
+
+    /// <summary>
+    /// JS `String(first ?? second ?? "")`：nullish 才取后者；非字符串按 JS String 语义
+    /// （array 逗号连接、object "[object Object]"，与 <see cref="ChannelJsonValue.JsStringOrEmpty"/> 一致）。
+    /// </summary>
+    private static string JsStringOrFallback(JsonElement parent, string first, string second)
+    {
+        if (parent.TryGetProperty(first, out var value) && value.ValueKind != JsonValueKind.Null) return JsString(value);
+        if (parent.TryGetProperty(second, out value) && value.ValueKind != JsonValueKind.Null) return JsString(value);
+        return "";
+    }
+
+    private static string JsString(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? "",
+        JsonValueKind.Number => value.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Array => string.Join(",", value.EnumerateArray().Select(JsString)),
+        JsonValueKind.Object => "[object Object]",
+        _ => "",
+    };
 
     // ── 出站 ────────────────────────────────────────────────────────────────
 

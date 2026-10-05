@@ -41,6 +41,7 @@ internal static class WeChatSelfTest
         await CheckProtocolClientAsync(Check);
         await CheckCdnAsync(Check);
         await CheckAdapterTextAsync(Check);
+        await CheckAdapterStartRaceAsync(Check);
         await CheckAdapterMediaAsync(Check);
         await CheckReconnectAsync(Check);
         await CheckQrLoginAsync(Check);
@@ -170,6 +171,17 @@ internal static class WeChatSelfTest
         client.Dispose();
         var afterDispose = await client.SendTextAsync("wx-user-1", "dispose 后仍可用", "ctx-1");
         check("协议: Dispose 仅释放自建 HttpClient（注入连接保留 + 幂等）", afterDispose.Ok, afterDispose.Error);
+
+        // P2-8：ILinkLoginClient（QR 轮询）同样的 Dispose 所有权口径——注入连接保留 + 幂等
+        var loginHandler = new MockILinkHandler();
+        using var loginHttp = NewHttp(loginHandler);
+        var loginClient = new ILinkLoginClient(loginHttp, "https://mock.ilink.test", () => "dGVzdC11aW4=");
+        loginClient.Dispose();
+        loginClient.Dispose();
+        var qr = await loginClient.FetchQrCodeAsync();
+        check("协议: LoginClient Dispose 仅释放自建 HttpClient（注入连接保留 + 幂等）",
+            qr.Qrcode == "qr-ticket-1" && qr.QrcodeImgContent == "https://liteapp.weixin.qq.com/q/mock",
+            JsonSerializer.Serialize(qr));
     }
 
     // ── 2. CDN（AES 密钥格式/加解密/上传/下载/超限）────────────────────────────
@@ -409,8 +421,96 @@ internal static class WeChatSelfTest
             check("适配器: 缺 context_token 拒绝回复",
                 !missingContext.Ok && missingContext.Error?.Contains("context_token") == true, missingContext.Error);
 
+            // P2-8：_replyContextByTarget 有界（cap=3，超限按最久未更新 LRU 淘汰）
+            adapter.ReplyContextLimit = 3;
+            var dispatchClient = NewClient(http);
+            for (var i = 0; i < 6; i++)
+            {
+                var sender = $"wx-cap-{i}";
+                await adapter.DispatchInboundAsync(dispatchClient, new WeixinMessage
+                {
+                    MsgId = $"cap-{i}",
+                    FromUserId = sender,
+                    ToUserId = "bot-1",
+                    MsgType = 1,
+                    Content = "hi",
+                    Items = default,
+                    ContextToken = $"ctx-cap-{i}",
+                    Raw = JsonSerializer.SerializeToElement(new
+                    {
+                        message_id = $"cap-{i}",
+                        from_user_id = sender,
+                        to_user_id = "bot-1",
+                        message_type = 1,
+                        context_token = $"ctx-cap-{i}",
+                        item_list = new[] { new { type = 1, text_item = new { text = "hi" } } },
+                    }),
+                }, CancellationToken.None);
+            }
+            check("适配器: replyContext 上限淘汰（cap=3，有界）", adapter.ReplyContextCount == 3,
+                $"count={adapter.ReplyContextCount}");
+            var evicted = await adapter.SendAsync(new OutgoingMessage
+            {
+                Channel = ChannelIds.WeChat,
+                TargetId = "wx-cap-0",
+                Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = "hi" }],
+            });
+            var retained = await adapter.SendAsync(new OutgoingMessage
+            {
+                Channel = ChannelIds.WeChat,
+                TargetId = "wx-cap-5",
+                Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = "hi" }],
+            });
+            check("适配器: LRU 淘汰最久未更新，最新 target 仍可回复",
+                !evicted.Ok && evicted.Error?.Contains("context_token") == true && retained.Ok,
+                $"evicted={evicted.Error} retained={retained.Ok}");
+
             await adapter.StopAsync();
             check("适配器: Stop 后 offline", adapter.GetStatus().Phase == ChannelPhases.Offline);
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
+    // ── 3b. 并发 Start 竞态：后到客户端走丢弃路径并释放（P2-8）────────────────────
+
+    private static async Task CheckAdapterStartRaceAsync(CheckFn check)
+    {
+        var dir = NewTempDir("wechat-start-race");
+        try
+        {
+            var (options, store, media, handler, http) = await NewEnvironmentAsync(dir, suffix: "race");
+            var clients = new List<TrackingProtocolClient>();
+            using var barrier = new Barrier(2);
+            var adapter = new ILinkBotAdapter(
+                options,
+                store,
+                media,
+                new WeChatCdnClient(http),
+                new SilkUnavailableCodec(),
+                NullLogger<ILinkBotAdapter>.Instance,
+                credentials =>
+                {
+                    var client = new TrackingProtocolClient(credentials, http);
+                    lock (clients) clients.Add(client);
+                    // 两路并发 Start 都进入工厂后再放行：强制后到者命中「_client 已存在」丢弃路径
+                    barrier.SignalAndWait(TimeSpan.FromSeconds(5));
+                    return client;
+                },
+                TimeSpan.FromMilliseconds(10));
+            adapter.OnMessage = (_, _) => Task.FromResult<OutgoingMessage?>(null);
+
+            // Task.Run 强制两路真并发：否则第一次 Start 可能同步跑完，第二次直接命中幂等分支
+            await Task.WhenAll(
+                Task.Run(() => adapter.StartAsync()),
+                Task.Run(() => adapter.StartAsync()));
+            var discarded = clients.Count(client => client.Disposed);
+            check("适配器: 并发 Start 竞态仅一路生效，另一路客户端被释放（P2-8）",
+                clients.Count == 2 && discarded == 1 && adapter.GetStatus().Phase == ChannelPhases.Running,
+                $"clients={clients.Count} disposed={discarded} phase={adapter.GetStatus().Phase}");
+            await adapter.StopAsync();
         }
         finally
         {
@@ -980,6 +1080,23 @@ internal static class WeChatSelfTest
             Task.FromResult(ChannelSendResult.Success);
 
         public ChannelStatus GetStatus() => new() { Enabled = true, Phase = ChannelPhases.Running };
+    }
+
+    /// <summary>selftest：观测并发 Start 竞态丢弃路径是否调用 Dispose（P2-8）。</summary>
+    private sealed class TrackingProtocolClient : ILinkProtocolClient
+    {
+        public TrackingProtocolClient(ILinkCredentials credentials, HttpClient http) : base(credentials, http)
+        {
+        }
+
+        public bool Disposed { get; private set; }
+
+        public override void Dispose()
+        {
+            if (Disposed) return;
+            Disposed = true;
+            base.Dispose();
+        }
     }
 
     // ── mock iLink HTTP ───────────────────────────────────────────────────────

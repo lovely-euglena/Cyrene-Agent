@@ -9,7 +9,7 @@ TS 归一化实现（`src/main/channels/normalizers/**`）与 C# 实现
 - JSON Schema（规范镜像，非执行器）：`schema/channel-contract-v1.schema.json`
 - TS 语义源：`src/main/channels/normalizers/**`（行为对齐桌面 `src/main/channels/adapters/*`）
 
-当前 `cases/` 共 **52** 个用例（初始 42 + 微信评审修正 2 + 飞书评审修正 7 + 飞书 R2 边界 1）。
+当前 `cases/` 共 **61** 个用例（初始 42 + R1 评审修正 9（微信 2 + 飞书 7）+ R2 评审修正 10（飞书 1 + QQ/微信 9））。
 
 ## 双端执行
 
@@ -129,17 +129,31 @@ proactiveEventId = "proactive-" + sha256hex(sessionId + ":" + intentId)[0..32]
   异常丢事件，按无效时间戳返回 null → 回退 `now`；新增 `inbound-feishu-timestamp-nonfinite`
   双端向量（`1e400` 两端都判非有限、回退 `now`）与 `feishu-webhook/huge-event-timestamp.json`
   回放（20 位毫秒数事件仍 200 且正文可见）。
+- **QQ 畸形输入按 JS `String()` 全语义**（P2-2）：`content`/`id`/`openid` 与附件
+  `content_type`/`voice_wav_url`/`url` 不再只认字符串——array 逗号连接、object `[object Object]`、
+  数字字面量（`inbound-qqbot-js-string-content` / `-js-string-object-fields` / `-attachments-js-string`）；
+- **微信 item/媒体字段严格比较**（P2-2）：`item.type` 1.5/2.5 不截断放行；`encrypt_type` 仅 0/1 保留；
+  `sample_rate` 非整数原值保留（`inbound-wechat-item-type-fraction` / `-media-strict-fields`）；
+  `file_name` 非字符串不回退 `name`（`inbound-wechat-file-name-nonstring`）；
+- **微信出站边界**（P2-2）：`file.name` 空串不回退 `filePath`；缺 `filePath`/`imagePath` 的错误文案与
+  TS 模板字符串一致（`undefined`）（`outbound-wechat-file-name-empty` / `-sticker-missing-path` /
+  `-audio-missing-path`）。
 
 ## 已知超纲差异（未入向量；双端不承诺逐字一致）
 
 - 飞书出站 video：`uploads[*].image_key` 显式 `null` 时 TS 输出 `"image_key":null`，C# 省略该键
   （`string?` 语义）；向量只锁「键存在（含空串）保留」。生产路径 uploads 由各端生成，不应出现显式 null；
-- 飞书入站 `content` 为 number 时：C# 取 JSON 原始字面量（`GetRawText`），JS 用 `String(number)` 数值
-  格式化——`1.0` / `1e21` 等形态不同（普通整数 `123` 已锁）；
+- 入站 number 字段（飞书 `content`、QQ `content`/`id`/`openid`、微信 `message_id` 等）：
+  C# 取 JSON 原始字面量（`GetRawText`），JS 用 `String(number)` 数值格式化——`1.0` / `1e21` 等形态不同
+  （普通整数 `123`/`20260828001` 已锁）；
 - 飞书入站时间戳超出 C# `DateTimeOffset` 范围（如 19 位毫秒数）：C# 视作无效回退 `now`（事件不丢）；
   TS `new Date(ms)` 可表示范围为 ±8.64e15——越界为 Invalid Date（契约序列化 `null`），未越界但年份
   >9999 时输出 5 位年份 ISO（schema `isoUtcMs` 不允许）。双端只锁「非有限值回退 `now`」与非丢事件
-  （`inbound-feishu-timestamp-nonfinite` / `feishu-webhook/huge-event-timestamp.json`）。
+  （`inbound-feishu-timestamp-nonfinite` / `feishu-webhook/huge-event-timestamp.json`）；
+- 显式 JSON `null` 与键缺省在 C# `string?` 下不可区分：微信出站缺 `filePath`/`imagePath` 的错误文案，
+  TS 缺省输出 `undefined`、显式 `null` 输出 `null`，C# 统一按 `undefined` 处理（向量只锁缺省形态）；
+- 微信媒体 item 容器非对象（如 `image_item: "x"` / `true`）：TS 真值判断会产出 fallback 描述符，
+  C# 要求 JSON object、否则跳过该 item；畸形 payload 下描述符条数可能不同（生产 payload 不出现）。
 
 ## 破坏性修改
 

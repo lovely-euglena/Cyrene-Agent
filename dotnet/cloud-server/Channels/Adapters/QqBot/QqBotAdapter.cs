@@ -21,7 +21,7 @@ namespace CyreneCloud.Channels.Adapters.QqBot;
 ///   - URL 消息发送失败：单次重试由 ChannelDeliveryService 负责，失败记 receipt failed；
 ///     <c>CLOUD_CHANNEL_QQBOT_STRIP_URLS=1</c> 时发送前把 URL 替换为占位。
 /// </summary>
-public sealed class QqBotAdapter : IChannelAdapter
+public sealed class QqBotAdapter : IChannelAdapter, IChannelSendRetryPolicy
 {
     /// <summary>§7.3 产品文案：QQ 官方 bot 不适用主动通知。</summary>
     public const string ProactiveNotice = "QQ 官方 bot 不适用主动通知；主动通知请用微信/飞书（服务端）或 NapCat（桌面）";
@@ -31,6 +31,14 @@ public sealed class QqBotAdapter : IChannelAdapter
 
     public const string ErrorCodeGateway = "E_QQBOT_GATEWAY";
     public const string ErrorCodeSend = "E_QQBOT_SEND";
+
+    /// <summary>
+    /// P2-3(d)：确定性失败文案——超窗/超限/无引用重试也不会成功（§7.2「明确错误，不重试」），
+    /// <see cref="IChannelSendRetryPolicy"/> 据此让 <see cref="ChannelDeliveryService"/> 跳过同轮重试。
+    /// </summary>
+    internal const string NoReferenceError = "官方 QQ Bot 仅支持被动回复（没有可引用的入站消息）";
+    internal const string WindowErrorPrefix = "被动回复窗口已过";
+    internal const string LimitErrorPrefix = "该消息回复次数已达上限";
 
     private static readonly TimeSpan DedupeTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan PrivateReplyWindow = TimeSpan.FromMinutes(60);
@@ -108,10 +116,11 @@ public sealed class QqBotAdapter : IChannelAdapter
             apiBase: _options.QqBotApiBase, tokenUrl: _options.QqBotTokenUrl);
         _ownsApi = _injectedApi is null;
         _api = api;
+        QqBotWsClient? ws = null;
         try
         {
             var gatewayUrl = await api.GetGatewayUrlAsync(cancellationToken);
-            var ws = CreateWsClient(gatewayUrl, api);
+            ws = CreateWsClient(gatewayUrl, api);
             _ws = ws;
             await ws.StartAsync(cancellationToken);
         }
@@ -124,6 +133,24 @@ public sealed class QqBotAdapter : IChannelAdapter
             _lastErrorCode = ErrorCodeGateway;
             _logger.LogError(ex, "QQ Bot 网关启动失败 channel={Channel}", Id);
             SetStatus(ChannelPhases.Error, ex.Message);
+            // P2-3(a)：失败必须冒泡——ChannelManager.StartAsync 不标记 started，sweep 才能自愈重试；
+            // 同时释放本次启动资源，避免重试时泄漏（注入的 api 归调用方）。
+            _ws = null;
+            if (ws is not null)
+            {
+                try
+                {
+                    await ws.StopAsync(CancellationToken.None);
+                }
+                catch (Exception stopError)
+                {
+                    _logger.LogDebug(stopError, "QQ Bot 启动失败清理网关异常 channel={Channel}", Id);
+                }
+            }
+            if (_ownsApi) api.Dispose();
+            _api = null;
+            _ownsApi = false;
+            throw;
         }
     }
 
@@ -158,6 +185,13 @@ public sealed class QqBotAdapter : IChannelAdapter
 
     public ChannelStatus GetStatus() => _status;
 
+    /// <summary>P2-3(d)：超窗/超限/无引用等确定性失败不重试；网络类失败仍由 delivery 重试 1 次（§2.5）。</summary>
+    bool IChannelSendRetryPolicy.ShouldRetry(OutgoingMessage message, string? error) =>
+        error is null
+        || (!error.StartsWith(WindowErrorPrefix, StringComparison.Ordinal)
+            && !error.StartsWith(LimitErrorPrefix, StringComparison.Ordinal)
+            && error != NoReferenceError);
+
     public async Task<ChannelSendResult> SendAsync(
         OutgoingMessage message, CancellationToken cancellationToken = default)
     {
@@ -174,17 +208,17 @@ public sealed class QqBotAdapter : IChannelAdapter
             var context = ResolveReplyContextLocked(message);
             if (context is null)
             {
-                return ChannelSendResult.Failure("官方 QQ Bot 仅支持被动回复（没有可引用的入站消息）");
+                return ChannelSendResult.Failure(NoReferenceError);
             }
             var window = isGroup ? GroupReplyWindow : PrivateReplyWindow;
             if (_time.GetUtcNow() - context.ReceivedAt > window)
             {
-                return ChannelSendResult.Failure($"被动回复窗口已过（{(isGroup ? "5 分钟" : "60 分钟")}）");
+                return ChannelSendResult.Failure($"{WindowErrorPrefix}（{(isGroup ? "5 分钟" : "60 分钟")}）");
             }
             var limit = isGroup ? GroupReplyLimit : PrivateReplyLimit;
             if (context.SeqUsed >= limit)
             {
-                return ChannelSendResult.Failure($"该消息回复次数已达上限（{limit} 次）");
+                return ChannelSendResult.Failure($"{LimitErrorPrefix}（{limit} 次）");
             }
             plan = QqBotNormalizer.BuildPassiveReplies(message, context.MessageId, context.SeqUsed, limit);
             if (plan.Requests.Count == 0)

@@ -65,6 +65,8 @@ public sealed class QqBotWsClient
 
     private readonly QqBotWsClientOptions _options;
     private readonly object _sync = new();
+    /// <summary>P2-3(b)：WS 同一时刻只允许一个未完成 Send；Identify/Resume/心跳共用此队列串行化。</summary>
+    private readonly SemaphoreSlim _sendGate = new(1, 1);
 
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _heartbeatCts;
@@ -260,7 +262,7 @@ public sealed class QqBotWsClient
                 }
                 using (document)
                 {
-                    HandlePayload(document.RootElement, accessToken, resume);
+                    await HandlePayloadAsync(document.RootElement, accessToken, resume);
                 }
             }
         }
@@ -284,7 +286,7 @@ public sealed class QqBotWsClient
         }
     }
 
-    private void HandlePayload(JsonElement payload, string accessToken, bool resume)
+    private async Task HandlePayloadAsync(JsonElement payload, string accessToken, bool resume)
     {
         if (!payload.TryGetProperty("op", out var opElement) || opElement.ValueKind != JsonValueKind.Number) return;
         switch (opElement.GetInt32())
@@ -304,7 +306,7 @@ public sealed class QqBotWsClient
                 var (sessionId, seq) = SnapshotSession();
                 if (resume && sessionId.Length > 0 && seq > 0)
                 {
-                    SendPayload(new
+                    await SendPayloadAsync(new
                     {
                         op = 6,
                         d = new { token = $"QQBot {accessToken}", session_id = sessionId, seq },
@@ -312,7 +314,7 @@ public sealed class QqBotWsClient
                 }
                 else
                 {
-                    SendIdentify(accessToken);
+                    await SendIdentifyAsync(accessToken);
                 }
                 break;
             }
@@ -377,7 +379,7 @@ public sealed class QqBotWsClient
         }
     }
 
-    private void SendIdentify(string accessToken) => SendPayload(new
+    private Task SendIdentifyAsync(string accessToken) => SendPayloadAsync(new
     {
         op = 2,
         d = new
@@ -394,18 +396,34 @@ public sealed class QqBotWsClient
         },
     });
 
-    private void SendPayload(object payload)
+    /// <summary>
+    /// P2-3(b)：发送串行化并 await（WS 不允许并发的未完成 Send；心跳/Identify/Resume 共用队列），
+    /// 失败经 <see cref="SendRawAsync"/> → HandleError 可观察，不再 fire-and-forget 丢失。
+    /// </summary>
+    private async Task SendPayloadAsync(object payload)
     {
-        IQqBotWebSocket? socket;
-        CancellationToken cancellationToken;
-        lock (_sync)
-        {
-            socket = _socket;
-            cancellationToken = _cts?.Token ?? CancellationToken.None;
-        }
-        if (socket is null || !socket.IsOpen) return;
         var json = JsonSerializer.Serialize(payload);
-        _ = SendRawAsync(socket, json, cancellationToken);
+        CancellationToken cancellationToken;
+        lock (_sync) cancellationToken = _cts?.Token ?? CancellationToken.None;
+        try
+        {
+            await _sendGate.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // 停止中：放弃发送
+        }
+        try
+        {
+            IQqBotWebSocket? socket;
+            lock (_sync) socket = _socket;
+            if (socket is null || !socket.IsOpen) return;
+            await SendRawAsync(socket, json, cancellationToken);
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
     }
 
     private async Task SendRawAsync(IQqBotWebSocket socket, string json, CancellationToken cancellationToken)
@@ -454,7 +472,7 @@ public sealed class QqBotWsClient
                     _heartbeatAcked = false;
                     long seq;
                     lock (_sync) seq = _seq;
-                    SendPayload(new { op = 1, d = seq > 0 ? (object)seq : null });
+                    await SendPayloadAsync(new { op = 1, d = seq > 0 ? (object)seq : null });
                 }
             }
             catch (OperationCanceledException)
@@ -564,7 +582,7 @@ public sealed class QqBotWsClient
             {
                 if (_stopped) return;
             }
-            SendIdentify(accessToken);
+            await SendIdentifyAsync(accessToken);
         });
     }
 
