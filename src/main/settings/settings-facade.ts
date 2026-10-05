@@ -596,8 +596,14 @@ export function loadGeneralSettings(): GeneralSettings {
 
 export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralSettings {
   const before = loadGeneralSettings();
-  // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化
-  vaultifyGeneralSettingsForSave(partial as unknown as Record<string, unknown>);
+  // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化；
+  // 复审3 P1-1：写入意图按「值与既有真值（keyring → 内存 before → 磁盘）不同」判定，
+  // 全量回显（{...loadGeneralSettings(), ...patch}）不再被误判为新 key 写入
+  vaultifyGeneralSettingsForSave(
+    partial as unknown as Record<string, unknown>,
+    before as unknown as Record<string, unknown>,
+    getGeneralSettingsPath(),
+  );
   // PR19 P1-1（掩码-保存门控一致性）：vault 模式不可写（明文回退态 / hydrated 后
   // 宿主猝死态）时，陈旧掩码空串按「不改」保内存旧明文 key
   if (shouldPreservePlaintextKeys()) {

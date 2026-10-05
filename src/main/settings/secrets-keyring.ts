@@ -9,12 +9,13 @@
  *  - 同步取用：getSecret() 供 model-settings / general-settings 加载路径填 key；
  *  - 掩码：maskModelSettingsForUi / maskGeneralSettingsForUi（A3，设置页只回掩码）。
  *
- * host 缺失策略（设计 §8 用例 4/5 + PR19 复审 P1-1/P2-6）：迁移前回退明文
- * （告警一次）；迁移后/已 hydrate 后宿主缺失 → 密钥事实源仍在 vault：掩码照常
- * （vaultAuthoritative），保存仅对「含非空 key 或 SENTINEL」的 patch 硬失败
- * （E_SECRETS_HOST_LOST，不写明文、不清盘），非 key patch 正常持久化且落盘 key
- * 槽逐槽取磁盘原值；migrated 状态在宿主缺失时读盘上 secrets-vault.json 的
- * migratedAt 明文标记判定。
+ * host 缺失策略（设计 §8 用例 4/5 + PR19 复审 P1-1/P2-6 + 复审3 P1-1）：迁移前
+ * 回退明文（告警一次）；迁移后/已 hydrate 后宿主缺失 → 密钥事实源仍在 vault：
+ * 掩码照常（vaultAuthoritative），保存仅对「写入意图」的 patch 硬失败
+ * （E_SECRETS_HOST_LOST，不写明文、不清盘）——写入意图 = incoming 值 ≠ 既有真值
+ * 或显式 SENTINEL，内部调用方原样回显既有真值按「不改」处理（详见下方判据注释）；
+ * 非 key patch 正常持久化且落盘 key 槽逐槽取磁盘原值；migrated 状态在宿主缺失时
+ * 读盘上 secrets-vault.json 的 migratedAt 明文标记判定。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -124,49 +125,203 @@ const SECRETS_HOST_LOST_MESSAGE =
 
 type VaultSaveRoute = "plaintext" | "vault" | "readonly";
 
-/** key 值判定：非空 string 或显式清除 SENTINEL。 */
-function isSecretValue(value: unknown): boolean {
-  return value === SECRET_CLEAR_SENTINEL || (typeof value === "string" && value.trim() !== "");
+/** 非空 string → trim 后的值；否则 undefined（空串/缺失/非 string 均视为「未携带 key」）。 */
+function nonEmptySecret(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
-/** incoming 是否携带非空 key / SENTINEL（model 四类槽位：顶层 / perProvider / 档案 / vision）。 */
-function modelIncomingHasSecret(incoming: Record<string, unknown>): boolean {
-  if (isSecretValue(incoming.apiKey)) return true;
-  const per = incoming.perProvider as Record<string, Record<string, unknown>> | undefined;
+/** keyring 全量真值（跨槽回显判定用）。 */
+function keyringSecretValues(): string[] {
+  const values: string[] = [];
+  for (const value of keyring.values()) {
+    const v = nonEmptySecret(value);
+    if (v !== undefined) values.push(v);
+  }
+  return values;
+}
+
+/** 模型设置对象里的全部非空 key 真值（顶层 / perProvider / 档案 / vision）。 */
+function collectModelKnownSecrets(settings: Record<string, unknown> | null | undefined): string[] {
+  if (!settings) return [];
+  const values: unknown[] = [settings.apiKey];
+  const per = settings.perProvider as Record<string, { apiKey?: unknown }> | undefined;
   if (per && typeof per === "object") {
-    for (const entry of Object.values(per)) {
-      if (entry && typeof entry === "object" && isSecretValue(entry.apiKey)) return true;
-    }
+    for (const entry of Object.values(per)) values.push(entry?.apiKey);
   }
-  const profiles = incoming.modelProfiles as Array<Record<string, unknown>> | undefined;
+  const profiles = settings.modelProfiles as Array<{ apiKey?: unknown }> | undefined;
   if (Array.isArray(profiles)) {
-    for (const p of profiles) {
-      if (p && typeof p === "object" && isSecretValue(p.apiKey)) return true;
-    }
+    for (const p of profiles) values.push(p?.apiKey);
   }
-  const vision = incoming.vision as Record<string, unknown> | undefined;
-  return !!(vision && typeof vision === "object" && isSecretValue(vision.apiKey));
+  const vision = settings.vision as { apiKey?: unknown } | undefined;
+  if (vision && typeof vision === "object") values.push(vision.apiKey);
+  return values.map(nonEmptySecret).filter((v): v is string => v !== undefined);
 }
 
-/** incoming 是否携带非空 key / SENTINEL（general 的 SECRET_GENERAL_FIELDS）。 */
-function generalIncomingHasSecret(incoming: Record<string, unknown>): boolean {
-  return SECRET_GENERAL_FIELDS.some((field) => isSecretValue(incoming[field.jsonField]));
+/** general 设置对象里的全部非空 key 真值（SECRET_GENERAL_FIELDS）。 */
+function collectGeneralKnownSecrets(settings: Record<string, unknown> | null | undefined): string[] {
+  if (!settings) return [];
+  return SECRET_GENERAL_FIELDS
+    .map((field) => nonEmptySecret(settings[field.jsonField]))
+    .filter((v): v is string => v !== undefined);
+}
+
+/** 逐槽既有真值：keyring → 内存设置 → 磁盘设置，取第一个非空（trim 归一）。 */
+function existingSecretForSlot(
+  vaultKeys: string[],
+  memoryValues: unknown[],
+  diskValues: unknown[],
+): string | undefined {
+  for (const vaultKey of vaultKeys) {
+    if (!vaultKey) continue;
+    const fromVault = nonEmptySecret(getSecret(vaultKey));
+    if (fromVault !== undefined) return fromVault;
+  }
+  for (const value of [...memoryValues, ...diskValues]) {
+    const v = nonEmptySecret(value);
+    if (v !== undefined) return v;
+  }
+  return undefined;
 }
 
 /**
- * 保存路由（PR19 复审 P1-1/P2-6）：
+ * 单槽写入意图判据（PR19 复审3 P1-1）：
+ *  - SENTINEL → 写入（显式清除）；
+ *  - 空/缺失 → 不写入（「空=不改」）；
+ *  - 非空 → 与「该槽既有真值」（keyring → 内存 → 磁盘，trim 归一）比较：相等 → 等价回显
+ *    （不改）；不等或同槽解析不到 → 再查值是否命中任一已知真值（跨槽展开回显：档案字段
+ *    展开到顶层镜像 / 顶层镜像折叠回 perProvider 等场景，值会在槽间移动）——命中 → 回显。
+ *  - 完全解析不到任何既有真值的非空值 → 保守按写入意图：authoritative 态 UI 已掩码，
+ *    系统不认识的非空值只可能是用户新输入；此时拒绝（不写明文、不清盘）不丢数据，
+ *    比静默当「不改」丢掉用户输入更安全。
+ */
+function slotHasWriteIntent(
+  incomingValue: unknown,
+  vaultKeys: string[],
+  memoryValues: unknown[],
+  diskValues: unknown[],
+  knownValues: Set<string>,
+): boolean {
+  if (incomingValue === SECRET_CLEAR_SENTINEL) return true;
+  const value = nonEmptySecret(incomingValue);
+  if (value === undefined) return false;
+  const existing = existingSecretForSlot(vaultKeys, memoryValues, diskValues);
+  if (existing !== undefined && value === existing) return false;
+  return !knownValues.has(value);
+}
+
+/** incoming 是否携带写入意图（model 四类槽位：顶层 / perProvider / 档案 / vision）。 */
+function modelIncomingHasWriteIntent(
+  incoming: Record<string, unknown>,
+  memorySettings?: Record<string, unknown> | null,
+  diskSettings?: Record<string, unknown> | null,
+): boolean {
+  const known = new Set<string>([
+    ...keyringSecretValues(),
+    ...collectModelKnownSecrets(memorySettings),
+    ...collectModelKnownSecrets(diskSettings),
+  ]);
+  const perKey = (src: Record<string, unknown> | null | undefined, name: string): unknown =>
+    (src?.perProvider as Record<string, { apiKey?: unknown }> | undefined)?.[name]?.apiKey;
+  const profileKey = (src: Record<string, unknown> | null | undefined, id: string): unknown =>
+    (src?.modelProfiles as Array<{ id?: unknown; apiKey?: unknown }> | undefined)
+      ?.find((p) => p?.id === id)?.apiKey;
+  const visionKey = (src: Record<string, unknown> | null | undefined): unknown =>
+    (src?.vision as { apiKey?: unknown } | undefined)?.apiKey;
+
+  const provider = typeof incoming.provider === "string" ? incoming.provider.trim() : "";
+  if (provider) {
+    // 旧名建槽同步（迁移以 renamedProvider 建槽）——归一前后两种键名都查，避免重命名用户误判
+    const renamed = renamedProvider(provider);
+    if (slotHasWriteIntent(
+      incoming.apiKey,
+      [vaultKeyForProvider(provider), vaultKeyForProvider(renamed)],
+      [perKey(memorySettings, provider), perKey(memorySettings, renamed), memorySettings?.apiKey],
+      [perKey(diskSettings, provider), perKey(diskSettings, renamed), diskSettings?.apiKey],
+      known,
+    )) return true;
+  } else if (slotHasWriteIntent(
+    incoming.apiKey, [], [memorySettings?.apiKey], [diskSettings?.apiKey], known,
+  )) {
+    return true;
+  }
+
+  const per = incoming.perProvider as Record<string, Record<string, unknown>> | undefined;
+  if (per && typeof per === "object") {
+    for (const [name, entry] of Object.entries(per)) {
+      if (!entry || typeof entry !== "object") continue;
+      const renamed = renamedProvider(name);
+      if (slotHasWriteIntent(
+        entry.apiKey,
+        [vaultKeyForProvider(name), vaultKeyForProvider(renamed)],
+        [perKey(memorySettings, name), perKey(memorySettings, renamed)],
+        [perKey(diskSettings, name), perKey(diskSettings, renamed)],
+        known,
+      )) return true;
+    }
+  }
+
+  const profiles = incoming.modelProfiles as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(profiles)) {
+    for (const p of profiles) {
+      if (!p || typeof p !== "object") continue;
+      const id = typeof p.id === "string" ? p.id : "";
+      if (slotHasWriteIntent(
+        p.apiKey,
+        id ? [vaultKeyForProfile(id)] : [],
+        [profileKey(memorySettings, id)],
+        [profileKey(diskSettings, id)],
+        known,
+      )) return true;
+    }
+  }
+
+  const vision = incoming.vision as Record<string, unknown> | undefined;
+  if (vision && typeof vision === "object" && slotHasWriteIntent(
+    vision.apiKey, [VAULT_KEY_VISION], [visionKey(memorySettings)], [visionKey(diskSettings)], known,
+  )) {
+    return true;
+  }
+  return false;
+}
+
+/** incoming 是否携带写入意图（general 的 SECRET_GENERAL_FIELDS）。 */
+function generalIncomingHasWriteIntent(
+  incoming: Record<string, unknown>,
+  memorySettings?: Record<string, unknown> | null,
+  diskSettings?: Record<string, unknown> | null,
+): boolean {
+  const known = new Set<string>([
+    ...keyringSecretValues(),
+    ...collectGeneralKnownSecrets(memorySettings),
+    ...collectGeneralKnownSecrets(diskSettings),
+  ]);
+  for (const field of SECRET_GENERAL_FIELDS) {
+    if (slotHasWriteIntent(
+      incoming[field.jsonField],
+      [field.vaultKey],
+      [memorySettings?.[field.jsonField]],
+      [diskSettings?.[field.jsonField]],
+      known,
+    )) return true;
+  }
+  return false;
+}
+
+/**
+ * 保存路由（PR19 复审 P1-1/P2-6 + 复审3 P1-1）：
  *  - 非 vault 模式 → plaintext（明文语义不变）；
  *  - vault 可写 → vault（空=不改 / SENTINEL 删 / 非空入 vault）；
- *  - authoritative 但不可写 → readonly：仅当 incoming 含非空 key / SENTINEL 时抛
- *    E_SECRETS_HOST_LOST（不清盘、不写明文）；其余 patch 正常持久化（非 key 字段
- *    照写，key 槽由 stripKeysForDisk 取磁盘原值）；
+ *  - authoritative 但不可写 → readonly：仅当存在写入意图（值 ≠ 既有真值或 SENTINEL）时抛
+ *    E_SECRETS_HOST_LOST（不清盘、不写明文）；内部等价回显与其余 patch 正常持久化
+ *    （非 key 字段照写，key 槽由 stripKeysForDisk 取磁盘原值）；
  *  - 非 authoritative（未 hydrate 且未迁移）→ plaintext（迁移前回退明文）。
+ * 写入意图判据惰性求值（writable/plaintext 分支不读盘、不比对）。
  */
-function routeVaultSave(incomingHasSecret: boolean): VaultSaveRoute {
+function routeVaultSave(incomingHasWriteIntent: () => boolean): VaultSaveRoute {
   if (!isVaultMode()) return "plaintext";
   if (hydrated && isSecretsHostAlive()) return "vault";
   if (hydrated || vaultMigrated || readVaultMigratedMarker()) {
-    if (incomingHasSecret) throw new Error(SECRETS_HOST_LOST_MESSAGE);
+    if (incomingHasWriteIntent()) throw new Error(SECRETS_HOST_LOST_MESSAGE);
     return "readonly";
   }
   return "plaintext";
@@ -503,10 +658,19 @@ export function applyKeyringToGeneralSettings(settings: Record<string, unknown>)
  *  - SECRET_CLEAR_SENTINEL → 删 vault 条目 + 置 ""（用户显式清除）。
  * 磁盘副本由 stripKeysForDisk 生成；调用方继续用原对象回内存。
  */
-export function vaultifyModelSettingsForSave(incoming: Record<string, unknown>): void {
-  // PR19 复审 P1-1/P2-6：writable → vault 路径；authoritative 不可写 → 仅含 key
-  // 的 patch 抛 E_SECRETS_HOST_LOST（非 key patch 继续持久化）；其余回退明文。
-  if (routeVaultSave(modelIncomingHasSecret(incoming)) !== "vault") return;
+export function vaultifyModelSettingsForSave(
+  incoming: Record<string, unknown>,
+  /** 内存设置快照（loadModelSettings()）——写入意图判据的「内存」层，缺省只比 keyring/磁盘。 */
+  memorySettings?: Record<string, unknown> | null,
+  /** 当前设置文件路径（磁盘真值层；缺省不读盘）。 */
+  diskPath?: string,
+): void {
+  // PR19 复审 P1-1/P2-6 + 复审3 P1-1：writable → vault 路径；authoritative 不可写 →
+  // 仅「有写入意图」（值 ≠ 既有真值或 SENTINEL）的 patch 抛 E_SECRETS_HOST_LOST，
+  // 内部等价回显与其余 patch 继续持久化；其余回退明文。
+  if (routeVaultSave(() =>
+    modelIncomingHasWriteIntent(incoming, memorySettings, readDiskJson(diskPath)),
+  ) !== "vault") return;
   const provider = typeof incoming.provider === "string" ? incoming.provider : "";
   handleTopLevelKey(incoming, provider ? vaultKeyForProvider(provider) : "", "apiKey");
 
@@ -689,8 +853,16 @@ export function maskGeneralSettingsForUi<T>(settings: T): T {
 
 /** general 保存路径的 vaultify（同 model：writable → 空=不改 / SENTINEL=清；authoritative
  *  不可写 → 仅含 key 的 patch 抛 E_SECRETS_HOST_LOST，非 key patch 继续持久化；其余回退明文）。 */
-export function vaultifyGeneralSettingsForSave(incoming: Record<string, unknown>): void {
-  if (routeVaultSave(generalIncomingHasSecret(incoming)) !== "vault") return;
+export function vaultifyGeneralSettingsForSave(
+  incoming: Record<string, unknown>,
+  /** 内存设置快照（loadGeneralSettings()）——写入意图判据的「内存」层。 */
+  memorySettings?: Record<string, unknown> | null,
+  /** 当前设置文件路径（磁盘真值层；缺省不读盘）。 */
+  diskPath?: string,
+): void {
+  if (routeVaultSave(() =>
+    generalIncomingHasWriteIntent(incoming, memorySettings, readDiskJson(diskPath)),
+  ) !== "vault") return;
   for (const field of SECRET_GENERAL_FIELDS) {
     handleTopLevelKey(incoming, field.vaultKey, field.jsonField);
   }

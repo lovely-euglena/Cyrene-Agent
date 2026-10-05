@@ -669,8 +669,14 @@ function preserveKeysWhenVaultUnwritable(incoming: Partial<ModelSettings>, exist
  */
 export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettings {
   const existing = loadModelSettings();
-  // vault 模式（A2/A3）：摘 ""（=不改）/ 处理 SENTINEL（=清除）/ 新值入 vault
-  vaultifyModelSettingsForSave(settings as unknown as Record<string, unknown>);
+  // vault 模式（A2/A3）：摘 ""（=不改）/ 处理 SENTINEL（=清除）/ 新值入 vault；
+  // 复审3 P1-1：写入意图按「值与既有真值（keyring → 内存 existing → 磁盘）不同」判定，
+  // 内部全量回显（档案列表 / {...current} 展开）不再被误判为新 key 写入
+  vaultifyModelSettingsForSave(
+    settings as unknown as Record<string, unknown>,
+    existing as unknown as Record<string, unknown>,
+    getSettingsPath(),
+  );
   preserveKeysWhenVaultUnwritable(settings, existing);
   const merged: Partial<ModelSettings> = { ...existing, ...settings };
 
