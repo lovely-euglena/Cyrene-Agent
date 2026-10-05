@@ -7,7 +7,7 @@
 
 | 套件 | 覆盖 | 结果 |
 |---|---|---|
-| `scripts/dotnet-smoke-linux.py` | 六 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测） | 24/24 |
+| `scripts/dotnet-smoke-linux.py` | 八 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测 + **secrets-host vault 契约 + vault/.bak 权限 0600 断言** + **llm-host 自测（作业库 24 项 + mock SSE 全链 45 项）** + **selftest scheduler（调度核心）**） | 40/40 |
 | `scripts/dotnet-edge-test.py` | 畸形帧/路径穿越/SQL 注入/1e308 权重/5MB payload/幽灵会话 | 13/13 |
 | `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）/ fetch_url（本地 HTTP fixture + GitHub API mock + 截断/缓存）/ 文档四件（zip 结构 + PdfPig 文本提取）/ 邮件四件（本地 fake SMTP + fake IMAP；含连接拒绝 E_EMAIL_PRECONDITION）/ ast_grep 两件（随包 CLI）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 146/146（本地全量；CI 132/0，见注） |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
@@ -24,7 +24,7 @@
 Agent 白名单只在自测验函数未接线（P0）、tool_result 生命周期断链、
 git commit 漏子命令、IPC argv 双传。
 
-## 七 host 进程地图（B3：独立启停，崩溃宿主监督重启）
+## 九 host 进程地图（B3：独立启停，崩溃宿主监督重启；另含原生窗口/分离托盘两形态）
 
 | Host | 入口 | 阶段 | 状态 |
 |---|---|---|---|
@@ -37,6 +37,8 @@ git commit 漏子命令、IPC argv 双传。
 | 记忆 | `cyrene-native --memory-host` | I | L0/L1/冲突/反思表 + get/append op（L2/DMAE 建表暂缓驱动 A7） |
 | 对话循环 | `cyrene-native --loop-host` | K | 状态机骨架（🔴 实机逐 token 一致性未过前禁开） |
 | 语音 | `CyreneVoice.exe --voice-host` | F/G | TTS 四引擎 + minimax 骨架 + Silero VAD 三模式 + 自动校准 |
+| 密钥库 | `cyrene-native --secrets-host` | Phase 1（IKJM7D A1） | DPAPI vault（原子写/.bak/迁移标记）+ secret.get/put/delete/list/import/status/mark-migrated（帧契约测试锁定） |
+| LLM 作业 | `cyrene-native --llm-host` | Phase 2（IKJM7D H0–H4 MVP） | 作业式厂商服务：鉴权注入/bearer+raw、OpenAI SSE 解析、重试集中（429/5xx/网络/超时）、未确认量反压、TTL 回收、lanes 4/2/1、指标出口（stderr + status） |
 
 ## 双轨开关（唯一解析入口 `src/main/dotnet-backend/config.ts`）
 

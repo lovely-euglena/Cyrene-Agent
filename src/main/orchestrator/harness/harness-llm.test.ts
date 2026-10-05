@@ -3,17 +3,23 @@ import type { ModelRetryStatus } from "../../../shared/model-retry";
 import type { ChatMessage, ChatResponse, ChatVendorAdapter, VendorConfig } from "../vendors/types";
 import { AgentRuntimeError } from "../agent-runtime-error";
 
-const { fakeStreamChat, fakeRecordUsage, fakeRecordRequest, fakeGetAdapter } = vi.hoisted(() => ({
+const { fakeStreamChat, fakeRecordUsage, fakeRecordRequest, fakeGetAdapter, fakeShouldRoute, fakeCallViaHost } = vi.hoisted(() => ({
   fakeStreamChat: vi.fn(),
   fakeRecordUsage: vi.fn(),
   fakeRecordRequest: vi.fn(),
   fakeGetAdapter: vi.fn(),
+  fakeShouldRoute: vi.fn(),
+  fakeCallViaHost: vi.fn(),
 }));
 
 vi.mock("../vendors", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../vendors")>();
   return { ...actual, getAdapterForConfig: fakeGetAdapter, streamChatWithSdk: fakeStreamChat };
 });
+vi.mock("../vendors/llm-host-facade", () => ({
+  shouldRouteViaLlmHost: fakeShouldRoute,
+  callLLMViaLlmHost: fakeCallViaHost,
+}));
 vi.mock("../../token-usage-store", () => ({ recordUsage: fakeRecordUsage, recordRequest: fakeRecordRequest }));
 
 import { callLLM, summarizeHistory } from "./harness-llm";
@@ -112,6 +118,41 @@ describe("callLLM retries", () => {
     expect(result.text).toBe("recovered");
     expect(fakeStreamChat).toHaveBeenCalledTimes(1);
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("llm-host 回退（复审3 P2-1：告警一次 + 直连兜底）", () => {
+  it("双开命中 + 两次 host-lost：回退告警恰一次，两次都走 TS 直连", async () => {
+    fakeShouldRoute.mockReturnValue(true);
+    fakeCallViaHost.mockRejectedValue(
+      new AgentRuntimeError("E_LLM_HOST_LOST", "llm-host ensureStarted 失败: host 未运行"),
+    );
+    fakeStreamChat.mockResolvedValue(makeResponse("direct"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { });
+
+    const first = await callLLM(vendorConfig, promptLayers, messages, [], harnessConfig);
+    const second = await callLLM(vendorConfig, promptLayers, messages, [], harnessConfig);
+
+    expect(first.text).toBe("direct");
+    expect(second.text).toBe("direct");
+    expect(fakeCallViaHost).toHaveBeenCalledTimes(2); // 每次作业都尝试 llm-host（不因告警跳过）
+    expect(fakeStreamChat).toHaveBeenCalledTimes(2);  // 两次 host-lost 都回退直连
+    const fallbackWarns = warn.mock.calls.filter((call) =>
+      String(call[0]).includes("宿主不可用，本会话回退 TS 直连"));
+    expect(fallbackWarns).toHaveLength(1); // 进程级告警恰一次
+    warn.mockRestore();
+  });
+
+  it("非 host-lost 错误不触发回退告警（原样上抛）", async () => {
+    fakeShouldRoute.mockReturnValue(true);
+    fakeCallViaHost.mockRejectedValue(new AgentRuntimeError("E_MODEL_REQUEST_FAILED", "上游 500"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { });
+
+    await expect(callLLM(vendorConfig, promptLayers, messages, [], harnessConfig))
+      .rejects.toThrow("上游 500");
+    expect(fakeStreamChat).not.toHaveBeenCalled();
+    expect(warn.mock.calls.some((call) => String(call[0]).includes("回退 TS 直连"))).toBe(false);
+    warn.mockRestore();
   });
 });
 

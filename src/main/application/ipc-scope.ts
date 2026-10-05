@@ -58,8 +58,19 @@ export function createIpcScope(main: IpcScopeMainLike = ipcMain as IpcScopeMainL
 
     on(channel, listener) {
       assertActive();
-      registrations.push({ kind: "on", channel, listener });
-      main.on(channel, listener);
+      // PR19 复审3 P1-1：ipcMain.on 同步监听器异常会升级为主进程未捕获异常
+      //（Electron 默认错误框/异常），全仓无全局 uncaughtException 兜底。这里统一
+      // 捕获同步异常并告警（可观察、不崩主进程）；async 监听器的 rejection 不在
+      // 同步 try/catch 范围（由各自 async 调用方处理）。
+      const guarded = (...args: any[]): void => {
+        try {
+          listener(...args);
+        } catch (error) {
+          console.warn(`[IpcScope] on ${channel} 监听器同步异常（已捕获，不冒泡）:`, error);
+        }
+      };
+      registrations.push({ kind: "on", channel, listener: guarded });
+      main.on(channel, guarded);
     },
 
     dispose() {

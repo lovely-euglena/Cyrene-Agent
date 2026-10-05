@@ -12,7 +12,8 @@ export type AgentErrorCode =
   | "E_MODEL_REQUEST_FAILED"
   | "E_MODEL_REQUEST_TIMEOUT"
   | "E_MODEL_HTTP_ERROR"
-  | "E_MODEL_RESPONSE_PARSE_FAILED";
+  | "E_MODEL_RESPONSE_PARSE_FAILED"
+  | "E_LLM_HOST_LOST";
 
 export class AgentRuntimeError extends Error {
   constructor(

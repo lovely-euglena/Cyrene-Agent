@@ -155,6 +155,8 @@ interface SettingsWindowApi {
     baseUrl: string;
     model: string;
     apiKey: string;
+    /** 复审 P1-6：被测档案 id（掩码空 key 时主进程按槽位回填真 key）。 */
+    profileId?: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
     manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig;

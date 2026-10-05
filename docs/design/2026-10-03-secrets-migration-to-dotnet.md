@@ -1,7 +1,7 @@
 # 密钥等敏感信息分阶段迁移 .NET 保存处理
 
 > **日期**：2026-10-03
-> **状态**：设计草案（讨论中，未实施）
+> **状态**：Phase 1 已实施（issue/IKJM7D 分支，A1–A5；llm-host H0–H4 MVP 同批落地）
 > **关联 Issue**：[Ygwill/cyrene-agent#IKJLB2](https://gitee.com/ygwill/cyrene-agent/issues/IKJLB2)
 > **结论先行**：分两阶段。
 > **Phase 1（本次规划）**：在 `cyrene-native` 增加 DPAPI（CurrentUser）加密的统一密钥库宿主，

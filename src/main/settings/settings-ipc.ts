@@ -21,6 +21,7 @@ import {
 import type { RuntimeStateService } from "../orchestrator/runtime-state-service";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
+import { maskGeneralSettingsForUi, maskModelSettingsForUi } from "./secrets-keyring";
 import { switchEmbeddingModel } from "../rag";
 import { finalizeEmbeddingModelSwitch } from "../rag/embedding-switch-finalize";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
@@ -30,7 +31,7 @@ import { testVendorConnection } from "../orchestrator/vendors/test-connection";
 import { testVisionConnection } from "./vision-test";
 import { getAdapterForConfig } from "../orchestrator/vendors";
 import type { VendorConfig } from "../orchestrator/vendors";
-import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
+import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, resolveTestConnectionApiKey, resolveVisionTestApiKey, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
 import type { ModelSettings } from "./model-settings";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
@@ -162,9 +163,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, runtimeStateService.getState());
   }
 
-  ipc.handle(IPC.SETTINGS_GET_CONFIG, () => getModelSettings());
+  ipc.handle(IPC.SETTINGS_GET_CONFIG, () => maskModelSettingsForUi(getModelSettings()));
   ipc.handle(IPC.SETTINGS_MODEL_PROFILES_LIST, () => ({
-    profiles: listSavedModelProfiles(getModelSettings()),
+    profiles: listSavedModelProfiles(getModelSettings()).map((p) => maskModelSettingsForUi(p)),
     defaultModelProfileId: getModelSettings().defaultModelProfileId,
   }));
   ipc.handle(IPC.SETTINGS_MODEL_PROFILE_SAVE, (_event, profile) => {
@@ -172,7 +173,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     if (saved.added && saved.settings.defaultModelProfileId === saved.settings.modelProfiles?.at(-1)?.id) {
       broadcastModelConfigChanged(saved.settings);
     }
-    return { added: saved.added, profiles: listSavedModelProfiles(saved.settings), defaultModelProfileId: saved.settings.defaultModelProfileId };
+    return { added: saved.added, profiles: listSavedModelProfiles(saved.settings).map((p) => maskModelSettingsForUi(p)), defaultModelProfileId: saved.settings.defaultModelProfileId }; // 复审 P1-2 出站掩码
   });
   ipc.handle(IPC.SETTINGS_MODEL_PROFILE_DELETE, (_event, id: unknown) => {
     if (typeof id !== "string") return null;
@@ -181,16 +182,16 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const defaultModelProfileId = settings.defaultModelProfileId === id ? profiles[0]?.id : settings.defaultModelProfileId;
     const saved = saveModelSettings({ modelProfiles: profiles, defaultModelProfileId });
     broadcastModelConfigChanged(saved);
-    return { profiles: listSavedModelProfiles(saved), defaultModelProfileId: saved.defaultModelProfileId };
+    return { profiles: listSavedModelProfiles(saved).map((p) => maskModelSettingsForUi(p)), defaultModelProfileId: saved.defaultModelProfileId }; // 复审 P1-2 出站掩码
   });
   ipc.handle(IPC.SETTINGS_MODEL_PROFILE_SET_DEFAULT, (_event, id: unknown) => {
     if (typeof id !== "string") return null;
     const saved = setDefaultModelProfile(id);
     broadcastModelConfigChanged(saved);
-    return { profiles: listSavedModelProfiles(saved), defaultModelProfileId: saved.defaultModelProfileId };
+    return { profiles: listSavedModelProfiles(saved).map((p) => maskModelSettingsForUi(p)), defaultModelProfileId: saved.defaultModelProfileId }; // 复审 P1-2 出站掩码
   });
 
-  ipc.handle(IPC.SETTINGS_GET_GENERAL, () => getGeneralSettings());
+  ipc.handle(IPC.SETTINGS_GET_GENERAL, () => maskGeneralSettingsForUi(getGeneralSettings()));
 
   ipc.handle(IPC.SETTINGS_GET_TIMEOUT_SETTINGS, () => getTimeoutSettings());
 
@@ -255,7 +256,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     if ("proactiveChatMode" in settings || "proactiveDeliveryTarget" in settings) {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }
-    return saved;
+    return maskGeneralSettingsForUi(saved); // 复审 P1-2 出站掩码
   });
 
   // 「一键复制全局配置」（IKJMO8）：把用户全局 Git 配置复制进独立配置文件（可重复刷新）
@@ -283,7 +284,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.SETTINGS_WSL_SHUTDOWN, () => restartWsl());
 
   // TTS 面板调用的通用设置读写入口（历史命名遗留）
-  ipc.handle(IPC.TTS_LOAD_SETTINGS, () => getGeneralSettings());
+  ipc.handle(IPC.TTS_LOAD_SETTINGS, () => maskGeneralSettingsForUi(getGeneralSettings()));
 
   ipc.handle(IPC.TTS_SAVE_SETTINGS, async (_event, tts: Partial<GeneralSettings>) => {
     const before = getGeneralSettings();
@@ -313,8 +314,8 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }
 
-    // 返回不含密钥明文的副本（前端展示用）
-    return saved;
+    // 复审 P1-2：返回不含密钥明文的副本（注释与行为对齐）
+    return maskGeneralSettingsForUi(saved);
   });
 
   ipc.handle(IPC.SETTINGS_OPEN_CUSTOM_STYLE_PROMPT, async () => {
@@ -375,11 +376,22 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       }
       throw error;
     }
-    broadcastModelConfigChanged(saved);
-    return saved;
+    broadcastModelConfigChanged(maskModelSettingsForUi(saved));
+    return maskModelSettingsForUi(saved); // 复审 P1-2 出站掩码
   });
 
-  ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => testVendorConnection(cfg));
+  // 复审 P1-6：vault 模式下渲染端拿到的是掩码（apiKey 空）——按 profileId/上下文
+  // 精确解析真 key 回填（不回退活跃 provider 槽跨端点），明文不出主进程
+  ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig & { profileId?: string }) => {
+    const apiKey = resolveTestConnectionApiKey({
+      provider: cfg.provider,
+      apiKey: cfg.apiKey,
+      profileId: typeof cfg.profileId === "string" ? cfg.profileId : undefined,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
+    });
+    return testVendorConnection({ ...cfg, apiKey });
+  });
   ipc.handle(IPC.SETTINGS_PREVIEW_REASONING, (_event, cfg: VendorConfig) => {
     const request = getAdapterForConfig(cfg).buildRequest({
       model: cfg.model,
@@ -391,9 +403,10 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   // 视觉模型连通性测试（实现与 native 设置窗共用：settings/vision-test.ts）
-  ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) =>
-    testVisionConnection(cfg),
-  );
+  // vault 模式下掩码空 key → keyring vision 槽回填（resolveVisionTestApiKey，与 WPF 同口径）
+  ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) => {
+    return testVisionConnection({ ...cfg, apiKey: resolveVisionTestApiKey(cfg.apiKey ?? "") });
+  });
 
   ipc.handle(
     IPC.EMBEDDING_SET_MODEL,
