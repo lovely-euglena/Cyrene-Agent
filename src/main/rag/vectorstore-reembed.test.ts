@@ -1,7 +1,7 @@
 // VectorStore.reembedAll（模型迁移原地重嵌入）双后端回归：
 // 不清库、按 id 原地替换 embedding、保留文本/权重/metadata、更新 index_meta、
 // 跨实例持久化可见（sqlite 行级 UPDATE / json 整文件原子写）。
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -102,6 +102,57 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
       model: "Xenova/multilingual-e5-small",
       dimensions: 3,
     });
+  });
+
+  it("同维不同模型：按模型身份全量重嵌（P1-3，不因维度相同空转）", async () => {
+    const dir = makeDir();
+    const store = create(dir);
+    // 旧索引：与目标同维（3），但模型身份不同
+    const oldProvider = makeProvider("openai/text-embedding-3", 3);
+    store.addPreparedBatch([
+      { text: "alpha", source: "user_memory", embedding: [0.1, 0.2, 0.3] },
+      { text: "beta", source: "user_memory", embedding: [0.4, 0.5, 0.6] },
+    ]);
+    store.setIndexMetaForProvider(oldProvider);
+
+    const newProvider = makeProvider("Xenova/multilingual-e5-small", 3);
+    const rebuilt = await store.reembedAll(newProvider);
+
+    // 旧实现按 entry.embedding.length !== 3 筛选会得到 0
+    expect(rebuilt).toBe(2);
+    const entries = (store as unknown as { entries: Array<{ embedding: number[] }> }).entries;
+    expect(entries[0].embedding).not.toEqual([0.1, 0.2, 0.3]);
+    expect(store.getIndexMeta()).toMatchObject({
+      model: "Xenova/multilingual-e5-small",
+      dimensions: 3,
+    });
+
+    // 身份一致后再次调用：默认不再重嵌（幂等，无需 force）
+    expect(await store.reembedAll(newProvider)).toBe(0);
+  });
+
+  it("持久化失败：抛错、meta 不更新、内存向量回滚（P2-1）", async () => {
+    const dir = makeDir();
+    const store = create(dir);
+    const oldProvider = makeProvider("Xenova/bge-m3", 3);
+    store.addPreparedBatch([
+      { text: "alpha", source: "user_memory", embedding: [0.1, 0.2, 0.3] },
+    ]);
+    store.setIndexMetaForProvider(oldProvider);
+
+    const backend = (store as unknown as { backend: { persist: (...args: unknown[]) => unknown } }).backend;
+    const spy = vi.spyOn(backend, "persist").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    const newProvider = makeProvider("Xenova/multilingual-e5-small", 3);
+    await expect(store.reembedAll(newProvider)).rejects.toThrow(/disk full/);
+
+    // 不能出现「磁盘旧向量 + 新模型 meta」：meta 保持旧身份，内存向量回滚
+    expect(store.getIndexMeta()).toMatchObject({ model: "Xenova/bge-m3", dimensions: 3 });
+    const entries = (store as unknown as { entries: Array<{ embedding: number[] }> }).entries;
+    expect(entries[0].embedding).toEqual([0.1, 0.2, 0.3]);
+    spy.mockRestore();
   });
 
   it("空库：返回 0 并写入目标模型 meta", async () => {

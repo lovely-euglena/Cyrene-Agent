@@ -833,12 +833,18 @@ export abstract class VectorStore {
   /**
    * 模型迁移：遍历全部 entries 分批重新 embed 并原地 upsert（不清库）。
    *
+   * - 待重嵌筛选以**模型身份**为准（P1-3）：index_meta.cacheIdentity 与目标
+   *   provider 身份不一致时无条件全量重嵌；身份一致（或无 meta）才退回按维度
+   *   筛选。只按维度筛选会在「同维不同模型」时空转（rebuilt=0）却仍写新 meta。
    * - 快照 id 后分批推理；每批间 ensureFresh，期间新增/外部写入的条目不被
    *   覆盖（按 id 匹配写入）。
-   * - 快照之后新增的条目若维度与目标模型不符（仍是旧模型产物），后续轮次
-   *   补算（最多 3 轮，正常并发量下一轮即收敛）。
+   * - 快照之后新增的条目若维度/身份与目标模型不符（仍是旧模型产物），后续
+   *   轮次补算（最多 3 轮，正常并发量下一轮即收敛）。
+   * - 提交前再查一次取消位（P2-3）：最后一批 embed 期间置位的取消不能漏检。
    * - 全部完成后一次性持久化（sqlite 事务 / JSON 原子写）并重建 IVF，
    *   最后写入新模型的 index_meta。
+   * - 持久化失败（P2-1）：回滚内存向量并向上抛错，中止 meta 更新——不能让
+   *   磁盘旧向量配上新模型 meta。
    * - 取消/失败：中途不落盘，旧数据保持原样（调用方应先备份）。
    */
   async reembedAll(
@@ -847,6 +853,8 @@ export abstract class VectorStore {
       batchSize?: number;
       onProgress?: (completed: number, total: number) => void;
       isCancelled?: () => boolean;
+      /** 身份一致时也强制全量重嵌（显式迁移；默认按身份/维度判断）。 */
+      force?: boolean;
     },
   ): Promise<number> {
     const targetDims = provider.resolvedDimensions ?? provider.declaredDimensions;
@@ -855,11 +863,18 @@ export abstract class VectorStore {
     const embeddingsById = new Map<string, number[]>();
     let total = 0;
 
+    const targetIdentity = provider.cacheIdentity
+      ? JSON.stringify(provider.cacheIdentity)
+      : provider.name;
+    const identityMismatch = this.indexMeta !== null
+      && this.indexMeta.cacheIdentity !== targetIdentity;
+
     for (let pass = 0; pass < 3; pass++) {
       this.ensureFresh();
       total = this.entries.length;
       const pending = this.entries.filter(
-        (entry) => !embeddingsById.has(entry.id) && entry.embedding.length !== targetDims,
+        (entry) => !embeddingsById.has(entry.id)
+          && (identityMismatch || options?.force === true || entry.embedding.length !== targetDims),
       );
       if (pending.length === 0) break;
       for (let start = 0; start < pending.length; start += batchSize) {
@@ -878,18 +893,32 @@ export abstract class VectorStore {
       }
     }
 
+    // 提交前最终取消检查：最后一批推理期间置位的取消必须生效（P2-3）
+    if (options?.isCancelled?.()) throw new Error("rebuild cancelled");
+
     // 基于最新盘面应用（只覆盖重算过的 id；期间新增条目不受影响）
     this.ensureFresh();
     const touched: MemoryEntry[] = [];
+    const previousEmbeddings: number[][] = [];
     for (const entry of this.entries) {
       const embedding = embeddingsById.get(entry.id);
       if (!embedding) continue;
+      previousEmbeddings.push(entry.embedding);
       entry.embedding = embedding;
       touched.push(entry);
     }
     if (touched.length > 0) {
       this.markIndexDirty();
-      this.persistNow({ kind: "reembed", entries: touched });
+      try {
+        this.persistNowStrict({ kind: "reembed", entries: touched });
+      } catch (err) {
+        // 回滚内存向量：磁盘未更新，内存也不能是「新向量」状态
+        for (let i = 0; i < touched.length; i++) {
+          touched[i].embedding = previousEmbeddings[i];
+        }
+        this.markIndexDirty();
+        throw err;
+      }
       this.rebuildIndex();
     }
     this.setIndexMetaForProvider(provider);
@@ -913,15 +942,23 @@ export abstract class VectorStore {
 
   private persistNow(change: StoreChange): void {
     try {
-      const result = this.backend.persist(this.entries, change);
-      if (result.needsReload) {
-        this.reload();
-      } else {
-        const rev = this.backend.revision();
-        if (rev !== null) this.cachedRevision = rev;
-      }
+      this.persistNowStrict(change);
     } catch (err) {
       console.warn("[RAG] failed to persist vector store:", err);
+    }
+  }
+
+  /**
+   * 持久化并向上抛错（P2-1：迁移等不允许吞错的路径用）。
+   * 失败 = 磁盘状态未（完整）更新，调用方必须中止后续 meta 更新。
+   */
+  private persistNowStrict(change: StoreChange): void {
+    const result = this.backend.persist(this.entries, change);
+    if (result.needsReload) {
+      this.reload();
+    } else {
+      const rev = this.backend.revision();
+      if (rev !== null) this.cachedRevision = rev;
     }
   }
 
