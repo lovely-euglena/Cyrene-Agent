@@ -451,4 +451,52 @@ describe("EmbeddingSidecarClient: 回退重启健壮性（P2-5）", () => {
     await expect(requestB).resolves.toHaveProperty("0.length", e5Dims);
     expect(state.children).toHaveLength(2);
   });
+
+  it("并发回退单飞：等待者复查仍未确认 → 仍需重启（P2-5）", async () => {
+    const client = new EmbeddingSidecarClient("fake.exe");
+    const bgem3Dims = LOCAL_MODELS.bgem3.dims;
+    const e5Dims = LOCAL_MODELS["e5-small"].dims;
+
+    const first = client.embedTexts("bgem3", ["a"]);
+    lastChild().emitReady("bgem3", bgem3Dims);
+    await flush();
+    lastChild().emitVectors(lastChild().lastHeader().id, [vector(bgem3Dims)]);
+    await first;
+
+    // 两个 e5 请求并发进入回退
+    const oldChild = state.children[0];
+    const framesBefore = oldChild.frames().length;
+    const requestA = client.embedTexts("e5-small", ["a1"]);
+    const requestB = client.embedTexts("e5-small", ["b1"]);
+    await flush();
+    const embedFrames = oldChild.frames().slice(framesBefore).filter((header) => header.op === "embed");
+    expect(embedFrames).toHaveLength(2);
+    for (const frame of embedFrames) {
+      oldChild.emitVectors(frame.id, [vector(bgem3Dims)]);
+    }
+
+    // A 先持锁重启；新进程 ready 仍报错键/错维度（旧 exe 失真）→ B 复查无法确认
+    await flush();
+    await flush();
+    expect(state.children).toHaveLength(2);
+    lastChild().emitReady("bgem3", bgem3Dims);
+    await flush();
+    const retryA = lastChild().lastHeader();
+    expect(retryA).toMatchObject({ modelKey: "e5-small" });
+    lastChild().emitVectors(retryA.id, [vector(e5Dims)]);
+    await expect(requestA).resolves.toHaveProperty("0.length", e5Dims);
+
+    // B 拿到锁后复查：ready dim 仍 1024 ≠ 384 → 必须再重启一次（第 3 个进程）
+    for (let i = 0; i < 10 && state.children.length < 3; i++) {
+      await flush();
+    }
+    expect(state.children).toHaveLength(3);
+    lastChild().emitReady("e5-small", e5Dims);
+    await flush();
+    const retryB = lastChild().lastHeader();
+    expect(retryB).toMatchObject({ modelKey: "e5-small" });
+    lastChild().emitVectors(retryB.id, [vector(e5Dims)]);
+    await expect(requestB).resolves.toHaveProperty("0.length", e5Dims);
+    expect(state.children).toHaveLength(3);
+  });
 });

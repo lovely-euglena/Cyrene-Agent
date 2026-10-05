@@ -175,6 +175,8 @@ export class EmbeddingSidecarClient {
   private progressHandlers = new Map<number, (progress: DocImportProgress) => void>();
   /** 回退重启互斥（单飞）：同一时刻只有一个「重启 + 重试」在途，并发回退串行，避免后到者 dispose 掉前者刚拉起的新进程（P2-5）。 */
   private restartLock: Promise<void> = Promise.resolve();
+  /** 在途「重启 + 重试」数量（含等待者）：用于区分首个调用者与等待者（P2-6）。 */
+  private restartInFlight = 0;
 
   constructor(private readonly exePath: string) {}
 
@@ -385,24 +387,37 @@ export class EmbeddingSidecarClient {
    *
    * P2-4（复审）：等待者拿到锁后**先复查路由**——前一持有者可能已把进程修好，
    * 此时直接重试，不再无条件 dispose + 重启（避免重复重启与等待放大）。
+   *
+   * P2-6（复审附注）：复查对首个调用者不能照搬等待者语义——
+   *   - 等待者的确认来自前一持有者刚完成的修复，可直接信任；
+   *   - 首个调用者的「已确认」可能只是失败前的旧状态（例：请求超时已触发异步
+   *     回收但尚未 reset，此时 ready 维度仍是旧进程的），据此跳过重启会撞上
+   *     正在退出的进程。故首个调用者只有确认状态在本次失败之后才变为已确认
+   *     （并发路径修好）才可跳过，否则仍重启一次。
    */
   private async restartAndRetry<T>(modelKey: string, retry: () => Promise<T>, expectedDims?: number): Promise<T> {
     const previous = this.restartLock;
+    const confirmedAtEntry = this.isRoutingConfirmed(modelKey, expectedDims);
+    const isWaiter = this.restartInFlight > 0;
+    this.restartInFlight++;
     let release!: () => void;
     this.restartLock = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try {
-      if (!this.isRoutingConfirmed(modelKey, expectedDims)) {
-        await this.dispose("model-routing-fallback");
-        await this.ensureStarted(modelKey);
-      } else {
+      const confirmedNow = this.isRoutingConfirmed(modelKey, expectedDims);
+      const fixedConcurrently = !confirmedAtEntry && confirmedNow;
+      if (confirmedNow && (isWaiter || fixedConcurrently)) {
         console.warn(
           `[EmbeddingSidecar] fallback for "${modelKey}" skipped restart: routing already confirmed ` +
           `by a concurrent fallback (ready "${this.modelKey}", ready dim ${this.readyDims})`,
         );
+      } else {
+        await this.dispose("model-routing-fallback");
+        await this.ensureStarted(modelKey);
       }
       return await retry();
     } finally {
+      this.restartInFlight--;
       release();
     }
   }
