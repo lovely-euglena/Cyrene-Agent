@@ -117,7 +117,8 @@ public sealed class ModelDownloader : IDisposable
     public static string ModelDir(string modelsDir, ModelSpec spec) =>
         Path.Combine(modelsDir, spec.SubDir.Replace('/', Path.DirectorySeparatorChar));
 
-    /// <summary>全部必装文件存在且 ≥ MinBytes 才算已安装（与 TS 侧同口径）。</summary>
+    /// <summary>必装文件清单与 TS 侧 model-status 同口径；TS 设置页探测仅存在性判定，
+    /// 大小达标由下载器/脚本按 MinBytes 保证（本方法额外校验 ≥ MinBytes）。</summary>
     public static bool IsInstalled(string modelsDir, ModelSpec spec)
     {
         var dir = ModelDir(modelsDir, spec);
