@@ -659,7 +659,7 @@
   消息类型镜像 + 契约 fixtures），服务端 24/7 托管微信 iLink / 飞书 webhook / QQ 官方 bot 被动回复；
   渠道消息进事件流（v0 `message.append` + `presentation.channelSource`），桌面/手机/服务端共享同一历史；
   归属权 = **服务端默认持有 + 桌面租约认领**的唯一调度模型。设计冻结
-  `docs/design/2026-10-05-server-channel.md`，契约 `fixtures/channels/`（51 例）。
+  `docs/design/2026-10-05-server-channel.md`，契约 `fixtures/channels/`（61 例）。
 - **Q1–Q8 拍板摘要**：
   1. Q1 ffmpeg 入镜像：接受（+~80MB），默认启用、`CLOUD_CHANNEL_FEISHU_AUDIO=0` 可关（不可用则降级文本）；
   2. Q2 SILK spike：WASI 自建模块优先、native P/Invoke 退路；1 天门限，超时走 `ISilkCodec` 占位 + 降级文案（阶段 7 条件阶段，本批未落地）；
@@ -669,11 +669,11 @@
   6. Q6 token 复用/配置字段：IKJK2I 接线前显式 `channels.remote`（baseUrl/token），不与同步设置合并；接线后自动复用；
   7. Q7 QQ 入站图片：不纳入本批（仅文本被动回复）；附件-only 拦截并回固定文案，不进 agent 链路；
   8. Q8 多设备认领：先到先得租约；第二台桌面保持被动并展示 owner 信息，不排队（后续按需再评估）。
-- **实测口径（2026-10-05，Windows 本地）**：`channel-selftest all` **232 项**；
-  `--selftest channel-contract fixtures/channels` **51 项**（双端契约 C# 侧）；
-  `scripts/channel-smoke-test.py` **52 项**（R2 冒烟增补 /events 别名、>1MB 413、无 Bearer 401、
-  他设备 heartbeat/release 越权共 5 例后为 **57 项**；Linux +4 落盘权限 = 61）；
-  TS 侧 `vitest run src/main/channels src/main/proactive` **45 files / 404 tests**。
+- **实测口径（2026-10-05，Windows 本地）**：`channel-selftest all` **266 项**；
+  `--selftest channel-contract fixtures/channels` **61 项**（双端契约 C# 侧）；
+  `scripts/channel-smoke-test.py` **57 项**（含 R2 增补的 /events 别名、>1MB 413、无 Bearer 401、
+  他设备 heartbeat/release 越权共 5 例；Linux +4 落盘权限 = 61）；
+  TS 侧 `vitest run src/main/channels src/main/proactive` **46 files / 431 tests**。
 - **评审收口（R1/R2）**：飞书出站缺省 `receive_id_type=chat_id`、`E_CHANNEL_UNSUPPORTED`、
   preferServer 语义、QQ 附件-only 文案等已并入；视觉输入（caption / 模型直读）与
   `CLOUD_CHANNEL_VISION` 明确为后续批次（当前图片/文件仅事件占位文本）；冒烟落盘权限改
