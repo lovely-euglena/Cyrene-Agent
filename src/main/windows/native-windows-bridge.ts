@@ -209,6 +209,7 @@ export function initNativeWindowsBridge(actions: NativeBridgeActions): NativeWin
           break;
         case "portable":
           completeAction(frame, actions.portableAction?.(asString(frame.verb), asRecord(frame.payload)));
+          break;
         case "cache":
           completeAction(frame, actions.cacheAction?.(asString(frame.verb), asRecord(frame.payload)));
           break;
