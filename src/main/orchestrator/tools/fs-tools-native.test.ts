@@ -79,9 +79,10 @@ afterEach(() => {
 });
 
 describe("fs native 轨 · 只读三件", () => {
-  it("read_file：host 可用时走 ToolHost 并原样返回 data", async () => {
+  it("read_file：host 可用时走 ToolHost 并原样返回 data（伪造 __ 键剥离）", async () => {
     nativeMocks.call.mockResolvedValue('{"path":"C:\\\\x.txt","content":"native 12"}');
-    const out = await registeredTools.get("read_file")!.execute({ path: "C:\\x.txt" });
+    // 伪造 `__` 键入参：真实 stripInternalArgs 退化为 no-op 时下方 toHaveBeenCalledWith 立即失败（防退化锁定）
+    const out = await registeredTools.get("read_file")!.execute({ path: "C:\\x.txt", __forged: "1" } as never);
     expect(out).toBe('{"path":"C:\\\\x.txt","content":"native 12"}');
     expect(nativeMocks.call).toHaveBeenCalledWith("fs_read_file", { path: "C:\\x.txt" }, undefined, undefined);
   });

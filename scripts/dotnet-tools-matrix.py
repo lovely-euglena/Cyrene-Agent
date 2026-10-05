@@ -8,7 +8,7 @@ web_search / weather / plan_trip / fetch_url（本地 HTTP fixture + GitHub mock
 邮件四件（本地 fake SMTP + fake IMAP）/ ast_grep 两件（随包 CLI）
 每个工具多组输入：正常 + 参数缺失 + 参数类型错。验响应形状与错误语义。
 """
-import subprocess, json, os, tempfile, sys, re, shutil, atexit
+import subprocess, json, os, tempfile, sys, re, shutil, atexit, socket
 
 # Windows 控制台默认 GBK：错误 detail 含 emoji（如 🚗）会撑爆 print；强制 UTF-8 输出
 try:
@@ -458,6 +458,17 @@ c_em10 = req("email_list", {})
 frames.append(json.dumps({"op": "config", "email": None}))
 c_em11 = req("email_list", {})
 c_em12 = req("send_email", {"to": ["a@b.com"], "subject": "s", "body": "b"})
+# PR #20 复审 P1：SMTP 连接拒绝（连接阶段失败，确定未发出）→ ok=false + E_EMAIL_PRECONDITION
+_refused = socket.socket()
+_refused.bind(("127.0.0.1", 0))
+_refused_port = _refused.getsockname()[1]
+_refused.close()
+frames.append(json.dumps({"op": "config", "email": {
+    "enabled": True, "smtpHost": "127.0.0.1", "smtpPort": _refused_port, "smtpSecure": False,
+    "user": "sender@example.com", "pass": "authcode", "fromName": "Cyrene",
+    "imapHost": "127.0.0.1", "imapPort": imap_srv.server_address[1], "imapSecure": False}}))
+c_em13 = req("send_email", {"to": ["to@example.com"], "subject": "s", "body": "b"})
+frames.append(json.dumps({"op": "config", "email": None}))
 
 # ast_grep：随包 CLI（__astGrepCommand 注入；搜索/校验/dryRun/写入）
 import glob as _glob
@@ -793,6 +804,9 @@ check("email_mark 生效（uid=1 未读）", "uid=1" in el10 and "未读" in el1
 check("email_read 不存在 uid", data_text(c_em9) == "[错误] 未找到 uid=99 的邮件（folder=INBOX）", data_text(c_em9))
 check("email 关闭后校验（list）", data_text(c_em11) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em11))
 check("email 关闭后校验（send）", data_text(c_em12) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em12))
+r_em13 = by.get(c_em13, {})
+check("send_email SMTP 连接拒绝 → ok=false 且 E_EMAIL_PRECONDITION",
+      r_em13.get("ok") is False and r_em13.get("errorCode") == "E_EMAIL_PRECONDITION", r_em13)
 
 print("\n=== ast_grep（随包 CLI）===")
 if not AST_CLI:
