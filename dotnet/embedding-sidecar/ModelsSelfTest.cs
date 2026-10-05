@@ -117,8 +117,16 @@ public static class ModelsSelfTest
         var ld = disposed.Acquire("a");
         disposed.Dispose();
         Check("池 Dispose 卸载全部引擎", ld.Engine.DisposeCount == 1 && disposed.Count == 0);
-        ld.Dispose();
-        Check("池 Dispose 后迟到 Release 不抛", true);
+        var lateReleaseThrew = false;
+        try
+        {
+            ld.Dispose();
+        }
+        catch
+        {
+            lateReleaseThrew = true;
+        }
+        Check("池 Dispose 后迟到 Release 不抛", !lateReleaseThrew);
         try
         {
             disposed.Acquire("b");
