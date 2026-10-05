@@ -1401,6 +1401,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
                 saveModelSettings(settingsPatch);
                 broadcastModelChanged();
                 if (patch.rerankerMode) {
+                  // 复审 P1-5 残项：reranker 保存成功后推一次设置快照——WPF 窗口据此
+                  // 重建 section（当前模式摘要/卡片态），否则同窗口内摘要停留在开窗快照值
+                  pushSettingsSnapshotToNative();
                   const mode = patch.rerankerMode;
                   void import("../rag/reranker")
                     .then(({ initReranker }) => initReranker(mode))
