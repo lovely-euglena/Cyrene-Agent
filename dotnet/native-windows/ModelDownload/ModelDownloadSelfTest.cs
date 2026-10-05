@@ -193,6 +193,46 @@ public static class ModelDownloadSelfTest
             Check("IsInstalled：完整安装为 true", ModelDownloader.IsInstalled(root1, spec));
             File.Delete(Path.Combine(root1, "Xenova", "bge-m3", "config.json"));
             Check("IsInstalled：缺必装文件为 false", !ModelDownloader.IsInstalled(root1, spec));
+
+            // ── 10) 第二引擎两个新 spec（IKIH28）：e5-small / bge-reranker-v2-m3 ──
+            // 直接引用真实清单（不复制/不改动 spec 表），仅把 minBytes 缩到假网络可覆盖，
+            // 覆盖 Repo/SubDir 落点、必装结构与完整下载链路，防清单漂移。
+            var secondEngineSpecs = new[]
+            {
+                (Spec: ModelDownloadSpecs.E5Small, Repo: "Xenova/multilingual-e5-small", SubDir: "Xenova/multilingual-e5-small"),
+                (Spec: ModelDownloadSpecs.RerankerV2M3, Repo: "onnx-community/bge-reranker-v2-m3-ONNX", SubDir: "bge-reranker-v2-m3"),
+            };
+            foreach (var (realSpec, expectedRepo, expectedSubDir) in secondEngineSpecs)
+            {
+                var testSpec = Shrink(realSpec);
+                Check($"{realSpec.Kind} spec：Repo/SubDir 与探测约定一致",
+                    testSpec.Repo == expectedRepo && testSpec.SubDir == expectedSubDir);
+                Check($"{realSpec.Kind} spec：必装三件套齐全",
+                    testSpec.Files.Any(f => f.Rel == "onnx/model_quantized.onnx" && f.Required)
+                    && testSpec.Files.Any(f => f.Rel == "tokenizer.json" && f.Required)
+                    && testSpec.Files.Any(f => f.Rel == "config.json" && f.Required));
+
+                var specRoot = Path.Combine(tempRoot, "case10-" + realSpec.Kind);
+                var specBase = $"https://huggingface.co/{testSpec.Repo}/resolve/main/";
+                using (var downloader = new ModelDownloader(new FakeHandler(req =>
+                {
+                    var rel = RelOf(req, specBase);
+                    return rel is null ? NotFound() : FileResponse(req, ContentFor(rel));
+                })))
+                {
+                    var result = downloader.DownloadAsync(testSpec, specRoot, "official").GetAwaiter().GetResult();
+                    Check($"{realSpec.Kind} spec：下载落点 = SubDir",
+                        result.Dir == Path.Combine(specRoot, expectedSubDir.Replace('/', Path.DirectorySeparatorChar)));
+                    Check($"{realSpec.Kind} spec：必装文件就绪、内容正确、无 .part 残留", testSpec.Files.Where(f => f.Required).All(f =>
+                    {
+                        var path = Path.Combine(result.Dir, f.Rel.Replace('/', Path.DirectorySeparatorChar));
+                        return File.Exists(path)
+                            && !File.Exists(path + ".part")
+                            && File.ReadAllBytes(path).AsSpan().SequenceEqual(ContentFor(f.Rel));
+                    }));
+                    Check($"{realSpec.Kind} spec：IsInstalled 判定为 true", ModelDownloader.IsInstalled(specRoot, testSpec));
+                }
+            }
         }
         finally
         {
@@ -217,6 +257,12 @@ public static class ModelDownloadSelfTest
     }
 
     private static byte[] ContentFor(string rel) => Encoding.UTF8.GetBytes($"payload-of-{rel}-0123456789");
+
+    /// <summary>把真实 spec 的 minBytes 缩到假网络内容可覆盖的大小（保留 Repo/SubDir/文件结构）。</summary>
+    private static ModelSpec Shrink(ModelSpec source) => source with
+    {
+        Files = source.Files.Select(f => new ModelFileSpec(f.Rel, 1, f.Required)).ToList(),
+    };
 
     private static HttpResponseMessage NotFound() =>
         new(HttpStatusCode.NotFound) { Content = new ByteArrayContent(Array.Empty<byte>()) };

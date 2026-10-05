@@ -7,7 +7,7 @@
 import { MODEL_PRESETS } from "../../shared/model-presets";
 import { DEFAULT_MOSSLAND_TTS_MODEL } from "../../shared/tts-types";
 import type { GeneralSettings } from "./general-settings";
-import type { ModelSettings } from "./model-settings";
+import type { ModelSettings, EmbeddingModelKey, RerankerMode } from "./model-settings";
 import type { SavedModelProfile } from "./model-catalog";
 import type { ObsidianVaultConfig } from "../memory/obsidian-vault-config";
 import { isVaultAuthoritative, maskGeneralSettingsForUi } from "./secrets-keyring";
@@ -441,20 +441,27 @@ export interface NativeCyreneSnapshot {
   stickerSize: "small" | "standard" | "large";
   stickerSimilarityThreshold: number;
   /** RAG / 文档导入：embedding 模型与维度（null = 自动探测） */
-  embeddingModel: "bgem3";
+  embeddingModel: EmbeddingModelKey;
   embeddingDimensions: number | null;
   /** RAG：reranker 模式 + 两个模型的安装状态（来自 model-status 体检） */
-  rerankerMode: "standard" | "none";
+  rerankerMode: RerankerMode;
+  /** 选中 embedding 模型的安装状态（兼容旧 WPF 字段） */
   embeddingInstalled: boolean;
+  /** 选中 reranker 档位的安装状态（兼容旧 WPF 字段） */
   rerankerInstalled: boolean;
+  /** 第二引擎：四个模型各自的安装状态（WPF 双卡/三档都按各自状态展示） */
+  embeddingBgem3Installed: boolean;
+  embeddingE5SmallInstalled: boolean;
+  rerankerStandardInstalled: boolean;
+  rerankerV2M3Installed: boolean;
   /** 首选模型目录（手动安装落点；展示在安装说明弹窗） */
   modelsDir: string;
 }
 
 /** 模型安装状态（结构投影；实际探测在 main/rag/model-status，避免本模块依赖 electron）。 */
 export interface NativeModelInstallStatus {
-  embedding: { bgem3: boolean };
-  reranker: { standard: boolean };
+  embedding: { bgem3: boolean; "e5-small": boolean };
+  reranker: { standard: boolean; "v2-m3": boolean };
 }
 
 /**
@@ -481,6 +488,13 @@ export function buildCyreneSectionSnapshot(
     : settings.runtimeSync === "local"
       ? "local"
       : "off";
+  const embeddingModel: EmbeddingModelKey = settings.embeddingModel === "e5-small" ? "e5-small" : "bgem3";
+  const rerankerMode: RerankerMode = settings.rerankerMode === "none"
+    ? "none"
+    : settings.rerankerMode === "v2-m3"
+      ? "v2-m3"
+      : "standard";
+  const rerankerStatusKey = rerankerMode === "v2-m3" ? "v2-m3" : "standard";
   return {
     runtimeSync,
     stickerEnabled: settings.stickerEnabled !== false,
@@ -491,15 +505,19 @@ export function buildCyreneSectionSnapshot(
       && Number.isFinite(settings.stickerSimilarityThreshold)
       ? Math.min(0.9, Math.max(0.3, settings.stickerSimilarityThreshold))
       : 0.55,
-    embeddingModel: "bgem3",
+    embeddingModel,
     embeddingDimensions: typeof settings.embeddingDimensions === "number"
       && Number.isFinite(settings.embeddingDimensions)
       && settings.embeddingDimensions > 0
       ? Math.round(settings.embeddingDimensions)
       : null,
-    rerankerMode: settings.rerankerMode === "none" ? "none" : "standard",
-    embeddingInstalled: status?.embedding?.bgem3 === true,
-    rerankerInstalled: status?.reranker?.standard === true,
+    rerankerMode,
+    embeddingInstalled: status?.embedding?.[embeddingModel] === true,
+    rerankerInstalled: status?.reranker?.[rerankerStatusKey] === true,
+    embeddingBgem3Installed: status?.embedding?.bgem3 === true,
+    embeddingE5SmallInstalled: status?.embedding?.["e5-small"] === true,
+    rerankerStandardInstalled: status?.reranker?.standard === true,
+    rerankerV2M3Installed: status?.reranker?.["v2-m3"] === true,
     modelsDir,
   };
 }

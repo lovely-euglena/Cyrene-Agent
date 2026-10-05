@@ -5,13 +5,16 @@
 //   2. sidecar exe 存在（见 resolveSidecarPath）
 //
 // 帧协议见 dotnet/embedding-sidecar/Program.cs：
-//   请求 [4B LE 头长][JSON {id,op:"embed",texts}]
+//   请求 [4B LE 头长][JSON {id,op:"embed",texts,modelDir,modelKey}]
 //   响应 [4B LE 头长][JSON {id,ok,count,dim}][float32 LE count×dim×4]
 //   就绪 {id:0,op:ready,modelKey,dim}
 //
-// 数值与 transformers.js WASM 逐位一致（verify cosine=1.0，
-// max|diff|≈5e-7），因此 cacheIdentity 沿用 "local"——LanceDB
-// 索引零迁移。同机性能：WASM 749ms/条 → ORT native 173ms/条。
+// 第二引擎（IKIH28）：embed/search/doc-import 请求携带可选 modelDir + modelKey
+// （缺省 = 启动默认），C# 侧池按 modelDir 路由；rerank 已有 rerankerDir。
+// 客户端不再因 modelKey 变化无条件 dispose 重启；对旧 sidecar（无池）用
+// 「ready modelKey/dim 不符 + 请求失败/响应维度不符」检测并回退重启一次。
+// doc-import 响应无二进制向量、旧 exe 忽略请求 modelDir：发送前必须先确认
+// 路由（ready 维度/启动参数），无法确认则重启；仍无法确认 → 失败，不落错向量。
 //
 // ⚠️ 实现要点（都是复查时踩过的坑）：
 //   - 帧解析统一走 SidecarFrameDecoder（sidecar-frame-decoder.ts）：
@@ -36,6 +39,7 @@ import { app } from "electron";
 import { trackChildProcess } from "../child-processes";
 import { DecodedFrame, SidecarFrameDecoder } from "./sidecar-frame-decoder";
 import { getProjectModelDir } from "./model-status";
+import { getCurrentModelKey, LOCAL_MODELS } from "./embedding-pipeline";
 
 interface SidecarResponse {
   header: Record<string, unknown>;
@@ -95,6 +99,18 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+/**
+ * 响应维度/模型回显与请求模型不符（旧 sidecar 无池时用错模型计算）。
+ * 独立类型用于触发回退重启：旧 exe ready 帧恒报 "bgem3"，不能只靠
+ * ready 键判断 possiblyUnrouted（P2-5）。
+ */
+export class SidecarModelRoutingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SidecarModelRoutingError";
+  }
+}
+
 /** 模型加载 ready 超时（模型 570MB，慢盘 30s+ 也可能）。 */
 const READY_TIMEOUT_MS = 60_000;
 /** 单请求超时：基数 + 每条文本加时（native ~200ms/条，留 10x 余量）。 */
@@ -150,9 +166,17 @@ export class EmbeddingSidecarClient {
   private decoder = new SidecarFrameDecoder();
   private startup: Promise<void> | null = null;
   private modelKey: string | null = null;
+  /** 当前进程 spawn 时传入的模型键（旧 exe 无池：启动参数即实际加载模型）。 */
+  private launchedModelKey: string | null = null;
+  /** ready 帧回报的实际维度（旧 exe modelKey 失真，但 dim 如实）。 */
+  private readyDims: number | null = null;
   private onReadyFrame: ((header: any) => void) | null = null;
   /** doc-import 进度通知路由（op=progress 帧，按 forId）。 */
   private progressHandlers = new Map<number, (progress: DocImportProgress) => void>();
+  /** 回退重启互斥（单飞）：同一时刻只有一个「重启 + 重试」在途，并发回退串行，避免后到者 dispose 掉前者刚拉起的新进程（P2-5）。 */
+  private restartLock: Promise<void> = Promise.resolve();
+  /** 在途「重启 + 重试」数量（含等待者）：用于区分首个调用者与等待者（P2-6）。 */
+  private restartInFlight = 0;
 
   constructor(private readonly exePath: string) {}
 
@@ -168,25 +192,32 @@ export class EmbeddingSidecarClient {
     if (texts.length === 0) return [];
     const timeoutMs =
       REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(texts.length, 256);
-    const response = await this.request(modelKey, { op: "embed", texts }, timeoutMs, `texts=${texts.length}`);
+    const expectedDims = LOCAL_MODELS[modelKey]?.dims;
+    const response = await this.requestRouted(
+      modelKey,
+      { op: "embed", texts },
+      timeoutMs,
+      `texts=${texts.length}`,
+      { expectedDims },
+    );
     return response.vectors;
   }
 
   /**
    * rerank（.NET RerankerEngine）：返回与 documents 对齐的原始 logits（越大越相关）。
-   * rerankerDir = 完整模型目录（models/bge-reranker-base，由调用方解析后显式传入）。
+   * rerankerDir = 完整模型目录（models/bge-reranker-base 或 models/bge-reranker-v2-m3，
+   * 由调用方按 mode 解析后显式传入）；sidecar 按 dir 惰性加载/热切换，无需重启进程。
    */
   async rerankScores(
-    modelKey: string,
     query: string,
     documents: string[],
     rerankerDir: string,
   ): Promise<number[]> {
     if (documents.length === 0) return [];
+    await this.ensureStarted(getCurrentModelKey());
     const timeoutMs =
       REQUEST_TIMEOUT_BASE_MS + REQUEST_TIMEOUT_PER_TEXT_MS * Math.min(documents.length, 256);
     const { vectors } = await this.request(
-      modelKey,
       { op: "rerank", query, documents, rerankerDir },
       timeoutMs,
       `docs=${documents.length}`,
@@ -201,11 +232,13 @@ export class EmbeddingSidecarClient {
    */
   async searchHybrid(modelKey: string, payload: SidecarSearchRequest): Promise<SidecarSearchResponse> {
     // 耗时与候选量相关（全库分词 + 扫描）；后续可做 token 缓存优化
-    const { header, vectors } = await this.request(
+    const expectedDims = LOCAL_MODELS[modelKey]?.dims;
+    const { header, vectors } = await this.requestRouted(
       modelKey,
       { op: "search", ...payload },
       REQUEST_TIMEOUT_BASE_MS,
       `search="${payload.query.slice(0, 24)}"`,
+      { expectedDims },
     );
     const entries = Array.isArray(header.results) ? (header.results as SidecarSearchEntry[]) : [];
     return { entries, embeddings: vectors };
@@ -223,22 +256,31 @@ export class EmbeddingSidecarClient {
       onStarted?: (requestId: number) => void;
     } = {},
   ): Promise<DocImportResponse> {
-    let requestId = -1;
+    const startedIds: number[] = [];
     try {
-      const { header } = await this.request(
+      const expectedDims = LOCAL_MODELS[modelKey]?.dims;
+      const { header } = await this.requestRouted(
         modelKey,
         { op: "doc-import", ...payload },
         DOC_IMPORT_TIMEOUT_MS,
         `doc="${payload.filePath.slice(-32)}"`,
-        (id) => {
-          requestId = id;
-          if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
-          callbacks.onStarted?.(id);
+        {
+          expectedDims,
+          // 旧 exe 忽略请求 modelDir 且 doc-import 响应无 dim/modelKey：无法从
+          // 响应发现错模型，而错误维度向量一旦落盘无法撤销 → 发送前必须能确认
+          // 路由（新 exe 回显 dim/modelKey；旧 exe 用 ready 维度/启动参数确认）。
+          requireModelEcho: true,
+          onStarted: (id) => {
+            startedIds.push(id);
+            if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
+            callbacks.onStarted?.(id);
+          },
         },
       );
       return header as DocImportResponse;
     } finally {
-      if (requestId >= 0) this.progressHandlers.delete(requestId);
+      // 含旧 sidecar 回退重试产生的多个 requestId，全部清理
+      for (const id of startedIds) this.progressHandlers.delete(id);
     }
   }
 
@@ -251,20 +293,181 @@ export class EmbeddingSidecarClient {
     }
   }
 
-  /** 请求公共路径：模型一致性检查 + 懒启动 + 超时 + pending 路由。 */
-  private async request(
+  /**
+   * 模型路由请求（embed/search/doc-import 公共路径）：
+   *   - 请求携带 modelDir + modelKey，C# 侧池按 modelDir 路由，不再因 modelKey
+   *     变化无条件 dispose 重启；
+   *   - 旧 sidecar（无池）兼容：当前进程 ready 的 modelKey 与请求不符时，先按
+   *     新协议试发；请求失败或返回维度不符（旧进程用错模型静默计算）则回退
+   *     重启一次（以请求的 modelDir 重新 spawn）。
+   *   - P2-5：维度不符错误同样触发回退（旧 exe ready 键恒报 "bgem3"，实际按
+   *     e5-small 启动时 possiblyUnrouted=false，不能只看 ready 键）；回退重启
+   *     串行单飞，并发不互杀。
+   *   - P1-2：doc-import 等响应无二进制的 op（requireModelEcho）在发送前先
+   *     确认路由；无法确认（旧 exe 忽略请求 modelDir）则先重启再发，避免错误
+   *     维度向量静默落盘。
+   */
+  private async requestRouted(
     modelKey: string,
+    header: Record<string, unknown>,
+    timeoutMs: number,
+    label: string,
+    opts: {
+      expectedDims?: number;
+      /** 响应必须能确认路由（doc-import；见 isRoutingConfirmed）。 */
+      requireModelEcho?: boolean;
+      onStarted?: (id: number) => void;
+    } = {},
+  ): Promise<SidecarResponse> {
+    const modelDir = this.modelDirArg(modelKey);
+    const payload = { ...header, modelDir, modelKey };
+
+    await this.ensureStarted(modelKey);
+    // 运行中的进程可能是按其他模型启动的（旧 sidecar 无池，无法路由）
+    const possiblyUnrouted = this.modelKey !== null && this.modelKey !== modelKey;
+
+    const attempt = async (): Promise<SidecarResponse> => {
+      const response = await this.request(payload, timeoutMs, label, opts.onStarted);
+      this.assertResponseModel(
+        response,
+        modelKey,
+        opts.expectedDims,
+        opts.requireModelEcho === true && this.isRoutingConfirmed(modelKey, opts.expectedDims),
+      );
+      return response;
+    };
+
+    if (opts.requireModelEcho === true && !this.isRoutingConfirmed(modelKey, opts.expectedDims)) {
+      console.warn(
+        `[EmbeddingSidecar] doc-import for "${modelKey}" is unverifiable on current sidecar ` +
+        `(launched "${this.launchedModelKey}", ready "${this.modelKey}", ready dim ${this.readyDims}); restarting first`,
+      );
+      return this.restartAndRetry(modelKey, async () => {
+        // 重启后仍无法确认路由 → 直接失败，不发请求（旧进程会按启动模型写入错误向量）
+        if (!this.isRoutingConfirmed(modelKey, opts.expectedDims)) {
+          throw new SidecarModelRoutingError(
+            `doc-import for "${modelKey}" cannot confirm routing after restart ` +
+            `(launched "${this.launchedModelKey}", ready "${this.modelKey}", ready dim ${this.readyDims})`,
+          );
+        }
+        return attempt();
+      }, opts.expectedDims);
+    }
+
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!possiblyUnrouted && !(error instanceof SidecarModelRoutingError)) throw error;
+      console.warn(
+        `[EmbeddingSidecar] request for "${modelKey}" failed on sidecar ready with "${this.modelKey}" ` +
+        `(${error instanceof Error ? error.message : String(error)}); restarting with the requested model`,
+      );
+      return this.restartAndRetry(modelKey, attempt, opts.expectedDims);
+    }
+  }
+
+  /**
+   * 路由确认（仅 doc-import 等 requireModelEcho 的 op 需要）：
+   *   - 本地注册模型维度唯一（bgem3=1024、e5-small=384），ready 帧的 dim 与请求
+   *     一致即可确认实际加载的是请求模型（旧 exe modelKey 失真但 dim 如实）；
+   *   - 无 ready dim 时退化为「本进程是按请求模型 spawn 的」（旧 exe 启动参数
+   *     即实际模型；新 exe 池按请求 modelDir 路由且响应会回显 dim）。
+   */
+  private isRoutingConfirmed(modelKey: string, expectedDims?: number): boolean {
+    if (expectedDims !== undefined && this.readyDims !== null) {
+      return this.readyDims === expectedDims;
+    }
+    return this.launchedModelKey === modelKey;
+  }
+
+  /**
+   * 回退重启 + 重试（单飞）：并发回退在这里串行化（持锁到重试结束），后到者
+   * 不会在重试途中 dispose 掉前者刚拉起的新进程。doc-import 重试可能分钟级，
+   * 持锁期间其它回退排队等待——过渡态下正确性优先（初始请求不受影响）。
+   *
+   * P2-4（复审）：等待者拿到锁后**先复查路由**——前一持有者可能已把进程修好，
+   * 此时直接重试，不再无条件 dispose + 重启（避免重复重启与等待放大）。
+   *
+   * P2-6（复审附注）：复查对首个调用者不能照搬等待者语义——
+   *   - 等待者的确认来自前一持有者刚完成的修复，可直接信任；
+   *   - 首个调用者的「已确认」可能只是失败前的旧状态（例：请求超时已触发异步
+   *     回收但尚未 reset，此时 ready 维度仍是旧进程的），据此跳过重启会撞上
+   *     正在退出的进程。故首个调用者只有确认状态在本次失败之后才变为已确认
+   *     （并发路径修好）才可跳过，否则仍重启一次。
+   */
+  private async restartAndRetry<T>(modelKey: string, retry: () => Promise<T>, expectedDims?: number): Promise<T> {
+    const previous = this.restartLock;
+    const confirmedAtEntry = this.isRoutingConfirmed(modelKey, expectedDims);
+    const isWaiter = this.restartInFlight > 0;
+    this.restartInFlight++;
+    let release!: () => void;
+    this.restartLock = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      const confirmedNow = this.isRoutingConfirmed(modelKey, expectedDims);
+      const fixedConcurrently = !confirmedAtEntry && confirmedNow;
+      if (confirmedNow && (isWaiter || fixedConcurrently)) {
+        console.warn(
+          `[EmbeddingSidecar] fallback for "${modelKey}" skipped restart: routing already confirmed ` +
+          `by a concurrent fallback (ready "${this.modelKey}", ready dim ${this.readyDims})`,
+        );
+      } else {
+        await this.dispose("model-routing-fallback");
+        await this.ensureStarted(modelKey);
+      }
+      return await retry();
+    } finally {
+      this.restartInFlight--;
+      release();
+    }
+  }
+
+  /**
+   * 响应模型校验：header.dim / 向量长度与请求模型的注册维度不一致 = 旧进程算错模型。
+   * requireModelEcho 场景（doc-import）在响应无 dim 回显且路由未确认时必须失败，
+   * 不能让旧进程按启动模型静默导入错误向量（P1-2）。
+   */
+  private assertResponseModel(
+    response: SidecarResponse,
+    modelKey: string,
+    expectedDims?: number,
+    routingConfirmed = false,
+  ): void {
+    if (expectedDims === undefined) return;
+    const headerDim = response.header.dim;
+    if (typeof headerDim === "number" && headerDim > 0 && headerDim !== expectedDims) {
+      throw new SidecarModelRoutingError(
+        `Embedding sidecar returned ${headerDim}-dim output for "${modelKey}" (expected ${expectedDims})`,
+      );
+    }
+    if (headerDim === undefined && !routingConfirmed) {
+      throw new SidecarModelRoutingError(
+        `Embedding sidecar response for "${modelKey}" has no dim echo and routing is unconfirmed ` +
+        `(old sidecar ignores per-request modelDir)`,
+      );
+    }
+    const headerModelKey = response.header.modelKey;
+    if (typeof headerModelKey === "string" && headerModelKey.length > 0 && headerModelKey !== modelKey) {
+      throw new SidecarModelRoutingError(
+        `Embedding sidecar routed "${modelKey}" to model "${headerModelKey}"`,
+      );
+    }
+    for (const vector of response.vectors) {
+      if (vector.length !== expectedDims) {
+        throw new SidecarModelRoutingError(
+          `Embedding sidecar returned ${vector.length}-dim vectors for "${modelKey}" (expected ${expectedDims})`,
+        );
+      }
+    }
+  }
+
+  /** 请求公共路径：超时 + pending 路由（进程生命周期由 ensureStarted 管理）。 */
+  private async request(
     header: Record<string, unknown>,
     timeoutMs: number,
     label: string,
     onStarted?: (id: number) => void,
   ): Promise<SidecarResponse> {
-    if (this.modelKey && this.modelKey !== modelKey) {
-      // 当前 sidecar 加载的模型不同：重启换模型（现阶段只有 bgem3，防御式处理）
-      await this.dispose("model-switch");
-    }
-    await this.ensureStarted(modelKey);
-
     const id = this.nextId++;
     onStarted?.(id);
     return new Promise<SidecarResponse>((resolve, reject) => {
@@ -272,7 +475,10 @@ export class EmbeddingSidecarClient {
         const pending = this.pending.get(id);
         if (!pending) return;
         this.pending.delete(id);
-        // sidecar 疑似卡死：回收进程（下次调用自动重启），本次走调用方兜底
+        // sidecar 疑似卡死：回收进程（下次调用自动重启），本次走调用方兜底。
+        // P2-4 取舍：该 dispose 不入 restartLock（也不等待）——超时请求本身已
+        // reject；若排队等锁持有者的分钟级重试，只会放大延迟。打断在途重试的
+        // 代价是该次重试失败、调用方走 worker 兜底，下次请求懒重启。
         void this.dispose("request-timeout");
         reject(new Error(`Embedding sidecar request timeout (${timeoutMs}ms, ${label})`));
       }, timeoutMs);
@@ -287,21 +493,33 @@ export class EmbeddingSidecarClient {
     });
   }
 
+  /**
+   * 懒启动。运行中的进程直接复用（模型路由交给 C# 池；旧协议兼容重启
+   * 只发生在 requestRouted 检测到行为不符时）；启动握手进行中则等待完成，
+   * 避免在 ready 之前写入请求帧。
+   */
   private async ensureStarted(modelKey: string): Promise<void> {
-    if (this.child && this.child.exitCode === null && this.modelKey === modelKey) return;
-    if (!this.startup) {
-      this.startup = this.launch(modelKey).finally(() => {
-        this.startup = null;
-      });
+    if (this.startup) {
+      await this.startup;
+      return;
     }
+    if (this.child && this.child.exitCode === null) return;
+    this.startup = this.launch(modelKey).finally(() => {
+      this.startup = null;
+    });
     await this.startup;
   }
 
   private launch(modelKey: string): Promise<void> {
     this.disposeSync("relaunch");
+    // 记录 spawn 参数：旧 exe 无池，启动 modelDir 即实际加载模型
+    // （doc-import 发送前路由确认用；新 exe 池另有响应 dim/modelKey 回显）
+    this.launchedModelKey = modelKey;
 
     return new Promise<void>((resolve, reject) => {
-      const child = spawn(this.exePath, ["serve", this.modelDirArg(modelKey)], {
+      // 第 3 参数 = modelKey（显式启动键，ready 帧回显；旧 exe 忽略多余参数）。
+      // 第 4 参数（rerankerDir 默认目录）暂不传：rerank 每次都显式带 dir。
+      const child = spawn(this.exePath, ["serve", this.modelDirArg(modelKey), modelKey], {
         stdio: ["pipe", "pipe", "inherit"],
         env: this.buildEnv(),
       });
@@ -379,6 +597,8 @@ export class EmbeddingSidecarClient {
         if (header.id === 0 && header.op === "ready") {
           clearTimeout(readyTimeout);
           this.modelKey = header.modelKey;
+          // 旧 exe ready 的 modelKey 恒报 "bgem3"，但 dim 如实 → 缓存供路由确认
+          this.readyDims = typeof header.dim === "number" && header.dim > 0 ? header.dim : null;
           this.onReadyFrame = null;
           resolve();
         }
@@ -461,6 +681,8 @@ export class EmbeddingSidecarClient {
   private resetForRespawn(): void {
     this.child = null;
     this.modelKey = null;
+    this.launchedModelKey = null;
+    this.readyDims = null;
     this.onReadyFrame = null;
     this.decoder.reset();
   }
@@ -475,6 +697,14 @@ export class EmbeddingSidecarClient {
     this.resetForRespawn();
   }
 
+  /**
+   * 回收进程（异步等待退出，最多 3s）。
+   *
+   * P2-4 取舍：与 restartAndRetry 的单飞锁不互斥、也不等待锁——本方法被请求
+   * 超时回收、resetEmbeddingProvider、before-quit 调用；若等待锁，分钟级的
+   * doc-import 回退重试会阻塞退出/重置，且锁持有者自身也调用本方法（自锁）。
+   * 打断在途重试时该次重试失败，调用方走 worker 兜底，下次请求懒重启。
+   */
   async dispose(reason: string): Promise<void> {
     const child = this.child;
     if (child && child.exitCode === null) {
@@ -503,6 +733,7 @@ export function getEmbeddingSidecarClient(): EmbeddingSidecarClient | null {
   return sharedClient;
 }
 
+/** 模块级单例回收（reset/退出）；best-effort，不等待回退单飞锁（取舍见 dispose 注释）。 */
 export async function disposeEmbeddingSidecar(reason = "manual"): Promise<void> {
   if (sharedClient) {
     await sharedClient.dispose(reason);

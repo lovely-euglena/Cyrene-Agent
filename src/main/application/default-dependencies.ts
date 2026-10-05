@@ -39,6 +39,7 @@ import { createModelBackedConversationTranscriptCompactor } from "../orchestrato
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
+import { notifyEmbeddingSwitchRejected, runNativeEmbeddingSwitch } from "../settings/embedding-switch-native";
 import { registerPortableIpc, applyPortableChange } from "../portable/portable-ipc";
 import { registerCacheDirIpc } from "../portable/cache-ipc";
 import { registerOcrIpc } from "../ocr/ocr-ipc";
@@ -501,7 +502,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
    *   open-docs / open-dir / open-site / check-model-update / delete-embedding。
    * 返回可直接展示的反馈；native 侧包一层 notice，渲染端直接展示 message。
    */
-  async function runCyreneModelAction(verb: string): Promise<{
+  async function runCyreneModelAction(verb: string, payload?: unknown): Promise<{
     ok: boolean;
     message?: string;
     dir?: string;
@@ -549,10 +550,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           return { ok: true, message: `已重新检测：${embeddingText}；${rerankerText}。` };
         }
         case "delete-embedding": {
-          const removed = deleteEmbeddingModel("bgem3");
+          const requested = (payload as { model?: unknown } | null | undefined)?.model;
+          const modelKey = typeof requested === "string" && requested.length > 0 ? requested : "bgem3";
+          const label = modelKey === "e5-small" ? "Multilingual-E5-Small" : "BGE-M3";
+          const removed = deleteEmbeddingModel(modelKey);
           console.log("[Cyrene] embedding model deleted:", removed.length > 0 ? removed.join("; ") : "(no files found)");
           pushSettingsSnapshotToNative();
-          return { ok: true, message: "BGE-M3 模型已删除（项目 models 目录 + HF 缓存；下次使用需重新安装）" };
+          return { ok: true, message: `${label} 模型已删除（项目 models 目录 + HF 缓存；下次使用需重新安装）` };
         }
         default:
           return { ok: false, error: `未知操作：${verb}` };
@@ -1362,19 +1366,56 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           },
           // 「昔涟设置」section：状态栏实时更新 + 表情包 + RAG（阶段 2）。
           // 与渲染页 saveConfig 同源（saveModelSettings + model-config 广播）；
-          // reranker 模式变更后重新 initReranker（与 RERANKER_SET_MODE IPC 同口径）。
+          // reranker 模式变更后重新 initReranker（与 RERANKER_SET_MODE IPC 同口径）；
+          // embedding 模型变更走索引迁移（rebuild/clear，默认拒绝不落盘）。
           cyreneAction: (verb, payload) => {
             if (verb === "save") {
               const patch = sanitizeNativeCyreneSave(payload);
               if (!patch) return;
+              const { embeddingModelAction, ...settingsPatch } = patch;
+              // embedding 模型切换（第二引擎）：走索引迁移（rebuild/clear）。
+              // 默认拒绝不落盘（宿主回 rebuild-required，UI 需带 action 重试）。
+              // 流程与失败回执统一在 embedding-switch-native（P1-1：reject / 动态
+              // import 失败与 ok:false 同口径带结构化 data，WPF 才会重建 section
+              // 撤销卡片乐观选中）；动态 import 避免 rag 顶层循环依赖。
+              if (patch.embeddingModel && patch.embeddingModel !== loadModelSettings().embeddingModel) {
+                const embeddingModel = patch.embeddingModel;
+                void import("../rag")
+                  .then(({ switchEmbeddingModel }) =>
+                    runNativeEmbeddingSwitch(embeddingModel, embeddingModelAction, settingsPatch, {
+                      switchEmbeddingModel,
+                      finalize: {
+                        reconcileUserMemoryIndex,
+                        invalidateStickerEmbeddingIndex: () =>
+                          stickerEmbeddingIndexService?.invalidateStickerEmbeddingIndex(),
+                        refreshStickerEmbeddingIndex: (reason) =>
+                          stickerEmbeddingIndexService?.refreshStickerEmbeddingIndex(reason),
+                      },
+                      saveModelSettings,
+                      broadcastModelChanged,
+                      pushSettingsSnapshotToNative,
+                      nativeNotice,
+                    }),
+                  )
+                  .catch((err) => {
+                    // 动态 import 失败等（runNativeEmbeddingSwitch 内部失败已自行回执）：
+                    // 与流程内 reject 同一结构化回执，保证 WPF 卡片回退
+                    notifyEmbeddingSwitchRejected(nativeNotice, err, embeddingModel);
+                    pushSettingsSnapshotToNative();
+                  });
+                return;
+              }
               try {
-                saveModelSettings(patch);
+                saveModelSettings(settingsPatch);
                 broadcastModelChanged();
                 if (patch.rerankerMode) {
+                  // 复审 P1-5 残项：reranker 保存成功后推一次设置快照——WPF 窗口据此
+                  // 重建 section（当前模式摘要/卡片态），否则同窗口内摘要停留在开窗快照值
+                  pushSettingsSnapshotToNative();
                   const mode = patch.rerankerMode;
                   void import("../rag/reranker")
                     .then(({ initReranker }) => initReranker(mode))
-                    .then(() => nativeNotice("cyrene", "ok", `重排序已${mode === "none" ? "关闭" : "开启（bge-reranker-base）"}`))
+                    .then(() => nativeNotice("cyrene", "ok", `重排序已${mode === "none" ? "关闭" : `开启（${mode === "v2-m3" ? "bge-reranker-v2-m3" : "bge-reranker-base"}）`}`))
                     .catch((err) =>
                       nativeNotice("cyrene", "error", `重排序初始化失败：${err instanceof Error ? err.message : String(err)}`));
                 }
@@ -1404,7 +1445,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               modelAction === "check-model-update" ||
               modelAction === "delete-embedding"
             ) {
-              void runCyreneModelAction(modelAction).then((result) => {
+              void runCyreneModelAction(modelAction, payload).then((result) => {
                 nativeNotice(
                   "cyrene",
                   result.ok ? "ok" : "error",

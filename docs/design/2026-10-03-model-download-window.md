@@ -1,6 +1,6 @@
 # 模型一键下载（独立 .NET 窗口）设计
 
-> 状态：已实现（2026-10-03；`cyrene-native --selftest model-download` 14/14）。
+> 状态：已实现（2026-10-03；`cyrene-native --selftest model-download` 24/24）。
 > 用户文档见 [docs/local-models.md](../local-models.md)。
 
 ## 1. 背景与目标
@@ -61,12 +61,17 @@ React 设置页（聊天窗内）              WPF 设置窗（cyrene 段）
   文件达到 MinBytes 后原子改名（覆盖旧文件）。
 - 已完整文件直接跳过（规划期不发请求）；取消（CancellationToken）保留 `.part`，
   重开可续传；进度节流 250ms，窗口经 Dispatcher 回 UI 线程。
-- `IsInstalled` 只认三个必装文件 + 大小阈值（与 TS 侧 `model-status` 同口径）。
+- `IsInstalled` 只认三个必装文件 + 大小阈值（必装清单与 TS 侧 `model-status` 同口径；
+  设置页探测仅存在性判定，大小达标由下载器/脚本按 MinBytes 保证）。
 
 ## 5. 验证与遗留
 
 - 自检：`cyrene-native --selftest model-download`（假网络覆盖全量/跳过/续传/忽略
-  Range/必装缺失/可选缺失/镜像切换/取消/IsInstalled），14/14 绿。
+  Range/必装缺失/可选缺失/镜像切换/取消/IsInstalled；第二引擎两个新 spec 的
+  Repo/SubDir 落点：e5-small = `Xenova/multilingual-e5-small` →
+  `Xenova/multilingual-e5-small/`，bge-reranker-v2-m3 =
+  `onnx-community/bge-reranker-v2-m3-ONNX` → `bge-reranker-v2-m3/`，
+  含必装结构与 IsInstalled），24/24 绿。
 - 编译：CyreneNative（Debug）0 错误；TS `tsc main/renderer` 干净；
   `native-settings-protocol.test.ts`（白名单契约）通过；
   `settings-in-chat-smoke.mjs` 的 cyrene 段断言补「下载模型」。

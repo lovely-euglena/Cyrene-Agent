@@ -28,7 +28,9 @@ public sealed class ModelDownloadWindow : NativeWindow
     private int? _lastPercent;
 
     private readonly TextBlock _bgem3Status = MakeStatus();
+    private readonly TextBlock _e5Status = MakeStatus();
     private readonly TextBlock _rerankerStatus = MakeStatus();
+    private readonly TextBlock _v2m3Status = MakeStatus();
     private readonly TextBlock _stageText = new()
     {
         FontSize = 12,
@@ -52,7 +54,9 @@ public sealed class ModelDownloadWindow : NativeWindow
         Width = 0,
     };
     private readonly Button _bgem3Button = new();
+    private readonly Button _e5Button = new();
     private readonly Button _rerankerButton = new();
+    private readonly Button _v2m3Button = new();
     private readonly Button _cancelButton = new()
     {
         Content = "取消下载",
@@ -79,7 +83,7 @@ public sealed class ModelDownloadWindow : NativeWindow
         {
             Title = "昔涟 · 模型下载",
             Width = 620,
-            Height = 480,
+            Height = 700,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,
@@ -109,17 +113,29 @@ public sealed class ModelDownloadWindow : NativeWindow
         });
 
         ConfigureDownloadButton(_bgem3Button, ModelDownloadSpecs.BgeM3);
+        ConfigureDownloadButton(_e5Button, ModelDownloadSpecs.E5Small);
         ConfigureDownloadButton(_rerankerButton, ModelDownloadSpecs.Reranker);
+        ConfigureDownloadButton(_v2m3Button, ModelDownloadSpecs.RerankerV2M3);
         root.Children.Add(BuildCard(
             "BGE-M3（必装）",
-            "本地检索主模型，约 570MB。文件落在 models/Xenova/bge-m3/。",
+            "本地检索主模型，1024 维，约 570MB。文件落在 models/Xenova/bge-m3/。",
             _bgem3Status,
             _bgem3Button));
         root.Children.Add(BuildCard(
+            "Multilingual-E5-Small（可选）",
+            "轻量多语言嵌入模型，384 维，约 120MB。文件落在 models/Xenova/multilingual-e5-small/。",
+            _e5Status,
+            _e5Button));
+        root.Children.Add(BuildCard(
             "bge-reranker-base（可选）",
-            "检索结果重排序，约 279MB；不安装则检索不做重排。",
+            "检索结果重排序，约 279MB；不安装则检索不做重排。文件落在 models/bge-reranker-base/。",
             _rerankerStatus,
             _rerankerButton));
+        root.Children.Add(BuildCard(
+            "bge-reranker-v2-m3（可选）",
+            "多语言重排序，效果更强，约 570MB。文件落在 models/bge-reranker-v2-m3/。",
+            _v2m3Status,
+            _v2m3Button));
 
         // 镜像源
         var mirrorRow = new Grid { Margin = new Thickness(0, 14, 0, 0) };
@@ -256,7 +272,13 @@ public sealed class ModelDownloadWindow : NativeWindow
             : null;
     }
 
-    private static string DisplayName(ModelSpec spec) => spec.Kind == "reranker" ? "bge-reranker-base" : "BGE-M3";
+    private static string DisplayName(ModelSpec spec) => spec.Kind switch
+    {
+        "bgem3" => "BGE-M3",
+        "e5-small" => "Multilingual-E5-Small",
+        "reranker-v2-m3" => "bge-reranker-v2-m3",
+        _ => "bge-reranker-base",
+    };
 
     private static string FormatBytes(long bytes)
     {
@@ -271,13 +293,21 @@ public sealed class ModelDownloadWindow : NativeWindow
     private void RefreshStatuses()
     {
         var bgem3 = ModelDownloader.IsInstalled(_modelsDir, ModelDownloadSpecs.BgeM3);
+        var e5 = ModelDownloader.IsInstalled(_modelsDir, ModelDownloadSpecs.E5Small);
         var reranker = ModelDownloader.IsInstalled(_modelsDir, ModelDownloadSpecs.Reranker);
+        var v2m3 = ModelDownloader.IsInstalled(_modelsDir, ModelDownloadSpecs.RerankerV2M3);
         _bgem3Status.Text = bgem3 ? "已安装" : "未安装";
         _bgem3Status.Foreground = bgem3 ? NativeTheme.PinkDarkBrush : NativeTheme.TextMutedBrush;
+        _e5Status.Text = e5 ? "已安装" : "未安装（可选）";
+        _e5Status.Foreground = e5 ? NativeTheme.PinkDarkBrush : NativeTheme.TextMutedBrush;
         _rerankerStatus.Text = reranker ? "已安装" : "未安装（可选）";
         _rerankerStatus.Foreground = reranker ? NativeTheme.PinkDarkBrush : NativeTheme.TextMutedBrush;
+        _v2m3Status.Text = v2m3 ? "已安装" : "未安装（可选）";
+        _v2m3Status.Foreground = v2m3 ? NativeTheme.PinkDarkBrush : NativeTheme.TextMutedBrush;
         _bgem3Button.Content = bgem3 ? "重新下载" : "下载";
+        _e5Button.Content = e5 ? "重新下载" : "下载";
         _rerankerButton.Content = reranker ? "重新下载" : "下载";
+        _v2m3Button.Content = v2m3 ? "重新下载" : "下载";
     }
 
     private void SetProgress(int? percent)
@@ -320,7 +350,9 @@ public sealed class ModelDownloadWindow : NativeWindow
     {
         _busy = busy;
         _bgem3Button.IsEnabled = !busy;
+        _e5Button.IsEnabled = !busy;
         _rerankerButton.IsEnabled = !busy;
+        _v2m3Button.IsEnabled = !busy;
         _cancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
     }
 

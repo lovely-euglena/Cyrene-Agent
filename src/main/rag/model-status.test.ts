@@ -43,13 +43,14 @@ import {
   getProjectModelsDir,
   getProjectModelsDirCandidates,
   getProjectModelBaseDir,
+  getProjectModelDir,
   getModelInstallStatusDetail,
   getModelInstallStatus,
   checkEmbeddingModelInstalled,
   checkRerankerModelInstalled,
 } from "./model-status";
 
-// checkRerankerModelInstalled now takes no arguments (only "standard" exists)
+// checkRerankerModelInstalled 默认探测 standard；v2-m3 由新用例覆盖
 void checkRerankerModelInstalled;
 
 const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
@@ -289,5 +290,95 @@ describe("model-status: getModelInstallStatus aggregate", () => {
     const status = getModelInstallStatus();
     expect(status.embedding.bgem3).toBe(true);
     expect(status.reranker.standard).toBe(true);
+  });
+});
+
+describe("model-status: 第二引擎（e5-small / reranker-v2-m3）路径解析", () => {
+  it("e5-small 装在 models/Xenova/multilingual-e5-small → project 命中，getProjectModelDir 返回具体目录", () => {
+    ensureFakeDir("models", "Xenova", "multilingual-e5-small");
+
+    const detail = getModelInstallStatusDetail("embedding", "e5-small");
+    expect(detail.installed).toBe(true);
+    expect(detail.source).toBe("project");
+    expect(detail.matchedAt).toBe(path.join(ISOLATED_ROOT, "models", "Xenova", "multilingual-e5-small"));
+    expect(checkEmbeddingModelInstalled("e5-small")).toBe(true);
+
+    expect(getProjectModelBaseDir("embedding", "e5-small")).toBe(path.join(ISOLATED_ROOT, "models"));
+    expect(getProjectModelDir("embedding", "e5-small")).toBe(
+      path.join(ISOLATED_ROOT, "models", "Xenova", "multilingual-e5-small"),
+    );
+  });
+
+  it("e5-small 裸目录 models/multilingual-e5-small 不算安装（canonical Xenova 布局）", () => {
+    ensureFakeDir("models", "multilingual-e5-small");
+    expect(getModelInstallStatusDetail("embedding", "e5-small").installed).toBe(false);
+    expect(getProjectModelDir("embedding", "e5-small")).toBeNull();
+  });
+
+  it("e5-small HF 缓存兜底：~/.cache/huggingface/Xenova/multilingual-e5-small", () => {
+    fs.mkdirSync(path.join(ISOLATED_ROOT, "models"), { recursive: true });
+    ensureHfCache("multilingual-e5-small");
+
+    const detail = getModelInstallStatusDetail("embedding", "e5-small");
+    expect(detail.installed).toBe(true);
+    expect(detail.source).toBe("hf-cache");
+    expect(detail.matchedAt).toBe(path.join(HF_CACHE_XENOVA, "multilingual-e5-small"));
+  });
+
+  it("bgem3 与 e5-small 探测互不串扰", () => {
+    ensureFakeDir("models", "Xenova", "bge-m3");
+    expect(getModelInstallStatusDetail("embedding", "e5-small").installed).toBe(false);
+    expect(getProjectModelDir("embedding", "e5-small")).toBeNull();
+    expect(getProjectModelDir("embedding", "bgem3")).toBe(
+      path.join(ISOLATED_ROOT, "models", "Xenova", "bge-m3"),
+    );
+  });
+
+  it("reranker-v2-m3 装在 models/bge-reranker-v2-m3 → 按 modelKey 解析；standard 独立", () => {
+    ensureFakeDir("models", "bge-reranker-v2-m3");
+
+    expect(checkRerankerModelInstalled("v2-m3")).toBe(true);
+    expect(checkRerankerModelInstalled("standard")).toBe(false);
+    expect(getProjectModelDir("reranker", "v2-m3")).toBe(
+      path.join(ISOLATED_ROOT, "models", "bge-reranker-v2-m3"),
+    );
+    expect(getProjectModelBaseDir("reranker", "v2-m3")).toBe(path.join(ISOLATED_ROOT, "models"));
+
+    const status = getModelInstallStatus();
+    expect(status.reranker["v2-m3"]).toBe(true);
+    expect(status.reranker.standard).toBe(false);
+  });
+
+  it("standard 与 v2-m3 同时安装时各自命中自己的目录", () => {
+    ensureFakeDir("models", "bge-reranker-base");
+    ensureFakeDir("models", "bge-reranker-v2-m3");
+
+    expect(getProjectModelDir("reranker", "standard")).toBe(
+      path.join(ISOLATED_ROOT, "models", "bge-reranker-base"),
+    );
+    expect(getProjectModelDir("reranker", "v2-m3")).toBe(
+      path.join(ISOLATED_ROOT, "models", "bge-reranker-v2-m3"),
+    );
+  });
+
+  it("未知 modelKey 不再静默回落到 bgem3/standard", () => {
+    ensureFakeDir("models", "Xenova", "bge-m3");
+    ensureFakeDir("models", "bge-reranker-base");
+
+    expect(getModelInstallStatusDetail("embedding", "nope").installed).toBe(false);
+    expect(getProjectModelDir("embedding", "nope")).toBeNull();
+    expect(getModelInstallStatusDetail("reranker", "nope").installed).toBe(false);
+    expect(getProjectModelDir("reranker", "nope")).toBeNull();
+  });
+
+  it("getModelInstallStatus 输出四个档位", () => {
+    ensureFakeDir("models", "Xenova", "multilingual-e5-small");
+    ensureFakeDir("models", "bge-reranker-v2-m3");
+
+    const status = getModelInstallStatus();
+    expect(status).toEqual({
+      embedding: { bgem3: false, "e5-small": true },
+      reranker: { standard: false, "v2-m3": true },
+    });
   });
 });

@@ -355,9 +355,17 @@ export type NativeCyreneSavePatch = Partial<
     | "stickerSize"
     | "stickerSimilarityThreshold"
     | "embeddingDimensions"
+    | "embeddingModel"
     | "rerankerMode"
   >
->;
+> & {
+  /**
+   * embedding 模型切换动作（仅当 embeddingModel 变化时使用）：
+   * rebuild = 备份后全量重嵌入；clear = 显式清空旧索引。
+   * 缺省 = 默认拒绝（宿主回 rebuild-required 提示，不落盘）。
+   */
+  embeddingModelAction?: "rebuild" | "clear";
+};
 
 /**
  * cyrene save payload 校验：只保留合法字段（未知档位丢弃、阈值 clamp 0.3~0.9
@@ -385,8 +393,15 @@ export function sanitizeNativeCyreneSave(raw: Record<string, unknown> | null | u
     const dimensions = Math.round(raw.embeddingDimensions);
     if (dimensions > 0) patch.embeddingDimensions = Math.min(65_536, dimensions);
   }
-  // RAG：reranker 模式（写入后由宿主重新 initReranker）
-  if (raw.rerankerMode === "standard" || raw.rerankerMode === "none") {
+  // RAG：embedding 模型（第二引擎）+ 迁移动作（rebuild/clear）
+  if (raw.embeddingModel === "bgem3" || raw.embeddingModel === "e5-small") {
+    patch.embeddingModel = raw.embeddingModel;
+  }
+  if (raw.embeddingModelAction === "rebuild" || raw.embeddingModelAction === "clear") {
+    patch.embeddingModelAction = raw.embeddingModelAction;
+  }
+  // RAG：reranker 模式（standard / v2-m3 / none；写入后由宿主重新 initReranker）
+  if (raw.rerankerMode === "standard" || raw.rerankerMode === "v2-m3" || raw.rerankerMode === "none") {
     patch.rerankerMode = raw.rerankerMode;
   }
   return Object.keys(patch).length > 0 ? patch : null;
