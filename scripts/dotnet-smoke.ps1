@@ -88,6 +88,19 @@ if (Test-Path $vexe) {
 $out = Invoke-HostFrames "--selftest tray-scheduler" @()
 Check "tray-scheduler 自测全 PASS" ($out -match "SELFTEST tray-scheduler: PASS")
 
+# ── 5b. 托盘调度管道 E2E（IKJK51 复审 P2-1；真实起 --tray --scheduler 驱动 sched.* 协议）──
+# 注意：E2E 使用机器级 Global\cyrene-tray 互斥——本机已跑着托盘时会直接失败退出。
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if ($nodeCmd) {
+    $e2eScript = Join-Path $PSScriptRoot "tray-scheduler-e2e.mjs"
+    $e2eOutput = & node $e2eScript $exe 2>&1
+    $e2eExit = $LASTEXITCODE
+    foreach ($line in $e2eOutput) { Write-Host $line }
+    Check "tray-scheduler E2E 全 PASS" ($e2eExit -eq 0)
+} else {
+    Write-Host "[SKIP] 未找到 node，tray-scheduler E2E 跳过" -f Yellow
+}
+
 # ── 6. 双轨开关（C4）──
 $env:CYRENE_TOOL_HOST = "0"
 Check "CYRENE_TOOL_HOST=0 读取" (-not $env:CYRENE_TOOL_HOST.Equals("1"))

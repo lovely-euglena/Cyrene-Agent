@@ -1,6 +1,6 @@
 # Cyrene .NET 后端总览（dotnet-backend）
 
-> 状态：功能级完成 + Linux 侧五套实测（96+ 项，见下「测试矩阵」）；2026-10-04 跨平台协议类抽入 `dotnet/cyrene-core`（IKJK2G），本地（Windows）全量复跑全绿，Linux 复跑由 CI 工作流承接（脚本已去硬编码路径）；Windows 实机冒烟已跑通（`scripts/dotnet-smoke.ps1` 5/5，含 tray-scheduler 自测）。
+> 状态：功能级完成 + Linux 侧五套实测（96+ 项，见下「测试矩阵」）；2026-10-04 跨平台协议类抽入 `dotnet/cyrene-core`（IKJK2G），本地（Windows）全量复跑全绿，Linux 复跑由 CI 工作流承接（脚本已去硬编码路径）；Windows 实机冒烟已跑通（`scripts/dotnet-smoke.ps1` 6/6，含 tray-scheduler 自测 + 管道 E2E；CyreneVoice 已发布时 7/7）。
 > 决策记录：docs/dotnet-migration-decisions.md（A1-A19）
 
 ## 测试矩阵（Linux 冒烟壳 dotnet/smoke-host，引用 dotnet/cyrene-core 跨平台核心）
@@ -78,7 +78,9 @@ git commit 漏子命令、IPC argv 双传。
 
 `scripts/dotnet-smoke.ps1`：tool-host 五工具双轨 diff、agent-host 闭环、
 rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关、
-`--selftest tray-scheduler`（托盘调度宿主：协议/arm/离线失败/队列/中断，IKJK51 复审 P1-6）。
+`--selftest tray-scheduler`（托盘调度宿主：协议/arm/离线失败/队列/中断/宽限兜底，
+IKJK51 复审 P1-6）、`scripts/tray-scheduler-e2e.mjs`（真实起 `--tray --scheduler`
+驱动 sched.* 协议：CRUD/在线 sched.fire/断线离线 failed 历史/disarm，IKJK51 复审 P2-1）。
 
 ## 云端昔涟 cloud-server（IKJK2J / IKJK2K）
 
