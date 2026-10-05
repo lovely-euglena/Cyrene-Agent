@@ -38,16 +38,16 @@ if (args.Length > 0 && args[0] is "pair-code" or "devices" or "revoke")
     return;
 }
 
-// 裸跑渠道自测（不进 Web 管线）：channel-selftest [all|framework|feishu]；--selftest framework|feishu 同义
-// （阶段 3-6 追加 wechat/feishu/qqbot 子集；见 §8.2）
+// 裸跑渠道自测（不进 Web 管线）：channel-selftest [all|framework|wechat|feishu|qqbot|ownership]；
+// --selftest <suite> 为通用别名（同义；未知子集退出码 2 并打印可用清单，不会误落回真服务启动）。
 if (args.Length > 0 && args[0] == "channel-selftest")
 {
     Environment.ExitCode = ChannelSelfTest.Run(args.Length > 1 ? args[1] : "all");
     return;
 }
-if (args.Length > 1 && args[0] == "--selftest" && args[1] is "framework" or "feishu")
+if (args.Length > 0 && args[0] == "--selftest")
 {
-    Environment.ExitCode = ChannelSelfTest.Run(args[1]);
+    Environment.ExitCode = ChannelSelfTest.Run(args.Length > 1 ? args[1] : "all");
     return;
 }
 
@@ -148,7 +148,8 @@ if (channelOptions.ChannelsEnabled)
     if (channelOptions.IsChannelEnabled(ChannelIds.WeChat))
     {
         builder.Services.AddSingleton(new WeChatMediaStore(channelOptions.DataDir, channelOptions.MediaDirMb));
-        builder.Services.AddSingleton(new WeChatCdnClient(WeChatHttp.CreateClient()));
+        builder.Services.AddSingleton(new WeChatCdnClient(
+            WeChatHttp.CreateClient(), channelOptions.WeChatCdnBaseUrl));
         builder.Services.AddSingleton<ISilkCodec, SilkUnavailableCodec>();
         builder.Services.AddSingleton(sp => new WeChatQrLogin(
             channelOptions,

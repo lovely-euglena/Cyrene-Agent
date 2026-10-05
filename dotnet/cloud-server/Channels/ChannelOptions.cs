@@ -24,6 +24,9 @@ public sealed class ChannelOptions
     public string WeChatBaseUrl { get; init; } = "https://ilinkai.weixin.qq.com";
     public int WeChatMediaMaxMb { get; init; } = 20;
 
+    /// <summary>CLOUD_CHANNEL_WECHAT_CDN_BASE_URL（测试注入：mock CDN；缺省官方 novac2c CDN）。</summary>
+    public string? WeChatCdnBaseUrl { get; init; }
+
     /// <summary>数据目录根（媒体缓存等；Program 传 CYRENE_CLOUD_DATA，测试传临时目录）。</summary>
     public string DataDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "data");
 
@@ -36,6 +39,9 @@ public sealed class ChannelOptions
 
     public string? QqBotAppId { get; init; }
     public string? QqBotAppSecret { get; init; }
+    /// <summary>CLOUD_CHANNEL_QQBOT_API_BASE / _TOKEN_URL（测试注入：mock REST；缺省官方端点）。</summary>
+    public string? QqBotApiBase { get; init; }
+    public string? QqBotTokenUrl { get; init; }
     public bool QqBotAllowAnyPrivate { get; init; }
     public IReadOnlyList<string> QqBotAllowedOpenIds { get; init; } = [];
     public bool QqBotStripUrls { get; init; }
@@ -73,6 +79,7 @@ public sealed class ChannelOptions
             FailoverGraceSeconds = ReadInt("CLOUD_CHANNEL_FAILOVER_GRACE_SECONDS", 300),
             WeChatBaseUrl = ReadString("CLOUD_CHANNEL_WECHAT_BASE_URL") ?? "https://ilinkai.weixin.qq.com",
             WeChatMediaMaxMb = ReadInt("CLOUD_CHANNEL_WECHAT_MEDIA_MAX_MB", 20),
+            WeChatCdnBaseUrl = ReadString("CLOUD_CHANNEL_WECHAT_CDN_BASE_URL"),
             FeishuAppId = ReadString("CLOUD_CHANNEL_FEISHU_APP_ID"),
             FeishuAppSecret = ReadString("CLOUD_CHANNEL_FEISHU_APP_SECRET"),
             FeishuVerificationToken = ReadString("CLOUD_CHANNEL_FEISHU_VERIFICATION_TOKEN"),
@@ -80,6 +87,8 @@ public sealed class ChannelOptions
             FeishuAudio = ReadBool("CLOUD_CHANNEL_FEISHU_AUDIO", true),
             QqBotAppId = ReadString("CLOUD_CHANNEL_QQBOT_APP_ID"),
             QqBotAppSecret = ReadString("CLOUD_CHANNEL_QQBOT_APP_SECRET"),
+            QqBotApiBase = ReadString("CLOUD_CHANNEL_QQBOT_API_BASE"),
+            QqBotTokenUrl = ReadString("CLOUD_CHANNEL_QQBOT_TOKEN_URL"),
             QqBotAllowAnyPrivate = ReadBool("CLOUD_CHANNEL_QQBOT_ALLOW_ANY_PRIVATE", false),
             QqBotAllowedOpenIds = (ReadString("CLOUD_CHANNEL_QQBOT_ALLOWED_OPENIDS") ?? "")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),

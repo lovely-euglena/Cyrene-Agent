@@ -101,7 +101,8 @@ public sealed class QqBotAdapter : IChannelAdapter
         _startedAt = _time.GetUtcNow();
         SetStatus(ChannelPhases.Starting, "正在连接 QQ 开放平台网关");
         var api = _injectedApi ?? new QqBotApiClient(
-            _options.QqBotAppId!, _options.QqBotAppSecret!, timeProvider: _time);
+            _options.QqBotAppId!, _options.QqBotAppSecret!, timeProvider: _time,
+            apiBase: _options.QqBotApiBase, tokenUrl: _options.QqBotTokenUrl);
         _ownsApi = _injectedApi is null;
         _api = api;
         try
