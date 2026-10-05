@@ -1,13 +1,24 @@
+using System.Text.Json;
 using Microsoft.ML.OnnxRuntime;
 
 namespace CyreneEmbedSidecar;
 
 /// <summary>
-/// bge-m3 embedding 推理引擎：ONNX Runtime native 后端 + Unigram 分词 +
-/// attention-mask mean pooling + L2 归一化 + 排序组批。
+/// embedding 推理引擎：ONNX Runtime native 后端 + Unigram 分词 +
+/// attention-mask mean pooling + L2 归一化。
 ///
 /// 与 Electron 侧 transformers.js（WASM）共用同一份 onnx/model_quantized.onnx
 /// 权重；向量语义一致（残差为 int8 量化噪声，verify 模式对账）。
+///
+/// 模型自适应（IKIH28 第二向量模型 Xenova/multilingual-e5-small，384 维）：
+///   - 输入名按 session 元数据：input_ids / attention_mask 必需，
+///     token_type_ids 存在时补全零（e5-small 的 BERT 系导出必需，
+///     bge-m3 的 XLM-R 导出无此输入）。
+///   - 输出名优先 last_hidden_state，未知导出回退第一个输出；维度取该输出
+///     最后一维（bge-m3=1024，e5-small=384）。
+///   - 截断长度优先 tokenizer_config.json 的 model_max_length（与
+///     transformers.js truncation 同口径），回退 config.json 的
+///     max_position_embeddings；缺失则不截断（保持旧行为）。
 /// </summary>
 public sealed class EmbeddingEngine : IDisposable
 {
@@ -16,20 +27,36 @@ public sealed class EmbeddingEngine : IDisposable
     private readonly string _modelKey;
     private readonly RunOptions _runOptions;
     private readonly Dictionary<string, OrtValue> _inputTemplate = new(2);
+    private readonly bool _needsTokenTypeIds;
+    private readonly string[] _outputNames;
+    private readonly int _maxLength;
     public int Dimensions { get; }
 
     public string ModelKey => _modelKey;
 
-    private EmbeddingEngine(InferenceSession session, HfUnigramTokenizer tokenizer, string modelKey, int dims)
+    private EmbeddingEngine(
+        InferenceSession session,
+        HfUnigramTokenizer tokenizer,
+        string modelKey,
+        int dims,
+        bool needsTokenTypeIds,
+        string[] outputNames,
+        int maxLength)
     {
         _session = session;
         _tokenizer = tokenizer;
         _modelKey = modelKey;
         Dimensions = dims;
+        _needsTokenTypeIds = needsTokenTypeIds;
+        _outputNames = outputNames;
+        _maxLength = maxLength;
         _runOptions = new RunOptions();
     }
 
-    /// <summary>modelDir 指向 Xenova/bge-m3 布局（tokenizer.json + onnx/model_quantized.onnx）。</summary>
+    /// <summary>
+    /// modelDir 指向 Xenova 布局（tokenizer.json + onnx/model_quantized.onnx）：
+    /// bge-m3（1024 维）或 multilingual-e5-small（384 维）等。
+    /// </summary>
     public static EmbeddingEngine Load(string modelDir, string modelKey = "bgem3")
     {
         var tokenizerPath = Path.Combine(modelDir, "tokenizer.json");
@@ -56,11 +83,65 @@ public sealed class EmbeddingEngine : IDisposable
         var session = new InferenceSession(onnxPath, options);
         Console.Error.WriteLine($"[engine] session ready (intra-op threads={options.IntraOpNumThreads})");
 
-        var dims = session.OutputMetadata["last_hidden_state"].Dimensions;
+        var outputNames = ResolveOutputNames(session);
+        var needsTokenTypeIds = session.InputMetadata.ContainsKey("token_type_ids");
+        var maxLength = ReadModelMaxLength(modelDir);
+
+        var dims = session.OutputMetadata[outputNames[0]].Dimensions;
         // [batch, seq, dim] → 取最后一维
         var embedDim = dims.Length > 0 && dims[^1] > 0 ? dims[^1] : 1024;
 
-        return new EmbeddingEngine(session, tokenizer, modelKey, embedDim);
+        Console.Error.WriteLine(
+            $"[engine] metadata: inputs={string.Join(",", session.InputMetadata.Keys)}, output={outputNames[0]}, maxLength={(maxLength > 0 ? maxLength.ToString() : "unlimited")}");
+
+        return new EmbeddingEngine(session, tokenizer, modelKey, embedDim, needsTokenTypeIds, outputNames, maxLength);
+    }
+
+    /// <summary>
+    /// 输出名自适应：优先 last_hidden_state（feature-extraction 导出），
+    /// 未知导出回退第一个输出，避免硬编码 KeyNotFoundException。
+    /// </summary>
+    private static string[] ResolveOutputNames(InferenceSession session)
+    {
+        var preferred = session.OutputMetadata.ContainsKey("last_hidden_state")
+            ? "last_hidden_state"
+            : session.OutputMetadata.Keys.First();
+        return new[] { preferred };
+    }
+
+    /// <summary>
+    /// 最大输入长度（截断用）：优先 tokenizer_config.json 的 model_max_length
+    /// （transformers.js truncation 同口径），回退 config.json 的
+    /// max_position_embeddings；都缺失返回 0（不截断）。
+    /// </summary>
+    private static int ReadModelMaxLength(string modelDir)
+    {
+        var candidates = new[]
+        {
+            ("tokenizer_config.json", "model_max_length"),
+            ("config.json", "max_position_embeddings"),
+        };
+        foreach (var (file, key) in candidates)
+        {
+            try
+            {
+                var path = Path.Combine(modelDir, file);
+                if (!File.Exists(path)) continue;
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (doc.RootElement.TryGetProperty(key, out var el)
+                    && el.ValueKind == JsonValueKind.Number
+                    && el.TryGetInt32(out var value)
+                    && value > 0)
+                {
+                    return value;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[engine] read {file} failed: {ex.Message}");
+            }
+        }
+        return 0;
     }
 
     /// <summary>
@@ -86,6 +167,12 @@ public sealed class EmbeddingEngine : IDisposable
         for (var i = 0; i < texts.Count; i++)
         {
             var ids = _tokenizer.EncodeToIds(texts[i]);
+            // 截断：e5-small 等 512 上限模型必须（超出会让位置嵌入 gather 越界），
+            // 口径与 transformers.js truncation 一致（右截断，尾部 </s> 可能被截掉）
+            if (_maxLength > 0 && ids.Length > _maxLength)
+            {
+                ids = ids[.._maxLength];
+            }
             var vector = new float[Dimensions];
             RunSingle(ids, vector);
             results[i] = vector;
@@ -93,8 +180,6 @@ public sealed class EmbeddingEngine : IDisposable
 
         return results;
     }
-
-    private static readonly string[] OutputNames = { "last_hidden_state" };
 
     internal static int ReadThreadsEnv()
     {
@@ -133,32 +218,46 @@ public sealed class EmbeddingEngine : IDisposable
         var inputs = _inputTemplate;
         inputs["input_ids"] = inputIdsOrt;
         inputs["attention_mask"] = maskOrt;
-
-        using var outputs = _session.Run(_runOptions, inputs, OutputNames);
-        inputs.Clear(); // 释放对 OrtValue 的引用（OrtValue 自身 using 释放）
-        // ResultCollection：按 outputNames 顺序排列
-        var hidden = outputs[0].GetTensorDataAsSpan<float>();
-        // [1, seqLen, dim]
-
-        // mask-aware mean pooling（n=1 无 padding，全位有效）
-        for (var j = 0; j < seqLen; j++)
+        // BERT 系导出（e5-small）要求 token_type_ids，单句全 0；XLM-R 系无此输入
+        OrtValue? tokenTypesOrt = null;
+        if (_needsTokenTypeIds)
         {
-            var baseOffset = j * dims;
-            for (var k = 0; k < dims; k++)
+            tokenTypesOrt = OrtValue.CreateTensorValueFromMemory(new long[seqLen], new long[] { 1, seqLen });
+            inputs["token_type_ids"] = tokenTypesOrt;
+        }
+
+        try
+        {
+            using var outputs = _session.Run(_runOptions, inputs, _outputNames);
+            // ResultCollection：按 outputNames 顺序排列
+            var hidden = outputs[0].GetTensorDataAsSpan<float>();
+            // [1, seqLen, dim]
+
+            // mask-aware mean pooling（n=1 无 padding，全位有效）
+            for (var j = 0; j < seqLen; j++)
             {
-                vector[k] += hidden[baseOffset + k];
+                var baseOffset = j * dims;
+                for (var k = 0; k < dims; k++)
+                {
+                    vector[k] += hidden[baseOffset + k];
+                }
+            }
+            var denom = (float)seqLen;
+            for (var k = 0; k < dims; k++) vector[k] /= denom;
+
+            // L2 normalize（检索用余弦相似度，归一化后点积即余弦）
+            float norm = 0f;
+            for (var k = 0; k < dims; k++) norm += vector[k] * vector[k];
+            norm = MathF.Sqrt(norm);
+            if (norm > 0f)
+            {
+                for (var k = 0; k < dims; k++) vector[k] /= norm;
             }
         }
-        var denom = (float)seqLen;
-        for (var k = 0; k < dims; k++) vector[k] /= denom;
-
-        // L2 normalize（bge-m3 检索用余弦相似度，归一化后点积即余弦）
-        float norm = 0f;
-        for (var k = 0; k < dims; k++) norm += vector[k] * vector[k];
-        norm = MathF.Sqrt(norm);
-        if (norm > 0f)
+        finally
         {
-            for (var k = 0; k < dims; k++) vector[k] /= norm;
+            tokenTypesOrt?.Dispose();
+            inputs.Clear(); // 释放对 OrtValue 的引用（OrtValue 自身 using 释放）
         }
     }
 

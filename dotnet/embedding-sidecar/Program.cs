@@ -6,12 +6,14 @@ using CyreneEmbedSidecar;
 //   verify-rerank <rerankerDir> <dump.json>  reranker 句对 tokenIds + logits 对账
 //   verify-sqlite [workDir]         SQLite 向量库自检（schema/迁移/rev/检索对账）
 //   verify-pandoc [pandocPath]      Pandoc 转换自检（纯函数 + 本机真实转换）
+//   verify-models                   模型路由 + 引擎池纯逻辑自检（无需模型文件）
 //   pandoc-probe [pandocPath]       探测 Pandoc 版本与可读格式（设置页检测，JSON 输出）
 //   bench  <modelDir> [textCount]   性能基准（自生成混合长短文本）
-//   serve  <modelDir>               stdio 帧协议服务（Electron spawn）
+//   serve  <modelDir> [modelKey] [rerankerDir]  stdio 帧协议服务（Electron spawn）
 //
-// modelDir 指向 Xenova/bge-m3 布局（tokenizer.json + onnx/model_quantized.onnx）
-// rerankerDir 指向 bge-reranker-base 布局（同构）
+// modelDir 指向 Xenova 布局（tokenizer.json + onnx/model_quantized.onnx）：
+//   bge-m3（1024 维）或 multilingual-e5-small（384 维）
+// rerankerDir 指向 bge-reranker-base / bge-reranker-v2-m3 布局（同构）
 
 var command = args.Length > 0 ? args[0] : "serve";
 var modelDir = args.Length > 1 ? args[1]
@@ -39,13 +41,15 @@ switch (command)
         return 0;
     case "verify-pandoc":
         return PandocSelfTest.Run(args.Length > 1 ? args[1] : null);
+    case "verify-models":
+        return ModelsSelfTest.Run();
     case "pandoc-probe":
         return PandocProbeCommand.Run(args.Length > 1 ? args[1] : null);
     case "bench":
         Bench.Run(modelDir, args.Length > 2 ? int.Parse(args[2]) : 48);
         return 0;
     case "serve":
-        Server.Run(modelDir);
+        Server.Run(modelDir, args.Length > 2 ? args[2] : null, args.Length > 3 ? args[3] : null);
         return 0;
     default:
         Console.Error.WriteLine($"unknown command: {command}");
@@ -615,9 +619,24 @@ internal static class Server
     ///
     ///   就绪通知（模型加载完成后发一帧，id=0）：
     ///     {"id":0,"op":"ready","modelKey":"bgem3","dim":1024}
+    ///     modelKey = serve 第 3 参数（缺省从目录名推导：bge-m3 → bgem3、
+    ///     multilingual-e5-small → e5-small，与宿主 LOCAL_MODELS 键一致），
+    ///     dim 为该模型实际输出维度。
+    ///
+    ///   请求可选字段（embed / search / doc-import）：modelDir（缺省 = 启动目录）
+    ///   与 modelKey（日志用）；rerank 用 rerankerDir（缺省 = 启动 reranker 目录）。
     ///
     /// stderr 只用于诊断日志（进程崩溃前的输出不受帧协议污染）。
     /// </summary>
+    /// <summary>embedding 引擎池容量：bge-m3 + e5-small 两个模型常驻，超出按 LRU 卸载。</summary>
+    private const int MaxEmbeddingEngines = 2;
+    private static EnginePool<EmbeddingEngine>? _pool;
+
+    /// <summary>serve 启动参数：默认模型目录 / 键（请求缺省时回退）。</summary>
+    private static string _defaultModelDir = "";
+    private static string _startupModelKey = "bgem3";
+    private static string? _defaultRerankerDir;
+
     /// <summary>reranker 惰性加载 + 目录变更重载（单进程内单实例）。</summary>
     private static RerankerEngine? _reranker;
     private static string? _rerankerDir;
@@ -659,27 +678,45 @@ internal static class Server
     private static readonly HashSet<int> _cancelledImports = new();
     private static readonly object _cancelLock = new();
 
-    public static void Run(string modelDir)
+    public static void Run(string modelDir, string? modelKey = null, string? rerankerDir = null)
     {
-        Console.Error.WriteLine($"[serve] model dir: {modelDir}");
-        var engine = EmbeddingEngine.Load(modelDir);
+        _defaultModelDir = ModelRouting.NormalizeModelDir(modelDir);
+        // modelKey 缺省从目录名推导（bge-m3 → bgem3，保持既有 ready 口径）；
+        // 显式启动参数优先，供 e5 等第二模型使用稳定键名。
+        _startupModelKey = string.IsNullOrWhiteSpace(modelKey)
+            ? ModelRouting.DeriveModelKey(_defaultModelDir)
+            : modelKey;
+        _defaultRerankerDir = string.IsNullOrWhiteSpace(rerankerDir)
+            ? null
+            : ModelRouting.NormalizeModelDir(rerankerDir);
+        Console.Error.WriteLine($"[serve] model dir: {_defaultModelDir} (modelKey={_startupModelKey})");
+
+        var defaultDir = _defaultModelDir;
+        var startupKey = _startupModelKey;
+        _pool = new EnginePool<EmbeddingEngine>(
+            MaxEmbeddingEngines,
+            (dir) => EmbeddingEngine.Load(dir, dir == defaultDir ? startupKey : ModelRouting.DeriveModelKey(dir)));
 
         // 预热：隐藏首次推理的 MLAS kernel lazy-init（实测 ~130ms），
         // 代价是 ready 延迟同等毫秒数，换首个真实请求无毛刺
         var warmupStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        engine.Embed(new[] { "warmup" });
-        Console.Error.WriteLine($"[serve] warmup in {System.Diagnostics.Stopwatch.GetElapsedTime(warmupStart).TotalMilliseconds:F0}ms");
-
-        WriteFrame(new
+        using (var warmup = _pool.Acquire(defaultDir))
         {
-            id = 0,
-            op = "ready",
-            modelKey = engine.ModelKey,
-            dim = engine.Dimensions,
-            idleExitSec = IdleExitSeconds,
-        });
+            warmup.Engine.Embed(new[] { "warmup" });
+            Console.Error.WriteLine($"[serve] warmup in {System.Diagnostics.Stopwatch.GetElapsedTime(warmupStart).TotalMilliseconds:F0}ms");
 
-        RunAsync(engine, Console.OpenStandardInput(), Console.OpenStandardOutput()).GetAwaiter().GetResult();
+            // ready 帧如实回报实际加载的 modelKey / dim（此前恒报 "bgem3" 的坑）
+            WriteFrame(new
+            {
+                id = 0,
+                op = "ready",
+                modelKey = warmup.Engine.ModelKey,
+                dim = warmup.Engine.Dimensions,
+                idleExitSec = IdleExitSeconds,
+            });
+        }
+
+        RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput()).GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -698,7 +735,7 @@ internal static class Server
         return int.TryParse(raw, out var v) && v >= 0 ? v : null;
     }
 
-    private static async Task RunAsync(EmbeddingEngine engine, Stream stdin, Stream stdout)
+    private static async Task RunAsync(Stream stdin, Stream stdout)
     {
         // ⚠️ Console.OpenStandardInput() 的 ReadAsync 是 sync-over-async：
         // 线程真阻塞在 pipe read(2) 上，CancellationToken 无法中断（实测
@@ -797,15 +834,19 @@ internal static class Server
 
                 // 后台执行：导入耗时长（分钟级），期间仍需响应 embed/rerank/search
                 // （引擎与向量库各有内部锁；stdout 帧写入有全局锁）
+                var importModelDir = ModelRouting.ResolveModelDir(request.ModelDir, _defaultModelDir);
+                LogRoute("doc-import", importModelDir, request.ModelKey);
                 _ = Task.Run(() =>
                 {
                     try
                     {
+                        // 租约贯穿整个导入：分钟级任务期间该引擎不会被池 LRU 卸载
+                        using var lease = _pool!.Acquire(importModelDir);
                         var importStore = GetRagStore(ragDataDir, request.StoreMode);
                         var result = DocImporter.Import(
                             filePath,
                             ragDataDir,
-                            engine,
+                            lease.Engine,
                             importStore,
                             () =>
                             {
@@ -847,10 +888,13 @@ internal static class Server
                     {
                         throw new InvalidOperationException("search requires ragDataDir");
                     }
+                    var searchModelDir = ModelRouting.ResolveModelDir(request.ModelDir, _defaultModelDir);
+                    LogRoute("search", searchModelDir, request.ModelKey);
+                    using var lease = _pool!.Acquire(searchModelDir);
                     var store = GetRagStore(request.RagDataDir, request.StoreMode);
                     var results = HybridSearch.Retrieve(
                         store,
-                        engine,
+                        lease.Engine,
                         request.Query ?? "",
                         request.Source,
                         request.TopK ?? 5,
@@ -860,7 +904,7 @@ internal static class Server
                         request.VectorWeight ?? 0.7,
                         request.Bm25Weight ?? 0.3,
                         request.UpdateRecall ?? true);
-                    WriteSearchResponse(stdout, request.Id, results, engine.Dimensions);
+                    WriteSearchResponse(stdout, request.Id, results, lease.Engine.Dimensions);
                 }
                 catch (Exception ex)
                 {
@@ -874,7 +918,11 @@ internal static class Server
             {
                 try
                 {
-                    var rerankerDir = request.RerankerDir;
+                    // rerankerDir 缺省回退 serve 启动的 reranker 目录（冻结口径）；
+                    // 两者都没有才报错
+                    var rerankerDir = string.IsNullOrWhiteSpace(request.RerankerDir)
+                        ? _defaultRerankerDir
+                        : ModelRouting.NormalizeModelDir(request.RerankerDir);
                     if (string.IsNullOrEmpty(rerankerDir))
                     {
                         throw new InvalidOperationException("rerank requires rerankerDir");
@@ -903,14 +951,29 @@ internal static class Server
 
             try
             {
-                var vectors = engine.Embed(request.Texts ?? Array.Empty<string>());
-                WriteResponse(stdout, request.Id, vectors, engine.Dimensions);
+                var embedModelDir = ModelRouting.ResolveModelDir(request.ModelDir, _defaultModelDir);
+                LogRoute("embed", embedModelDir, request.ModelKey);
+                using var lease = _pool!.Acquire(embedModelDir);
+                var vectors = lease.Engine.Embed(request.Texts ?? Array.Empty<string>());
+                WriteResponse(stdout, request.Id, vectors, lease.Engine.Dimensions);
             }
             catch (Exception ex)
             {
                 WriteFrame(new ResponseHeader { Id = request.Id, Ok = false, Error = ex.Message });
                 Console.Error.WriteLine($"[serve] embed failed: {ex}");
             }
+        }
+    }
+
+    /// <summary>请求带显式模型路由信息时打一行 stderr 日志（协议字段“日志用”）。</summary>
+    private static void LogRoute(string op, string modelDir, string? modelKey)
+    {
+        var keyChanged = !string.IsNullOrEmpty(modelKey)
+            && !string.Equals(modelKey, _startupModelKey, StringComparison.Ordinal);
+        if (modelDir != _defaultModelDir || keyChanged)
+        {
+            Console.Error.WriteLine(
+                $"[serve] {op} route: modelDir={modelDir} modelKey={(string.IsNullOrEmpty(modelKey) ? "-" : modelKey)}");
         }
     }
 
@@ -1010,6 +1073,10 @@ internal static class Server
         public int Id { get; set; }
         public string Op { get; set; } = "embed";
         public string[]? Texts { get; set; }
+        // embed / search / doc-import op：可选模型路由（缺省 = serve 启动目录/键；
+        // modelKey 仅日志用，引擎键始终由目录决定）
+        public string? ModelDir { get; set; }
+        public string? ModelKey { get; set; }
         // rerank op：query + documents + 显式模型目录
         public string? Query { get; set; }
         public string[]? Documents { get; set; }
