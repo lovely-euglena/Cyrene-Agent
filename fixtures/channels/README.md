@@ -9,7 +9,7 @@ TS 归一化实现（`src/main/channels/normalizers/**`）与 C# 实现
 - JSON Schema（规范镜像，非执行器）：`schema/channel-contract-v1.schema.json`
 - TS 语义源：`src/main/channels/normalizers/**`（行为对齐桌面 `src/main/channels/adapters/*`）
 
-当前 `cases/` 共 **51** 个用例（初始 42 + 微信评审修正 2 + 飞书评审修正 7）。
+当前 `cases/` 共 **52** 个用例（初始 42 + 微信评审修正 2 + 飞书评审修正 7 + 飞书 R2 边界 1）。
 
 ## 双端执行
 
@@ -120,12 +120,26 @@ proactiveEventId = "proactive-" + sha256hex(sessionId + ":" + intentId)[0..32]
 - **webhook 回放**：`feishu-webhook/`（非双端契约，供 `channel-selftest feishu`）锁定 challenge
   明文/加密、坏签名、越界时间戳（`E_FEISHU_TIMESTAMP`）、密文文本/图片、群忽略、重投去重。
 
+## 本轮契约修正（2026-10-05 R2 评审；冻结规则不变）
+
+- **runner 布尔比较（P1-5）**：`DeepCompare` 补 `True/False` 显式比较——此前布尔字段落入
+  `default` 被视为相等，capability 8 个开关、微信媒体 `analyzable` 的单侧漂移无法被 CI 发现；
+  smoke-host runner 增加「人为改错布尔必须失败」的负向自检探针（`BooleanCompareSelfCheck`）；
+- **飞书时间戳越界（P2-2）**：C# `FeishuNormalizer` 对超出 `DateTimeOffset` 范围的毫秒数不再抛
+  异常丢事件，按无效时间戳返回 null → 回退 `now`；新增 `inbound-feishu-timestamp-nonfinite`
+  双端向量（`1e400` 两端都判非有限、回退 `now`）与 `feishu-webhook/huge-event-timestamp.json`
+  回放（20 位毫秒数事件仍 200 且正文可见）。
+
 ## 已知超纲差异（未入向量；双端不承诺逐字一致）
 
 - 飞书出站 video：`uploads[*].image_key` 显式 `null` 时 TS 输出 `"image_key":null`，C# 省略该键
   （`string?` 语义）；向量只锁「键存在（含空串）保留」。生产路径 uploads 由各端生成，不应出现显式 null；
 - 飞书入站 `content` 为 number 时：C# 取 JSON 原始字面量（`GetRawText`），JS 用 `String(number)` 数值
-  格式化——`1.0` / `1e21` 等形态不同（普通整数 `123` 已锁）。
+  格式化——`1.0` / `1e21` 等形态不同（普通整数 `123` 已锁）；
+- 飞书入站时间戳超出 C# `DateTimeOffset` 范围（如 19 位毫秒数）：C# 视作无效回退 `now`（事件不丢）；
+  TS `new Date(ms)` 可表示范围为 ±8.64e15——越界为 Invalid Date（契约序列化 `null`），未越界但年份
+  >9999 时输出 5 位年份 ISO（schema `isoUtcMs` 不允许）。双端只锁「非有限值回退 `now`」与非丢事件
+  （`inbound-feishu-timestamp-nonfinite` / `feishu-webhook/huge-event-timestamp.json`）。
 
 ## 破坏性修改
 

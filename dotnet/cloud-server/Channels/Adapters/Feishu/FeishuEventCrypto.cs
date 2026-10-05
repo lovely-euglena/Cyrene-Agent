@@ -103,6 +103,8 @@ public sealed class FeishuEventCrypto
         }
         finally
         {
+            // prefix 含 Encrypt Key：与 VerifyToken 同口径清零（buffer 同理）
+            CryptographicOperations.ZeroMemory(prefix);
             CryptographicOperations.ZeroMemory(buffer);
         }
     }
@@ -132,11 +134,20 @@ public sealed class FeishuEventCrypto
     public string? Decrypt(string encryptBase64)
     {
         if (_encryptKey is null || string.IsNullOrEmpty(encryptBase64)) return null;
+        byte[] key = [];
         try
         {
             var data = Convert.FromBase64String(encryptBase64);
             if (data.Length <= 16 || (data.Length - 16) % 16 != 0) return null;
-            var key = SHA256.HashData(Encoding.UTF8.GetBytes(_encryptKey));
+            var keyMaterial = Encoding.UTF8.GetBytes(_encryptKey);
+            try
+            {
+                key = SHA256.HashData(keyMaterial);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(keyMaterial);
+            }
             using var aes = Aes.Create();
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.PKCS7;
@@ -152,6 +163,11 @@ public sealed class FeishuEventCrypto
         {
             return null;
         }
+        finally
+        {
+            // SHA-256 派生 key 与 Encrypt Key 原文一并清零（与 VerifyToken 口径一致）
+            CryptographicOperations.ZeroMemory(key);
+        }
     }
 
     /// <summary>
@@ -161,6 +177,10 @@ public sealed class FeishuEventCrypto
     public FeishuVerifyResult Verify(string? timestamp, string? nonce, string? signature, byte[] rawBody)
     {
         if (!Configured) return FeishuVerifyResult.Failure(ErrorConfig);
+        // 时间戳新鲜度对「发送至开发者服务器」的明文推送同样校验：官方文档把
+        // X-Lark-Request-Timestamp / X-Lark-Request-Nonce 列为事件推送安全校验请求头
+        // （签名在配置 Encrypt Key 时才强制）；SDK 生态（chyroc/lark）对普通事件也
+        // 无条件读取这两个头。保留校验不弱化安全；真机明文推送若缺该头需再评估（见报告）。
         if (!IsTimestampFresh(timestamp)) return FeishuVerifyResult.Failure(ErrorTimestamp);
         if (_encryptKey is not null && !VerifySignature(timestamp!, nonce ?? "", rawBody, signature))
         {

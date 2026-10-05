@@ -35,12 +35,16 @@ public sealed class FeishuApiClient : IDisposable
 
     private static readonly TimeSpan TokenRefreshMargin = TimeSpan.FromMinutes(5);
 
+    /// <summary>媒体下载传输超时（含响应体读取；测试可注入更短值）。</summary>
+    public static readonly TimeSpan DefaultTransferTimeout = TimeSpan.FromSeconds(60);
+
     private readonly HttpClient _http;
     private readonly bool _ownsHandler;
     private readonly string _baseUrl;
     private readonly string? _appId;
     private readonly string? _appSecret;
     private readonly TimeProvider _clock;
+    private readonly TimeSpan _transferTimeout;
     private readonly ILogger<FeishuApiClient>? _logger;
     private readonly SemaphoreSlim _tokenGate = new(1, 1);
     private string? _token;
@@ -53,7 +57,8 @@ public sealed class FeishuApiClient : IDisposable
         HttpMessageHandler? handler = null,
         string? baseUrl = null,
         TimeProvider? clock = null,
-        ILogger<FeishuApiClient>? logger = null)
+        ILogger<FeishuApiClient>? logger = null,
+        TimeSpan? transferTimeout = null)
     {
         _appId = string.IsNullOrWhiteSpace(appId) ? null : appId.Trim();
         _appSecret = string.IsNullOrWhiteSpace(appSecret) ? null : appSecret.Trim();
@@ -66,6 +71,7 @@ public sealed class FeishuApiClient : IDisposable
             Timeout = TimeSpan.FromSeconds(30),
         };
         _clock = clock ?? TimeProvider.System;
+        _transferTimeout = transferTimeout ?? DefaultTransferTimeout;
         _logger = logger;
     }
 
@@ -192,49 +198,59 @@ public sealed class FeishuApiClient : IDisposable
     {
         var url = $"{_baseUrl}/open-apis/im/v1/messages/{Uri.EscapeDataString(messageId)}"
             + $"/resources/{Uri.EscapeDataString(fileKey)}?type={Uri.EscapeDataString(resourceType)}";
-        var token = await GetTenantAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await _http
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            throw new FeishuApiException(
-                $"E_FEISHU_HTTP_{(int)response.StatusCode}", Truncate(text, 200));
-        }
-        var declared = response.Content.Headers.ContentLength;
-        if (declared is > 0 && declared.Value > maxBytes)
-        {
-            throw new FeishuApiException("E_FEISHU_MEDIA_TOO_LARGE", $"媒体超过上限 {maxBytes} 字节");
-        }
-
-        var dir = Path.GetDirectoryName(destPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        long total = 0;
+        // ResponseHeadersRead 下 HttpClient.Timeout 只覆盖到响应头（后台路径还常传 CancellationToken.None），
+        // 上游发头后卡住会无限悬挂：比照 WeChatCdnClient 用 linked CTS 兜住整个传输（含响应体读取）。
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(_transferTimeout);
         try
         {
-            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            var token = await GetTenantAccessTokenAsync(linked.Token).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await _http
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var text = await response.Content.ReadAsStringAsync(linked.Token).ConfigureAwait(false);
+                throw new FeishuApiException(
+                    $"E_FEISHU_HTTP_{(int)response.StatusCode}", Truncate(text, 200));
+            }
+            var declared = response.Content.Headers.ContentLength;
+            if (declared is > 0 && declared.Value > maxBytes)
+            {
+                throw new FeishuApiException("E_FEISHU_MEDIA_TOO_LARGE", $"媒体超过上限 {maxBytes} 字节");
+            }
+
+            var dir = Path.GetDirectoryName(destPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            long total = 0;
+            await using var source = await response.Content.ReadAsStreamAsync(linked.Token).ConfigureAwait(false);
             await using var target = File.Create(destPath);
             var buffer = new byte[81920];
             int read;
-            while ((read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+            while ((read = await source.ReadAsync(buffer, linked.Token).ConfigureAwait(false)) > 0)
             {
                 total += read;
                 if (total > maxBytes)
                 {
                     throw new FeishuApiException("E_FEISHU_MEDIA_TOO_LARGE", $"媒体超过上限 {maxBytes} 字节");
                 }
-                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                await target.WriteAsync(buffer.AsMemory(0, read), linked.Token).ConfigureAwait(false);
             }
+            TryHardenFile(destPath);
+            return total;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            TryDelete(destPath);
+            throw new FeishuApiException(
+                "E_FEISHU_MEDIA_TIMEOUT", $"媒体下载超时（{_transferTimeout.TotalSeconds:0}s）");
         }
         catch
         {
             TryDelete(destPath);
             throw;
         }
-        TryHardenFile(destPath);
-        return total;
     }
 
     // ── HTTP 辅助 ────────────────────────────────────────────────────────────

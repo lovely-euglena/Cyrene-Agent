@@ -19,6 +19,17 @@ internal static class ChannelContractSelfTest
             return 1;
         }
         var failures = 0;
+        // runner 自检（P1-5）：布尔 deep-equal 负向探针——人为漂移必须失败，防止比较盲区回归
+        var selfCheck = ChannelContractFixture.BooleanCompareSelfCheck();
+        if (selfCheck is null)
+        {
+            Console.WriteLine("[PASS] runner 自检：布尔 deep-equal 漂移可捕获");
+        }
+        else
+        {
+            failures++;
+            Console.WriteLine($"[FAIL] runner 自检：{selfCheck}");
+        }
         var cases = ChannelContractFixture.LoadDirectory(casesDir);
         foreach (var item in cases)
         {

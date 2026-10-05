@@ -28,9 +28,11 @@ public sealed class FeishuAdapterRegistration : IChannelAdapterRegistration
         var api = new FeishuApiClient(
             options.FeishuAppId, options.FeishuAppSecret, logger: loggerFactory.CreateLogger<FeishuApiClient>());
         var transcoder = new FeishuMediaTranscoder(logger: loggerFactory.CreateLogger<FeishuMediaTranscoder>());
+        // 归属门闩注入（P2-4b）：桌面持有期间适配器预检跳过媒体下载（无则退化为放行）
+        var ownershipGate = services.GetService<ChannelOwnershipService>();
         return new FeishuAdapter(
             options, store, api, transcoder, ResolveMediaDir(),
-            loggerFactory.CreateLogger<FeishuAdapter>());
+            loggerFactory.CreateLogger<FeishuAdapter>(), ownershipGate);
     }
 
     /// <summary>入站媒体落盘目录（data/media/feishu；与 §3.3 媒体缓存同根，LRU/TTL 由后续媒体清理接入）。</summary>

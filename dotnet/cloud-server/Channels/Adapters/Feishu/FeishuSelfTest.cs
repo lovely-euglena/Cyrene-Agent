@@ -7,7 +7,9 @@ using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Channels;
 using CyreneNative.Channels.Normalizers;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CyreneCloud.Channels.Adapters.Feishu;
@@ -54,10 +56,12 @@ internal static class FeishuSelfTest
 
         await CheckCryptoAsync(Check);
         await CheckWebhookFixturesAsync(Check);
+        await CheckEndpointAsync(Check);
         await CheckDedupeAsync(Check);
         await CheckTranscoderAsync(Check);
         await CheckApiClientAsync(Check);
         await CheckAdapterAsync(Check);
+        await CheckOwnershipPrecheckAsync(Check);
         await CheckDispatcherIntegrationAsync(Check);
 
         Console.WriteLine(failures == 0
@@ -238,6 +242,68 @@ internal static class FeishuSelfTest
         }
     }
 
+    // ── 2b. webhook 路由接线（P2-5c）────────────────────────────────────────
+
+    /// <summary>
+    /// 端点级执行证据：413 分块限读（无 Content-Length 超 1MB 直接拒绝，不整块缓冲）
+    /// + 1MB 以内正常进入处理器；/events 别名注册一并校验（HTTP 级冒烟由文档簇脚本覆盖）。
+    /// </summary>
+    private static async Task CheckEndpointAsync(Action<string, bool, string> check)
+    {
+        // 分块超限：ContentLength 为空、body 超 1MB → 分块限读触顶立即 413
+        var tooLarge = new DefaultHttpContext();
+        tooLarge.Request.Method = HttpMethods.Post;
+        tooLarge.Request.ContentLength = null;
+        tooLarge.Request.Body = new MemoryStream(new byte[FeishuWebhookEndpoint.MaxBodyBytes + 1]);
+        tooLarge.Response.Body = new MemoryStream();
+        await FeishuWebhookEndpoint.HandleAsync(tooLarge);
+        tooLarge.Response.Body.Position = 0;
+        using (var document = JsonDocument.Parse(tooLarge.Response.Body))
+        {
+            check("webhook: 413 分块限读（无 Content-Length 超 1MB 直接拒绝）",
+                tooLarge.Response.StatusCode == StatusCodes.Status413PayloadTooLarge
+                && document.RootElement.GetProperty("code").GetString() == "E_FEISHU_BODY_TOO_LARGE",
+                $"status={tooLarge.Response.StatusCode} body={document.RootElement.GetRawText()}");
+        }
+
+        // 未超限：同一读取路径进入处理器（challenge 回显，token-only 配置）
+        var clock = new FixedTimeProvider(DateTimeOffset.Parse("2026-10-05T08:00:00.000Z"));
+        var processor = new FeishuWebhookProcessor(
+            new FeishuEventCrypto(FixtureToken, null, clock), null, null,
+            NullLogger<FeishuWebhookProcessor>.Instance);
+        var services = new ServiceCollection().AddSingleton(processor).BuildServiceProvider();
+        var challengeBody = Encoding.UTF8.GetBytes(
+            """{"type":"url_verification","challenge":"cyrene-endpoint-1","token":"cyrene-test-token"}""");
+        var okContext = new DefaultHttpContext { RequestServices = services };
+        okContext.Request.Method = HttpMethods.Post;
+        okContext.Request.Headers["X-Lark-Request-Timestamp"] = "1791187200";
+        okContext.Request.Body = new MemoryStream(challengeBody);
+        okContext.Response.Body = new MemoryStream();
+        await FeishuWebhookEndpoint.HandleAsync(okContext);
+        okContext.Response.Body.Position = 0;
+        using (var document = JsonDocument.Parse(okContext.Response.Body))
+        {
+            check("webhook: 1MB 以内分块读取正常进入处理器（challenge 回显）",
+                okContext.Response.StatusCode == 200
+                && document.RootElement.GetProperty("challenge").GetString() == "cyrene-endpoint-1",
+                $"status={okContext.Response.StatusCode} body={document.RootElement.GetRawText()}");
+        }
+
+        // /events 别名接线：Map 同时注册主路径与别名
+        var builder = WebApplication.CreateBuilder();
+        await using var aliasApp = builder.Build();
+        FeishuWebhookEndpoint.Map(aliasApp);
+        var patterns = ((IEndpointRouteBuilder)aliasApp).DataSources
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Select(endpoint => endpoint.RoutePattern.RawText)
+            .ToArray();
+        check("webhook: /events 别名与主路径同注册",
+            patterns.Contains(FeishuWebhookEndpoint.WebhookPath)
+            && patterns.Contains(FeishuWebhookEndpoint.AliasPath),
+            string.Join(",", patterns));
+    }
+
     // ── 3. 去重表 ────────────────────────────────────────────────────────────
 
     private static async Task CheckDedupeAsync(Action<string, bool, string> check)
@@ -348,6 +414,25 @@ internal static class FeishuSelfTest
             check("api: token 并发去重 + 缓存",
                 tokens.All(item => item == "t-1") && handler.TokenCalls == 1, $"calls={handler.TokenCalls}");
 
+            // token 过期前 5 分钟刷新边界（固定时钟；上游 expire=7200）
+            var boundaryClock = new FixedTimeProvider(DateTimeOffset.Parse("2026-10-05T08:00:00.000Z"));
+            var boundaryHandler = new FakeFeishuHandler();
+            using (var boundaryClient = new FeishuApiClient(
+                "cli_test_app", "secret_test", boundaryHandler, clock: boundaryClock))
+            {
+                await boundaryClient.GetTenantAccessTokenAsync();
+                boundaryClock.Advance(TimeSpan.FromSeconds(7200 - 300 - 1));
+                var cached = await boundaryClient.GetTenantAccessTokenAsync();
+                check("api: token 过期前 5 分钟 + 1s 仍命中缓存",
+                    cached == "t-1" && boundaryHandler.TokenCalls == 1,
+                    $"calls={boundaryHandler.TokenCalls}");
+                boundaryClock.Advance(TimeSpan.FromSeconds(1)); // 恰好到「过期前 5 分钟」
+                var refreshed = await boundaryClient.GetTenantAccessTokenAsync();
+                check("api: token 过期前 5 分钟整点触发刷新",
+                    refreshed == "t-1" && boundaryHandler.TokenCalls == 2,
+                    $"calls={boundaryHandler.TokenCalls}");
+            }
+
             var messageId = await client.SendMessageAsync("open_id", new FeishuSendRequest
             {
                 ReceiveId = "ou_user_1",
@@ -366,11 +451,17 @@ internal static class FeishuSelfTest
             check("api: 图片上传 image_key", imageKey == "img_key_1" && handler.ImageUploads == 1, imageKey);
 
             var fileKey = await client.UploadFileAsync(png, "voice.ogg", "opus", durationMs: 1200);
-            check("api: 文件上传（file_type=opus + file_name）",
+            check("api: 文件上传（file_type=opus + file_name + duration 表单字段）",
                 fileKey == "file_key_1"
                 && handler.FileUploads.Count == 1
                 && handler.FileUploads[0].FileType == "opus"
-                && handler.FileUploads[0].FileName == "voice.ogg",
+                && handler.FileUploads[0].FileName == "voice.ogg"
+                && handler.FileUploads[0].Duration == "1200",
+                JsonSerializer.Serialize(handler.FileUploads));
+
+            await client.UploadFileAsync(png, "plain.bin", "stream");
+            check("api: 无 duration 时不带 duration 表单字段",
+                handler.FileUploads.Count == 2 && handler.FileUploads[1].Duration is null,
                 JsonSerializer.Serialize(handler.FileUploads));
 
             var dest = Path.Combine(dir, "dl.png");
@@ -390,6 +481,25 @@ internal static class FeishuSelfTest
             {
                 check("api: 超限拒绝（E_FEISHU_MEDIA_TOO_LARGE）",
                     ex.ErrorCode == "E_FEISHU_MEDIA_TOO_LARGE" && !File.Exists(tooLargeDest), ex.ErrorCode);
+            }
+
+            // 传输超时：上游发头后卡住（ResponseHeadersRead 下 HttpClient.Timeout 不覆盖响应体读取）
+            var hangHandler = new FakeFeishuHandler { HangResource = true };
+            using (var hangClient = new FeishuApiClient(
+                "cli_test_app", "secret_test", hangHandler,
+                transferTimeout: TimeSpan.FromMilliseconds(150)))
+            {
+                var hangDest = Path.Combine(dir, "hang.bin");
+                try
+                {
+                    await hangClient.DownloadResourceAsync("om_1", "hang_key", "file", hangDest, 1024 * 1024);
+                    check("api: 媒体下载传输超时（发头后卡住 → E_FEISHU_MEDIA_TIMEOUT）", false, "未抛异常");
+                }
+                catch (FeishuApiException ex)
+                {
+                    check("api: 媒体下载传输超时（发头后卡住 → E_FEISHU_MEDIA_TIMEOUT）",
+                        ex.ErrorCode == "E_FEISHU_MEDIA_TIMEOUT" && !File.Exists(hangDest), ex.ErrorCode);
+                }
             }
 
             handler.SendError = true;
@@ -558,6 +668,54 @@ internal static class FeishuSelfTest
         }
     }
 
+    // ── 6b. 归属门闩预检（P2-4b）────────────────────────────────────────────
+
+    /// <summary>桌面持有（门闩拒绝）时不得为入站媒体下载/落盘；门闩放行时原链路不变。</summary>
+    private static async Task CheckOwnershipPrecheckAsync(Action<string, bool, string> check)
+    {
+        var dir = NewTempDir("feishu-ownership");
+        try
+        {
+            var deniedHandler = new FakeFeishuHandler();
+            using (var deniedApi = new FeishuApiClient("cli_test_app", "secret_test", deniedHandler))
+            {
+                var deniedAdapter = BuildAdapter(
+                    dir, deniedApi, ownershipGate: new FixedOwnershipGate(allow: false));
+                var handled = new List<IncomingMessage>();
+                deniedAdapter.OnMessage = (message, _) =>
+                {
+                    handled.Add(message);
+                    return Task.FromResult<OutgoingMessage?>(null);
+                };
+                using var envelope = JsonDocument.Parse(
+                    ImageEnvelope("om_gate_denied", "img_gate_denied", "evt-gate-denied"));
+                var result = await deniedAdapter.HandleEventAsync(envelope.RootElement);
+                check("adapter: 归属预检拒绝（owner≠server）→ 跳过媒体下载与 dispatcher",
+                    result.Ignored && handled.Count == 0 && deniedHandler.ResourceQueries.Count == 0,
+                    $"ignored={result.Ignored} handled={handled.Count} downloads={deniedHandler.ResourceQueries.Count}");
+            }
+
+            var allowHandler = new FakeFeishuHandler();
+            using (var allowApi = new FeishuApiClient("cli_test_app", "secret_test", allowHandler))
+            {
+                var allowAdapter = BuildAdapter(
+                    dir, allowApi, ownershipGate: new FixedOwnershipGate(allow: true));
+                using var envelope = JsonDocument.Parse(
+                    ImageEnvelope("om_gate_allowed", "img_gate_allowed", "evt-gate-allowed"));
+                var result = await allowAdapter.HandleEventAsync(envelope.RootElement);
+                check("adapter: 归属预检放行（owner=server）→ 媒体下载与附件注入不变",
+                    !result.Ignored && result.Message is not null
+                    && allowHandler.ResourceQueries.Count == 1
+                    && result.Message.Text.Contains("[附件: ", StringComparison.Ordinal),
+                    $"ignored={result.Ignored} downloads={allowHandler.ResourceQueries.Count} text={result.Message?.Text}");
+            }
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
     // ── 7. dispatcher → adapter（oc_ 目标）集成 ───────────────────────────────
 
     /// <summary>
@@ -624,7 +782,8 @@ internal static class FeishuSelfTest
     // ── 测试替身 ─────────────────────────────────────────────────────────────
 
     private static FeishuAdapter BuildAdapter(
-        string tempDir, FeishuApiClient api, FeishuMediaTranscoder? transcoder = null, ChannelOptions? options = null)
+        string tempDir, FeishuApiClient api, FeishuMediaTranscoder? transcoder = null,
+        ChannelOptions? options = null, IChannelOwnershipGate? ownershipGate = null)
     {
         var effective = options ?? new ChannelOptions
         {
@@ -638,7 +797,8 @@ internal static class FeishuSelfTest
             api,
             transcoder ?? new FeishuMediaTranscoder("__missing_ffmpeg__", runner: UnavailableRunner),
             Path.Combine(tempDir, "media"),
-            NullLogger<FeishuAdapter>.Instance);
+            NullLogger<FeishuAdapter>.Instance,
+            ownershipGate);
     }
 
     private static OutgoingMessage AudioMessage(string filePath) => new()
@@ -667,10 +827,11 @@ internal static class FeishuSelfTest
         public int TokenCalls;
         public List<(string Query, string Body)> Messages { get; } = [];
         public int ImageUploads;
-        public List<(string FileType, string FileName)> FileUploads { get; } = [];
+        public List<(string FileType, string FileName, string? Duration)> FileUploads { get; } = [];
         public List<string> ResourceQueries { get; } = [];
         public byte[] ResourceBytes { get; set; } = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         public bool SendError;
+        public bool HangResource;
         public int? ForceHttpStatus;
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -708,6 +869,7 @@ internal static class FeishuSelfTest
             {
                 var fileType = "";
                 var fileName = "";
+                string? duration = null;
                 if (request.Content is MultipartFormDataContent form)
                 {
                     foreach (var part in form)
@@ -715,15 +877,18 @@ internal static class FeishuSelfTest
                         var name = part.Headers.ContentDisposition?.Name?.Trim('"');
                         if (name == "file_type") fileType = await part.ReadAsStringAsync(cancellationToken);
                         else if (name == "file_name") fileName = await part.ReadAsStringAsync(cancellationToken);
+                        else if (name == "duration") duration = await part.ReadAsStringAsync(cancellationToken);
                     }
                 }
-                FileUploads.Add((fileType, fileName));
+                FileUploads.Add((fileType, fileName, duration));
                 return Json("""{"code":0,"msg":"success","data":{"file_key":"file_key_1"}}""");
             }
             if (path.Contains("/resources/", StringComparison.Ordinal))
             {
                 ResourceQueries.Add(uri.Query);
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ResourceBytes) };
+                return HangResource
+                    ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new HangingContent() }
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ResourceBytes) };
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound)
             {
@@ -735,16 +900,83 @@ internal static class FeishuSelfTest
             new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     }
 
+    /// <summary>发头后卡住的响应体（读取只在取消时返回），模拟上游发头后不传数据。</summary>
+    private sealed class HangingContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            Task.Delay(Timeout.Infinite);
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() =>
+            Task.FromResult<Stream>(new HangingStream());
+
+        protected override Task<Stream> CreateContentReadStreamAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<Stream>(new HangingStream());
+
+        private sealed class HangingStream : Stream
+        {
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush()
+            {
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                WaitAsync(cancellationToken);
+
+            public override Task<int> ReadAsync(
+                byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                WaitAsync(cancellationToken).AsTask();
+
+            private static async ValueTask<int> WaitAsync(CancellationToken cancellationToken)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+                return 0;
+            }
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+    }
+
     private sealed class FixedTimeProvider : TimeProvider
     {
-        private readonly DateTimeOffset _now;
+        private DateTimeOffset _now;
 
         public FixedTimeProvider(DateTimeOffset now)
         {
             _now = now;
         }
 
+        /// <summary>固定时钟推进（token 刷新边界用例用）。</summary>
+        public void Advance(TimeSpan delta) => _now = _now.Add(delta);
+
         public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    /// <summary>固定归属门闩（P2-4b 预检用例）。</summary>
+    private sealed class FixedOwnershipGate(bool allow) : IChannelOwnershipGate
+    {
+        public ValueTask<bool> CanProcessAsync(string channel, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(allow);
     }
 
     /// <summary>固定回复的 DialogEngine（dispatcher 集成链路用）。</summary>
@@ -774,6 +1006,29 @@ internal static class FeishuSelfTest
         if (body is null) return "";
         using var document = JsonDocument.Parse(body);
         return document.RootElement.TryGetProperty("content", out var value) ? value.GetString() ?? "" : "";
+    }
+
+    /// <summary>构造私聊图片事件 envelope（P2-4b 归属预检用例）。</summary>
+    private static string ImageEnvelope(string messageId, string imageKey, string eventId)
+    {
+        var content = JsonSerializer.Serialize(new { image_key = imageKey }, ChannelJson.Compact);
+        return JsonSerializer.Serialize(new
+        {
+            header = new { event_id = eventId, event_type = "im.message.receive_v1", create_time = "1787889600000" },
+            @event = new
+            {
+                sender = new { sender_id = new { open_id = "ou_user_1" } },
+                message = new
+                {
+                    message_id = messageId,
+                    chat_id = "oc_chat_1",
+                    chat_type = "p2p",
+                    message_type = "image",
+                    content,
+                    timestamp = 1787889600000,
+                },
+            },
+        });
     }
 
     private static string? OptionalString(JsonElement parent, string name) =>
