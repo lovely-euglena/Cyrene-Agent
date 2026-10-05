@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyInstallerLaunchAtLoginSelection,
+  buildTrayLoginItemArgs,
   consumeInstallerLaunchAtLoginSelection,
   syncLaunchAtLogin,
 } from "./launch-at-login";
@@ -47,6 +48,28 @@ describe("syncLaunchAtLogin", () => {
 
     expect(setLoginItemSettings).toHaveBeenNthCalledWith(1, { openAtLogin: false });
     expect(setLoginItemSettings).toHaveBeenNthCalledWith(2, { openAtLogin: false, path: "C:\\app\\cyrene-native.exe" });
+  });
+
+  it("IKJK51 复审 P1-3：含空格/中文路径 --data-dir 必须引号包裹", () => {
+    expect(buildTrayLoginItemArgs("C:\\Users\\John Doe\\AppData\\Roaming\\昔涟 Cyrene")).toEqual([
+      "--tray",
+      "--scheduler",
+      "--data-dir",
+      "\"C:\\Users\\John Doe\\AppData\\Roaming\\昔涟 Cyrene\"",
+    ]);
+  });
+
+  it("IKJK51 复审 P1-3：syncLaunchAtLogin 原样透传引号参数", () => {
+    const setLoginItemSettings = vi.fn();
+    syncLaunchAtLogin(true, { setLoginItemSettings }, {
+      trayPath: "C:\\app\\cyrene-native.exe",
+      trayArgs: ["--tray", "--scheduler", "--data-dir", "\"C:\\Users\\John Doe\\Cyrene\""],
+    });
+    expect(setLoginItemSettings).toHaveBeenCalledWith({
+      openAtLogin: true,
+      path: "C:\\app\\cyrene-native.exe",
+      args: ["--tray", "--scheduler", "--data-dir", "\"C:\\Users\\John Doe\\Cyrene\""],
+    });
   });
 });
 

@@ -1125,7 +1125,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         configureDocumentIndexQueue(
           isSidecarEnabled() ? runDocumentImportJobViaSidecar : runDocumentIndexJob,
         ),
-      installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
+      installSingleInstance: (onSecondInstance) =>
+        installSingleInstanceGuard(app, () => {
+          // IKJK51 复审 P1-4：headless 执行实例不响应激活（否则会在后台任务
+          // 期间被 second-instance 拉起聊天窗）；主实例聚焦行为不变。
+          if (headlessScheduledArgs()) return;
+          onSecondInstance();
+        }),
       migrateLegacyUserData: () => {
         migrateLegacyUserData({
           appDataPath: app.getPath("appData"),
@@ -1984,17 +1990,19 @@ createTray: (input) => {
       getPluginsSnapshot: () => buildPluginSnapshot(),
 
       createScheduler: (runtime) => {
-        // IKJK51：调度宿主双轨——开关开且托盘管道可用 → host 模式；否则回退 TS scheduler
+        // IKJK51：调度宿主双轨——开关开即建 host 客户端（本地回退 + 周期重连 watchdog
+        // 在 host-mode 适配器内）；否则回退 TS scheduler。
         const schedulerHostEnabled = resolveDotnetConfig().schedulerHost;
-        const schedulerHostClient = schedulerHostEnabled && isTrayPipeAvailable()
-          ? createSchedulerHostClient()
-          : null;
-        if (schedulerHostEnabled && !schedulerHostClient) {
-          console.warn("[scheduler] CYRENE_SCHEDULER_HOST=1 但托盘管道不可用——回退 TS scheduler");
+        const schedulerHostClient = schedulerHostEnabled ? createSchedulerHostClient() : null;
+        if (schedulerHostEnabled && !isTrayPipeAvailable()) {
+          console.warn("[scheduler] CYRENE_SCHEDULER_HOST=1 但托盘管道暂不可用——先本地调度，watchdog 周期重连");
         }
         if (!schedulerHostClient && isTrayPipeAvailable()) {
-          // 开关关闭但托盘在跑（登录项残留等）：停用托盘调度，避免双调度
-          disarmSchedulerHost();
+          // 开关关闭但托盘在跑（登录项残留等）：停用托盘调度，避免双调度。
+          // 复审 P1-2：带重试 + 回执；重试耗尽显式告警，不再静默放弃。
+          void disarmSchedulerHost().then((ok) => {
+            if (!ok) console.warn("[scheduler] 停用托盘调度失败（重试耗尽）——请检查托盘进程/管道");
+          });
         }
         const subsystem = createSchedulerSubsystem({
           agentRuntime: runtime,

@@ -88,8 +88,11 @@ export function createApplication(deps: ApplicationDependencies): Application {
       installAppShutdownHandlers({ app: deps.app, coordinator: deps.shutdown });
       // 全部窗口关闭不退出（托盘常驻，与旧行为一致）
       deps.app.on("window-all-closed", () => { /* no-op */ });
-      // macOS 标准激活行为：统一走激活代理
-      deps.app.on("activate", () => { deps.activation.request({ kind: "chat" }); });
+      // macOS 标准激活行为：统一走激活代理；headless 执行实例不响应（不弹聊天窗）。
+      deps.app.on("activate", () => {
+        if (headlessScheduledArgs()) return;
+        deps.activation.request({ kind: "chat" });
+      });
     },
 
     async handleFatalStartup(error: unknown): Promise<void> {
