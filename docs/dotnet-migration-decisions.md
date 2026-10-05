@@ -676,7 +676,9 @@
   TS 侧 `vitest run src/main/channels src/main/proactive` **46 files / 431 tests**。
 - **评审收口（R1/R2）**：飞书出站缺省 `receive_id_type=chat_id`、`E_CHANNEL_UNSUPPORTED`、
   preferServer 语义、QQ 附件-only 文案等已并入；视觉输入（caption / 模型直读）与
-  `CLOUD_CHANNEL_VISION` 明确为后续批次（当前图片/文件仅事件占位文本）；冒烟落盘权限改
-  「db 本体必查、-wal/-shm 存在才断言」的稳健口径；`dotnet-backend.md` / 设计稿 /
+  `CLOUD_CHANNEL_VISION` 明确为后续批次（当前图片/文件仅事件占位文本）；冒烟落盘权限：数据目录
+  0700 改「冒烟预置 0755 → 服务端启动收紧」的判别力口径，db 本体必查、-wal/-shm 存在才断言；
+  明文推送时间戳新鲜度校验保留（真机是否携带 `X-Lark-Request-Timestamp` **待真机执行时确认**，
+  若缺失需评估，已登记 cloud-server README 真机冒烟清单）；`dotnet-backend.md` / 设计稿 /
   cloud-server README 计数与实现口径同步。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3P / #IKJK2P / #IKJK2R / #IKJK2S / #IKJK2T。

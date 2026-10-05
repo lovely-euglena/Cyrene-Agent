@@ -546,6 +546,8 @@ sequenceDiagram
   自带校验：Verification Token 定长比较（临时字节比较后清零）+ `X-Lark-Signature`
   （`sha256(timestamp + nonce + encryptKey + rawBody)`）+ 时间戳新鲜度 ±5 分钟（防重放；越界 401
   `E_FEISHU_TIMESTAMP`）；
+- 明文推送（未配置 Encrypt Key）同样校验 `X-Lark-Request-Timestamp` 新鲜度；该头在真机明文推送中
+  是否携带**待真机执行时确认**，若缺失需评估（已登记 `dotnet/cloud-server/README.md` 真机冒烟清单）；
 - 流程：challenge（`type=url_verification`）→ 原样回 `challenge`；加密事件 → AES-256-CBC 解密
   （key=SHA-256(EncryptKey)、IV 取密文前 16 字节，实现时以官方文档 + 测试向量锁定）→
   解析 `im.message.receive_v1` → 归一化 → 去重（`seen_messages`：message_id + header.event_id 双键）→

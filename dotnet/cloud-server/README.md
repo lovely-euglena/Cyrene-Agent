@@ -151,12 +151,14 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 ### 真机冒烟清单（§1.3 豁免项的替代证据入口）
 
 CI 用 mock e2e（`scripts/channel-smoke-test.py`，57 项；Linux CI 追加 4 项落盘权限断言 = 61 项）+ C# 自测（`channel-selftest all`，266 项）覆盖协议与编排；
-以下**真机项**需人工执行一次，并在部署/PR 记录日期、commit、结果（截图或日志片段）：
+以下**真机项**需人工执行一次，并在部署/PR 记录日期、commit、结果（截图或日志片段）；
+执行前一律为「待真机执行时确认」口径，不写「已验证」：
 
 | 渠道 | 步骤 | 通过标准 |
 | --- | --- | --- |
 | 微信 | 设置页「云端微信登录」扫码 → 收文本 → 回文本 → 收/发图片 → 断网 30s 再恢复 → 触发 `ret=-14`（换 token） | 状态 running；文本/图片往返；断线自动重连；`ret=-14` 后状态 error + 「会话已过期」提示且不重试 |
 | 飞书 | 真 App 凭据 + 事件订阅 URL；私聊文本/图片；桌面触发一条主动消息 | webhook challenge 通过；文本/图片往返；主动消息实测可达（服务端 REST 发送成功） |
+| 飞书（明文时间戳） | 明文模式确认飞书事件推送是否携带 `X-Lark-Request-Timestamp`（当前保持校验；若缺失需评估） | 待真机执行时确认（抓包或服务端日志核对请求头） |
 | QQ | 真 AppID/Secret；私聊被动回复；连发 5 条触发上限 | 60 分钟内最多 4 条回复；超限/超窗返回明确错误；白名单拒绝在状态 detail 可见 |
 | 大文件 | 任选渠道发 1 个视频/超大文件 | 大小上限文案拒绝（不落盘、不崩溃） |
 | 日志脱敏 | `journalctl -u cyrene-cloud-server` 抽查渠道相关行 | 无 bot token / app secret / 消息正文 |
