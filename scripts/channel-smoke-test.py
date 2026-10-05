@@ -21,8 +21,8 @@
   `CLOUD_CHANNEL_WECHAT_CDN_BASE_URL` / `CLOUD_CHANNEL_QQBOT_API_BASE` / `CLOUD_CHANNEL_QQBOT_TOKEN_URL`。
 飞书密文事件复用仓库 fixtures（不在冒烟脚本内实现 AES；签名 sha256 现算，时间戳新鲜）。
 出站图片与 SILK 语音不在本冒烟覆盖（C# `channel-selftest wechat` 覆盖；设计 §1.3 分期）。
-Linux 下追加落盘权限断言（数据目录/media 目录 0700；channels.db 0600、-wal/-shm 存在时同断言、
-媒体文件 0600；非 Linux 平台自动跳过）。
+Linux 下追加落盘权限断言（数据目录先以 0755 预置，断言服务端启动收紧为 0700；media 目录 0700；
+channels.db 0600、-wal/-shm 存在时同断言、媒体文件 0600；非 Linux 平台自动跳过）。
 
 运行：
   python scripts/channel-smoke-test.py [cyrene-cloud-server.dll]
@@ -56,6 +56,7 @@ FEISHU_VERIFICATION_TOKEN = "cyrene-test-token"
 FEISHU_ENCRYPT_KEY = "cyrene-test-encrypt-key"
 
 BASE = ""  # 服务端 base URL（main 覆盖）
+DATA_DIR_MODE_BEFORE = None  # Linux 5b：冒烟预置的宽松数据目录权限（服务端应收紧为 0700）
 results = []
 
 # 1x1 透明 PNG（图片链路字节往返用）
@@ -824,8 +825,13 @@ def phase_file_permissions():
     def posix_mode(path):
         return os.stat(path).st_mode & 0o777
 
+    # 判别力：数据目录由冒烟先以 0755 预置（见 main），断言的是「服务端启动时收紧为 0700」，
+    # 而非 tempfile.mkdtemp 自带的 0700；before 记录缺失/不符时判 FAIL，避免断言静默失去判别力。
     dir_mode = posix_mode(data_dir)
-    check("落盘权限：数据目录 0700", dir_mode == 0o700, f"{data_dir} mode={oct(dir_mode)}")
+    check("落盘权限：数据目录 0700（冒烟预置 0755 → 服务端启动收紧）",
+          DATA_DIR_MODE_BEFORE == 0o755 and dir_mode == 0o700,
+          f"{data_dir} before={oct(DATA_DIR_MODE_BEFORE) if DATA_DIR_MODE_BEFORE is not None else None} "
+          f"after={oct(dir_mode)}")
 
     db_path = os.path.join(data_dir, "channels.db")
     # db 本体必查 0600；-wal/-shm 为 SQLite 附属文件——checkpoint 后连接全回收时可能被回收，
@@ -1199,7 +1205,7 @@ def phase_wechat_expired(state):
 
 
 def main():
-    global BASE
+    global BASE, DATA_DIR_MODE_BEFORE
     parser = argparse.ArgumentParser(description="cyrene-cloud-server 渠道 mock e2e 冒烟（设计 §8.4）")
     parser.add_argument("dll", nargs="?", default=None, help="cloud-server 产物 dll（默认 Release 构建输出）")
     parser.add_argument("--keep-data", action="store_true", help="保留临时数据目录（排查用）")
@@ -1217,6 +1223,14 @@ def main():
     mock_port = mock_server.server_address[1]
 
     data_dir = tempfile.mkdtemp(prefix="cyrene-channel-smoke-")
+    if sys.platform == "linux":
+        # 5b 判别力：mkdtemp 默认 0700 会让「服务端收紧目录」断言无判别力——
+        # 先放宽为 0755，由服务端启动 StorageHardening 收紧回 0700 后再断言。
+        try:
+            os.chmod(data_dir, 0o755)
+        except OSError:
+            pass  # 保持 0700：phase_file_permissions 会因 before != 0755 判 FAIL，不静默放行
+        DATA_DIR_MODE_BEFORE = os.stat(data_dir).st_mode & 0o777
     os.environ["SMOKE_DATA_DIR"] = data_dir
     log_path = os.path.join(data_dir, "server.log")
     extra_env = {
