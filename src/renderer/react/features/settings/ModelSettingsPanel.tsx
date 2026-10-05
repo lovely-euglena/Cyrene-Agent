@@ -478,7 +478,7 @@ export function ModelSettingsPanel() {
     try {
       if (!window.settings) throw new Error("Settings API unavailable");
       const config = currentManualConfig();
-      const request = { provider, baseUrl: baseUrl.trim(), model: modelOptionModelId.trim(), apiKey: currentApiKey(), explicitTransport: transport, reasoning: draftReasoningPreference(), manualReasoning: config };
+      const request = { provider, baseUrl: baseUrl.trim(), model: modelOptionModelId.trim(), apiKey: currentApiKey(), explicitTransport: transport, reasoning: draftReasoningPreference(), manualReasoning: config, ...(activeId ? { profileId: activeId } : {}) };
       if (checkConnection) {
         setManualChecking(true);
         const result = await window.settings.testConnection?.(request);
@@ -648,6 +648,8 @@ export function ModelSettingsPanel() {
         explicitTransport: transport,
         reasoning,
         manualReasoning: modelOptions[model.trim()]?.manualReasoning,
+        // 复审 P1-6：掩码空 key 时主进程按档案槽回填真 key（明文不出主进程）
+        ...(activeId ? { profileId: activeId } : {}),
       });
       setStatus(result.ok
         ? { kind: "success", text: t("settingsPage.modelSettings.testOk", { latency: result.latency ?? 0, sample: result.sample ?? "" }) }

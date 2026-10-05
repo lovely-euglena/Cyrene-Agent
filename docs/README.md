@@ -57,7 +57,7 @@
 > [2026-09-26-agent-orchestration-plan-b.md](./design/2026-09-26-agent-orchestration-plan-b.md)（多 Agent 编排机制 v1；子 Agent 接入接口已就绪、生产未接线）・
 > [2026-09-21-cta-conversation-transcript-architecture-design.md](./design/2026-09-21-cta-conversation-transcript-architecture-design.md)（CTA 会话轨迹）・
 > [2026-09-22-no-auto-resend-and-interruption-context-design.md](./design/2026-09-22-no-auto-resend-and-interruption-context-design.md)（取消自动续跑与中断进上下文）・
-> 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET 设计草案・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）设计草案・写类工具 evidence 帧协议 v1（fs 三件接线落地）・2026-10-04 手机 PWA（查看 / 续聊 / 离线只读）・2026-10-05 定时任务常驻化（调度下沉 .NET tray）。
+> 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET（Phase 1 已实施 + llm-host H0–H4 MVP，issue/IKJM7D）・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）・写类工具 evidence 帧协议 v1（fs 三件接线落地）・2026-10-04 手机 PWA（查看 / 续聊 / 离线只读）・2026-10-05 定时任务常驻化（调度下沉 .NET tray）。
 
 <details>
 <summary>全部 58 篇 + 2 个子目录（按时间序）</summary>

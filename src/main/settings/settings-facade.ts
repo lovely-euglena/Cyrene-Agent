@@ -36,6 +36,14 @@ import type { ConversationMode } from "../../shared/chat-types";
 import type { SkillModeOverrides } from "../skills/types";
 import { normalizeLspServerOverrides } from "../lsp/server-catalog";
 import {
+  applyKeyringToGeneralSettings,
+  isVaultAuthoritative,
+  SECRET_GENERAL_FIELDS,
+  shouldPreservePlaintextKeys,
+  stripKeysForDisk,
+  vaultifyGeneralSettingsForSave,
+} from "./secrets-keyring";
+import {
   applyInstallerLaunchAtLoginSelection,
   consumeInstallerLaunchAtLoginSelection,
 } from "./launch-at-login";
@@ -581,14 +589,42 @@ function loadGeneralSettings0(): GeneralSettings {
 
 export function loadGeneralSettings(): GeneralSettings {
   if (generalSettingsCache !== null) return generalSettingsCache;
-  return (generalSettingsCache = loadGeneralSettings0());
+  const settings = loadGeneralSettings0();
+  applyKeyringToGeneralSettings(settings as unknown as Record<string, unknown>);
+  return (generalSettingsCache = settings);
 }
 
 export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralSettings {
   const before = loadGeneralSettings();
+  // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化；
+  // 复审3 P1-1：写入意图按「值与既有真值（keyring → 内存 before → 磁盘）不同」判定，
+  // 全量回显（{...loadGeneralSettings(), ...patch}）不再被误判为新 key 写入
+  vaultifyGeneralSettingsForSave(
+    partial as unknown as Record<string, unknown>,
+    before as unknown as Record<string, unknown>,
+    getGeneralSettingsPath(),
+  );
+  // PR19 P1-1（掩码-保存门控一致性）：vault 模式不可写（明文回退态 / hydrated 后
+  // 宿主猝死态）时，陈旧掩码空串按「不改」保内存旧明文 key
+  if (shouldPreservePlaintextKeys()) {
+    const incoming = partial as unknown as Record<string, unknown>;
+    const existing = before as unknown as Record<string, unknown>;
+    for (const field of SECRET_GENERAL_FIELDS) {
+      const incomingValue = incoming[field.jsonField];
+      const empty = incomingValue == null || (typeof incomingValue === "string" && incomingValue.trim() === "");
+      if (empty && typeof existing[field.jsonField] === "string" && (existing[field.jsonField] as string).trim() !== "") {
+        incoming[field.jsonField] = existing[field.jsonField];
+      }
+    }
+  }
   const normalized = normalizeGeneralSettings({ ...before, ...partial });
+  // 复审 P0-7 + PR19 P1-1：normalize 归一空串后按 keyring 回填（SENTINEL 已删槽不复活；
+  // authoritative（含 hydrated 后宿主猝死）内存持真值，UI 由掩码隐藏）
+  if (isVaultAuthoritative()) applyKeyringToGeneralSettings(normalized as unknown as Record<string, unknown>);
   const filePath = getGeneralSettingsPath();
-  fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2));
+  // vault 模式磁盘清痕（A2，写副本）；PR19 P1-1：authoritative 但不可写时 key 槽取磁盘原值
+  const persist = stripKeysForDisk(normalized, filePath);
+  fs.writeFileSync(filePath, JSON.stringify(persist, null, 2));
   generalSettingsCache = normalized;
   notifyGeneralSettingsChanged(before, normalized);
   // 独立 Git 配置文件随设置同步（仅开关开时；失败只记日志，不阻断设置保存）
@@ -604,4 +640,14 @@ export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralS
     console.error("[Cyrene] sync dedicated git config failed:", error);
   }
   return normalized;
+}
+
+/**
+ * 复审 P0-6：hydrate 晚于缓存建立时对已建 general 缓存原地回填
+ * （pre-ready 阶段 loadGeneralSettings 先建立缓存，keyring 未 hydrate 回填 no-op）。
+ */
+export function refreshGeneralSettingsFromKeyring(): void {
+  if (generalSettingsCache !== null) {
+    applyKeyringToGeneralSettings(generalSettingsCache as unknown as Record<string, unknown>);
+  }
 }

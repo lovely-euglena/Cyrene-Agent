@@ -6,6 +6,18 @@ import { foldReasoning, normalizeReasoningPreference, type ReasoningPreference }
 import { normalizeManualReasoningConfig, type ManualReasoningConfig } from "../../shared/manual-reasoning";
 import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
+import {
+  applyKeyringToModelSettings,
+  getSecret,
+  isVaultAuthoritative,
+  isVaultMode,
+  shouldPreservePlaintextKeys,
+  stripKeysForDisk,
+  VAULT_KEY_VISION,
+  vaultifyModelSettingsForSave,
+  vaultKeyForProfile,
+  vaultKeyForProvider,
+} from "./secrets-keyring";
 import type { VisionConfig } from "../orchestrator/vision-captioner";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors/capabilities";
@@ -17,6 +29,7 @@ import {
 } from "../../shared/session-model";
 import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type SavedModelProfile } from "./model-catalog";
 import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
+import { renamedProvider } from "./provider-renames";
 
 /**
  * 统一模型配置入口：所有模块（包括 Code 模式）必须通过此函数读取。
@@ -75,23 +88,6 @@ export interface ProviderProfile {
 }
 
 /**
- * 厂商名变更映射：旧 providerName → 新 providerName。
- *
- * 触发时机：UI 上为了对齐"英文名（中文公司名）"格式重命名了 preset 后，
- * 已存盘的 model-settings.json 里 provider 字段（以及 perProvider 字典的键）
- * 仍是旧名；normalize 阶段做一次性迁移，把旧名的 perProvider 数据搬到新名下，
- * provider 字段也改写为新名。迁移后写盘一次即清除痕迹。
- *
- * 后续如果再次重命名，**只追加键值对**，不要删除老条目，避免回归。
- */
-const PROVIDER_RENAMES: Record<string, string> = {
-  "MiniMax": "MiniMax（稀宇科技）",
-  "DeepSeek": "DeepSeek（深度求索）",
-  "智谱 GLM": "GLM（智谱）",
-  "通义千问（DashScope）": "Qwen（通义千问）",
-};
-
-/**
  * 把 perProvider 字典 + currentProvider 字段一起套用 PROVIDER_RENAMES。
  * - 旧名 → 新名：直接搬数据；如果新名已存在数据，旧名的不覆盖（保护"已用新名存过"的情况）。
  * - 不在映射表里的键：原样保留。
@@ -102,7 +98,7 @@ function migrateProviderRenames(
 ): { provider: string; perProvider: Record<string, ProviderProfile> } {
   const next: Record<string, ProviderProfile> = {};
   for (const [key, value] of Object.entries(perProvider)) {
-    const newKey = PROVIDER_RENAMES[key] ?? key;
+    const newKey = renamedProvider(key);
     if (next[newKey]) {
       // 新名已经有数据（说明用户已经在新名下存过），旧名的本地副本保留为最近一次更新优先：
       // 这里取保守路线 → 不覆盖 next[newKey]，旧名直接丢弃。
@@ -114,7 +110,7 @@ function migrateProviderRenames(
     }
     next[newKey] = value;
   }
-  const newProvider = PROVIDER_RENAMES[currentProvider] ?? currentProvider;
+  const newProvider = renamedProvider(currentProvider);
   return { provider: newProvider, perProvider: next };
 }
 
@@ -242,7 +238,7 @@ function normalizeProviderProfile(
   input: Partial<ProviderProfile> | null | undefined,
   provider = DEFAULT_MODEL_SETTINGS.provider,
 ): ProviderProfile {
-  const normalizedProvider = PROVIDER_RENAMES[provider] ?? provider;
+  const normalizedProvider = renamedProvider(provider);
   const explicitTransport: ProviderProfile["explicitTransport"] =
     migrateLegacyExplicitTransport(input, normalizedProvider);
   const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
@@ -389,7 +385,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
   const modelProfiles: SavedModelProfile[] = hasPersistedProfiles
     ? input!.modelProfiles!.filter((item): item is SavedModelProfile => Boolean(item && typeof item === "object" && typeof item.id === "string" && typeof item.provider === "string"))
       .map((item) => {
-        const normalizedProvider = PROVIDER_RENAMES[item.provider] ?? item.provider;
+        const normalizedProvider = renamedProvider(item.provider);
         return { ...normalizeProviderProfile(item, normalizedProvider), id: item.id, provider: normalizedProvider };
       })
     : [];
@@ -587,7 +583,10 @@ function loadModelSettings0(): ModelSettings {
 
 export function loadModelSettings(): ModelSettings {
   if (modelSettingsCache !== null) return modelSettingsCache;
-  return modelSettingsCache = loadModelSettings0();
+  const settings = loadModelSettings0();
+  // vault 模式：从 keyring 回填密钥（迁移前未 hydrate 时 no-op，明文照旧可读）
+  applyKeyringToModelSettings(settings);
+  return modelSettingsCache = settings;
 }
 
 /**
@@ -621,6 +620,47 @@ export function loadVisionConfig(from: ModelSettings = loadModelSettings()): Vis
 }
 
 /**
+ * PR19 复审 P1-1（掩码-保存门控一致性）：vault 模式开但不可写（迁移前宿主缺失
+ * 的回退态 / hydrated 后宿主猝死的 authoritative-readonly 态）时，陈旧掩码载荷
+ * 可能回传空 key。空串/缺失一律按「不改」处理——逐槽位用内存旧值回填，避免
+ * `normalizeProviderProfile` 把缺失 apiKey 补 "" 后覆盖写盘（永久丢钥）。
+ * 仅 vault 模式不可写时生效；纯明文模式（vault 关闭）与 vault 可写态语义不变。
+ */
+function preserveKeysWhenVaultUnwritable(incoming: Partial<ModelSettings>, existing: ModelSettings): void {
+  if (!shouldPreservePlaintextKeys()) return;
+  const keep = (target: Record<string, unknown>, field: string, oldValue: unknown): void => {
+    const value = target[field];
+    const empty = value == null || (typeof value === "string" && value.trim() === "");
+    if (empty && typeof oldValue === "string" && oldValue.trim() !== "") {
+      target[field] = oldValue;
+    }
+  };
+  const provider = (typeof incoming.provider === "string" && incoming.provider.trim()) || existing.provider;
+  keep(incoming as unknown as Record<string, unknown>, "apiKey",
+    existing.perProvider?.[provider]?.apiKey || existing.apiKey);
+  const per = incoming.perProvider;
+  if (per && typeof per === "object") {
+    for (const [name, entry] of Object.entries(per)) {
+      if (entry && typeof entry === "object") {
+        keep(entry as unknown as Record<string, unknown>, "apiKey", existing.perProvider?.[name]?.apiKey);
+      }
+    }
+  }
+  const profiles = incoming.modelProfiles;
+  if (Array.isArray(profiles)) {
+    for (const profile of profiles) {
+      if (profile && typeof profile === "object") {
+        const old = existing.modelProfiles?.find((item) => item.id === profile.id);
+        keep(profile as unknown as Record<string, unknown>, "apiKey", old?.apiKey);
+      }
+    }
+  }
+  if (incoming.vision && typeof incoming.vision === "object") {
+    keep(incoming.vision as unknown as Record<string, unknown>, "apiKey", existing.vision?.apiKey);
+  }
+}
+
+/**
  * 保存逻辑：
  *   - 渲染端发来的 settings 既可能带顶层 baseUrl/model/apiKey（旧调用方式），
  *     也可能带 perProvider（新调用方式，未来可扩展）。
@@ -629,6 +669,15 @@ export function loadVisionConfig(from: ModelSettings = loadModelSettings()): Vis
  */
 export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettings {
   const existing = loadModelSettings();
+  // vault 模式（A2/A3）：摘 ""（=不改）/ 处理 SENTINEL（=清除）/ 新值入 vault；
+  // 复审3 P1-1：写入意图按「值与既有真值（keyring → 内存 existing → 磁盘）不同」判定，
+  // 内部全量回显（档案列表 / {...current} 展开）不再被误判为新 key 写入
+  vaultifyModelSettingsForSave(
+    settings as unknown as Record<string, unknown>,
+    existing as unknown as Record<string, unknown>,
+    getSettingsPath(),
+  );
+  preserveKeysWhenVaultUnwritable(settings, existing);
   const merged: Partial<ModelSettings> = { ...existing, ...settings };
 
   // currentProvider 优先取传入的、再取已有的
@@ -685,11 +734,101 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   merged.perProvider = perProvider;
 
   const final = normalizeModelSettings(merged);
+  // 复审 P0-7 + PR19 P1-1：normalize 会把掩码空串归一进槽位——事实源在 vault 时按
+  // keyring 回填（SENTINEL 已删的槽 keyring 无值，不会复活；用户新值已同步进 keyring，
+  // 回填即新值；hydrated 后宿主猝死时内存仍持 keyring 真值，UI 由掩码隐藏）
+  if (isVaultAuthoritative()) applyKeyringToModelSettings(final);
   const filePath = getSettingsPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(final, null, 2), "utf8");
+  // vault 模式磁盘清痕（A2）：写副本；PR19 P1-1：不可写但 authoritative 时 key 槽取
+  // 磁盘原值（不写内存/keyring 明文、不空串覆盖），返回值与内存缓存持真值
+  const persist = stripKeysForDisk(final, filePath);
+  fs.writeFileSync(filePath, JSON.stringify(persist, null, 2), "utf8");
   Object.assign(existing, final);
   return final;
+}
+
+/**
+ * 复审 P0-6：hydrate 晚于缓存建立时（pre-ready 阶段已 load），对已建缓存原地回填。
+ * initSecretsVault 完成后由启动序调用；非 vault / 未 hydrate 时 no-op。
+ */
+export function refreshModelSettingsFromKeyring(): void {
+  if (modelSettingsCache !== null) applyKeyringToModelSettings(modelSettingsCache);
+}
+
+export interface TestConnectionKeyContext {
+  provider: string;
+  apiKey?: string;
+  /** 复审 P1-6：被测档案 id（渲染端/WPF 表单携带；有则精确解析 model:profile:<id> 槽）。 */
+  profileId?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+/**
+ * 复审 P1-6 + PR19 P1-2：测试连接的真 key 回填。
+ * 掩码后渲染端/WPF 的 apiKey 为空——按上下文（profileId → provider+baseUrl+model 档案 →
+ * 同 provider 档案槽 → provider 槽）解析真值；每个槽位 keyring 解析不到时回退内存/盘上
+ * 明文槽（明文回退态 / 部分迁移态），顺序仍为 profile → provider → 顶层镜像。
+ * 解析不到回空（测试显式失败，不拿活跃 provider 的 key 去测别的 endpoint——凭据不跨端点；
+ * 顶层镜像仅在与 provider 一致时兜底）。vision 槽单独由 resolveVisionTestApiKey 处理。
+ */
+export function resolveTestConnectionApiKey(ctx: TestConnectionKeyContext): string {
+  if (ctx.apiKey && ctx.apiKey.trim()) return ctx.apiKey;
+  if (!isVaultMode()) return ctx.apiKey ?? "";
+  const settings = loadModelSettings();
+  const profiles = listSavedModelProfiles(settings);
+  const plainProfileKey = (profile: SavedModelProfile | undefined): string => {
+    const v = profile?.apiKey;
+    return v && v.trim() ? v.trim() : "";
+  };
+  const plainProviderKey = (provider: string): string => {
+    const per = settings.perProvider?.[provider]?.apiKey;
+    if (per && per.trim()) return per.trim();
+    // 顶层 apiKey 是活跃 provider 的镜像——仅同 provider 时兜底（不跨端点）
+    if (settings.provider === provider && settings.apiKey && settings.apiKey.trim()) {
+      return settings.apiKey.trim();
+    }
+    return "";
+  };
+  const profileKey = (profile: SavedModelProfile | undefined): string => {
+    if (!profile) return "";
+    const fromVault = getSecret(vaultKeyForProfile(profile.id));
+    if (fromVault) return fromVault;
+    const plain = plainProfileKey(profile);
+    if (plain) return plain;
+    const provider = getSecret(vaultKeyForProvider(profile.provider));
+    if (provider) return provider;
+    return plainProviderKey(profile.provider);
+  };
+  if (ctx.profileId) {
+    const direct = getSecret(vaultKeyForProfile(ctx.profileId));
+    if (direct) return direct;
+    const profile = profiles.find((item) => item.id === ctx.profileId);
+    const byProfile = profileKey(profile);
+    if (byProfile) return byProfile;
+  }
+  const exact = profiles.find((item) => item.provider === ctx.provider
+    && item.baseUrl === ctx.baseUrl && item.model === ctx.model);
+  if (exact) {
+    const v = profileKey(exact);
+    if (v) return v;
+  }
+  const sameProvider = profiles.find((item) => item.provider === ctx.provider);
+  if (sameProvider) {
+    const v = profileKey(sameProvider);
+    if (v) return v;
+  }
+  return getSecret(vaultKeyForProvider(ctx.provider)) ?? plainProviderKey(ctx.provider) ?? "";
+}
+
+/**
+ * 复审 P1-2：视觉测试连接的真 key 回填（渲染端 IPC 与 WPF 原生 test-vision 同口径）。
+ * vault 模式下掩码空 key → keyring vision 槽；解析不到原样返回（测试显式失败，不跨槽）。
+ */
+export function resolveVisionTestApiKey(apiKey: string): string {
+  if (isVaultMode() && !apiKey.trim()) return getSecret(VAULT_KEY_VISION) ?? apiKey;
+  return apiKey;
 }
 
 

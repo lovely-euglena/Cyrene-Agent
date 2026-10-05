@@ -1,7 +1,7 @@
 # LLM 服务化：.NET 厂商服务（job + 轮询取 token）
 
 > **日期**：2026-10-03
-> **状态**：设计草案（讨论中，未实施）
+> **状态**：Phase 1 已实施（issue/IKJM7D 分支，A1–A5；llm-host H0–H4 MVP 同批落地）
 > **关联 Issue**：[Ygwill/cyrene-agent#IKJLB2](https://gitee.com/ygwill/cyrene-agent/issues/IKJLB2)
 > **结论先行**：新增 `cyrene-native --llm-host` **作业式厂商服务**——TS `llm.submit` 提交请求，
 > .NET 负责「鉴权注入 → 发送 → 流式解析 → 事件缓冲」，TS 按 cursor **轮询**取归一化 token 事件。
@@ -14,6 +14,24 @@
 > `src/main/llm-queue.ts`（现有后台限流队列，本设计接管其职责）。
 > 服务器版关联：决策 issue [IKJK2F](https://gitee.com/ygwill/cyrene-agent/issues/IKJK2F) ·
 > 里程碑 [#229292「云端昔涟：不落」](https://gitee.com/ygwill/cyrene-agent/milestones/229292)。
+>
+> **实施偏差注记（2026-10-05，复审后补）**：本稿为设计目标态，落地以 `LlmContracts.cs`
+> 冻结契约为准，已知偏差：
+> - 事件名：本稿 §4.2 的 `text_delta/thinking_delta/tool_call` 在实现中为
+>   `delta/reasoning_delta/tool_calls_delta`（对齐 OpenAI chunk 形态，契约两侧锁定）；
+> - **批合并未实现**：本稿 §4.2 的「上游 16–50ms 批合并 / ≥256 字符」未落地——.NET 逐
+>   事件落 ring，节流由 TS poll 侧 ~66ms 节奏承担（400 TPS 由 ring 缓冲摊平）；
+> - `truncated`：ring drop-oldest 不注入合成事件（保持绝对序号连续），改由 `llm.poll`
+>   帧的 `truncated`（请求 cursor 落在已丢弃段 = 真实增量缺口）告知；`dropped` 仅为 ring
+>   回收累计（含「已 poll 消费、仅因 ring 满被回收」的事件，不等价于缺口——复审 P2-2）；
+> - **工具批保护未实现（复审 P2-3，接受同权丢弃）**：本稿 §4.4 要求工具调用/usage/finish
+>   永不丢弃（单独优先级通道），实现为全事件同权 drop-oldest。依据：反压把未确认量压在
+>   ≤~1025（`LowWater` 单一阈值），远低于 ring 4096，驱逐时被驱逐事件必已消费（真实缺口经
+>   `poll.truncated` 上报）；做保护位需从 ring 中部驱逐，会破坏「绝对序号连续 + cursor 幂等」
+>   不变量（重投递/静默漏读），收益与风险不成比例，故按同权丢弃接受并注记；
+> - cursor：实现为绝对序号 + 低于丢弃段时 clamp 到 base 补读（幂等，不重投）；
+> - 重试/超时：总时长 `timeoutMs`、idle `idleTimeoutMs`、`maxRetries` 均按帧透传生效
+>   （对齐 `model-retry-runner` 语义）；lane 并发 4/2/1 持槽至作业终态。
 
 ---
 

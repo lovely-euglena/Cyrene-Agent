@@ -33,6 +33,11 @@ export class LineHostClient {
     this.timeoutMs = timeoutMs;
   }
 
+  /** 子类追加启动参数（如 --data-dir）。 */
+  protected extraArgs(): string[] {
+    return [];
+  }
+
   async ensureStarted(): Promise<boolean> {
     if (this.proc && !this.exited) return true;
     if (this.starting) return this.starting;
@@ -41,7 +46,7 @@ export class LineHostClient {
       if (!exe) return false;
       // mode 支持数组（["dotnet", dll, "--tool-host"] 形态——argv[0] 是
       // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）
-      const argv = Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode];
+      const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode]), ...this.extraArgs()];
       const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       if (!child?.stdout?.readable || !child?.stdin) return false;
       this.proc = child;
@@ -72,9 +77,18 @@ export class LineHostClient {
       return true;
     })();
     this.starting = starting;
-    const ok = await starting;
-    this.starting = null;
-    return ok;
+    // 复审 P2-2⑥：同步/异步 reject 也必须清 starting——否则失败 promise 被永久缓存，
+    // 后续 ensureStarted 永远拿到同一次失败（宿主再也拉不起来）。
+    try {
+      return await starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  /** 保存路径门控用（IKJNX1 #1）：同步判定宿主进程当前是否存活（不触发拉起）。 */
+  isAlive(): boolean {
+    return !!this.proc && !this.exited;
   }
 
   protected resolveExe(): string | null {
@@ -114,8 +128,16 @@ export class LineHostClient {
       if (!p) return;
       this.pending.delete(callId);
       clearTimeout(p.timer);
-      if (frame.ok === false) p.reject(new Error(String(frame.error ?? "host 调用失败")));
-      else p.resolve(frame.data ?? frame);
+      if (frame.ok === false) {
+        // 复审 P0-5：对齐仓库错误帧约定 {error: "msg", errorCode: "E_..."}——
+        // 业务错误码挂到 Error 上，调用方可分类（lane 满 / auth 缺失 / secret 不可用）
+        const err = new Error(String(frame.error ?? "host 调用失败")) as Error & { errorCode?: string; retryable?: boolean };
+        if (typeof frame.errorCode === "string") err.errorCode = frame.errorCode;
+        if (typeof frame.retryable === "boolean") err.retryable = frame.retryable;
+        p.reject(err);
+      } else {
+        p.resolve(frame.data ?? frame);
+      }
     } else if (op === "ready" || op === "log" || op === "vad_result" || op === "asr_partial" || op === "asr_final" || op === "tts_meta") {
       this.onEvent(frame);
     }
