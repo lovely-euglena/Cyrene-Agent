@@ -1,6 +1,8 @@
 # 服务端渠道 24/7（云端昔涟 Phase 2 · 渠道批）设计
 
-> **状态**：**冻结设计**（2026-10-05，分支 `feat/server-channel`）——后续实现与 PR 的依据；本文不写实现代码。
+> **状态**：**已实施**（2026-10-05，分支 `feat/server-channel`）——渠道批五轨 + 收口轨已落地；实现与 PR 依据仍以本文为准。
+> **收口说明（2026-10-05 阶段 8）**：已知缺口 = SILK 语音仍为 `ISilkCodec` 占位 + 文本降级（§4.2 阶段 7 未落地）；
+> 服务端自主主动消息调度未做（依赖 IKJK2O，§5.4 Q3）；真机冒烟待人工执行（清单见 `dotnet/cloud-server/README.md`「真机冒烟清单」）。
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（§0.3 阶段范围 / §1 总体架构 / §6 issue 映射）·
 > 服务端四形态 `docs/design/2026-10-04-cloud-server-forms.md` · 同步协议 v0
 > `docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/` ·

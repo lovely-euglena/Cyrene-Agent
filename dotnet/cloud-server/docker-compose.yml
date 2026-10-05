@@ -15,6 +15,14 @@ services:
       # CLOUD_TOKEN: change-me   # 主控令牌（引导/运维；IKJK2K）
       # CLOUD_LLM_API_KEY: change-me        # 服务端生成（IKJK2M）
       # CLOUD_LLM_MODEL: gpt-4o-mini
+      # CLOUD_CHANNELS: wechat,feishu,qqbot   # 渠道托管（Phase 2；依赖上面的 CLOUD_LLM_API_KEY）
+      # CLOUD_CHANNEL_OWNERSHIP_TTL_SECONDS: "180"
+      # CLOUD_CHANNEL_FEISHU_APP_ID: change-me
+      # CLOUD_CHANNEL_FEISHU_APP_SECRET: change-me
+      # CLOUD_CHANNEL_FEISHU_VERIFICATION_TOKEN: change-me
+      # CLOUD_CHANNEL_QQBOT_APP_ID: change-me
+      # CLOUD_CHANNEL_QQBOT_APP_SECRET: change-me
+      # 镜像已内置 ffmpeg（飞书语音）；体积敏感可 CLOUD_CHANNEL_FEISHU_AUDIO: "0"
     volumes:
       # 命名卷初始化继承镜像 /data 属主（cyrene, uid 10001）；bind mount 需自行 chown
       - cloud-data:/data
