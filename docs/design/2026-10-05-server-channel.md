@@ -3,6 +3,9 @@
 > **状态**：**已实施**（2026-10-05，分支 `feat/server-channel`）——渠道批五轨 + 收口轨已落地；实现与 PR 依据仍以本文为准。
 > **收口说明（2026-10-05 阶段 8）**：已知缺口 = SILK 语音仍为 `ISilkCodec` 占位 + 文本降级（§4.2 阶段 7 未落地）；
 > 服务端自主主动消息调度未做（依赖 IKJK2O，§5.4 Q3）；真机冒烟待人工执行（清单见 `dotnet/cloud-server/README.md`「真机冒烟清单」）。
+> **R1 评审收口（2026-10-05）**：飞书出站缺省 `receive_id_type=chat_id`（§6.3）、`E_CHANNEL_UNSUPPORTED`（§5.2）、
+> preferServer 已实现（§5.5）、QQ 附件-only 拦截文案（§7.2/Q7）等已并入；`healthz.channels` 与 RSS>380MB 告警
+> 本批未实现（§3.5/§5.7/§8.3，后续批次）；fixtures 51 例。
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（§0.3 阶段范围 / §1 总体架构 / §6 issue 映射）·
 > 服务端四形态 `docs/design/2026-10-04-cloud-server-forms.md` · 同步协议 v0
 > `docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/` ·
@@ -97,18 +100,19 @@ dotnet/cloud-server/Channels/                   ← 服务端专有：网络、�
 ├─ ChannelManager.cs         TS manager.ts 镜像（注册表 + 启停 + 单实例守卫）
 ├─ ChannelDispatcher.cs      入站 → 去重 → ServerEventWriter → DialogEngine → 出站 → 回执
 ├─ ChannelDeliveryService.cs TS delivery-service.ts 镜像（统一发送边界/错误归一）
-├─ ChannelHostedService.cs   BackgroundService：按配置 + 归属启停适配器；媒体清理定时器
+├─ ChannelHostedService.cs   BackgroundService：按配置 + 归属启停适配器
 ├─ ChannelOptions.cs         env 解析（CLOUD_CHANNELS / CLOUD_CHANNEL_*，见 §2.3）
 ├─ ChannelStore.cs           channels.db：credentials / recipients / ownership / seen_messages /
 │                            delivery_receipts（与 events.db 分离，见 §2.4 决策 R2）
 ├─ ChannelOwnershipService.cs 租约状态机（§5）
 ├─ ChannelApi.cs             /v1/channels/* 端点组（含飞书 webhook 公开路由，§6.2）
 ├─ ChannelProactiveService.cs 主动消息投递（幂等，§5.4）
-├─ ChannelMediaStore.cs      媒体缓存（目录/上限/TTL/0600）
 └─ Adapters/
-   ├─ WeChat/   ILinkProtocolClient / ILinkBotAdapter / WeChatCdnMedia /
-   │            WeChatQrLogin / Silk（ISilkCodec 及实现）
+   ├─ WeChat/   ILinkProtocolClient / ILinkBotAdapter / WeChatCdnMedia / WeChatQrLogin /
+   │            Silk（ISilkCodec 及实现）；WeChatMediaStore（媒体缓存：目录/上限/TTL/0600；
+   │            清理在适配器启动时执行，非后台定时器）
    ├─ Feishu/   FeishuAdapter / FeishuApiClient / FeishuEventCrypto / FeishuMediaTranscoder
+   │            （入站媒体落 data/media/feishu；LRU/TTL 由后续媒体清理接入）
    └─ QqBot/    QqBotAdapter / QqBotApiClient / QqBotWsClient
 
 dotnet/cloud-server/DialogEngine.cs             ← 从 DialogLoop 抽出的生成核心（§2.4 决策 R3）
@@ -159,7 +163,7 @@ src/main/channels/
 | 渠道 | text | image | audio | file | video | markdown | card | sticker | maxTextLength |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | wechat | ✅ | ✅ | 分期（§4） | ✅ | ✅（仅出站转发） | ❌ | ❌ | ✅ | 2048 |
-| feishu | ✅ | ✅ | 分期（§6.3） | ✅ | ✅ | ✅ | ✅ | ✅ | 4000 |
+| feishu | ✅ | ✅ | ✅（ffmpeg 入镜像；`CLOUD_CHANNEL_FEISHU_AUDIO=0` 可关） | ✅ | ✅ | ✅ | ✅ | ✅ | 4000 |
 | qqbot | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 0（适配器按 `splitQqText` 分片） |
 
 **ChannelStatus**：`{enabled, phase:"running"｜"offline"｜"starting"｜"config_missing"｜"error", message?, detail?}`；
@@ -350,7 +354,7 @@ C# 侧 `ILinkProtocolClient` 保持**同端点、同字段、同头**，差异�
 | 媒体下载/上传 | 单请求 ≤20MB 峰值 | 流式落盘；并发 1；超限拒绝 |
 | 适配器状态/去重表 | ≤5MB | `seen_messages` 按 TTL 30 天清理；内存表仅热窗口 |
 | SILK/转码（分期） | 10–40MB（按需） | wasmtime 单实例池 1；ffmpeg 并发 1 + 超时 |
-| 渠道层合计目标 | ≤420MB（峰值） | `healthz` RSS >380MB 记 warning；容器 `mem_limit 512m` 兜底 |
+| 渠道层合计目标 | ≤420MB（峰值） | `healthz` 暴露 `rssMB` 仅观测；**>380MB 告警未实现**（后续批次）；容器 `mem_limit 512m` 兜底 |
 
 ---
 
@@ -444,7 +448,8 @@ C# 侧 `ILinkProtocolClient` 保持**同端点、同字段、同头**，差异�
 
 - 鉴权：沿用 `/v1/*` 中间件（device token 或 `CLOUD_TOKEN`）；无新增凭据面；
 - 错误码：`E_CHANNEL_UNKNOWN` / `E_CHANNEL_NOT_HOSTED` / `E_CHANNEL_OWNED_BY_OTHER` /
-  `E_CHANNEL_RECIPIENT_MISSING` / `E_CHANNEL_SEND_FAILED` / `E_CHANNEL_LOGIN`；
+  `E_CHANNEL_RECIPIENT_MISSING` / `E_CHANNEL_SEND_FAILED` / `E_CHANNEL_LOGIN` /
+  `E_CHANNEL_UNSUPPORTED`（400；proactive capability 前置拒绝，如 qqbot `proactive:false`，不写事件/不投递）；
 - **不新增推送通道**：桌面 30s 轮询 `GET /v1/channels/ownership`（PWA Q7 同口径），状态变化触发本机适配器启停；
 - 归属变更与 proactive 均走 `sync` 限流桶（复用，不新增配额面）。
 
@@ -489,7 +494,7 @@ sequenceDiagram
 | 桌面启动时服务端不可达 | 渠道**不自动接管**（避免与仍在运行的服务端双主）；状态 `unknown`，UI 提示「云端暂不可达」；用户可手动「本机运行」 |
 | 运行期不可达 < 宽限期（默认 300s） | 桌面保持 `paused_remote`，只重试；期间渠道由服务端继续服务 |
 | 运行期不可达 ≥ 宽限期且 `failover=local` | 进入 `failover_local`：本机启动适配器；状态标注「本机兜底（未与云端确认）」；重复消息由幂等吸收，可能重复回复（文档明示） |
-| 服务端恢复 | 桌面按 `preferServer`（默认 true）`release` 并停本机；或 `claim` 维持本机（用户偏好） |
+| 服务端恢复 | **已实现**（`ownership.ts`，仅自动兜底渠道）：`preferServer=true`（默认）自动 `release` 并停本机；`false` 则重新 `claim` 维持本机；手动「本机运行」不参与自动交回（继续续租） |
 | 服务端进程重启 | `channel_ownership` 持久化：原 owner=server 的渠道直接恢复；owner=desktop 且租约未过期的渠道保持 paused（等桌面心跳） |
 
 ### 5.6 两端实现点
@@ -499,7 +504,7 @@ sequenceDiagram
 | C# | `Channels/ChannelOwnershipService.cs` | 租约读写/过期回收/claim-release 状态机；`ChannelHostedService` 订阅其变更启停适配器 |
 | C# | `Channels/ChannelApi.cs` | 上述端点 + 错误码 + 限流桶 |
 | C# | `Channels/ChannelDispatcher.cs` | 入站归属门闩（owner≠server 直接丢弃并记 debug，防交接窗口误处理） |
-| TS | `src/main/channels/ownership.ts` | 客户端：轮询/claim/heartbeat/release/状态缓存/不可达计数与兜底判定 |
+| TS | `src/main/channels/ownership.ts` | 客户端：轮询/claim/heartbeat/release/状态缓存/不可达计数与兜底判定；控制面请求 12s 超时（停止时中止在途并尽力交回租约）；remote 配置 5s TTL 缓存（保存后立即失效） |
 | TS | `src/main/channels/manager.ts`、`init.ts` | `startAll` 前按归属过滤；运行期变更时 `stopOne/startOne`（新增 `pauseOne`/`resumeOne` 语义） |
 | TS | `src/main/channels/dispatcher.ts` | 门闩（第二道防线）+ 状态广播 |
 | TS | `src/main/proactive/proactive-lifecycle.ts`、`proactive-delivery.ts` | 转发/本机二选一 |
@@ -513,7 +518,7 @@ sequenceDiagram
 | 租约丢失（网络抖动） | heartbeat `lost` | 桌面立即停适配器；下一轮重新 claim |
 | 服务端适配器启动失败 | status `error` + 日志 | 不影响其它渠道；桌面轮询可见；人工修凭据 |
 | 状态轮询失败 | 连续失败计数 | 状态 `unknown`；不影响已建立的归属判定（以最后一次成功为准，超 TTL 才降级） |
-| 可观测性 | `GET /v1/channels/status` + `healthz.channels` + 结构化日志 | 日志字段：`channel`、`phase`、`owner`、`event=claim/release/expire/start/stop`、错误码；**不含消息正文与凭据** |
+| 可观测性 | `GET /v1/channels/status` + 结构化日志（`healthz.rssMB` 仅 RSS 观测；`healthz.channels` **未实现**，后续批次） | 日志字段：`channel`、`phase`、`owner`、`event=claim/release/expire/start/stop`、错误码；**不含消息正文与凭据** |
 
 ---
 
@@ -534,9 +539,12 @@ sequenceDiagram
 
 ### 6.2 事件接收（webhook）
 
-- 路由：`POST /v1/channels/feishu/events`（**公开路由**，加入鉴权中间件豁免名单，与 `/v1/pair` 同级）；
-  自带校验：Verification Token 定长比较 + `X-Lark-Signature`（`sha256(timestamp + nonce + encryptKey + rawBody)`）
-  + 时间戳新鲜度 ±5 分钟（防重放）；
+- 路由：`POST /v1/channels/feishu/webhook`（**公开路由**，加入鉴权中间件豁免名单，与 `/v1/pair` 同级；
+  兼容别名 `/v1/channels/feishu/events`，两者同一处理函数）；请求体 1MB 上限、chunked 分块限读（超限 413
+  `E_FEISHU_BODY_TOO_LARGE`）；
+  自带校验：Verification Token 定长比较（临时字节比较后清零）+ `X-Lark-Signature`
+  （`sha256(timestamp + nonce + encryptKey + rawBody)`）+ 时间戳新鲜度 ±5 分钟（防重放；越界 401
+  `E_FEISHU_TIMESTAMP`）；
 - 流程：challenge（`type=url_verification`）→ 原样回 `challenge`；加密事件 → AES-256-CBC 解密
   （key=SHA-256(EncryptKey)、IV 取密文前 16 字节，实现时以官方文档 + 测试向量锁定）→
   解析 `im.message.receive_v1` → 归一化 → 去重（`seen_messages`：message_id + header.event_id 双键）→
@@ -549,16 +557,20 @@ sequenceDiagram
 
 - `FeishuApiClient`：`tenant_access_token` 缓存（过期前 5 分钟刷新，并发去重）→
   `POST /open-apis/im/v1/messages?receive_id_type=open_id|chat_id`（文本/图片/文件/音频/卡片）；
+  **缺省 `chat_id`**——dispatcher 的 TargetId 恒为 chatId（`oc_…`），显式传 `receiveIdType=open_id` 才覆盖；
   图片/文件先 `im/v1/images`、`im/v1/files` 上传；错误码进状态（`lastErrorCode`）；
 - 入站媒体：`GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=image|file` 流式落盘（≤20MB）；
 - 音频出站：飞书要求 Ogg Opus（单声道 48k）；服务端用 **ffmpeg**（镜像内安装，`FeishuMediaTranscoder` 封装：
-  并发 1、30s 超时、临时文件清理、失败降级文本）。入站音频（mp3/opus）→ ffmpeg 解码 → ASR（V2）；
+  并发 1、30s 超时、临时文件清理、失败降级文本；转码产物固定 `.ogg` 文件名）。出站 `duration` 由
+  Ogg granule_position 解析（48kHz 采样数 / 48，与桌面 `parseOpusDuration` 同口径）。入站音频（mp3/opus）→
+  ffmpeg 解码 → ASR（V2）；
 - 决策：ffmpeg 入镜像（+~80MB 镜像体积）换取飞书语音验收；若镜像体积不可接受，退路 = 纯文本 +
   状态 `voice:false`（`CLOUD_CHANNEL_FEISHU_AUDIO=0` 关闭）。**本 PR 默认开启**（与 2S 验收一致）。
 
 ### 6.4 主动消息（仅限与机器人有会话的用户）
 
-- 服务端发送：`im/v1/messages` 直发 `open_id`（飞书允许给与机器人有会话的用户发消息）；
+- 服务端发送：`im/v1/messages` 直发收件人（`channel_recipients` 记录的 chatId → 缺省 `receive_id_type=chat_id`；
+  飞书允许给与机器人有会话的用户发消息）；
 - 唯一化：由 §5.4 保证——服务端 owner 时只走 `POST /v1/channels/feishu/proactive`；桌面不直发；
 - 验收证据：mock 断言 + 真机冒烟清单（人工发一条主动消息并截图/日志，CI 豁免）。
 
@@ -592,7 +604,7 @@ sequenceDiagram
 | 白名单 | `allowAnyPrivate`（默认关）/ `allowedUserOpenids` / `allowedGroupOpenids`；被拒 openid 进 status detail（加白引导） |
 | 被动回复 | `POST /v2/users/{openid}/messages`（群 `/v2/groups/{group_openid}/messages`），body `{msg_type:0, content, msg_id, msg_seq}`；**窗口**：单聊 60 分钟 / 群 5 分钟；**次数**：单聊 4 / 群 5（`msg_seq` 递增）；超窗/超限 → 明确错误，不重试 |
 | 分片 | 复用桌面 `splitQqText` 同口径（共享测试向量）；URL 发送失败 → 单次重试失败后记 receipt failed；可选 `CLOUD_CHANNEL_QQBOT_STRIP_URLS=1` 把 URL 替换为占位（默认关，保持内容诚实） |
-| 附件 | 入站附件下载 ≤8MB（镜像桌面）；出站仅文本（本批） |
+| 附件 | 本批**不支持 QQ 入站附件下载**（Q7）；附件-only（text 为空 + 有附件）拦截并被动回复固定文案（`QqBotAdapter.AttachmentNotice`，不派发空文本、不写事件）；出站仅文本（本批） |
 
 ### 7.3 主动通知需求导向
 
@@ -608,16 +620,19 @@ sequenceDiagram
 
 ```text
 fixtures/channels/
-├─ README.md                          双端执行说明（与 fixtures/sync-protocol 同体例）
+├─ README.md                          双端执行说明 + draft-07 schema 校验命令（与 fixtures/sync-protocol 同体例）
 ├─ schema/channel-contract-v1.schema.json   规范镜像（非执行器）：IncomingMessage/OutgoingMessage/派生 id
-└─ cases/
-   ├─ inbound-wechat-*.json     （§3.2 清单）
-   ├─ inbound-feishu-*.json     （challenge/加密/文本/图片/群忽略/重试去重）
-   ├─ inbound-qqbot-*.json      （C2C/群/白名单拒/重复 message_id）
-   ├─ outbound-wechat-*.json    （文本/分片/图片/contextToken 回传）
-   ├─ outbound-feishu-*.json    （文本/图片/音频请求体）
-   ├─ outbound-qqbot-*.json     （被动回复 msg_seq/分片/超限错误）
-   └─ derived-ids-*.json        （makeSessionId / makeChannelTurnId / eventId 派生向量）
+├─ feishu-webhook/*.json              飞书 webhook 回放（非双端契约；channel-selftest feishu 用）：
+│                                     challenge 明文/加密、坏签名、越界时间戳、密文文本/图片、群忽略、重投去重
+└─ cases/                             共 51 例（2026-10-05 R1 收口）
+   ├─ inbound-wechat-*.json     （§3.2 清单 + message_type 严格 ==1 边界 2 例）
+   ├─ inbound-feishu-*.json     （文本/图片/文件/音频、群忽略、缺时间戳、content 非字符串 3 例、duration 非整数）
+   ├─ inbound-qqbot-*.json      （C2C/群 @/附件/白名单拒/缺 openid/坏时间戳/未知事件）
+   ├─ outbound-wechat-*.json    （文本/图片/文件/缺 filePath/视频+sticker）
+   ├─ outbound-feishu-*.json    （文本/图片/音频（含非整数 duration）/视频空 cover/缺省与显式 receive_id_type）
+   ├─ outbound-qqbot-*.json     （被动回复 msg_seq/分片/超限/不支持类型）
+   ├─ text-split-*.json         （wechat/feishu maxParts、qqbot codepoint 分片）
+   └─ derived-ids-*.json / capability-*.json（makeSessionId / turnId / eventId 派生；服务端冻结能力表）
 ```
 
 case 格式（与 sync-protocol 同风格）：
@@ -632,7 +647,8 @@ case 格式（与 sync-protocol 同风格）：
 }
 ```
 
-- `kind`：`inbound` / `outbound` / `derived-ids`；`expect` 逐字段 deep-equal（缺省键必须缺省）；
+- `kind`：`inbound` / `outbound` / `derived-ids` / `text-split` / `capability`；`expect` 逐字段 deep-equal（缺省键必须缺省）；
+- schema 规范校验（draft-07，51 例全过）：`npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"`（命令与说明见 fixtures README）；
 - 用例来源：桌面适配器现有测试向量 + 协议文档样例 + 匿名化真机抓包（§3.2）；
 - 破坏性修改（字段/枚举）必须同时改 TS 类型、C# record、schema、fixtures，双端 runner 全绿才算契约成立。
 
@@ -665,7 +681,7 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
 | 主动消息 | C# selftest + TS vitest | 同上 | intentId 幂等；无收件人错误；桌面转发不本机直发 |
 | 飞书 | C# selftest + mock e2e | `channel-selftest feishu`、channel-smoke | challenge；签名/解密测试向量；重试去重；发送/媒体请求体 |
 | QQ | C# selftest + mock e2e | `channel-selftest qqbot`、channel-smoke | WS 状态机（fake socket）；被动回复 msg_seq/窗口/次数；白名单 |
-| 内存/RSS | 运维 | `healthz`、channel-smoke | 渠道批峰值 ≤420MB；>380MB 告警；容器 512m 兜底 |
+| 内存/RSS | 运维 | `healthz`（`rssMB` 仅观测）、channel-smoke | 渠道批峰值 ≤420MB；容器 512m 兜底；**>380MB 告警未实现**（后续批次） |
 | 回归 | 既有 | `dotnet-cloud-sync-test.py`（54/55）、PWA e2e（11/11）、`vitest src/main/sync src/pwa` | capabilities 扩展向后兼容；现有行为零变化 |
 
 ### 8.4 冒烟与 CI 落点
@@ -677,7 +693,10 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
   4. 既有 `dotnet-cloud-sync-test.py` 与 PWA e2e 回归保留；
 - `scripts/channel-smoke-test.py` 设计：临时数据目录 + mock LLM（echo，复用既有 smoke 的 mock 方式）+
   mock iLink（getupdates/sendmessage/getuploadurl/get_bot_qrcode/get_qrcode_status）+
-  mock 飞书（webhook 回放 + token/messages）+ mock QQ（REST；WS 由 C# selftest 覆盖）；
+  mock 飞书（webhook 回放 + token/messages）+ mock QQ **REST + 网关 WS**（Hello/Identify/READY/C2C dispatch
+  均由冒烟内 mock 网关覆盖；Resume/op7/op9 等 WS 状态机细节由 C# selftest 覆盖）；
+  Linux 下附带落盘权限断言（数据目录 0700、`channels.db` 及 `-wal`/`-shm` 0600、`media/wechat` 目录/文件 0700/0600），
+  非 Linux 平台自动跳过；
   断言清单 = §8.3；退出码聚合；可对已有实例 `--base-url` 复跑（与既有 smoke 同体例）。
 
 ---
@@ -743,7 +762,8 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
 4. **Q4 SILK 再分发许可**：随 spike 复核；许可不明即维持占位（不随包分发 SILK 二进制）。
 5. **Q5 凭据过期告警**：本 PR = 服务端日志 + 渠道状态端点字段 + 桌面轮询提示；外部告警（邮件/webhook）后置。
 6. **Q6 token 复用/配置字段**：IKJK2I 接线前用显式 `channels.remote`（baseUrl/token）配置，**不与同步设置合并**；接线后自动复用。
-7. **Q7 QQ 入站图片**：**不纳入本批**（仅文本被动回复；图片后置）。
+7. **Q7 QQ 入站图片**：**不纳入本批**（仅文本被动回复；图片后置）。附件-only 消息拦截并回固定文案
+   （`QqBotAdapter.AttachmentNotice`），不进入 agent 链路（避免空文本静默无回复）。
 8. **Q8 多设备认领**：**先到先得租约**；第二台桌面保持被动并展示 owner 信息，不排队（后续按需再评估）。
 
 ---

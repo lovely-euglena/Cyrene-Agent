@@ -123,7 +123,8 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 - `POST /v1/channels/ownership/claim|heartbeat|release`（holder = 当前鉴权 deviceId/`master`；多设备先到先得）；
 - `GET /v1/channels/status` → 各渠道 `{id, phase, enabled, owner, detail}`（`detail` 含 `botId`/`wsReady`/`lastErrorCode` 等）；
 - `POST /v1/channels/{id}/proactive` — `{sessionId?, intentId, text}`，intentId 幂等；无收件人 400 `E_CHANNEL_RECIPIENT_MISSING`，
-  owner=desktop 409 `E_CHANNEL_OWNED_BY_OTHER`；qqbot 不在 `capabilities.channels.proactive`（不支持主动通知）；
+  owner=desktop 409 `E_CHANNEL_OWNED_BY_OTHER`；capability 不支持主动的渠道（qqbot）前置 400 `E_CHANNEL_UNSUPPORTED`，
+  不在 `capabilities.channels.proactive`（不支持主动通知）；
 - `POST /v1/channels/wechat/login/start` → `{loginId, pngBase64, expiresAt}`；`GET .../login/status?loginId=` → `pending|scanned|confirmed|expired|error`；
   `POST .../wechat/logout`（幂等）；
 - `POST /v1/channels/feishu/webhook`（**公开路由**，兼容别名 `/events`）：Verification Token + 签名 + ±5min 时间戳 + AES-256-CBC 解密。
@@ -133,7 +134,10 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 桌面设置 `channels.remote = {enabled, baseUrl?, preferServer, failover}`（`src/main/channels/settings-store.ts`）：
 
 - `enabled`：启用「云端托管」；`baseUrl` 缺省复用同步服务端地址（IKJK2I 接线前可显式填写）；
-- token 复用同步 device token（不新增凭据面）；`preferServer=true`（默认）：服务端恢复后 release 并停本机；
+- token 复用同步 device token（不新增凭据面）；控制面请求 12s 超时（停止时中止在途并尽力交回租约）；
+  remote 配置 5s TTL 缓存（保存后立即失效）；
+- `preferServer=true`（默认）：**自动兜底（failover）期间**服务端恢复后自动 release 并停本机；
+  `false` 则重新 claim 维持本机；手动「本机运行」不参与自动交回（继续续租）；
 - `failover=local`（默认关）：服务端连续不可达 ≥ 宽限期才本机兜底启动，重连后必须 claim/release 二选一（残余双主窗口由幂等吸收，文档明示）。
 
 ### 部署要点
@@ -146,7 +150,7 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 
 ### 真机冒烟清单（§1.3 豁免项的替代证据入口）
 
-CI 用 mock e2e（`scripts/channel-smoke-test.py`，52 项）+ C# 自测（`channel-selftest all`，210 项）覆盖协议与编排；
+CI 用 mock e2e（`scripts/channel-smoke-test.py`，52 项；Linux CI 追加 4 项落盘权限断言 = 56 项）+ C# 自测（`channel-selftest all`，232 项）覆盖协议与编排；
 以下**真机项**需人工执行一次，并在部署/PR 记录日期、commit、结果（截图或日志片段）：
 
 | 渠道 | 步骤 | 通过标准 |
@@ -251,10 +255,11 @@ python scripts/dotnet-cloud-sync-test.py        # 本地 full：同步收敛 + �
 python scripts/dotnet-cloud-sync-test.py --profile core   # 本地核心档（同步核心 + 配对 + 能力声明）
 python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN   # 远端形态核心档（CF / PHP / …）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
-dotnet <发布目录>/cyrene-cloud-server.dll channel-selftest all   # 渠道五套 C# 自测（framework/wechat/feishu/qqbot/ownership；210 项，mock HTTP/WS 无网络）
+dotnet <发布目录>/cyrene-cloud-server.dll channel-selftest all   # 渠道五套 C# 自测（framework/wechat/feishu/qqbot/ownership；232 项，mock HTTP/WS 无网络）
 #   `--selftest <suite>` 为同义通用别名（如 --selftest wechat）；未知子集退出码 2，不会误落回真服务启动
-python scripts/channel-smoke-test.py <发布目录>/cyrene-cloud-server.dll   # 渠道 mock e2e（iLink 扫码/文本/图片/重连、飞书 webhook 加密/去重、QQ 网关被动回复、归属、主动消息；52 项）
-dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels   # 渠道契约 fixtures（C# 侧 runner，42 项；TS 侧 npx vitest run src/main/channels）
+python scripts/channel-smoke-test.py <发布目录>/cyrene-cloud-server.dll   # 渠道 mock e2e（iLink 扫码/文本/图片/重连、飞书 webhook 加密/去重、QQ 网关被动回复、归属、主动消息；52 项，Linux +4 落盘权限）
+dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels   # 渠道契约 fixtures（C# 侧 runner，51 项；TS 侧 npx vitest run src/main/channels）
+npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"   # schema 规范校验（draft-07，51 例全过；命令同 fixtures/channels/README.md）
 node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
 node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN   # 远端 e2e（不 spawn；--expect-echo 开启生成断言）
 ```
