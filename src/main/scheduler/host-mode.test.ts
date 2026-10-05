@@ -255,4 +255,32 @@ describe("createHostModeAdapter（IKJK51 host 模式适配）", () => {
       adapter.dispose();
     }
   });
+
+  it("watchdog：ensureConnected 先败后成 → 切回 host（复审 P2-6）", async () => {
+    const local = fakeLocalStore([task({ id: "local-1" })]);
+    const { client, sets } = fakeClient([task({ id: "host-1" })]);
+    let attempts = 0;
+    client.ensureConnected = async () => {
+      attempts += 1;
+      return attempts >= 3;
+    };
+    const modes: string[] = [];
+    const adapter = createHostModeAdapter({
+      client,
+      runTask: vi.fn(async () => runOk()),
+      localStore: local.store,
+      watchdogIntervalMs: 5,
+      onModeChange: (mode) => modes.push(mode),
+    });
+    try {
+      for (const cb of sets.lost) cb();
+      expect(modes).toEqual(["local"]);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(attempts).toBeGreaterThanOrEqual(3);
+      expect(modes).toEqual(["local", "host"]);
+      expect(adapter.store.getTasks()[0].id).toBe("host-1");
+    } finally {
+      adapter.dispose();
+    }
+  });
 });

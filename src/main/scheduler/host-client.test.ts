@@ -201,6 +201,21 @@ describe("createSchedulerHostClient（IKJK51 sched.* 协议）", () => {
     expect(link.sent.filter((f) => f.op === "sched.report").length).toBe(2);
   });
 
+  it("flushReports：断线持续时超时返回且不抛（复审 P2-6）", async () => {
+    const { link, client } = await setupConnected();
+    vi.useFakeTimers();
+    try {
+      link.setConnected(false);
+      client.sendReport({ id: "h-timeout" } as ScheduledTaskHistoryEntry);
+      const flush = client.flushReports(1_000);
+      await vi.advanceTimersByTimeAsync(1_400);
+      await expect(flush).resolves.toBeUndefined();
+      expect(link.sent.filter((f) => f.op === "sched.report").length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("disarm：带 id 回执确认成功（复审 P1-2）", async () => {
     const link = new FakeLink();
     hoisted.link = link;
@@ -210,6 +225,28 @@ describe("createSchedulerHostClient（IKJK51 sched.* 协议）", () => {
     expect(frame).toMatchObject({ op: "sched.mode", enabled: false });
     link.emit(JSON.stringify({ op: "reply", id: frame?.id, ok: true }));
     await expect(pending).resolves.toBe(true);
+  });
+
+  it("disarm：回执 ok:false 后重试并最终确认（复审 P2-6）", async () => {
+    vi.useFakeTimers();
+    try {
+      const link = new FakeLink();
+      hoisted.link = link;
+      const pending = disarmSchedulerHost({ attempts: 2, replyTimeoutMs: 500 });
+      await vi.advanceTimersByTimeAsync(0);
+      const first = link.lastFrame("sched.mode");
+      expect(first).toMatchObject({ op: "sched.mode", enabled: false });
+      link.emit(JSON.stringify({ op: "reply", id: first?.id, ok: false }));
+
+      // 第一次未确认：退避 500ms 后第二次尝试发新帧
+      await vi.advanceTimersByTimeAsync(600);
+      const second = link.lastFrame("sched.mode");
+      expect(second?.id).not.toBe(first?.id);
+      link.emit(JSON.stringify({ op: "reply", id: second?.id, ok: true }));
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("disarm：connect 失败重试耗尽返回 false（不静默成功）", async () => {

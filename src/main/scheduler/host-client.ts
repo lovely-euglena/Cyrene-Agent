@@ -204,6 +204,11 @@ export function createSchedulerHostClient(): SchedulerHostClient {
   /**
    * 历史回写（sched.report）：连接可写即发；断线入缓冲，重连后补发。
    * 与 host-mode 的本地落盘回退互补——保证终态不静默丢失（IKJK51 复审 P1-1）。
+   *
+   * 已知边界（复审 P2-6，取舍声明，不实现）：outbox 无上限、report 无 ack——
+   * 进程存活期的断线条数受「任务数 × 重试轮次」约束，极端断线长跑才会膨胀；
+   * 补发只保证写入管道，宿主是否落盘无回执。同 id 覆盖语义在宿主侧（后到者
+   * 赢）——超时 failed 条目可被同 id 的真实终态覆写，见 bootstrap.ts 超时分支。
    */
   function sendReport(entry: ScheduledTaskHistoryEntry): void {
     if (disposed) return;
@@ -220,6 +225,11 @@ export function createSchedulerHostClient(): SchedulerHostClient {
     for (const entry of pending) link.send({ op: "sched.report", entry });
   }
 
+  /**
+   * 等待缓冲补发完成（headless 退出前调用）。
+   * 已知边界（复审 P2-6）：无 ack，超时即返回——只保证「已尽量写管道」；
+   * 仍未发完的条目留待重连补发，进程退出即丢失，由托盘宽限兜底终态。
+   */
   async function flushReports(timeoutMs = 5_000): Promise<void> {
     if (disposed || reportOutbox.length === 0) return;
     const deadline = Date.now() + timeoutMs;

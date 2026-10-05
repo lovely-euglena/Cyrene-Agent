@@ -175,6 +175,10 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
       }
       if (!task) {
         // 连接失败 / 任务查不到：回退读本地 scheduled-tasks.json（离线主场景）。
+        // 复审 P1（第二轮）：headless 进程不经 initialize()/engine.start()，本地 store
+        // 从未加载（host 模式下 store.load() 又是 no-op），必须先 load 再读——
+        // 否则回退恒读空数组 → task not found 静默退出。load 幂等，可重复调用。
+        localStore.load();
         task = localStore.getTasks().find((t) => t.id === taskId);
       }
       if (!task) return { ok: false, error: "task not found" };
@@ -191,6 +195,10 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
         const outcome = await Promise.race([runPromise, timeout]);
         if (typeof outcome === "string" || timedOut) {
           // 复审 P1-5：执行超时看门狗——写 failed 历史后返回，进程退出即中止运行。
+          // 已知边界（复审 P2-6）：① 超时路径不 flushReports（report 可能滞留
+          // host-client outbox，由托盘宽限/下次对账兜底）；② runPromise 未被取消，
+          // 若其后仍完成，runner 会以同 id 落真实终态覆写本条 timeout 条目——
+          // 进程随即退出，取舍为「宁留真实终态，不保证 timeout 条目终态性」。
           recordHeadlessTimeout(task, effectiveHistoryId, scheduledFireAt, timeoutMs);
           return { ok: false, error: `timeout after ${Math.round(timeoutMs / 60_000)}min` };
         }

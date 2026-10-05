@@ -21,12 +21,33 @@ vi.mock("./scheduler-ipc", () => ({
 vi.mock("../orchestrator/tools/registry/tool-registry", () => ({
   toolRegistry: { getEnabledTools: () => [], getAllTools: () => [] },
 }));
+const agentBehavior = vi.hoisted(() => ({ mode: "hang" as "hang" | "success" }));
+
 vi.mock("../orchestrator/cyrene-agent", () => ({
-  // 永不 complete 的 Observable：headless 超时看门狗用例需要运行悬挂。
+  // 默认永不 complete 的 Observable：headless 超时看门狗用例需要运行悬挂。
+  // "success" 模式同步 complete 并置成功终态，覆盖成功路径（flushReports 用例）。
   CyreneAgent: class {
     lastResult: unknown = undefined;
-    runWithEvents(): { subscribe: () => { unsubscribe: () => void } } {
-      return { subscribe: () => ({ unsubscribe: () => { /* noop */ } }) };
+    runWithEvents(): {
+      subscribe: (observer: {
+        next: (event: unknown) => void;
+        complete: () => void;
+        error: (err: unknown) => void;
+      }) => { unsubscribe: () => void };
+    } {
+      return {
+        subscribe: (observer) => {
+          if (agentBehavior.mode === "success") {
+            this.lastResult = { reply: "done", terminal: { status: "success" } };
+            // 异步 complete：runner 在 subscribe 返回前回调会引用未初始化的 sub（TDZ）
+            queueMicrotask(() => {
+              observer.next({ type: "RUN_FINISHED" });
+              observer.complete();
+            });
+          }
+          return { unsubscribe: () => { /* noop */ } };
+        },
+      };
     }
   },
 }));
@@ -59,6 +80,16 @@ function makeFakeStore() {
     updateTask: vi.fn(),
     recordHistory: vi.fn(),
   };
+}
+
+/** 复审 P1（第二轮）：模拟真实 getSchedulerStore——load 前 getTasks 恒空，load 后命中；记录调用序。 */
+function makeLazyStore(tasks: ScheduledTask[]) {
+  const store = makeFakeStore();
+  const order: string[] = [];
+  let loaded = false;
+  store.load.mockImplementation(() => { order.push("load"); loaded = true; });
+  store.getTasks.mockImplementation(() => { order.push("getTasks"); return loaded ? tasks : []; });
+  return { store, order };
 }
 
 function makeFakeEngine() {
@@ -174,17 +205,20 @@ describe("runScheduledTaskForHeadless（复审 P1-1/P1-5）", () => {
     else process.env.CYRENE_SCHEDULED_TASK_TIMEOUT_MS = originalTimeout;
   });
 
-  it("连接失败 → 回退本地 scheduled-tasks.json 执行并透传超时 failed 历史", async () => {
-    const store = makeFakeStore();
-    store.getTasks.mockReturnValue([headlessTask()]);
+  it("连接失败 → 回退前先 load（load 前空 / load 后命中），命中后透传超时 failed 历史", async () => {
+    const { store, order } = makeLazyStore([headlessTask()]);
+    const flushReports = vi.fn(async () => { /* noop */ });
     const subsystem = createSchedulerSubsystem(makeSchedulerDeps({
       store: store as unknown as SchedulerSubsystemDeps["store"],
-      hostClient: fakeHostClient({ ensureConnected: async () => false }),
+      hostClient: fakeHostClient({ ensureConnected: async () => false, flushReports }),
       agentRuntime: { buildSchedulerOptions: async () => ({ messages: [] }) } as never,
     }));
 
     const result = await subsystem.runScheduledTaskForHeadless!("task-1", "hist-1", "2026-10-05T00:00:00.000Z");
 
+    // 命中任务本身即证明 load 生效（否则会在 load 前读空数组 → task not found）
+    expect(order[0]).toBe("load");
+    expect(store.load).toHaveBeenCalledOnce();
     expect(result.ok).toBe(false);
     expect(result.error).toContain("timeout");
     expect(store.recordHistory).toHaveBeenCalledWith(expect.objectContaining({
@@ -193,11 +227,12 @@ describe("runScheduledTaskForHeadless（复审 P1-1/P1-5）", () => {
       status: "failed",
       reason: "timeout",
     }));
+    // 复审 P2-6：超时路径不 flush（report 滞留 outbox，由托盘宽限兜底）
+    expect(flushReports).not.toHaveBeenCalled();
   });
 
-  it("连接失败且本地也没有任务 → task not found（不再空转）", async () => {
-    const store = makeFakeStore();
-    store.getTasks.mockReturnValue([]);
+  it("连接失败且本地也没有任务 → load 后仍空 → task not found（不再空转）", async () => {
+    const { store, order } = makeLazyStore([]);
     const subsystem = createSchedulerSubsystem(makeSchedulerDeps({
       store: store as unknown as SchedulerSubsystemDeps["store"],
       hostClient: fakeHostClient(),
@@ -207,12 +242,13 @@ describe("runScheduledTaskForHeadless（复审 P1-1/P1-5）", () => {
       ok: false,
       error: "task not found",
     });
+    expect(order[0]).toBe("load");
+    expect(store.load).toHaveBeenCalledOnce();
     expect(store.recordHistory).not.toHaveBeenCalled();
   });
 
-  it("连接成功但镜像缺任务 → 补拉快照后仍缺 → 回退本地执行", async () => {
-    const store = makeFakeStore();
-    store.getTasks.mockReturnValue([headlessTask()]);
+  it("连接成功但镜像缺任务 → 补拉快照后仍缺 → 回退本地（先 load）执行", async () => {
+    const { store, order } = makeLazyStore([headlessTask()]);
     const refreshTasks = vi.fn(async () => { /* noop */ });
     const subsystem = createSchedulerSubsystem(makeSchedulerDeps({
       store: store as unknown as SchedulerSubsystemDeps["store"],
@@ -221,6 +257,29 @@ describe("runScheduledTaskForHeadless（复审 P1-1/P1-5）", () => {
     }));
     const result = await subsystem.runScheduledTaskForHeadless!("task-1", "hist-1");
     expect(refreshTasks).toHaveBeenCalledOnce();
+    expect(order[0]).toBe("load");
     expect(result.error).toContain("timeout");
+  });
+
+  it("执行成功 → 退出前 flushReports 补发窗口，返回 ok（复审 P2-6）", async () => {
+    agentBehavior.mode = "success";
+    try {
+      const { store, order } = makeLazyStore([headlessTask()]);
+      const flushReports = vi.fn(async () => { /* noop */ });
+      const subsystem = createSchedulerSubsystem(makeSchedulerDeps({
+        store: store as unknown as SchedulerSubsystemDeps["store"],
+        hostClient: fakeHostClient({ ensureConnected: async () => false, flushReports }),
+        agentRuntime: { buildSchedulerOptions: async () => ({ messages: [] }) } as never,
+      }));
+
+      const result = await subsystem.runScheduledTaskForHeadless!("task-1", "hist-1");
+
+      expect(order[0]).toBe("load");
+      expect(result).toEqual({ ok: true });
+      expect(flushReports).toHaveBeenCalledOnce();
+      expect(flushReports).toHaveBeenCalledWith(5_000);
+    } finally {
+      agentBehavior.mode = "hang";
+    }
   });
 });

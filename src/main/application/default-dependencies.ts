@@ -1599,7 +1599,13 @@ createTray: (input) => {
       const args = headlessScheduledArgs();
       if (!args) return;
       // 结果通知由托盘在 sched.report 终态统一弹出（避免 headless 与托盘双气泡）
-      await core.scheduler.runScheduledTaskForHeadless?.(args.taskId, args.historyId, args.fireAt);
+      const result = await core.scheduler.runScheduledTaskForHeadless?.(args.taskId, args.historyId, args.fireAt);
+      // 复审 P2-2：失败必须可观察——写 stderr 日志并置非零退出码（application.start
+      // 的 finally 只调 app.quit()，不会覆盖 process.exitCode），供托盘/冒烟诊断。
+      if (result && !result.ok) {
+        console.warn(`[Scheduler] headless task ${args.taskId} failed: ${result.error ?? "unknown"}`);
+        process.exitCode = 1;
+      }
     },
     startCore: (shell) => {
       // 插件管理壳/运行时与核心 IPC 共用应用级 scope：运行期动态启用时
