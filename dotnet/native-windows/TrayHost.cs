@@ -15,7 +15,7 @@ namespace CyreneNative;
 ///
 /// 架构：托盘进程常驻（约 15-25MB），Electron 主程序成为「按需工作进程」——
 /// 用户把桌宠/窗口全关后 Electron 可整体退出，仅托盘驻留，从托盘再拉起。
-/// 单实例：Local\cyrene-tray Mutex（双托盘会双调度，设计 §7）。
+/// 单实例：Global\cyrene-tray Mutex（机器级，与管道名同作用域；双托盘会双调度，设计 §7）。
 /// 通信：named pipe cyrene-tray（JSON 行协议，\n 分隔）：
 ///   Electron → tray：{"op":"tray.ready"} / {"op":"tray.icon","path":...} /
 ///                    {"op":"tray.notify","text":...} / {"op":"tray.tooltip","text":...} /
@@ -114,8 +114,10 @@ public sealed class TrayHost
     /// <summary>托盘模式入口：单实例守护 + WPF Dispatcher 消息循环 + NotifyIcon。</summary>
     public static int Run(string electronExe, string dataDir, bool schedulerEnabled)
     {
-        // 单实例守护（设计 §7）：双托盘会双调度；已存在则静默退出（第二次启动无窗口可提示）。
-        using var mutex = new Mutex(initiallyOwned: true, @"Local\cyrene-tray", out var createdNew);
+        // 单实例守护（设计 §7 + 复审 P2-6）：双托盘会双调度；管道名是机器级
+        // （\\.\pipe\cyrene-tray），锁也用 Global 命名空间——同机多会话/多用户
+        // 下与管道作用域一致，避免 Local 会话级锁各起一个托盘共享同一 data-dir。
+        using var mutex = new Mutex(initiallyOwned: true, @"Global\cyrene-tray", out var createdNew);
         if (!createdNew) return 0;
         var app = new WpfApplication { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
         var host = new TrayHost { _electronExe = electronExe, _dataDir = dataDir, _schedulerEnabled = schedulerEnabled };
@@ -201,7 +203,8 @@ public sealed class TrayHost
         try
         {
             var scheduler = new TraySchedulerHost(
-                _dataDir, _electronExe, _schedulerEnabled, SendEvent, ShowTrayBalloon);
+                _dataDir, _electronExe, _schedulerEnabled, SendEvent, ShowTrayBalloon,
+                () => _pipe is { IsConnected: true });
             scheduler.Start();
             _scheduler = scheduler;
         }

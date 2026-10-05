@@ -15,6 +15,12 @@ namespace CyreneNative;
 ///   Process.Start headless Electron（--scheduled-task/--scheduled-history/
 ///   --scheduled-fire-at，UseShellExecute=false）；启动失败写 failed 历史 +
 ///   气泡；headless 终态（success/failed）report 到达时气泡提醒并出队；
+/// - 复审 P1-1：headless 拉起串行排队（同一时刻至多一个执行实例；前一个终态
+///   或进程退出后再拉下一个）。进程无 report 退出（单实例锁失败/崩溃）→ 宽限
+///   后写 failed 历史 + 气泡，不再永久 running；
+/// - 复审 P1-1：Start() 把遗留 running 历史标为中断（上一托盘进程崩溃未回报）；
+/// - 复审 P1-5：跟踪 headless 进程句柄，Stop()（完全退出）时按句柄杀进程树
+///   （不会误杀主 Electron）并把 running 历史写中断；
 /// - 任务写操作（store.Changed，含引擎排期推进）统一广播 sched.changed
 ///   全量快照；历史/插件状态不广播；
 /// - sched.mode：Electron 双轨协商（enabled=false 停引擎防双调度——TS
@@ -26,39 +32,65 @@ internal sealed class TraySchedulerHost
     private readonly SchedulerStore _store;
     private readonly SchedulerEngine _engine;
     private readonly Dictionary<string, bool> _pluginRunning = new(StringComparer.Ordinal);
-    /// <summary>本进程 headless 拉起且尚未收到终态 report 的 histId → 任务标题。</summary>
-    private readonly Dictionary<string, string> _headlessHistories = new(StringComparer.Ordinal);
+    /// <summary>本进程 headless 拉起/排队且尚未收到终态 report 的 histId → 任务信息。</summary>
+    private readonly Dictionary<string, HeadlessJobInfo> _headlessPending = new(StringComparer.Ordinal);
+    /// <summary>等待前一个 headless 终态的执行队列（复审 P1-1 串行化）。</summary>
+    private readonly Queue<HeadlessJob> _headlessQueue = new();
+    /// <summary>当前在跑的 headless 历史 id（null = 无在跑实例）。</summary>
+    private string? _headlessActiveHistId;
+    /// <summary>当前在跑的 headless 进程句柄（完全退出时按句柄杀，不误杀主 Electron）。</summary>
+    private System.Diagnostics.Process? _headlessProcess;
+    /// <summary>是否已收到 Electron 的插件运行状态同步（复审 P2-7 首连窗口）。</summary>
+    private bool _pluginStateKnown;
     private readonly string _electronExe;
     private readonly Func<string, object, bool> _sendEvent;
     private readonly Action<string, string> _showBalloon;
+    private readonly Func<bool> _isElectronConnected;
     /// <summary>--scheduler 启动即启用；false 时等待 Electron 经 sched.mode arm。</summary>
     private readonly bool _schedulerEnabled;
     private bool _engineRunning;
+
+    /// <summary>headless 进程退出后等待迟到 report 的宽限（测试可缩短）。</summary>
+    internal TimeSpan HeadlessExitGrace { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>进程启动 seam（自测注入；缺省 Process.Start）。返回 null 视为已启动但不可跟踪。</summary>
+    internal Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?> ProcessStarter { get; set; }
+        = psi => System.Diagnostics.Process.Start(psi);
+
+    /// <summary>自测可读状态。</summary>
+    internal bool EngineRunning => _engineRunning;
+    internal int QueuedHeadlessCount { get { lock (_gate) return _headlessQueue.Count; } }
+    internal string? ActiveHeadlessHistId { get { lock (_gate) return _headlessActiveHistId; } }
 
     public TraySchedulerHost(
         string dataDir,
         string electronExe,
         bool schedulerEnabled,
         Func<string, object, bool> sendEvent,
-        Action<string, string> showBalloon)
+        Action<string, string> showBalloon,
+        Func<bool>? isElectronConnected = null,
+        Func<TimeSpan, Func<Task>, IDisposable>? scheduleTimer = null)
     {
         _electronExe = electronExe;
         _schedulerEnabled = schedulerEnabled;
         _sendEvent = sendEvent;
         _showBalloon = showBalloon;
+        _isElectronConnected = isElectronConnected ?? (() => true);
         _store = new SchedulerStore(dataDir);
-        _engine = new SchedulerEngine(_store, RunTaskAsync, CanRunTask);
+        _engine = new SchedulerEngine(_store, RunTaskAsync, CanRunTask, scheduleTimer: scheduleTimer);
     }
 
     /// <summary>
-    /// 启动：加载归一（store.Load）；--scheduler 时 engine.Start（逾期归一 + timer），
-    /// 否则仅托盘 UI，等 sched.mode enabled:true 由 Electron 接管启用。
+    /// 启动：加载归一（store.Load）→ 遗留 running 历史标为中断（复审 P1-1）；
+    /// --scheduler 时 engine.Start（逾期归一 + timer），否则仅托盘 UI，
+    /// 等 sched.mode enabled:true 由 Electron 接管启用。
     /// </summary>
     public void Start()
     {
         lock (_gate)
         {
             _store.Load();
+            _store.MarkRunningHistoryInterrupted("interrupted: tray restarted while task was running");
             _store.Changed += OnTasksChanged;
             if (_schedulerEnabled)
             {
@@ -68,15 +100,39 @@ internal sealed class TraySchedulerHost
         }
     }
 
-    /// <summary>完全退出路径：先停引擎（不再触发/拉起），再退托盘。</summary>
+    /// <summary>
+    /// 完全退出路径：先停引擎（不再触发/拉起），中止在跑 headless 进程树并
+    /// 把 running 历史写中断（复审 P1-5），再退托盘。
+    /// </summary>
     public void Stop()
     {
+        System.Diagnostics.Process? process;
         lock (_gate)
         {
             try { _engine.Stop(); } catch { /* 退出路径不抛 */ }
             _store.Changed -= OnTasksChanged;
             _engineRunning = false;
+            _headlessQueue.Clear();
+            _headlessPending.Clear();
+            _headlessActiveHistId = null;
+            process = _headlessProcess;
+            _headlessProcess = null;
         }
+        if (process is { } p)
+        {
+            try
+            {
+                if (!p.HasExited) p.Kill(entireProcessTree: true);
+            }
+            catch { /* 权限/已退出：忽略 */ }
+            finally { p.Dispose(); }
+        }
+        try
+        {
+            // 按文件对账：所有遗留 running（在跑进程 + 排队项 + 在线运行）标中断。
+            _store.MarkRunningHistoryInterrupted("interrupted: tray exited while task was running");
+        }
+        catch { /* 退出路径不抛 */ }
     }
 
     /// <summary>处理 sched.* 帧；返回回执 data（无 id 帧由调用方丢弃 data）。</summary>
@@ -141,6 +197,7 @@ internal sealed class TraySchedulerHost
                     {
                         _pluginRunning.Clear();
                         foreach (var pair in running) _pluginRunning[pair.Key] = pair.Value;
+                        _pluginStateKnown = true;
                         _engine.RefreshPluginTasks();
                     }
                     return SchedulerOpResult.Success(new { });
@@ -185,7 +242,7 @@ internal sealed class TraySchedulerHost
 
     /// <summary>
     /// 到点执行：在线（管道可写）→ sched.fire 事件交 Electron scheduler-runner，
-    /// 立即返回；离线 → headless 拉起。写失败按离线处理（避免任务静默丢失）。
+    /// 立即返回；离线 → headless 拉起（串行排队）。写失败按离线处理（避免任务静默丢失）。
     /// </summary>
     private Task<SchedulerRunResult> RunTaskAsync(ScheduledTask task, DateTimeOffset scheduledFireAt, bool manual)
     {
@@ -200,35 +257,80 @@ internal sealed class TraySchedulerHost
     /// <summary>
     /// 插件任务离线语义：插件未运行 → false（引擎自动写 skipped/"plugin not running"
     /// 并推进排期）；用户任务恒可跑。
+    ///
+    /// 复审 P2-7 首连窗口：Electron 在线但插件状态尚未同步时按「暂缓判定」处理
+    /// （返回 true，交 Electron 执行前用 isTaskEnabled/canRunTask 复核）；离线时
+    /// 仍按未运行处理（插件运行需要 Electron）。
     /// </summary>
     private bool CanRunTask(ScheduledTask task)
     {
         if (task.OwnerPluginId is null) return true;
-        lock (_gate) return _pluginRunning.TryGetValue(task.OwnerPluginId, out var running) && running;
+        lock (_gate)
+        {
+            if (_pluginRunning.TryGetValue(task.OwnerPluginId, out var running)) return running;
+            return !_pluginStateKnown && _isElectronConnected();
+        }
     }
 
     private void OnTasksChanged(IReadOnlyList<ScheduledTask> tasks)
         => _sendEvent("sched.changed", new { tasks });
 
-    // ── headless 拉起 ───────────────────────────────────────────
+    // ── headless 拉起（串行队列，复审 P1-1） ─────────────────────
 
+    private sealed record HeadlessJob(ScheduledTask Task, string Iso, string HistId);
+
+    private sealed record HeadlessJobInfo(string TaskId, string Title, string Iso);
+
+    private static string NewHistoryId()
+        => $"hist-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{SchedulerStoreHelpers.RandomBase36(6)}";
+
+    private static ScheduledTaskHistoryEntry RunningEntry(ScheduledTask task, string iso, string histId)
+        => new()
+        {
+            Id = histId,
+            TaskId = task.Id,
+            TaskTitle = task.Title,
+            FiredAt = iso,
+            Status = ScheduledTaskHistoryStatus.Running,
+            Reason = "headless launch",
+            EffectiveToolIds = new List<string>(),
+        };
+
+    /// <summary>
+    /// 离线拉起：同一时刻至多一个执行实例；有在跑实例时入队（预建 running 历史，
+    /// 终态/进程退出后出队拉起）。启动失败写 failed 历史 + 气泡并立即出队下一个。
+    /// </summary>
     private SchedulerRunResult LaunchHeadless(ScheduledTask task, string iso)
     {
-        var histId = $"hist-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{SchedulerStoreHelpers.RandomBase36(6)}";
+        HeadlessJob? queued = null;
+        string histId;
         lock (_gate)
         {
-            _store.RecordHistory(new ScheduledTaskHistoryEntry
+            histId = NewHistoryId();
+            var job = new HeadlessJob(task, iso, histId);
+            _headlessPending[histId] = new HeadlessJobInfo(task.Id, task.Title, iso);
+            _store.RecordHistory(RunningEntry(task, iso, histId));
+            if (_headlessActiveHistId is not null)
             {
-                Id = histId,
-                TaskId = task.Id,
-                TaskTitle = task.Title,
-                FiredAt = iso,
-                Status = ScheduledTaskHistoryStatus.Running,
-                Reason = "headless launch",
-                EffectiveToolIds = new List<string>(),
-            });
+                _headlessQueue.Enqueue(job);
+                queued = job;
+            }
+            else
+            {
+                _headlessActiveHistId = histId;
+            }
         }
+        if (queued is not null)
+        {
+            Console.Error.WriteLine($"[TraySchedulerHost] headless queued: {task.Id} ({histId})");
+            return new SchedulerRunResult { Ok = true, HistoryId = histId, EffectiveToolIds = new List<string>() };
+        }
+        return StartHeadlessProcess(task, iso, histId);
+    }
 
+    /// <summary>启动 headless 进程；失败 → failed 历史 + 气泡 + 出队下一个。</summary>
+    private SchedulerRunResult StartHeadlessProcess(ScheduledTask task, string iso, string histId)
+    {
         try
         {
             if (string.IsNullOrEmpty(_electronExe) || !File.Exists(_electronExe))
@@ -245,8 +347,15 @@ internal sealed class TraySchedulerHost
             startInfo.ArgumentList.Add(histId);
             startInfo.ArgumentList.Add("--scheduled-fire-at");
             startInfo.ArgumentList.Add(iso);
-            var process = System.Diagnostics.Process.Start(startInfo);
-            process?.Dispose();
+            var process = ProcessStarter(startInfo);
+            if (process is not null)
+            {
+                lock (_gate) _headlessProcess = process;
+                process.EnableRaisingEvents = true;
+                process.Exited += (_, _) => OnHeadlessProcessExited(histId, process);
+            }
+            Console.Error.WriteLine($"[TraySchedulerHost] headless launch: {task.Id} ({histId})");
+            return new SchedulerRunResult { Ok = true, HistoryId = histId, EffectiveToolIds = new List<string>() };
         }
         catch (Exception ex)
         {
@@ -258,13 +367,17 @@ internal sealed class TraySchedulerHost
                     TaskId = task.Id,
                     TaskTitle = task.Title,
                     FiredAt = iso,
+                    FinishedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
                     Status = ScheduledTaskHistoryStatus.Failed,
                     Reason = "headless launch",
                     ErrorMessage = ex.Message,
                     EffectiveToolIds = new List<string>(),
                 });
+                _headlessPending.Remove(histId);
+                if (_headlessActiveHistId == histId) _headlessActiveHistId = null;
             }
             _showBalloon("定时任务启动失败", $"{task.Title} 拉起失败：{ex.Message}");
+            DrainHeadlessQueue();
             return new SchedulerRunResult
             {
                 Ok = false,
@@ -273,10 +386,64 @@ internal sealed class TraySchedulerHost
                 EffectiveToolIds = new List<string>(),
             };
         }
+    }
 
-        lock (_gate) _headlessHistories[histId] = task.Title;
-        Console.Error.WriteLine($"[TraySchedulerHost] headless launch: {task.Id} ({histId})");
-        return new SchedulerRunResult { Ok = true, HistoryId = histId, EffectiveToolIds = new List<string>() };
+    /// <summary>
+    /// headless 进程退出但未收到终态 report（单实例锁失败/崩溃）：宽限后写
+    /// failed 历史 + 气泡，不再永久 running；随后出队下一个。
+    /// </summary>
+    private void OnHeadlessProcessExited(string histId, System.Diagnostics.Process process)
+    {
+        var exitCode = -1;
+        try { exitCode = process.ExitCode; } catch { /* 句柄已失效 */ }
+        var grace = HeadlessExitGrace;
+        _ = System.Threading.Tasks.Task.Delay(grace).ContinueWith(_ =>
+        {
+            string? title = null;
+            try
+            {
+                lock (_gate)
+                {
+                    if (_headlessActiveHistId != histId) return; // 终态 report 已到（或已由 Stop 处理）
+                    if (!_headlessPending.Remove(histId, out var info)) return;
+                    _store.RecordHistory(new ScheduledTaskHistoryEntry
+                    {
+                        Id = histId,
+                        TaskId = info.TaskId,
+                        TaskTitle = info.Title,
+                        FiredAt = info.Iso,
+                        FinishedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
+                        Status = ScheduledTaskHistoryStatus.Failed,
+                        Reason = "headless process exited without report",
+                        ErrorMessage = $"headless exited without report (exit code {exitCode})",
+                        EffectiveToolIds = new List<string>(),
+                    });
+                    _headlessActiveHistId = null;
+                    title = info.Title;
+                }
+                _showBalloon("定时任务失败", $"{title} 执行进程异常退出且未回报结果（exit code {exitCode}）");
+                DrainHeadlessQueue();
+            }
+            finally
+            {
+                try { process.Dispose(); } catch { /* 句柄清理失败不致命 */ }
+            }
+        });
+    }
+
+    /// <summary>前一个 headless 终态后拉起队列中的下一个（同一时刻至多一个实例）。</summary>
+    private void DrainHeadlessQueue()
+    {
+        HeadlessJob? next = null;
+        lock (_gate)
+        {
+            if (_headlessActiveHistId is null && _headlessQueue.Count > 0)
+            {
+                next = _headlessQueue.Dequeue();
+                _headlessActiveHistId = next.HistId;
+            }
+        }
+        if (next is not null) StartHeadlessProcess(next.Task, next.Iso, next.HistId);
     }
 
     /// <summary>历史写入 + headless 终态气泡（仅本进程拉起的 histId）。</summary>
@@ -284,22 +451,35 @@ internal sealed class TraySchedulerHost
     {
         var terminal = entry.Status is ScheduledTaskHistoryStatus.Success or ScheduledTaskHistoryStatus.Failed;
         string? headlessTitle = null;
+        var wasActive = false;
         lock (_gate)
         {
             _store.RecordHistory(entry);
             if (terminal && !string.IsNullOrEmpty(entry.Id))
-                _headlessHistories.Remove(entry.Id, out headlessTitle);
+            {
+                if (_headlessPending.Remove(entry.Id, out var info) && _headlessActiveHistId == entry.Id)
+                {
+                    headlessTitle = info.Title;
+                    _headlessActiveHistId = null;
+                    _headlessProcess = null;
+                    wasActive = true;
+                }
+            }
         }
-        if (headlessTitle is not null)
+        if (wasActive)
         {
-            var success = entry.Status == ScheduledTaskHistoryStatus.Success;
-            _showBalloon(
-                success ? "定时任务完成" : "定时任务失败",
-                success
-                    ? $"{headlessTitle} 已在后台执行完成"
-                    : string.IsNullOrEmpty(entry.ErrorMessage)
-                        ? $"{headlessTitle} 执行失败"
-                        : $"{headlessTitle} 执行失败：{entry.ErrorMessage}");
+            if (headlessTitle is not null)
+            {
+                var success = entry.Status == ScheduledTaskHistoryStatus.Success;
+                _showBalloon(
+                    success ? "定时任务完成" : "定时任务失败",
+                    success
+                        ? $"{headlessTitle} 已在后台执行完成"
+                        : string.IsNullOrEmpty(entry.ErrorMessage)
+                            ? $"{headlessTitle} 执行失败"
+                            : $"{headlessTitle} 执行失败：{entry.ErrorMessage}");
+            }
+            DrainHeadlessQueue();
         }
         return SchedulerOpResult.Success(new { });
     }

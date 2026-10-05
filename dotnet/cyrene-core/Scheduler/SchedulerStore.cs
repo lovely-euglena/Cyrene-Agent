@@ -269,7 +269,6 @@ public sealed class SchedulerStore : ISchedulerTaskStore
 
         var task = new ScheduledTask
         {
-            Id = NextTaskId(),
             Title = title,
             Prompt = prompt,
             // 插件任务不接受 enabled 输入：永远 false 落盘，授权由 pluginUserEnabled 表达。
@@ -301,6 +300,8 @@ public sealed class SchedulerStore : ISchedulerTaskStore
 
         lock (_gate)
         {
+            // 复审 P2-3：id 生成与追加同一把锁，避免并发 add 产生重复 id。
+            task.Id = NextTaskId();
             _tasks = new List<ScheduledTask>(_tasks) { task };
             PersistTasks(_tasks);
         }
@@ -323,6 +324,7 @@ public sealed class SchedulerStore : ISchedulerTaskStore
 
     public ScheduledTask UpdateTask(string id, ScheduledTaskPatch patch)
     {
+        ScheduledTask result;
         lock (_gate)
         {
             var index = _tasks.FindIndex(task => task.Id == id);
@@ -436,9 +438,12 @@ public sealed class SchedulerStore : ISchedulerTaskStore
             _tasks = new List<ScheduledTask>(_tasks);
             _tasks[index] = updated;
             PersistTasks(_tasks);
-            Notify();
-            return updated.Clone();
+            // 复审 P2-3：Notify 移出锁（与其余写方法口径一致；Changed 订阅者
+            // 可能回调 store 读取，锁内通知易放大锁竞争）。
+            result = updated.Clone();
         }
+        Notify();
+        return result;
     }
 
     public bool DeleteTask(string id)
@@ -481,28 +486,64 @@ public sealed class SchedulerStore : ISchedulerTaskStore
     {
         lock (_gate)
         {
-            EnsureParent(_historyFile);
             var existing = ReadAllHistory().Where(item => item.Id != entry.Id).ToList();
             existing.Add(entry);
-            var compacted = existing
-                .GroupBy(item => item.TaskId)
-                .SelectMany(group => group.OrderBy(item => item.FiredAt, StringComparer.Ordinal).TakeLast(50))
-                .OrderBy(item => item.FiredAt, StringComparer.Ordinal)
-                .TakeLast(1000)
-                .ToList();
-            var text = compacted.Count == 0
-                ? ""
-                : string.Join("\n", compacted.Select(item => JsonSerializer.Serialize(item, SchedulerJson.Options))) + "\n";
-            File.WriteAllText(_historyFile, text, SchedulerStoreHelpers.Utf8NoBom);
+            WriteHistory(existing);
+        }
+    }
+
+    /// <summary>
+    /// 复审 P1-1：托盘启动时把遗留 running 历史标为中断（上一托盘进程崩溃/退出
+    /// 未回报终态）。之后到达的迟到 report 仍可按同 id 覆盖为真实终态。
+    /// </summary>
+    public int MarkRunningHistoryInterrupted(string reason)
+    {
+        lock (_gate)
+        {
+            var all = ReadAllHistory();
+            var running = all.Where(item => item.Status == ScheduledTaskHistoryStatus.Running).ToList();
+            if (running.Count == 0) return 0;
+            var finishedAt = SchedulerJson.ToIsoString(_now());
+            foreach (var entry in running)
+            {
+                entry.Status = ScheduledTaskHistoryStatus.Failed;
+                entry.Reason = reason;
+                entry.ErrorMessage = reason;
+                entry.FinishedAt ??= finishedAt;
+            }
+            WriteHistory(all);
+            return running.Count;
         }
     }
 
     public IReadOnlyList<ScheduledTaskHistoryEntry> GetHistory(string taskId, int limit = 10)
-        => ReadAllHistory()
-            .Where(item => item.TaskId == taskId)
-            .OrderByDescending(item => item.FiredAt, StringComparer.Ordinal)
-            .Take(limit)
+    {
+        // 复审 P2-3：读路径纳入锁，避免读到写入中的历史文件。
+        lock (_gate)
+        {
+            return ReadAllHistory()
+                .Where(item => item.TaskId == taskId)
+                .OrderByDescending(item => item.FiredAt, StringComparer.Ordinal)
+                .Take(limit)
+                .ToList();
+        }
+    }
+
+    /// <summary>历史文件整体重写（同 id 覆盖 + 每任务 50 / 全局 1000 压缩）。</summary>
+    private void WriteHistory(List<ScheduledTaskHistoryEntry> entries)
+    {
+        EnsureParent(_historyFile);
+        var compacted = entries
+            .GroupBy(item => item.TaskId)
+            .SelectMany(group => group.OrderBy(item => item.FiredAt, StringComparer.Ordinal).TakeLast(50))
+            .OrderBy(item => item.FiredAt, StringComparer.Ordinal)
+            .TakeLast(1000)
             .ToList();
+        var text = compacted.Count == 0
+            ? ""
+            : string.Join("\n", compacted.Select(item => JsonSerializer.Serialize(item, SchedulerJson.Options))) + "\n";
+        File.WriteAllText(_historyFile, text, SchedulerStoreHelpers.Utf8NoBom);
+    }
 
     private List<ScheduledTaskHistoryEntry> ReadAllHistory()
     {
@@ -652,6 +693,8 @@ internal static class SchedulerStoreHelpers
     internal static readonly JsonSerializerOptions TasksFileOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+        // 复审 P2-2：中文任务标题与 TS JSON.stringify 落盘同形（不转 \uXXXX）。
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
     internal static string RandomBase36(int length)

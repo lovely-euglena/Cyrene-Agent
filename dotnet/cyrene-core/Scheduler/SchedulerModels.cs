@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -16,8 +17,13 @@ namespace CyreneNative.Scheduler;
 /// </summary>
 public static class SchedulerJson
 {
-    /// <summary>共享序列化选项（Web defaults = camelCase + 大小写不敏感读取）。</summary>
-    public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+    /// <summary>共享序列化选项（Web defaults = camelCase + 大小写不敏感读取）。
+    /// Encoder 关闭非 ASCII 转义：中文标题/原因与 TS JSON.stringify 输出一致
+    ///（复审 P2-2；仓库既有模式见 WebSearchTool/ExpenseTools）。</summary>
+    public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     /// <summary>TS `new Date(0).toISOString()`：旧任务缺失 createdAt/updatedAt 的兜底。</summary>
     public const string EpochIso = "1970-01-01T00:00:00.000Z";
