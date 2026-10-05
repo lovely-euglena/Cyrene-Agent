@@ -20,6 +20,15 @@ function fakeAdapter(id: string): ChannelAdapter {
   };
 }
 
+/** 可控 deferred：测试在途 start 与 stop 的交错（P2-1）。 */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 describe("ChannelManager", () => {
   it("startOne 启动单个 adapter；unregister 先 stop 再移除", async () => {
     const mgr = new ChannelManager();
@@ -92,6 +101,77 @@ describe("ChannelManager", () => {
 
     await mgr.startOne("feishu" as never);
     expect(mgr.isStarted("feishu" as never)).toBe(true);
+  });
+
+  it("并发 startOne：同渠道串行复用，只真正 start 一次（P2-1）", async () => {
+    const mgr = new ChannelManager();
+    let starts = 0;
+    const gate = deferred();
+    const adapter = fakeAdapter("qq");
+    adapter.start = async () => {
+      starts += 1;
+      await gate.promise;
+    };
+    mgr.register(adapter);
+
+    const first = mgr.startOne("qq" as never);
+    const second = mgr.startOne("qq" as never);
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(starts).toBe(1);
+    expect(mgr.isStarted("qq" as never)).toBe(true);
+  });
+
+  it("在途 startOne 与 pauseOne 交错：先收敛启动再停止，不残留已启动标记（P2-1）", async () => {
+    const mgr = new ChannelManager();
+    let running = false;
+    const gate = deferred();
+    const adapter = fakeAdapter("qq");
+    adapter.start = async () => {
+      running = true;
+      await gate.promise;
+    };
+    adapter.stop = async () => {
+      running = false;
+    };
+    mgr.register(adapter);
+
+    const starting = mgr.startOne("qq" as never);
+    const pausing = mgr.pauseOne("qq" as never);
+    gate.resolve();
+    await Promise.all([starting, pausing]);
+    expect(running).toBe(false);
+    expect(mgr.isStarted("qq" as never)).toBe(false);
+  });
+
+  it("在途 startOne 与 stopAll 交错：等启动收敛后停止，不标记已启动（P2-1）", async () => {
+    const mgr = new ChannelManager();
+    let running = false;
+    const gate = deferred();
+    const adapter = fakeAdapter("qq");
+    adapter.start = async () => {
+      running = true;
+      await gate.promise;
+    };
+    adapter.stop = async () => {
+      running = false;
+    };
+    mgr.register(adapter);
+
+    const starting = mgr.startOne("qq" as never);
+    const stopping = mgr.stopAll();
+    gate.resolve();
+    await Promise.all([starting, stopping]);
+    expect(running).toBe(false);
+    expect(mgr.isStarted("qq" as never)).toBe(false);
+  });
+
+  it("pauseOne 后 startOne：按调用顺序收敛为已启动（P2-1）", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("qq");
+    mgr.register(adapter);
+    await Promise.all([mgr.pauseOne("qq" as never), mgr.startOne("qq" as never)]);
+    expect(mgr.isStarted("qq" as never)).toBe(true);
   });
 
   it("只委托入站处理，不重复发送 dispatcher 返回的消息", async () => {
