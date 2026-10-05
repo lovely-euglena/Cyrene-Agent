@@ -501,7 +501,7 @@ internal static class ChannelSelfTest
 
         var missing = await delivery.SendAsync(new OutgoingMessage
         {
-            Channel = ChannelIds.Feishu, TargetId = "ou_1",
+            Channel = ChannelIds.Feishu, TargetId = "oc_1",
             Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = "hi" }],
         });
         check("delivery: adapter_not_found", !missing.Ok && missing.Error == "adapter_not_found");

@@ -277,9 +277,36 @@ public static class ChannelContractFixture
                     ? null
                     : $"{path}: 字符串不一致 got={Truncate(actualText)} want={Truncate(expectedText)}";
             }
+            // 布尔必须显式比较（P1-5）：此前落入 default 视为相等，capability 8 开关、
+            // 微信媒体 analyzable 等字段的 C# 单侧漂移无法被 CI 发现。
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+            {
+                return actual.GetBoolean() == expected.GetBoolean()
+                    ? null
+                    : $"{path}: 布尔不一致 got={actual.GetRawText()} want={expected.GetRawText()}";
+            }
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// runner 自检（P1-5 回归探针）：人为构造布尔字段漂移，DeepCompare 必须报差异；
+    /// 同时验证相等布尔不误报。返回 null = 通过，否则为失败说明。
+    /// </summary>
+    public static string? BooleanCompareSelfCheck()
+    {
+        using var expectedDocument = JsonDocument.Parse("""{"flag":false,"same":true}""");
+        using var driftDocument = JsonDocument.Parse("""{"flag":true,"same":true}""");
+        var drift = DeepCompare(driftDocument.RootElement, expectedDocument.RootElement);
+        if (drift is null)
+        {
+            return "布尔字段漂移未被 DeepCompare 捕获（P1-5 回归）";
+        }
+        using var equalDocument = JsonDocument.Parse("""{"flag":false,"same":true}""");
+        var equal = DeepCompare(equalDocument.RootElement, expectedDocument.RootElement);
+        return equal is null ? null : $"相等布尔被误报为差异: {equal}";
     }
 
     private static string Truncate(string? value) =>

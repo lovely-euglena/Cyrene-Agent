@@ -33,6 +33,7 @@ public sealed class FeishuAdapter : IChannelAdapter
     private readonly FeishuMediaTranscoder _transcoder;
     private readonly string _mediaDir;
     private readonly ILogger<FeishuAdapter> _logger;
+    private readonly IChannelOwnershipGate? _ownershipGate;
     private readonly object _sync = new();
 
     private volatile bool _started;
@@ -49,7 +50,8 @@ public sealed class FeishuAdapter : IChannelAdapter
         FeishuApiClient api,
         FeishuMediaTranscoder transcoder,
         string mediaDir,
-        ILogger<FeishuAdapter> logger)
+        ILogger<FeishuAdapter> logger,
+        IChannelOwnershipGate? ownershipGate = null)
     {
         _options = options;
         _store = store;
@@ -57,6 +59,7 @@ public sealed class FeishuAdapter : IChannelAdapter
         _transcoder = transcoder;
         _mediaDir = mediaDir;
         _logger = logger;
+        _ownershipGate = ownershipGate;
     }
 
     public string Id => ChannelIds.Feishu;
@@ -157,6 +160,15 @@ public sealed class FeishuAdapter : IChannelAdapter
         {
             // 非 im.message.receive_v1 / 群消息 / 结构不合法：记日志忽略（§6.2 仅私聊）
             _logger.LogDebug("飞书事件忽略（非 p2p 消息或未知事件）eventId={EventKey}", eventKey);
+            return new FeishuHandleResult(false, true, null, null);
+        }
+
+        // 归属门闩前预检（P2-4b）：桌面持有期间跳过媒体下载（≤20MB 落盘）与后续处理，
+        // 避免为最终被 dispatcher 门闩丢弃的消息下载/落盘。无门闩（自测/默认）= 放行。
+        if (_ownershipGate is not null
+            && !await _ownershipGate.CanProcessAsync(ChannelIds.Feishu, cancellationToken).ConfigureAwait(false))
+        {
+            _logger.LogDebug("飞书事件归属预检丢弃（owner≠server），跳过媒体下载 eventId={EventKey}", eventKey);
             return new FeishuHandleResult(false, true, null, null);
         }
 
