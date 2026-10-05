@@ -9,10 +9,12 @@
  *  - 同步取用：getSecret() 供 model-settings / general-settings 加载路径填 key；
  *  - 掩码：maskModelSettingsForUi / maskGeneralSettingsForUi（A3，设置页只回掩码）。
  *
- * host 缺失策略（设计 §8 用例 4/5）：迁移前回退明文（告警一次）；迁移后宿主缺失
- * → keyring 空（调用 401 明确报错）且保存路径硬失败（IKJNX1 #1：抛
- * E_SECRETS_HOST_LOST，不写明文、不清盘；migrated 状态在宿主缺失时读盘上
- * secrets-vault.json 的 migratedAt 明文标记判定）。
+ * host 缺失策略（设计 §8 用例 4/5 + PR19 复审 P1-1/P2-6）：迁移前回退明文
+ * （告警一次）；迁移后/已 hydrate 后宿主缺失 → 密钥事实源仍在 vault：掩码照常
+ * （vaultAuthoritative），保存仅对「含非空 key 或 SENTINEL」的 patch 硬失败
+ * （E_SECRETS_HOST_LOST，不写明文、不清盘），非 key patch 正常持久化且落盘 key
+ * 槽逐槽取磁盘原值；migrated 状态在宿主缺失时读盘上 secrets-vault.json 的
+ * migratedAt 明文标记判定。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -55,21 +57,29 @@ export function isVaultMode(): boolean {
 }
 
 /**
- * vault 实际可用（复审 P0-8）：配置开 且 keyring 已 hydrate。
- * hydrated 只能经宿主成功 list/get 达成——宿主缺失/崩溃（迁移未发生）时为 false，
- * 保存路径据此整体回退明文语义（不清盘、不静默丢用户输入，设计 §4.5 用例 4）。
+ * vault 可写（PR19 复审 P1-1）：配置开 ∧ keyring 已 hydrate ∧ 宿主存活。
+ * 仅此状态允许新 key 写入 vault、以及把内存真值清盘痕（strip 清空）。
  */
-export function isVaultActive(): boolean {
-  return isVaultMode() && hydrated;
+export function isVaultWritable(): boolean {
+  return isVaultMode() && hydrated && isSecretsHostAlive();
 }
 
 /**
- * 迁移前宿主缺失的明文回退态（复审 P0 门控一致性）：vault 模式开但未激活。
- * 掩码与保存共用此判定——未激活不掩码（渲染端持明文，维持「迁移前回退明文」语义），
- * 保存侧再把空串按「不改」处理（防陈旧掩码载荷覆盖写盘）。
+ * 密钥事实源在 vault（PR19 复审 P1-1）：配置开 ∧（已 hydrate ∨ 已迁移 ∨ 盘上
+ * migratedAt 标记）。掩码与保存分类共用此判据——hydrated 后宿主猝死（迁移未发生）
+ * 时事实源仍是 vault（keyring 内存真值），既不能明文写盘，也不能空串覆盖丢钥。
  */
-export function isPlaintextFallbackSave(): boolean {
-  return isVaultMode() && !isVaultActive();
+export function isVaultAuthoritative(): boolean {
+  return isVaultMode() && (hydrated || vaultMigrated || readVaultMigratedMarker());
+}
+
+/**
+ * 保存时是否把「空/缺失 key」按「不改」保内存旧值（PR19 复审 P1-1）：
+ * vault 模式开但不可写（未 hydrate 的明文回退态 / 已 hydrate 后宿主猝死态）。
+ * 两种状态下渲染端都可能回传陈旧掩码空串，需在内存合并前回填旧值。
+ */
+export function shouldPreservePlaintextKeys(): boolean {
+  return isVaultMode() && !isVaultWritable();
 }
 
 /** hydrate 完成回调（复审 P0-6：先建的 settings 缓存原地回填用；避免循环 import）。 */
@@ -109,25 +119,57 @@ function isSecretsHostAlive(): boolean {
   return typeof c.isAlive === "function" ? c.isAlive() : true;
 }
 
-/**
- * 保存路径门控（IKJNX1 #1；设计 §4.5 / §8 用例 4/5）：
- *  - 非 vault 模式 → false（明文语义）；
- *  - hydrated 且宿主存活 → true（vault 路径）；
- *  - 已迁移但宿主不可用 / 未 hydrate → 抛 E_SECRETS_HOST_LOST（硬失败：不写明文、
- *    不清盘；错误上抛 = IPC invoke reject，可观察）；
- *  - 迁移前宿主缺失 → false（回退明文，复审 P0-8：不清盘、不丢输入）。
- */
-function ensureVaultSaveAllowed(): boolean {
-  if (!isVaultMode()) return false;
-  if (hydrated && isSecretsHostAlive()) return true;
-  // 内存态可能滞后（status() 曾失败 / 会话内进程猝死）：宿主不可用时以盘上
-  // migratedAt 标记兜底——已清痕的 vault 绝不回退写明文（设计 §4.5 用例 5）。
-  if (isVaultMigrated() || readVaultMigratedMarker()) {
-    throw new Error(
-      "E_SECRETS_HOST_LOST: 密钥已迁移至 vault，但宿主不可用——保存已拒绝（不写明文、不清盘）。请检查 cyrene-native 安装后重试。",
-    );
+const SECRETS_HOST_LOST_MESSAGE =
+  "E_SECRETS_HOST_LOST: 密钥已迁移至 vault，但宿主不可用——保存已拒绝（不写明文、不清盘）。请检查 cyrene-native 安装后重试。";
+
+type VaultSaveRoute = "plaintext" | "vault" | "readonly";
+
+/** key 值判定：非空 string 或显式清除 SENTINEL。 */
+function isSecretValue(value: unknown): boolean {
+  return value === SECRET_CLEAR_SENTINEL || (typeof value === "string" && value.trim() !== "");
+}
+
+/** incoming 是否携带非空 key / SENTINEL（model 四类槽位：顶层 / perProvider / 档案 / vision）。 */
+function modelIncomingHasSecret(incoming: Record<string, unknown>): boolean {
+  if (isSecretValue(incoming.apiKey)) return true;
+  const per = incoming.perProvider as Record<string, Record<string, unknown>> | undefined;
+  if (per && typeof per === "object") {
+    for (const entry of Object.values(per)) {
+      if (entry && typeof entry === "object" && isSecretValue(entry.apiKey)) return true;
+    }
   }
-  return false;
+  const profiles = incoming.modelProfiles as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(profiles)) {
+    for (const p of profiles) {
+      if (p && typeof p === "object" && isSecretValue(p.apiKey)) return true;
+    }
+  }
+  const vision = incoming.vision as Record<string, unknown> | undefined;
+  return !!(vision && typeof vision === "object" && isSecretValue(vision.apiKey));
+}
+
+/** incoming 是否携带非空 key / SENTINEL（general 的 SECRET_GENERAL_FIELDS）。 */
+function generalIncomingHasSecret(incoming: Record<string, unknown>): boolean {
+  return SECRET_GENERAL_FIELDS.some((field) => isSecretValue(incoming[field.jsonField]));
+}
+
+/**
+ * 保存路由（PR19 复审 P1-1/P2-6）：
+ *  - 非 vault 模式 → plaintext（明文语义不变）；
+ *  - vault 可写 → vault（空=不改 / SENTINEL 删 / 非空入 vault）；
+ *  - authoritative 但不可写 → readonly：仅当 incoming 含非空 key / SENTINEL 时抛
+ *    E_SECRETS_HOST_LOST（不清盘、不写明文）；其余 patch 正常持久化（非 key 字段
+ *    照写，key 槽由 stripKeysForDisk 取磁盘原值）；
+ *  - 非 authoritative（未 hydrate 且未迁移）→ plaintext（迁移前回退明文）。
+ */
+function routeVaultSave(incomingHasSecret: boolean): VaultSaveRoute {
+  if (!isVaultMode()) return "plaintext";
+  if (hydrated && isSecretsHostAlive()) return "vault";
+  if (hydrated || vaultMigrated || readVaultMigratedMarker()) {
+    if (incomingHasSecret) throw new Error(SECRETS_HOST_LOST_MESSAGE);
+    return "readonly";
+  }
+  return "plaintext";
 }
 
 /** 同步取密钥（loadModelSettings / loadGeneralSettings 的热路径）。 */
@@ -377,10 +419,18 @@ export async function migratePlaintextKeys(
   return hits.length;
 }
 
-/** 非 Windows 平台把文件权限收紧至 0600（owner rw）；失败/Windows 静默跳过。 */
+/** 非 Windows 平台把文件权限收紧至 0600（owner rw）；Windows 跳过；失败告警但不阻断迁移。 */
 function tightenFileMode(filePath: string): void {
   if (process.platform === "win32") return;
-  try { fs.chmodSync(filePath, 0o600); } catch { /* 平台不支持：不阻断迁移 */ }
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch (err) {
+    // 复审 P2-7：chmod 失败不再静默——.bak 含明文 key，权限收紧失败必须可观察
+    console.warn(
+      `[secrets] 收紧文件权限失败（不阻断迁移）: ${filePath}`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 /** 原地清空 raw 对象里的全部 key 字段（顶层镜像 + 集合内条目）。 */
@@ -447,14 +497,16 @@ export function applyKeyringToGeneralSettings(settings: Record<string, unknown>)
 // ── 保存路径：settings → vault + 磁盘清痕 ──
 
 /**
- * vault 模式保存语义（A3「空=不改」）：
+ * vault 模式保存语义（A3「空=不改」；路由见 routeVaultSave，仅 writable 执行）：
  *  - 非空 string → setSecret（vault + keyring 同步），值保留在内存对象；
  *  - "" → 视为「不改」：从 incoming 摘除该字段，让 merge 保住旧值；
  *  - SECRET_CLEAR_SENTINEL → 删 vault 条目 + 置 ""（用户显式清除）。
- * 返回磁盘写入副本（全部 key 置空）；调用方继续用原对象回内存。
+ * 磁盘副本由 stripKeysForDisk 生成；调用方继续用原对象回内存。
  */
 export function vaultifyModelSettingsForSave(incoming: Record<string, unknown>): void {
-  if (!ensureVaultSaveAllowed()) return; // P0-8 明文回退；IKJNX1 #1：迁移后宿主缺失在此抛 E_SECRETS_HOST_LOST
+  // PR19 复审 P1-1/P2-6：writable → vault 路径；authoritative 不可写 → 仅含 key
+  // 的 patch 抛 E_SECRETS_HOST_LOST（非 key patch 继续持久化）；其余回退明文。
+  if (routeVaultSave(modelIncomingHasSecret(incoming)) !== "vault") return;
   const provider = typeof incoming.provider === "string" ? incoming.provider : "";
   handleTopLevelKey(incoming, provider ? vaultKeyForProvider(provider) : "", "apiKey");
 
@@ -496,39 +548,117 @@ function handleTopLevelKey(obj: Record<string, unknown>, vaultKey: string, field
   if (vaultKey) setSecret(vaultKey, v.trim());
 }
 
-/** 磁盘副本：全部 key 字段置空（vault 激活时专用；源 JSON 清痕铁律。P0-8：未激活时原样返回；
- *  IKJNX1 #1：迁移后宿主缺失时抛 E_SECRETS_HOST_LOST——纵深防御，绝不把明文写回盘）。 */
-export function stripKeysForDisk<T>(settings: T): T {
-  if (!ensureVaultSaveAllowed()) return settings;
-  const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
-  for (const field of SECRET_GENERAL_FIELDS) {
-    if (typeof copy[field.jsonField] === "string") copy[field.jsonField] = "";
+/** 读取磁盘 JSON（缺失 / 解析失败 / 非对象 → null）。 */
+function readDiskJson(diskPath: string | undefined): Record<string, unknown> | null {
+  if (!diskPath) return null;
+  try {
+    if (!fs.existsSync(diskPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(diskPath, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
   }
-  const per = copy.perProvider as Record<string, Record<string, unknown>> | undefined;
-  if (per && typeof per === "object") {
-    for (const entry of Object.values(per)) {
-      if (entry && "apiKey" in entry) entry.apiKey = "";
+}
+
+/** 磁盘非空 string 原值（否则 ""）。 */
+function diskString(value: unknown): string {
+  return typeof value === "string" && value.trim() !== "" ? value : "";
+}
+
+/**
+ * key 槽逐槽对齐磁盘原值（PR19 复审 P1-1；authoritative 但不可写专用）。
+ * 「磁盘有非空值 → 用磁盘值；磁盘无该槽 → 置 ''」，绝不取内存/keyring/incoming。
+ * 磁盘有值而副本缺槽时补回磁盘原结构（vision / perProvider）；档案删除语义优先，
+ * 磁盘独有档案不复活。
+ */
+function applyDiskKeyValues(copy: Record<string, unknown>, disk: Record<string, unknown> | null): void {
+  // general：TTS/ASR 字段
+  for (const field of SECRET_GENERAL_FIELDS) {
+    if (typeof copy[field.jsonField] === "string" || diskString(disk?.[field.jsonField])) {
+      copy[field.jsonField] = diskString(disk?.[field.jsonField]);
     }
   }
-  const profiles = copy.modelProfiles as Array<Record<string, unknown>> | undefined;
-  if (Array.isArray(profiles)) {
-    for (const p of profiles) if (p && "apiKey" in p) p.apiKey = "";
+  // 顶层 apiKey（perProvider 镜像）
+  if (typeof copy.apiKey === "string" || diskString(disk?.apiKey)) {
+    copy.apiKey = diskString(disk?.apiKey);
   }
-  const vision = copy.vision as Record<string, unknown> | undefined;
-  if (vision && "apiKey" in vision) vision.apiKey = "";
-  if (typeof copy.apiKey === "string") copy.apiKey = "";
-  return copy as T;
+  // perProvider.*.apiKey（并集：磁盘独有槽补回）
+  const per = copy.perProvider && typeof copy.perProvider === "object"
+    ? copy.perProvider as Record<string, Record<string, unknown>>
+    : undefined;
+  const diskPer = disk?.perProvider && typeof disk.perProvider === "object"
+    ? disk.perProvider as Record<string, { apiKey?: unknown } | undefined>
+    : undefined;
+  if (per || diskPer) {
+    if (!copy.perProvider || typeof copy.perProvider !== "object") copy.perProvider = {};
+    const target = copy.perProvider as Record<string, Record<string, unknown>>;
+    for (const name of new Set([...Object.keys(per ?? {}), ...Object.keys(diskPer ?? {})])) {
+      const entry = target[name];
+      const hasSlot = !!entry && typeof entry === "object" && "apiKey" in entry;
+      const value = diskString(diskPer?.[name]?.apiKey);
+      if (hasSlot || value) target[name] = { ...(entry ?? {}), apiKey: value };
+    }
+  }
+  // modelProfiles[].apiKey：按 id 对齐；磁盘已删除的档案不复活（删除语义优先）
+  const profiles = copy.modelProfiles;
+  if (Array.isArray(profiles)) {
+    const diskProfiles = Array.isArray(disk?.modelProfiles)
+      ? disk.modelProfiles as Array<{ id?: unknown; apiKey?: unknown } | undefined>
+      : [];
+    for (const p of profiles) {
+      if (!p || typeof p !== "object" || !("apiKey" in p)) continue;
+      const match = typeof p.id === "string" ? diskProfiles.find((d) => d?.id === p.id) : undefined;
+      p.apiKey = diskString(match?.apiKey);
+    }
+  }
+  // vision.apiKey（磁盘独有 key-only 配置补回原结构）
+  const vision = copy.vision && typeof copy.vision === "object"
+    ? copy.vision as Record<string, unknown>
+    : undefined;
+  const diskVision = disk?.vision && typeof disk.vision === "object"
+    ? disk.vision as Record<string, unknown>
+    : undefined;
+  if (vision && "apiKey" in vision) {
+    vision.apiKey = diskString(diskVision?.apiKey);
+  } else if (diskString(diskVision?.apiKey)) {
+    copy.vision = { ...diskVision };
+  }
+}
+
+/**
+ * 磁盘副本（PR19 复审 P1-1 三分支）：
+ *  - vault 可写 → 全部 key 槽置空（源 JSON 清痕铁律）；
+ *  - authoritative 但不可写 → key 槽逐槽取「磁盘原值」（磁盘无该槽 → ""），
+ *    绝不把内存/keyring/incoming 明文写回盘，也不空串覆盖丢钥；
+ *  - 非 authoritative（未 hydrate 且未迁移）→ 原样返回（明文回退语义）。
+ * diskPath 传当前要写入的设置文件路径（model-settings.json / app-settings.json）。
+ */
+export function stripKeysForDisk<T>(settings: T, diskPath?: string): T {
+  if (isVaultWritable()) {
+    const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
+    clearKeysInRaw(copy);
+    return copy as T;
+  }
+  if (isVaultAuthoritative()) {
+    const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
+    applyDiskKeyValues(copy, readDiskJson(diskPath));
+    return copy as T;
+  }
+  return settings;
 }
 
 // ── 掩码（A3：设置页读取只回掩码/hasKey） ──
 
 /**
  * 掩码模型设置快照（vault 模式专用；非 vault 模式维持明文展示不变）。
- * 复审 P0 门控一致性：仅 vault 实际可用（isVaultActive）时掩码——宿主缺失（迁移
- * 未发生）时不掩码，否则渲染端整包回传掩码空串会覆盖写盘明文 key（永久丢钥）。
+ * PR19 复审 P1-1：门控 = vaultAuthoritative（hydrated ∨ 已迁移 ∨ 盘上标记）——
+ * 事实源在 vault 即掩码；未 hydrate 且未迁移（迁移前回退明文）不掩码，渲染端
+ * 持明文、回传不会清盘。掩码判据与保存/回填/WPF 快照统一。
  */
 export function maskModelSettingsForUi<T>(settings: T): T {
-  if (!isVaultActive()) return settings;
+  if (!isVaultAuthoritative()) return settings;
   const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
   const mask = (obj: Record<string, unknown>, field = "apiKey"): void => {
     const v = obj[field];
@@ -544,9 +674,9 @@ export function maskModelSettingsForUi<T>(settings: T): T {
   return copy as T;
 }
 
-/** 掩码 general 设置快照（TTS/ASR key → "" + has<Field> 布尔）。同 model：仅 vault 激活时掩码。 */
+/** 掩码 general 设置快照（TTS/ASR key → "" + has<Field> 布尔）。同 model：门控 = vaultAuthoritative。 */
 export function maskGeneralSettingsForUi<T>(settings: T): T {
-  if (!isVaultActive()) return settings;
+  if (!isVaultAuthoritative()) return settings;
   const copy = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
   for (const field of SECRET_GENERAL_FIELDS) {
     const v = copy[field.jsonField];
@@ -557,10 +687,10 @@ export function maskGeneralSettingsForUi<T>(settings: T): T {
   return copy as T;
 }
 
-/** general 保存路径的 vaultify（同 model 语义：空=不改 / SENTINEL=清；P0-8：host 缺失时整体回退明文；
- *  IKJNX1 #1：迁移后宿主缺失 → 抛 E_SECRETS_HOST_LOST）。 */
+/** general 保存路径的 vaultify（同 model：writable → 空=不改 / SENTINEL=清；authoritative
+ *  不可写 → 仅含 key 的 patch 抛 E_SECRETS_HOST_LOST，非 key patch 继续持久化；其余回退明文）。 */
 export function vaultifyGeneralSettingsForSave(incoming: Record<string, unknown>): void {
-  if (!ensureVaultSaveAllowed()) return;
+  if (routeVaultSave(generalIncomingHasSecret(incoming)) !== "vault") return;
   for (const field of SECRET_GENERAL_FIELDS) {
     handleTopLevelKey(incoming, field.vaultKey, field.jsonField);
   }

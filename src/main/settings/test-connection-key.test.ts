@@ -39,6 +39,14 @@ async function load() {
   return model;
 }
 
+/** 明文回退态：宿主缺失、迁移未发生、keyring 未 hydrate（PR19 P1-2）。 */
+async function loadWithoutHydrate() {
+  const secrets = await import("../dotnet-backend/secrets-client");
+  secrets.__setSecretsDataDirForTests(electronMock.userDataDir);
+  secrets.__setSecretsHostClientForTests(new StubSecretsClient() as unknown as import("../dotnet-backend/secrets-client").SecretsHostClient);
+  return await import("./model-settings");
+}
+
 function writeModelFile(): void {
   fs.writeFileSync(path.join(electronMock.userDataDir, "model-settings.json"), JSON.stringify({
     schemaVersion: 99,
@@ -79,10 +87,22 @@ describe("resolveTestConnectionApiKey（复审 P1-6）", () => {
     })).toBe("sk-pb-profile");
   });
 
-  it("profileId 档案槽缺失 → 该档案 provider 槽兜底", async () => {
+  it("profileId 档案槽 keyring 缺失 → 回退内存/盘上明文档案槽（PR19 P1-2）", async () => {
     const model = await load();
     const keyring = await import("./secrets-keyring");
-    keyring.deleteSecret("model:profile:pf-b"); // keyring 与 vault 同步移除
+    keyring.deleteSecret("model:profile:pf-b"); // keyring 与 vault 同步移除；内存/盘上明文仍在
+    expect(model.resolveTestConnectionApiKey({
+      provider: "PB", profileId: "pf-b", baseUrl: "https://pb.example.com", model: "m-b", apiKey: "",
+    })).toBe("sk-pb-profile");
+  });
+
+  it("profileId 档案槽 keyring+明文均缺失 → 该档案 provider 槽兜底", async () => {
+    const model = await load();
+    const keyring = await import("./secrets-keyring");
+    keyring.deleteSecret("model:profile:pf-b");
+    const settings = model.loadModelSettings();
+    const profile = settings.modelProfiles?.find((item) => item.id === "pf-b");
+    if (profile) profile.apiKey = ""; // 模拟档案明文槽也为空
     expect(model.resolveTestConnectionApiKey({
       provider: "PB", profileId: "pf-b", baseUrl: "https://pb.example.com", model: "m-b", apiKey: "",
     })).toBe("sk-pb-provider");
@@ -100,6 +120,40 @@ describe("resolveTestConnectionApiKey（复审 P1-6）", () => {
     expect(model.resolveTestConnectionApiKey({
       provider: "PC", baseUrl: "https://pc.example.com", model: "m-c", apiKey: "",
     })).toBe("");
+  });
+
+  it("P2-8：sameProvider 兜底直测——无 profileId、无精确匹配 → 同 provider 档案槽", async () => {
+    const model = await load();
+    expect(model.resolveTestConnectionApiKey({
+      provider: "PA", baseUrl: "https://not-exact.example.com", model: "m-x", apiKey: "",
+    })).toBe("sk-pa-profile");
+  });
+
+  it("P1-2 明文回退态（未 hydrate）：keyring 解析不到 → 回退内存/盘上明文槽，不跨端点", async () => {
+    // 覆盖 beforeEach 的默认文件：PD 只有 provider 明文槽、没有档案
+    fs.writeFileSync(path.join(electronMock.userDataDir, "model-settings.json"), JSON.stringify({
+      schemaVersion: 99,
+      provider: "PD",
+      apiKey: "sk-pd-top",
+      perProvider: { PD: { apiKey: "sk-pd-provider", baseUrl: "https://pd.example.com", model: "m-pd" } },
+      modelProfiles: [],
+    }, null, 2));
+    const model = await loadWithoutHydrate();
+    // provider 明文槽兜底（顶层镜像经 normalize 折叠进 perProvider）
+    expect(model.resolveTestConnectionApiKey({
+      provider: "PD", baseUrl: "https://pd.example.com", model: "m-pd", apiKey: "",
+    })).toBe("sk-pd-provider");
+    // 不跨端点：无关 provider 不拿活跃 provider 的明文 key
+    expect(model.resolveTestConnectionApiKey({ provider: "PE", apiKey: "" })).toBe("");
+  });
+
+  it("P1-2：vision 掩码空 key → keyring vision 槽回填（WPF/Electron 同口径）", async () => {
+    const model = await load();
+    const keyring = await import("./secrets-keyring");
+    keyring.setSecret("vision", "sk-vision"); // keyring + vault 同步
+    expect(model.resolveVisionTestApiKey("")).toBe("sk-vision");
+    expect(model.resolveVisionTestApiKey("   ")).toBe("sk-vision");
+    expect(model.resolveVisionTestApiKey("sk-typed")).toBe("sk-typed"); // 非空入参原样
   });
 
   it("非空入参原样返回；vault 关闭时不做回填", async () => {

@@ -9,10 +9,11 @@ import { getSettingsPath } from "../settings-store";
 import {
   applyKeyringToModelSettings,
   getSecret,
-  isPlaintextFallbackSave,
-  isVaultActive,
+  isVaultAuthoritative,
   isVaultMode,
+  shouldPreservePlaintextKeys,
   stripKeysForDisk,
+  VAULT_KEY_VISION,
   vaultifyModelSettingsForSave,
   vaultKeyForProfile,
   vaultKeyForProvider,
@@ -619,16 +620,18 @@ export function loadVisionConfig(from: ModelSettings = loadModelSettings()): Vis
 }
 
 /**
- * 复审 P0（掩码-保存门控一致性）：迁移前宿主缺失（vault 模式未激活）时，陈旧掩码
- * 载荷可能回传空 key。空串一律按「不改」处理——逐槽位用内存旧值回填，避免
+ * PR19 复审 P1-1（掩码-保存门控一致性）：vault 模式开但不可写（迁移前宿主缺失
+ * 的回退态 / hydrated 后宿主猝死的 authoritative-readonly 态）时，陈旧掩码载荷
+ * 可能回传空 key。空串/缺失一律按「不改」处理——逐槽位用内存旧值回填，避免
  * `normalizeProviderProfile` 把缺失 apiKey 补 "" 后覆盖写盘（永久丢钥）。
- * 仅在此回退态生效；纯明文模式（vault 关闭）与 vault 激活态语义不变。
+ * 仅 vault 模式不可写时生效；纯明文模式（vault 关闭）与 vault 可写态语义不变。
  */
-function preserveKeysOnPlaintextFallback(incoming: Partial<ModelSettings>, existing: ModelSettings): void {
-  if (!isPlaintextFallbackSave()) return;
+function preserveKeysWhenVaultUnwritable(incoming: Partial<ModelSettings>, existing: ModelSettings): void {
+  if (!shouldPreservePlaintextKeys()) return;
   const keep = (target: Record<string, unknown>, field: string, oldValue: unknown): void => {
-    if (typeof target[field] === "string" && target[field].trim() === ""
-      && typeof oldValue === "string" && oldValue.trim() !== "") {
+    const value = target[field];
+    const empty = value == null || (typeof value === "string" && value.trim() === "");
+    if (empty && typeof oldValue === "string" && oldValue.trim() !== "") {
       target[field] = oldValue;
     }
   };
@@ -668,7 +671,7 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   const existing = loadModelSettings();
   // vault 模式（A2/A3）：摘 ""（=不改）/ 处理 SENTINEL（=清除）/ 新值入 vault
   vaultifyModelSettingsForSave(settings as unknown as Record<string, unknown>);
-  preserveKeysOnPlaintextFallback(settings, existing);
+  preserveKeysWhenVaultUnwritable(settings, existing);
   const merged: Partial<ModelSettings> = { ...existing, ...settings };
 
   // currentProvider 优先取传入的、再取已有的
@@ -725,13 +728,15 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   merged.perProvider = perProvider;
 
   const final = normalizeModelSettings(merged);
-  // 复审 P0-7：normalize 会把掩码空串归一进槽位——vault 激活时按 keyring 回填
-  //（SENTINEL 已删的槽 keyring 无值，不会复活；用户新值已同步进 keyring，回填即新值）
-  if (isVaultActive()) applyKeyringToModelSettings(final);
+  // 复审 P0-7 + PR19 P1-1：normalize 会把掩码空串归一进槽位——事实源在 vault 时按
+  // keyring 回填（SENTINEL 已删的槽 keyring 无值，不会复活；用户新值已同步进 keyring，
+  // 回填即新值；hydrated 后宿主猝死时内存仍持 keyring 真值，UI 由掩码隐藏）
+  if (isVaultAuthoritative()) applyKeyringToModelSettings(final);
   const filePath = getSettingsPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  // vault 模式磁盘清痕（A2）：写副本（key 置空），返回值与内存缓存持真值
-  const persist = stripKeysForDisk(final);
+  // vault 模式磁盘清痕（A2）：写副本；PR19 P1-1：不可写但 authoritative 时 key 槽取
+  // 磁盘原值（不写内存/keyring 明文、不空串覆盖），返回值与内存缓存持真值
+  const persist = stripKeysForDisk(final, filePath);
   fs.writeFileSync(filePath, JSON.stringify(persist, null, 2), "utf8");
   Object.assign(existing, final);
   return final;
@@ -755,37 +760,69 @@ export interface TestConnectionKeyContext {
 }
 
 /**
- * 复审 P1-6：测试连接的真 key 回填。
+ * 复审 P1-6 + PR19 P1-2：测试连接的真 key 回填。
  * 掩码后渲染端/WPF 的 apiKey 为空——按上下文（profileId → provider+baseUrl+model 档案 →
- * 同 provider 档案槽 → provider 槽）解析 keyring 真值；解析不到回空（测试显式失败，
- * 不拿活跃 provider 的 key 去测别的 endpoint——凭据不跨端点）。
+ * 同 provider 档案槽 → provider 槽）解析真值；每个槽位 keyring 解析不到时回退内存/盘上
+ * 明文槽（明文回退态 / 部分迁移态），顺序仍为 profile → provider → 顶层镜像。
+ * 解析不到回空（测试显式失败，不拿活跃 provider 的 key 去测别的 endpoint——凭据不跨端点；
+ * 顶层镜像仅在与 provider 一致时兜底）。vision 槽单独由 resolveVisionTestApiKey 处理。
  */
 export function resolveTestConnectionApiKey(ctx: TestConnectionKeyContext): string {
   if (ctx.apiKey && ctx.apiKey.trim()) return ctx.apiKey;
   if (!isVaultMode()) return ctx.apiKey ?? "";
   const settings = loadModelSettings();
   const profiles = listSavedModelProfiles(settings);
+  const plainProfileKey = (profile: SavedModelProfile | undefined): string => {
+    const v = profile?.apiKey;
+    return v && v.trim() ? v.trim() : "";
+  };
+  const plainProviderKey = (provider: string): string => {
+    const per = settings.perProvider?.[provider]?.apiKey;
+    if (per && per.trim()) return per.trim();
+    // 顶层 apiKey 是活跃 provider 的镜像——仅同 provider 时兜底（不跨端点）
+    if (settings.provider === provider && settings.apiKey && settings.apiKey.trim()) {
+      return settings.apiKey.trim();
+    }
+    return "";
+  };
+  const profileKey = (profile: SavedModelProfile | undefined): string => {
+    if (!profile) return "";
+    const fromVault = getSecret(vaultKeyForProfile(profile.id));
+    if (fromVault) return fromVault;
+    const plain = plainProfileKey(profile);
+    if (plain) return plain;
+    const provider = getSecret(vaultKeyForProvider(profile.provider));
+    if (provider) return provider;
+    return plainProviderKey(profile.provider);
+  };
   if (ctx.profileId) {
     const direct = getSecret(vaultKeyForProfile(ctx.profileId));
     if (direct) return direct;
     const profile = profiles.find((item) => item.id === ctx.profileId);
-    if (profile) {
-      const byProvider = getSecret(vaultKeyForProvider(profile.provider));
-      if (byProvider) return byProvider;
-    }
+    const byProfile = profileKey(profile);
+    if (byProfile) return byProfile;
   }
   const exact = profiles.find((item) => item.provider === ctx.provider
     && item.baseUrl === ctx.baseUrl && item.model === ctx.model);
   if (exact) {
-    const v = getSecret(vaultKeyForProfile(exact.id)) ?? getSecret(vaultKeyForProvider(exact.provider));
+    const v = profileKey(exact);
     if (v) return v;
   }
   const sameProvider = profiles.find((item) => item.provider === ctx.provider);
   if (sameProvider) {
-    const v = getSecret(vaultKeyForProfile(sameProvider.id)) ?? getSecret(vaultKeyForProvider(sameProvider.provider));
+    const v = profileKey(sameProvider);
     if (v) return v;
   }
-  return getSecret(vaultKeyForProvider(ctx.provider)) ?? "";
+  return getSecret(vaultKeyForProvider(ctx.provider)) ?? plainProviderKey(ctx.provider) ?? "";
+}
+
+/**
+ * 复审 P1-2：视觉测试连接的真 key 回填（渲染端 IPC 与 WPF 原生 test-vision 同口径）。
+ * vault 模式下掩码空 key → keyring vision 槽；解析不到原样返回（测试显式失败，不跨槽）。
+ */
+export function resolveVisionTestApiKey(apiKey: string): string {
+  if (isVaultMode() && !apiKey.trim()) return getSecret(VAULT_KEY_VISION) ?? apiKey;
+  return apiKey;
 }
 
 

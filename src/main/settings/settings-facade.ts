@@ -37,9 +37,9 @@ import type { SkillModeOverrides } from "../skills/types";
 import { normalizeLspServerOverrides } from "../lsp/server-catalog";
 import {
   applyKeyringToGeneralSettings,
-  isPlaintextFallbackSave,
-  isVaultActive,
+  isVaultAuthoritative,
   SECRET_GENERAL_FIELDS,
+  shouldPreservePlaintextKeys,
   stripKeysForDisk,
   vaultifyGeneralSettingsForSave,
 } from "./secrets-keyring";
@@ -598,23 +598,26 @@ export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralS
   const before = loadGeneralSettings();
   // vault 模式：先摘 ""（不改）/ 处理 SENTINEL（清除）/ 新值入 vault，再归一化
   vaultifyGeneralSettingsForSave(partial as unknown as Record<string, unknown>);
-  // 复审 P0（掩码-保存门控一致性）：迁移前宿主缺失时，陈旧掩码空串按「不改」保旧明文 key
-  if (isPlaintextFallbackSave()) {
+  // PR19 P1-1（掩码-保存门控一致性）：vault 模式不可写（明文回退态 / hydrated 后
+  // 宿主猝死态）时，陈旧掩码空串按「不改」保内存旧明文 key
+  if (shouldPreservePlaintextKeys()) {
     const incoming = partial as unknown as Record<string, unknown>;
     const existing = before as unknown as Record<string, unknown>;
     for (const field of SECRET_GENERAL_FIELDS) {
-      if (typeof incoming[field.jsonField] === "string" && (incoming[field.jsonField] as string).trim() === ""
-        && typeof existing[field.jsonField] === "string" && (existing[field.jsonField] as string).trim() !== "") {
+      const incomingValue = incoming[field.jsonField];
+      const empty = incomingValue == null || (typeof incomingValue === "string" && incomingValue.trim() === "");
+      if (empty && typeof existing[field.jsonField] === "string" && (existing[field.jsonField] as string).trim() !== "") {
         incoming[field.jsonField] = existing[field.jsonField];
       }
     }
   }
   const normalized = normalizeGeneralSettings({ ...before, ...partial });
-  // 复审 P0-7：normalize 归一空串后按 keyring 回填（SENTINEL 已删槽不复活）
-  if (isVaultActive()) applyKeyringToGeneralSettings(normalized as unknown as Record<string, unknown>);
+  // 复审 P0-7 + PR19 P1-1：normalize 归一空串后按 keyring 回填（SENTINEL 已删槽不复活；
+  // authoritative（含 hydrated 后宿主猝死）内存持真值，UI 由掩码隐藏）
+  if (isVaultAuthoritative()) applyKeyringToGeneralSettings(normalized as unknown as Record<string, unknown>);
   const filePath = getGeneralSettingsPath();
-  // vault 激活时磁盘清痕（写副本，key 置空），内存缓存持真值；未激活原样写（复审 P0-8）
-  const persist = stripKeysForDisk(normalized);
+  // vault 模式磁盘清痕（A2，写副本）；PR19 P1-1：authoritative 但不可写时 key 槽取磁盘原值
+  const persist = stripKeysForDisk(normalized, filePath);
   fs.writeFileSync(filePath, JSON.stringify(persist, null, 2));
   generalSettingsCache = normalized;
   notifyGeneralSettingsChanged(before, normalized);

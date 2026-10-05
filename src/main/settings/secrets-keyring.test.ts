@@ -5,13 +5,14 @@
  * maskForUi 掩码 + hasKey、applyKeyring 回填、collectPlaintextKeys + 迁移清痕幂等。
  * 环境开关 CYRENE_SECRETS_HOST=1 进入 vault 模式；宿主客户端注入内存桩。
  */
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import fs, { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   hydrateKeyring,
   initSecretsVault,
+  isVaultAuthoritative,
   isVaultMigrated,
   onKeyringHydrated,
   SECRET_CLEAR_SENTINEL,
@@ -84,7 +85,7 @@ function reset(): void {
 describe("vaultifyModelSettingsForSave（空=不改 / SENTINEL=清 / 新值入 vault）", () => {
   it("非空新值 → 入 vault 并保留原字段（最终由 stripKeysForDisk 清盘）", async () => {
     reset();
-    await hydrateKeyring(); // isVaultActive 门控：hydrated 才走 vault 路径
+    await hydrateKeyring(); // isVaultWritable 门控：hydrated + 宿主存活才走 vault 路径
     const incoming: Record<string, unknown> = { provider: "MiniMax（稀宇科技）", apiKey: "  sk-new-1  " };
     vaultifyModelSettingsForSave(incoming);
     expect(vault.get("model:provider:MiniMax（稀宇科技）")).toBe("sk-new-1");
@@ -153,7 +154,7 @@ describe("stripKeysForDisk（A2 清痕）", () => {
 describe("maskModelSettingsForUi / maskGeneralSettingsForUi（A3）", () => {
   it("model：vault 激活时 key → '' + hasApiKey", async () => {
     reset();
-    await hydrateKeyring(); // 复审 P0：掩码门控 = isVaultActive（须已 hydrate）
+    await hydrateKeyring(); // 复审 P0 + PR19 P1-1：掩码门控 = isVaultAuthoritative（hydrated 即事实源在 vault）
     const masked = maskModelSettingsForUi({
       apiKey: "sk-x",
       perProvider: { P: { apiKey: "sk-y" } },
@@ -228,7 +229,7 @@ describe("applyKeyring（hydrate 后回填）", () => {
 
 describe("复审 P0-8 / P0-6（host 缺失保存回退 + 冷启动回填）", () => {
   it("host 缺失（未 hydrate）保存 → 整体回退明文语义：不清盘、不丢 key", () => {
-    reset(); // 不 hydrate → isVaultActive=false（宿主缺失/迁移未发生）
+    reset(); // 不 hydrate → 非 authoritative（宿主缺失/迁移未发生）
     const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-keep-me" };
     vaultifyModelSettingsForSave(incoming); // no-op（门控）
     expect(incoming.apiKey).toBe("sk-keep-me"); // 用户输入原样保留
@@ -278,8 +279,8 @@ describe("复审 P0-8 / P0-6（host 缺失保存回退 + 冷启动回填）", ()
   });
 });
 
-describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST_LOST，设计 §4.5/§8 用例 5）", () => {
-  it("启动即迁移后（盘上 migratedAt 标记）+ 宿主缺失：vaultify/strip 均抛错，不动传入对象、不写 vault", async () => {
+describe("IKJNX1 #1 + PR19 P1-1：宿主缺失保存门控（含 key 硬失败 / 非 key 不连坐 / strip 磁盘对齐）", () => {
+  it("启动即迁移后（盘上 migratedAt 标记）+ 宿主缺失：含 key 的 vaultify 抛错；strip 不抛且不泄漏", async () => {
     reset();
     const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-marker-"));
     __setSecretsDataDirForTests(dir);
@@ -303,9 +304,15 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
       expect(() => vaultifyGeneralSettingsForSave(general)).toThrow(/E_SECRETS_HOST_LOST/);
       expect(general.ttsMimoKey).toBe("sk-tts");
 
+      // PR19 P2-6：非 key patch 不连坐
+      expect(() => vaultifyModelSettingsForSave({ provider: "PA", model: "m" })).not.toThrow();
+      expect(() => vaultifyGeneralSettingsForSave({ petWindowX: 1 })).not.toThrow();
+
+      // PR19 P1-1：strip 不再抛——authoritative 不可写 → key 槽取磁盘原值（无路径 = 磁盘无值 → ""）
       const final = { provider: "PA", apiKey: "sk-new" };
-      expect(() => stripKeysForDisk(final)).toThrow(/E_SECRETS_HOST_LOST/); // 纵深防御：不清盘
-      expect(final.apiKey).toBe("sk-new");
+      const disk = stripKeysForDisk(final);
+      expect((disk as { apiKey: string }).apiKey).toBe("");
+      expect(final.apiKey).toBe("sk-new"); // 原对象不动
       expect(vault.size).toBe(0); // 未写明文也未写 vault
     } finally {
       __setSecretsDataDirForTests(null);
@@ -313,7 +320,7 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
     }
   });
 
-  it("会话内宿主死亡（已 hydrate）：vaultify/strip 抛错；宿主恢复后回 vault 路径", async () => {
+  it("会话内宿主死亡（已 hydrate）：含 key 抛错、非 key 不抛；宿主恢复后回 vault 路径", async () => {
     reset();
     const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-alive-"));
     try {
@@ -325,7 +332,11 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
       const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-new" };
       expect(() => vaultifyModelSettingsForSave(incoming)).toThrow(/E_SECRETS_HOST_LOST/);
       expect(incoming.apiKey).toBe("sk-new");
-      expect(() => stripKeysForDisk({ apiKey: "sk-new" })).toThrow(/E_SECRETS_HOST_LOST/);
+      // PR19 P2-6：非 key patch 不连坐
+      expect(() => vaultifyModelSettingsForSave({ provider: "PA", model: "m" })).not.toThrow();
+      // PR19 P1-1：strip 三分支——不可写时返回磁盘原值副本（无路径 = ""），不抛
+      const disk = stripKeysForDisk({ apiKey: "sk-new" });
+      expect((disk as { apiKey: string }).apiKey).toBe("");
 
       stub.alive = true; // 恢复后正常走 vault
       vaultifyModelSettingsForSave(incoming);
@@ -335,7 +346,7 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
     }
   });
 
-  it("内存态未迁移但盘上 marker 在（status 曾失败场景）：宿主死亡仍硬失败", () => {
+  it("内存态未迁移但盘上 marker 在（status 曾失败场景）：含 key 硬失败、非 key 不连坐", () => {
     reset();
     const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-marker2-"));
     __setSecretsDataDirForTests(dir);
@@ -350,7 +361,8 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
       const incoming: Record<string, unknown> = { provider: "PA", apiKey: "sk-new" };
       expect(() => vaultifyModelSettingsForSave(incoming)).toThrow(/E_SECRETS_HOST_LOST/);
       expect(incoming.apiKey).toBe("sk-new");
-      expect(() => stripKeysForDisk({ apiKey: "sk-new" })).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(() => vaultifyModelSettingsForSave({ provider: "PA", model: "m" })).not.toThrow();
+      expect((stripKeysForDisk({ apiKey: "sk-new" }) as { apiKey: string }).apiKey).toBe("");
     } finally {
       __setSecretsDataDirForTests(null);
       reset();
@@ -374,6 +386,142 @@ describe("IKJNX1 #1：迁移后宿主缺失 → 保存硬失败（E_SECRETS_HOST
         __setSecretsDataDirForTests(null);
         reset();
       }
+    }
+  });
+});
+
+describe("PR19 P1-1：hydrate 后宿主猝死 + 未迁移（无 marker）", () => {
+  it("掩码仍按 vaultAuthoritative；非 key vaultify 不抛，含 key/SENTINEL 抛 E_SECRETS_HOST_LOST", async () => {
+    reset();
+    await hydrateKeyring(); // 宿主曾活 → hydrated；无 marker、未迁移
+    stub.alive = false;     // 宿主猝死（S4）
+    expect(isVaultMigrated()).toBe(false);
+    expect(isVaultAuthoritative()).toBe(true);
+    // 掩码与保存同判据：事实源在 vault（keyring 内存真值）→ 继续掩码
+    const masked = maskModelSettingsForUi({ apiKey: "sk-x", vision: { apiKey: "sk-v" } });
+    expect(masked.apiKey).toBe("");
+    expect((masked.vision as Record<string, unknown>).apiKey).toBe("");
+    // P2-6：非 key patch 不连坐
+    expect(() => vaultifyModelSettingsForSave({ provider: "PA", model: "m" })).not.toThrow();
+    expect(() => vaultifyGeneralSettingsForSave({ petWindowX: 1 })).not.toThrow();
+    // 含非空 key / SENTINEL：硬失败（不清盘、不写明文）
+    for (const key of ["sk-new", SECRET_CLEAR_SENTINEL]) {
+      expect(() => vaultifyModelSettingsForSave({ provider: "PA", apiKey: key })).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(() => vaultifyModelSettingsForSave({ vision: { apiKey: key } })).toThrow(/E_SECRETS_HOST_LOST/);
+      expect(() => vaultifyGeneralSettingsForSave({ ttsMinimaxKey: key })).toThrow(/E_SECRETS_HOST_LOST/);
+    }
+  });
+
+  it("已迁移（盘上 marker）+ 未 hydrate：仍掩码——事实源在 vault，UI 不回明文", () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-mask-marker-"));
+    __setSecretsDataDirForTests(dir);
+    writeFileSync(
+      path.join(dir, "secrets-vault.json"),
+      JSON.stringify({ version: 1, migratedAt: "2026-10-05T00:00:00Z", entries: {} }),
+    );
+    try {
+      expect(isVaultAuthoritative()).toBe(true);
+      expect(maskModelSettingsForUi({ apiKey: "sk-x" }).apiKey).toBe("");
+      expect(maskGeneralSettingsForUi({ ttsMinimaxKey: "sk-t" }).ttsMinimaxKey).toBe("");
+    } finally {
+      __setSecretsDataDirForTests(null);
+      reset();
+    }
+  });
+
+  it("stripKeysForDisk：key 槽逐槽取磁盘原值（不取内存/keyring、不空串覆盖）", async () => {
+    reset();
+    await hydrateKeyring();
+    stub.alive = false;
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-diskkeys-"));
+    try {
+      const modelPath = path.join(dir, "model-settings.json");
+      writeFileSync(modelPath, JSON.stringify({
+        provider: "PA",
+        apiKey: "sk-disk-top",
+        perProvider: { PA: { apiKey: "sk-disk-p" }, PB: { apiKey: "sk-disk-pb" } },
+        modelProfiles: [{ id: "pf1", apiKey: "sk-disk-prof" }],
+        vision: { baseUrl: "u", apiKey: "sk-disk-v", model: "vm" },
+      }));
+      const memory = {
+        provider: "PA",
+        apiKey: "sk-mem-top",
+        perProvider: { PA: { apiKey: "sk-mem-p" } },
+        modelProfiles: [{ id: "pf1", apiKey: "sk-mem-prof" }, { id: "pf2", apiKey: "sk-mem-2" }],
+        vision: { apiKey: "sk-mem-v" },
+      };
+      const disk = stripKeysForDisk(memory, modelPath);
+      expect(disk.apiKey).toBe("sk-disk-top");
+      expect(disk.perProvider.PA.apiKey).toBe("sk-disk-p");
+      expect((disk.perProvider as Record<string, { apiKey: string }>).PB.apiKey).toBe("sk-disk-pb"); // 磁盘独有槽补回
+      expect(disk.modelProfiles[0].apiKey).toBe("sk-disk-prof");
+      expect(disk.modelProfiles[1].apiKey).toBe(""); // 磁盘无该档案 → ""
+      expect(disk.vision?.apiKey).toBe("sk-disk-v");
+      // 原对象不动（内存持真值）
+      expect(memory.apiKey).toBe("sk-mem-top");
+      expect(memory.perProvider.PA.apiKey).toBe("sk-mem-p");
+
+      const generalPath = path.join(dir, "app-settings.json");
+      writeFileSync(generalPath, JSON.stringify({ ttsMinimaxKey: "sk-disk-tts" }));
+      const general = stripKeysForDisk({ ttsMinimaxKey: "sk-mem-tts", asrMinimaxKey: "sk-mem-asr" }, generalPath);
+      expect(general.ttsMinimaxKey).toBe("sk-disk-tts");
+      expect(general.asrMinimaxKey).toBe("");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      reset();
+    }
+  });
+});
+
+describe("PR19 P2-7：.pre-secrets.bak 权限 0600", () => {
+  function withLinuxPlatform(fn: () => Promise<void>): Promise<void> {
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    return fn().finally(() => {
+      if (original) Object.defineProperty(process, "platform", original);
+    });
+  }
+
+  it("Linux 迁移：对 model/general 的 .pre-secrets.bak 都 chmod 0600", async () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-mode-"));
+    const modelPath = path.join(dir, "model-settings.json");
+    const generalPath = path.join(dir, "general-settings.json");
+    writeFileSync(modelPath, JSON.stringify({ provider: "PA", perProvider: { PA: { apiKey: "sk-mode" } } }));
+    writeFileSync(generalPath, JSON.stringify({ ttsMinimaxKey: "sk-tts-mode" }));
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => { /* no-op */ });
+    try {
+      await withLinuxPlatform(async () => {
+        await migratePlaintextKeys(modelPath, generalPath);
+      });
+      expect(chmodSpy).toHaveBeenCalledWith(`${modelPath}.pre-secrets.bak`, 0o600);
+      expect(chmodSpy).toHaveBeenCalledWith(`${generalPath}.pre-secrets.bak`, 0o600);
+      expect(existsSync(`${modelPath}.pre-secrets.bak`)).toBe(true);
+    } finally {
+      chmodSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+      reset();
+    }
+  });
+
+  it("chmod 失败：console.warn 告警但不阻断迁移", async () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-mode-warn-"));
+    const modelPath = path.join(dir, "model-settings.json");
+    writeFileSync(modelPath, JSON.stringify({ provider: "PA", perProvider: { PA: { apiKey: "sk-mode-warn" } } }));
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => { throw new Error("EACCES"); });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* no-op */ });
+    try {
+      const migrated = await withLinuxPlatform(async () => migratePlaintextKeys(modelPath, path.join(dir, "general-settings.json")));
+      expect(migrated).toBeGreaterThan(0);
+      expect(warnSpy.mock.calls.some((call) => String(call[0]).includes("收紧文件权限失败"))).toBe(true);
+      expect(existsSync(`${modelPath}.pre-secrets.bak`)).toBe(true);
+    } finally {
+      chmodSpy.mockRestore();
+      warnSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+      reset();
     }
   });
 });
