@@ -358,6 +358,10 @@ internal static class AstGrepTool
         }
         var stdout = stdoutTask.GetAwaiter().GetResult();
         var stderr = stderrTask.GetAwaiter().GetResult();
+        // 注：GetAwaiter().GetResult() 与 GitTools.RunGit 同款既有模式——WaitForExit
+        // 只等进程退出，理论上存在「进程已退出但管道未 EOF」的长挂窗口；ast-grep 退出
+        // 即关闭 stdout/stderr，实际不可达。如后续统一改读任务超时（Task.WhenAny），
+        // 与 GitTools 一并处理，此处不改行为。
         // exit 1 = 无匹配（ast-grep 约定，stdout 空）；stderr 非空/异常退出 → 抛错误帧回退 TS
         if (stderr.Trim().Length > 0 || proc.ExitCode is not (0 or 1))
             throw new ToolHostException("E_AST_GREP_CLI", "ast-grep 执行失败: " + stderr.Trim());

@@ -561,7 +561,7 @@
   zip 结构断言、PdfPig 文本提取探针、CLI 缺失错误帧）；dual-track **PASS**（新增 fetch_url 5 / 文档 6 /
   邮件 12 / ast_grep 10：raw 逐字、读回投影、docx run 属性、落盘字节、校验路径逐字、TS↔CLI 逐字）；
   vitest native 新增 **26 项**（fetch_url 3 / 文档 9 / 邮件 8 / ast_grep 6）；
-  `vitest run src/main/orchestrator/tools` **483/483**；tsc 三端 0；cyrene-core 洁净断言 PASS；
+  `vitest run src/main/orchestrator/tools` **496/496**（审查修复批 +13）；tsc 三端 0；cyrene-core 洁净断言 PASS；
   native-windows 全量编译 0 错误。
 - **剩余（非本批，均依赖其他层；按 issue「随各自 host 迁移」计划）**：run_verification（harness 审批 /
   记账链路耦合）、shell_job（属 T2；run_shell 属 T3，需连同后台任务底座一起迁）、translate（需 tool-host →
@@ -575,8 +575,10 @@
   （ast-grep 打包态路径、CLI 读取/超时、send_email 重复投递窗口、邮件三件取消透传）；
   当批逐条修复，矩阵/dual-track 直连宿主的测试注入路径不受影响。
 - **P0 信任边界**：`nativeFirst` / `withNativeFirst` 统一下发前剥离模型 args 中的
-  `__` 键；可信内部参数改经 `NativeFirstOptions.internalArgs` 唯一通道注入
-  （git / search_text / download_file / ast-grep）；直接 `nativeToolHost.call`
+  `__` 键；可信内部参数有两条装配通道——`nativeFirst` 经
+  `NativeFirstOptions.internalArgs` 显式注入（git / search_text / download_file），
+  `withNativeFirst` 由 prepare 回调自行装配（ast-grep 的 `__cyreneWorkspaceRoot` /
+  `__astGrepCommand`、文档四件的输出路径/主题）；直接 `nativeToolHost.call`
   的模型参数路径（str_replace 两段式 / fs 只读）同样先剥离。用例：
   `native-tool-host.test.ts`（nativeFirst / withNativeFirst 剥离 + internalArgs 覆盖 +
   fallbackOnError 语义）、`git-tools-native` / `str-replace-native` / `ast-grep-native`
@@ -607,9 +609,42 @@
   - `Math.round` / 附件 KB 取整边界、`paragraphs` 非数组语义（C# 静默当空 vs TS 抛错）
     保留为已知边界，双轨用例仅覆盖数组形态；
   - 文档生成取消可能留半成品文件（native 被杀无原子写）、`ast_grep_replace` 预演失败/
-    部分写失败的基线时序缺口、ast-grep 取消不杀孙进程（杀 host 语义同 git）、
-    `ToolHostException.errorCode` 暂无 TS 消费方：按 issue 计划跟踪。
+    部分写失败的基线时序缺口、ast-grep 取消不杀孙进程（杀 host 语义同 git）：按 issue
+    计划跟踪（`ToolHostException.errorCode` 自 P2 加固批起经 `handleFrame` 透传，
+    `send_email` 已消费 `E_EMAIL_PRECONDITION`）。
 - **CI 口径**：matrix 在 CI 先于 npm ci，ast-grep 段 SKIP → **131/0**（本地全量
   145/145）；ast-grep 由 npm ci 之后的 dual-track 步骤覆盖；`docs/dotnet-backend.md`
   已注明。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 审查修复）。
+
+## 2026-10-05 增量：PR #20 复审 P2 加固（IKJK3V T2 批）
+
+- **背景**：Gitee PR #20 复审结论「可合入」（无 P0/P1）；6 条 P2 不阻断加固项逐条处理。
+- **P2-1 未知副作用安全网**：`nativeFirst(fallbackOnError:false)` 的 native 失败不再
+  以 `[错误]` 文本返回（会被 `legacyFailure` 固定归为 `not_applied`），改为结构化抛
+  `ToolExecutionError(E_TOOL_EFFECT_UNKNOWN, effectState:"unknown")`——经
+  `executeToolDefinition` 保留事实，由 Harness 既有入账机制登记 `uncertainEffects`
+  并触发同 fingerprint 重放拦截；补 dispatcher 级入账/拦截用例。
+- **P2-2 未派发 sentinel**：host 退出时排队（call 帧从未写入 stdin）调用以
+  `NativeCallNotDispatchedError`（`E_TOOL_NOT_DISPATCHED`）拒绝，在途失败保持普通
+  Error；`nativeFirst` 对确定未派发允许安全回退 TS，`fallbackOnError:false` 仅拦
+  不确定态。补 host 层与包装层两态用例。
+- **P2-3 发送前置/发送阶段区分**：C# `EmailTools.Send` 组装/连接/认证等前置失败抛
+  `E_EMAIL_PRECONDITION`（确定未发出），`Send` 阶段失败保持 `E_EMAIL_SEND`（状态
+  未知）；TS `handleFrame` 透传错误帧 `errorCode` 到 `Error.code`，`send_email` 以
+  `safeFallbackCodes:["E_EMAIL_PRECONDITION"]` 安全回退 nodemailer；smoke-host 实测
+  连接拒绝返回 `E_EMAIL_PRECONDITION`。
+- **P2-4 信任边界用例判别力**：ast-grep 伪造 `__` 用例改断言「无后置可信覆盖的键被
+  剥离」（修复前失败）；fs / git wire mock 改用 `vi.importActual` 复用真实
+  `stripInternalArgs`，不再自行重实现剥离逻辑。
+- **P2-5 决策文档**：本文件上文计数同步 **496/496（审查修复批 +13）**；「唯一通道」
+  措辞改为两条可信装配通道（`internalArgs` 与 `withNativeFirst` prepare）。
+- **P2-6 小边界**：① ast-grep 平台包补 win32-ia32 映射并注释支持范围（linux musl
+  无官方包 → 静默回退 TS）；② `formatEmailDate` Invalid Date 回退 `(未知)`（补断言）；
+  ③ `AstGrepTool.RunCli` 补 `GetResult()` 理论长挂注释（对照 GitTools 既有模式，
+  不改行为）；④ `withNativeFirst` / `nativeFirst` 的 TS 回退统一只拿已剥离 `__` 的
+  args（补 prepare 返回 null 路径用例）。
+- **验证**：`vitest run src/main/orchestrator/tools` **504/504**（P2 加固批 +8）；
+  `tsc -p tsconfig.main.json` 0；cyrene-core build 0 错误；矩阵 **145/0**（重建
+  smoke-host 后复跑）；dual-track **PASS**。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 复审 P2 加固）。

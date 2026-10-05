@@ -29,12 +29,19 @@ const LOG_PREFIX = "[AstGrep]";
 /** native 轨看门狗：≥ C# CLI 超时（30s）。 */
 const AST_GREP_NATIVE_TIMEOUT_MS = 60_000;
 
-/** 解析随包 ast-grep CLI 可执行文件（平台包；找不到返回 null → 走 TS napi 实现）。 */
+/**
+ * 解析随包 ast-grep CLI 可执行文件（平台包；找不到返回 null → 走 TS napi 实现）。
+ * 支持范围 = @ast-grep/cli 官方平台包矩阵：win32 x64/ia32/arm64、darwin x64/arm64、
+ * linux glibc x64/arm64。未覆盖架构（如 linux musl——官方无 musl 包）解析失败后
+ * 静默回退 TS，不崩溃。
+ */
 export function resolveAstGrepCommand(): string | null {
   try {
     const cliDir = path.dirname(require.resolve("@ast-grep/cli/package.json"));
     const platformPkg = process.platform === "win32"
-      ? (process.arch === "arm64" ? "@ast-grep/cli-win32-arm64-msvc" : "@ast-grep/cli-win32-x64-msvc")
+      ? (process.arch === "arm64" ? "@ast-grep/cli-win32-arm64-msvc"
+        : process.arch === "ia32" ? "@ast-grep/cli-win32-ia32-msvc"
+        : "@ast-grep/cli-win32-x64-msvc")
       : process.platform === "darwin"
         ? (process.arch === "arm64" ? "@ast-grep/cli-darwin-arm64" : "@ast-grep/cli-darwin-x64")
         : (process.arch === "arm64" ? "@ast-grep/cli-linux-arm64-gnu" : "@ast-grep/cli-linux-x64-gnu");
