@@ -106,8 +106,9 @@ IKJK51 复审 P1-6）、`scripts/tray-scheduler-e2e.mjs`（真实起 `--tray --s
 - 渠道托管（Phase 2 渠道批 IKJK3P/IKJK2P/IKJK2R/IKJK2S/IKJK2T）：`CLOUD_CHANNELS=wechat,feishu,qqbot` 服务端 24/7；
   微信 iLink 扫码登录/长轮询/媒体、飞书 webhook（签名/解密/去重）+ 最小 REST、QQ 官方 bot 被动回复（WS+REST）、
   归属租约 claim/heartbeat/release + `/v1/channels/{id}/proactive` 幂等投递；设计 `docs/design/2026-10-05-server-channel.md`。
-  渠道套件实测：`channel-selftest all` **210 项**（framework/wechat/feishu/qqbot/ownership）+ `scripts/channel-smoke-test.py`
-  **52 项**（真实起服务 + mock iLink/飞书/QQ 上游）+ `--selftest channel-contract fixtures/channels` **42 项**（双端契约 C# 侧）。
+  渠道套件实测：`channel-selftest all` **232 项**（framework/wechat/feishu/qqbot/ownership）+ `scripts/channel-smoke-test.py`
+  **57 项**（真实起服务 + mock iLink/飞书/QQ 上游；Linux 追加 4 项落盘权限 = 61）+ `--selftest channel-contract fixtures/channels`
+  **51 项**（双端契约 C# 侧）。
 - 测试：`python scripts/dotnet-cloud-sync-test.py`（真实起服务：幂等/分页/并发收敛/链拒绝回滚/
   clone 游标 + 配对令牌/限流/Host/脱敏 + 生成闭环 + PWA 静态托管 + 能力声明，Windows 54 / Linux 55 项；
   wwwroot 未构建时跳过静态 3 项）。`--base-url/--profile core` 为远端/核心档（对任意 HTTP 形态）。

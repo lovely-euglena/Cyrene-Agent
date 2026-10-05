@@ -47,7 +47,7 @@ Phase 1 已交付：事件库 + `/v1/sync` + 配对令牌 + 服务端生成（`D
 **进入本 PR（P0/P1）**：
 
 1. 渠道框架：`IChannelAdapter` + 消息类型镜像 + `ChannelManager`/`ChannelHostedService` + `ChannelStore` + 控制面 API；
-2. 微信 iLink 试点：文本 + 图片（入站下载/模型输入、出站图片 item）+ 断线重连 + 扫码登录态（二维码投递桌面设置页）；
+2. 微信 iLink 试点：文本 + 图片（入站下载 + 事件占位文本、出站图片 item）+ 断线重连 + 扫码登录态（二维码投递桌面设置页）；
 3. 归属权与唯一调度（IKJK2P 全部三项）：交棒握手、主动消息唯一化（桌面转发）、服务端不可达接管（显式兜底）；
 4. 飞书：webhook 文本/图片；语音（Ogg Opus 转码）**若 ffmpeg 镜像落地**则一并交付，否则按 §6.3 占位降级；
 5. QQ 官方 bot：被动回复文本（WS + REST）；
@@ -319,14 +319,14 @@ C# 侧 `ILinkProtocolClient` 保持**同端点、同字段、同头**，差异�
 ### 3.3 媒体链路（图片/文件）
 
 - **入站图片**：CDN 下载（流式、单文件 ≤10MB）→ 落 `media/wechat/`（0600）→
-  `IncomingMessage.attachments`；模型输入策略与桌面一致：`image-router` 的 direct/caption 二分——
-  服务端 v1 简化为 **caption 优先**（`CLOUD_CHANNEL_VISION=direct` 时走模型直读）；未配置视觉模型时
-  文案降级「收到图片，但服务端还没有配置看图能力」；
-- **入站文件**：可分析扩展名（与桌面 `inbound-media.ts` 白名单同表）→ 下载并注入 prompt 路径；
-  其它文件 → 文案提示（不落盘），与桌面 `buildUnsupportedWechatFilePrompt` 同口径；
+  `IncomingMessage.attachments`（仅服务端本机持有）；事件文本与模型输入只写稳定占位 `[图片]`。
+  **视觉输入（caption / 模型直读）与 `CLOUD_CHANNEL_VISION` 未接线，为后续批次**——
+  当前无消费点，也不存在「未配置看图能力」的降级文案；
+- **入站文件**：可分析扩展名（与桌面 `inbound-media.ts` 白名单同表）→ 下载落盘并在事件文本写
+  `[文件: name]` 占位；其它文件 → 文案提示（不落盘），与桌面 `buildUnsupportedWechatFilePrompt` 同口径；
 - **视频**：本批仅文案提示（桌面行为一致）；
 - **出站图片**：`OutgoingMessage.parts[image]` → 上传 CDN → `image_item`；试点验收的「图片链路」=
-  入站（下载+模型输入+事件占位文本）+ 出站（adapter 发送，mock e2e 断言 item 结构）；
+  入站（下载+事件占位文本）+ 出站（adapter 发送，mock e2e 断言 item 结构）；
 - **事件文本占位**：图片/文件在事件 `text` 中写稳定占位（`[图片]` / `[文件: name]`），附件本体不跨端同步（§1.3 边界）。
 
 ### 3.4 登录态与二维码投递
@@ -677,9 +677,9 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
 | 微信文本/图片/媒体 AES | C# selftest + mock e2e | `channel-selftest wechat`、channel-smoke | getupdates 游标轮转；contextToken 回传；CDN 加解密往返；ret=-14 |
 | 断线重连 | C# selftest | `channel-selftest wechat` | 网络错误退避重试；Stop 打断在途；连续失败状态可见 |
 | 登录/二维码 | C# selftest + mock e2e | 同上 | PNG 渲染；confirmed 落库；expired/error 文案；重复 start 作废 |
-| 归属/唯一调度 | C# selftest + TS vitest + mock e2e | `channel-selftest ownership`、`vitest run src/main/channels`、channel-smoke | claim 停服务端适配器；heartbeat/lost；租约过期收回；双端同启只有一端处理；门闩 |
+| 归属/唯一调度 | C# selftest + TS vitest + mock e2e | `channel-selftest ownership`、`vitest run src/main/channels`、channel-smoke | claim 停服务端适配器；heartbeat/lost；租约过期收回；双端同启只有一端处理；门闩；无 Bearer 401；他设备 heartbeat/release 不生效 |
 | 主动消息 | C# selftest + TS vitest | 同上 | intentId 幂等；无收件人错误；桌面转发不本机直发 |
-| 飞书 | C# selftest + mock e2e | `channel-selftest feishu`、channel-smoke | challenge；签名/解密测试向量；重试去重；发送/媒体请求体 |
+| 飞书 | C# selftest + mock e2e | `channel-selftest feishu`、channel-smoke | challenge；签名/解密测试向量；重试去重；发送/媒体请求体；`/events` 别名；>1MB 413 |
 | QQ | C# selftest + mock e2e | `channel-selftest qqbot`、channel-smoke | WS 状态机（fake socket）；被动回复 msg_seq/窗口/次数；白名单 |
 | 内存/RSS | 运维 | `healthz`（`rssMB` 仅观测）、channel-smoke | 渠道批峰值 ≤420MB；容器 512m 兜底；**>380MB 告警未实现**（后续批次） |
 | 回归 | 既有 | `dotnet-cloud-sync-test.py`（54/55）、PWA e2e（11/11）、`vitest src/main/sync src/pwa` | capabilities 扩展向后兼容；现有行为零变化 |
@@ -695,9 +695,9 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
   mock iLink（getupdates/sendmessage/getuploadurl/get_bot_qrcode/get_qrcode_status）+
   mock 飞书（webhook 回放 + token/messages）+ mock QQ **REST + 网关 WS**（Hello/Identify/READY/C2C dispatch
   均由冒烟内 mock 网关覆盖；Resume/op7/op9 等 WS 状态机细节由 C# selftest 覆盖）；
-  Linux 下附带落盘权限断言（数据目录 0700、`channels.db` 及 `-wal`/`-shm` 0600、`media/wechat` 目录/文件 0700/0600），
+  Linux 下附带落盘权限断言（数据目录 0700、`channels.db` 0600、`-wal`/`-shm` 存在时同断言、`media/wechat` 目录/文件 0700/0600），
   非 Linux 平台自动跳过；
-  断言清单 = §8.3；退出码聚合；可对已有实例 `--base-url` 复跑（与既有 smoke 同体例）。
+  断言清单 = §8.3；退出码聚合（0 = 全过；1 = FAIL 或启动失败；2 = 环境错误）。
 
 ---
 

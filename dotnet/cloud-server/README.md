@@ -110,7 +110,7 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 | `CLOUD_CHANNEL_QQBOT_APP_ID` / `_APP_SECRET` | 空 | QQ 开放平台凭据（齐备才托管；仅被动回复） |
 | `CLOUD_CHANNEL_QQBOT_ALLOW_ANY_PRIVATE` / `_ALLOWED_OPENIDS` | `0` / 空 | 私聊白名单（镜像桌面语义；被拒 openid 进状态 detail） |
 | `CLOUD_CHANNEL_QQBOT_STRIP_URLS` | `0` | 含链接消息发送失败时替换为 `[链接]` 的兜底开关 |
-| `CLOUD_CHANNEL_VISION` | 空 | 预留：`direct` = 图片模型直读（当前实现恒 caption 文本口径，未接线模型直读） |
+| `CLOUD_CHANNEL_VISION` | 空 | 预留（未接线、无消费点）：图片/文件当前仅事件占位文本；视觉输入（caption / 直读）为后续批次 |
 | `CLOUD_CHANNEL_MEDIA_DIR_MB` | 256 | 媒体缓存总量上限 |
 | `CLOUD_CHANNEL_ASR_*` / `CLOUD_CHANNEL_TTS_*` | 空 | 语音分期配置（当前 SILK 占位，未接线，见下「已知缺口」） |
 
@@ -150,7 +150,7 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 
 ### 真机冒烟清单（§1.3 豁免项的替代证据入口）
 
-CI 用 mock e2e（`scripts/channel-smoke-test.py`，52 项；Linux CI 追加 4 项落盘权限断言 = 56 项）+ C# 自测（`channel-selftest all`，232 项）覆盖协议与编排；
+CI 用 mock e2e（`scripts/channel-smoke-test.py`，57 项；Linux CI 追加 4 项落盘权限断言 = 61 项）+ C# 自测（`channel-selftest all`，232 项）覆盖协议与编排；
 以下**真机项**需人工执行一次，并在部署/PR 记录日期、commit、结果（截图或日志片段）：
 
 | 渠道 | 步骤 | 通过标准 |
@@ -164,6 +164,7 @@ CI 用 mock e2e（`scripts/channel-smoke-test.py`，52 项；Linux CI 追加 4 �
 ### 已知缺口（设计 §1.3 分期）
 
 - **SILK 语音**：`ISilkCodec` 为占位实现（`SilkUnavailableCodec`），入站语音回「未配置语音识别」文案、出站语音降级文本 + 状态 `voice:false`（§4.2 阶段 7 未落地）；
+- **图片视觉输入**：`CLOUD_CHANNEL_VISION` 预留未接线（无消费点）；图片/文件仅事件占位文本，caption / 模型直读为后续批次（§3.3）；
 - **服务端自主主动消息调度**：未做（依赖 IKJK2O）；当前仅 `POST /v1/channels/{id}/proactive` + 桌面转发唯一化（§5.4 Q3）；
 - **真机冒烟**：上表待人工执行；微信出站图片、飞书语音转码的 CI 覆盖在 C# `channel-selftest wechat|feishu`。
 
@@ -257,7 +258,7 @@ python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN   #
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
 dotnet <发布目录>/cyrene-cloud-server.dll channel-selftest all   # 渠道五套 C# 自测（framework/wechat/feishu/qqbot/ownership；232 项，mock HTTP/WS 无网络）
 #   `--selftest <suite>` 为同义通用别名（如 --selftest wechat）；未知子集退出码 2，不会误落回真服务启动
-python scripts/channel-smoke-test.py <发布目录>/cyrene-cloud-server.dll   # 渠道 mock e2e（iLink 扫码/文本/图片/重连、飞书 webhook 加密/去重、QQ 网关被动回复、归属、主动消息；52 项，Linux +4 落盘权限）
+python scripts/channel-smoke-test.py <发布目录>/cyrene-cloud-server.dll   # 渠道 mock e2e（iLink 扫码/文本/图片/重连、飞书 webhook 加密/去重/别名/413、QQ 网关被动回复、归属（含 401/越权反向断言）、主动消息；57 项，Linux +4 落盘权限）
 dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels   # 渠道契约 fixtures（C# 侧 runner，51 项；TS 侧 npx vitest run src/main/channels）
 npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"   # schema 规范校验（draft-07，51 例全过；命令同 fixtures/channels/README.md）
 node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
