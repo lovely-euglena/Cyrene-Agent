@@ -167,6 +167,48 @@ internal static class SchedulerSelfTest
             veryOldNow);
         f.Check("calculator: 极旧分钟 interval 归一后仍在未来",
             veryOld is { } vo && vo > veryOldNow && Iso(vo) == "2026-06-22T12:01:00.000Z");
+
+        // ── 复审 P2-5 补充：非 interval 的 next-after / 短月 / DST ──
+
+        var dailyAfter = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Daily("08:00"), Local(2026, 6, 22, 8, 0));
+        f.Check("calculator: daily next-after 墙钟 +1 天",
+            dailyAfter is { } da
+            && da.LocalDateTime == new DateTime(2026, 6, 23, 8, 0, 0));
+
+        var weekdaysAfter = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Weekdays("09:00"), Local(2026, 6, 26, 9, 0));
+        f.Check("calculator: weekdays next-after 跨周末到周一",
+            weekdaysAfter is { } wa
+            && wa.LocalDateTime == new DateTime(2026, 6, 29, 9, 0, 0));
+
+        var weeklyAfter = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Weekly(3, "09:30"), Local(2026, 6, 24, 9, 30));
+        f.Check("calculator: weekly next-after +7 天同墙钟",
+            weeklyAfter is { } wka
+            && wka.LocalDateTime == new DateTime(2026, 7, 1, 9, 30, 0));
+
+        var monthlyAfter = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Monthly(31, "08:00"), Local(2026, 1, 31, 8, 0));
+        f.Check("calculator: monthly 短月跳过不夹取（1/31 → 3/31）",
+            monthlyAfter is { } ma
+            && ma.LocalDateTime == new DateTime(2026, 3, 31, 8, 0, 0));
+
+        var yearlyAfter = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Yearly(2, 29, "08:00"), Local(2028, 2, 29, 8, 0));
+        f.Check("calculator: yearly 闰日跳过非闰年（2028 → 2032）",
+            yearlyAfter is { } ya
+            && ya.LocalDateTime == new DateTime(2032, 2, 29, 8, 0, 0));
+
+        // DST 无关性：next-after 以墙钟推进，不因本机时区跳变偏移小时
+        //（3/8 与 11/1 是美国 DST 切换日；断言墙钟相等在任何时区都成立）。
+        var dstSpring = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Daily("08:00"), Local(2026, 3, 8, 8, 0));
+        var dstFall = ScheduleCalculator.ComputeNextFireAtAfter(
+            ScheduleConfig.Daily("08:00"), Local(2026, 11, 1, 8, 0));
+        f.Check("calculator: DST 切换日 next-after 保持墙钟（不 ±1h）",
+            dstSpring is { } ds && ds.LocalDateTime == new DateTime(2026, 3, 9, 8, 0, 0)
+            && dstFall is { } df && df.LocalDateTime == new DateTime(2026, 11, 2, 8, 0, 0));
     }
 
     // ================================================================ store
@@ -775,7 +817,7 @@ internal static class SchedulerSelfTest
             var advanced = store.GetTasks()[0].NextFireAt == "2026-06-22T09:00:00.000Z";
             var stillRunning = !completion.Task.IsCompleted;
             completion.SetResult(OkRun());
-            f.Check("engine: 先推进排期再并发执行（runner 未完成排期已前进）",
+            f.Check("engine: 先发起执行再推进排期（runner 未完成排期已前进）",
                 advanced && stillRunning);
             engine.Stop();
         }
@@ -792,6 +834,70 @@ internal static class SchedulerSelfTest
                 result.Ok
                 && !store.Updates.Any(update => update.Patch.HasNextFireAt)
                 && store.GetTasks()[0].NextFireAt == "2026-06-22T08:00:00.000Z");
+            engine.Stop();
+        }
+
+        // 15. once 逾期归一：skipped/"missed while app was closed" + 停用（复审 P2-5）
+        {
+            var timer = new ManualTimerScheduler();
+            var store = new FakeStore(new[]
+            {
+                DailyTask(task =>
+                {
+                    task.Schedule = ScheduleConfig.Once("2026-06-22T07:00:00.000Z");
+                    task.NextFireAt = "2026-06-22T07:00:00.000Z";
+                }),
+            });
+            var engine = new SchedulerEngine(
+                store,
+                (task, at, manual) => Task.FromResult(OkRun()),
+                now: () => ParseUtc("2026-06-22T08:00:00.000Z"),
+                scheduleTimer: timer.Schedule);
+            engine.Start();
+            var skipped = store.History.Any(entry => entry.TaskId == "task-1"
+                && entry.Status == ScheduledTaskHistoryStatus.Skipped
+                && entry.Reason == "missed while app was closed");
+            var disabled = store.Updates.Any(update => update.Id == "task-1"
+                && update.Patch.Enabled == false
+                && update.Patch.HasNextFireAt
+                && update.Patch.NextFireAt is null);
+            f.Check("engine: once 逾期 → skipped 历史 + 停用 + 不排计时器",
+                skipped && disabled && timer.ScheduledCount == 0);
+            engine.Stop();
+        }
+
+        // 16. endAt 超出：到点时直接停用，不执行（复审 P2-5）
+        {
+            var now = ParseUtc("2026-06-22T08:00:00.000Z");
+            var timer = new ManualTimerScheduler();
+            var runs = 0;
+            var store = new FakeStore(new[]
+            {
+                DailyTask(task =>
+                {
+                    task.NextFireAt = "2026-06-22T09:00:00.000Z";
+                    task.EndAt = "2026-06-22T08:30:00.000Z";
+                }),
+            });
+            var engine = new SchedulerEngine(
+                store,
+                (task, at, manual) => { runs += 1; return Task.FromResult(OkRun()); },
+                now: () => now,
+                scheduleTimer: timer.Schedule);
+            engine.Start();
+            // Start 时 endAt 未过 → 正常排期；随后把 nextFireAt/endAt 都拨到过去
+            // （模拟运行期到点），验证 FireDueTasks 的 endAt 复核。
+            store.UpdateTask("task-1", new ScheduledTaskPatch
+            {
+                NextFireAt = "2026-06-22T07:59:00.000Z",
+                EndAt = "2026-06-22T07:30:00.000Z",
+            });
+            timer.Pending!().GetAwaiter().GetResult();
+            var disabled = store.Updates.Any(update => update.Id == "task-1"
+                && update.Patch.Enabled == false
+                && update.Patch.HasNextFireAt
+                && update.Patch.NextFireAt is null);
+            f.Check("engine: endAt 超出 → 到点停用不执行", runs == 0 && disabled);
             engine.Stop();
         }
     }

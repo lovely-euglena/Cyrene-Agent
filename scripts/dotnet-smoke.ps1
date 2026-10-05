@@ -84,7 +84,11 @@ if (Test-Path $vexe) {
     Write-Host "[SKIP] CyreneVoice.exe 未发布（语音冒烟跳过）" -f Yellow
 }
 
-# ── 5. 双轨开关（C4）──
+# ── 5. 托盘调度宿主自测（IKJK51 复审 P1-6；WPF 初始化前分流，无需桌面交互）──
+$out = Invoke-HostFrames "--selftest tray-scheduler" @()
+Check "tray-scheduler 自测全 PASS" ($out -match "SELFTEST tray-scheduler: PASS")
+
+# ── 6. 双轨开关（C4）──
 $env:CYRENE_TOOL_HOST = "0"
 Check "CYRENE_TOOL_HOST=0 读取" (-not $env:CYRENE_TOOL_HOST.Equals("1"))
 $env:CYRENE_TOOL_HOST = "1"
