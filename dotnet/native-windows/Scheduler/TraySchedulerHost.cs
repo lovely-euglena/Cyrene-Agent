@@ -351,8 +351,10 @@ internal sealed class TraySchedulerHost
             if (process is not null)
             {
                 lock (_gate) _headlessProcess = process;
-                process.EnableRaisingEvents = true;
+                // 复审 P2-4：先订阅再开事件——已启动进程若立即退出，先开事件会让
+                // Exited 回调先于订阅丢失，该 histId 队列停滞至迟到 report/下次对账。
                 process.Exited += (_, _) => OnHeadlessProcessExited(histId, process);
+                process.EnableRaisingEvents = true;
             }
             Console.Error.WriteLine($"[TraySchedulerHost] headless launch: {task.Id} ({histId})");
             return new SchedulerRunResult { Ok = true, HistoryId = histId, EffectiveToolIds = new List<string>() };
@@ -400,28 +402,43 @@ internal sealed class TraySchedulerHost
         _ = System.Threading.Tasks.Task.Delay(grace).ContinueWith(_ =>
         {
             string? title = null;
+            var alreadyReported = false;
             try
             {
                 lock (_gate)
                 {
                     if (_headlessActiveHistId != histId) return; // 终态 report 已到（或已由 Stop 处理）
                     if (!_headlessPending.Remove(histId, out var info)) return;
-                    _store.RecordHistory(new ScheduledTaskHistoryEntry
+                    // 复审 P2-3：TS 回退断连时会把真实终态直写同一历史文件；宽限内
+                    // 若已有终态则视为「已回报」——不覆写 failed、不弹假失败气泡。
+                    var existing = _store.FindHistoryById(histId);
+                    if (existing is not null
+                        && existing.Status is ScheduledTaskHistoryStatus.Success or ScheduledTaskHistoryStatus.Failed)
                     {
-                        Id = histId,
-                        TaskId = info.TaskId,
-                        TaskTitle = info.Title,
-                        FiredAt = info.Iso,
-                        FinishedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
-                        Status = ScheduledTaskHistoryStatus.Failed,
-                        Reason = "headless process exited without report",
-                        ErrorMessage = $"headless exited without report (exit code {exitCode})",
-                        EffectiveToolIds = new List<string>(),
-                    });
-                    _headlessActiveHistId = null;
-                    title = info.Title;
+                        _headlessActiveHistId = null;
+                        alreadyReported = true;
+                        Console.Error.WriteLine($"[TraySchedulerHost] headless exit ignored (terminal already recorded): {histId}");
+                    }
+                    else
+                    {
+                        _store.RecordHistory(new ScheduledTaskHistoryEntry
+                        {
+                            Id = histId,
+                            TaskId = info.TaskId,
+                            TaskTitle = info.Title,
+                            FiredAt = info.Iso,
+                            FinishedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
+                            Status = ScheduledTaskHistoryStatus.Failed,
+                            Reason = "headless process exited without report",
+                            ErrorMessage = $"headless exited without report (exit code {exitCode})",
+                            EffectiveToolIds = new List<string>(),
+                        });
+                        _headlessActiveHistId = null;
+                        title = info.Title;
+                    }
                 }
-                _showBalloon("定时任务失败", $"{title} 执行进程异常退出且未回报结果（exit code {exitCode}）");
+                if (!alreadyReported)
+                    _showBalloon("定时任务失败", $"{title} 执行进程异常退出且未回报结果（exit code {exitCode}）");
                 DrainHeadlessQueue();
             }
             finally
@@ -431,19 +448,56 @@ internal sealed class TraySchedulerHost
         });
     }
 
-    /// <summary>前一个 headless 终态后拉起队列中的下一个（同一时刻至多一个实例）。</summary>
+    /// <summary>
+    /// 前一个 headless 终态后拉起队列中的下一个（同一时刻至多一个实例）。
+    /// 复审 P2-5：出队时复核任务仍启用/可运行——排队期最长可达 30 分钟，任务可能
+    /// 已被禁用/删除或插件已停用（对齐在线路径 fire 前复核口径）；不满足写 skipped
+    /// 覆写预建 running，清在跑标记后继续出队，不拉起。
+    /// </summary>
     private void DrainHeadlessQueue()
     {
-        HeadlessJob? next = null;
-        lock (_gate)
+        while (true)
         {
-            if (_headlessActiveHistId is null && _headlessQueue.Count > 0)
+            HeadlessJob next;
+            lock (_gate)
             {
+                if (_headlessActiveHistId is not null || _headlessQueue.Count == 0) return;
                 next = _headlessQueue.Dequeue();
                 _headlessActiveHistId = next.HistId;
             }
+
+            var current = _store.GetTasks().FirstOrDefault(task => task.Id == next.Task.Id);
+            var skipReason = current is null
+                ? "task not found"
+                : !SchedulerEngine.IsTaskEnabled(current)
+                    ? "task is disabled"
+                    : !CanRunTask(current)
+                        ? "plugin not running"
+                        : null;
+            if (skipReason is null)
+            {
+                StartHeadlessProcess(next.Task, next.Iso, next.HistId);
+                return;
+            }
+
+            lock (_gate)
+            {
+                _store.RecordHistory(new ScheduledTaskHistoryEntry
+                {
+                    Id = next.HistId,
+                    TaskId = next.Task.Id,
+                    TaskTitle = next.Task.Title,
+                    FiredAt = next.Iso,
+                    FinishedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
+                    Status = ScheduledTaskHistoryStatus.Skipped,
+                    Reason = skipReason,
+                    EffectiveToolIds = new List<string>(),
+                });
+                _headlessPending.Remove(next.HistId);
+                if (_headlessActiveHistId == next.HistId) _headlessActiveHistId = null;
+            }
+            Console.Error.WriteLine($"[TraySchedulerHost] headless skipped at drain: {next.Task.Id} ({next.HistId}) {skipReason}");
         }
-        if (next is not null) StartHeadlessProcess(next.Task, next.Iso, next.HistId);
     }
 
     /// <summary>历史写入 + headless 终态气泡（仅本进程拉起的 histId）。</summary>

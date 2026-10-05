@@ -6,9 +6,10 @@ namespace CyreneNative.Scheduler;
 /// - 单 timer（延迟 1h 封顶）；store 变更 → 重排；
 /// - 启动 / 插件启停后做逾期归一：once 逾期写 skipped/"missed while app was
 ///   closed" 历史并停用；周期任务滚动到未来（不补跑）；
-/// - 到点触发：先推进排期（updateTask{nextFireAt,lastFiredAt}）再并发执行，
-///   崩溃窗口内不重复触发；running 去重（重复触发写 skipped/"previous run
-///   still active"）；canRun 为假（插件未运行）时跳过本次但照常推进；
+/// - 到点触发：先发起执行（同步登记 running 再启动 runner）后推进排期
+///   （updateTask{nextFireAt,lastFiredAt}），崩溃窗口内不重复触发；running 去重
+///   （重复触发写 skipped/"previous run still active"）；canRun 为假（插件未运行）
+///   时跳过本次但照常推进；
 /// - FireNow：不推进排期的手动触发；
 /// - 插件启用口径 = PluginUserEnabled && approvalFingerprint 非空（授权指纹
 ///   由 TS 侧维护，C# 不算指纹）；

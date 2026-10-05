@@ -516,6 +516,18 @@ public sealed class SchedulerStore : ISchedulerTaskStore
         }
     }
 
+    /// <summary>
+    /// 复审 P2-3：按历史 id 查生效条目（宽限兜底写 failed 前检查 TS 回退是否已把
+    /// 真实终态直写同一历史文件）。同 id 覆盖语义 = 文件中最后一条生效。
+    /// </summary>
+    public ScheduledTaskHistoryEntry? FindHistoryById(string historyId)
+    {
+        lock (_gate)
+        {
+            return ReadAllHistory().LastOrDefault(item => item.Id == historyId);
+        }
+    }
+
     public IReadOnlyList<ScheduledTaskHistoryEntry> GetHistory(string taskId, int limit = 10)
     {
         // 复审 P2-3：读路径纳入锁，避免读到写入中的历史文件。

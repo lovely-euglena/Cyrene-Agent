@@ -9,8 +9,9 @@ namespace CyreneNative;
 /// 复审 P1-6 要求的仓库内可复现入口——构造 TraySchedulerHost + 临时 data-dir +
 /// 注入 stub 回调/进程启动器/手动计时器，覆盖：
 ///   协议 CRUD/回执/事件、arm/disarm、离线拉起失败→failed 历史+气泡、
-///   终态 report→气泡、进程无 report 退出→failed 历史+气泡、遗留 running 中断、
-///   headless 队列串行、插件首连窗口判定。
+///   终态 report→气泡、进程无 report 退出→failed 历史+气泡、宽限兜底不覆写
+///   TS 回退终态（P2-3）、遗留 running 中断、headless 队列串行与出队复核（P2-5）、
+///   插件首连窗口判定。
 /// 输出约定：[PASS]/[FAIL] + 末行 SELFTEST tray-scheduler: PASS / N FAILURES；退出码 0/1。
 /// </summary>
 internal static class TraySchedulerSelfTest
@@ -23,6 +24,8 @@ internal static class TraySchedulerSelfTest
         OfflineLaunchFailureChecks(f);
         TerminalReportAndQueueChecks(f);
         ProcessExitWithoutReportChecks(f);
+        TerminalFallbackNoOverwriteChecks(f);
+        QueueDrainRecheckChecks(f);
         LeftoverRunningChecks(f);
         PluginFirstConnectChecks(f);
         Console.WriteLine(f.Count == 0
@@ -176,6 +179,77 @@ internal static class TraySchedulerSelfTest
         });
     }
 
+    // ================================================================ 宽限兜底不覆写 TS 回退终态（P2-3）
+
+    private static void TerminalFallbackNoOverwriteChecks(FailureCounter f)
+    {
+        WithHost((host, ctx) =>
+        {
+            host.HeadlessExitGrace = TimeSpan.FromMilliseconds(300);
+            host.ProcessStarter = _ => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c exit 9",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            var taskId = AddDailyTask(host, "回退终态任务");
+            host.Handle("sched.mode", Frame(new { enabled = true }));
+            FireDue(host, ctx, taskId);
+            var histId = host.ActiveHeadlessHistId ?? throw new InvalidOperationException("no active headless");
+
+            // 模拟 TS 断连回退：真实成功终态直写同一历史文件（不经管道），宽限兜底不得覆写。
+            var terminal = JsonSerializer.Serialize(new
+            {
+                id = histId,
+                taskId,
+                taskTitle = "回退终态任务",
+                firedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
+                finishedAt = SchedulerJson.ToIsoString(DateTimeOffset.Now),
+                status = "success",
+                effectiveToolIds = Array.Empty<string>(),
+            }, SchedulerJson.Options);
+            File.AppendAllText(Path.Combine(ctx.Dir, "scheduled-tasks-history.jsonl"), terminal + "\n");
+
+            Thread.Sleep(700);
+
+            var entry = History(host, taskId).FirstOrDefault(e => e.Id == histId);
+            f.Check("宽限兜底: 已有终态不覆写（保留 TS 回退 success）",
+                entry?.Status == ScheduledTaskHistoryStatus.Success);
+            f.Check("宽限兜底: 不弹假失败气泡",
+                !ctx.Balloons.Any(b => b.Title == "定时任务失败"));
+            f.Check("宽限兜底: 清在跑标记且不阻塞出队",
+                host.ActiveHeadlessHistId is null && host.QueuedHeadlessCount == 0);
+        });
+    }
+
+    // ================================================================ 出队复核任务启用/可运行（P2-5）
+
+    private static void QueueDrainRecheckChecks(FailureCounter f)
+    {
+        WithHost((host, ctx) =>
+        {
+            host.ProcessStarter = _ => null; // 视为已启动（无进程句柄）
+            var firstId = AddDailyTask(host, "队列复核1");
+            var secondId = AddDailyTask(host, "队列复核2");
+            host.Handle("sched.mode", Frame(new { enabled = true }));
+            FireDue(host, ctx, firstId, secondId);
+            var firstActive = host.ActiveHeadlessHistId;
+            f.Check("出队复核: 第二项已入队等待",
+                firstActive is not null && host.QueuedHeadlessCount == 1);
+
+            // 排队期间禁用第二个任务；第一个终态出队时复核 → 写 skipped，不拉起。
+            host.Handle("sched.toggle", Frame(new { taskId = secondId, enabled = false }));
+            ReportTerminal(host, firstId, firstActive!, "success", null);
+
+            f.Check("出队复核: 停用任务写 skipped/task is disabled",
+                History(host, secondId).Any(e => e.Status == ScheduledTaskHistoryStatus.Skipped
+                    && e.Reason == "task is disabled"));
+            f.Check("出队复核: 不拉起并清在跑标记",
+                host.ActiveHeadlessHistId is null && host.QueuedHeadlessCount == 0);
+        });
+    }
+
     // ================================================================ 遗留 running 中断
 
     private static void LeftoverRunningChecks(FailureCounter f)
@@ -324,7 +398,7 @@ internal static class TraySchedulerSelfTest
 
     private static TraySchedulerHost NewHost(string dir, Func<bool> connected, out HostContext ctx, bool schedulerEnabled)
     {
-        var context = new HostContext();
+        var context = new HostContext { Dir = dir };
         ctx = context;
         var exePath = Path.Combine(dir, "Cyrene.exe");
         // 占位 exe：通过 File.Exists 预检；实际启动由 ProcessStarter seam 接管。
@@ -359,6 +433,7 @@ internal static class TraySchedulerSelfTest
 
     private sealed class HostContext
     {
+        public string Dir { get; set; } = "";
         public List<(string Name, object Data)> Events { get; } = new();
         public List<(string Title, string Content)> Balloons { get; } = new();
         public ManualTimerScheduler Timer { get; } = new();
