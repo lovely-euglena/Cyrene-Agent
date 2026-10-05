@@ -648,11 +648,14 @@ public static class LlmStreamSelfTest
             var queued = SubmitLow(service, slowServer.Url);
 
             // 阻塞中的 poll 等待者：事件为空、非终态 → Monitor.Wait（waitMs=5000，不能等满）
-            var sw = Stopwatch.StartNew();
+            // 复审3 P2-3④：轮询等待 waiter 真正进入执行（取代固定 100ms 调度窗口，慢机器不误判）
             var waiter = Task.Run(() => queued.Poll(0, 10, 5000));
-            await Task.Delay(100).ConfigureAwait(false); // 让 waiter 进入 Monitor.Wait
-            Check(!waiter.IsCompleted, "poll 等待者已阻塞（等事件中）");
+            var startSw = Stopwatch.StartNew();
+            while (waiter.Status != TaskStatus.Running && startSw.ElapsedMilliseconds < 2000)
+                await Task.Delay(10).ConfigureAwait(false);
+            Check(waiter.Status == TaskStatus.Running, "poll 等待者已启动并阻塞（等事件中）");
 
+            var sw = Stopwatch.StartNew(); // 唤醒时延从 cancel 前起算
             Check(service.Store.Cancel(queued.Id), "排队中 cancel 受理");
             var woke = await Task.WhenAny(waiter, Task.Delay(3000)).ConfigureAwait(false);
             Check(woke == waiter, "cancel 后阻塞中的 poll 立即唤醒（P2-8）");

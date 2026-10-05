@@ -524,6 +524,24 @@ describe("PR19 P2-7：.pre-secrets.bak 权限 0600", () => {
       reset();
     }
   });
+
+  // 复审3 P2-3③：真实 chmod + stat（非 mock）——Windows 上 chmod 不映射 0600，跳过由 Linux CI 承接
+  it.skipIf(process.platform === "win32")("Linux 真实 chmod：.pre-secrets.bak 实际权限为 0600", async () => {
+    reset();
+    const dir = mkdtempSync(path.join(tmpdir(), "cyrene-secrets-real-mode-"));
+    const modelPath = path.join(dir, "model-settings.json");
+    writeFileSync(modelPath, JSON.stringify({ provider: "PA", perProvider: { PA: { apiKey: "sk-real-mode" } } }));
+    try {
+      const migrated = await migratePlaintextKeys(modelPath, path.join(dir, "general-settings.json"));
+      expect(migrated).toBeGreaterThan(0);
+      const bakPath = `${modelPath}.pre-secrets.bak`;
+      expect(existsSync(bakPath)).toBe(true);
+      expect(fs.statSync(bakPath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      reset();
+    }
+  });
 });
 
 describe("collectPlaintextKeys 边界（复审 P2-4③④）", () => {
