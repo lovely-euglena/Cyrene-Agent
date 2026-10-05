@@ -11,6 +11,13 @@ namespace CyreneCloud.Channels;
 /// </summary>
 public sealed class ChannelManager
 {
+    /// <summary>
+    /// R3 P2-2：生命周期锁等待上限——旧 Stop 在途挂起时，启动/停止不得无限期等待该渠道锁
+    /// （sweep 持全局归属锁调用启动，无限等待会把全部渠道控制面拖住）。
+    /// 量级对齐 drain（5s）：取 10s，超时记 warning 返回，由下轮 sweep（5s 周期）重试。
+    /// </summary>
+    public static readonly TimeSpan DefaultLifecycleGateTimeout = TimeSpan.FromSeconds(10);
+
     private readonly object _sync = new();
     private readonly Dictionary<string, IChannelAdapter> _adapters = new(StringComparer.Ordinal);
     private readonly HashSet<string> _started = new(StringComparer.Ordinal);
@@ -19,18 +26,45 @@ public sealed class ChannelManager
     // P2-1：按渠道串行「启动/停止」适配器调用——drain 超时后旧 StopAsync 可能仍在途，
     // 没有互斥时 sweep/宽限启动会与旧 StopAsync 并发（启动→停止交错）。
     private readonly Dictionary<string, SemaphoreSlim> _lifecycle = new(StringComparer.Ordinal);
+    // R3 P2-6.3：启动失败日志节流——持续失败（sweep 每 5s 自愈）只在状态变化时记 Error，后续降 Debug。
+    private readonly HashSet<string> _startFailureLogged = new(StringComparer.Ordinal);
+    private readonly TimeSpan _lifecycleGateTimeout;
     private readonly ILogger<ChannelManager> _logger;
 
     private Func<IncomingMessage, CancellationToken, Task<OutgoingMessage?>>? _dispatcher;
+    // R3 P2-3：归属启动门闩（由 ChannelOwnershipService 安装）；返回 false 时任何直接启动都被跳过。
+    private Func<string, bool>? _startGate;
 
-    public ChannelManager(ILogger<ChannelManager> logger)
+    public ChannelManager(ILogger<ChannelManager> logger, TimeSpan? lifecycleGateTimeout = null)
     {
         _logger = logger;
+        _lifecycleGateTimeout = lifecycleGateTimeout ?? DefaultLifecycleGateTimeout;
     }
 
     public bool Has(string id)
     {
         lock (_sync) return _adapters.ContainsKey(id);
+    }
+
+    /// <summary>
+    /// 安装启动门闩（归属服务构造时调用，R3 P2-3）：返回 false 时 <see cref="StartAsync"/> 跳过启动。
+    /// 语义 = 「唯一调度」：任何直接启动入口（如扫码确认后的适配器重启）都必须服从归属判定，
+    /// 避免桌面持有期间服务端适配器被重新拉起形成双连接。
+    /// </summary>
+    public void SetStartGate(Func<string, bool>? startGate)
+    {
+        lock (_sync) _startGate = startGate;
+    }
+
+    /// <summary>
+    /// 归属启动判定（R3 P2-3）：已安装门闩时按门闩结果；未接入归属服务时放行。
+    /// 供重启入口在动手前预判（决定是否只落凭据 + 状态提示），实际拦截由 <see cref="StartAsync"/> 兜底。
+    /// </summary>
+    public bool IsStartAllowed(string id)
+    {
+        Func<string, bool>? startGate;
+        lock (_sync) startGate = _startGate;
+        return startGate is null || startGate(id);
     }
 
     /// <summary>注册适配器（必须在 StartAll 之前；重复 id 一律拒绝）。</summary>
@@ -74,6 +108,7 @@ public sealed class ChannelManager
                 _started.Remove(id);
                 _starting.Remove(id);
                 _stopRequested.Remove(id);
+                _startFailureLogged.Remove(id);
             }
         }
         finally
@@ -96,7 +131,12 @@ public sealed class ChannelManager
         }
     }
 
-    /// <summary>启动单个适配器（幂等：已启动/启动中直接返回；与 StopAsync 按渠道串行）。</summary>
+    /// <summary>
+    /// 启动单个适配器（幂等：已启动/启动中直接返回；与 StopAsync 按渠道串行）。
+    /// R3 P2-2：等待生命周期锁有界（默认 <see cref="DefaultLifecycleGateTimeout"/>）——旧 Stop 挂起
+    /// 时不无限阻塞调用方（sweep 持全局归属锁），超时记 warning 返回、由下轮 sweep 重试。
+    /// R3 P2-3：等锁后复查归属门闩，桌面持有期间跳过启动（直接调用入口同样受控）。
+    /// </summary>
     public async Task StartAsync(string id, CancellationToken cancellationToken = default)
     {
         IChannelAdapter? adapter;
@@ -105,14 +145,37 @@ public sealed class ChannelManager
             if (!_adapters.TryGetValue(id, out adapter) || _started.Contains(id) || _starting.Contains(id)) return;
         }
         var gate = LifecycleLock(id);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var gateWait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        gateWait.CancelAfter(_lifecycleGateTimeout);
+        var acquired = false;
         try
         {
+            try
+            {
+                await gate.WaitAsync(gateWait.Token).ConfigureAwait(false);
+                acquired = true;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "渠道启动等待生命周期锁超时（{Timeout}s），本轮跳过（下轮 sweep 重试）channel={Channel}",
+                    _lifecycleGateTimeout.TotalSeconds, id);
+                return;
+            }
+            Func<string, bool>? startGate;
             lock (_sync)
             {
                 // 等锁期间状态可能已变（如旧 StopAsync 完成）：仍按幂等处理
                 if (!_adapters.TryGetValue(id, out adapter) || _started.Contains(id) || !_starting.Add(id)) return;
+                startGate = _startGate;
                 if (_dispatcher is not null) adapter.OnMessage = MakeHandler(id);
+            }
+            if (startGate is not null && !startGate(id))
+            {
+                // R3 P2-3：归属门闩拒绝（owner=desktop）——不启动；release 宽限/下轮 sweep 会按归属再评估
+                lock (_sync) _starting.Remove(id);
+                _logger.LogInformation("渠道启动被归属门闩跳过（非服务端持有）channel={Channel}", id);
+                return;
             }
             var stopAfterStart = false;
             try
@@ -122,6 +185,7 @@ public sealed class ChannelManager
                 {
                     _starting.Remove(id);
                     _started.Add(id);
+                    _startFailureLogged.Remove(id);
                     // 启动期间收到停止请求（归属交接/停机）：登记补停，不让 StopAsync 空操作
                     stopAfterStart = _stopRequested.Remove(id);
                 }
@@ -129,12 +193,22 @@ public sealed class ChannelManager
             }
             catch (Exception ex)
             {
+                bool firstFailure;
                 lock (_sync)
                 {
                     _starting.Remove(id);
                     _stopRequested.Remove(id);
+                    // R3 P2-6.3：持续失败按状态变化记录（首次 Error，后续 Debug），重试节奏不变
+                    firstFailure = _startFailureLogged.Add(id);
                 }
-                _logger.LogError(ex, "渠道启动失败 channel={Channel}", id);
+                if (firstFailure)
+                {
+                    _logger.LogError(ex, "渠道启动失败 channel={Channel}", id);
+                }
+                else
+                {
+                    _logger.LogDebug(ex, "渠道启动失败（持续失败，日志已按状态变化节流）channel={Channel}", id);
+                }
             }
             if (stopAfterStart)
             {
@@ -144,11 +218,14 @@ public sealed class ChannelManager
         }
         finally
         {
-            gate.Release();
+            if (acquired) gate.Release();
         }
     }
 
-    /// <summary>停止单个适配器（幂等；启动中的适配器登记补停，不空操作；与 StartAsync 按渠道串行）。</summary>
+    /// <summary>
+    /// 停止单个适配器（幂等；启动中的适配器登记补停，不空操作；与 StartAsync 按渠道串行）。
+    /// R3 P2-2：等待生命周期锁同样有界——旧 Stop 在途挂起时，停止调用不得无限期等待。
+    /// </summary>
     public async Task StopAsync(string id, CancellationToken cancellationToken = default)
     {
         SemaphoreSlim gate;
@@ -163,14 +240,29 @@ public sealed class ChannelManager
             }
             gate = LifecycleLockLocked(id);
         }
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var gateWait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        gateWait.CancelAfter(_lifecycleGateTimeout);
+        var acquired = false;
         try
         {
+            try
+            {
+                await gate.WaitAsync(gateWait.Token).ConfigureAwait(false);
+                acquired = true;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 在途 Stop 会完成实际停止；在途启动完成方也会处理补停登记。下轮 sweep 兜底
+                _logger.LogWarning(
+                    "渠道停止等待生命周期锁超时（{Timeout}s），本轮跳过 channel={Channel}",
+                    _lifecycleGateTimeout.TotalSeconds, id);
+                return;
+            }
             await StopCoreAsync(id, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            gate.Release();
+            if (acquired) gate.Release();
         }
     }
 

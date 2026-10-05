@@ -40,6 +40,10 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     private readonly List<Task> _pendingStarts = new();
     private readonly object _graceLock = new();
     private readonly Dictionary<string, DateTimeOffset> _graceDeadlines = new(StringComparer.Ordinal);
+    // R3 P2-6.3：owner=server 自愈启动的日志节流——持续失败只在状态变化（首次失败/恢复）时记录，
+    // 不改变 5s 重试节奏（每轮仍尝试启动）。
+    private readonly object _startLogLock = new();
+    private readonly HashSet<string> _startFailureLogged = new(StringComparer.Ordinal);
 
     public ChannelOwnershipService(
         ChannelStore store,
@@ -59,6 +63,9 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
         ReleaseGrace = releaseGrace ?? DefaultReleaseGrace;
         HandoffDrainTimeout = handoffDrainTimeout ?? DefaultHandoffDrainTimeout;
         _clock = clock ?? TimeProvider.System;
+        // R3 P2-3：把归属判定安装为 ChannelManager 的启动门闩——扫码确认后的直接重启等入口
+        // 也必须服从「唯一调度」（桌面持有期间不得拉起服务端适配器）。
+        _manager.SetStartGate(CanProcess);
     }
 
     /// <summary>稳定服务端指纹（机器名 + 数据目录；桌面据此识别服务端进程重启）。</summary>
@@ -370,7 +377,30 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     {
         if (!CanProcess(channel)) return; // 收回与重新 claim 竞态：已被桌面重新持有
         await _manager.StartAsync(channel, cancellationToken).ConfigureAwait(false);
-        _logger.LogInformation("渠道归属恢复服务端 event=start channel={Channel}", channel);
+        if (_manager.IsRunning(channel))
+        {
+            bool recovered;
+            lock (_startLogLock) recovered = _startFailureLogged.Remove(channel);
+            _logger.LogInformation(
+                recovered
+                    ? "渠道归属恢复服务端 event=start-recovered channel={Channel}"
+                    : "渠道归属恢复服务端 event=start channel={Channel}",
+                channel);
+            return;
+        }
+        // R3 P2-6.3：启动未成功——首次记 warning，持续失败降 Debug；重试节奏（5s sweep）不变
+        bool firstFailure;
+        lock (_startLogLock) firstFailure = _startFailureLogged.Add(channel);
+        if (firstFailure)
+        {
+            _logger.LogWarning(
+                "渠道归属恢复服务端启动未成功，按托管扫描节奏持续重试（后续失败日志按状态变化节流）channel={Channel}",
+                channel);
+        }
+        else
+        {
+            _logger.LogDebug("渠道归属恢复服务端启动仍未成功（日志已节流）channel={Channel}", channel);
+        }
     }
 
     /// <summary>

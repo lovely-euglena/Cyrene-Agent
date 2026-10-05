@@ -936,6 +936,69 @@ internal static class ChannelSelfTest
         {
             CleanupTempDir(dir);
         }
+
+        // P2-2(R3)：适配器 Stop 挂起（无视取消）时，sweep 等启动必须由生命周期锁超时有界兜底——
+        // 否则 sweep 长期持有全局归属锁，所有渠道 claim/heartbeat/release 全部被阻塞。
+        dir = NewTempDir("ownership-stop-hang");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var manager = new ChannelManager(
+                NullLogger<ChannelManager>.Instance, lifecycleGateTimeout: TimeSpan.FromMilliseconds(100));
+            var adapter = new FakeAdapter(ChannelIds.WeChat);
+            manager.Register(adapter);
+            var clock = new ManualTimeProvider();
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.Zero, clock,
+                handoffDrainTimeout: TimeSpan.FromMilliseconds(50));
+            await ownership.InitializeAsync([ChannelIds.WeChat]);
+            await manager.StartAsync(ChannelIds.WeChat);
+            var stopEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            adapter.StopImpl = _ =>
+            {
+                stopEntered.TrySetResult();
+                return new TaskCompletionSource().Task; // 挂起且无视取消：旧 Stop 在途持生命周期锁
+            };
+            var claim = await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", null);
+            await stopEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            check("ownership: drain 超时授予后旧 Stop 仍在途（场景准备）",
+                claim.Granted.SequenceEqual([ChannelIds.WeChat]) && !manager.IsRunning(ChannelIds.WeChat),
+                JsonSerializer.Serialize(claim));
+
+            clock.Now += TimeSpan.FromSeconds(181); // 租约过期 → sweep 收回并尝试启动（gate 被挂起 Stop 占用）
+            IReadOnlyList<string>? swept = null;
+            try
+            {
+                swept = await ownership.SweepExpiredAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            }
+            catch (TimeoutException)
+            {
+                // 无界等待：sweep 卡在 gate（本用例的回归点）
+            }
+            check("ownership: Stop 挂起时 sweep 有界返回（生命周期锁超时跳过启动，不阻塞控制面）",
+                swept is not null && swept.SequenceEqual([ChannelIds.WeChat])
+                && ownership.GetState(ChannelIds.WeChat).Owner == "server"
+                && !manager.IsRunning(ChannelIds.WeChat),
+                $"reclaimed={swept?.Count} running={manager.IsRunning(ChannelIds.WeChat)}");
+
+            OwnershipHeartbeatResult? heartbeat = null;
+            try
+            {
+                heartbeat = await ownership.HeartbeatAsync([ChannelIds.WeChat], "device-a").WaitAsync(TimeSpan.FromSeconds(3));
+            }
+            catch (TimeoutException)
+            {
+                // 全局 _mutex 被 sweep 长期占用（本用例的回归点）
+            }
+            check("ownership: Stop 挂起后控制面心跳仍可用（全局归属锁未被长期占用）",
+                heartbeat is not null && heartbeat.Lost.SequenceEqual([ChannelIds.WeChat]),
+                heartbeat is null ? "heartbeat 超时" : JsonSerializer.Serialize(heartbeat));
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
     }
 
     // ── 13. release 宽限 × claim/sweep（P1-2a/P1-2b）──────────────────────────
@@ -1886,9 +1949,11 @@ internal static class ChannelSelfTest
         var failManager = new ChannelManager(NullLogger<ChannelManager>.Instance);
         failManager.Register(failAdapter);
         await failManager.StartAsync(ChannelIds.QqBot);
-        check("qqbot adapter: GET /gateway 首败冒泡（manager 不记 started，sweep 可自愈）",
-            !failManager.IsRunning(ChannelIds.QqBot) && failAdapter.GetStatus().Phase == ChannelPhases.Error,
-            $"running={failManager.IsRunning(ChannelIds.QqBot)} phase={failAdapter.GetStatus().Phase}");
+        var failedStatus = failAdapter.GetStatus();
+        check("qqbot adapter: GET /gateway 首败冒泡 + detail.lastErrorCode 记录（manager 不记 started，sweep 可自愈）",
+            !failManager.IsRunning(ChannelIds.QqBot) && failedStatus.Phase == ChannelPhases.Error
+            && failedStatus.Detail?.GetProperty("lastErrorCode").GetString() == QqBotAdapter.ErrorCodeGateway,
+            $"running={failManager.IsRunning(ChannelIds.QqBot)} phase={failedStatus.Phase} detail={failedStatus.Detail?.GetRawText()}");
 
         gatewayDown = false;
         await failManager.StartAsync(ChannelIds.QqBot);
@@ -1899,6 +1964,12 @@ internal static class ChannelSelfTest
             await WaitUntilAsync(() => failManager.IsRunning(ChannelIds.QqBot)
                 && failAdapter.GetStatus().Phase == ChannelPhases.Running),
             $"running={failManager.IsRunning(ChannelIds.QqBot)} phase={failAdapter.GetStatus().Phase}");
+        // P2-6.3：自愈成功后不残留上一轮网关错误码（null 键在 ChannelJson.Options 下省略）
+        var recoveredDetail = failAdapter.GetStatus().Detail;
+        check("qqbot adapter: 自愈成功后清理 detail.lastErrorCode（不残留网关错误码）",
+            recoveredDetail is { } detail
+            && (!detail.TryGetProperty("lastErrorCode", out var residual) || residual.ValueKind == JsonValueKind.Null),
+            recoveredDetail?.GetRawText() ?? "null");
         await failManager.StopAsync(ChannelIds.QqBot);
 
         // P2-3(d)：确定性失败（超窗/超限/无引用）标记不可重试；网络类失败仍可重试
