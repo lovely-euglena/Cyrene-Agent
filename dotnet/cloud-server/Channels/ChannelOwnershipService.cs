@@ -23,7 +23,7 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     public const string OwnerDesktop = "desktop";
 
     /// <summary>claim 交接 drain 上限（R2：先停适配器再授予，≤5s）。</summary>
-    public static readonly TimeSpan HandoffDrainTimeout = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan DefaultHandoffDrainTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>release 后恢复服务端适配器的宽限（§5.3：宽限 5s 后恢复）。</summary>
     public static readonly TimeSpan DefaultReleaseGrace = TimeSpan.FromSeconds(5);
@@ -35,6 +35,9 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     private readonly SemaphoreSlim _mutex = new(1, 1);
     private readonly object _statesLock = new();
     private readonly Dictionary<string, OwnershipState> _states = new(StringComparer.Ordinal);
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _pendingStartsLock = new();
+    private readonly List<Task> _pendingStarts = new();
 
     public ChannelOwnershipService(
         ChannelStore store,
@@ -43,7 +46,8 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
         string serverId,
         TimeSpan? leaseTtl = null,
         TimeSpan? releaseGrace = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        TimeSpan? handoffDrainTimeout = null)
     {
         _store = store;
         _manager = manager;
@@ -51,6 +55,7 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
         ServerId = serverId;
         LeaseTtl = leaseTtl ?? TimeSpan.FromSeconds(180);
         ReleaseGrace = releaseGrace ?? DefaultReleaseGrace;
+        HandoffDrainTimeout = handoffDrainTimeout ?? DefaultHandoffDrainTimeout;
         _clock = clock ?? TimeProvider.System;
     }
 
@@ -64,6 +69,7 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     public string ServerId { get; }
     public TimeSpan LeaseTtl { get; }
     public TimeSpan ReleaseGrace { get; }
+    public TimeSpan HandoffDrainTimeout { get; }
 
     // ── 启动与状态 ───────────────────────────────────────────────────────────
 
@@ -176,9 +182,23 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
                     continue;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 await StopForHandoffAsync(channel, cancellationToken).ConfigureAwait(false);
                 var claimed = new OwnershipState(OwnerDesktop, holder, now + ttl, now);
-                await PersistAsync(channel, claimed, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await PersistAsync(channel, claimed, cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // 持久化失败/请求中止：适配器已停但归属仍为 server——补偿重启，避免渠道悬挂离线
+                    // （补偿不随请求取消；后续 sweep 自愈兜底）
+                    _logger.LogWarning(
+                        "渠道归属交接持久化失败，补偿重启服务端适配器 channel={Channel} holder={Holder}",
+                        channel, holder);
+                    await StartOwnedAsync(channel, CancellationToken.None).ConfigureAwait(false);
+                    throw;
+                }
                 SetState(channel, claimed);
                 granted.Add(channel);
                 lastLease = claimed.LeaseExpiresAt;
@@ -271,7 +291,11 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
 
     // ── 租约过期回收（R3）与门闩 ─────────────────────────────────────────────
 
-    /// <summary>过期租约批量收回（ChannelHostedService 周期调用）；返回被收回的渠道。</summary>
+    /// <summary>
+    /// 周期扫描（ChannelHostedService 每 5s 调用）：回收过期桌面租约并启动适配器；
+    /// owner=server 但适配器未运行（交接补偿失败/启动失败悬挂）时自愈补启动。
+    /// 返回被收回（reclaimed）的渠道。
+    /// </summary>
     public async Task<IReadOnlyList<string>> SweepExpiredAsync(CancellationToken cancellationToken = default)
     {
         await _mutex.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -282,10 +306,19 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
             foreach (var channel in ListStateChannels())
             {
                 var state = GetState(channel);
-                if (state.Owner == OwnerDesktop && state.LeaseExpiresAt <= now)
+                if (state.Owner == OwnerDesktop)
                 {
-                    await ReclaimAsync(channel, "expire", cancellationToken).ConfigureAwait(false);
-                    reclaimed.Add(channel);
+                    if (state.LeaseExpiresAt <= now)
+                    {
+                        await ReclaimAsync(channel, "expire", cancellationToken).ConfigureAwait(false);
+                        reclaimed.Add(channel);
+                    }
+                    continue;
+                }
+                // owner=server 自愈：适配器应运行而未运行（claim 补偿失败/启动失败）→ 补启动
+                if (!_manager.IsRunning(channel))
+                {
+                    await StartOwnedAsync(channel, cancellationToken).ConfigureAwait(false);
                 }
             }
             return reclaimed;
@@ -330,35 +363,89 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
         _logger.LogInformation("渠道归属恢复服务端 event=start channel={Channel}", channel);
     }
 
+    /// <summary>
+    /// 按归属启动服务端持有渠道（托管服务启动/自愈入口）：owner=desktop 时跳过。
+    /// 与 claim 共用互斥：并发 claim 后不会再把服务端适配器拉起（R2 门闩复查）。
+    /// </summary>
+    public async Task StartServerOwnedAsync(string channel, CancellationToken cancellationToken = default)
+    {
+        await _mutex.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await StartOwnedAsync(channel, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
     private void ScheduleServerStart(string channel)
     {
-        _ = Task.Run(async () =>
+        Task task = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(ReleaseGrace).ConfigureAwait(false);
-                await StartOwnedAsync(channel, CancellationToken.None).ConfigureAwait(false);
+                await Task.Delay(ReleaseGrace, _shutdown.Token).ConfigureAwait(false);
+                await StartOwnedAsync(channel, _shutdown.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // 停机：放弃宽限启动（适配器由托管服务 StopAllAsync 统一停止）
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "渠道 release 宽限恢复失败 channel={Channel}", channel);
             }
         });
+        lock (_pendingStartsLock) _pendingStarts.Add(task);
+        _ = task.ContinueWith(
+            completed => { lock (_pendingStartsLock) _pendingStarts.Remove(completed); },
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// 停机收尾（ChannelHostedService.StopAsync 调用）：取消 release 宽限启动并等待在途任务结束，
+    /// 避免宽限任务在 StopAllAsync 之后把适配器重新拉起。
+    /// </summary>
+    public async Task CancelPendingStartsAsync()
+    {
+        _shutdown.Cancel();
+        Task[] pending;
+        lock (_pendingStartsLock) pending = _pendingStarts.ToArray();
+        if (pending.Length == 0) return;
+        try
+        {
+            await Task.WhenAll(pending).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "release 宽限启动收尾异常");
+        }
     }
 
     private async Task StopForHandoffAsync(string channel, CancellationToken cancellationToken)
     {
         using var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        drain.CancelAfter(HandoffDrainTimeout);
-        try
+        var stopTask = _manager.StopAsync(channel, drain.Token);
+        var timeoutTask = Task.Delay(HandoffDrainTimeout, cancellationToken);
+        // drain 为协作式：适配器不响应取消时不能无限持有 mutex，超时即继续授予
+        if (await Task.WhenAny(stopTask, timeoutTask).ConfigureAwait(false) != stopTask)
         {
-            await _manager.StopAsync(channel, drain.Token).ConfigureAwait(false);
+            drain.Cancel();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug("渠道交接请求中止，放弃等待 drain channel={Channel}", channel);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "渠道交接 drain 超时（{Timeout}s），继续授予 channel={Channel}",
+                    HandoffDrainTimeout.TotalSeconds, channel);
+            }
+            return;
         }
-        catch (OperationCanceledException)
-        {
-            // drain 超时：继续授予（适配器 StopAsync 自行保证不阻塞进程退出）
-            _logger.LogWarning("渠道交接 drain 超时 channel={Channel}", channel);
-        }
+        await stopTask.ConfigureAwait(false);
     }
 
     private TimeSpan ClampTtl(int? ttlSeconds)

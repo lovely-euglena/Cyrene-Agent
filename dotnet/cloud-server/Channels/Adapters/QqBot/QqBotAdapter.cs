@@ -26,6 +26,9 @@ public sealed class QqBotAdapter : IChannelAdapter
     /// <summary>§7.3 产品文案：QQ 官方 bot 不适用主动通知。</summary>
     public const string ProactiveNotice = "QQ 官方 bot 不适用主动通知；主动通知请用微信/飞书（服务端）或 NapCat（桌面）";
 
+    /// <summary>Q7 口径：本批不支持 QQ 入站附件——附件-only 消息拦截文案（对齐微信拦截口径）。</summary>
+    public const string AttachmentNotice = "这个附件人家暂时还收不了呢，可以发文字给我哦~~";
+
     public const string ErrorCodeGateway = "E_QQBOT_GATEWAY";
     public const string ErrorCodeSend = "E_QQBOT_SEND";
 
@@ -164,31 +167,32 @@ public sealed class QqBotAdapter : IChannelAdapter
             return ChannelSendResult.Failure("QQ 机器人网关未连接");
         }
         var chatType = string.IsNullOrEmpty(message.ChatType) ? ChannelChatTypes.Private : message.ChatType;
-        ReplyContext? context;
+        var isGroup = chatType == ChannelChatTypes.Group;
+        QqBotReplyPlan plan;
         lock (_sync)
         {
-            context = ResolveReplyContextLocked(message);
-        }
-        if (context is null)
-        {
-            return ChannelSendResult.Failure("官方 QQ Bot 仅支持被动回复（没有可引用的入站消息）");
-        }
-        var isGroup = chatType == ChannelChatTypes.Group;
-        var window = isGroup ? GroupReplyWindow : PrivateReplyWindow;
-        if (_time.GetUtcNow() - context.ReceivedAt > window)
-        {
-            return ChannelSendResult.Failure($"被动回复窗口已过（{(isGroup ? "5 分钟" : "60 分钟")}）");
-        }
-        var limit = isGroup ? GroupReplyLimit : PrivateReplyLimit;
-        if (context.SeqUsed >= limit)
-        {
-            return ChannelSendResult.Failure($"该消息回复次数已达上限（{limit} 次）");
-        }
-
-        var plan = QqBotNormalizer.BuildPassiveReplies(message, context.MessageId, context.SeqUsed, limit);
-        if (plan.Requests.Count == 0)
-        {
-            return ChannelSendResult.Failure(plan.Error ?? "没有可发送的 QQ Bot 内容");
+            var context = ResolveReplyContextLocked(message);
+            if (context is null)
+            {
+                return ChannelSendResult.Failure("官方 QQ Bot 仅支持被动回复（没有可引用的入站消息）");
+            }
+            var window = isGroup ? GroupReplyWindow : PrivateReplyWindow;
+            if (_time.GetUtcNow() - context.ReceivedAt > window)
+            {
+                return ChannelSendResult.Failure($"被动回复窗口已过（{(isGroup ? "5 分钟" : "60 分钟")}）");
+            }
+            var limit = isGroup ? GroupReplyLimit : PrivateReplyLimit;
+            if (context.SeqUsed >= limit)
+            {
+                return ChannelSendResult.Failure($"该消息回复次数已达上限（{limit} 次）");
+            }
+            plan = QqBotNormalizer.BuildPassiveReplies(message, context.MessageId, context.SeqUsed, limit);
+            if (plan.Requests.Count == 0)
+            {
+                return ChannelSendResult.Failure(plan.Error ?? "没有可发送的 QQ Bot 内容");
+            }
+            // P2：msg_seq 规划与预占必须在锁内——并发发送不得读到同一 SeqUsed 而重复序号
+            context.SeqUsed += plan.Requests.Count;
         }
 
         var sent = 0;
@@ -205,8 +209,7 @@ public sealed class QqBotAdapter : IChannelAdapter
                     MsgId = request.MsgId,
                     MsgSeq = request.MsgSeq,
                 };
-            // 桌面语义：发送尝试即消耗一次 msg_seq（失败也消耗，避免并发双发抢同一序号）
-            Interlocked.Increment(ref context.SeqUsed);
+            // 序号已在锁内预占；桌面语义：发送尝试即消耗一次 msg_seq（失败也消耗，避免并发双发抢同一序号）
             try
             {
                 await api.SendTextAsync(
@@ -305,6 +308,13 @@ public sealed class QqBotAdapter : IChannelAdapter
     {
         try
         {
+            // Q7：本批不支持 QQ 入站附件——附件-only（text 为空）直接拦截回文案，
+            // 避免空文本 user 事件被 DialogEngine 丢弃造成用户静默无回复
+            if (string.IsNullOrWhiteSpace(incoming.Text) && incoming.Attachments is { Count: > 0 })
+            {
+                await SendAttachmentNoticeAsync(incoming);
+                return;
+            }
             var handler = OnMessage;
             if (handler is null) return;
             await handler(incoming, CancellationToken.None);
@@ -312,6 +322,26 @@ public sealed class QqBotAdapter : IChannelAdapter
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "QQ Bot 入站处理失败 channel={Channel}", Id);
+        }
+    }
+
+    /// <summary>附件-only 消息的被动回复拦截（复用发送窗口/限次/msg_seq 规则）。</summary>
+    private async Task SendAttachmentNoticeAsync(IncomingMessage incoming)
+    {
+        var outgoing = new OutgoingMessage
+        {
+            Channel = Id,
+            ChatType = incoming.ChatType,
+            TargetId = incoming.ChatId,
+            ReplyContext = string.IsNullOrEmpty(incoming.MessageId)
+                ? null
+                : new OutgoingReplyContext { MessageId = incoming.MessageId },
+            Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = AttachmentNotice }],
+        };
+        var result = await SendAsync(outgoing, CancellationToken.None);
+        if (!result.Ok)
+        {
+            _logger.LogWarning("QQ Bot 附件拦截回复失败 channel={Channel} error={Error}", Id, result.Error);
         }
     }
 

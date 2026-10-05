@@ -99,7 +99,8 @@ public sealed class ChannelHostedService : BackgroundService
         }
         foreach (var id in serverOwned)
         {
-            await _manager.StartAsync(id, stoppingToken);
+            // R2 复查门闩：Initialize 与本循环之间可能已被桌面 claim（先停后授），不得拉起桌面持有渠道
+            await _ownership.StartServerOwnedAsync(id, stoppingToken);
         }
 
         var nextSeenCleanup = DateTimeOffset.UtcNow + SeenCleanupInterval;
@@ -149,6 +150,8 @@ public sealed class ChannelHostedService : BackgroundService
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        // 先取消 release 宽限启动并收尾，再统一停适配器：停机后不得有宽限任务重新拉起
+        await _ownership.CancelPendingStartsAsync();
         await _manager.StopAllAsync(CancellationToken.None);
         await base.StopAsync(cancellationToken);
     }

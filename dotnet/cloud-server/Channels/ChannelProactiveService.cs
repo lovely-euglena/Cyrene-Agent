@@ -41,6 +41,13 @@ public sealed class ChannelProactiveService
         string channel, string? sessionId, string intentId, string text,
         CancellationToken cancellationToken = default)
     {
+        // capability 前置拒绝（§2.6/§7.1）：proactive:false 渠道绝不写事件，避免事件流留下不可达回复
+        if (!ChannelAdapterCatalog.SupportsProactive(channel))
+        {
+            return new ProactiveDeliveryOutcome(
+                ProactiveDeliveryStatus.Unsupported, null, false, false, ChannelErrorCodes.Unsupported);
+        }
+
         // 唯一调度（§5.4）：owner=desktop 时服务端绝不直发，桌面负责本机发送
         if (!await _ownership.CanProcessAsync(channel, cancellationToken).ConfigureAwait(false))
         {
@@ -128,6 +135,8 @@ public enum ProactiveDeliveryStatus
     RecipientMissing,
     /// <summary>owner=desktop，服务端拒发（409 E_CHANNEL_OWNED_BY_OTHER）。</summary>
     OwnedByOther,
+    /// <summary>渠道 capability 不支持主动消息（400 E_CHANNEL_UNSUPPORTED；qqbot）。</summary>
+    Unsupported,
     /// <summary>事件写库失败（500 E_CHANNEL_SEND_FAILED）。</summary>
     WriteFailed,
 }

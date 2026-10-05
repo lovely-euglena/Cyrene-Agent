@@ -37,4 +37,8 @@ public static class ChannelAdapterCatalog
         new Adapters.WeChat.WeChatAdapterRegistration(),
         new Adapters.Feishu.FeishuAdapterRegistration(),
     ];
+
+    /// <summary>渠道是否支持服务端主动消息（§2.6 channels.proactive；qqbot = false）。</summary>
+    public static bool SupportsProactive(string channel) =>
+        All.Any(item => item.ChannelId == channel && item.SupportsProactive);
 }

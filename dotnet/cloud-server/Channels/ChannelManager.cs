@@ -15,6 +15,7 @@ public sealed class ChannelManager
     private readonly Dictionary<string, IChannelAdapter> _adapters = new(StringComparer.Ordinal);
     private readonly HashSet<string> _started = new(StringComparer.Ordinal);
     private readonly HashSet<string> _starting = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _stopRequested = new(StringComparer.Ordinal);
     private readonly ILogger<ChannelManager> _logger;
 
     private Func<IncomingMessage, CancellationToken, Task<OutgoingMessage?>>? _dispatcher;
@@ -84,6 +85,7 @@ public sealed class ChannelManager
             if (!_adapters.TryGetValue(id, out adapter) || _started.Contains(id) || !_starting.Add(id)) return;
             if (_dispatcher is not null) adapter.OnMessage = MakeHandler(id);
         }
+        var stopAfterStart = false;
         try
         {
             await adapter.StartAsync(cancellationToken);
@@ -91,23 +93,39 @@ public sealed class ChannelManager
             {
                 _starting.Remove(id);
                 _started.Add(id);
+                // 启动期间收到停止请求（归属交接/停机）：登记补停，不让 StopAsync 空操作
+                stopAfterStart = _stopRequested.Remove(id);
             }
             _logger.LogInformation("渠道已启动 channel={Channel} name={Name}", id, adapter.DisplayName);
         }
         catch (Exception ex)
         {
-            lock (_sync) _starting.Remove(id);
+            lock (_sync)
+            {
+                _starting.Remove(id);
+                _stopRequested.Remove(id);
+            }
             _logger.LogError(ex, "渠道启动失败 channel={Channel}", id);
+        }
+        if (stopAfterStart)
+        {
+            // 启动完成即补停，保证「先停适配器 → 再授予」语义（R2）
+            await StopAsync(id, CancellationToken.None);
         }
     }
 
-    /// <summary>停止单个适配器（幂等）。</summary>
+    /// <summary>停止单个适配器（幂等；启动中的适配器登记补停，不空操作）。</summary>
     public async Task StopAsync(string id, CancellationToken cancellationToken = default)
     {
         IChannelAdapter? adapter;
         lock (_sync)
         {
-            if (!_started.Remove(id) || !_adapters.TryGetValue(id, out adapter)) return;
+            if (!_adapters.TryGetValue(id, out adapter)) return;
+            if (!_started.Remove(id))
+            {
+                if (_starting.Contains(id)) _stopRequested.Add(id);
+                return;
+            }
         }
         try
         {
@@ -134,11 +152,18 @@ public sealed class ChannelManager
     public async Task StopAllAsync(CancellationToken cancellationToken = default)
     {
         string[] ids;
-        lock (_sync) ids = _started.ToArray();
+        // 遍历全部适配器（含启动中）：StopAsync 对启动中的实例登记补停，停机不留残余
+        lock (_sync) ids = _adapters.Keys.ToArray();
         foreach (var id in ids)
         {
             await StopAsync(id, cancellationToken);
         }
+    }
+
+    /// <summary>适配器是否运行中或启动中（归属 sweep 自愈判定用）。</summary>
+    public bool IsRunning(string id)
+    {
+        lock (_sync) return _started.Contains(id) || _starting.Contains(id);
     }
 
     public IChannelAdapter? GetAdapter(string id)

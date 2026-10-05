@@ -98,6 +98,9 @@ public static class ChannelApi
                 return Results.BadRequest(new { code = ChannelErrorCodes.Unknown, channel });
             if (!manager.Has(channel))
                 return Results.BadRequest(new { code = ChannelErrorCodes.NotHosted, channel });
+            // capability 前置拒绝（§2.6）：proactive:false 渠道不写事件、不尝试投递
+            if (!ChannelAdapterCatalog.SupportsProactive(channel))
+                return Results.BadRequest(new { code = ChannelErrorCodes.Unsupported, channel });
             if (request is null || string.IsNullOrWhiteSpace(request.IntentId) || string.IsNullOrWhiteSpace(request.Text))
                 return Results.BadRequest(new { code = ChannelErrorCodes.BadRequest });
 
@@ -109,6 +112,8 @@ public static class ChannelApi
                     Results.BadRequest(new { code = ChannelErrorCodes.RecipientMissing }),
                 ProactiveDeliveryStatus.OwnedByOther =>
                     Results.Json(new { code = ChannelErrorCodes.OwnedByOther }, statusCode: StatusCodes.Status409Conflict),
+                ProactiveDeliveryStatus.Unsupported =>
+                    Results.BadRequest(new { code = ChannelErrorCodes.Unsupported, channel }),
                 ProactiveDeliveryStatus.WriteFailed =>
                     Results.Json(new { code = ChannelErrorCodes.SendFailed, error = outcome.Error },
                         statusCode: StatusCodes.Status500InternalServerError),
@@ -149,6 +154,8 @@ public static class ChannelErrorCodes
     public const string SendFailed = "E_CHANNEL_SEND_FAILED";
     public const string Login = "E_CHANNEL_LOGIN";
     public const string BadRequest = "E_CHANNEL_REQUEST";
+    /// <summary>渠道 capability 不支持该操作（proactive:false；本批 qqbot）。</summary>
+    public const string Unsupported = "E_CHANNEL_UNSUPPORTED";
 }
 
 public sealed record ChannelClaimRequest(string[]? Channels, int? TtlSeconds);
