@@ -162,6 +162,13 @@ internal static class WeChatSelfTest
             uploadError = true;
         }
         check("协议: getuploadurl 非 0 ret 报错", uploadError);
+
+        // Dispose：注入的 HttpClient 归调用方所有，客户端 Dispose 幂等且不释放注入连接
+        handler.SendMessageResponse = """{"ret":0}""";
+        client.Dispose();
+        client.Dispose();
+        var afterDispose = await client.SendTextAsync("wx-user-1", "dispose 后仍可用", "ctx-1");
+        check("协议: Dispose 仅释放自建 HttpClient（注入连接保留 + 幂等）", afterDispose.Ok, afterDispose.Error);
     }
 
     // ── 2. CDN（AES 密钥格式/加解密/上传/下载/超限）────────────────────────────
@@ -258,6 +265,62 @@ internal static class WeChatSelfTest
             missingHeader = true;
         }
         check("CDN: 缺 x-encrypted-param 报错", missingHeader);
+
+        // 传输挂起 → linked CTS 超时打断（不无限期阻塞长轮询；测试注入 50ms）
+        var hangHandler = new MockILinkHandler
+        {
+            Override = async (request, cancellationToken) =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/c2c/download")
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                return MockILinkHandler.Json("{}");
+            },
+        };
+        using var hangHttp = NewHttp(hangHandler);
+        var hangCdn = new WeChatCdnClient(hangHttp, transferTimeout: TimeSpan.FromMilliseconds(50));
+        var downloadTimeout = false;
+        try
+        {
+            await hangCdn.DownloadAsync(new WeChatCdnMedia
+            {
+                EncryptQueryParam = "download-param",
+                AesKey = keyHex,
+                EncryptType = 1,
+            }, 10 * 1024 * 1024);
+        }
+        catch (WeChatCdnException ex)
+        {
+            downloadTimeout = ex.Message.Contains("超时");
+        }
+        check("CDN: 下载挂起 50ms 超时打断", downloadTimeout);
+
+        var hangUploadHandler = new MockILinkHandler
+        {
+            Override = async (request, cancellationToken) =>
+            {
+                if (request.RequestUri!.AbsolutePath.StartsWith("/c2c/upload", StringComparison.Ordinal))
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                return MockILinkHandler.Json("""{"upload_full_url":"https://mock.cdn.test/c2c/upload/full"}""");
+            },
+        };
+        using var hangUploadHttp = NewHttp(hangUploadHandler);
+        var hangUploadCdn = new WeChatCdnClient(hangUploadHttp, transferTimeout: TimeSpan.FromMilliseconds(50));
+        var hangUploadClient = NewClient(hangUploadHttp);
+        var uploadTimeout = false;
+        try
+        {
+            await hangUploadCdn.UploadAsync(
+                hangUploadClient, "wx-user-1", uploadData, WeChatMediaTypes.Image, default, key, "fk-timeout");
+        }
+        catch (WeChatCdnException ex)
+        {
+            uploadTimeout = ex.Message.Contains("超时");
+        }
+        check("CDN: 上传挂起 50ms 超时打断", uploadTimeout);
     }
 
     // ── 3. 适配器：文本收发 / contextToken 回传 / 事件占位 ───────────────────────
@@ -659,7 +722,8 @@ internal static class WeChatSelfTest
         try
         {
             var options = new ChannelOptions { EnabledChannels = [ChannelIds.WeChat], DataDir = dir };
-            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var protector = ChannelCredentialProtector.Create("test-master-token", dir);
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"), protector);
             var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
             var fake = new FakeAdapter(ChannelIds.WeChat);
             manager.Register(fake);
@@ -698,8 +762,12 @@ internal static class WeChatSelfTest
                 && login.GetStatus(started.LoginId!).BotId == "bot-9",
                 JsonSerializer.Serialize(login.GetStatus(started.LoginId!)));
             var rawCredential = await store.LoadCredentialAsync(ChannelIds.WeChat);
-            check("QR: confirmed 凭据加密落库（botToken/botId）",
-                rawCredential is not null && rawCredential.Contains("tok-9") && rawCredential.Contains("bot-9"));
+            var protection = await store.CredentialProtectionAsync(ChannelIds.WeChat);
+            var withoutProtector = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var cipherUnreadable = await withoutProtector.LoadCredentialAsync(ChannelIds.WeChat) is null;
+            check("QR: confirmed 凭据加密落库（aes-gcm 密文 + botToken/botId 往返）",
+                rawCredential is not null && rawCredential.Contains("tok-9") && rawCredential.Contains("bot-9")
+                && protection == ChannelCredentialProtector.AesGcmScheme && cipherUnreadable);
             check("QR: confirmed 后自动重启适配器（stop+start）",
                 await WaitUntilAsync(() => fake.StopCount == 1 && fake.StartCount == 2, TimeSpan.FromSeconds(5)),
                 $"starts={fake.StartCount} stops={fake.StopCount}");
@@ -723,6 +791,31 @@ internal static class WeChatSelfTest
             check("QR: 上游取码失败返回人话错误",
                 !failed.Ok && failed.Error?.Contains("获取二维码失败") == true, failed.Error);
             handler.QrCodeResponse = null;
+
+            // ticket 是登录会话凭据：轮询失败异常只带 path
+            var ticket = "ticket-secret-abcdef";
+            handler.Override = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("boom"),
+            });
+            var probe = new ILinkLoginClient(http, "https://mock.ilink.test", () => "dGVzdC11aW4=");
+            string? pollError = null;
+            try
+            {
+                await probe.PollQrStatusAsync(ticket);
+            }
+            catch (ILinkProtocolException ex)
+            {
+                pollError = ex.Message;
+            }
+            finally
+            {
+                probe.Dispose();
+            }
+            handler.Override = null;
+            check("QR: 轮询失败异常只带 path（ticket 不进日志）",
+                pollError is not null && !pollError.Contains(ticket)
+                && pollError.Contains("/ilink/bot/get_qrcode_status"), pollError);
 
             // 登出：删凭据 + 停适配器（幂等）
             await login.LogoutAsync();

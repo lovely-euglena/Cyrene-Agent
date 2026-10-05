@@ -129,6 +129,7 @@ public sealed class ILinkBotAdapter : IChannelAdapter
             if (_client is not null)
             {
                 pollCts.Dispose();
+                client.Dispose(); // 本轮客户端未启用：释放自建连接池
                 return;
             }
             _client = client;
@@ -148,10 +149,12 @@ public sealed class ILinkBotAdapter : IChannelAdapter
     {
         CancellationTokenSource? pollCts;
         Task? pollTask;
+        ILinkProtocolClient? client;
         lock (_sync)
         {
             pollCts = _pollCts;
             pollTask = _pollTask;
+            client = _client;
             _pollCts = null;
             _pollTask = null;
             _client = null;
@@ -188,7 +191,20 @@ public sealed class ILinkBotAdapter : IChannelAdapter
                 _logger.LogWarning(ex, "微信轮询任务退出异常 channel=wechat");
             }
         }
-        if (drained) pollCts?.Dispose();
+        if (pollCts is not null)
+        {
+            if (drained || pollTask is null)
+            {
+                pollCts.Dispose();
+            }
+            else
+            {
+                // 轮询任务未退出：token 可能仍在途，待任务结束后释放
+                _ = pollTask.ContinueWith(_ => pollCts.Dispose(), CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+        }
+        client?.Dispose(); // 仅自建 HttpClient 真正释放；注入的连接由调用方管理
         _replyContextByTarget.Clear();
         SetStatus(ChannelPhases.Offline, "已停止");
     }

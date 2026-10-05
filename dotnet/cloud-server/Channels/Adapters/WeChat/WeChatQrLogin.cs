@@ -26,6 +26,7 @@ public sealed class WeChatQrLogin
     private readonly object _sync = new();
     private LoginState? _current;
     private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
 
     public WeChatQrLogin(
         ChannelOptions options,
@@ -39,7 +40,7 @@ public sealed class WeChatQrLogin
         _manager = manager;
         _logger = logger;
         _clientFactory = clientFactory
-            ?? (() => new ILinkLoginClient(WeChatHttp.CreateClient(), options.WeChatBaseUrl));
+            ?? (() => new ILinkLoginClient(options.WeChatBaseUrl));
         _pollRetryDelay = pollRetryDelay ?? DefaultPollRetryDelay;
     }
 
@@ -59,10 +60,12 @@ public sealed class WeChatQrLogin
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            client.Dispose();
             throw;
         }
         catch (Exception ex)
         {
+            client.Dispose();
             _logger.LogWarning("微信二维码获取失败 error={Error}", ex.Message);
             return new StartResult(false, null, null, default, $"获取二维码失败：{ex.Message}");
         }
@@ -74,6 +77,7 @@ public sealed class WeChatQrLogin
         }
         catch (Exception ex)
         {
+            client.Dispose();
             _logger.LogWarning("微信二维码渲染失败 error={Error}", ex.Message);
             return new StartResult(false, null, null, default, "二维码渲染失败，请重试");
         }
@@ -82,13 +86,13 @@ public sealed class WeChatQrLogin
         CancellationTokenSource pollCts;
         lock (_sync)
         {
-            // 旧 loginId 作废：只取消不 Dispose（旧轮询可能仍在在途请求中引用该 token）
-            _pollCts?.Cancel();
+            // 旧 loginId 作废：取消旧轮询（CTS 待旧任务退出后释放，在途请求可能仍引用 token）
+            CancelPolling(_pollCts, _pollTask);
             pollCts = new CancellationTokenSource();
             _pollCts = pollCts;
             _current = state;
+            _pollTask = Task.Run(() => PollLoopAsync(client, state, pollCts.Token), CancellationToken.None);
         }
-        _ = Task.Run(() => PollLoopAsync(client, state, pollCts.Token), CancellationToken.None);
         _logger.LogInformation("微信扫码登录已发起 loginId={LoginId}", state.LoginId);
         return new StartResult(true, state.LoginId, pngBase64, state.ExpiresAt, null);
     }
@@ -115,78 +119,108 @@ public sealed class WeChatQrLogin
     public async Task LogoutAsync(CancellationToken cancellationToken = default)
     {
         CancellationTokenSource? pollCts;
+        Task? pollTask;
         lock (_sync)
         {
             pollCts = _pollCts;
+            pollTask = _pollTask;
             _pollCts = null;
+            _pollTask = null;
             _current = null;
         }
-        if (pollCts is not null)
-        {
-            try
-            {
-                pollCts.Cancel();
-            }
-            catch (ObjectDisposedException)
-            {
-                // 已释放：忽略
-            }
-        }
+        CancelPolling(pollCts, pollTask);
         await _store.DeleteCredentialAsync(ILinkBotAdapter.CredentialChannel, cancellationToken);
         await _manager.StopAsync(ILinkBotAdapter.CredentialChannel, cancellationToken);
         _logger.LogInformation("微信渠道已登出 channel=wechat");
+    }
+
+    /// <summary>取消轮询；CTS 待任务退出后释放（在途请求可能仍引用 token，不能立即 Dispose）。</summary>
+    private static void CancelPolling(CancellationTokenSource? pollCts, Task? pollTask)
+    {
+        if (pollCts is null) return;
+        try
+        {
+            pollCts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            return; // 已释放：忽略
+        }
+        if (pollTask is null)
+        {
+            pollCts.Dispose();
+            return;
+        }
+        _ = pollTask.ContinueWith(_ => pollCts.Dispose(), CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     // ── 轮询 ────────────────────────────────────────────────────────────────
 
     private async Task PollLoopAsync(ILinkLoginClient client, LoginState state, CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow < state.ExpiresAt)
+        try
         {
-            ILinkQrStatusResponse status;
-            try
+            while (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow < state.ExpiresAt)
             {
-                status = await client.PollQrStatusAsync(state.Qrcode, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                // 网络抖动：保持 pending，按退避重试（与桌面 login() 的 continue 同口径）
-                _logger.LogWarning("微信扫码状态轮询失败 error={Error}", ex.Message);
+                ILinkQrStatusResponse status;
                 try
                 {
-                    await Task.Delay(_pollRetryDelay, cancellationToken);
+                    status = await client.PollQrStatusAsync(state.Qrcode, cancellationToken);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
-                continue;
-            }
+                catch (Exception ex)
+                {
+                    // 网络抖动：保持 pending，按退避重试（与桌面 login() 的 continue 同口径）
+                    // ticket 是登录会话凭据：日志只留前缀（异常消息已只带 path，此处双保险）
+                    _logger.LogWarning("微信扫码状态轮询失败 error={Error}",
+                        RedactTicket(ex.Message, state.Qrcode));
+                    try
+                    {
+                        await Task.Delay(_pollRetryDelay, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    continue;
+                }
 
-            switch (status.Status)
+                switch (status.Status)
+                {
+                    case "confirmed":
+                        await ConfirmAsync(state, status, cancellationToken);
+                        return;
+                    case "expired":
+                        SetState(state, "expired", "二维码已过期，请重新扫码");
+                        return;
+                    case "scanned":
+                        SetState(state, "scanned", null);
+                        break;
+                    default: // init / pending / scanning / 其它
+                        SetState(state, "pending", null);
+                        break;
+                }
+            }
+            if (state.Status is "pending" or "scanned")
             {
-                case "confirmed":
-                    await ConfirmAsync(state, status, cancellationToken);
-                    return;
-                case "expired":
-                    SetState(state, "expired", "二维码已过期，请重新扫码");
-                    return;
-                case "scanned":
-                    SetState(state, "scanned", null);
-                    break;
-                default: // init / pending / scanning / 其它
-                    SetState(state, "pending", null);
-                    break;
+                SetState(state, "expired", "二维码已过期，请重新扫码");
             }
         }
-        if (state.Status is "pending" or "scanned")
+        finally
         {
-            SetState(state, "expired", "二维码已过期，请重新扫码");
+            client.Dispose(); // 本轮登录结束：释放自建 HttpClient（注入连接由调用方管理）
         }
+    }
+
+    /// <summary>脱敏：错误消息中出现完整 qrcode ticket 时仅保留前缀。</summary>
+    private static string RedactTicket(string message, string ticket)
+    {
+        if (ticket.Length <= 8 || !message.Contains(ticket, StringComparison.Ordinal)) return message;
+        return message.Replace(ticket, ticket[..8] + "…", StringComparison.Ordinal);
     }
 
     private async Task ConfirmAsync(LoginState state, ILinkQrStatusResponse status, CancellationToken cancellationToken)

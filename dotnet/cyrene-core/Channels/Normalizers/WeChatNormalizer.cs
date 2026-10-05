@@ -36,7 +36,7 @@ public static class WeChatNormalizer
     {
         if (raw.ValueKind != JsonValueKind.Object) return null;
         var messageType = ChannelJsonValue.NumberOrNull(raw, "message_type");
-        if (messageType is null || (int)messageType.Value != 1) return null;
+        if (messageType != 1) return null; // 严格等于 1（对齐 TS `message_type !== 1`：非整数不放行）
 
         var fromUserId = ChannelJsonValue.OptionalString(raw, "from_user_id") ?? "";
         var createTimeMs = ChannelJsonValue.NumberOrNull(raw, "create_time_ms");
