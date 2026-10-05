@@ -15,7 +15,8 @@
 `install-e5-small.ps1`（→ `models/Xenova/multilingual-e5-small/`）、
 `install-bge-reranker.ps1`（→ `models/bge-reranker-base/`）与
 `install-bge-reranker-v2-m3.ps1`（→ `models/bge-reranker-v2-m3/`）；自动切源、断点续传，
-后两个脚本共用 `lib/model-install-common.ps1` 的下载/校验函数，
+其中 `install-e5-small.ps1` 与 `install-bge-reranker-v2-m3.ps1` 共用 `lib/model-install-common.ps1`
+的下载/校验函数（BGE-M3 与旧 reranker 脚本未复用该公共库），
 详细步骤见 `docs/local-models.md`。
 
 `npm run build:music-component` 使用固定版本的 PyInstaller 将网易云音乐 MCP 封装为 `dist/components/music/`。发布包会预置空的 `resources/components/music/` 目录；用户将整个 `music` 文件夹内容拖入其中即可使用。

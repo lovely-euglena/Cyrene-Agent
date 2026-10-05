@@ -60,7 +60,7 @@
 > 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET 设计草案・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）设计草案・写类工具 evidence 帧协议 v1（fs 三件接线落地）・2026-10-04 手机 PWA（查看 / 续聊 / 离线只读）・2026-10-05 RAG 第二引擎（Multilingual-E5-Small 向量 + bge-reranker-v2-m3 重排）。
 
 <details>
-<summary>全部 57 篇 + 2 个子目录（按时间序）</summary>
+<summary>全部 58 篇 + 2 个子目录（按时间序）</summary>
 
 - [2026-08-08-cyreneHarnessloopdesign.md](./design/2026-08-08-cyreneHarnessloopdesign.md)
 - [2026-08-09-cyreneHarness-construction-plan.md](./design/2026-08-09-cyreneHarness-construction-plan.md)
