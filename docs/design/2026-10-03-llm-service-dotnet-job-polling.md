@@ -22,7 +22,13 @@
 > - **批合并未实现**：本稿 §4.2 的「上游 16–50ms 批合并 / ≥256 字符」未落地——.NET 逐
 >   事件落 ring，节流由 TS poll 侧 ~66ms 节奏承担（400 TPS 由 ring 缓冲摊平）；
 > - `truncated`：ring drop-oldest 不注入合成事件（保持绝对序号连续），改由 `llm.poll`
->   帧的 `dropped/truncated` 字段告知增量缺口；
+>   帧的 `truncated`（请求 cursor 落在已丢弃段 = 真实增量缺口）告知；`dropped` 仅为 ring
+>   回收累计（含「已 poll 消费、仅因 ring 满被回收」的事件，不等价于缺口——复审 P2-2）；
+> - **工具批保护未实现（复审 P2-3，接受同权丢弃）**：本稿 §4.4 要求工具调用/usage/finish
+>   永不丢弃（单独优先级通道），实现为全事件同权 drop-oldest。依据：反压把未确认量压在
+>   ≤~1025（`LowWater` 单一阈值），远低于 ring 4096，驱逐时被驱逐事件必已消费（真实缺口经
+>   `poll.truncated` 上报）；做保护位需从 ring 中部驱逐，会破坏「绝对序号连续 + cursor 幂等」
+>   不变量（重投递/静默漏读），收益与风险不成比例，故按同权丢弃接受并注记；
 > - cursor：实现为绝对序号 + 低于丢弃段时 clamp 到 base 补读（幂等，不重投）；
 > - 重试/超时：总时长 `timeoutMs`、idle `idleTimeoutMs`、`maxRetries` 均按帧透传生效
 >   （对齐 `model-retry-runner` 语义）；lane 并发 4/2/1 持槽至作业终态。

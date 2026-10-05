@@ -28,8 +28,11 @@ public sealed class LlmEvent
 /// <summary>作业状态：queued → running →（waiting_retry）→ done | error | cancelled。</summary>
 public enum LlmJobState { Queued, Running, WaitingRetry, Done, Error, Cancelled }
 
-/// <summary>poll 结果：事件段 + clamp 后的有效 nextCursor（P2-1①）。</summary>
-public readonly record struct LlmPollSlice(IReadOnlyList<LlmEvent> Events, int NextCursor);
+/// <summary>
+/// poll 结果：事件段 + clamp 后的有效 nextCursor（P2-1①）+ 真实缺口标记 Gap（P2-2：
+/// 请求 cursor 落在已丢弃段——该段事件不可恢复，消费侧应告警；仅 ring 回收已消费事件时 Gap=false）。
+/// </summary>
+public readonly record struct LlmPollSlice(IReadOnlyList<LlmEvent> Events, int NextCursor, bool Gap);
 
 /// <summary>结构化指标（设计 §6 可观测；终态时经 stderr 结构化日志 + llm.status 出口）。</summary>
 public sealed class LlmJobMetrics
@@ -50,18 +53,19 @@ public sealed class LlmJobMetrics
 /// <summary>
 /// 单条作业：事件 ring + 长轮询等待 + 重试/取消/指标。
 ///
-/// 反压语义（IKJM7D 复审 P0-2 修复）：
+/// 反压语义（IKJM7D 复审 P0-2 修复；P2-1① 按实现订正口径）：
 ///   - ring 上限 RingCapacity；**满时 drop-oldest**（_base 前移 + _dropped 计数；单次腾位
 ///     即保证终态 done/error 可追加），SSE 回调永不阻塞、永不死锁；
-///   - 高水位反压按「未确认量 = EventCount - PolledCursor」判定：poll 消费推进 PolledCursor，
-///     上游读在 ≥HighWater 时暂停、降至 ≤LowWater 恢复（迟滞，设计 §8 用例 3）；
+///   - 反压按「未确认量 = EventCount - PolledCursor」判定：poll 消费推进 PolledCursor，
+///     上游读在 > LowWater 时暂停、降至 ≤LowWater 恢复（**单一阈值，无独立高水位/迟滞**）；
+///   - _dropped 是 ring 回收累计（含「已 poll 消费、仅因 ring 满被回收」的事件），
+///     不等于增量缺口；真实缺口由 Poll 的 Gap（请求 cursor < _base）判定；
 ///   - 消费者死亡导致的永久暂停由 stall 兜底（service 侧 60s 超水位 → truncated 终态）。
 /// </summary>
 public sealed class LlmJob
 {
     public const int RingCapacity = 4096;      // 对齐设计 §4（复审提示项：8192→4096）
-    public const int HighWater = 3276;         // 未确认量 ~80%
-    public const int LowWater = 1024;          // 恢复阈值
+    public const int LowWater = 1024;          // 暂停阈值（单一阈值，无迟滞——P2-1①）
     public const int StallTimeoutMs = 60_000;  // 超水位暂停兜底（消费者死亡）
     public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(5); // 对齐设计（10min→5min）
 
@@ -94,7 +98,7 @@ public sealed class LlmJob
     private readonly object _gate = new();
     private readonly List<LlmEvent> _events = new();          // [base, base+count) 绝对序号连续
     private int _base;                                        // 已被 drop-oldest 丢弃的事件数
-    private long _dropped;
+    private long _dropped;                                    // ring 回收累计（含已消费事件；非缺口，P2-2）
     private long _polledCursor;                               // 消费位点（TS 已拉取到的最大 nextCursor）
 
     public LlmJob(string lane, string endpoint, string method, string body,
@@ -115,8 +119,10 @@ public sealed class LlmJob
     public int PendingCount { get { lock (_gate) return _base + _events.Count - (int)Math.Min((long)_base + _events.Count, Interlocked.Read(ref _polledCursor)); } }
 
     /// <summary>
-    /// 追加事件；ring 满时 drop-oldest（_base 前移，_dropped 计数）。
+    /// 追加事件；ring 满时 drop-oldest（_base 前移，_dropped 回收累计）。
     /// 满时先丢弃一条最旧腾位再追加（单次 drop 已保证终态 done/error 必达，无二次分支）。
+    /// 实现偏差（P2-3，已在设计稿注记）：不做工具/usage/finish 保护位，全事件同权 drop-oldest——
+    /// 反压下未确认量 ≤~1025 << RingCapacity，被驱逐事件必已消费，保护位收益与游标改造成本不成比例。
     /// </summary>
     public bool Append(LlmEvent e)
     {
@@ -136,8 +142,8 @@ public sealed class LlmJob
 
     /// <summary>
     /// 取 [cursor, cursor+max) 事件段；cursor 低于 _base（已被丢弃）时从 _base 起补读
-    /// （丢弃段不可恢复，调用方经 DroppedEvents/truncated 知晓）。为空且 waitMs>0 时
-    /// 长轮询（Monitor.Wait，不占读帧线程）。
+    /// （丢弃段不可恢复；真实缺口经 slice.Gap 上报，DroppedEvents 只是回收累计，P2-2）。
+    /// 为空且 waitMs>0 时长轮询（Monitor.Wait，不占读帧线程）。
     /// 复审 P2-1①：返回 clamp 后的有效 nextCursor——宿主不得按 cursor+events.Count 自算
     /// （cursor 在丢弃段时会重复投递同一批事件）。
     /// </summary>
@@ -154,12 +160,15 @@ public sealed class LlmJob
                     break;
                 effective = Math.Clamp(effective, _base, _base + _events.Count);
             }
+            // P2-2：缺口按「请求 cursor 落后于当前 _base」判定（等待期间发生的回收同样计入）——
+            // 已消费事件被回收不构成缺口。
+            var gap = cursor < _base;
             var take = Math.Min(maxEvents, _base + _events.Count - effective);
             var slice = _events.GetRange(effective - _base, Math.Max(0, take));
             var next = effective + slice.Count;
             if (next > Interlocked.Read(ref _polledCursor))
                 Interlocked.Exchange(ref _polledCursor, next);
-            return new LlmPollSlice(slice, next);
+            return new LlmPollSlice(slice, next, gap);
         }
     }
 

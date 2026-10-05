@@ -83,9 +83,9 @@ export interface LlmPollResult {
   nextCursor: number;
   events: LlmHostEvent[];
   final: boolean;
-  /** 复审 P2-1④：ring 溢出累计丢弃数（>0 = 增量有缺口）。 */
+  /** 复审 P2-2：ring 回收累计（含「已 poll 消费、仅因 ring 满被回收」的事件）——>0 不等于有缺口。 */
   dropped?: number;
-  /** 复审 P2-1④：ring 曾 drop-oldest（丢弃段不可恢复）——消费侧应告警。 */
+  /** 复审 P2-2：请求 cursor 落在已丢弃段 = 真实增量缺口（丢弃段不可恢复）——消费侧应告警。 */
   truncated?: boolean;
 }
 

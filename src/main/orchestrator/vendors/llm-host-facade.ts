@@ -75,6 +75,9 @@ export async function callLLMViaLlmHost(options: LlmHostCallOptions): Promise<Ch
   } catch (err) {
     throw hostLost(err, "ensureStarted");
   }
+  // 复审 P2-5：冷启动可达秒级，signal 可能在 ensureStarted 窗口内中止——已中止的
+  // AbortSignal 不会再触发监听，故此处补一次预检（不建 .NET 作业）
+  if (signal.aborted) throw cancelledError();
 
   const http = adapter.buildStreamRequest({ ...request, stream: true }, config);
 
@@ -161,10 +164,15 @@ async function collectJob(
       throw err;
     }
     cursor = result.nextCursor;
-    // 复审 P2-1④：ring 溢出（drop-oldest）→ 增量缺口告警（每次作业一次，不刷屏）
+    // 复审 P2-2：dropped 是 ring 回收累计（含「已 poll 消费、仅因 ring 满被回收」的事件），
+    // truncated 才是请求 cursor 落在已丢弃段（真实增量缺口）。分开告警，每次作业一次。
     if (!warnedDropped && ((result.dropped ?? 0) > 0 || result.truncated === true)) {
       warnedDropped = true;
-      console.warn(`[llm-host] job ${jobId} 事件 ring 溢出：累计丢弃 ${result.dropped ?? 0} 条（增量有缺口）`);
+      if (result.truncated === true) {
+        console.warn(`[llm-host] job ${jobId} 增量缺口：请求 cursor 落在已丢弃段（ring 累计回收 ${result.dropped ?? 0} 条）`);
+      } else {
+        console.warn(`[llm-host] job ${jobId} ring 累计回收 ${result.dropped ?? 0} 条已消费事件（无增量缺口）`);
+      }
     }
 
     for (const ev of result.events) {
@@ -315,9 +323,17 @@ function hostBusinessError(err: unknown, phase: string, model: string): AgentRun
   const code = typeof (err as { errorCode?: unknown } | null)?.errorCode === "string"
     ? (err as { errorCode: string }).errorCode
     : "E_LLM_HOST_ERROR";
+  // 复审 P2-4：host-clients 已把 frame.retryable 挂到 Error（如 LANE_FULL retryable:true），
+  // 此处按 boolean 透传，不丢可重试信号
+  const retryable = (err as { retryable?: unknown } | null)?.retryable;
   return new AgentRuntimeError("E_MODEL_REQUEST_FAILED", `[${code}] llm-host ${phase} 失败: ${err instanceof Error ? err.message : String(err)}`, {
     cause: err,
-    modelFailure: { provider: "llm-host", model, category: "SERVER_ERROR" },
+    modelFailure: {
+      provider: "llm-host",
+      model,
+      category: "SERVER_ERROR",
+      ...(typeof retryable === "boolean" ? { retryable } : {}),
+    },
   });
 }
 
