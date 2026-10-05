@@ -23,9 +23,20 @@ export const EMBEDDING_SWITCH_STICKER_REASON = "embedding-model-switch";
 /**
  * 切换成功收尾：用户记忆对账 → 贴纸索引失效 → 贴纸索引重建。
  * 调用方在 switchEmbeddingModel 返回 ok 后、保存设置/广播前调用。
+ *
+ * P2-1（复审）：对账是 best-effort——reconcile 失败（如备份步骤抛错）只告警
+ * 继续，不能让已生效的模型切换被当作失败（否则 IPC 返回 ok:false、设置不落盘，
+ * 重启后旧配置与新索引 meta 不符）。贴纸收尾与设置保存照常进行。
  */
 export async function finalizeEmbeddingModelSwitch(deps: EmbeddingSwitchFinalizeDeps): Promise<void> {
-  await deps.reconcileUserMemoryIndex();
+  try {
+    await deps.reconcileUserMemoryIndex();
+  } catch (error) {
+    console.warn(
+      "[RAG] user memory reconciliation failed after embedding switch (continuing):",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   deps.invalidateStickerEmbeddingIndex();
   deps.refreshStickerEmbeddingIndex(EMBEDDING_SWITCH_STICKER_REASON);
 }
