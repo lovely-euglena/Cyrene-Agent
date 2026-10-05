@@ -1,0 +1,18 @@
+{
+  "name": "wechat 出站语音缺 filePath（错误文案与 TS 模板字符串一致：undefined）",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [{ "kind": "audio" }]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000008"
+  },
+  "expect": {
+    "requests": [],
+    "error": "缺少语音编码结果: undefined"
+  }
+}

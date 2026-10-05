@@ -32,7 +32,17 @@ public sealed class ILinkBotAdapter : IChannelAdapter
     private readonly TimeSpan _reconnectBackoff;
 
     private readonly object _sync = new();
-    private readonly ConcurrentDictionary<string, string> _replyContextByTarget = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ReplyContextEntry> _replyContextByTarget = new(StringComparer.Ordinal);
+    private long _replyContextSequence;
+
+    /// <summary>P2-8：_replyContextByTarget 默认上限（超出按最久未更新 LRU 淘汰，§3.5 内存口径）。</summary>
+    internal const int DefaultReplyContextLimit = 1024;
+
+    /// <summary>selftest 可调小以验证淘汰；生产用 <see cref="DefaultReplyContextLimit"/>。</summary>
+    internal int ReplyContextLimit { get; set; } = DefaultReplyContextLimit;
+
+    /// <summary>selftest 观测用：当前 target → context_token 条目数。</summary>
+    internal int ReplyContextCount => _replyContextByTarget.Count;
 
     private ILinkProtocolClient? _client;
     private CancellationTokenSource? _pollCts;
@@ -308,7 +318,7 @@ public sealed class ILinkBotAdapter : IChannelAdapter
         var fromUserId = message.FromUserId;
         if (!string.IsNullOrEmpty(fromUserId))
         {
-            _replyContextByTarget[fromUserId] = message.ContextToken;
+            RememberReplyContext(fromUserId, message.ContextToken);
         }
         var normalized = WeChatNormalizer.NormalizeInbound(message.Raw, DateTimeOffset.UtcNow);
         if (normalized is null) return;
@@ -409,6 +419,26 @@ public sealed class ILinkBotAdapter : IChannelAdapter
         }
     }
 
+    /// <summary>
+    /// 记录 target → context_token（出站回复用）。P2-8：超过上限按最久未更新淘汰（LRU），
+    /// 避免多用户 24/7 下无界增长（§3.5 适配器状态内存口径）。
+    /// </summary>
+    private void RememberReplyContext(string target, string contextToken)
+    {
+        _replyContextByTarget[target] = new ReplyContextEntry(
+            contextToken, Interlocked.Increment(ref _replyContextSequence));
+        var limit = ReplyContextLimit;
+        if (limit <= 0 || _replyContextByTarget.Count <= limit) return;
+        var overflow = _replyContextByTarget.Count - limit;
+        foreach (var pair in _replyContextByTarget.OrderBy(pair => pair.Value.Sequence).Take(overflow))
+        {
+            _replyContextByTarget.TryRemove(pair.Key, out _);
+        }
+    }
+
+    /// <summary>出站回复上下文（token + 单调序号；同毫秒写入也能稳定按最久未更新淘汰）。</summary>
+    private sealed record ReplyContextEntry(string Token, long Sequence);
+
     /// <summary>事件文本占位（§3.3）：[图片] / [文件: name]。</summary>
     internal static string BuildPlaceholder(IEnumerable<WeChatInboundMedia> media)
     {
@@ -453,10 +483,12 @@ public sealed class ILinkBotAdapter : IChannelAdapter
     {
         var client = _client;
         if (client is null) return ChannelSendResult.Failure("微信未连接");
-        if (!_replyContextByTarget.TryGetValue(message.TargetId, out var contextToken) || string.IsNullOrEmpty(contextToken))
+        if (!_replyContextByTarget.TryGetValue(message.TargetId, out var replyContext)
+            || string.IsNullOrEmpty(replyContext.Token))
         {
             return ChannelSendResult.Failure("缺少微信 context_token，无法回复");
         }
+        var contextToken = replyContext.Token;
 
         var anyOk = false;
         string? lastError = null;

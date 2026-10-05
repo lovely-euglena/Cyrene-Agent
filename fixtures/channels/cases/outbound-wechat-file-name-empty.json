@@ -1,0 +1,49 @@
+{
+  "name": "wechat 出站 file.name 空串不回退 filePath（TS basename(\"\") 为空串）",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [
+        { "kind": "file", "filePath": "C:/tmp/report.pdf", "name": "", "mime": "application/pdf" }
+      ]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000006",
+    "uploads": {
+      "C:/tmp/report.pdf": {
+        "encrypt_query_param": "enc-file-empty-name",
+        "aes_key": "key-empty-name"
+      }
+    }
+  },
+  "expect": {
+    "requests": [
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000006",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [
+            {
+              "type": 4,
+              "file_item": {
+                "file_name": "",
+                "media": {
+                  "encrypt_query_param": "enc-file-empty-name",
+                  "aes_key": "key-empty-name"
+                }
+              }
+            }
+          ]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      }
+    ]
+  }
+}

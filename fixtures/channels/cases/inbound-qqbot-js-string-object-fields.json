@@ -1,0 +1,30 @@
+{
+  "name": "qqbot 畸形输入按 JS String() 语义（member_openid/group_openid 对象 + timestamp 数组）",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "GROUP_AT_MESSAGE_CREATE",
+      "data": {
+        "id": "ROBOT1.0_group_object_001",
+        "author": { "member_openid": { "id": "u1" } },
+        "group_openid": { "group": "g1" },
+        "content": "在吗",
+        "timestamp": ["2026-08-28T12:00:00+08:00"]
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "qqbot",
+      "chatType": "group",
+      "messageId": "ROBOT1.0_group_object_001",
+      "senderId": "[object Object]",
+      "chatId": "[object Object]",
+      "text": "在吗",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

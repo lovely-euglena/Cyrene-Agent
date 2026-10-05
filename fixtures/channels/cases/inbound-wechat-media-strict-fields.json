@@ -1,0 +1,68 @@
+{
+  "name": "wechat 媒体字段严格口径（encrypt_type=2 省略；sample_rate=16000.5 原值保留）",
+  "kind": "inbound",
+  "channel": "wechat",
+  "input": {
+    "raw": {
+      "message_id": "msg-media-strict-fields",
+      "from_user_id": "wx-user-1",
+      "to_user_id": "bot-1",
+      "message_type": 1,
+      "context_token": "ctx-abc",
+      "create_time_ms": 1787889600000,
+      "item_list": [
+        {
+          "type": 2,
+          "image_item": {
+            "file_name": "pic.png",
+            "media": {
+              "encrypt_query_param": "enc-img",
+              "aes_key": "key-img",
+              "encrypt_type": 2
+            }
+          }
+        },
+        {
+          "type": 3,
+          "voice_item": {
+            "file_name": "voice.silk",
+            "sample_rate": 16000.5,
+            "media": {
+              "encrypt_query_param": "enc-voice",
+              "aes_key": "key-voice",
+              "encrypt_type": 1
+            }
+          }
+        }
+      ]
+    },
+    "now": "2026-08-28T04:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "wechat",
+      "senderId": "wx-user-1",
+      "chatId": "wx-user-1",
+      "messageId": "msg-media-strict-fields",
+      "text": "",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": [
+      {
+        "kind": "image",
+        "fileName": "pic.png",
+        "extension": ".png",
+        "analyzable": true,
+        "media": { "encrypt_query_param": "enc-img", "aes_key": "key-img" }
+      },
+      {
+        "kind": "voice",
+        "fileName": "voice.silk",
+        "extension": ".silk",
+        "analyzable": false,
+        "sampleRate": 16000.5,
+        "media": { "encrypt_query_param": "enc-voice", "aes_key": "key-voice", "encrypt_type": 1 }
+      }
+    ]
+  }
+}

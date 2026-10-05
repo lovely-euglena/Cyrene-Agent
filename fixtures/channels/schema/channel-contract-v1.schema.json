@@ -131,7 +131,10 @@
         "fileName": { "type": "string" },
         "extension": { "type": "string" },
         "analyzable": { "type": "boolean" },
-        "sampleRate": { "type": "integer" },
+        "sampleRate": {
+          "type": "number",
+          "$comment": "Hz；非整数原值保留（inbound-wechat-media-strict-fields），与 TS number 口径一致"
+        },
         "media": {
           "type": "object",
           "required": ["encrypt_query_param", "aes_key"],

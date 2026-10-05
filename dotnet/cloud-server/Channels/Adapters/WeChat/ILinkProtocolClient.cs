@@ -16,8 +16,9 @@ namespace CyreneCloud.Channels.Adapters.WeChat;
 /// getuploadurl；响应体上限 4MB（§3.5）。ret 缺省视为成功（上游成功响应常无 ret），
 /// ret=-14 → <see cref="ILinkSessionExpiredException"/>（不重试，等人工重登）。
 /// 构造注入 <see cref="HttpClient"/>（测试用 mock HttpMessageHandler，无网络）。
+/// 非 sealed + Dispose virtual：selftest 可子类化观测并发 Start 竞态丢弃路径的释放（P2-8）。
 /// </summary>
-public sealed class ILinkProtocolClient : IDisposable
+public class ILinkProtocolClient : IDisposable
 {
     public const string DefaultBaseUrl = "https://ilinkai.weixin.qq.com";
     public const string ChannelVersion = "2.0.0";
@@ -260,7 +261,7 @@ public sealed class ILinkProtocolClient : IDisposable
     }
 
     /// <summary>释放自建 HttpClient 的连接池（注入的 HttpClient 归调用方管理）。</summary>
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_disposed) return;
         _disposed = true;

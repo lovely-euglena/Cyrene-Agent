@@ -1026,6 +1026,29 @@ internal static class ChannelSelfTest
         public ChannelStatus GetStatus() => new() { Enabled = true, Phase = ChannelPhases.Running };
     }
 
+    /// <summary>P2-3(d) 用：固定返回 QQ 超窗确定性失败，并按策略声明不可重试。</summary>
+    private sealed class FakeRetryAdapter(string id) : IChannelAdapter, IChannelSendRetryPolicy
+    {
+        public string Id { get; } = id;
+        public string DisplayName => $"fake-retry-{Id}";
+        public ChannelCapability Capability => ChannelCapabilities.For(Id);
+        public Func<IncomingMessage, CancellationToken, Task<OutgoingMessage?>>? OnMessage { get; set; }
+        public int SendCount { get; private set; }
+
+        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<ChannelSendResult> SendAsync(OutgoingMessage message, CancellationToken cancellationToken = default)
+        {
+            SendCount++;
+            return Task.FromResult(ChannelSendResult.Failure($"{QqBotAdapter.WindowErrorPrefix}（60 分钟）"));
+        }
+
+        public ChannelStatus GetStatus() => new() { Enabled = true, Phase = ChannelPhases.Running };
+
+        public bool ShouldRetry(OutgoingMessage message, string? error) => false;
+    }
+
     private sealed class FakeDialogEngine : IDialogEngine
     {
         public int Calls { get; private set; }
@@ -1093,6 +1116,7 @@ internal static class ChannelSelfTest
         CheckQqBotRegistration(Check);
         await CheckQqBotApiClientAsync(Check);
         await CheckQqBotWsProtocolAsync(Check);
+        await CheckQqBotWsSendSerializationAsync(Check);
         await CheckQqBotAdapterAsync(Check);
 
         Console.WriteLine(failures == 0
@@ -1122,6 +1146,13 @@ internal static class ChannelSelfTest
             QqBotUrlPolicy.ContainsUrl("看 https://a.example/x 哦")
             && !QqBotUrlPolicy.ContainsUrl("没有链接")
             && QqBotUrlPolicy.StripUrls("看 https://a.example/x 哦") == "看 [链接] 哦");
+        check("qqbot: URL 边界收窄（中文/全角标点截断，不吞并后续文本）",
+            QqBotUrlPolicy.StripUrls("看 https://a.example/x，谢谢") == "看 [链接]，谢谢"
+            && QqBotUrlPolicy.StripUrls("看 https://a.example/x。") == "看 [链接]。"
+            && QqBotUrlPolicy.StripUrls("看 https://a.example/x、还有") == "看 [链接]、还有"
+            && QqBotUrlPolicy.StripUrls("https://a.example/x?q=1&b=2 完") == "[链接] 完"
+            && QqBotUrlPolicy.ContainsUrl("见 https://a.example/x，谢谢"),
+            QqBotUrlPolicy.StripUrls("看 https://a.example/x，谢谢"));
     }
 
     private static async Task CheckQqBotApiClientAsync(CheckFn check)
@@ -1312,6 +1343,53 @@ internal static class ChannelSelfTest
         check("qqbot ws: Stop 打断在途（socket 关闭 + ready=false）",
             !client.IsReady && gateway.Sockets.All(item => item.Closed || item.Aborted));
         check("qqbot ws: 错误仅为预期的心跳超时（无未处理异常）",
+            errors.All(item => item.Message.Contains("心跳超时")),
+            string.Join(";", errors.Select(item => item.Message)));
+    }
+
+    /// <summary>
+    /// P2-3(b)：发送串行化——心跳/Identify/Resume 共用发送队列，不产生并发未完成 Send
+    /// （旧 fire-and-forget 在心跳与 op9 重连并发时会触发 WS 发送异常并丢 Identify 且无补发）。
+    /// </summary>
+    private static async Task CheckQqBotWsSendSerializationAsync(CheckFn check)
+    {
+        var gateway = new FakeQqBotGateway();
+        var errors = new List<Exception>();
+        await using var client = new QqBotWsClient(new QqBotWsClientOptions
+        {
+            GatewayUrl = "wss://fake",
+            GetAccessToken = _ => Task.FromResult("fake-token"),
+            SocketFactory = gateway.Factory,
+            InitialBackoff = TimeSpan.FromMilliseconds(30),
+            MaxBackoff = TimeSpan.FromMilliseconds(60),
+            InvalidSessionDelay = TimeSpan.FromMilliseconds(20),
+            MinHeartbeatIntervalMs = 20,
+            OnReadyChange = _ => { },
+            OnError = error => { lock (errors) errors.Add(error); },
+        });
+        await client.StartAsync();
+        check("qqbot ws: 串行发送建连", await WaitUntilAsync(() => gateway.Sockets.Count == 1));
+        var socket = gateway.Latest!;
+        socket.SendDelayMs = 60; // 放大并发窗口：旧实现（fire-and-forget）必然出现发送重叠
+        socket.Push(new { op = 10, d = new { heartbeat_interval = 50 } });
+        socket.Push(new { op = 0, t = "READY", s = 1, d = new { session_id = "sess-serial" } });
+
+        // 心跳 50ms 触发、单次 Send 60ms；持续 ACK 防心跳超时，中途 op9 触发重连 Identify
+        var overlapFree = true;
+        for (var i = 0; i < 40; i++)
+        {
+            socket.Push(new { op = 11, d = (object?)null });
+            if (i == 20) socket.Push(new { op = 9, d = false });
+            await Task.Delay(10);
+            overlapFree &= !socket.SendOverlapDetected;
+        }
+        check("qqbot ws: 心跳 + op9 重连 Identify 串行发送（无并发 Send 重叠）",
+            overlapFree && !socket.SendOverlapDetected
+            && socket.SentOps(1).Count >= 3 && socket.SentOps(2).Count >= 2,
+            $"heartbeat={socket.SentOps(1).Count} identify={socket.SentOps(2).Count} overlap={socket.SendOverlapDetected}");
+
+        await client.StopAsync();
+        check("qqbot ws: 串行发送无发送类错误（仅允许预期的自愈心跳超时）",
             errors.All(item => item.Message.Contains("心跳超时")),
             string.Join(";", errors.Select(item => item.Message)));
     }
@@ -1531,6 +1609,95 @@ internal static class ChannelSelfTest
             harness.PushMessage(C2c("any-msg", "STRANGER000000000000000000001", "你好"));
             check("qqbot adapter: allowAnyPrivate 放行", await WaitUntilAsync(() => harness.Received.Count == 1));
         }
+
+        // P2-3(a)：GET /gateway 首败必须冒泡——ChannelManager 不标记 started，sweep 自愈才会重试
+        var gatewayDown = true;
+        var failHandler = new FakeQqBotHttpHandler
+        {
+            Responder = (request, _) =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (path == "/gateway" && gatewayDown) throw new HttpRequestException("gateway down");
+                return Task.FromResult(path switch
+                {
+                    "/gateway" => JsonResponse("{\"url\":\"wss://fake-gateway\"}"),
+                    _ when path.EndsWith("/getAppAccessToken", StringComparison.Ordinal) =>
+                        JsonResponse("{\"access_token\":\"tok\",\"expires_in\":7200}"),
+                    _ => JsonResponse("{}"),
+                });
+            },
+        };
+        var failGateway = new FakeQqBotGateway();
+        var failTime = new MutableTimeProvider();
+        var failApi = new QqBotApiClient(
+            "102146862", "secret", new HttpClient(failHandler),
+            apiBase: "https://api.test", tokenUrl: "https://bots.test/app/getAppAccessToken", timeProvider: failTime);
+        var failAdapter = new QqBotAdapter(
+            options, NullLogger<QqBotAdapter>.Instance, failApi,
+            wsOptions => new QqBotWsClient(new QqBotWsClientOptions
+            {
+                GatewayUrl = wsOptions.GatewayUrl,
+                GetAccessToken = wsOptions.GetAccessToken,
+                OnDispatch = wsOptions.OnDispatch,
+                OnReadyChange = wsOptions.OnReadyChange,
+                OnError = wsOptions.OnError,
+                SocketFactory = failGateway.Factory,
+                InitialBackoff = TimeSpan.FromMilliseconds(30),
+                MaxBackoff = TimeSpan.FromMilliseconds(60),
+                MinHeartbeatIntervalMs = 20,
+                TimeProvider = failTime,
+            }),
+            failTime);
+        var failManager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+        failManager.Register(failAdapter);
+        await failManager.StartAsync(ChannelIds.QqBot);
+        check("qqbot adapter: GET /gateway 首败冒泡（manager 不记 started，sweep 可自愈）",
+            !failManager.IsRunning(ChannelIds.QqBot) && failAdapter.GetStatus().Phase == ChannelPhases.Error,
+            $"running={failManager.IsRunning(ChannelIds.QqBot)} phase={failAdapter.GetStatus().Phase}");
+
+        gatewayDown = false;
+        await failManager.StartAsync(ChannelIds.QqBot);
+        var recoveredSocket = failGateway.Latest!;
+        recoveredSocket.Push(new { op = 10, d = new { heartbeat_interval = 30_000 } });
+        recoveredSocket.Push(new { op = 0, t = "READY", s = 1, d = new { session_id = "sess-1" } });
+        check("qqbot adapter: 网关恢复后重试成功（running）",
+            await WaitUntilAsync(() => failManager.IsRunning(ChannelIds.QqBot)
+                && failAdapter.GetStatus().Phase == ChannelPhases.Running),
+            $"running={failManager.IsRunning(ChannelIds.QqBot)} phase={failAdapter.GetStatus().Phase}");
+        await failManager.StopAsync(ChannelIds.QqBot);
+
+        // P2-3(d)：确定性失败（超窗/超限/无引用）标记不可重试；网络类失败仍可重试
+        await using (var harness = new QqBotHarness(options))
+        {
+            await harness.StartAsync();
+            var policy = (IChannelSendRetryPolicy)harness.Adapter;
+            var policyMessage = new OutgoingMessage
+            {
+                Channel = ChannelIds.QqBot, TargetId = "u",
+                Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = "hi" }],
+            };
+            check("qqbot adapter: 确定性失败不重试（policy 分类）",
+                !policy.ShouldRetry(policyMessage, $"{QqBotAdapter.WindowErrorPrefix}（60 分钟）")
+                && !policy.ShouldRetry(policyMessage, $"{QqBotAdapter.LimitErrorPrefix}（4 次）")
+                && !policy.ShouldRetry(policyMessage, QqBotAdapter.NoReferenceError)
+                && policy.ShouldRetry(policyMessage, "QQ Bot API /v2/users/x/messages 失败 (HTTP 500)"));
+        }
+
+        // P2-3(d)：delivery 依据策略跳过重试（确定性失败只尝试 1 次）
+        var deliveryManager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+        var deterministicAdapter = new FakeRetryAdapter(ChannelIds.QqBot);
+        deliveryManager.Register(deterministicAdapter);
+        var delivery = new ChannelDeliveryService(
+            deliveryManager, NullLogger<ChannelDeliveryService>.Instance, TimeSpan.Zero);
+        var deterministicResult = await delivery.SendAsync(new OutgoingMessage
+        {
+            Channel = ChannelIds.QqBot, TargetId = "u",
+            Parts = [new OutgoingPart { Kind = OutgoingPartKinds.Text, Text = "hi" }],
+        });
+        check("qqbot adapter: 确定性失败 delivery 只尝试 1 次（不重试）",
+            !deterministicResult.Ok && deterministicResult.Error == $"{QqBotAdapter.WindowErrorPrefix}（60 分钟）"
+            && deterministicAdapter.SendCount == 1,
+            $"attempts={deterministicAdapter.SendCount} error={deterministicResult.Error}");
     }
 
     private static object C2c(string id, string openId, string content) => new
@@ -1635,9 +1802,17 @@ internal static class ChannelSelfTest
         private readonly Channel<string?> _incoming = Channel.CreateUnbounded<string?>();
         private readonly object _sync = new();
         private readonly List<JsonElement> _sent = [];
+        private int _activeSends;
+        private volatile bool _sendOverlapDetected;
 
         public bool Closed { get; private set; }
         public bool Aborted { get; private set; }
+
+        /// <summary>P2-3(b)：曾出现并发未完成 Send（真实 WS 会抛异常；此处记录供断言）。</summary>
+        public bool SendOverlapDetected => _sendOverlapDetected;
+
+        /// <summary>模拟真实发送耗时（放大并发窗口；0 = 立即完成）。</summary>
+        public int SendDelayMs { get; set; }
 
         public bool IsOpen
         {
@@ -1647,11 +1822,19 @@ internal static class ChannelSelfTest
             }
         }
 
-        public Task SendTextAsync(string payload, CancellationToken cancellationToken)
+        public async Task SendTextAsync(string payload, CancellationToken cancellationToken)
         {
-            var element = JsonDocument.Parse(payload).RootElement.Clone();
-            lock (_sync) _sent.Add(element);
-            return Task.CompletedTask;
+            if (Interlocked.Increment(ref _activeSends) != 1) _sendOverlapDetected = true;
+            try
+            {
+                if (SendDelayMs > 0) await Task.Delay(SendDelayMs, cancellationToken);
+                var element = JsonDocument.Parse(payload).RootElement.Clone();
+                lock (_sync) _sent.Add(element);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeSends);
+            }
         }
 
         public async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
