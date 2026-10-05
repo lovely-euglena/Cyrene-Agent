@@ -26,6 +26,7 @@ internal static class WeChatSelfTest
         var failures = 0;
         void Check(string name, bool ok, string? detail = "")
         {
+            ChannelSelfTest.CheckCount++;
             if (ok)
             {
                 Console.WriteLine($"[PASS] {name}");

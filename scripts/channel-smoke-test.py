@@ -20,10 +20,12 @@
   `CLOUD_CHANNEL_WECHAT_CDN_BASE_URL` / `CLOUD_CHANNEL_QQBOT_API_BASE` / `CLOUD_CHANNEL_QQBOT_TOKEN_URL`。
 飞书密文事件复用仓库 fixtures（不在冒烟脚本内实现 AES；签名 sha256 现算，时间戳新鲜）。
 出站图片与 SILK 语音不在本冒烟覆盖（C# `channel-selftest wechat` 覆盖；设计 §1.3 分期）。
+Linux 下追加落盘权限断言（数据目录/media 目录 0700；channels.db 及 -wal/-shm、媒体文件 0600；
+非 Linux 平台自动跳过）。
 
 运行：
   python scripts/channel-smoke-test.py [cyrene-cloud-server.dll]
-退出码：0 = 全过；1 = 存在 FAIL；2 = 启动/环境错误。
+退出码：0 = 全过；1 = 存在 FAIL（含服务启动失败与执行异常）；2 = 环境错误（找不到 dll）。
 """
 import argparse
 import base64
@@ -809,6 +811,42 @@ def phase_wechat_image(state):
     check("微信图片入站：媒体落盘 data/media/wechat", len(files) >= 1, f"files={files}")
 
 
+def phase_file_permissions():
+    """Linux 落盘权限断言（存储基线；非 Linux 跳过——Windows ACL 与 POSIX mode 语义不同）。"""
+    if sys.platform != "linux":
+        print("  [SKIP] 落盘权限断言（非 Linux 平台）")
+        return
+
+    data_dir = os.environ.get("SMOKE_DATA_DIR", "")
+
+    def posix_mode(path):
+        return os.stat(path).st_mode & 0o777
+
+    dir_mode = posix_mode(data_dir)
+    check("落盘权限：数据目录 0700", dir_mode == 0o700, f"{data_dir} mode={oct(dir_mode)}")
+
+    db_path = os.path.join(data_dir, "channels.db")
+    db_modes = {}
+    for suffix in ("", "-wal", "-shm"):
+        path = db_path + suffix
+        db_modes[suffix or "db"] = posix_mode(path) if os.path.exists(path) else None
+    check("落盘权限：channels.db / -wal / -shm 0600",
+          all(value == 0o600 for value in db_modes.values()),
+          "modes=" + json.dumps({key: (oct(value) if value is not None else None)
+                                 for key, value in db_modes.items()}))
+
+    media_dir = os.path.join(data_dir, "media", "wechat")
+    media_dir_mode = posix_mode(media_dir) if os.path.isdir(media_dir) else None
+    check("落盘权限：media/wechat 目录 0700", media_dir_mode == 0o700,
+          f"mode={oct(media_dir_mode) if media_dir_mode is not None else None}")
+
+    media_files = sorted(os.listdir(media_dir)) if os.path.isdir(media_dir) else []
+    file_modes = {name: posix_mode(os.path.join(media_dir, name)) for name in media_files}
+    check("落盘权限：media/wechat 媒体文件 0600",
+          bool(file_modes) and all(value == 0o600 for value in file_modes.values()),
+          "files=" + json.dumps({name: oct(value) for name, value in file_modes.items()}))
+
+
 def phase_feishu(state):
     # 1) 明文 challenge（签名强制：Encrypt Key 已配置）
     status, text, _ = post_feishu_webhook(json.dumps({
@@ -851,13 +889,13 @@ def phase_feishu(state):
     if sent is not None:
         receive_type, payload = state.feishu_messages[0]
         content = json.loads(payload.get("content") or "{}")
-        check("飞书出站：im/v1/messages 文本请求体（receive_id_type=open_id）",
-              receive_type == "open_id" and payload.get("msg_type") == "text"
+        check("飞书出站：im/v1/messages 文本请求体（缺省 receive_id_type=chat_id）",
+              receive_type == "chat_id" and payload.get("msg_type") == "text"
               and content.get("text", "").startswith("渠道回复-")
               and payload.get("receive_id") == "oc_chat_1",
               json.dumps(payload, ensure_ascii=False)[:240])
     else:
-        check("飞书出站：im/v1/messages 文本请求体（receive_id_type=open_id）", False, "timeout")
+        check("飞书出站：im/v1/messages 文本请求体（缺省 receive_id_type=chat_id）", False, "timeout")
 
     def feishu_event_seen():
         events = events_for(fetch_events(), "feishu")
@@ -1168,6 +1206,8 @@ def main():
         phase_wechat_reconnect(state)
         print("\n=== 5. 微信图片入站（mock CDN）===")
         phase_wechat_image(state)
+        print("\n=== 5b. 落盘权限（Linux；其他平台跳过）===")
+        phase_file_permissions()
         print("\n=== 6. 飞书 webhook（真实 HTTP 打到服务）===")
         phase_feishu(state)
         print("\n=== 7. QQ 网关与被动回复 ===")

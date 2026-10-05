@@ -3,9 +3,9 @@ name: dotnet-backend
 on:
   push:
     branches: [feature/dotnet-backend, main]
-    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
   pull_request:
-    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
 
 permissions:
   contents: read
@@ -58,12 +58,13 @@ jobs:
         run: |
           dotnet artifacts/cyrene-cloud/cyrene-cloud-server.dll channel-selftest all
           python3 scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
-      - name: TS 类型检查 + 工具单测 + 双轨基线 + sync-protocol 契约（TS 侧）
+      - name: TS 类型检查 + 工具单测 + 双轨基线 + sync-protocol/渠道契约（TS 侧）
         run: |
           npm ci --registry=https://registry.npmmirror.com || npm install --registry=https://registry.npmmirror.com
           npx tsc -p tsconfig.main.json --noEmit
           npx vitest run src/main/orchestrator/tools
           npx vitest run src/main/sync src/pwa
+          npx vitest run src/main/channels src/main/proactive
           npx tsx scripts/dual-track-diff.ts
       - name: PWA 端到端冒烟（Edge 通道：配对 / 查看 / 续聊 / 离线缓存）
         run: |

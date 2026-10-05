@@ -28,6 +28,9 @@ namespace CyreneCloud.Channels;
 /// </summary>
 internal static class ChannelSelfTest
 {
+    /// <summary>本次进程已执行的检查项计数（RunAllAsync 汇总输出口径）。</summary>
+    internal static int CheckCount;
+
     public static int Run(string suite)
     {
         try
@@ -59,8 +62,8 @@ internal static class ChannelSelfTest
         failures += await RunQqBotAsync();
         failures += await RunOwnershipAsync();
         Console.WriteLine(failures == 0
-            ? "SELFTEST channel all: ALL PASS"
-            : $"SELFTEST channel all: {failures} FAILURES");
+            ? $"SELFTEST channel all: ALL PASS（{CheckCount} checks）"
+            : $"SELFTEST channel all: {failures} FAILURES（{CheckCount} checks）");
         return failures;
     }
 
@@ -77,6 +80,7 @@ internal static class ChannelSelfTest
         var failures = 0;
         void Check(string name, bool ok, string detail = "")
         {
+            CheckCount++;
             if (ok)
             {
                 Console.WriteLine($"[PASS] {name}");
@@ -471,6 +475,7 @@ internal static class ChannelSelfTest
         var failures = 0;
         void Check(string name, bool ok, string detail = "")
         {
+            CheckCount++;
             if (ok)
             {
                 Console.WriteLine($"[PASS] {name}");
@@ -1073,6 +1078,7 @@ internal static class ChannelSelfTest
         var failures = 0;
         void Check(string name, bool ok, string detail = "")
         {
+            CheckCount++;
             if (ok)
             {
                 Console.WriteLine($"[PASS] {name}");
