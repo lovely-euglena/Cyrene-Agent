@@ -12,7 +12,9 @@
 // 第二引擎（IKIH28）：embed/search/doc-import 请求携带可选 modelDir + modelKey
 // （缺省 = 启动默认），C# 侧池按 modelDir 路由；rerank 已有 rerankerDir。
 // 客户端不再因 modelKey 变化无条件 dispose 重启；对旧 sidecar（无池）用
-// 「ready modelKey 不符 + 请求失败/响应维度不符」检测并回退重启一次。
+// 「ready modelKey/dim 不符 + 请求失败/响应维度不符」检测并回退重启一次。
+// doc-import 响应无二进制向量、旧 exe 忽略请求 modelDir：发送前必须先确认
+// 路由（ready 维度/启动参数），无法确认则重启；仍无法确认 → 失败，不落错向量。
 //
 // ⚠️ 实现要点（都是复查时踩过的坑）：
 //   - 帧解析统一走 SidecarFrameDecoder（sidecar-frame-decoder.ts）：
@@ -97,6 +99,18 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+/**
+ * 响应维度/模型回显与请求模型不符（旧 sidecar 无池时用错模型计算）。
+ * 独立类型用于触发回退重启：旧 exe ready 帧恒报 "bgem3"，不能只靠
+ * ready 键判断 possiblyUnrouted（P2-5）。
+ */
+export class SidecarModelRoutingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SidecarModelRoutingError";
+  }
+}
+
 /** 模型加载 ready 超时（模型 570MB，慢盘 30s+ 也可能）。 */
 const READY_TIMEOUT_MS = 60_000;
 /** 单请求超时：基数 + 每条文本加时（native ~200ms/条，留 10x 余量）。 */
@@ -152,9 +166,15 @@ export class EmbeddingSidecarClient {
   private decoder = new SidecarFrameDecoder();
   private startup: Promise<void> | null = null;
   private modelKey: string | null = null;
+  /** 当前进程 spawn 时传入的模型键（旧 exe 无池：启动参数即实际加载模型）。 */
+  private launchedModelKey: string | null = null;
+  /** ready 帧回报的实际维度（旧 exe modelKey 失真，但 dim 如实）。 */
+  private readyDims: number | null = null;
   private onReadyFrame: ((header: any) => void) | null = null;
   /** doc-import 进度通知路由（op=progress 帧，按 forId）。 */
   private progressHandlers = new Map<number, (progress: DocImportProgress) => void>();
+  /** 回退重启互斥（单飞）：同一时刻只有一个「重启 + 重试」在途，并发回退串行，避免后到者 dispose 掉前者刚拉起的新进程（P2-5）。 */
+  private restartLock: Promise<void> = Promise.resolve();
 
   constructor(private readonly exePath: string) {}
 
@@ -236,12 +256,18 @@ export class EmbeddingSidecarClient {
   ): Promise<DocImportResponse> {
     const startedIds: number[] = [];
     try {
+      const expectedDims = LOCAL_MODELS[modelKey]?.dims;
       const { header } = await this.requestRouted(
         modelKey,
         { op: "doc-import", ...payload },
         DOC_IMPORT_TIMEOUT_MS,
         `doc="${payload.filePath.slice(-32)}"`,
         {
+          expectedDims,
+          // 旧 exe 忽略请求 modelDir 且 doc-import 响应无 dim/modelKey：无法从
+          // 响应发现错模型，而错误维度向量一旦落盘无法撤销 → 发送前必须能确认
+          // 路由（新 exe 回显 dim/modelKey；旧 exe 用 ready 维度/启动参数确认）。
+          requireModelEcho: true,
           onStarted: (id) => {
             startedIds.push(id);
             if (callbacks.onProgress) this.progressHandlers.set(id, callbacks.onProgress);
@@ -272,13 +298,24 @@ export class EmbeddingSidecarClient {
    *   - 旧 sidecar（无池）兼容：当前进程 ready 的 modelKey 与请求不符时，先按
    *     新协议试发；请求失败或返回维度不符（旧进程用错模型静默计算）则回退
    *     重启一次（以请求的 modelDir 重新 spawn）。
+   *   - P2-5：维度不符错误同样触发回退（旧 exe ready 键恒报 "bgem3"，实际按
+   *     e5-small 启动时 possiblyUnrouted=false，不能只看 ready 键）；回退重启
+   *     串行单飞，并发不互杀。
+   *   - P1-2：doc-import 等响应无二进制的 op（requireModelEcho）在发送前先
+   *     确认路由；无法确认（旧 exe 忽略请求 modelDir）则先重启再发，避免错误
+   *     维度向量静默落盘。
    */
   private async requestRouted(
     modelKey: string,
     header: Record<string, unknown>,
     timeoutMs: number,
     label: string,
-    opts: { expectedDims?: number; onStarted?: (id: number) => void } = {},
+    opts: {
+      expectedDims?: number;
+      /** 响应必须能确认路由（doc-import；见 isRoutingConfirmed）。 */
+      requireModelEcho?: boolean;
+      onStarted?: (id: number) => void;
+    } = {},
   ): Promise<SidecarResponse> {
     const modelDir = this.modelDirArg(modelKey);
     const payload = { ...header, modelDir, modelKey };
@@ -289,36 +326,110 @@ export class EmbeddingSidecarClient {
 
     const attempt = async (): Promise<SidecarResponse> => {
       const response = await this.request(payload, timeoutMs, label, opts.onStarted);
-      this.assertResponseModel(response, modelKey, opts.expectedDims);
+      this.assertResponseModel(
+        response,
+        modelKey,
+        opts.expectedDims,
+        opts.requireModelEcho === true && this.isRoutingConfirmed(modelKey, opts.expectedDims),
+      );
       return response;
     };
+
+    if (opts.requireModelEcho === true && !this.isRoutingConfirmed(modelKey, opts.expectedDims)) {
+      console.warn(
+        `[EmbeddingSidecar] doc-import for "${modelKey}" is unverifiable on current sidecar ` +
+        `(launched "${this.launchedModelKey}", ready "${this.modelKey}", ready dim ${this.readyDims}); restarting first`,
+      );
+      return this.restartAndRetry(modelKey, async () => {
+        // 重启后仍无法确认路由 → 直接失败，不发请求（旧进程会按启动模型写入错误向量）
+        if (!this.isRoutingConfirmed(modelKey, opts.expectedDims)) {
+          throw new SidecarModelRoutingError(
+            `doc-import for "${modelKey}" cannot confirm routing after restart ` +
+            `(launched "${this.launchedModelKey}", ready "${this.modelKey}", ready dim ${this.readyDims})`,
+          );
+        }
+        return attempt();
+      });
+    }
 
     try {
       return await attempt();
     } catch (error) {
-      if (!possiblyUnrouted) throw error;
+      if (!possiblyUnrouted && !(error instanceof SidecarModelRoutingError)) throw error;
       console.warn(
         `[EmbeddingSidecar] request for "${modelKey}" failed on sidecar ready with "${this.modelKey}" ` +
         `(${error instanceof Error ? error.message : String(error)}); restarting with the requested model`,
       );
-      await this.dispose("model-routing-fallback");
-      await this.ensureStarted(modelKey);
-      return attempt();
+      return this.restartAndRetry(modelKey, attempt);
     }
   }
 
-  /** 响应模型校验：header.dim / 向量长度与请求模型的注册维度不一致 = 旧进程算错模型。 */
-  private assertResponseModel(response: SidecarResponse, modelKey: string, expectedDims?: number): void {
+  /**
+   * 路由确认（仅 doc-import 等 requireModelEcho 的 op 需要）：
+   *   - 本地注册模型维度唯一（bgem3=1024、e5-small=384），ready 帧的 dim 与请求
+   *     一致即可确认实际加载的是请求模型（旧 exe modelKey 失真但 dim 如实）；
+   *   - 无 ready dim 时退化为「本进程是按请求模型 spawn 的」（旧 exe 启动参数
+   *     即实际模型；新 exe 池按请求 modelDir 路由且响应会回显 dim）。
+   */
+  private isRoutingConfirmed(modelKey: string, expectedDims?: number): boolean {
+    if (expectedDims !== undefined && this.readyDims !== null) {
+      return this.readyDims === expectedDims;
+    }
+    return this.launchedModelKey === modelKey;
+  }
+
+  /**
+   * 回退重启 + 重试（单飞）：并发回退在这里串行化（持锁到重试结束），后到者
+   * 不会在重试途中 dispose 掉前者刚拉起的新进程。doc-import 重试可能分钟级，
+   * 持锁期间其它回退排队等待——过渡态下正确性优先（初始请求不受影响）。
+   */
+  private async restartAndRetry<T>(modelKey: string, retry: () => Promise<T>): Promise<T> {
+    const previous = this.restartLock;
+    let release!: () => void;
+    this.restartLock = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      await this.dispose("model-routing-fallback");
+      await this.ensureStarted(modelKey);
+      return await retry();
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * 响应模型校验：header.dim / 向量长度与请求模型的注册维度不一致 = 旧进程算错模型。
+   * requireModelEcho 场景（doc-import）在响应无 dim 回显且路由未确认时必须失败，
+   * 不能让旧进程按启动模型静默导入错误向量（P1-2）。
+   */
+  private assertResponseModel(
+    response: SidecarResponse,
+    modelKey: string,
+    expectedDims?: number,
+    routingConfirmed = false,
+  ): void {
     if (expectedDims === undefined) return;
     const headerDim = response.header.dim;
     if (typeof headerDim === "number" && headerDim > 0 && headerDim !== expectedDims) {
-      throw new Error(
+      throw new SidecarModelRoutingError(
         `Embedding sidecar returned ${headerDim}-dim output for "${modelKey}" (expected ${expectedDims})`,
+      );
+    }
+    if (headerDim === undefined && !routingConfirmed) {
+      throw new SidecarModelRoutingError(
+        `Embedding sidecar response for "${modelKey}" has no dim echo and routing is unconfirmed ` +
+        `(old sidecar ignores per-request modelDir)`,
+      );
+    }
+    const headerModelKey = response.header.modelKey;
+    if (typeof headerModelKey === "string" && headerModelKey.length > 0 && headerModelKey !== modelKey) {
+      throw new SidecarModelRoutingError(
+        `Embedding sidecar routed "${modelKey}" to model "${headerModelKey}"`,
       );
     }
     for (const vector of response.vectors) {
       if (vector.length !== expectedDims) {
-        throw new Error(
+        throw new SidecarModelRoutingError(
           `Embedding sidecar returned ${vector.length}-dim vectors for "${modelKey}" (expected ${expectedDims})`,
         );
       }
@@ -373,6 +484,9 @@ export class EmbeddingSidecarClient {
 
   private launch(modelKey: string): Promise<void> {
     this.disposeSync("relaunch");
+    // 记录 spawn 参数：旧 exe 无池，启动 modelDir 即实际加载模型
+    // （doc-import 发送前路由确认用；新 exe 池另有响应 dim/modelKey 回显）
+    this.launchedModelKey = modelKey;
 
     return new Promise<void>((resolve, reject) => {
       // 第 3 参数 = modelKey（显式启动键，ready 帧回显；旧 exe 忽略多余参数）。
@@ -455,6 +569,8 @@ export class EmbeddingSidecarClient {
         if (header.id === 0 && header.op === "ready") {
           clearTimeout(readyTimeout);
           this.modelKey = header.modelKey;
+          // 旧 exe ready 的 modelKey 恒报 "bgem3"，但 dim 如实 → 缓存供路由确认
+          this.readyDims = typeof header.dim === "number" && header.dim > 0 ? header.dim : null;
           this.onReadyFrame = null;
           resolve();
         }
@@ -537,6 +653,8 @@ export class EmbeddingSidecarClient {
   private resetForRespawn(): void {
     this.child = null;
     this.modelKey = null;
+    this.launchedModelKey = null;
+    this.readyDims = null;
     this.onReadyFrame = null;
     this.decoder.reset();
   }

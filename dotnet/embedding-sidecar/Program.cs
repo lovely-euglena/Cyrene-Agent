@@ -868,6 +868,10 @@ internal static class Server
                             cached = result.Cached,
                             text = result.Text,
                             reason = result.Reason,
+                            // 回显实际路由的模型身份/维度：宿主据此断言 doc-import 用的
+                            // 是请求模型（旧 exe 无此字段，宿主在发送前按 ready 维度确认）
+                            modelKey = lease.Engine.ModelKey,
+                            dim = lease.Engine.Dimensions,
                         });
                     }
                     catch (Exception ex)
