@@ -47,12 +47,14 @@ export type EmbeddingProviderIdentity = {
 
 /**
  * 索引元数据 — 写入向量索引时记录，用于后续一致性校验。
+ * cacheIdentity 为后加字段：升级前写入的旧 meta 可能缺失（P2-5），读取方
+ * 需按可选处理（缺失时退回按 model 判定身份）。
  */
 export interface EmbeddingIndexMetadata {
   provider: string;
   model: string;
   dimensions: number;
-  cacheIdentity: string;
+  cacheIdentity?: string;
 }
 
 export type EmbeddingWorkerConfig =

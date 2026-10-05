@@ -1,13 +1,37 @@
 // VectorStore.reembedAll（模型迁移原地重嵌入）双后端回归：
 // 不清库、按 id 原地替换 embedding、保留文本/权重/metadata、更新 index_meta、
 // 跨实例持久化可见（sqlite 行级 UPDATE / json 整文件原子写）。
+//
+// P1-1（复审）：失败注入针对真实后端契约层——
+//   - JSON：mock fs.writeFileSync 按目标文件抛错；
+//   - SQLite：包装 db.exec / db.prepare 使写路径抛错；
+// 断言 persist 返回 failed、saveMeta 返回 false、reembedAll 回滚且 meta 未更新。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createRequire } from "module";
 import { JsonVectorStore, SqliteVectorStore, type NodeSqliteModule } from "./vectorstore";
-import type { EmbeddingProvider } from "./embedding";
+import type { EmbeddingIndexMetadata, EmbeddingProvider } from "./embedding";
+
+// 真实写路径失败注入开关（JSON 后端；vi.mock 工厂在 hoist 期读取）。
+const fsState = vi.hoisted(() => ({ writeFailure: null as null | "all" | "meta" }));
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  return {
+    ...actual,
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      const target = String(args[0]);
+      if (
+        fsState.writeFailure === "all" ||
+        (fsState.writeFailure === "meta" && target.includes("memory-store-meta"))
+      ) {
+        throw new Error("disk full (injected)");
+      }
+      return actual.writeFileSync(...args);
+    },
+  };
+});
 
 const requireCjs = createRequire(import.meta.url);
 const sqliteDriver = requireCjs("node:sqlite") as NodeSqliteModule;
@@ -31,6 +55,62 @@ function makeProvider(model: string, dims: number): EmbeddingProvider {
   };
 }
 
+interface BackendShape {
+  persist: (all: unknown[], change: unknown) => { needsReload: boolean; failed?: boolean };
+  saveMeta: (meta: EmbeddingIndexMetadata | null) => boolean;
+  db?: {
+    exec: (sql: string) => void;
+    prepare: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[] };
+  };
+}
+
+interface StoreShape {
+  backend: BackendShape;
+  entries: Array<{ id: string; text: string; embedding: number[]; weight: number; metadata?: Record<string, unknown> }>;
+}
+
+function backendOf(store: object): BackendShape {
+  return (store as unknown as StoreShape).backend;
+}
+
+function entriesOf(store: object): StoreShape["entries"] {
+  return (store as unknown as StoreShape).entries;
+}
+
+/** JSON 后端：按目标文件让真实写路径抛错（"all" 全失败 / "meta" 仅 meta 失败）。 */
+function injectJsonWriteFailure(mode: "all" | "meta"): () => void {
+  fsState.writeFailure = mode;
+  return () => { fsState.writeFailure = null; };
+}
+
+/** SQLite 后端：包装 db.exec / db.prepare 让真实写路径抛错（读路径保持可用）。 */
+function injectSqliteWriteFailure(store: SqliteVectorStore, mode: "all" | "meta"): () => void {
+  const db = backendOf(store).db;
+  if (!db) throw new Error("sqlite backend db unavailable");
+  const realExec = db.exec.bind(db);
+  const realPrepare = db.prepare.bind(db);
+  const failingStatement = (stmt: { get: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[] }) => ({
+    run: () => { throw new Error("disk full (injected)"); },
+    get: (...args: unknown[]) => stmt.get(...args),
+    all: (...args: unknown[]) => stmt.all(...args),
+  });
+  db.exec = (sql: string) => {
+    if (mode === "all") throw new Error("disk full (injected)");
+    return realExec(sql);
+  };
+  db.prepare = (sql: string) => {
+    const stmt = realPrepare(sql);
+    if (mode === "all" || (mode === "meta" && /INSERT INTO rag_meta/i.test(sql))) {
+      return failingStatement(stmt);
+    }
+    return stmt;
+  };
+  return () => {
+    db.exec = realExec;
+    db.prepare = realPrepare;
+  };
+}
+
 const tempDirs: string[] = [];
 const stores: Array<{ dispose(): void }> = [];
 
@@ -41,6 +121,7 @@ function makeDir(): string {
 }
 
 afterEach(() => {
+  fsState.writeFailure = null;
   for (const store of stores.splice(0)) {
     try { store.dispose(); } catch { /* ignore */ }
   }
@@ -55,6 +136,7 @@ const backends = [
       stores.push(store);
       return store;
     },
+    injectWriteFailure: (_store: object, mode: "all" | "meta") => injectJsonWriteFailure(mode),
   },
   {
     label: "sqlite",
@@ -63,10 +145,12 @@ const backends = [
       stores.push(store);
       return store;
     },
+    injectWriteFailure: (store: object, mode: "all" | "meta") =>
+      injectSqliteWriteFailure(store as SqliteVectorStore, mode),
   },
 ] as const;
 
-describe.each(backends)("reembedAll: $label", ({ create }) => {
+describe.each(backends)("reembedAll: $label", ({ create, injectWriteFailure }) => {
   it("原地替换 embedding + 更新 meta + 跨实例可见", async () => {
     const dir = makeDir();
     const store = create(dir);
@@ -82,7 +166,7 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
     const rebuilt = await store.reembedAll(newProvider, { batchSize: 2 });
 
     expect(rebuilt).toBe(3);
-    const entries = (store as unknown as { entries: Array<{ id: string; text: string; embedding: number[]; weight: number; metadata?: Record<string, unknown> }> }).entries;
+    const entries = entriesOf(store);
     expect(entries.map((entry) => entry.text)).toEqual(["alpha", "beta", "gamma"]);
     expect(entries.every((entry) => entry.embedding.length === 3)).toBe(true);
     expect(entries.every((entry) => entry.weight === 1)).toBe(true);
@@ -95,7 +179,7 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
     // 跨实例持久化可见（sqlite 行更新 / json 整文件写）
     store.dispose();
     const reopened = create(dir);
-    const reloaded = (reopened as unknown as { entries: Array<{ embedding: number[] }> }).entries;
+    const reloaded = entriesOf(reopened);
     expect(reloaded).toHaveLength(3);
     expect(reloaded.every((entry) => entry.embedding.length === 3)).toBe(true);
     expect(reopened.getIndexMeta()).toMatchObject({
@@ -120,7 +204,7 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
 
     // 旧实现按 entry.embedding.length !== 3 筛选会得到 0
     expect(rebuilt).toBe(2);
-    const entries = (store as unknown as { entries: Array<{ embedding: number[] }> }).entries;
+    const entries = entriesOf(store);
     expect(entries[0].embedding).not.toEqual([0.1, 0.2, 0.3]);
     expect(store.getIndexMeta()).toMatchObject({
       model: "Xenova/multilingual-e5-small",
@@ -131,7 +215,25 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
     expect(await store.reembedAll(newProvider)).toBe(0);
   });
 
-  it("持久化失败：抛错、meta 不更新、内存向量回滚（P2-1）", async () => {
+  it("真实后端契约：写失败经 persist.failed / saveMeta=false 显式上报（P1-1）", () => {
+    const dir = makeDir();
+    const store = create(dir);
+    store.addPreparedBatch([
+      { text: "alpha", source: "user_memory", embedding: [0.1, 0.2, 0.3] },
+    ]);
+    store.setIndexMetaForProvider(makeProvider("Xenova/bge-m3", 3));
+
+    const backend = backendOf(store);
+    const restore = injectWriteFailure(store, "all");
+    try {
+      expect(backend.persist(entriesOf(store), { kind: "replace" })).toMatchObject({ failed: true });
+      expect(backend.saveMeta({ provider: "local", model: "Xenova/bge-m3", dimensions: 3 })).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("persist 失败：reembedAll 抛错、内存回滚、meta 与磁盘保持旧值（P1-1）", async () => {
     const dir = makeDir();
     const store = create(dir);
     const oldProvider = makeProvider("Xenova/bge-m3", 3);
@@ -140,19 +242,50 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
     ]);
     store.setIndexMetaForProvider(oldProvider);
 
-    const backend = (store as unknown as { backend: { persist: (...args: unknown[]) => unknown } }).backend;
-    const spy = vi.spyOn(backend, "persist").mockImplementation(() => {
-      throw new Error("disk full");
-    });
-
-    const newProvider = makeProvider("Xenova/multilingual-e5-small", 3);
-    await expect(store.reembedAll(newProvider)).rejects.toThrow(/disk full/);
+    const restore = injectWriteFailure(store, "all");
+    try {
+      const newProvider = makeProvider("Xenova/multilingual-e5-small", 3);
+      await expect(store.reembedAll(newProvider)).rejects.toThrow(/write failure/);
+    } finally {
+      restore();
+    }
 
     // 不能出现「磁盘旧向量 + 新模型 meta」：meta 保持旧身份，内存向量回滚
     expect(store.getIndexMeta()).toMatchObject({ model: "Xenova/bge-m3", dimensions: 3 });
-    const entries = (store as unknown as { entries: Array<{ embedding: number[] }> }).entries;
-    expect(entries[0].embedding).toEqual([0.1, 0.2, 0.3]);
-    spy.mockRestore();
+    expect(entriesOf(store)[0].embedding).toEqual([0.1, 0.2, 0.3]);
+
+    // 磁盘也未被写坏：重开仍是旧向量 + 旧 meta（sqlite 经 Float32 往返，按精度比对）
+    store.dispose();
+    const reopened = create(dir);
+    expect(reopened.getIndexMeta()).toMatchObject({ model: "Xenova/bge-m3", dimensions: 3 });
+    expect(entriesOf(reopened)[0].embedding.map((v) => Number(v.toFixed(3)))).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it("meta 写失败：reembedAll 抛错、内存回滚并恢复磁盘旧向量（P1-1）", async () => {
+    const dir = makeDir();
+    const store = create(dir);
+    const oldProvider = makeProvider("Xenova/bge-m3", 3);
+    store.addPreparedBatch([
+      { text: "alpha", source: "user_memory", embedding: [0.1, 0.2, 0.3] },
+    ]);
+    store.setIndexMetaForProvider(oldProvider);
+
+    const restore = injectWriteFailure(store, "meta");
+    try {
+      const newProvider = makeProvider("Xenova/multilingual-e5-small", 3);
+      await expect(store.reembedAll(newProvider)).rejects.toThrow(/metadata/);
+    } finally {
+      restore();
+    }
+
+    expect(store.getIndexMeta()).toMatchObject({ model: "Xenova/bge-m3", dimensions: 3 });
+    expect(entriesOf(store)[0].embedding).toEqual([0.1, 0.2, 0.3]);
+
+    // 补偿写回旧向量：磁盘保持旧向量 + 旧 meta（重开校验，按 Float32 精度比对）
+    store.dispose();
+    const reopened = create(dir);
+    expect(reopened.getIndexMeta()).toMatchObject({ model: "Xenova/bge-m3", dimensions: 3 });
+    expect(entriesOf(reopened)[0].embedding.map((v) => Number(v.toFixed(3)))).toEqual([0.1, 0.2, 0.3]);
   });
 
   it("空库：返回 0 并写入目标模型 meta", async () => {
@@ -162,6 +295,35 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
 
     const rebuilt = await store.reembedAll(provider);
     expect(rebuilt).toBe(0);
+    expect(store.getIndexMeta()).toMatchObject({
+      model: "Xenova/multilingual-e5-small",
+      dimensions: 3,
+    });
+  });
+
+  it("旧 meta 无 cacheIdentity：模型未变不全量、模型变了全量（P2-5）", async () => {
+    const dir = makeDir();
+    const store = create(dir);
+    store.addPreparedBatch([
+      { text: "alpha", source: "user_memory", embedding: [0.1, 0.2, 0.3] },
+      { text: "beta", source: "user_memory", embedding: [0.4, 0.5, 0.6] },
+    ]);
+    // 模拟升级前旧 meta：无 cacheIdentity 字段
+    expect(backendOf(store).saveMeta({ provider: "local", model: "Xenova/bge-m3", dimensions: 3 })).toBe(true);
+    store.reload();
+
+    // 模型未变（meta.model = identity.model）：不全量重嵌（维度也一致 → 0）
+    expect(await store.reembedAll(makeProvider("Xenova/bge-m3", 3))).toBe(0);
+
+    // 旧命名（meta.model = provider.name）：同样视为未变
+    expect(backendOf(store).saveMeta({ provider: "local-bge-m3", model: "local-bge-m3", dimensions: 3 })).toBe(true);
+    store.reload();
+    expect(await store.reembedAll(makeProvider("Xenova/bge-m3", 3))).toBe(0);
+
+    // 模型变了（同维、无 cacheIdentity 可比）：仍全量重嵌
+    expect(backendOf(store).saveMeta({ provider: "local", model: "Xenova/bge-m3", dimensions: 3 })).toBe(true);
+    store.reload();
+    expect(await store.reembedAll(makeProvider("Xenova/multilingual-e5-small", 3))).toBe(2);
     expect(store.getIndexMeta()).toMatchObject({
       model: "Xenova/multilingual-e5-small",
       dimensions: 3,
@@ -180,8 +342,47 @@ describe.each(backends)("reembedAll: $label", ({ create }) => {
       store.reembedAll(makeProvider("Xenova/multilingual-e5-small", 3), { isCancelled: () => true }),
     ).rejects.toThrow(/cancelled/);
 
-    const entries = (store as unknown as { entries: Array<{ embedding: number[] }> }).entries;
+    const entries = entriesOf(store);
     expect(entries.every((entry) => entry.embedding.length === 8)).toBe(true);
     expect(store.getIndexMeta()?.model).toBe("Xenova/bge-m3");
+  });
+
+  it("最后一批 embed 期间置取消位：提交前检查生效，不提交、不写 meta（P2-3①）", async () => {
+    const dir = makeDir();
+    const store = create(dir);
+    store.addPreparedBatch([
+      { text: "alpha", source: "user_memory", embedding: new Array(8).fill(0.1) },
+    ]);
+    store.setIndexMetaForProvider(makeProvider("Xenova/bge-m3", 8));
+
+    // 单批场景：embed 挂起期间置取消位，只有提交前检查（reembedAll 末尾）能拦下
+    const provider = makeProvider("Xenova/multilingual-e5-small", 3);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const originalBatch = provider.embedBatch.bind(provider);
+    provider.embedBatch = async (texts: string[]) => {
+      markStarted();
+      await gate;
+      return originalBatch(texts);
+    };
+
+    let cancelled = false;
+    const pending = store.reembedAll(provider, { isCancelled: () => cancelled });
+    await started;
+    cancelled = true;
+    release();
+
+    await expect(pending).rejects.toThrow(/cancelled/);
+
+    expect(entriesOf(store).every((entry) => entry.embedding.length === 8)).toBe(true);
+    expect(store.getIndexMeta()?.model).toBe("Xenova/bge-m3");
+
+    // 磁盘同样未提交（重开校验）
+    store.dispose();
+    const reopened = create(dir);
+    expect(entriesOf(reopened).every((entry) => entry.embedding.length === 8)).toBe(true);
+    expect(reopened.getIndexMeta()?.model).toBe("Xenova/bge-m3");
   });
 });
