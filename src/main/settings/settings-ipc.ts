@@ -23,6 +23,7 @@ import type { EmbeddingIndexService } from "../services/embedding/embedding-inde
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
 import { maskGeneralSettingsForUi, maskModelSettingsForUi } from "./secrets-keyring";
 import { switchEmbeddingModel } from "../rag";
+import { finalizeEmbeddingModelSwitch } from "../rag/embedding-switch-finalize";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
 import * as os from "os";
@@ -407,26 +408,34 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     return testVisionConnection({ ...cfg, apiKey: resolveVisionTestApiKey(cfg.apiKey ?? "") });
   });
 
-  ipc.handle(IPC.EMBEDDING_SET_MODEL, async (_event, modelKey: string) => {
-    console.log("[Cyrene] embedding model switch requested:", modelKey);
-    try {
-      const result = await switchEmbeddingModel(modelKey);
-      if (result.ok) {
-        await reconcileUserMemoryIndex();
-        saveModelSettings({ embeddingModel: "bgem3" });
-        broadcastModelConfigChanged();
-        embeddingIndexService.invalidateStickerEmbeddingIndex();
-        embeddingIndexService.refreshStickerEmbeddingIndex("embedding-model-switch");
+  ipc.handle(
+    IPC.EMBEDDING_SET_MODEL,
+    async (_event, modelKey: string, action?: "rebuild" | "clear") => {
+      console.log("[Cyrene] embedding model switch requested:", modelKey, action ? `(action=${action})` : "");
+      try {
+        const result = await switchEmbeddingModel(modelKey, action);
+        if (result.ok) {
+          // P2-3（复审）：先落盘设置再 best-effort 收尾——收尾（对账/贴纸）已
+          // 保证不抛错，但设置先写可避免进程在收尾期间退出导致已生效切换不落盘。
+          saveModelSettings({ embeddingModel: modelKey === "e5-small" ? "e5-small" : "bgem3" });
+          // 与 native/WPF 入口同口径收尾（P1-4）：用户记忆对账 + 贴纸索引失效/重建
+          await finalizeEmbeddingModelSwitch({
+            reconcileUserMemoryIndex,
+            invalidateStickerEmbeddingIndex: () => embeddingIndexService.invalidateStickerEmbeddingIndex(),
+            refreshStickerEmbeddingIndex: (reason) => embeddingIndexService.refreshStickerEmbeddingIndex(reason),
+          });
+          broadcastModelConfigChanged();
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[Cyrene] embedding model switch failed:", message);
+        return { ok: false, clearedEntries: 0, error: message };
       }
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Cyrene] embedding model switch failed:", message);
-      return { ok: false, clearedEntries: 0, error: message };
-    }
-  });
+    },
+  );
 
-  ipc.handle(IPC.RERANKER_SET_MODE, async (_event, mode: "standard" | "none") => {
+  ipc.handle(IPC.RERANKER_SET_MODE, async (_event, mode: "standard" | "v2-m3" | "none") => {
     const current = getModelSettings();
     saveModelSettings({ ...current, rerankerMode: mode });
     if (normalizeMemoryMode(current.memoryMode) === "vector") await initReranker(mode);
@@ -467,6 +476,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const cacheDir = hfModelCacheDir();
     const models = {
       bgem3: { dir: "Xenova\\bge-m3", onnx: "onnx\\model_quantized.onnx", name: "BGE-M3" },
+      "e5-small": { dir: "Xenova\\multilingual-e5-small", onnx: "onnx\\model_quantized.onnx", name: "Multilingual-E5-Small" },
     };
     const result: Record<string, { installed: boolean; sizeBytes: number }> = {};
     for (const [key, m] of Object.entries(models)) {

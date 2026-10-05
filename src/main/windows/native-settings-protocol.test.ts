@@ -280,6 +280,23 @@ describe("sanitizeNativeCyreneSave / sanitizeNativeStickerAdd（cyrene section �
     expect(sanitizeNativeCyreneSave({ rerankerMode: "huge" })).toBeNull();
   });
 
+  it("save：第二引擎（embeddingModel + 迁移动作、reranker v2-m3）白名单", () => {
+    expect(sanitizeNativeCyreneSave({ embeddingModel: "e5-small" })).toEqual({ embeddingModel: "e5-small" });
+    expect(sanitizeNativeCyreneSave({ embeddingModel: "bgem3" })).toEqual({ embeddingModel: "bgem3" });
+    // 非注册键（旧 UI 的显示名/脏值）丢弃
+    expect(sanitizeNativeCyreneSave({ embeddingModel: "bge-m3" })).toBeNull();
+    expect(sanitizeNativeCyreneSave({ embeddingModel: "multilingual-e5-small" })).toBeNull();
+    // 迁移动作：rebuild / clear 放行，未知动作丢弃
+    expect(sanitizeNativeCyreneSave({ embeddingModel: "e5-small", embeddingModelAction: "rebuild" })).toEqual({
+      embeddingModel: "e5-small",
+      embeddingModelAction: "rebuild",
+    });
+    expect(sanitizeNativeCyreneSave({ embeddingModelAction: "clear" })).toEqual({ embeddingModelAction: "clear" });
+    expect(sanitizeNativeCyreneSave({ embeddingModelAction: "drop" })).toBeNull();
+    // reranker 第二模型
+    expect(sanitizeNativeCyreneSave({ rerankerMode: "v2-m3" })).toEqual({ rerankerMode: "v2-m3" });
+  });
+
   it("save：插件字段白名单（布尔/枚举/密钥裁剪/端口范围）", () => {
     expect(sanitizeNativePluginsSave({
       weatherEnabled: true,

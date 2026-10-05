@@ -14,6 +14,12 @@ interface ModelInfo {
 
 const MODELS: ModelInfo[] = [
   { key: "bgem3", name: "Xenova/bge-m3", dir: "Xenova/bge-m3", onnx: "onnx/model_quantized.onnx" },
+  {
+    key: "e5-small",
+    name: "Xenova/multilingual-e5-small",
+    dir: "Xenova/multilingual-e5-small",
+    onnx: "onnx/model_quantized.onnx",
+  },
 ];
 
 function getCacheDir(): string {

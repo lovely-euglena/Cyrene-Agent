@@ -272,7 +272,7 @@ describe("buildCyreneSectionSnapshot", () => {
   it("RAG 投影：embedding 模型/维度与 reranker 模式 + 安装状态（缺省未安装）", () => {
     const snapshot = buildCyreneSectionSnapshot(
       modelSettings({ embeddingDimensions: 1024, rerankerMode: "none" }),
-      { embedding: { bgem3: true }, reranker: { standard: false } },
+      { embedding: { bgem3: true, "e5-small": false }, reranker: { standard: false, "v2-m3": false } },
       "D:/cyrene/models",
     );
     expect(snapshot).toMatchObject({
@@ -289,6 +289,35 @@ describe("buildCyreneSectionSnapshot", () => {
     expect(auto.embeddingInstalled).toBe(false);
     expect(auto.rerankerInstalled).toBe(false);
     expect(auto.modelsDir).toBe("");
+  });
+
+  it("RAG 投影：第二引擎选中 e5-small / v2-m3 时安装状态按选中项取", () => {
+    const snapshot = buildCyreneSectionSnapshot(
+      modelSettings({ embeddingModel: "e5-small", rerankerMode: "v2-m3" }),
+      {
+        embedding: { bgem3: true, "e5-small": false },
+        reranker: { standard: true, "v2-m3": true },
+      },
+    );
+    expect(snapshot).toMatchObject({
+      embeddingModel: "e5-small",
+      rerankerMode: "v2-m3",
+      embeddingInstalled: false,
+      rerankerInstalled: true,
+    });
+  });
+
+  it("RAG 投影：脏值回落默认档（bgem3 / standard）", () => {
+    const snapshot = buildCyreneSectionSnapshot(
+      modelSettings({ embeddingModel: "bge-m3" as never, rerankerMode: "light" as never }),
+      { embedding: { bgem3: true, "e5-small": true }, reranker: { standard: true, "v2-m3": false } },
+    );
+    expect(snapshot).toMatchObject({
+      embeddingModel: "bgem3",
+      rerankerMode: "standard",
+      embeddingInstalled: true,
+      rerankerInstalled: true,
+    });
   });
 });
 

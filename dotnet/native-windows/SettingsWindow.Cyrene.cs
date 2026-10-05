@@ -107,57 +107,129 @@ public sealed partial class SettingsWindow
         panel.Children.Add(MakeModuleHead(
             NativeTheme.VectorGlyph(Glyphs.BookRag, 22, NativeTheme.TextDefaultBrush),
             "RAG / 文档导入"));
-        var embeddingInstalled = GetBool(cyrene, "embeddingInstalled");
-        var rerankerInstalled = GetBool(cyrene, "rerankerInstalled");
+        var embeddingModel = GetString(cyrene, "embeddingModel", "bgem3");
+        // 快照新字段（四个模型各自安装状态）；旧字段作为兼容回退
+        var bgem3Installed = GetBool(cyrene, "embeddingBgem3Installed", GetBool(cyrene, "embeddingInstalled"));
+        var e5Installed = GetBool(cyrene, "embeddingE5SmallInstalled");
         var rerankerMode = GetString(cyrene, "rerankerMode", "standard");
+        var rerankerStandardInstalled = GetBool(cyrene, "rerankerStandardInstalled", GetBool(cyrene, "rerankerInstalled"));
+        var rerankerV2M3Installed = GetBool(cyrene, "rerankerV2M3Installed");
 
-        panel.Children.Add(MakeModelCard(
+        // Embedding 两张卡：选中态 + 各自安装状态；点击切换走宿主索引迁移
+        Border? bgem3Card = null;
+        Border? e5Card = null;
+        // 点击守卫用可变选中态而非构建期快照局部变量：点击后先乐观选中，宿主回执
+        // 到达前快照值仍是旧档位（避免同一档位重复发保存）；切换失败时宿主会带
+        // embeddingSwitchFailed 结构化回执触发本 section 重建（ApplyNotice →
+        // RefreshSection），成功后快照推送按源变化重建——重建后选中态从新快照重置
+        // （与 reranker 同一模式）。
+        var embeddingSelected = embeddingModel;
+        void ApplyEmbeddingSelection(string model)
+        {
+            if (bgem3Card is not null) ApplyModelCardSelected(bgem3Card, model == "bgem3");
+            if (e5Card is not null) ApplyModelCardSelected(e5Card, model == "e5-small");
+        }
+        bgem3Card = MakeModelCard(
             "BGE-M3",
-            "中文效果优秀，支持贴纸语义匹配和场景语气注入。",
-            embeddingInstalled ? "已下载 · 约 570MB" : "未下载 · 约 570MB",
-            selected: true,
-            onClick: null));
+            "中文效果优秀，支持贴纸语义匹配和场景语气注入（1024 维）。",
+            bgem3Installed ? "已下载 · 约 570MB" : "未下载 · 约 570MB",
+            embeddingModel == "bgem3",
+            () =>
+            {
+                if (embeddingSelected == "bgem3") return;
+                embeddingSelected = "bgem3";
+                ApplyEmbeddingSelection("bgem3");
+                SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = "bgem3" });
+            });
+        e5Card = MakeModelCard(
+            "Multilingual-E5-Small",
+            "体积小、多语言，适合低配设备（384 维固定）。",
+            e5Installed ? "已下载 · 约 120MB" : "未下载 · 约 120MB",
+            embeddingModel == "e5-small",
+            () =>
+            {
+                if (embeddingSelected == "e5-small") return;
+                embeddingSelected = "e5-small";
+                ApplyEmbeddingSelection("e5-small");
+                SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = "e5-small" });
+            });
+        panel.Children.Add(MakeModuleHead(
+            NativeTheme.VectorGlyph(Glyphs.BookRag, 18, NativeTheme.TextDefaultBrush),
+            "Embedding 模型"));
+        panel.Children.Add(bgem3Card);
+        panel.Children.Add(e5Card);
 
-        var dimensionsInput = GetInt(cyrene, "embeddingDimensions", 0);
-        panel.Children.Add(MakeDescribedRow("Embedding 维度",
-            "留空 = 首次请求自动检测；填写 = 严格校验（仅 Cloud 模式）。",
-            MakeTextControl(
-                dimensionsInput > 0 ? dimensionsInput.ToString() : "",
-                value =>
-                {
-                    if (value.Length == 0)
+        // Embedding 维度：仅 bgem3（Cloud 模式）可编辑；e5-small 固定 384
+        if (embeddingModel == "e5-small")
+        {
+            panel.Children.Add(MakeDescribedRow("Embedding 维度",
+                "E5-Small 本地维度固定 384，无需填写（仅 Cloud 模式使用）。",
+                MakeText("384（固定）", 14, NativeTheme.TextMutedBrush, margin: new Thickness(0, 0, 12, 0))));
+        }
+        else
+        {
+            var dimensionsInput = GetInt(cyrene, "embeddingDimensions", 0);
+            panel.Children.Add(MakeDescribedRow("Embedding 维度",
+                "留空 = 首次请求自动检测；填写 = 严格校验（仅 Cloud 模式）。",
+                MakeTextControl(
+                    dimensionsInput > 0 ? dimensionsInput.ToString() : "",
+                    value =>
                     {
-                        // null = 清空（回落到自动探测）
-                        SendCyreneSave(new Dictionary<string, object?> { ["embeddingDimensions"] = null });
-                        ShowStatus("Embedding 维度已清空（首次请求自动探测）", "ok");
-                        return;
-                    }
-                    if (!int.TryParse(value, out var parsed) || parsed <= 0 || parsed > 65536)
-                    {
-                        ShowStatus("维度需为 1~65536 的整数（留空 = 自动探测）", "error");
-                        return;
-                    }
-                    SendCyreneSave(new Dictionary<string, object?> { ["embeddingDimensions"] = parsed });
-                    ShowStatus($"Embedding 维度已保存：{parsed}", "ok");
-                },
-                160, "留空自动探测")));
+                        if (value.Length == 0)
+                        {
+                            // null = 清空（回落到自动探测）
+                            SendCyreneSave(new Dictionary<string, object?> { ["embeddingDimensions"] = null });
+                            ShowStatus("Embedding 维度已清空（首次请求自动探测）", "ok");
+                            return;
+                        }
+                        if (!int.TryParse(value, out var parsed) || parsed <= 0 || parsed > 65536)
+                        {
+                            ShowStatus("维度需为 1~65536 的整数（留空 = 自动探测）", "error");
+                            return;
+                        }
+                        SendCyreneSave(new Dictionary<string, object?> { ["embeddingDimensions"] = parsed });
+                        ShowStatus($"Embedding 维度已保存：{parsed}", "ok");
+                    },
+                    160, "留空自动探测")));
+        }
 
+        // Reranker 三档卡：standard / v2-m3 / none
         Border? rerankerStandardCard = null;
+        Border? rerankerV2M3Card = null;
         Border? rerankerNoneCard = null;
+        // 点击守卫用可变选中态而非构建期快照局部变量：宿主在 reranker 保存成功后
+        // 已推设置快照重建本 section；守卫仍覆盖回执到达前的乐观选中窗口，避免
+        // 同一档位重复发保存（与 embedding 卡同一模式）。
+        var rerankerSelected = rerankerMode;
         void ApplyRerankerSelection(string mode)
         {
             if (rerankerStandardCard is not null) ApplyModelCardSelected(rerankerStandardCard, mode == "standard");
+            if (rerankerV2M3Card is not null) ApplyModelCardSelected(rerankerV2M3Card, mode == "v2-m3");
             if (rerankerNoneCard is not null) ApplyModelCardSelected(rerankerNoneCard, mode == "none");
         }
         rerankerStandardCard = MakeModelCard(
             "bge-reranker-base",
             "精准重排，适合长文档和专业检索，约 200ms/对。",
-            rerankerInstalled ? "已下载 · 约 279MB" : "未下载 · 可选",
+            rerankerStandardInstalled ? "已下载 · 约 279MB" : "未下载 · 可选",
             rerankerMode == "standard",
             () =>
             {
+                if (rerankerSelected == "standard") return;
+                rerankerSelected = "standard";
                 ApplyRerankerSelection("standard");
                 SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "standard" });
+            });
+        rerankerV2M3Card = MakeModelCard(
+            "bge-reranker-v2-m3",
+            "多语言重排，效果更强，约 570MB。",
+            rerankerV2M3Installed ? "已下载 · 约 570MB" : "未下载 · 可选",
+            rerankerMode == "v2-m3",
+            () =>
+            {
+                if (rerankerSelected == "v2-m3") return;
+                rerankerSelected = "v2-m3";
+                ApplyRerankerSelection("v2-m3");
+                SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "v2-m3" });
             });
         rerankerNoneCard = MakeModelCard(
             "关闭",
@@ -166,6 +238,8 @@ public sealed partial class SettingsWindow
             rerankerMode == "none",
             () =>
             {
+                if (rerankerSelected == "none") return;
+                rerankerSelected = "none";
                 ApplyRerankerSelection("none");
                 SendCyreneSave(new Dictionary<string, object?> { ["rerankerMode"] = "none" });
             });
@@ -173,21 +247,33 @@ public sealed partial class SettingsWindow
             NativeTheme.VectorGlyph(Glyphs.Reflection, 18, NativeTheme.TextDefaultBrush),
             "Rerank 重排序"));
         panel.Children.Add(rerankerStandardCard);
+        panel.Children.Add(rerankerV2M3Card);
         panel.Children.Add(rerankerNoneCard);
 
-        var effectiveMode = rerankerMode == "standard"
-            ? (rerankerInstalled ? "自动（优先使用已安装模型）" : "自动（bge-reranker-base 未安装，检索时按关闭处理）")
-            : "关闭（不进行重排序）";
+        // 当前模式：按选中模型/档位与安装状态拼装
+        var embeddingModeText = embeddingModel == "e5-small"
+            ? "Multilingual-E5-Small（384 维）"
+            : "BGE-M3（1024 维）";
+        var rerankerModeText = rerankerMode switch
+        {
+            "v2-m3" => rerankerV2M3Installed
+                ? "bge-reranker-v2-m3（已安装）"
+                : "bge-reranker-v2-m3 未安装，检索时按关闭处理",
+            "none" => "关闭（不进行重排序）",
+            _ => rerankerStandardInstalled
+                ? "bge-reranker-base（已安装）"
+                : "bge-reranker-base 未安装，检索时按关闭处理",
+        };
         panel.Children.Add(MakeDescribedRow("当前模式",
-            "重排序在检索后按 Rerank 模式生效。",
+            "重排序在检索后按 Rerank 模式生效；切换 Embedding 需要索引迁移。",
             new TextBlock
             {
-                Text = effectiveMode,
+                Text = $"Embedding：{embeddingModeText} · Rerank：{rerankerModeText}",
                 FontSize = 14,
                 Foreground = NativeTheme.TextDefaultBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 300,
+                MaxWidth = 340,
             }));
 
         var ragActions = new StackPanel
@@ -205,7 +291,7 @@ public sealed partial class SettingsWindow
             () => RequestRouter.SendSettingsAction("cyrene", "check-model-update"), minWidth: 104));
         ragActions.Children.Add(MakeActionButton("📂 打开模型目录",
             () => RequestRouter.SendSettingsAction("cyrene", "open-model-dir"), minWidth: 128));
-        ragActions.Children.Add(MakeActionButton("删除模型", ConfirmDeleteEmbeddingCache, minWidth: 90));
+        ragActions.Children.Add(MakeActionButton("删除模型", () => ConfirmDeleteEmbeddingCache(embeddingModel), minWidth: 90));
         panel.Children.Add(MakeDescribedRow("模型操作",
             "点「下载模型」打开下载窗（支持 hf-mirror 与断点续传）；也可按「安装说明」手动放置后点「刷新状态」。",
             ragActions));
@@ -220,6 +306,53 @@ public sealed partial class SettingsWindow
         CardifySubBlocks(panel);
 
         return panel;
+    }
+
+    /// <summary>
+    /// 宿主 rebuild-required 回执：MessageBox 确认迁移方式后带 embeddingModelAction 重发。
+    /// requires=rebuild → 是(Y)=重建 / 否(N)=清空 / 取消；requires=clear → 确定=清空 / 取消。
+    /// 取消时刷新 section，撤销卡片的乐观选中。
+    /// </summary>
+    private void HandleCyreneRebuildRequired(JsonElement data)
+    {
+        var model = GetString(data, "embeddingModel");
+        if (model != "bgem3" && model != "e5-small") return;
+        var name = model == "e5-small" ? "Multilingual-E5-Small" : "BGE-M3";
+        var requires = GetString(data, "requires", "rebuild");
+        if (requires == "clear")
+        {
+            var clear = MessageBox.Show(
+                $"切换到 {name} 需要清空旧索引元数据（当前没有可重建的向量数据）。\n\n确定：清空索引并切换\n取消：保持当前模型",
+                "嵌入模型切换", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+            if (clear == MessageBoxResult.OK)
+            {
+                SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = model, ["embeddingModelAction"] = "clear" });
+            }
+            else
+            {
+                RefreshSection("cyrene");
+            }
+            return;
+        }
+
+        var result = MessageBox.Show(
+            $"切换到 {name} 需要迁移旧索引。\n\n" +
+            "是(Y)：重建索引（先备份记忆，再全量重新嵌入；保留记忆，可能耗时较长）\n" +
+            "否(N)：清空索引（删除旧向量记忆后切换，不可恢复）\n" +
+            "取消：保持当前模型",
+            "嵌入模型切换", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (result == MessageBoxResult.Yes)
+        {
+            SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = model, ["embeddingModelAction"] = "rebuild" });
+        }
+        else if (result == MessageBoxResult.No)
+        {
+            SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = model, ["embeddingModelAction"] = "clear" });
+        }
+        else
+        {
+            RefreshSection("cyrene");
+        }
     }
 
     /// <summary>模型安装说明弹窗（应用内步骤 + 打开目录/下载站/刷新状态）。</summary>
@@ -298,15 +431,16 @@ public sealed partial class SettingsWindow
         }
     }
 
-    /// <summary>删除 embedding 模型（native 侧确认框；宿主只做删除，项目 models 目录 + HF 缓存两处都清）。</summary>
-    private void ConfirmDeleteEmbeddingCache()
+    /// <summary>删除选中 embedding 模型（native 侧确认框；宿主只做删除，项目 models 目录 + HF 缓存两处都清）。</summary>
+    private void ConfirmDeleteEmbeddingCache(string modelKey)
     {
-        if (MessageBox.Show("确定删除 BGE-M3 模型？将移除项目 models 目录与 HF 缓存中的模型文件，下次使用需重新安装（见「模型安装说明」）。", "删除模型",
+        var label = modelKey == "e5-small" ? "Multilingual-E5-Small" : "BGE-M3";
+        if (MessageBox.Show($"确定删除 {label} 模型？将移除项目 models 目录与 HF 缓存中的模型文件，下次使用需重新安装（见「模型安装说明」）。", "删除模型",
                 MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
         {
             return;
         }
-        RequestRouter.SendSettingsAction("cyrene", "delete-embedding");
+        RequestRouter.SendSettingsAction("cyrene", "delete-embedding", new Dictionary<string, object?> { ["model"] = modelKey });
     }
 
     private static void SendCyreneSave(Dictionary<string, object?> patch)
@@ -603,13 +737,17 @@ internal sealed class ModelDocsDialog : Window
             $"当前设置：{mirrorText}。\n下载站按当前镜像源打开；要换源请回设置页改「下载镜像源」后再点这里。"));
         root.Children.Add(Section(
             "2 · 下载模型文件",
-            "BGE-M3（约 570MB）：tokenizer.json、config.json、onnx/model_quantized.onnx。\n" +
-            "三个文件的相对路径必须保持不变（onnx 文件夹里的模型文件尤其别改名）。"));
+            "BGE-M3（约 570MB，必装）：tokenizer.json、config.json、onnx/model_quantized.onnx。\n" +
+            "Multilingual-E5-Small（约 120MB，可选）：文件同上，放在 Xenova/multilingual-e5-small/。\n" +
+            "bge-reranker-base（约 279MB，可选）与 bge-reranker-v2-m3（约 570MB，可选）：文件同上。\n" +
+            "所有文件的相对路径必须保持不变（onnx 文件夹里的模型文件尤其别改名）。"));
         root.Children.Add(Section(
             "3 · 放置到模型目录",
-            $"把整个 bge-m3 文件夹放到：\n{modelsDir}\\Xenova\\bge-m3\\\n" +
-            "（该目录内应直接看到 tokenizer.json 与 onnx\\model_quantized.onnx）\n\n" +
-            "重排序模型（可选）：bge-reranker-base 放到同级的 bge-reranker-base\\，文件结构相同。"));
+            $"把整个模型文件夹放到：\n{modelsDir}\\Xenova\\bge-m3\\（BGE-M3）\n" +
+            $"{modelsDir}\\Xenova\\multilingual-e5-small\\（E5-Small）\n" +
+            $"{modelsDir}\\bge-reranker-base\\（重排，可选）\n" +
+            $"{modelsDir}\\bge-reranker-v2-m3\\（重排 v2，可选）\n" +
+            "每个目录内应直接看到 tokenizer.json 与 onnx\\model_quantized.onnx。"));
         root.Children.Add(Section(
             "4 · 回来刷新状态",
             "点下方「刷新状态」重新体检；模型卡从「未下载」变成「已下载」即安装成功。\n" +

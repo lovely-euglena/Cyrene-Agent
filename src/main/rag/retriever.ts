@@ -2,7 +2,7 @@ import { VectorStore, SearchResult } from "./vectorstore";
 import { EmbeddingProvider, getEmbeddingProvider } from "./embedding";
 import { getReranker } from "./reranker";
 import { getEmbeddingSidecarClient, isSidecarEnabled } from "./embedding-sidecar";
-import { DEFAULT_MODEL_KEY } from "./embedding-pipeline";
+import { getCurrentModelKey } from "./embedding-pipeline";
 
 // ── @node-rs/jieba 分词（Node 24 兼容；nodejieba 已弃用） ──
 import { Jieba } from "@node-rs/jieba";
@@ -226,7 +226,7 @@ export class HybridRetriever {
     const sidecar = isSidecarEnabled() ? getEmbeddingSidecarClient() : null;
     if (sidecar) {
       try {
-        const response = await sidecar.searchHybrid(DEFAULT_MODEL_KEY, {
+        const response = await sidecar.searchHybrid(getCurrentModelKey(), {
           ragDataDir: this.store.getDirectory(),
           storeMode: this.store.mode,
           query,

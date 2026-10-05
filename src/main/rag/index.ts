@@ -1,9 +1,11 @@
+import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
-import { getEmbeddingProvider, resetEmbeddingProvider, EmbeddingProvider, switchEmbeddingModel as switchModel, getCurrentModelDims, EmbeddingDimensionMismatchError } from "./embedding";
+import { createLocalEmbeddingProvider, getEmbeddingProvider, resetEmbeddingProvider, EmbeddingProvider, switchEmbeddingModel as switchModel, getCurrentModelDims, EmbeddingDimensionMismatchError } from "./embedding";
 import type { EmbeddingIndexMetadata, VectorStore } from "./vectorstore";
-import { createVectorStore } from "./vectorstore";
+import { backupSqliteStore, createVectorStore } from "./vectorstore";
 import type { MemoryEntry } from "./vectorstore";
+import { LOCAL_MODELS } from "./embedding-pipeline";
 import { HybridRetriever } from "./retriever";
 import { WorldbookManager } from "./worldbook";
 import { logger, LogTag } from "../logger";
@@ -108,16 +110,153 @@ export async function disposeVectorMemory(): Promise<void> {
   resetEmbeddingProvider();
 }
 
-// ── Switch embedding model (hot-swap) ──
-export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: boolean; clearedEntries: number; error?: string }> {
-  if (!isMemoryEnabled()) return { ok: false, clearedEntries: 0, error: "记忆模式已关闭" };
-  try {
-    // Switch the embedding pipeline first
-    switchModel(modelKey);
-    const newProvider = getEmbeddingProvider("auto", undefined, undefined, modelKey);
+// ── Switch embedding model (hot-swap with index migration) ──
 
-    // 模型不存在时无法切换 — 输出详细诊断帮助排查"放到 models/ 却检测不到"
+export type EmbeddingSwitchAction = "rebuild" | "clear";
+
+export interface EmbeddingSwitchOptions {
+  onProgress?: (completed: number, total: number) => void;
+  isCancelled?: () => boolean;
+}
+
+export interface EmbeddingSwitchResult {
+  ok: boolean;
+  modelKey?: string;
+  clearedEntries: number;
+  rebuiltEntries?: number;
+  /** 默认拒绝时给出安全动作建议：rebuild（有数据，建议重建）| clear（空库/仅陈旧元数据） */
+  requires?: EmbeddingSwitchAction;
+  reason?: string;
+  error?: string;
+}
+
+/** 维度 → 注册表 hfName（旧数据无 meta.model 时兼容推断；1024 → bge-m3）。 */
+function inferModelNameByDims(dims: number): string | null {
+  const match = Object.values(LOCAL_MODELS).find((model) => model.dims === dims);
+  return match?.hfName ?? null;
+}
+
+/**
+ * 重建前备份向量库（复用 reconciliation 的 VACUUM INTO / 文件拷贝模式）：
+ * - sqlite：memory.db → <rag-data>/index-rebuild-backups/memory-db.<ts>.db（VACUUM INTO 一致快照）
+ * - json：memory-store.json → index-rebuild-backups/memory-store.<ts>.json
+ * 每类保留最近 3 份。
+ */
+function backupRagDataForRebuild(dataDir: string): void {
+  const backupDir = path.join(dataDir, "index-rebuild-backups");
+  const timestamp = Date.now();
+  const sqliteSource = path.join(dataDir, "memory.db");
+  const jsonSource = path.join(dataDir, "memory-store.json");
+  const hasSqlite = fs.existsSync(sqliteSource);
+  const hasJson = fs.existsSync(jsonSource);
+  if (!hasSqlite && !hasJson) return;
+
+  fs.mkdirSync(backupDir, { recursive: true });
+  if (hasSqlite) {
+    const target = path.join(backupDir, `memory-db.${timestamp}.db`);
+    if (backupSqliteStore(sqliteSource, target)) {
+      pruneRebuildBackups(backupDir, "memory-db", "db");
+    } else {
+      console.warn("[RAG] sqlite backup unavailable before rebuild; proceeding without snapshot");
+    }
+  }
+  if (hasJson) {
+    fs.copyFileSync(jsonSource, path.join(backupDir, `memory-store.${timestamp}.json`));
+    pruneRebuildBackups(backupDir, "memory-store", "json");
+  }
+}
+
+function pruneRebuildBackups(backupDir: string, prefix: string, extension: string, retention = 3): void {
+  const suffix = `.${extension}`;
+  const backups = fs.readdirSync(backupDir)
+    .filter((name) => name.startsWith(`${prefix}.`) && name.endsWith(suffix))
+    .sort();
+  for (const stale of backups.slice(0, Math.max(0, backups.length - Math.max(1, retention)))) {
+    try { fs.rmSync(path.join(backupDir, stale)); } catch { /* best effort */ }
+  }
+}
+
+/**
+ * clear 动作：一并删除重建备份目录（P2-4）。
+ * 旧设置页/设计稿对 clear 的承诺是「删除后不可恢复」；备份目录是 rebuild 的内部
+ * 快照（最多 3 份），若保留则旧记忆仍可从 rag-data/index-rebuild-backups 恢复，
+ * 与文案不符。删除失败只告警（clear 本身已生效，残留备份不应让切换失败）。
+ */
+function clearRebuildBackups(dataDir: string): void {
+  const backupDir = path.join(dataDir, "index-rebuild-backups");
+  try {
+    fs.rmSync(backupDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn("[RAG] failed to remove rebuild backups after clear:", err);
+  }
+}
+
+/** 切换进行中标记（P2-2 互斥）：进行中拒绝新请求，避免两次迁移交错落盘。 */
+let embeddingSwitchInFlight = false;
+
+/** 合法的切换动作（运行时白名单；P1-1 渲染层输入不可信，编译期类型不算数）。 */
+function isEmbeddingSwitchAction(value: unknown): value is EmbeddingSwitchAction {
+  return value === "rebuild" || value === "clear";
+}
+
+/**
+ * 切换 embedding 模型（第二引擎 IKIH28）。
+ *
+ * 与旧实现的区别：模型/维度变化**不再静默 clearAll**。
+ *   - 默认（无 action）：返回 { ok:false, reason:"rebuild-required", requires }，
+ *     不动库、不动 provider（requires = 有数据 ? "rebuild" : "clear"）。
+ *   - action="rebuild"：先备份 → 全量分批重嵌入 → 原地 upsert → IVF 重建 → meta 更新。
+ *   - action="clear"：显式清空（含 meta），再切 provider。
+ *
+ * 入口防线：
+ *   - action 运行时白名单（P1-1）：非法值直接拒绝，不落盘、不切 provider、不写 meta
+ *     （渲染层可传任意真值字符串；与 native sanitize 白名单同口径）；
+ *   - 切换互斥（P2-2）：进行中拒绝并回 reason="switch-in-progress"。
+ */
+export async function switchEmbeddingModel(
+  modelKey: string,
+  action?: EmbeddingSwitchAction,
+  options?: EmbeddingSwitchOptions,
+): Promise<EmbeddingSwitchResult> {
+  if (action !== undefined && !isEmbeddingSwitchAction(action)) {
+    console.warn("[RAG] rejected embedding switch with invalid action:", action);
+    return {
+      ok: false,
+      modelKey,
+      clearedEntries: 0,
+      reason: "invalid-action",
+      error: `Invalid embedding switch action: ${String(action)} (expected "rebuild" | "clear")`,
+    };
+  }
+  if (embeddingSwitchInFlight) {
+    return {
+      ok: false,
+      modelKey,
+      clearedEntries: 0,
+      reason: "switch-in-progress",
+      error: "Another embedding model switch is already in progress",
+    };
+  }
+  embeddingSwitchInFlight = true;
+  try {
+    return await performEmbeddingSwitch(modelKey, action, options);
+  } finally {
+    embeddingSwitchInFlight = false;
+  }
+}
+
+async function performEmbeddingSwitch(
+  modelKey: string,
+  action?: EmbeddingSwitchAction,
+  options?: EmbeddingSwitchOptions,
+): Promise<EmbeddingSwitchResult> {
+  if (!isMemoryEnabled()) return { ok: false, clearedEntries: 0, error: "记忆模式已关闭" };
+  const config = LOCAL_MODELS[modelKey];
+  if (!config) return { ok: false, clearedEntries: 0, error: `Unknown embedding model: ${modelKey}` };
+  try {
+    const newProvider = createLocalEmbeddingProvider(modelKey);
     if (!newProvider) {
+      // 模型不存在时无法切换 — 输出详细诊断帮助排查"放到 models/ 却检测不到"
       try {
         // require to avoid circular import at module load
         const { getModelInstallStatusDetail } = require("./model-status") as typeof import("./model-status");
@@ -142,37 +281,92 @@ export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: bool
       } catch (diagErr) {
         console.error("[Cyrene] model diagnostic log failed:", diagErr);
       }
-      return { ok: false, clearedEntries: 0, error: "Local embedding model not found. Cannot switch." };
+      return { ok: false, modelKey, clearedEntries: 0, error: "Local embedding model not found. Cannot switch." };
     }
 
+    const newModelName = newProvider.cacheIdentity?.model ?? newProvider.name;
     const newDims = newProvider.dims;
 
-    // Check existing entries for dimension mismatch
-    let clearedEntries = 0;
+    // 当前索引身份：meta 优先；旧数据无 meta 时按向量维度兼容推断（1024 → bgem3）
+    let currentModel: string | null = null;
+    let currentDims: number | null = null;
+    let entryCount = 0;
     if (store) {
-      const entries = (store as any).entries as Array<{ embedding: number[] }> | undefined;
-      if (entries && entries.length > 0) {
-        const oldDims = entries[0].embedding.length;
-        if (oldDims !== newDims) {
-          // Dimension mismatch — clear entries + index metadata（两种后端各自持久化清理）
-          clearedEntries = store.clearAll();
-          console.log("[RAG] dimension mismatch (" + oldDims + " → " + newDims + "), cleared " + clearedEntries + " entries");
-        }
+      store.ensureFresh();
+      const entries = (store as any).entries as MemoryEntry[];
+      entryCount = entries.length;
+      const meta = store.getIndexMeta();
+      if (meta) {
+        currentDims = meta.dimensions;
+        currentModel = typeof meta.model === "string" && meta.model.length > 0
+          ? meta.model
+          : inferModelNameByDims(meta.dimensions);
+      } else if (entryCount > 0) {
+        currentDims = entries[0].embedding.length;
+        currentModel = inferModelNameByDims(currentDims);
       }
     }
+    const mismatch = (currentDims !== null && currentDims !== newDims)
+      || (currentModel !== null && currentModel !== newModelName);
 
-    // Update provider reference and retriever
-    provider = newProvider;
+    if (mismatch && !action) {
+      console.log(
+        `[RAG] embedding switch to ${modelKey} requires index migration ` +
+        `(${currentModel ?? currentDims} → ${newModelName}); refusing silent clear`,
+      );
+      return {
+        ok: false,
+        modelKey,
+        clearedEntries: 0,
+        requires: entryCount > 0 ? "rebuild" : "clear",
+        reason: "rebuild-required",
+      };
+    }
+
+    let clearedEntries = 0;
+    let rebuiltEntries = 0;
+    if (mismatch && action === "rebuild") {
+      backupRagDataForRebuild(getDataDir());
+      rebuiltEntries = store
+        ? await store.reembedAll(newProvider, {
+            onProgress: options?.onProgress,
+            isCancelled: options?.isCancelled,
+          })
+        : 0;
+    } else if (mismatch && action === "clear") {
+      // P2-1（复审）：clear 走严格落盘——persist/meta 任一失败内部回滚后抛出，
+      // 不再出现「磁盘旧向量 + 新 meta」或忽略 saveMeta 返回值仍返回 ok。
+      clearedEntries = store
+        ? store.clearAll({ strict: true, nextProvider: newProvider })
+        : 0;
+      clearRebuildBackups(getDataDir());
+    }
+
+    // 迁移流程（reembedAll / clearAll strict）已各自严格写入新 provider meta，
+    // 写失败已在上方抛出；这里只做不变量校验，避免未来路径漏写 meta 却返回 ok
+    // （原实现此处忽略 setIndexMetaForProvider 返回值——复审 P2-1）。
+    if (mismatch && store && store.getIndexMeta() === null) {
+      throw new Error("[RAG] index metadata missing after embedding switch migration");
+    }
+
+    // provider 切换（embedding.ts：清缓存 + 切 current key + 丢旧 pipeline）。
+    // 再经 getEmbeddingProvider 建一次以回填模块级 cachedProvider——否则
+    // 后续无参 getEmbeddingProvider() 会按 DEFAULT_MODEL_KEY 重建 bgem3。
+    switchModel(modelKey);
+    provider = getEmbeddingProvider("auto", undefined, undefined, modelKey) ?? newProvider;
     if (store) {
       retriever = new HybridRetriever(store, provider);
     }
 
-    console.log("[RAG] switched embedding model to", modelKey, "dims:", newDims, "cleared:", clearedEntries);
-    return { ok: true, clearedEntries };
+    console.log(
+      "[RAG] switched embedding model to", modelKey, "dims:", newDims,
+      "cleared:", clearedEntries, "rebuilt:", rebuiltEntries,
+    );
+    return { ok: true, modelKey, clearedEntries, rebuiltEntries };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[RAG] switch embedding model failed:", message);
-    return { ok: false, clearedEntries: 0, error: message };
+    return { ok: false, modelKey, clearedEntries: 0, error: message };
   }
 }
 

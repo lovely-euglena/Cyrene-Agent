@@ -47,12 +47,14 @@ export type EmbeddingProviderIdentity = {
 
 /**
  * 索引元数据 — 写入向量索引时记录，用于后续一致性校验。
+ * cacheIdentity 为后加字段：升级前写入的旧 meta 可能缺失（P2-5），读取方
+ * 需按可选处理（缺失时退回按 model 判定身份）。
  */
 export interface EmbeddingIndexMetadata {
   provider: string;
   model: string;
   dimensions: number;
-  cacheIdentity: string;
+  cacheIdentity?: string;
 }
 
 export type EmbeddingWorkerConfig =
@@ -368,18 +370,25 @@ export function getEmbeddingWorkerConfig(): EmbeddingWorkerConfig {
 export { getCurrentModelKey };
 
 export function getCurrentModelDims(): number {
-  const config = LOCAL_MODELS[getCurrentModelKey()];
-  return config ? config.dims : 1024;
+  const config = LOCAL_MODELS[getCurrentModelKey()] ?? LOCAL_MODELS[DEFAULT_MODEL_KEY];
+  return config.dims;
 }
 
+/**
+ * 切换本地 embedding 模型（注册表驱动，bgem3 / e5-small 均可）。
+ * 仅负责进程内状态（provider 缓存 + pipeline + current key）；
+ * 索引迁移（rebuild/clear/默认拒绝）在 rag/index.ts 的 switchEmbeddingModel 处理。
+ */
 export function switchEmbeddingModel(modelKey: string): void {
-  if (modelKey !== "bgem3") {
-    console.warn(`[Embedding] ignoring model switch to "${modelKey}" — bge-m3 is the only supported model`);
+  if (!LOCAL_MODELS[modelKey]) {
+    console.warn(`[Embedding] ignoring model switch to "${modelKey}" — not a registered local model`);
     return;
   }
   cachedProvider = null;
-  dropLocalPipeline(getCurrentModelKey());
-  setCurrentModelKey(modelKey);
+  if (modelKey !== getCurrentModelKey()) {
+    dropLocalPipeline(getCurrentModelKey());
+    setCurrentModelKey(modelKey);
+  }
 }
 
 export function resetEmbeddingProvider(): void {
