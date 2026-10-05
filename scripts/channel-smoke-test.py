@@ -10,18 +10,19 @@
         CDN download 图片（`CLOUD_CHANNEL_WECHAT_CDN_BASE_URL` 注入）。
   飞书  真实 HTTP webhook 打到服务：challenge 明文/密文回显、加密事件（复用
         `fixtures/channels/feishu-webhook/` 密文 + 现算签名与新鲜时间戳）、重投去重、
-        坏签名 401；REST 发送/媒体下载打到 mock（`CLOUD_CHANNEL_FEISHU_BASE_URL`）。
+        坏签名 401、兼容别名 /events、>1MB 请求体 413；REST 发送/媒体下载打到 mock
+        （`CLOUD_CHANNEL_FEISHU_BASE_URL`）。
   QQ    mock REST（token / gateway / 被动回复）+ mock 网关 WebSocket（Hello/Identify/
         READY/C2C dispatch）：断言被动回复 msg_id/msg_seq 与 `Authorization: QQBot <token>`。
   归属  claim/heartbeat/release（配对 device token）+ owner=desktop 门闩/409 + proactive
-        幂等投递（Bearer）。
+        幂等投递（Bearer）；反向断言：无 Bearer 401、他设备 heartbeat/release 不生效。
 
 上游注入点（本轨新增，缺省官方端点 = 生产零变化）：
   `CLOUD_CHANNEL_WECHAT_CDN_BASE_URL` / `CLOUD_CHANNEL_QQBOT_API_BASE` / `CLOUD_CHANNEL_QQBOT_TOKEN_URL`。
 飞书密文事件复用仓库 fixtures（不在冒烟脚本内实现 AES；签名 sha256 现算，时间戳新鲜）。
 出站图片与 SILK 语音不在本冒烟覆盖（C# `channel-selftest wechat` 覆盖；设计 §1.3 分期）。
-Linux 下追加落盘权限断言（数据目录/media 目录 0700；channels.db 及 -wal/-shm、媒体文件 0600；
-非 Linux 平台自动跳过）。
+Linux 下追加落盘权限断言（数据目录/media 目录 0700；channels.db 0600、-wal/-shm 存在时同断言、
+媒体文件 0600；非 Linux 平台自动跳过）。
 
 运行：
   python scripts/channel-smoke-test.py [cyrene-cloud-server.dll]
@@ -594,7 +595,8 @@ def feishu_sign(timestamp, nonce, body_bytes):
     return hashlib.sha256(prefix + body_bytes).hexdigest()
 
 
-def post_feishu_webhook(body, signature=None, timestamp=None, nonce=None):
+def post_feishu_webhook(body, signature=None, timestamp=None, nonce=None,
+                        path="/v1/channels/feishu/webhook"):
     body_bytes = body.encode("utf-8") if isinstance(body, str) else body
     stamp = timestamp or str(int(time.time()))
     nonce_value = nonce or f"smoke-{int(time.time() * 1000)}"
@@ -606,7 +608,7 @@ def post_feishu_webhook(body, signature=None, timestamp=None, nonce=None):
     }
     if sig is not None:
         headers["X-Lark-Signature"] = sig
-    return http("POST", BASE + "/v1/channels/feishu/webhook", body_bytes, headers=headers)
+    return http("POST", BASE + path, body_bytes, headers=headers)
 
 
 def fixture_body(name):
@@ -826,12 +828,15 @@ def phase_file_permissions():
     check("落盘权限：数据目录 0700", dir_mode == 0o700, f"{data_dir} mode={oct(dir_mode)}")
 
     db_path = os.path.join(data_dir, "channels.db")
-    db_modes = {}
-    for suffix in ("", "-wal", "-shm"):
+    # db 本体必查 0600；-wal/-shm 为 SQLite 附属文件——checkpoint 后连接全回收时可能被回收，
+    # 存在才断言（避免偶发误报），仍保持 Linux 权限覆盖价值。
+    db_modes = {"db": posix_mode(db_path) if os.path.exists(db_path) else None}
+    for suffix in ("-wal", "-shm"):
         path = db_path + suffix
-        db_modes[suffix or "db"] = posix_mode(path) if os.path.exists(path) else None
-    check("落盘权限：channels.db / -wal / -shm 0600",
-          all(value == 0o600 for value in db_modes.values()),
+        if os.path.exists(path):
+            db_modes[suffix] = posix_mode(path)
+    check("落盘权限：channels.db 0600（-wal/-shm 存在时同断言）",
+          db_modes.get("db") == 0o600 and all(value == 0o600 for value in db_modes.values()),
           "modes=" + json.dumps({key: (oct(value) if value is not None else None)
                                  for key, value in db_modes.items()}))
 
@@ -855,6 +860,24 @@ def phase_feishu(state):
     }, ensure_ascii=False))
     check("飞书 webhook：明文 challenge 回显",
           status == 200 and json.loads(text).get("challenge") == "smoke-challenge-plain",
+          f"{status} {text[:160]}")
+
+    # 1b) /events 兼容别名（同一处理器；公开路由豁免鉴权）
+    status, text, _ = post_feishu_webhook(json.dumps({
+        "type": "url_verification", "challenge": "smoke-challenge-alias",
+        "token": FEISHU_VERIFICATION_TOKEN,
+    }, ensure_ascii=False), path="/v1/channels/feishu/events")
+    check("飞书 webhook 别名 /events：明文 challenge 回显",
+          status == 200 and json.loads(text).get("challenge") == "smoke-challenge-alias",
+          f"{status} {text[:160]}")
+
+    # 1c) >1MB 请求体 → 413（端点 1MB 分块限读；Kestrel 全局 10MB 之下，不走服务器层截断）
+    status, text, _ = post_feishu_webhook(json.dumps({
+        "type": "url_verification", "challenge": "x" * (1024 * 1024),
+        "token": FEISHU_VERIFICATION_TOKEN,
+    }, ensure_ascii=False))
+    check("飞书 webhook：>1MB 请求体 → 413 E_FEISHU_BODY_TOO_LARGE",
+          status == 413 and json.loads(text).get("code") == "E_FEISHU_BODY_TOO_LARGE",
           f"{status} {text[:160]}")
 
     # 2) 加密 challenge（复用 fixtures 密文 + 现算签名/时间戳）
@@ -985,6 +1008,12 @@ def phase_qq(state, gateway):
 
 
 def phase_ownership(state):
+    # 无 Bearer → 401（全局鉴权中间件反向断言；ownership 不走豁免名单）
+    status, body = api_json("GET", "/v1/channels/ownership", token=None)
+    check("归属控制面：无 Bearer 调 ownership → 401 E_UNAUTHORIZED",
+          status == 401 and body.get("code") == "E_UNAUTHORIZED",
+          f"{status} {json.dumps(body, ensure_ascii=False)[:160]}")
+
     # 配对一台设备（device token 走桌面路径）
     status, data = api_json("POST", "/v1/pair/code")
     code = data.get("code")
@@ -1034,6 +1063,28 @@ def phase_ownership(state):
     check("归属快照：holder=deviceId（桌面持有）",
           (snapshot.get("channels") or {}).get("wechat", {}).get("holder") == device_id,
           json.dumps(snapshot, ensure_ascii=False)[:200])
+
+    # 他设备（另一 device token）越权：heartbeat/release 不产生续约/交回，holder 不变
+    status, data = api_json("POST", "/v1/pair/code")
+    status, text, _ = http("POST", BASE + "/v1/pair", json.dumps(
+        {"code": data.get("code"), "deviceName": "channel-smoke-other"}), headers={})
+    other_pair = json.loads(text) if status == 200 else {}
+    other_token = other_pair.get("token")
+
+    status, heartbeat_other = api_json("POST", "/v1/channels/ownership/heartbeat",
+                                       {"channels": ["wechat"]}, token=other_token)
+    check("归属越权：他设备 heartbeat → renewed 为空（不续他人租约）",
+          status == 200 and heartbeat_other.get("renewed") == [],
+          f"{status} {json.dumps(heartbeat_other, ensure_ascii=False)[:160]}")
+
+    status, release_other = api_json("POST", "/v1/channels/ownership/release",
+                                     {"channels": ["wechat"]}, token=other_token)
+    _, snapshot_after = api_json("GET", "/v1/channels/ownership")
+    check("归属越权：他设备 release → released 为空且 holder 不变",
+          status == 200 and release_other.get("released") == []
+          and (snapshot_after.get("channels") or {}).get("wechat", {}).get("holder") == device_id,
+          f"{status} {json.dumps(release_other, ensure_ascii=False)[:120]} "
+          f"holder={(snapshot_after.get('channels') or {}).get('wechat', {}).get('holder')}")
 
     status, body = api_json("POST", "/v1/channels/wechat/proactive",
                             {"intentId": "owned-1", "text": "不应发出"}, token=device_token)
