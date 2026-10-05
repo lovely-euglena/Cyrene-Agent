@@ -1409,8 +1409,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
                       `嵌入模型已切换（重建 ${result.rebuiltEntries ?? 0} 条，清空 ${result.clearedEntries} 条）`,
                     );
                   })
-                  .catch((err) =>
-                    nativeNotice("cyrene", "error", `嵌入模型切换失败：${err instanceof Error ? err.message : String(err)}`));
+                  .catch((err) => {
+                    nativeNotice("cyrene", "error", `嵌入模型切换失败：${err instanceof Error ? err.message : String(err)}`);
+                    // P2-2（复审配合）：切换 Promise reject 时 WPF 卡片仍保留乐观选中，
+                    // 推一次设置快照触发既有 section 重建，把卡片回退到实际档位。
+                    pushSettingsSnapshotToNative();
+                  });
                 return;
               }
               try {
