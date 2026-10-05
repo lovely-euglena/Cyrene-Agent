@@ -51,9 +51,10 @@ public static class WeChatNormalizer
             ChatId = fromUserId,
             MessageId = ChannelJsonValue.JsStringOrEmpty(raw, "message_id"),
             Text = ExtractText(items),
-            At = createTimeMs is not null && double.IsFinite(createTimeMs.Value)
-                ? ChannelJsonValue.FromUnixTimeMilliseconds(createTimeMs.Value)
-                : now,
+            // P2-1：非有限/越界毫秒数走共享范围助手 → 回退 now（此前 19 位毫秒数
+            // 会 (long) 溢出抛 ArgumentOutOfRangeException 被长轮询循环吞掉并计连续失败）。
+            // 残余双端差异（TS new Date 越界为 Invalid Date → 契约 null）见 fixtures/channels/README.md。
+            At = ChannelJsonValue.TryFromUnixTimeMilliseconds(createTimeMs) ?? now,
         };
         return new WeChatNormalizedInbound { Message = message, Media = DescribeMedia(items) };
     }

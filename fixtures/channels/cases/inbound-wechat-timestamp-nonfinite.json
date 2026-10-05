@@ -1,0 +1,28 @@
+{
+  "name": "wechat 超大毫秒数（1e400 → 非有限）回退注入 now",
+  "kind": "inbound",
+  "channel": "wechat",
+  "input": {
+    "raw": {
+      "message_id": "msg-nonfinite-1",
+      "from_user_id": "wx-user-1",
+      "to_user_id": "bot-1",
+      "message_type": 1,
+      "context_token": "ctx-abc",
+      "create_time_ms": 1e400,
+      "item_list": [{ "type": 1, "text_item": { "text": "溢出时间戳" } }]
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "wechat",
+      "senderId": "wx-user-1",
+      "chatId": "wx-user-1",
+      "messageId": "msg-nonfinite-1",
+      "text": "溢出时间戳",
+      "at": "2026-09-01T00:00:00.000Z"
+    },
+    "media": []
+  }
+}

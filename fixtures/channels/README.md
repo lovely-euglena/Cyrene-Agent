@@ -9,7 +9,7 @@ TS 归一化实现（`src/main/channels/normalizers/**`）与 C# 实现
 - JSON Schema（规范镜像，非执行器）：`schema/channel-contract-v1.schema.json`
 - TS 语义源：`src/main/channels/normalizers/**`（行为对齐桌面 `src/main/channels/adapters/*`）
 
-当前 `cases/` 共 **61** 个用例（初始 42 + R1 评审修正 9（微信 2 + 飞书 7）+ R2 评审修正 10（飞书 1 + QQ/微信 9））。
+当前 `cases/` 共 **62** 个用例（初始 42 + R1 评审修正 9（微信 2 + 飞书 7）+ R2 评审修正 10（飞书 1 + QQ/微信 9）+ R3 评审修正 1（微信时间戳非有限））。
 
 ## 双端执行
 
@@ -139,6 +139,13 @@ proactiveEventId = "proactive-" + sha256hex(sessionId + ":" + intentId)[0..32]
   TS 模板字符串一致（`undefined`）（`outbound-wechat-file-name-empty` / `-sticker-missing-path` /
   `-audio-missing-path`）。
 
+## 本轮契约修正（2026-10-05 R3 评审；冻结规则不变）
+
+- **微信时间戳越界（P2-1）**：`WeChatNormalizer` 与飞书共用 `ChannelJsonValue.TryFromUnixTimeMilliseconds`
+  范围收口——非有限/超出 `DateTimeOffset` 范围的毫秒数回退 `now`（此前 19 位毫秒数 `(long)` 溢出抛
+  `ArgumentOutOfRangeException`，被长轮询循环吞掉并计连续失败）；新增
+  `inbound-wechat-timestamp-nonfinite` 双端向量（`1e400` 两端都判非有限、回退 `now`）。
+
 ## 已知超纲差异（未入向量；双端不承诺逐字一致）
 
 - 飞书出站 video：`uploads[*].image_key` 显式 `null` 时 TS 输出 `"image_key":null`，C# 省略该键
@@ -150,6 +157,10 @@ proactiveEventId = "proactive-" + sha256hex(sessionId + ":" + intentId)[0..32]
   TS `new Date(ms)` 可表示范围为 ±8.64e15——越界为 Invalid Date（契约序列化 `null`），未越界但年份
   >9999 时输出 5 位年份 ISO（schema `isoUtcMs` 不允许）。双端只锁「非有限值回退 `now`」与非丢事件
   （`inbound-feishu-timestamp-nonfinite` / `feishu-webhook/huge-event-timestamp.json`）；
+- 微信入站 `create_time_ms` 超出 C# `DateTimeOffset` 范围（如 19 位毫秒数，P2-1）：C# 走共享范围
+  助手回退 `now`（事件不丢）；TS `new Date(ms)` 越界为 Invalid Date（契约序列化 `null`）。双端只锁
+  「非有限值回退 `now`」（`inbound-wechat-timestamp-nonfinite`）；C# 侧越界回退由
+  `channel-selftest feishu` 的共享毫秒范围助手用例锁定；
 - 显式 JSON `null` 与键缺省在 C# `string?` 下不可区分：微信出站缺 `filePath`/`imagePath` 的错误文案，
   TS 缺省输出 `undefined`、显式 `null` 输出 `null`，C# 统一按 `undefined` 处理（向量只锁缺省形态）；
 - 微信媒体 item 容器非对象（如 `image_item: "x"` / `true`）：TS 真值判断会产出 fallback 描述符，

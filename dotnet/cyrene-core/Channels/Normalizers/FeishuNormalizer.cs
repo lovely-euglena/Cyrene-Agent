@@ -141,18 +141,11 @@ public static class FeishuNormalizer
             _ => null,
         };
         if (milliseconds is null || !double.IsFinite(milliseconds.Value)) return null;
-        // 超大毫秒数（超出 DateTimeOffset 可表示范围，如 19 位数字）直接调用
-        // FromUnixTimeMilliseconds 会抛 ArgumentOutOfRangeException，导致整条事件被丢弃；
-        // 按 TS 语义视作「无效时间戳」返回 null，由调用方回退 now（事件仍可处理）。
-        // 残余双端差异（TS new Date 范围为 ±8.64e15，越界为 Invalid Date→契约 null）见
+        // 非有限/越界毫秒数（如 19 位数字）视作「无效时间戳」返回 null，由调用方回退 now
+        // （事件仍可处理；此前直接 FromUnixTimeMilliseconds 会抛异常丢事件）。
+        // 范围收口已抽到共享助手（P2-1，与微信同口径）；残余双端差异见
         // fixtures/channels/README.md「已知超纲差异」。
-        var truncated = Math.Truncate(milliseconds.Value);
-        if (truncated < DateTimeOffset.MinValue.ToUnixTimeMilliseconds()
-            || truncated > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds())
-        {
-            return null;
-        }
-        return ChannelJsonValue.FromUnixTimeMilliseconds(truncated);
+        return ChannelJsonValue.TryFromUnixTimeMilliseconds(milliseconds);
     }
 
     // ── 出站 ────────────────────────────────────────────────────────────────
