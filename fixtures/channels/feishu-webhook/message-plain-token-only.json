@@ -1,0 +1,29 @@
+{
+  "name": "明文事件（token-only 配置，无 Encrypt Key）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": null,
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-plain-1",
+      "signature": null,
+      "body": "{\"schema\":\"2.0\",\"header\":{\"event_id\":\"evt-plain-1\",\"event_type\":\"im.message.receive_v1\",\"create_time\":\"1791187198000\",\"token\":\"cyrene-test-token\",\"app_id\":\"cli_test_app\"},\"event\":{\"sender\":{\"sender_id\":{\"open_id\":\"ou_user_1\"},\"sender_type\":\"user\"},\"message\":{\"message_id\":\"om_plain_1\",\"chat_id\":\"oc_chat_1\",\"chat_type\":\"p2p\",\"message_type\":\"text\",\"content\":\"{\\\"text\\\":\\\"你好，昔涟\\\"}\",\"timestamp\":1791187199000}}}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "duplicate": false,
+        "ignored": false,
+        "messageId": "om_plain_1",
+        "text": "你好，昔涟",
+        "media": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "群消息忽略（仅私聊，§6.2）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-group-1",
+      "signature": "53d3865625dcf9da5264d5ae19b0ed297350772d9aa5234cb34c9235f66314db",
+      "body": "{\"encrypt\":\"5ti8WTSsdAZfKbhSgcCoc6zAI/2yJ9AJljBq8JXIdsAYzyP81wieaHmUQLEe7D08SUJ1U6wifmPM7dq31fIVPvAV/ZlTXu3BcNo/VKX82YtE5p1NFboy5UOviov8PkUL947CGdEofWDmkC02Fr19uGeW5NW/4shgDXzDs403xhEW3hdU3Q+k6LZNYzdnWhD0uS5CBBLMrHa56KVPjiVJ5EJ0UvE8LFbM9Dl+mTPlw5JUGb8Uhep/N+mynGGtX/4jIvOoLyMXOHlEBaVXsQ/ozW6ssfRUG8wl+aUm6QBPjraN+GPamkQcOTnpaiAp+p6C2PwuF08uHWDUyHCaRIaV/aIIwmNL//C44eSYebnUnmFPJE/wS84uqUOzLvjofamH5zgTTWN+zUqxOexmDqJ4Z+TnR1jGSadAV/ZSqCuyszwR843kWFR7LXZxFwMDSRCWYSSnUXSSVu5u2cQKZ9URQYQtmPImZsPLYq6FG/jacJr5+KjaHJXP909zhwPn+IHgQ8IwycMsrQamu6OW/uRbobBZie1IfB8FoFu7a9BYmVUa2F0DGdRbfqt4c0Myp1RxuKlhUD7MP/TV/Bx8iEd67g==\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "duplicate": false,
+        "ignored": true,
+        "media": 0
+      }
+    }
+  ]
+}

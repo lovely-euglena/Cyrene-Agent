@@ -6,8 +6,10 @@ using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using CyreneCloud.Auth;
 using CyreneCloud.Channels;
+using CyreneCloud.Channels.Adapters.Feishu;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
+using CyreneNative.Channels;
 using CyreneNative.Sync;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
@@ -35,16 +37,16 @@ if (args.Length > 0 && args[0] is "pair-code" or "devices" or "revoke")
     return;
 }
 
-// 裸跑渠道自测（不进 Web 管线）：channel-selftest [all|framework]；--selftest framework 同义
+// 裸跑渠道自测（不进 Web 管线）：channel-selftest [all|framework|feishu]；--selftest framework|feishu 同义
 // （阶段 3-6 追加 wechat/feishu/qqbot 子集；见 §8.2）
 if (args.Length > 0 && args[0] == "channel-selftest")
 {
     Environment.ExitCode = ChannelSelfTest.Run(args.Length > 1 ? args[1] : "all");
     return;
 }
-if (args.Length > 1 && args[0] == "--selftest" && args[1] == "framework")
+if (args.Length > 1 && args[0] == "--selftest" && args[1] is "framework" or "feishu")
 {
-    Environment.ExitCode = ChannelSelfTest.Run("framework");
+    Environment.ExitCode = ChannelSelfTest.Run(args[1]);
     return;
 }
 
@@ -115,6 +117,14 @@ if (channelOptions.ChannelsEnabled)
         sp.GetRequiredService<IDialogEngine>(),
         sp.GetRequiredService<ChannelDeliveryService>(),
         sp.GetRequiredService<ILogger<ChannelDispatcher>>()));
+    // 飞书 webhook 处理器（阶段 5）：公开路由的校验/解密/去重/路由逻辑；适配器由托管服务注册
+    builder.Services.AddSingleton(sp => new FeishuEventCrypto(
+        channelOptions.FeishuVerificationToken, channelOptions.FeishuEncryptKey));
+    builder.Services.AddSingleton(sp => new FeishuWebhookProcessor(
+        sp.GetRequiredService<FeishuEventCrypto>(),
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ChannelManager>(),
+        sp.GetRequiredService<ILogger<FeishuWebhookProcessor>>()));
     // 适配器注册表（阶段 3-6 在 ChannelAdapterCatalog 追加；本批为空）
     foreach (var registration in ChannelAdapterCatalog.All)
     {
@@ -228,7 +238,12 @@ app.Use(async (context, next) =>
     // 能力声明公开只读（客户端在配对前就需要它来降级 UI；不含敏感信息）
     var isCapabilities = HttpMethods.IsGet(context.Request.Method)
         && path.Equals("/v1/capabilities", StringComparison.OrdinalIgnoreCase);
-    if (isPairRedeem || isCapabilities || (!path.StartsWithSegments("/v1") && !isHealthz))
+    // 飞书 webhook 公开路由（§6.2）：自带 Verification Token/签名/时间戳校验
+    var isFeishuWebhook = HttpMethods.IsPost(context.Request.Method)
+        && (path.Equals(FeishuWebhookEndpoint.WebhookPath, StringComparison.OrdinalIgnoreCase)
+            || path.Equals(FeishuWebhookEndpoint.AliasPath, StringComparison.OrdinalIgnoreCase));
+    if (isPairRedeem || isCapabilities || isFeishuWebhook
+        || (!path.StartsWithSegments("/v1") && !isHealthz))
     {
         await next();
         return;
@@ -300,6 +315,13 @@ app.MapGet("/v1/capabilities", () => Results.Json(new
         mediaMaxMB = channelOptions.WeChatMediaMaxMb,
     },
 }));
+
+// 飞书 webhook（公开路由，§6.2）：渠道层启用且飞书在 CLOUD_CHANNELS 内才挂载；
+// 校验/解密/去重逻辑见 FeishuWebhookProcessor，事件处理立即 200 + 后台执行。
+if (channelOptions.ChannelsEnabled && channelOptions.IsChannelEnabled(ChannelIds.Feishu))
+{
+    FeishuWebhookEndpoint.Map(app);
+}
 
 // ── 配对与设备（IKJK2K） ──
 
