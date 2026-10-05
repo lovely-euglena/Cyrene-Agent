@@ -71,12 +71,12 @@ Electron → Tray：
 | op | 载荷 | 回执 data |
 | --- | --- | --- |
 | `sched.snapshot` | — | `{tasks:[…]}` |
-| `sched.add` | `{input}` | `{task}` |
-| `sched.update` | `{taskId, patch}` | `{task}` |
-| `sched.toggle` | `{taskId, enabled}` | `{task}` |
-| `sched.delete` | `{taskId}` | `{deleted}` |
-| `sched.delete-owner` | `{pluginId}` | `{removed}` |
-| `sched.history` | `{taskId, limit}` | `{entries:[…]}` |
+| `sched.add` | `{input}` | task 对象 |
+| `sched.update` | `{taskId, patch}` | task 对象 |
+| `sched.toggle` | `{taskId, enabled}` | task 对象 |
+| `sched.delete` | `{taskId}` | bool |
+| `sched.delete-owner` | `{pluginId}` | count |
+| `sched.history` | `{taskId, limit}` | entries 数组 |
 | `sched.report` | `{entry}`（同 id 覆盖，running→终态） | — |
 | `sched.plugin-state` | `{running:{pluginId:bool}}` | — |
 | `sched.mode` | `{enabled}`（托盘调度启用/停用协商） | — |
@@ -133,4 +133,5 @@ Tray → Electron：
 - [x] 双轨开关与启动期回退
 - [x] 插件任务离线语义（skip 记历史；指纹校验仍在 TS）
 - [x] 启动注册（Electron ensure-spawn + 登录项改指 `--tray`）
-- [ ] 打包确认与冒烟脚本（随 PR 验证清单）
+- [x] 打包确认（`native-windows` 已随包）+ 冒烟脚本接入（`dotnet-smoke-linux.py` 增加
+  `--selftest scheduler`，CI `dotnet-backend.yml` 覆盖）

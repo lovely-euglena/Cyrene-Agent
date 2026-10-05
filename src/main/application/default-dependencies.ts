@@ -1591,11 +1591,8 @@ createTray: (input) => {
     runHeadlessScheduledTask: async (core: CoreResult): Promise<void> => {
       const args = headlessScheduledArgs();
       if (!args) return;
-      const result = await core.scheduler.runScheduledTaskForHeadless?.(args.taskId, args.historyId, args.fireAt);
-      core.scheduler.notifyHost?.(
-        "定时任务",
-        result?.ok ? "定时任务已执行完成" : `定时任务执行失败：${result?.error ?? "未知错误"}`,
-      );
+      // 结果通知由托盘在 sched.report 终态统一弹出（避免 headless 与托盘双气泡）
+      await core.scheduler.runScheduledTaskForHeadless?.(args.taskId, args.historyId, args.fireAt);
     },
     startCore: (shell) => {
       // 插件管理壳/运行时与核心 IPC 共用应用级 scope：运行期动态启用时
