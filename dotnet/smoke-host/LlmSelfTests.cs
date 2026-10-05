@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -14,7 +15,7 @@ namespace CyreneSmoke;
 
 /// <summary>
 /// llm 作业库自测（H1）：lane 隔离 / 事件序 / 长轮询幂等 / cursor 补读 / low 满载拒绝 /
-/// ring drop-oldest+truncated（复审 P0-2）/ TTL 回收（P0-4）。
+/// ring drop-oldest + 真实缺口（Gap）与回收计数（复审 P0-2/P2-2）/ TTL 回收（P0-4）。
 /// 纯内存逻辑（无网络）——Linux CI 可跑。
 /// </summary>
 public static class LlmJobsSelfTest
@@ -107,6 +108,21 @@ public static class LlmJobsSelfTest
         // P2-1①：cursor 落在丢弃段时 nextCursor 必须是 clamp 后位点，不能是 cursor+count（会重复投递）
         Check(fromZero.NextCursor == ring.EventCount, "丢弃段 cursor clamp 后 nextCursor 正确（P2-1①）");
         Check(ring.Poll(0, 1, 0).Events.Count > 0, "cursor 幂等保持（不挂）");
+        // P2-2：真实缺口按请求 cursor 判定（cursor < base）；cursor 追平后 dropped 只是回收累计
+        Check(fromZero.Gap, "cursor 落后丢弃段 → Gap=true（真实缺口）");
+        Check(!ring.Poll(ring.EventCount, 10, 0).Gap, "cursor 追平 → Gap=false（dropped 非缺口）");
+
+        // ── 5b. dropped 回收累计 ≠ 缺口（P2-2：全消费后被回收不告警）──
+        var recycled = MakeJob(LlmContracts.LaneInteractive);
+        for (var i = 0; i < LlmJob.RingCapacity; i++)
+            recycled.Append(new LlmEvent { Type = LlmContracts.EvDelta, Text = "w" });
+        var consumedAll = recycled.Poll(0, int.MaxValue, 0);
+        Check(consumedAll.NextCursor == LlmJob.RingCapacity && !consumedAll.Gap, "全量消费批无缺口");
+        for (var i = 0; i < 100; i++)
+            recycled.Append(new LlmEvent { Type = LlmContracts.EvDelta, Text = "v" });
+        Check(recycled.DroppedEvents == 100, "回收计数（已消费事件被驱逐）");
+        var afterRecycle = recycled.Poll(consumedAll.NextCursor, int.MaxValue, 0);
+        Check(!afterRecycle.Gap && afterRecycle.Events.Count == 100, "已消费事件被回收 → 无缺口（P2-2）");
 
         // ── 6. 未确认量语义（P0-2 核心：poll 消费推进 → PendingCount 下降）──
         var unconf = MakeJob(LlmContracts.LaneInteractive);
@@ -449,7 +465,7 @@ public static class LlmStreamSelfTest
             var chunkOnce = false;
             using var server = new MockSseServer(async (ctx, n) =>
             {
-                // 一次性吐 4000 个 delta（>HighWater 3276）+ finish/done，再慢慢关
+                // 一次性吐 4000 个 delta（> LowWater 1024 反压阈值）+ finish/done，再慢慢关
                 var sb = new StringBuilder();
                 for (var i = 0; i < 4000; i++) sb.Append("data: " + Chunk(content: "x") + "\n\n");
                 sb.Append("data: " + Chunk(finish: "stop") + "\n\n");
@@ -465,7 +481,7 @@ public static class LlmStreamSelfTest
             });
             using var service = new LlmJobService(new FileSecrets());
             var job = SubmitInteractive(service, server.Url, maxRetries: 0, timeoutMs: 60000);
-            // 关键：前 300ms 完全不 poll（制造未确认量 > HighWater）→ 上游暂停 → 恢复 poll 后收口
+            // 关键：前 300ms 完全不 poll（制造未确认量 > LowWater）→ 上游暂停 → 恢复 poll 后收口
             await Task.Delay(300).ConfigureAwait(false);
             var (events, j) = await PollUntilDone(service, job.Id, maxLoops: 5000).ConfigureAwait(false);
             Check(j.State == LlmJobState.Done, "超水位暂停后恢复收口（P0-2）");
@@ -618,10 +634,10 @@ public static class LlmStreamSelfTest
             Check(Has(events, LlmContracts.EvError, e => e.Code == LlmContracts.ErrIdleTimeout), "读循环 E_LLM_IDLE_TIMEOUT");
         }
 
-        // ── 14. 排队中取消 → 终态事件立即可达（复审 P2-2③）──
+        // ── 14. 排队中取消 → 唤醒阻塞中的 poll 等待者（复审 P2-2③ / P2-8：非只验终态可见）──
         using (var service = new LlmJobService(new FileSecrets()))
         {
-            // low lane 起 1 个慢作业占住槽位，其余排队；取消排队者应立即见 cancelled 终态
+            // low lane 起 1 个慢作业占住槽位，其余排队；取消排队者应立即唤醒等待者
             using var slowServer = new MockSseServer(async (ctx, n) =>
             {
                 await Task.Delay(800).ConfigureAwait(false);
@@ -630,13 +646,23 @@ public static class LlmStreamSelfTest
             var running = SubmitLow(service, slowServer.Url);
             await Task.Delay(150).ConfigureAwait(false); // 确保第一个作业已被 pump 取走（占住 low 槽位）
             var queued = SubmitLow(service, slowServer.Url);
-            var queuedCancel = service.Store.Cancel(queued.Id);
-            Check(queuedCancel, "排队中 cancel 受理");
-            var slice = queued.Poll(0, 10, 0);
+
+            // 阻塞中的 poll 等待者：事件为空、非终态 → Monitor.Wait（waitMs=5000，不能等满）
+            var sw = Stopwatch.StartNew();
+            var waiter = Task.Run(() => queued.Poll(0, 10, 5000));
+            await Task.Delay(100).ConfigureAwait(false); // 让 waiter 进入 Monitor.Wait
+            Check(!waiter.IsCompleted, "poll 等待者已阻塞（等事件中）");
+
+            Check(service.Store.Cancel(queued.Id), "排队中 cancel 受理");
+            var woke = await Task.WhenAny(waiter, Task.Delay(3000)).ConfigureAwait(false);
+            Check(woke == waiter, "cancel 后阻塞中的 poll 立即唤醒（P2-8）");
+            var slice = await waiter.ConfigureAwait(false); // 兜底等自然到期，避免悬挂
+            Check(sw.ElapsedMilliseconds < 3000, "唤醒来自 cancel 而非等待超时");
             Check(queued.IsTerminal && slice.Events.Count == 1
                 && slice.Events[0].Type == LlmContracts.EvError
                 && slice.Events[0].Code == LlmContracts.ErrCancelled,
-                "排队取消落终态事件 + 立即可 poll（P2-2③）");
+                "排队取消落终态事件 + poll 唤醒即达（P2-2③）");
+            Check(slice.NextCursor == 1 && !slice.Gap, "唤醒批 cursor 正确、无缺口");
             await PollUntilDone(service, running.Id).ConfigureAwait(false);
         }
 
