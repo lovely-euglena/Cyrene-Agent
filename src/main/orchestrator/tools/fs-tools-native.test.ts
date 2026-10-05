@@ -18,9 +18,15 @@ const nativeMocks = vi.hoisted(() => ({
   captureBefore: vi.fn(),
 }));
 
-vi.mock("./native-tool-host", () => ({
-  nativeToolHost: { call: nativeMocks.call },
-}));
+// 只替换 nativeToolHost.call；stripInternalArgs 复用真实实现（vi.importActual），
+// 避免 mock 自行重实现剥离逻辑——真实实现退化时本文件用例仍会失败（复审 P2-4）
+vi.mock("./native-tool-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./native-tool-host")>();
+  return {
+    ...actual,
+    nativeToolHost: { call: nativeMocks.call },
+  };
+});
 
 vi.mock("../../dotnet-backend/config", () => ({
   resolveDotnetConfig: vi.fn(() => ({ toolHost: true })),
@@ -73,9 +79,10 @@ afterEach(() => {
 });
 
 describe("fs native 轨 · 只读三件", () => {
-  it("read_file：host 可用时走 ToolHost 并原样返回 data", async () => {
+  it("read_file：host 可用时走 ToolHost 并原样返回 data（伪造 __ 键剥离）", async () => {
     nativeMocks.call.mockResolvedValue('{"path":"C:\\\\x.txt","content":"native 12"}');
-    const out = await registeredTools.get("read_file")!.execute({ path: "C:\\x.txt" });
+    // 伪造 `__` 键入参：真实 stripInternalArgs 退化为 no-op 时下方 toHaveBeenCalledWith 立即失败（防退化锁定）
+    const out = await registeredTools.get("read_file")!.execute({ path: "C:\\x.txt", __forged: "1" } as never);
     expect(out).toBe('{"path":"C:\\\\x.txt","content":"native 12"}');
     expect(nativeMocks.call).toHaveBeenCalledWith("fs_read_file", { path: "C:\\x.txt" }, undefined, undefined);
   });

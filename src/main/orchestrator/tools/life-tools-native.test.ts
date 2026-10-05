@@ -14,16 +14,21 @@ const nativeMocks = vi.hoisted(() => ({
 
 vi.mock("./native-tool-host", () => ({
   nativeToolHost: { setRuntimeSettings: nativeMocks.setRuntimeSettings },
+  stripInternalArgs: (args: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__"))),
   nativeFirst: async (
     tool: string,
     args: Record<string, unknown>,
     fallback: (a: Record<string, unknown>) => unknown,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: { timeoutMs?: number; signal?: AbortSignal; internalArgs?: Record<string, unknown> },
   ) => {
-    nativeMocks.calls.push({ tool, args, options });
+    // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+    const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
+    const nativeArgs = { ...clean, ...(options?.internalArgs ?? {}) };
+    nativeMocks.calls.push({ tool, args: nativeArgs, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
     // 模拟真实 nativeFirst 的故障回退语义
-    return fallback(args);
+    return fallback(nativeArgs);
   },
 }));
 

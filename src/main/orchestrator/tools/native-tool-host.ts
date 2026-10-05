@@ -31,6 +31,9 @@ import { resolveNativeWindowsExe } from "../../windows/native-windows-host";
 import { trackChildProcess } from "../../child-processes";
 import { createAbortError, isAbortError } from "../../abort-utils";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
+import type { ToolDefinition } from "./registry/tool-registry";
+import type { ToolContext } from "./registry/tool-context";
+import { ToolExecutionError } from "./registry/tool-execution-error";
 
 const LOG_PREFIX = "[ToolHost]";
 
@@ -78,6 +81,8 @@ export interface HostRuntimeSettings {
   weather: WeatherHostSettings | null;
   /** 出行工具配置（B1：key 仅宿主内存驻留，不落盘；调用前刷新）。 */
   travel: TravelHostSettings | null;
+  /** 邮件配置（B1：授权码仅宿主内存驻留，不落盘；调用前刷新）。 */
+  email: EmailHostSettings | null;
 }
 
 /** web_search 宿主侧配置。 */
@@ -105,6 +110,20 @@ export interface TravelHostSettings {
   enabled: boolean;
 }
 
+/** 邮件宿主侧配置（SMTP/IMAP 共用账号；pass 为授权码，B1 仅内存驻留）。 */
+export interface EmailHostSettings {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  user: string;
+  pass: string;
+  fromName: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
+}
+
 /** nativeFirst 按件选项：长耗时工具（大文件下载/外网请求）覆盖默认 5s 看门狗。 */
 export interface NativeFirstOptions {
   /** 单次调用超时（ms）。缺省 5000；应 ≥ C# 侧内部超时，避免 native 轨被误杀。 */
@@ -113,6 +132,60 @@ export interface NativeFirstOptions {
   signal?: AbortSignal;
   /** 调用内事件回调（如 weather_card）：event 帧按 callId 路由；只有 native 轨会触发。 */
   onEvent?: (event: HostToolEvent) => void;
+  /**
+   * 可信内部参数（`__` 前缀，docs/pr-review-rules.md §2.3）：nativeFirst 先剥离
+   * 模型 args 中的 `__` 键，再合并本字段下发宿主。模型/渲染层注入的内部参数
+   * 一律丢弃——内部参数只能经此通道由主进程可信装配注入。
+   */
+  internalArgs?: Record<string, unknown>;
+  /**
+   * native 轨失败（超时/进程故障/错误帧）时是否回退 TS，默认 true。
+   * 副作用类工具（send_email）置 false：失败可能发生在「已执行但未收到确认」之后，
+   * 自动回退会重复副作用——此时结构化上抛 effectState:"unknown"（不重跑），
+   * 交由 Harness 登记 uncertainEffects。
+   */
+  fallbackOnError?: boolean;
+  /**
+   * fallbackOnError=false 时仍允许安全回退的错误码清单（确定「未执行副作用」的
+   * 前置失败，如 E_EMAIL_PRECONDITION=SMTP 连接/认证失败、未进入发送阶段）。
+   * 排队未派发 sentinel（NativeCallNotDispatchedError）始终安全回退，无需列入。
+   */
+  safeFallbackCodes?: readonly string[];
+  /** fallbackOnError=false 且 native 不确定失败时的提示文案（缺省为通用不确定态文案）。 */
+  uncertainFailureMessage?: (error: Error) => string;
+}
+
+/**
+ * 剥离模型 args 中的内部参数（`__` 前缀）。
+ * 信任边界（docs/pr-review-rules.md §2.3）：`__` 键只能由主进程可信装配注入，
+ * 来自模型 / 渲染层的一律视为攻击并丢弃，不得进入宿主帧。
+ */
+export function stripInternalArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (!key.startsWith("__")) clean[key] = value;
+  }
+  return clean;
+}
+
+/**
+ * 「确定未派发」错误（P2-2）：host 退出时被连带拒绝的**排队**调用——call 帧
+ * 从未写入 stdin，副作用确定未执行；nativeFirst 据此在 fallbackOnError:false
+ * 下仍安全回退 TS。在途调用（call 帧已下发）失败仍是普通 Error：状态可能未知。
+ */
+export class NativeCallNotDispatchedError extends Error {
+  readonly name = "NativeCallNotDispatchedError";
+  readonly code = "E_TOOL_NOT_DISPATCHED";
+  constructor(message = "tool-host 进程退出（调用尚未派发，确定未执行）") {
+    super(message);
+  }
+}
+
+/** 判定失败是否「确定未执行副作用」：排队未派发 sentinel，或错误码命中安全清单。 */
+function isDefinitelyNotApplied(error: Error, safeCodes?: readonly string[]): boolean {
+  if (error instanceof NativeCallNotDispatchedError) return true;
+  const code = (error as Error & { code?: unknown }).code;
+  return typeof code === "string" && (safeCodes?.includes(code) ?? false);
 }
 
 export class NativeToolHost {
@@ -133,6 +206,7 @@ export class NativeToolHost {
     webSearch: null,
     weather: null,
     travel: null,
+    email: null,
   };
 
   /** 兼容旧入口：仅更新时区（now 工具每次调用实时下发）。 */
@@ -151,6 +225,7 @@ export class NativeToolHost {
     if (patch.webSearch !== undefined) this.settings.webSearch = patch.webSearch;
     if (patch.weather !== undefined) this.settings.weather = patch.weather;
     if (patch.travel !== undefined) this.settings.travel = patch.travel;
+    if (patch.email !== undefined) this.settings.email = patch.email;
     if (this.proc && !this.exited) this.send({ op: "config", ...this.settings });
   }
 
@@ -201,7 +276,9 @@ export class NativeToolHost {
         const queued = this.queue.splice(0);
         for (const entry of queued) {
           if (entry.onAbort && entry.signal) entry.signal.removeEventListener("abort", entry.onAbort);
-          entry.reject(entry.signal?.aborted ? createAbortError() : new Error("tool-host 进程退出"));
+          // 排队调用从未写入 stdin：独立 sentinel 标记「确定未派发」，
+          // 与在途失败（状态可能未知）分流（P2-2）
+          entry.reject(entry.signal?.aborted ? createAbortError() : new NativeCallNotDispatchedError());
         }
       });
       child.stderr?.on("data", (d: Buffer) => {
@@ -262,7 +339,15 @@ export class NativeToolHost {
       const call = this.pending.get(callId);
       if (!call) return;
       if (frame.ok === true) call.resolve(frame.data);
-      else call.reject(new Error(typeof frame.error === "string" ? frame.error : "工具执行失败"));
+      else {
+        const failure = new Error(typeof frame.error === "string" ? frame.error : "工具执行失败");
+        // B5 错误码契约透传：错误帧 errorCode（如 E_EMAIL_PRECONDITION=确定未进入
+        // 发送阶段）挂到 Error.code，nativeFirst 据此判定是否可安全回退（P2-3）
+        if (typeof frame.errorCode === "string" && frame.errorCode) {
+          (failure as Error & { code?: string }).code = frame.errorCode;
+        }
+        call.reject(failure);
+      }
     }
   }
 
@@ -346,6 +431,10 @@ export class NativeToolHost {
    * 调用一个 native 工具。返回 null = native 轨不可用（调用方回退 TS）。
    * 拒绝（超时/进程故障）同样由调用方捕获后回退 TS；signal 中止时以
    * AbortError 拒绝——调用方必须原样上抛，不得回退重跑。
+   *
+   * 信任边界：args 必须是「模型参数已剥离 `__` 键 + 可信内部参数」的最终装配结果
+   * （用 nativeFirst / withNativeFirst，或调用方自行 stripInternalArgs）；
+   * 模型/渲染层原始 args 不得直接传入。
    */
   async call(
     tool: string,
@@ -390,6 +479,8 @@ export const nativeToolHost = new NativeToolHost();
  * fallback 参数即原 TS execute 函数——双轨语义对齐由测试保证。
  * options.timeoutMs：按件看门狗（缺省 5s），长任务必须覆盖。
  * options.signal：父运行取消信号（AbortError 原样上抛，不回退重跑）。
+ * options.internalArgs：可信 `__` 内部参数（唯一注入通道）；模型 args 里的 `__` 键先被剥离，
+ *   TS 回退同样只拿剥离后的参数。
  */
 export async function nativeFirst(
   tool: string,
@@ -397,17 +488,92 @@ export async function nativeFirst(
   fallback: (args: Record<string, unknown>) => Promise<string> | string,
   options: NativeFirstOptions = {},
 ): Promise<string> {
+  // 信任边界：模型 args 的 `__` 键一律剥离；可信内部参数只经 internalArgs 注入。
+  // TS 回退（零触达/失败/确定未执行）也统一只拿剥离后的参数（P2-6④ 口径一致）。
+  const cleanArgs = stripInternalArgs(args);
   // CYRENE_TOOL_HOST=0：所有接线方式（含裸 nativeFirst 工具）统一零触达
-  if (!resolveDotnetConfig().toolHost) return fallback(args);
+  if (!resolveDotnetConfig().toolHost) return fallback(cleanArgs);
   if (options.signal?.aborted) throw createAbortError();
+  const nativeArgs = options.internalArgs
+    ? { ...cleanArgs, ...options.internalArgs }
+    : cleanArgs;
   try {
-    const result = await nativeToolHost.call(tool, args, options.timeoutMs, options.signal, options.onEvent);
+    const result = await nativeToolHost.call(tool, nativeArgs, options.timeoutMs, options.signal, options.onEvent);
     if (result !== null) {
       return typeof result === "string" ? result : JSON.stringify(result);
     }
   } catch (error) {
     if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复执行副作用
-    console.warn(LOG_PREFIX, `native 轨失败回退 TS（${tool}）:`, error instanceof Error ? error.message : error);
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (options.fallbackOnError === false && !isDefinitelyNotApplied(failure, options.safeFallbackCodes)) {
+      // 副作用安全：失败可能是「已执行、确认未回」，自动回退会重复副作用。
+      // 结构化上抛 effectState:"unknown"（P2-1）→ executeToolDefinition 保留事实
+      // → Harness 登记 uncertainEffects 并拦截同 fingerprint 重放。
+      console.warn(LOG_PREFIX, `native 轨失败且禁止自动回退（${tool}）:`, failure.message);
+      throw new ToolExecutionError(
+        "E_TOOL_EFFECT_UNKNOWN",
+        options.uncertainFailureMessage?.(failure)
+          ?? `[错误] ${tool} 执行状态未知（native 轨失败：${failure.message}）；为避免重复执行副作用不会自动回退。`,
+        "semantic_failure",
+        false,
+        "unknown",
+      );
+    }
+    // fallbackOnError 缺省 true：任何失败都回退（双轨语义对齐）；false 时到这里
+    // 仅限确定未执行（排队未派发 / safeFallbackCodes 命中的前置失败）
+    console.warn(LOG_PREFIX, `native 轨失败回退 TS（${tool}）:`, failure.message);
   }
-  return fallback(args);
+  return fallback(nativeArgs);
+}
+
+/** 判定宿主输出是否为"成功载荷里的业务失败"（C# Err(...) JSON）——是则调用方回退 TS 拿原错误语义。 */
+export function isNativeFailurePayload(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text) as { success?: unknown } | null;
+    return parsed !== null && typeof parsed === "object" && parsed.success === false;
+  } catch {
+    return false; // 非 JSON（纯文本输出）按成功处理
+  }
+}
+
+/**
+ * 通用"native 优先"工具包装（写类/生成类工具）：保留工具元数据，把 execute 换成
+ * prepare → native 调用 → 失败回退 TS 原实现。
+ *
+ * prepare 返回 native 调用参数；返回 null 表示"不触达 native"（校验不通过或 host 不可用），
+ * 直接走 TS 原实现产出语义一致的错误/结果。prepare 内抛出的语义拒绝（如覆盖防骤降）
+ * 原样上抛，不回退重跑副作用。模型 args 中的 `__` 键在进入 prepare 前统一剥离
+ * （信任边界 §2.3），可信内部参数只能由 prepare 自行装配；TS 回退同样只拿
+ * 剥离后的 args（不再向 TS 实现透传模型伪造的 `__` 键）。
+ */
+export function withNativeFirst(
+  tool: ToolDefinition,
+  nativeTool: string,
+  prepare: (args: Record<string, unknown>, ctx?: ToolContext) => Record<string, unknown> | null,
+  timeoutMs?: number,
+): ToolDefinition {
+  const tsExecute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    execute: async (args, ctx) => {
+      // 信任边界：先剥离模型 args 的 `__` 键；TS 回退（零触达/prepare 拒绝/
+      // native 失败）统一只拿剥离后的参数，口径与 nativeFirst 一致（P2-6④）
+      const cleanArgs = stripInternalArgs(args);
+      if (!resolveDotnetConfig().toolHost) return tsExecute(cleanArgs, ctx);
+      const nativeArgs = prepare(cleanArgs, ctx);
+      if (nativeArgs === null) return tsExecute(cleanArgs, ctx);
+      try {
+        const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal);
+        if (result !== null) {
+          const text = typeof result === "string" ? result : JSON.stringify(result);
+          if (!isNativeFailurePayload(text)) return text;
+          console.warn(LOG_PREFIX, nativeTool, "native 返回错误载荷，回退 TS:", text.slice(0, 200));
+        }
+      } catch (error) {
+        if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复执行副作用
+        console.warn(LOG_PREFIX, nativeTool, "native 轨失败回退 TS:", error instanceof Error ? error.message : error);
+      }
+      return tsExecute(cleanArgs, ctx);
+    },
+  };
 }

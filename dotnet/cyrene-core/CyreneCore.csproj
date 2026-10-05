@@ -12,8 +12,13 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+    <PackageReference Include="MailKit" Version="4.18.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="Jieba.NET" Version="0.42.2" />
+    <PackageReference Include="QuestPDF" Version="2026.9.1" />
+    <PackageReference Include="ReverseMarkdown" Version="6.2.1" />
   </ItemGroup>
   <ItemGroup>
     <!-- 同源拆分：内部实现经 IVT 供宿主（cyrene-native）与 Linux 冒烟壳（cyrene-smoke）使用，
@@ -25,7 +30,6 @@
     <!-- Jieba.NET 老式 content 包：SDK 项目不自动拷 Resources（词典）——
          不拷则 JiebaSegmenter 静态构造抛异常，rag-host open 即失败。
          工程引用的消费方会随 CopyToOutputDirectory 传递到各自输出目录。 -->
-    <None Include="$(NuGetPackageRoot)jieba.net/0.42.2/Resources/**/*"
-          CopyToOutputDirectory="PreserveNewest" LinkBase="Resources" />
+    <None Include="$(NuGetPackageRoot)jieba.net/0.42.2/Resources/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="Resources" />
   </ItemGroup>
 </Project>

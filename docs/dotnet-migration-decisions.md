@@ -528,3 +528,126 @@
   核心档（生成关）**35/35**；鲁棒核心档（inline echo）**35/35**；PWA e2e（inline echo）**11/11**；
   .NET 本地 e2e 回归 **11/11**。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJN7C。
+
+## 2026-10-05 增量：内置工具 T2「按库替代」批下沉 .NET（IKJK3V）
+
+- **范围**：11 件工具下沉——fetch_url（T1 遗留）、文档四件（write_markdown / write_excel / write_word /
+  write_pdf）、邮件四件（send_email / email_list / email_read / email_mark）、ast_grep 两件
+  （ast_grep_search / ast_grep_replace）。统一「TS 策略层 + .NET 执行层」：nativeFirst / withNativeFirst
+  包装，不可用/失败回退 TS 原实现，取消（AbortError）原样上抛；语义拒绝（覆盖防骤降等）不因轨道切换改变。
+- **fetch_url（Turndown → ReverseMarkdown v6）**：GitHub API 特化 / 正文容器提取 / 512KB 截断 /
+  30 分钟固定 TTL 缓存逐项移植；已知库差异：列表项缩进宽度、表格（TS 拍平为文本块，NET 输出 GFM
+  管道表——双轨显式断言防漂移）、整页回退路径的 `<title>`（NET 丢 head）；raw 格式两侧逐字一致。
+- **文档四件（exceljs → ClosedXML、docx → Open XML SDK、pdfkit → QuestPDF）**：
+  - write_markdown 与 fs_write_file 同款分工（TS 预检 / 覆盖防骤降 / review 基线；.NET 落盘 + changes 证据）；
+  - write_excel/word/pdf 的样式模板解析（skills 样式 + 自定义色覆盖）留在 TS，解析后经内部参数注入宿主；
+  - 已知差异：ClosedXML 列宽含 0.71 字符内边距（双轨容差 ±1）；exceljs 读取器只认无前缀标签，读不了
+    ClosedXML 的 `x:` 前缀 XML（双轨用 JSZip + 前缀归一自解析投影）；
+  - **顺带修复：TS pdfkit 与本机 msyh.ttc 不兼容（既有问题，`doc.text()` 抛 `createSubset is not a
+    function`）——QuestPDF 正确支持 TTC，迁移后 native 轨可用**；动态 import 补 CJS/ESM 互操作兜底
+    （tsx/Node ESM 加载 CJS 包时命名导出不可见）。
+- **邮件四件（nodemailer/imapflow/mailparser → MailKit/MimeKit）**：SMTP/IMAP 配置经 config 帧注入
+  （B1：授权码仅宿主内存驻留，调用前实时刷新）；发信确认卡留在 TS（B2 审批在 Electron），native 失败
+  回退 nodemailer 且不重复弹卡；校验文案（未启用/配置不完整/uid 无效/收件人无效等）逐字对齐；
+  矩阵用本地 fake SMTP + fake IMAP 覆盖快乐路径（发信捕获/列表/读信/标记/附件）。
+- **ast_grep 两件（@ast-grep/napi → 随包 ast-grep CLI JSON）**：CLI 平台二进制路径由 TS
+  `resolveAstGrepCommand` 解析后注入（pnpm/npm 两种布局；Linux 侧补可执行位）；文件收集 / 语言过滤 /
+  Skip 目录 / 上限（500 文件、50 匹配）与 TS 对齐；替换走 `--json=stream` 的 `replacement` 字段
+  （CLI 展开与 ast-grep 语义一致），C# 侧重叠编辑去重（保留最外层）+ 行级 diff 证据 + dryRun；
+  正式写入前先预演一遍拿变更清单，捕获 review 基线（runId 存在时）。
+  **顺带修复：TS napi 展开 `$$$` 多捕获重复逗号的真实 bug**（`console.log($$$A)` → `logger.info("a", ,, x)`；
+  改为源文本切片重建后与 CLI 一致 `logger.info("a", x)`）。
+- **测试**：矩阵 **146/146**（T2 批新增 fetch_url / 文档四件 / 邮件四件 / ast_grep 用例，复审 P1 补 SMTP 连接拒绝用例；含本地 fake 服务器、
+  zip 结构断言、PdfPig 文本提取探针、CLI 缺失错误帧）；dual-track **PASS**（新增 fetch_url 5 / 文档 6 /
+  邮件 12 / ast_grep 10：raw 逐字、读回投影、docx run 属性、落盘字节、校验路径逐字、TS↔CLI 逐字）；
+  vitest native 新增 **26 项**（fetch_url 3 / 文档 9 / 邮件 8 / ast_grep 6）；
+  `vitest run src/main/orchestrator/tools` **496/496**（审查修复批 +13）；tsc 三端 0；cyrene-core 洁净断言 PASS；
+  native-windows 全量编译 0 错误。
+- **剩余（非本批，均依赖其他层；按 issue「随各自 host 迁移」计划）**：run_verification（harness 审批 /
+  记账链路耦合）、shell_job（属 T2；run_shell 属 T3，需连同后台任务底座一起迁）、translate（需 tool-host →
+  TS 的 LLM 回调协议，agent-host 回调模式默认关）、install_mcp_server（先迁 MCP 层）、moments_*
+  （随 moments 存储层）、recall_history（RAG host 数据层接线）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（T2 按库替代批完成）。
+
+## 2026-10-05 增量：PR #20 审查修复（IKJK3V T2 批）
+
+- **背景**：Gitee PR #20 审查结论「不可合入」——1×P0（`__` 内部参数信任边界）+ 4×P1
+  （ast-grep 打包态路径、CLI 读取/超时、send_email 重复投递窗口、邮件三件取消透传）；
+  当批逐条修复，矩阵/dual-track 直连宿主的测试注入路径不受影响。
+- **P0 信任边界**：`nativeFirst` / `withNativeFirst` 统一下发前剥离模型 args 中的
+  `__` 键；可信内部参数有两条装配通道——`nativeFirst` 经
+  `NativeFirstOptions.internalArgs` 显式注入（git / search_text / download_file），
+  `withNativeFirst` 由 prepare 回调自行装配（ast-grep 的 `__cyreneWorkspaceRoot` /
+  `__astGrepCommand`、文档四件的输出路径/主题）；直接 `nativeToolHost.call`
+  的模型参数路径（str_replace 两段式 / fs 只读）同样先剥离。用例：
+  `native-tool-host.test.ts`（nativeFirst / withNativeFirst 剥离 + internalArgs 覆盖 +
+  fallbackOnError 语义）、`git-tools-native` / `str-replace-native` / `ast-grep-native`
+  接线级伪造注入用例。
+- **P1-1 ast-grep asar**：`resolveAstGrepCommand` 返回前做 `app.asar` →
+  `app.asar.unpacked` 重写（对照 sandbox-exec / sync-mcp-builtin），新增
+  `toUnpackedAsarPath` 的 asar 风格路径断言。
+- **P1-2 CLI 读取/超时**：`AstGrepTool.RunCli` 改双流 `ReadToEndAsync` 并发 +
+  `WaitForExit` 前置 + 超时 `Kill(entireProcessTree: true)`（对照 `GitTools.RunGit`）。
+- **P1-3 send_email 重复投递**：C# 把 `Disconnect` 移出发送失败判定（发送成功后的
+  断开失败仅日志）；TS 走 `nativeFirst(fallbackOnError:false)`——native 失败
+  （超时/进程崩溃/错误帧）不自动重发，返回「发送状态未知」明确提示；仅宿主未启动
+  （call 返回 null）时安全回退 TS（确定未发送）。后续 P2 加固已扩展安全回退情形
+  （+`E_EMAIL_PRECONDITION`、+`E_TOOL_NOT_DISPATCHED`，见下节）。
+- **P1-4 邮件取消**：`email_list` / `email_read` / `email_mark` execute 接收 ctx 并
+  透传 `signal: ctx?.signal`；补取消信号透传与 AbortError 原样上抛用例。
+- **P2 顺带**：workflow 加 `permissions: contents: read`、`pull_request` paths 补
+  `scripts/dual-track-diff.ts`、TS 步骤纳入 `vitest run src/main/orchestrator/tools`；
+  矩阵临时目录 atexit 清理；ast-grep `IsWithinWorkspace` 改 Ordinal 与
+  `SearchTools.cs` / TS 口径对齐；fetch_url 重定向上限 C# 50 → 20（对齐 TS fetch
+  默认）；`email_list` / `email_read` 时间格式 TS 侧固定为 `yyyy/M/d HH:mm:ss`
+  （与 C# 一致，去掉 locale 依赖，用例以格式断言锁定）。
+- **已知差异（保留，文档化 + 对应用例）**：
+  - `write_excel` 无 `headers` 时数据起始行两轨不同（C# 与 TS 的表头占位约定不同；
+    双轨现有投影断言只覆盖带表头场景，无 headers 场景暂不逐字承诺）；
+  - `email_read` 仅 HTML 邮件 native 无纯文本正文（TS mailparser 由 HTML 转 text，
+    C# 未引 html→text 库）→ native 返回「（无纯文本正文…）」；形态/校验用例已覆盖，
+    内容级对齐如需再做再引库；
+  - `Math.round` / 附件 KB 取整边界、`paragraphs` 非数组语义（C# 静默当空 vs TS 抛错）
+    保留为已知边界，双轨用例仅覆盖数组形态；
+  - 文档生成取消可能留半成品文件（native 被杀无原子写）、`ast_grep_replace` 预演失败/
+    部分写失败的基线时序缺口、ast-grep 取消不杀孙进程（杀 host 语义同 git）：按 issue
+    计划跟踪（`ToolHostException.errorCode` 自 P2 加固批起经 `handleFrame` 透传，
+    `send_email` 已消费 `E_EMAIL_PRECONDITION`）。
+- **CI 口径**：matrix 在 CI 先于 npm ci，ast-grep 段 SKIP → **132/0**（本地全量
+  146/146）；ast-grep 由 npm ci 之后的 dual-track 步骤覆盖；`docs/dotnet-backend.md`
+  已注明。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 审查修复）。
+
+## 2026-10-05 增量：PR #20 复审 P2 加固（IKJK3V T2 批）
+
+- **背景**：Gitee PR #20 复审结论「可合入」（无 P0/P1）；6 条 P2 不阻断加固项逐条处理。
+- **P2-1 未知副作用安全网**：`nativeFirst(fallbackOnError:false)` 的 native 失败不再
+  以 `[错误]` 文本返回（会被 `legacyFailure` 固定归为 `not_applied`），改为结构化抛
+  `ToolExecutionError(E_TOOL_EFFECT_UNKNOWN, effectState:"unknown")`——经
+  `executeToolDefinition` 保留事实，由 Harness 既有入账机制登记 `uncertainEffects`
+  并触发同 fingerprint 重放拦截；补 dispatcher 级入账/拦截用例。
+- **P2-2 未派发 sentinel**：host 退出时排队（call 帧从未写入 stdin）调用以
+  `NativeCallNotDispatchedError`（`E_TOOL_NOT_DISPATCHED`）拒绝，在途失败保持普通
+  Error；`nativeFirst` 对确定未派发允许安全回退 TS，`fallbackOnError:false` 仅拦
+  不确定态。补 host 层与包装层两态用例。
+- **P2-3 发送前置/发送阶段区分**：C# `EmailTools.Send` 组装/连接/认证等前置失败抛
+  `E_EMAIL_PRECONDITION`（确定未发出），`Send` 阶段失败保持 `E_EMAIL_SEND`（状态
+  未知）；TS `handleFrame` 透传错误帧 `errorCode` 到 `Error.code`，`send_email` 以
+  `safeFallbackCodes:["E_EMAIL_PRECONDITION"]` 安全回退 nodemailer；矩阵邮件段补
+  「SMTP 连接拒绝（临时关闭端口）→ `ok=false` + `errorCode=E_EMAIL_PRECONDITION`」用例锁定（复审 P1）。
+- **P2-4 信任边界用例判别力**：ast-grep 伪造 `__` 用例改断言「无后置可信覆盖的键被
+  剥离」（修复前失败）；fs / git wire mock 改用 `vi.importActual` 复用真实
+  `stripInternalArgs`，不再自行重实现剥离逻辑。
+- **P2-5 决策文档**：本文件上文计数同步 **496/496（审查修复批 +13）**；「唯一通道」
+  措辞改为两条可信装配通道（`internalArgs` 与 `withNativeFirst` prepare）。
+- **P2-6 小边界**：① ast-grep 平台包补 win32-ia32 映射并注释支持范围（linux musl
+  无官方包 → 静默回退 TS）；② `formatEmailDate` Invalid Date 回退 `(未知)`（补断言）；
+  ③ `AstGrepTool.RunCli` 补 `GetResult()` 理论长挂注释（对照 GitTools 既有模式，
+  不改行为）；④ `withNativeFirst` / `nativeFirst` 的 TS 回退统一不向 TS 透传**模型
+  伪造的** `__` 键（可信 `internalArgs` 仍随 prepare 结果传入；git/ast-grep 回退闭包
+  忽略入参为预存在接线、TS 实现不读 `__` 键，无实际暴露，后续收口顺带消费回退入参）
+  （补 prepare 返回 null 路径用例）。
+- **验证**：`vitest run src/main/orchestrator/tools` **504/504**（P2 加固批 +8）；
+  `tsc -p tsconfig.main.json` 0；cyrene-core build 0 错误；矩阵 **146/146**（重建
+  smoke-host 后复跑；复审 P1 补 SMTP 连接拒绝用例）；dual-track **PASS**。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 复审 P2 加固）。

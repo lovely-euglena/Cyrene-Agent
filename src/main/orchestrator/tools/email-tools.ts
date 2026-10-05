@@ -16,11 +16,14 @@ import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
 import { requestUserChoice, type ChoiceOption } from "../../user-choice";
 import { logger, LogTag } from "../../logger";
+import { nativeFirst, nativeToolHost } from "./native-tool-host";
 
 const LOG_PREFIX = "[EmailTools]";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** email_read 正文截断（字符；工具结果另有全局预算，这里先兜底防爆帧） */
 const EMAIL_BODY_LIMIT = 4000;
+/** native 轨看门狗：≥ C# 单操作超时（30s，含 IMAP/SMTP 连接与协议往返）。 */
+const EMAIL_NATIVE_TIMEOUT_MS = 60_000;
 
 // ══════════════════════════════════════════════════════════
 // 配置注入
@@ -62,11 +65,51 @@ export function setEmailConfig(
   imapSecureGetter = imapSecureFn;
 }
 
+/**
+ * 实时下发邮件配置（config 帧；B1：授权码仅宿主内存驻留，不落盘）。
+ * 每次执行前刷新——改设置后下一次调用生效，与 web_search/weather 同口径。
+ */
+function pushEmailConfig(): void {
+  const smtpPort = smtpPortGetter?.() ?? 465;
+  const imapPort = imapPortGetter?.() ?? 993;
+  nativeToolHost.setRuntimeSettings({
+    email: {
+      enabled: emailEnabledGetter?.() ?? false,
+      smtpHost: smtpHostGetter?.() ?? "",
+      smtpPort,
+      smtpSecure: smtpSecureGetter?.() ?? (smtpPort === 465),
+      user: smtpUserGetter?.() ?? "",
+      pass: smtpPassGetter?.() ?? "",
+      fromName: fromNameGetter?.() ?? "",
+      imapHost: imapHostGetter?.() ?? "",
+      imapPort,
+      imapSecure: imapSecureGetter?.() ?? (imapPort === 993),
+    },
+  });
+}
+
 // ══════════════════════════════════════════════════════════
 // 发信（SMTP）
 // ══════════════════════════════════════════════════════════
 
-async function executeSendEmail(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
+/** 发信计划（校验通过后的可信参数；native/TS 两轨共用）。 */
+interface SendEmailPlan {
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  html?: string;
+  attachments: string[];
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  fromName: string;
+}
+
+/** 校验 + 组装发信计划；校验失败返回可展示错误串（与旧行为逐字一致）。 */
+function prepareSendEmail(args: Record<string, unknown>): string | SendEmailPlan {
   // 1. 读配置 + 启用检查
   const enabled = emailEnabledGetter?.() ?? false;
   if (!enabled) {
@@ -116,16 +159,62 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
     }
   }
 
-  // 5. 确认卡片（实现注意点 12.4：摘要只取 body 纯文本，不截取 html）
-  const bodyPreview = body.length > 100 ? body.slice(0, 100) + "…" : body;
-  const attachNames = attachments.length > 0
-    ? attachments.map(p => path.basename(p)).join(", ")
+  return { to, cc, subject, body, html, attachments, host, port, secure, user, pass, fromName };
+}
+
+/** TS 原实现的实际发送（nodemailer；确认卡与校验在外层完成）。 */
+async function sendEmailTs(plan: SendEmailPlan): Promise<string> {
+  try {
+    // 每次 execute 新建 transport，不缓存模块级实例；fromName 双引号转义（RFC 5322）；cc 空数组传 undefined
+    const transport = nodemailer.createTransport({
+      host: plan.host,
+      port: plan.port,
+      secure: plan.secure,
+      auth: { user: plan.user, pass: plan.pass },
+    });
+    const safeName = plan.fromName.replace(/"/g, '\\"');
+    const from = plan.fromName ? `"${safeName}" <${plan.user}>` : plan.user;
+    const ccField = plan.cc.length > 0 ? plan.cc.join(", ") : undefined;
+    const info = await transport.sendMail({
+      from,
+      to: plan.to.join(", "),
+      cc: ccField,
+      subject: plan.subject,
+      text: plan.body,
+      html: plan.html,
+      attachments: plan.attachments.map(p => ({ filename: path.basename(p), path: p })),
+    });
+    console.log(LOG_PREFIX, "已发送：", info.messageId);
+    return `[send_email] 已发送：${plan.to.join(", ")} 主题：${plan.subject}`;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(LOG_PREFIX, "发送失败：", msg);
+    return `[错误] 发送失败：${msg}`;
+  }
+}
+
+/**
+ * send_email：校验 → 确认卡（B2 审批保持在 Electron/TS）→ native 优先发送。
+ * native 失败不自动回退 nodemailer：失败可能发生在「服务器已收件、确认未回」
+ * 之后，自动重发会重复投递——返回明确的不确定态提示（fallbackOnError:false）。
+ * 仅以下「确定未发送」情形安全回退 TS：宿主未启动（call 返回 null）、
+ * 排队未派发（E_TOOL_NOT_DISPATCHED sentinel）、SMTP 前置阶段失败
+ * （E_EMAIL_PRECONDITION：连接/认证失败，未进入发送）。
+ */
+async function executeSendEmail(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
+  const plan = prepareSendEmail(args);
+  if (typeof plan === "string") return plan;
+
+  // 确认卡片（实现注意点 12.4：摘要只取 body 纯文本，不截取 html）
+  const bodyPreview = plan.body.length > 100 ? plan.body.slice(0, 100) + "…" : plan.body;
+  const attachNames = plan.attachments.length > 0
+    ? plan.attachments.map(p => path.basename(p)).join(", ")
     : "（无）";
   const question = [
     "确认发送邮件？",
-    `收件人：${to.join(", ")}`,
-    cc.length > 0 ? `抄送：${cc.join(", ")}` : null,
-    `主题：${subject}`,
+    `收件人：${plan.to.join(", ")}`,
+    plan.cc.length > 0 ? `抄送：${plan.cc.join(", ")}` : null,
+    `主题：${plan.subject}`,
     `正文摘要：${bodyPreview}`,
     `附件：${attachNames}`,
   ].filter(Boolean).join("\n");
@@ -139,36 +228,33 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
     return "[send_email] 用户取消发送";
   }
 
-  // 6. 发送（实现注意点 12.2：fromName 转义；12.3：cc 空数组传 undefined；12.5：每次新建 transport）
-  try {
-    // 实现注意点 12.5：每次 execute 新建 transport，不缓存模块级实例
-    const transport = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass },
-    });
-    // 实现注意点 12.2：fromName 双引号转义（RFC 5322）
-    const safeName = fromName.replace(/"/g, '\\"');
-    const from = fromName ? `"${safeName}" <${user}>` : user;
-    // 实现注意点 12.3：cc 为空数组时传 undefined，避免空 CC 头
-    const ccField = cc.length > 0 ? cc.join(", ") : undefined;
-    const info = await transport.sendMail({
-      from,
-      to: to.join(", "),
-      cc: ccField,
-      subject,
-      text: body,
-      html,
-      attachments: attachments.map(p => ({ filename: path.basename(p), path: p })),
-    });
-    console.log(LOG_PREFIX, "已发送：", info.messageId);
-    return `[send_email] 已发送：${to.join(", ")} 主题：${subject}`;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(LOG_PREFIX, "发送失败：", msg);
-    return `[错误] 发送失败：${msg}`;
-  }
+  // 实时下发邮件配置后 native 优先发送；失败不自动重发（发送状态可能未知）
+  pushEmailConfig();
+  return nativeFirst(
+    "send_email",
+    {
+      to: plan.to,
+      cc: plan.cc,
+      subject: plan.subject,
+      body: plan.body,
+      ...(plan.html ? { html: plan.html } : {}),
+      attachments: plan.attachments,
+    },
+    () => sendEmailTs(plan),
+    {
+      timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+      signal: context?.signal,
+      // 副作用安全（审查 P1-3 / 复审 P2-1/P2-3）：超时/进程故障/Send 阶段错误帧
+      // 可能是「已发送、确认未回」，自动回退会重复投递 → 禁止回退，结构化上抛
+      // effectState:"unknown" 交由 Harness 入账；仅确定未进入发送的前置失败
+      // （E_EMAIL_PRECONDITION）安全回退 TS。
+      fallbackOnError: false,
+      safeFallbackCodes: ["E_EMAIL_PRECONDITION"],
+      uncertainFailureMessage: (error) =>
+        `[错误] 邮件发送状态未知：native 发送未收到确认（${error.message}）。` +
+        "为避免重复投递，不会自动重发；请先到邮箱「已发送」确认，必要时再手动重试。",
+    },
+  );
 }
 
 // ══════════════════════════════════════════════════════════
@@ -246,8 +332,20 @@ function formatAddress(address: { name?: string; address?: string } | undefined)
   return address.name ? `${address.name} <${address.address ?? ""}>` : (address.address ?? "(未知发件人)");
 }
 
-/** 收件箱/文件夹列表：默认最近 10 封，可只看未读、可关键词过滤主题/发件人。 */
-async function executeEmailList(args: Record<string, unknown>): Promise<string> {
+/**
+ * 邮件时间固定格式（与 native 轨 C# `yyyy/M/d HH:mm:ss` 对齐）：
+ * 不用 toLocaleString——locale 随环境变化会让双轨输出分叉（审查 P2-1③）。
+ * Invalid Date（如 IMAP 时间戳无法解析）回退 `(未知)`，不输出 NaN 串（复审 P2-6②）。
+ */
+function formatEmailDate(date: Date): string {
+  if (Number.isNaN(date.getTime())) return "(未知)";
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/** 收件箱/文件夹列表：默认最近 10 封，可只看未读、可关键词过滤主题/发件人（TS 原实现，native 回退）。 */
+async function executeEmailListTs(args: Record<string, unknown>): Promise<string> {
   const folder = readMailbox(args);
   const rawLimit = Number(args.limit ?? 10);
   const limit = Math.min(50, Math.max(1, Number.isFinite(rawLimit) ? Math.round(rawLimit) : 10));
@@ -267,7 +365,7 @@ async function executeEmailList(args: Record<string, unknown>): Promise<string> 
         const from = formatAddress(message.envelope?.from?.[0]);
         const subject = message.envelope?.subject || "(无主题)";
         if (search && !`${subject} ${from}`.toLowerCase().includes(search)) continue;
-        const date = message.envelope?.date ? new Date(message.envelope.date).toLocaleString() : "";
+        const date = message.envelope?.date ? formatEmailDate(new Date(message.envelope.date)) : "";
         const seen = message.flags?.has("\\Seen") ? "已读" : "未读";
         lines.push(`- uid=${message.uid} · ${seen} · ${date} · 发件人：${from}\n  主题：${subject}`);
       }
@@ -283,8 +381,17 @@ async function executeEmailList(args: Record<string, unknown>): Promise<string> 
   return typeof result === "string" ? result : JSON.stringify(result);
 }
 
-/** 读单封邮件：主题/收发件人/时间/附件名 + 纯文本正文（截断）；默认标记已读。 */
-async function executeEmailRead(args: Record<string, unknown>): Promise<string> {
+/** email_list：native 优先（MailKit），失败回退 TS（imapflow）；取消信号透传。 */
+async function executeEmailList(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+  pushEmailConfig();
+  return nativeFirst("email_list", args, () => executeEmailListTs(args), {
+    timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+    signal: ctx?.signal,
+  });
+}
+
+/** 读单封邮件：主题/收发件人/时间/附件名 + 纯文本正文（截断）；默认标记已读（TS 原实现，native 回退）。 */
+async function executeEmailReadTs(args: Record<string, unknown>): Promise<string> {
   const uid = readUid(args);
   if (uid === null) return "[错误] 缺少有效的邮件 uid（先用 email_list 获取 uid）";
   const folder = readMailbox(args);
@@ -318,7 +425,7 @@ async function executeEmailRead(args: Record<string, unknown>): Promise<string> 
         `主题：${parsed.subject ?? "(无主题)"}`,
         `发件人：${parsed.from?.text ?? "(未知)"}`,
         `收件人：${toText || "(未知)"}`,
-        `时间：${parsed.date ? parsed.date.toLocaleString() : "(未知)"}`,
+        `时间：${parsed.date ? formatEmailDate(parsed.date) : "(未知)"}`,
         `附件：${attachmentNames}`,
         "",
         bodyText || "（无纯文本正文；如需 HTML 原文请告知）",
@@ -330,8 +437,17 @@ async function executeEmailRead(args: Record<string, unknown>): Promise<string> 
   return typeof result === "string" ? result : JSON.stringify(result);
 }
 
-/** 标记已读/未读。 */
-async function executeEmailMark(args: Record<string, unknown>): Promise<string> {
+/** email_read：native 优先（MailKit），失败回退 TS（imapflow + mailparser）；取消信号透传。 */
+async function executeEmailRead(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+  pushEmailConfig();
+  return nativeFirst("email_read", args, () => executeEmailReadTs(args), {
+    timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+    signal: ctx?.signal,
+  });
+}
+
+/** 标记已读/未读（TS 原实现，native 回退）。 */
+async function executeEmailMarkTs(args: Record<string, unknown>): Promise<string> {
   const uid = readUid(args);
   if (uid === null) return "[错误] 缺少有效的邮件 uid（先用 email_list 获取 uid）";
   const folder = readMailbox(args);
@@ -351,6 +467,15 @@ async function executeEmailMark(args: Record<string, unknown>): Promise<string> 
     }
   });
   return typeof result === "string" ? result : JSON.stringify(result);
+}
+
+/** email_mark：native 优先（MailKit），失败回退 TS（imapflow）；取消信号透传。 */
+async function executeEmailMark(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+  pushEmailConfig();
+  return nativeFirst("email_mark", args, () => executeEmailMarkTs(args), {
+    timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
+    signal: ctx?.signal,
+  });
 }
 
 // ══════════════════════════════════════════════════════════

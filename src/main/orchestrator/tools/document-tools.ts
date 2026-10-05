@@ -18,8 +18,18 @@ import { checkOverwriteDrop, overwriteDropMessage } from "./overwrite-guard";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import { findSkillPath } from "../../external-content-paths";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { withNativeFirst } from "./native-tool-host";
 
 const LOG_PREFIX = "[DocTools]";
+
+/**
+ * 动态 import 的 CJS 互操作：tsx/Node ESM 加载 CJS 包时命名导出可能不可见
+ * （default 指向 module.exports）；统一取 default 兜底，保证 esbuild CJS 打包
+ * 与 ESM 加载器两套行为一致（dual-track 脚本经 tsx 跑同一份工具代码）。
+ */
+function interop<T extends object>(mod: T): T {
+  return ((mod as { default?: T }).default ?? mod) as T;
+}
 
 /** 校验文件名：必须有合法扩展名，不能有危险字符。ext 支持多个候选（如 [".md", ".txt"]）。 */
 function validateFilename(filename: string, ext: string | string[]): string | null {
@@ -242,7 +252,7 @@ export function registerDocumentTools(): void {
   }
 
   // ── write_excel ──────────────────────────────────────
-  toolRegistry.register({
+  toolRegistry.register(withNativeFirst({
     id: "write_excel",
     name: "写 Excel",
     description:
@@ -308,7 +318,7 @@ export function registerDocumentTools(): void {
         return "[错误] sheets 不能为空。本次收到的参数键：" + (Object.keys(args).join(", ") || "（空）");
       }
 
-      const ExcelJS = await import("exceljs");
+      const ExcelJS = interop(await import("exceljs"));
       const workbook = new ExcelJS.Workbook();
 
       // 选主题（预设 + 自定义颜色覆盖）
@@ -426,10 +436,36 @@ export function registerDocumentTools(): void {
       console.log(LOG_PREFIX, "Excel 已生成（默认美观样式）:", outputPath);
       return `[write_excel] 已生成：${outputPath}`;
     },
-  });
+  }, "write_excel", (args, ctx) => {
+    // native 预检：校验/路径/主题（skills 样式加载留在 TS）→ .NET ClosedXML 生成
+    const filename = validateFilename(String(args.filename || ""), ".xlsx");
+    if (!filename) return null;
+    const outputPath = resolveOutputPath(filename, ctx?.resolvedWorkspaceRoot);
+    if (!outputPath) return null;
+    const sheets = args.sheets as Array<{ name: string; headers: string[]; rows: unknown[][] }>;
+    if (!Array.isArray(sheets) || sheets.length === 0) return null;
+    const baseTheme = getTheme(args.style ? String(args.style) : undefined);
+    const colors = args.colors as {
+      headerFill?: string; headerFont?: string; headerBorder?: string;
+      zebraFill?: string; borderColor?: string;
+    } | undefined;
+    const theme = mergeTheme(baseTheme, colors);
+    captureBaseline(ctx, outputPath);
+    return {
+      path: outputPath,
+      sheets,
+      theme: {
+        headerFill: theme.headerFill,
+        headerFont: theme.headerFont,
+        headerBorder: theme.headerBorder,
+        zebraFill: theme.zebraFill,
+        borderColor: theme.borderColor,
+      },
+    };
+  }, 30_000));
 
   // ── write_word ───────────────────────────────────────
-  toolRegistry.register({
+  toolRegistry.register(withNativeFirst({
     id: "write_word",
     name: "写 Word",
     description:
@@ -486,7 +522,7 @@ export function registerDocumentTools(): void {
 
       console.log(LOG_PREFIX, "Word 主题:", theme?.name ?? "默认商务", "style=" + styleId);
 
-      const { Document, Packer, Paragraph, HeadingLevel, TextRun } = await import("docx");
+      const { Document, Packer, Paragraph, HeadingLevel, TextRun } = interop(await import("docx"));
       const doc = new Document({
         styles: {
           default: {
@@ -522,10 +558,38 @@ export function registerDocumentTools(): void {
       console.log(LOG_PREFIX, "Word 已生成:", outputPath);
       return `[write_word] 已生成：${outputPath}`;
     },
-  });
+  }, "write_word", (args, ctx) => {
+    // native 预检：校验/路径/主题（skills/docx/styles 加载留在 TS）→ .NET Open XML SDK 生成
+    const filename = validateFilename(String(args.filename || ""), ".docx");
+    if (!filename) return null;
+    const outputPath = resolveOutputPath(filename, ctx?.resolvedWorkspaceRoot);
+    if (!outputPath) return null;
+    const styles = loadStylesDir("docx");
+    const styleId = args.style ? String(args.style) : "default";
+    const theme = (styles[styleId] ?? styles["default"]) as {
+      name?: string; titleColor?: string; titleSize?: number; titleFont?: string;
+      bodyFont?: string; bodySize?: number; bodyColor?: string; lineSpacing?: number; headingColor?: string;
+    } | undefined;
+    captureBaseline(ctx, outputPath);
+    return {
+      path: outputPath,
+      title: String(args.title || ""),
+      paragraphs: (args.paragraphs as string[]) || [],
+      theme: {
+        titleColor: toHexColor(theme?.titleColor ?? "FF1F4E79"),
+        titleSize: theme?.titleSize ?? 28,
+        titleFont: theme?.titleFont ?? "微软雅黑",
+        bodyFont: theme?.bodyFont ?? "微软雅黑",
+        bodySize: theme?.bodySize ?? 24,
+        bodyColor: toHexColor(theme?.bodyColor ?? "FF333333"),
+        lineSpacing: theme?.lineSpacing ?? 360,
+        headingColor: toHexColor(theme?.headingColor ?? "FF1F4E79"),
+      },
+    };
+  }, 30_000));
 
   // ── write_pdf ────────────────────────────────────────
-  toolRegistry.register({
+  toolRegistry.register(withNativeFirst({
     id: "write_pdf",
     name: "写 PDF",
     description:
@@ -592,10 +656,22 @@ export function registerDocumentTools(): void {
       console.log(LOG_PREFIX, "PDF 已生成:", outputPath);
       return `[write_pdf] 已生成：${outputPath}`;
     },
-  });
+  }, "write_pdf", (args, ctx) => {
+    // native 预检：校验/路径 → .NET QuestPDF 生成
+    const filename = validateFilename(String(args.filename || ""), ".pdf");
+    if (!filename) return null;
+    const outputPath = resolveOutputPath(filename, ctx?.resolvedWorkspaceRoot);
+    if (!outputPath) return null;
+    captureBaseline(ctx, outputPath);
+    return {
+      path: outputPath,
+      title: String(args.title || ""),
+      paragraphs: (args.paragraphs as string[]) || [],
+    };
+  }, 30_000));
 
   // ── write_markdown ───────────────────────────────────
-  toolRegistry.register({
+  toolRegistry.register(withNativeFirst({
     id: "write_markdown",
     name: "写 Markdown",
     description:
@@ -686,5 +762,41 @@ export function registerDocumentTools(): void {
       // append 目标不存在时等同新建：append 标志回传调用方请求值（口径与 write_file 一致）
       return buildWriteMarkdownResult(outputPath, appendMode, content, existingContent);
     },
-  });
+  }, "write_markdown", (args, ctx) => {
+    // native 预检：校验/路径/写前现读/覆盖防骤降（语义拒绝抛错，不落盘不回退）
+    const filename = validateFilename(String(args.filename || ""), [".md", ".txt"]);
+    if (!filename) return null;
+    const outputPath = resolveOutputPath(filename, ctx?.resolvedWorkspaceRoot);
+    if (!outputPath) return null;
+    const appendMode = args.append === true;
+    const content = String(args.content ?? "");
+    const existedBefore = fs.existsSync(outputPath);
+    if (existedBefore) {
+      let existingContent: string;
+      try {
+        existingContent = fs.readFileSync(outputPath, "utf8");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ToolExecutionError(
+          "E_READ_BEFORE_OVERWRITE_FAILED",
+          "写前读取原文件失败，已拒绝写入: " + msg,
+          "permission_denied",
+        );
+      }
+      if (!appendMode) {
+        const drop = checkOverwriteDrop(existingContent, content);
+        if (drop.blocked) {
+          throw new ToolExecutionError(
+            "E_OVERWRITE_DROP_BLOCKED",
+            overwriteDropMessage(drop),
+            "runtime_safety",
+            false,
+            "not_applied",
+          );
+        }
+      }
+    }
+    captureBaseline(ctx, outputPath);
+    return { path: outputPath, content, append: appendMode };
+  }, 15_000));
 }

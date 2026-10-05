@@ -15,7 +15,7 @@ import { logger, LogTag } from "../../logger";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
-import { nativeToolHost, type NativeFirstOptions } from "./native-tool-host";
+import { nativeToolHost, stripInternalArgs, type NativeFirstOptions } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 import { isAbortError } from "../../abort-utils";
 
@@ -61,7 +61,8 @@ async function nativeFirstFs(
 ): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return fallback();
   try {
-    const result = await nativeToolHost.call(nativeTool, args, options.timeoutMs, signal);
+    // 信任边界：只读三件无可信内部参数，模型 args 里的 `__` 键一律剥离
+    const result = await nativeToolHost.call(nativeTool, stripInternalArgs(args), options.timeoutMs, signal);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;
