@@ -9,6 +9,8 @@ TS 归一化实现（`src/main/channels/normalizers/**`）与 C# 实现
 - JSON Schema（规范镜像，非执行器）：`schema/channel-contract-v1.schema.json`
 - TS 语义源：`src/main/channels/normalizers/**`（行为对齐桌面 `src/main/channels/adapters/*`）
 
+当前 `cases/` 共 **51** 个用例（初始 42 + 微信评审修正 2 + 飞书评审修正 7）。
+
 ## 双端执行
 
 ```bash
@@ -19,6 +21,16 @@ npx vitest run src/main/channels
 dotnet build dotnet/smoke-host -c Release
 dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels
 ```
+
+### schema 校验（draft-07）
+
+```bash
+npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"
+```
+
+schema 为规范镜像（非执行器）：全量 cases 必须通过，语义执行仍以双端 runner 为准。
+schema 不依赖 `format` 扩展——`clientId` 的 UUID 形态用 draft-07 `pattern` 锁定，保证上面命令无需
+`ajv-formats` 即可直接跑通。
 
 ## case 文件格式
 
@@ -64,7 +76,7 @@ dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel
 | feishu | `receiveIdType?`, `uploads{filePath→{image_key?,file_key?}}`, `durations{filePath→ms}` | `{ "receiveIdType": "open_id"\|"chat_id", "requests": [<im/v1/messages body>], "error"?: string }` |
 | qqbot | `messageId`, `msgSeqUsed?`, `seqLimit?` | `{ "requests": [<被动回复请求体>], "error"?: string }` |
 
-- `client_id` 真机为随机 UUID，fixtures 注入固定值后逐字段比对（格式见 schema `format: uuid`）；
+- `client_id` 真机为随机 UUID，fixtures 注入固定值后逐字段比对（格式见 schema `pattern`，UUID 形态）；
 - `error` 仅在实际失败时出现（缺上传结果、缺 filePath、超限等），`requests` 保持空数组。
 
 ### kind = derived-ids
@@ -96,6 +108,24 @@ proactiveEventId = "proactive-" + sha256hex(sessionId + ":" + intentId)[0..32]
 ### kind = capability
 
 `input = { channel }`，`expect` = 服务端冻结能力表（§2.2）。
+
+## 本轮契约修正（2026-10-05 R1 评审；冻结规则不变）
+
+- **飞书出站私聊缺省 `receive_id_type=chat_id`**：dispatcher 的 TargetId 恒为 chatId（`oc_`），
+  `outbound-feishu-text` / `outbound-feishu-group-receive-id` 锁定缺省口径；需要 `open_id` 时必须显式
+  覆盖（`outbound-feishu-receive-id-override`，输入 `receiveIdType`）；
+- **边界向量**：微信 `message_type` 严格 `==1`（`1.5` 与字符串 `"1"` 两条对齐 TS）；飞书 `content`
+  非字符串时按 JS `String()` 语义（array/number/object 三条）；飞书音频 `duration` 非整数原值保留
+  （入/出站各一条）；飞书 video `image_key` 空串保留（出站一条）；
+- **webhook 回放**：`feishu-webhook/`（非双端契约，供 `channel-selftest feishu`）锁定 challenge
+  明文/加密、坏签名、越界时间戳（`E_FEISHU_TIMESTAMP`）、密文文本/图片、群忽略、重投去重。
+
+## 已知超纲差异（未入向量；双端不承诺逐字一致）
+
+- 飞书出站 video：`uploads[*].image_key` 显式 `null` 时 TS 输出 `"image_key":null`，C# 省略该键
+  （`string?` 语义）；向量只锁「键存在（含空串）保留」。生产路径 uploads 由各端生成，不应出现显式 null；
+- 飞书入站 `content` 为 number 时：C# 取 JSON 原始字面量（`GetRawText`），JS 用 `String(number)` 数值
+  格式化——`1.0` / `1e21` 等形态不同（普通整数 `123` 已锁）。
 
 ## 破坏性修改
 

@@ -153,7 +153,10 @@
         "kind": { "enum": ["image", "file", "audio", "video"] },
         "fileKey": { "type": "string" },
         "fileName": { "type": "string" },
-        "duration": { "type": "integer" }
+        "duration": {
+          "type": "number",
+          "$comment": "ms；非整数原值保留（inbound-feishu-audio-fractional-duration）"
+        }
       },
       "additionalProperties": false
     },
@@ -203,6 +206,7 @@
       "type": "object",
       "required": ["name", "kind", "channel", "input", "expect"],
       "properties": {
+        "name": { "type": "string" },
         "kind": { "const": "inbound" },
         "channel": { "$ref": "#/definitions/channelId" },
         "input": {
@@ -219,6 +223,7 @@
       "type": "object",
       "required": ["name", "kind", "channel", "input", "expect"],
       "properties": {
+        "name": { "type": "string" },
         "kind": { "const": "outbound" },
         "channel": { "$ref": "#/definitions/channelId" },
         "input": {
@@ -227,7 +232,11 @@
           "properties": {
             "message": { "$ref": "#/definitions/outgoingMessage" },
             "contextToken": { "type": "string" },
-            "clientId": { "type": "string", "format": "uuid" },
+            "clientId": {
+              "type": "string",
+              "$comment": "UUID 形态（draft-07 pattern；不依赖 ajv-formats，保证 npx ajv-cli 默认档可直接校验）",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
             "uploads": { "type": "object" },
             "voices": { "type": "object" },
             "durations": { "type": "object" },
@@ -246,6 +255,7 @@
       "type": "object",
       "required": ["name", "kind", "channel", "input", "expect"],
       "properties": {
+        "name": { "type": "string" },
         "kind": { "const": "derived-ids" },
         "channel": { "$ref": "#/definitions/channelId" },
         "input": {
@@ -270,6 +280,7 @@
       "type": "object",
       "required": ["name", "kind", "channel", "input", "expect"],
       "properties": {
+        "name": { "type": "string" },
         "kind": { "const": "text-split" },
         "channel": { "$ref": "#/definitions/channelId" },
         "input": {
@@ -291,6 +302,7 @@
       "type": "object",
       "required": ["name", "kind", "channel", "input", "expect"],
       "properties": {
+        "name": { "type": "string" },
         "kind": { "const": "capability" },
         "channel": { "$ref": "#/definitions/channelId" },
         "input": {
