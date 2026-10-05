@@ -1,0 +1,31 @@
+{
+  "name": "feishu 出站图片（image_key 注入）",
+  "kind": "outbound",
+  "channel": "feishu",
+  "input": {
+    "message": {
+      "channel": "feishu",
+      "targetId": "oc_user_1",
+      "parts": [
+        { "kind": "text", "text": "看图" },
+        { "kind": "image", "filePath": "C:/tmp/pic.png" }
+      ]
+    },
+    "uploads": { "C:/tmp/pic.png": { "image_key": "img_key_1" } }
+  },
+  "expect": {
+    "receiveIdType": "chat_id",
+    "requests": [
+      {
+        "receive_id": "oc_user_1",
+        "msg_type": "text",
+        "content": "{\"text\":\"看图\"}"
+      },
+      {
+        "receive_id": "oc_user_1",
+        "msg_type": "image",
+        "content": "{\"image_key\":\"img_key_1\"}"
+      }
+    ]
+  }
+}

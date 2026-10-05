@@ -21,6 +21,7 @@ import type { ChannelsSettings } from "./settings-store";
 import { appendLog } from "./message-log";
 import type { MobileMessageSegmentationMode } from "../../shared/preferences";
 import { rememberProactiveChannelRecipient } from "./proactive-delivery";
+import { shouldProcessChannel } from "./ownership";
 import type { ChannelRateLimiter } from "./rate-limiter";
 import type { KeyedQueue } from "./keyed-queue";
 import type { ChannelDeliveryService } from "./delivery-service";
@@ -33,12 +34,14 @@ import {
   type ChannelConversationTarget,
   resolveChannelConversationTarget,
 } from "./channel-context";
+import { makeChannelTurnId } from "./normalizers/ids";
 
 export {
   formatChannelUserText,
   lookupOriginalSender,
   makeSessionId,
 } from "./channel-context";
+export { makeChannelTurnId } from "./normalizers/ids";
 export type {
   DispatchContext,
   ChannelConversationTarget,
@@ -157,6 +160,11 @@ export class ChannelDispatcher {
    * 返回的出站消息仅供调用方观测和测试，不要求适配器再次发送。
    */
   async handleIncoming(msg: IncomingMessage): Promise<OutgoingMessage | null> {
+    // 归属门闩（第二道防线，§5.6）：owner=server 时桌面不处理入站，防交接窗口双主
+    if (!shouldProcessChannel(msg.channel)) {
+      console.warn(LOG, `归属门闩丢弃（owner≠desktop）[${msg.channel}]`);
+      return null;
+    }
     const sessionId = makeSessionId(msg.channel, msg.chatId);
     // 读取设置会同步刷新限速器，必须发生在本轮额度消费之前。
     void this.settings;
@@ -390,13 +398,6 @@ export class ChannelDispatcher {
     try { appendLog({ dir: "error", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text: `[发送失败] ${error}` }); }
     catch (logErr) { console.warn(LOG, "appendLog (delivery error) 失败:", logErr); }
   }
-}
-
-export function makeChannelTurnId(msg: IncomingMessage, role: "user" | "assistant"): string {
-  // 回退源（时间+正文）可能含换行：多行/附件正文会生成非法 entry ID 被拒绝写入 journal，
-  // 这里压成单行空格，保证任何适配器都能得到合法的 turn ID
-  const source = (msg.messageId || `${msg.at.getTime()}:${msg.text}`).replace(/[\r\n]+/g, " ");
-  return `${msg.channel}:${msg.chatId}:${source}:${role}`;
 }
 
 function toJournalAttachments(msg: IncomingMessage): Array<{ kind: "image" | "document"; name: string; filePath: string; mime?: string; caption?: string }> | undefined {

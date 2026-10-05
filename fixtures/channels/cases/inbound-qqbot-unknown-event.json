@@ -1,0 +1,10 @@
+{
+  "name": "qqbot 未知事件类型忽略",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": { "type": "FRIEND_ADD", "data": {} },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": { "message": null, "media": [] }
+}

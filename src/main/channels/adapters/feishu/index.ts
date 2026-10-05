@@ -43,6 +43,7 @@ import type {
 } from "../../types";
 import { loadChannelsSettings } from "../../settings-store";
 import { getAudioDurationMs } from "./audio-duration";
+import { resourceKindToExt } from "../../normalizers/feishu";
 import { logger, LogTag } from "../../../logger";
 
 export { transcodeAudioFileToFeishuOpus } from "./audio-transcode";
@@ -61,18 +62,6 @@ const FEISHU_CAPABILITY: ChannelCapability = {
   sticker: true,
   maxTextLength: 4000,
 };
-
-/** 飞书资源类型 → 我们的附件类型 + 扩展名 */
-function resourceKindToExt(ktype: string): { ext: string; mime: string } {
-  switch (ktype) {
-    case "image": return { ext: ".png", mime: "image/png" };
-    case "audio": return { ext: ".mp3", mime: "audio/mpeg" };
-    case "video": return { ext: ".mp4", mime: "video/mp4" };
-    case "file":  return { ext: ".bin", mime: "application/octet-stream" };
-    case "sticker": return { ext: ".png", mime: "image/png" };
-    default: return { ext: ".bin", mime: "application/octet-stream" };
-  }
-}
 
 /** 把飞书资源下载到本地缓存目录。返回本地文件路径或 null（失败时）。 */
 async function downloadLarkResource(
@@ -216,6 +205,23 @@ async function sendLark(channel: LarkChannel, targetId: string, part: OutgoingPa
           source: part.filePath,
           duration,
         },
+      } as SendInput)) ?? null;
+      break;
+    }
+    case "file": {
+      // SDK 内置文件上传（file_type=stream）；fileName 必填，缺省用路径末段
+      result = (await channel.send(targetId, {
+        file: {
+          source: part.filePath,
+          fileName: part.name ?? path.basename(part.filePath),
+        },
+      } as SendInput)) ?? null;
+      break;
+    }
+    case "video": {
+      // SDK 内置视频上传（file_type=mp4，时长自解析）；封面可选，当前出站模型不携带
+      result = (await channel.send(targetId, {
+        video: { source: part.filePath },
       } as SendInput)) ?? null;
       break;
     }

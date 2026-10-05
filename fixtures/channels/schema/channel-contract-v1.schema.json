@@ -1,0 +1,322 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cyrene.local/fixtures/channels/channel-contract-v1.schema.json",
+  "title": "渠道消息契约 v1（fixtures/channels）",
+  "description": "服务端渠道层消息类型与 fixtures case 的规范镜像（非执行器）。执行器 = TS vitest + smoke-host --selftest channel-contract。字段语义见 docs/design/2026-10-05-server-channel.md §2.2/§2.4/§8.1。",
+  "definitions": {
+    "isoUtcMs": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "channelId": { "enum": ["wechat", "feishu", "qqbot"] },
+    "channelAttachment": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["image", "audio", "file", "video"] },
+        "url": { "type": "string" },
+        "filePath": { "type": "string" },
+        "mime": { "type": "string" },
+        "caption": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "channelMention": {
+      "type": "object",
+      "required": ["userId"],
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "isBot": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "channelReplyContext": {
+      "type": "object",
+      "required": ["messageId"],
+      "properties": {
+        "messageId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "incomingMessage": {
+      "type": "object",
+      "required": ["channel", "senderId", "chatId", "text", "at"],
+      "properties": {
+        "channel": { "$ref": "#/definitions/channelId" },
+        "chatType": { "enum": ["private", "group"] },
+        "messageId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "chatId": { "type": "string" },
+        "threadId": { "type": "string" },
+        "text": { "type": "string" },
+        "attachments": { "type": "array", "items": { "$ref": "#/definitions/channelAttachment" } },
+        "mentions": { "type": "array", "items": { "$ref": "#/definitions/channelMention" } },
+        "reply": { "$ref": "#/definitions/channelReplyContext" },
+        "at": { "$ref": "#/definitions/isoUtcMs" }
+      },
+      "additionalProperties": false
+    },
+    "outgoingPart": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["text", "image", "audio", "file", "video", "card", "sticker"] },
+        "text": { "type": "string" },
+        "url": { "type": "string" },
+        "filePath": { "type": "string" },
+        "caption": { "type": "string" },
+        "mime": { "type": "string" },
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "markdown": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "value"],
+            "properties": { "key": { "type": "string" }, "value": { "type": "string" } },
+            "additionalProperties": false
+          }
+        },
+        "stickerId": { "type": "string" },
+        "imagePath": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "outgoingMessage": {
+      "type": "object",
+      "required": ["channel", "targetId", "parts"],
+      "properties": {
+        "channel": { "$ref": "#/definitions/channelId" },
+        "chatType": { "enum": ["private", "group"] },
+        "targetId": { "type": "string" },
+        "threadId": { "type": "string" },
+        "replyContext": {
+          "type": "object",
+          "required": ["messageId"],
+          "properties": { "messageId": { "type": "string" }, "mentionUserId": { "type": "string" } },
+          "additionalProperties": false
+        },
+        "parts": { "type": "array", "items": { "$ref": "#/definitions/outgoingPart" } }
+      },
+      "additionalProperties": false
+    },
+    "channelCapability": {
+      "type": "object",
+      "$comment": "服务端冻结能力表见 docs/design/2026-10-05-server-channel.md §2.2；2026-10-05 阶段 5 ffmpeg 入镜像后 feishu.audio=true（§6.3/Q1）。执行值以 capability 用例 + 双端表为准。",
+      "required": ["text", "image", "audio", "file", "video", "markdown", "card", "sticker", "maxTextLength"],
+      "properties": {
+        "text": { "type": "boolean" },
+        "image": { "type": "boolean" },
+        "audio": { "type": "boolean" },
+        "file": { "type": "boolean" },
+        "video": { "type": "boolean" },
+        "markdown": { "type": "boolean" },
+        "card": { "type": "boolean" },
+        "sticker": { "type": "boolean" },
+        "maxTextLength": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "wechatMediaDescriptor": {
+      "type": "object",
+      "required": ["kind", "fileName", "extension", "analyzable"],
+      "properties": {
+        "kind": { "enum": ["image", "voice", "file", "video"] },
+        "fileName": { "type": "string" },
+        "extension": { "type": "string" },
+        "analyzable": { "type": "boolean" },
+        "sampleRate": {
+          "type": "number",
+          "$comment": "Hz；非整数原值保留（inbound-wechat-media-strict-fields），与 TS number 口径一致"
+        },
+        "media": {
+          "type": "object",
+          "required": ["encrypt_query_param", "aes_key"],
+          "properties": {
+            "encrypt_query_param": { "type": "string" },
+            "aes_key": { "type": "string" },
+            "encrypt_type": { "enum": [0, 1] },
+            "full_url": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "feishuMediaDescriptor": {
+      "type": "object",
+      "required": ["kind", "fileKey"],
+      "properties": {
+        "kind": { "enum": ["image", "file", "audio", "video"] },
+        "fileKey": { "type": "string" },
+        "fileName": { "type": "string" },
+        "duration": {
+          "type": "number",
+          "$comment": "ms；非整数原值保留（inbound-feishu-audio-fractional-duration）"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inboundExpect": {
+      "type": "object",
+      "required": ["message", "media"],
+      "properties": {
+        "message": { "oneOf": [{ "$ref": "#/definitions/incomingMessage" }, { "type": "null" }] },
+        "media": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/wechatMediaDescriptor" },
+              { "$ref": "#/definitions/feishuMediaDescriptor" }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "outboundExpect": {
+      "type": "object",
+      "required": ["requests"],
+      "properties": {
+        "receiveIdType": { "enum": ["open_id", "chat_id"] },
+        "requests": { "type": "array", "items": { "type": "object" } },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "derivedIdsExpect": {
+      "type": "object",
+      "required": ["sessionId", "userTurnId", "assistantTurnId", "userEventId", "assistantEventId", "proactiveEventId"],
+      "properties": {
+        "sessionId": { "type": "string" },
+        "userTurnId": { "type": "string" },
+        "assistantTurnId": { "type": "string" },
+        "userEventId": { "type": "string" },
+        "assistantEventId": { "type": "string" },
+        "proactiveEventId": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["name", "kind", "channel", "input", "expect"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "const": "inbound" },
+        "channel": { "$ref": "#/definitions/channelId" },
+        "input": {
+          "type": "object",
+          "required": ["raw"],
+          "properties": { "raw": {}, "now": { "$ref": "#/definitions/isoUtcMs" } },
+          "additionalProperties": false
+        },
+        "expect": { "$ref": "#/definitions/inboundExpect" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["name", "kind", "channel", "input", "expect"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "const": "outbound" },
+        "channel": { "$ref": "#/definitions/channelId" },
+        "input": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "message": { "$ref": "#/definitions/outgoingMessage" },
+            "contextToken": { "type": "string" },
+            "clientId": {
+              "type": "string",
+              "$comment": "UUID 形态（draft-07 pattern；不依赖 ajv-formats，保证 npx ajv-cli 默认档可直接校验）",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "uploads": { "type": "object" },
+            "voices": { "type": "object" },
+            "durations": { "type": "object" },
+            "receiveIdType": { "enum": ["open_id", "chat_id"] },
+            "messageId": { "type": "string" },
+            "msgSeqUsed": { "type": "integer", "minimum": 0 },
+            "seqLimit": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "expect": { "$ref": "#/definitions/outboundExpect" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["name", "kind", "channel", "input", "expect"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "const": "derived-ids" },
+        "channel": { "$ref": "#/definitions/channelId" },
+        "input": {
+          "type": "object",
+          "required": ["channel", "chatId", "at", "text", "anchorEventId", "intentId"],
+          "properties": {
+            "channel": { "$ref": "#/definitions/channelId" },
+            "chatId": { "type": "string" },
+            "messageId": { "type": "string" },
+            "at": { "$ref": "#/definitions/isoUtcMs" },
+            "text": { "type": "string" },
+            "anchorEventId": { "type": "string" },
+            "intentId": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "expect": { "$ref": "#/definitions/derivedIdsExpect" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["name", "kind", "channel", "input", "expect"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "const": "text-split" },
+        "channel": { "$ref": "#/definitions/channelId" },
+        "input": {
+          "type": "object",
+          "required": ["text"],
+          "properties": { "text": { "type": "string" }, "limit": { "type": "integer", "minimum": 1 } },
+          "additionalProperties": false
+        },
+        "expect": {
+          "type": "object",
+          "required": ["parts"],
+          "properties": { "parts": { "type": "array", "items": { "type": "string" } } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["name", "kind", "channel", "input", "expect"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "const": "capability" },
+        "channel": { "$ref": "#/definitions/channelId" },
+        "input": {
+          "type": "object",
+          "required": ["channel"],
+          "properties": { "channel": { "$ref": "#/definitions/channelId" } },
+          "additionalProperties": false
+        },
+        "expect": { "$ref": "#/definitions/channelCapability" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

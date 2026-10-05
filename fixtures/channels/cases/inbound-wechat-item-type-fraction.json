@@ -1,0 +1,31 @@
+{
+  "name": "wechat item.type=1.5/2.5 严格过滤（TS ===1/===2，C# 不做 (int) 截断）",
+  "kind": "inbound",
+  "channel": "wechat",
+  "input": {
+    "raw": {
+      "message_id": "msg-item-type-fraction",
+      "from_user_id": "wx-user-1",
+      "to_user_id": "bot-1",
+      "message_type": 1,
+      "context_token": "ctx-abc",
+      "create_time_ms": 1787889600000,
+      "item_list": [
+        { "type": 1.5, "text_item": { "text": "截断会误放行" } },
+        { "type": 2.5, "image_item": { "file_name": "a.png" } }
+      ]
+    },
+    "now": "2026-08-28T04:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "wechat",
+      "senderId": "wx-user-1",
+      "chatId": "wx-user-1",
+      "messageId": "msg-item-type-fraction",
+      "text": "",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

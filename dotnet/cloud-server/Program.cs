@@ -5,8 +5,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using CyreneCloud.Auth;
+using CyreneCloud.Channels;
+using CyreneCloud.Channels.Adapters.WeChat;
+using CyreneCloud.Channels.Adapters.Feishu;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
+using CyreneNative.Channels;
 using CyreneNative.Sync;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
@@ -31,6 +35,19 @@ StorageHardening.EnforceProcessUmask();
 if (args.Length > 0 && args[0] is "pair-code" or "devices" or "revoke")
 {
     Environment.ExitCode = RunCli(args);
+    return;
+}
+
+// 裸跑渠道自测（不进 Web 管线）：channel-selftest [all|framework|wechat|feishu|qqbot|ownership]；
+// --selftest <suite> 为通用别名（同义；未知子集退出码 2 并打印可用清单，不会误落回真服务启动）。
+if (args.Length > 0 && args[0] == "channel-selftest")
+{
+    Environment.ExitCode = ChannelSelfTest.Run(args.Length > 1 ? args[1] : "all");
+    return;
+}
+if (args.Length > 0 && args[0] == "--selftest")
+{
+    Environment.ExitCode = ChannelSelfTest.Run(args.Length > 1 ? args[1] : "all");
     return;
 }
 
@@ -60,17 +77,104 @@ var modelClient = new ModelClient(
 var dialogSystemPrompt = Environment.GetEnvironmentVariable("CLOUD_LLM_SYSTEM_PROMPT");
 var dialogContextChars = ReadIntEnv("CLOUD_LLM_CONTEXT_CHARS", 24000);
 builder.Services.AddSingleton(modelClient);
-builder.Services.AddSingleton(sp => new DialogLoop(
+// 生成核心（DialogEngine）与事件写者（ServerEventWriter）抽出（§2.4 R3/R4）：
+// DialogLoop 只留队列/重试/写回；渠道路径复用同一生成与写库语义。
+builder.Services.AddSingleton(sp => new ServerEventWriter(sp.GetRequiredService<EventStore>()));
+builder.Services.AddSingleton(sp => new DialogEngine(
     sp.GetRequiredService<EventStore>(),
     modelClient,
-    sp.GetRequiredService<ILogger<DialogLoop>>(),
+    sp.GetRequiredService<ILogger<DialogEngine>>(),
     dialogSystemPrompt,
     dialogContextChars));
+builder.Services.AddSingleton<IDialogEngine>(sp => sp.GetRequiredService<DialogEngine>());
+builder.Services.AddSingleton(sp => new DialogLoop(
+    sp.GetRequiredService<IDialogEngine>(),
+    sp.GetRequiredService<ServerEventWriter>(),
+    modelClient,
+    sp.GetRequiredService<ILogger<DialogLoop>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DialogLoop>());
 
 var masterToken = Environment.GetEnvironmentVariable("CLOUD_TOKEN");
 // 主控令牌字节预转换（鉴权热路径不重复分配；比较后临时数组清零）
 var masterTokenBytes = string.IsNullOrEmpty(masterToken) ? null : Encoding.UTF8.GetBytes(masterToken);
+
+// ── 服务端渠道层（Phase 2 渠道批，§2.3/§2.4）──
+// CLOUD_CHANNELS 为空 = 渠道层整体关闭（不注册存储/托管，零内存占用）；
+// capabilities.channels 仍声明（hosted=[]），老客户端宽容解析。
+var channelOptions = ChannelOptions.FromEnvironment(dataDir);
+builder.Services.AddSingleton(channelOptions);
+if (channelOptions.ChannelsEnabled)
+{
+    var channelsDbPath = Path.Combine(dataDir, "channels.db");
+    builder.Services.AddSingleton(new ChannelStore(
+        channelsDbPath, ChannelCredentialProtector.Create(masterToken, dataDir)));
+    builder.Services.AddSingleton<ChannelManager>();
+    builder.Services.AddSingleton(sp => new ChannelOwnershipService(
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ChannelManager>(),
+        sp.GetRequiredService<ILogger<ChannelOwnershipService>>(),
+        ChannelOwnershipService.ComputeServerId(dataDir),
+        TimeSpan.FromSeconds(channelOptions.OwnershipTtlSeconds)));
+    builder.Services.AddSingleton(sp => new ChannelDeliveryService(
+        sp.GetRequiredService<ChannelManager>(),
+        sp.GetRequiredService<ILogger<ChannelDeliveryService>>()));
+    builder.Services.AddSingleton(sp => new ChannelProactiveService(
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ServerEventWriter>(),
+        sp.GetRequiredService<ChannelDeliveryService>(),
+        sp.GetRequiredService<ChannelOwnershipService>(),
+        sp.GetRequiredService<ILogger<ChannelProactiveService>>()));
+    builder.Services.AddSingleton(sp => new ChannelDispatcher(
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ServerEventWriter>(),
+        sp.GetRequiredService<IDialogEngine>(),
+        sp.GetRequiredService<ChannelDeliveryService>(),
+        sp.GetRequiredService<ILogger<ChannelDispatcher>>(),
+        sp.GetRequiredService<ChannelOwnershipService>()));
+    // 飞书 webhook 处理器（阶段 5）：公开路由的校验/解密/去重/路由逻辑；适配器由托管服务注册
+    builder.Services.AddSingleton(sp => new FeishuEventCrypto(
+        channelOptions.FeishuVerificationToken, channelOptions.FeishuEncryptKey));
+    builder.Services.AddSingleton(sp => new FeishuWebhookProcessor(
+        sp.GetRequiredService<FeishuEventCrypto>(),
+        sp.GetRequiredService<ChannelStore>(),
+        sp.GetRequiredService<ChannelManager>(),
+        sp.GetRequiredService<ILogger<FeishuWebhookProcessor>>()));
+    // 适配器注册表（阶段 3-6 在 ChannelAdapterCatalog 追加；已含 wechat/qqbot/feishu）
+    foreach (var registration in ChannelAdapterCatalog.All)
+    {
+        builder.Services.AddSingleton<IChannelAdapterRegistration>(registration);
+    }
+    // 微信 iLink 专属运行时（媒体缓存/CDN/协议；SILK 阶段 7 占位）+ 扫码登录服务（§3.4）
+    if (channelOptions.IsChannelEnabled(ChannelIds.WeChat))
+    {
+        builder.Services.AddSingleton(new WeChatMediaStore(channelOptions.DataDir, channelOptions.MediaDirMb));
+        builder.Services.AddSingleton(new WeChatCdnClient(
+            WeChatHttp.CreateClient(), channelOptions.WeChatCdnBaseUrl));
+        builder.Services.AddSingleton<ISilkCodec, SilkUnavailableCodec>();
+        builder.Services.AddSingleton(sp => new WeChatQrLogin(
+            channelOptions,
+            sp.GetRequiredService<ChannelStore>(),
+            sp.GetRequiredService<ChannelManager>(),
+            sp.GetRequiredService<ILogger<WeChatQrLogin>>()));
+    }
+    builder.Services.AddHostedService<ChannelHostedService>();
+}
+
+// capabilities.channels（§2.6）：hosted = 已配置且生成可用的渠道（R6：无生成则空）。
+// 阶段 3-6 适配器注册后自动点亮；ownership/proactive 供桌面降级 UI。
+var channelRegistrations = ChannelAdapterCatalog.All;
+var hostedChannels = modelClient.Enabled
+    ? channelRegistrations
+        .Where(item => channelOptions.IsChannelEnabled(item.ChannelId) && item.IsConfigured(channelOptions))
+        .Select(item => item.ChannelId)
+        .ToArray()
+    : [];
+var proactiveChannels = modelClient.Enabled
+    ? channelRegistrations
+        .Where(item => channelOptions.IsChannelEnabled(item.ChannelId) && item.IsConfigured(channelOptions) && item.SupportsProactive)
+        .Select(item => item.ChannelId)
+        .ToArray()
+    : [];
 var allowedHosts = (Environment.GetEnvironmentVariable("CLOUD_ALLOWED_HOSTS") ?? "")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -161,7 +265,12 @@ app.Use(async (context, next) =>
     // 能力声明公开只读（客户端在配对前就需要它来降级 UI；不含敏感信息）
     var isCapabilities = HttpMethods.IsGet(context.Request.Method)
         && path.Equals("/v1/capabilities", StringComparison.OrdinalIgnoreCase);
-    if (isPairRedeem || isCapabilities || (!path.StartsWithSegments("/v1") && !isHealthz))
+    // 飞书 webhook 公开路由（§6.2）：自带 Verification Token/签名/时间戳校验
+    var isFeishuWebhook = HttpMethods.IsPost(context.Request.Method)
+        && (path.Equals(FeishuWebhookEndpoint.WebhookPath, StringComparison.OrdinalIgnoreCase)
+            || path.Equals(FeishuWebhookEndpoint.AliasPath, StringComparison.OrdinalIgnoreCase));
+    if (isPairRedeem || isCapabilities || isFeishuWebhook
+        || (!path.StartsWithSegments("/v1") && !isHealthz))
     {
         await next();
         return;
@@ -223,9 +332,32 @@ app.MapGet("/v1/capabilities", () => Results.Json(new
     pairing = "device-token",
     pwa = hasWebRoot,
     maxBatchBytes = CloudApi.MaxPushBodyBytes,
+    // §2.6 渠道能力声明：hosted 为空 = 服务端无渠道托管（桌面按本机运行处理）
+    channels = new
+    {
+        hosted = hostedChannels,
+        ownership = "lease",
+        proactive = proactiveChannels,
+        voice = false,
+        mediaMaxMB = channelOptions.WeChatMediaMaxMb,
+    },
 }));
 
+// 飞书 webhook（公开路由，§6.2）：渠道层启用且飞书在 CLOUD_CHANNELS 内才挂载；
+// 校验/解密/去重逻辑见 FeishuWebhookProcessor，事件处理立即 200 + 后台执行。
+if (channelOptions.ChannelsEnabled && channelOptions.IsChannelEnabled(ChannelIds.Feishu))
+{
+    FeishuWebhookEndpoint.Map(app);
+}
+
 // ── 配对与设备（IKJK2K） ──
+
+// 渠道控制面（§5.2）：/v1/channels/ownership|status|{id}/proactive（复用 Bearer 鉴权 + sync 限流桶）。
+// CLOUD_CHANNELS 为空时渠道层关闭，端点不挂载（客户端据 capabilities.channels.hosted=[] 降级）。
+if (channelOptions.ChannelsEnabled)
+{
+    app.MapChannelApi();
+}
 
 // POST /v1/pair/code：已配对设备（或主控令牌）签发一次性配对码（TTL 默认 5 分钟）
 app.MapPost("/v1/pair/code", (HttpContext context, AuthStore auth) =>
@@ -395,6 +527,57 @@ sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sess
     }
 });
 
+// ── 微信 iLink 扫码登录（§3.4；阶段 3）──
+// 控制面：桌面设置页调 start 拿 PNG 显示 → 3s 轮询 status → confirmed 后凭据已加密落库并自动重启适配器。
+// 渠道未启用/未配置 wechat 时返回 E_CHANNEL_NOT_HOSTED（API 面稳定，老客户端宽容处理）。
+
+app.MapPost("/v1/channels/wechat/login/start", async (HttpContext context) =>
+{
+    var login = context.RequestServices.GetService<WeChatQrLogin>();
+    if (login is null)
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelNotHosted });
+    }
+    var result = await login.StartAsync(context.RequestAborted);
+    if (!result.Ok)
+    {
+        return Results.Json(new { code = CloudApi.ChannelLogin, error = result.Error },
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+    return Results.Json(new
+    {
+        loginId = result.LoginId,
+        pngBase64 = result.PngBase64,
+        expiresAt = result.ExpiresAt,
+    });
+}).RequireRateLimiting("sync");
+
+app.MapGet("/v1/channels/wechat/login/status", (HttpContext context, string? loginId) =>
+{
+    var login = context.RequestServices.GetService<WeChatQrLogin>();
+    if (login is null)
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelNotHosted });
+    }
+    if (string.IsNullOrEmpty(loginId))
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelLogin, error = "缺少 loginId" });
+    }
+    var status = login.GetStatus(loginId);
+    return Results.Json(new { status = status.Status, botId = status.BotId, error = status.Error });
+}).RequireRateLimiting("sync");
+
+app.MapPost("/v1/channels/wechat/logout", async (HttpContext context) =>
+{
+    var login = context.RequestServices.GetService<WeChatQrLogin>();
+    if (login is null)
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelNotHosted });
+    }
+    await login.LogoutAsync(context.RequestAborted);
+    return Results.Json(new { ok = true });
+}).RequireRateLimiting("sync");
+
 app.Run();
 
 // ── 顶层辅助 ──
@@ -509,6 +692,10 @@ internal static class CloudApi
     public const string BatchTooLarge = "E_SYNC_BATCH_TOO_LARGE";
     public const string BatchRejected = "E_SYNC_BATCH_REJECTED";
     public const string Cursor = "E_SYNC_CURSOR";
+
+    // 渠道控制面（阶段 3 微信；错误码冻结见设计 §5.2）
+    public const string ChannelNotHosted = "E_CHANNEL_NOT_HOSTED";
+    public const string ChannelLogin = "E_CHANNEL_LOGIN";
 }
 
 /// <summary>POST /v1/pair 请求体。</summary>

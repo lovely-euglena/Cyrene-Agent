@@ -652,3 +652,33 @@
   `tsc -p tsconfig.main.json` 0；cyrene-core build 0 错误；矩阵 **146/146**（重建
   smoke-host 后复跑；复审 P1 补 SMTP 连接拒绝用例）；dual-track **PASS**。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3V（PR #20 复审 P2 加固）。
+
+## 2026-10-05 增量：Phase 2 渠道批——服务端 24/7 渠道托管（IKJK3P / IKJK2P / IKJK2R / IKJK2S / IKJK2T）
+
+- **范围**：`dotnet/cloud-server` 内建与桌面 `src/main/channels` 同构的渠道层（`IChannelAdapter` +
+  消息类型镜像 + 契约 fixtures），服务端 24/7 托管微信 iLink / 飞书 webhook / QQ 官方 bot 被动回复；
+  渠道消息进事件流（v0 `message.append` + `presentation.channelSource`），桌面/手机/服务端共享同一历史；
+  归属权 = **服务端默认持有 + 桌面租约认领**的唯一调度模型。设计冻结
+  `docs/design/2026-10-05-server-channel.md`，契约 `fixtures/channels/`（62 例）。
+- **Q1–Q8 拍板摘要**：
+  1. Q1 ffmpeg 入镜像：接受（+~80MB），默认启用、`CLOUD_CHANNEL_FEISHU_AUDIO=0` 可关（不可用则降级文本）；
+  2. Q2 SILK spike：WASI 自建模块优先、native P/Invoke 退路；1 天门限，超时走 `ISilkCodec` 占位 + 降级文案（阶段 7 条件阶段，本批未落地）；
+  3. Q3 服务端自主主动消息：本批不预留定时器占位（依赖 IKJK2O）；只交付 `POST /v1/channels/{id}/proactive` + 桌面转发唯一化；
+  4. Q4 SILK 再分发许可：随 spike 复核；许可不明即维持占位（不随包分发 SILK 二进制）；
+  5. Q5 凭据过期告警：本批 = 服务端日志 + 渠道状态端点字段 + 桌面轮询提示；外部告警（邮件/webhook）后置；
+  6. Q6 token 复用/配置字段：IKJK2I 接线前显式 `channels.remote`（baseUrl/token），不与同步设置合并；接线后自动复用；
+  7. Q7 QQ 入站图片：不纳入本批（仅文本被动回复）；附件-only 拦截并回固定文案，不进 agent 链路；
+  8. Q8 多设备认领：先到先得租约；第二台桌面保持被动并展示 owner 信息，不排队（后续按需再评估）。
+- **实测口径（2026-10-05，Windows 本地）**：`channel-selftest all` **286 项**（无 ffmpeg，含 ffmpeg 287）；
+  `--selftest channel-contract fixtures/channels` **62 项**（双端契约 C# 侧）；
+  `scripts/channel-smoke-test.py` **57 项**（含 R2 增补的 /events 别名、>1MB 413、无 Bearer 401、
+  他设备 heartbeat/release 越权共 5 例；Linux +4 落盘权限 = 61）；
+  TS 侧 `vitest run src/main/channels src/main/proactive` **46 files / 436 tests**。
+- **评审收口（R1/R2）**：飞书出站缺省 `receive_id_type=chat_id`、`E_CHANNEL_UNSUPPORTED`、
+  preferServer 语义、QQ 附件-only 文案等已并入；视觉输入（caption / 模型直读）与
+  `CLOUD_CHANNEL_VISION` 明确为后续批次（当前图片/文件仅事件占位文本）；冒烟落盘权限：数据目录
+  0700 改「冒烟预置 0755 → 服务端启动收紧」的判别力口径，db 本体必查、-wal/-shm 存在才断言；
+  明文推送时间戳新鲜度校验保留（真机是否携带 `X-Lark-Request-Timestamp` **待真机执行时确认**，
+  若缺失需评估，已登记 cloud-server README 真机冒烟清单）；`dotnet-backend.md` / 设计稿 /
+  cloud-server README 计数与实现口径同步。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK3P / #IKJK2P / #IKJK2R / #IKJK2S / #IKJK2T。

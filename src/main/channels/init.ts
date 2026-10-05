@@ -17,7 +17,15 @@ import {
   saveChannelsSettings,
 } from "./settings-store";
 import { channelManager } from "./manager";
-import type { MessageHandler } from "./types";
+import {
+  createChannelOwnershipController,
+  planChannelsRestart,
+  planOwnershipRuntimeAction,
+  setActiveOwnershipClient,
+  setChannelProcessGate,
+  type ChannelOwnershipController,
+} from "./ownership";
+import type { ChannelId, ChannelStatus, MessageHandler } from "./types";
 import { getChannelConversationBindingStore } from "./conversation-binding-store";
 import { listSessions, getSession } from "../chats/chats-store";
 import {
@@ -36,6 +44,18 @@ import { logger, LogTag } from "../logger";
 
 const LOG = "[ChannelsInit]";
 
+/** 手动 IPC 直启被归属门闩拒绝时的统一提示（P1-3）。 */
+export const CLOUD_MANAGED_START_ERROR = "云端托管中，请先在本机运行";
+
+/**
+ * 手动 IPC 启动路径的归属前置检查（P1-3）：
+ * owner=server 时这些入口会绕开 manager.startAll/startOne 的 allowedToStart 检查直启适配器，
+ * 可能造成与服务端适配器双连接。返回 null 表示放行。
+ */
+function denyManualStart(id: ChannelId): { ok: false; error: string } | null {
+  return channelManager.allowedToStart(id) ? null : { ok: false, error: CLOUD_MANAGED_START_ERROR };
+}
+
 let initialized = false;
 let started = false;
 let conversationLifecycle: {
@@ -51,6 +71,8 @@ export function setChannelsConversationLifecycle(lifecycle: typeof conversationL
 let wxAdapter: ILinkBotAdapter | null = null;
 let qqAdapter: NapCatAdapter | null = null;
 let qqBotAdapter: QqBotAdapter | null = null;
+/** 归属控制器（channels.remote.enabled 时驱动启停；§5） */
+let ownershipController: ChannelOwnershipController | null = null;
 
 export interface InitializeChannelsOptions {
   ipc?: IpcScope;
@@ -71,6 +93,11 @@ function getPublicChannelsSettings(): Record<string, unknown> {
       ...settings.qqbot,
       appSecret: undefined,
       hasAppSecret: Boolean(settings.qqbot.appSecret),
+    },
+    remote: {
+      ...settings.remote,
+      token: undefined,
+      hasToken: Boolean(settings.remote.token),
     },
   };
 }
@@ -93,6 +120,16 @@ export function initializeChannels(options: InitializeChannelsOptions): void {
 
   // 注册 adapter（不启动，startChannels 时统一 startAll）
   registerAdapters();
+
+  // 归属接线（§5）：manager 启动门闩（第一道）+ dispatcher 处理门闩（第二道）
+  // + proactive 转发端口。channels.remote.enabled=false 时决策恒为 local，行为零变化。
+  ownershipController = createChannelOwnershipController({
+    manager: channelManager,
+    loadConfig: () => loadChannelsSettings().remote,
+  });
+  channelManager.setStartGate((id) => ownershipController?.shouldRunLocal(id) ?? true);
+  setChannelProcessGate((channel) => ownershipController?.shouldProcess(channel) ?? true);
+  setActiveOwnershipClient(ownershipController.client);
 
   // 注册全局 IPC
   registerChannelsIpc(options.ipc, options.reloadDispatcherSettings);
@@ -136,8 +173,14 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
     throw signal.reason;
   }
 
-  // 启动所有已注册 adapter
-  await channelManager.startAll();
+  // 归属感知启动（§5）：remote.enabled 时由控制器按服务端归属逐个启停
+  // （owner=server 的渠道绝不本机启动，R4）；否则保持既有 startAll 行为。
+  const remote = loadChannelsSettings().remote;
+  if (remote.enabled && ownershipController) {
+    await ownershipController.start();
+  } else {
+    await channelManager.startAll();
+  }
 
   logger.info(LogTag.Channels, "channels module started");
   broadcastChannelsStatus();
@@ -145,10 +188,46 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
 
 /** app.on('before-quit') 调 */
 export async function shutdownChannels(): Promise<void> {
+  // 先交回本机租约（服务端可立即恢复，不用等 TTL），再停适配器
+  await ownershipController?.stop();
   await channelManager.stopAll();
   await stopInboundServer();
   initialized = false;
   started = false;
+}
+
+/**
+ * 运行期 remote 开关切换（settings 保存后调用）：
+ *   - 开启：启动归属控制器；否则快照恒空 → unknown，入站被门闩静默丢弃。
+ *   - 关闭：停控制器并恢复本机启动（本地模式行为不变）。
+ * 缓存失效顺序：关闭时先 stop（用旧配置尽力 release）再 invalidate，最后 startAll 用新配置判定。
+ */
+async function syncOwnershipRuntime(): Promise<void> {
+  if (!started || !ownershipController) return;
+  const remote = loadChannelsSettings().remote;
+  // 分流判定抽成纯函数（P1-4）：本地→remote 开启 / remote→关闭 / 仅刷新配置
+  const action = planOwnershipRuntimeAction({
+    started,
+    remoteEnabled: remote.enabled,
+    controllerRunning: ownershipController.isRunning,
+  });
+  switch (action) {
+    case "reload-config":
+      ownershipController.client.invalidateConfig();
+      return;
+    case "start-controller":
+      ownershipController.client.invalidateConfig();
+      await ownershipController.start();
+      return;
+    case "stop-controller-and-start-all":
+      // 缓存失效顺序：关闭时先 stop（用旧配置尽力 release）再 invalidate，最后 startAll 用新配置判定。
+      await ownershipController.stop();
+      ownershipController.client.invalidateConfig();
+      await channelManager.startAll();
+      return;
+    default:
+      return;
+  }
 }
 
 /** 注册进程间通信处理器。 */
@@ -159,15 +238,17 @@ function registerChannelsIpc(
   const ipc = ipcOption ?? createIpcScope();
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
-  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
+  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown) => {
     saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
     reloadDispatcherSettings();
+    await syncOwnershipRuntime();
+    broadcastChannelsStatus();
     return getPublicChannelsSettings();
   });
 
   ipc.handle(IPC.CHANNELS_LIST, () => channelManager.listChannels());
 
-  ipc.handle(IPC.CHANNELS_GET_STATUS, () => channelManager.getAllStatus());
+  ipc.handle(IPC.CHANNELS_GET_STATUS, () => getChannelsStatus());
 
   // QQ 监听鉴权预检：渲染进程看不到网络接口，无法自行判断监听地址是否回环，
   // 因此「是否需要 Access Token」只能由主进程给出（与启动时的硬校验同一实现）。
@@ -179,7 +260,22 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_RESTART, async () => {
     await channelManager.stopAll();
-    await channelManager.startAll();
+    // 分流判定抽成纯函数（P1-4）：本地走 startAll；remote 已运行 syncNow，未运行则起控制器
+    const remote = loadChannelsSettings().remote;
+    const action = planChannelsRestart({
+      remoteEnabled: remote.enabled,
+      controllerAvailable: ownershipController !== null,
+      controllerRunning: ownershipController?.isRunning ?? false,
+    });
+    if (action === "sync") {
+      // syncNow 返回链尾 promise（P2-6.6）：在途同步登记的补跑也会被 await，
+      // 确保渠道恢复后再返回 { ok: true }
+      await ownershipController!.syncNow();
+    } else if (action === "start-controller") {
+      await ownershipController!.start();
+    } else {
+      await channelManager.startAll();
+    }
     broadcastChannelsStatus();
     return { ok: true };
   });
@@ -194,6 +290,9 @@ function registerChannelsIpc(
 	  // 扫码登录：Main Process 生成 PNG dataURL，推给 Renderer 显示 <img>
 	  ipc.handle(IPC.CHANNELS_WECHAT_LOGIN_START, async () => {
 	    if (!wxAdapter) return { ok: false, error: "adapter 未初始化" };
+	    // 归属门闩（P1-3）：云端托管时不进入扫码直启流程，避免与服务端适配器双连接
+	    const denied = denyManualStart("wechat");
+	    if (denied) return denied;
 	    try {
 	      const { fetchQrCode } = await import("./adapters/wechat/ilink-protocol-client");
 	      const { createQrDataUrl } = await import("./adapters/wechat/qr");
@@ -215,6 +314,11 @@ function registerChannelsIpc(
 	      void (async () => {
 	        try {
 	          const creds = await wxAdapter!.login(qrcode);
+	          // 扫码期间归属可能变化：启动前复查门闩（P1-3）
+	          if (!channelManager.allowedToStart("wechat")) {
+	            win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: false, error: CLOUD_MANAGED_START_ERROR });
+	            return;
+	          }
 	          await wxAdapter!.stop();
 	          await wxAdapter!.start();
 	          win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: true, botId: creds.ilinkBotId });
@@ -265,6 +369,8 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_WECHAT_INSTALL, async () => {
     if (!wxAdapter) return { ok: false };
+    const denied = denyManualStart("wechat");
+    if (denied) return denied;
     await wxAdapter.stop();
     await wxAdapter.start();
     return { ok: true, phase: "ready" };
@@ -274,6 +380,9 @@ function registerChannelsIpc(
   ipc.handle(IPC.CHANNELS_FEISHU_TEST_CONNECTION, async () => {
     const adapter = channelManager.getAdapter("feishu") as FeishuAdapter | undefined;
     if (!adapter) return { ok: false, error: "飞书 adapter 未注册" };
+    // 归属门闩（P1-3）：rebuild 内部会 start()，云端托管时拒绝直启
+    const denied = denyManualStart("feishu");
+    if (denied) return denied;
     const status = adapter.getStatus();
     if (!status.enabled) return { ok: false, error: "飞书渠道未启用" };
     if (!loadChannelsSettings().feishu.appId || !loadChannelsSettings().feishu.appSecret) {
@@ -337,9 +446,23 @@ function registerChannelsIpc(
   });
 }
 
+/** UI 状态 = adapter 实时状态 + 归属相位（§5.6 状态广播）。 */
+export function getChannelsStatus(): Record<string, ChannelStatus> {
+  const status = channelManager.getAllStatus();
+  const ownership = ownershipController?.getStatusDetail() ?? {};
+  const out: Record<string, ChannelStatus> = {};
+  for (const [id, value] of Object.entries(status)) {
+    const ownerDetail = ownership[id];
+    out[id] = ownerDetail
+      ? { ...value, detail: { ...(value.detail ?? {}), ownership: ownerDetail } }
+      : value;
+  }
+  return out;
+}
+
 /** 工具：把所有 BrowserWindow 广播 channels 状态变更（UI 轮询用）。 */
 export function broadcastChannelsStatus(): void {
-  const status = channelManager.getAllStatus();
+  const status = getChannelsStatus();
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     try {

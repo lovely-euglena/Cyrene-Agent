@@ -1,0 +1,63 @@
+{
+  "name": "wechat 出站图片（上传结果注入 + contextToken 回传）",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [
+        { "kind": "text", "text": "看图" },
+        { "kind": "image", "filePath": "C:/tmp/pic.png", "caption": "图片" }
+      ]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000002",
+    "uploads": {
+      "C:/tmp/pic.png": {
+        "encrypt_query_param": "enc-param-upload-1",
+        "aes_key": "aes-key-upload-1",
+        "encrypt_type": 1
+      }
+    }
+  },
+  "expect": {
+    "requests": [
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000002",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [{ "type": 1, "text_item": { "text": "看图" } }]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      },
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000002",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [
+            {
+              "type": 2,
+              "image_item": {
+                "media": {
+                  "encrypt_query_param": "enc-param-upload-1",
+                  "aes_key": "aes-key-upload-1",
+                  "encrypt_type": 1
+                }
+              }
+            }
+          ]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      }
+    ]
+  }
+}

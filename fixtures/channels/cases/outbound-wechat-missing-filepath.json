@@ -1,0 +1,21 @@
+{
+  "name": "wechat 出站图片缺本地 filePath（整体拒绝，桌面同文案）",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [
+        { "kind": "text", "text": "先发文字" },
+        { "kind": "image", "url": "https://example.com/pic.png" }
+      ]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000005"
+  },
+  "expect": {
+    "requests": [],
+    "error": "微信图片发送需要本地 filePath"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "qqbot 附件字段按 JS String() 语义（content_type/voice_wav_url 数组；filename 数字丢弃）",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "C2C_MESSAGE_CREATE",
+      "data": {
+        "id": "ROBOT1.0_c2c_media_js",
+        "author": { "user_openid": "OPENUSER0000000000000000000001" },
+        "content": "",
+        "timestamp": "2026-08-28T12:00:00+08:00",
+        "attachments": [
+          {
+            "content_type": ["image/png"],
+            "voice_wav_url": ["https://cdn.qq.com/wav"],
+            "filename": 42
+          }
+        ]
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "qqbot",
+      "chatType": "private",
+      "messageId": "ROBOT1.0_c2c_media_js",
+      "senderId": "OPENUSER0000000000000000000001",
+      "chatId": "OPENUSER0000000000000000000001",
+      "text": "",
+      "attachments": [
+        { "kind": "image", "url": "https://cdn.qq.com/wav", "mime": "image/png" }
+      ],
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

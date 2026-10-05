@@ -1,0 +1,30 @@
+{
+  "name": "wechat 出站文本（trim 后单条 sendmessage）",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [{ "kind": "text", "text": "  你好  " }]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000001"
+  },
+  "expect": {
+    "requests": [
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000001",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [{ "type": 1, "text_item": { "text": "你好" } }]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      }
+    ]
+  }
+}

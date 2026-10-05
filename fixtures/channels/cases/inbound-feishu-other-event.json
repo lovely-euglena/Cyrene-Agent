@@ -1,0 +1,14 @@
+{
+  "name": "feishu 非消息事件忽略（reaction created）",
+  "kind": "inbound",
+  "channel": "feishu",
+  "input": {
+    "raw": {
+      "schema": "2.0",
+      "header": { "event_id": "evt-5", "event_type": "im.message.reaction.created_v1" },
+      "event": { "message_id": "om_5", "reaction_type": { "emoji_type": "SMILE" } }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": { "message": null, "media": [] }
+}

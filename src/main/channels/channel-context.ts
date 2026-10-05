@@ -1,5 +1,7 @@
-import { createHash } from "crypto";
 import type { ChannelId, IncomingMessage } from "./types";
+import { makeSessionId } from "./normalizers/ids";
+
+export { makeSessionId } from "./normalizers/ids";
 
 const LOG = "[ChannelContext]";
 
@@ -40,15 +42,6 @@ const sessionIndex = new Map<
   string,
   { channel: ChannelId; senderId: string; lastAt: number }
 >();
-
-/** 计算稳定且匿名的渠道会话标识。 */
-export function makeSessionId(channel: ChannelId, chatId: string): string {
-  const hash = createHash("sha256")
-    .update(`${channel}:${chatId}`)
-    .digest("hex")
-    .slice(0, 16);
-  return `channel:${channel}:${hash}`;
-}
 
 /** 生成供模型和渠道历史使用的用户文本。 */
 export function formatChannelUserText(msg: IncomingMessage): string {

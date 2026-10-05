@@ -1,0 +1,78 @@
+{
+  "name": "wechat 出站视频与表情（image item 复用）+ 空文本跳过",
+  "kind": "outbound",
+  "channel": "wechat",
+  "input": {
+    "message": {
+      "channel": "wechat",
+      "targetId": "wx-user-1",
+      "parts": [
+        { "kind": "text", "text": "   " },
+        { "kind": "video", "filePath": "C:/tmp/demo.mp4", "name": "demo.mp4", "mime": "video/mp4" },
+        { "kind": "sticker", "stickerId": "happy", "imagePath": "C:/tmp/sticker.png" }
+      ]
+    },
+    "contextToken": "ctx-1",
+    "clientId": "00000000-0000-4000-8000-000000000004",
+    "uploads": {
+      "C:/tmp/demo.mp4": {
+        "encrypt_query_param": "enc-param-upload-3",
+        "aes_key": "aes-key-upload-3"
+      },
+      "C:/tmp/sticker.png": {
+        "encrypt_query_param": "enc-param-upload-4",
+        "aes_key": "aes-key-upload-4",
+        "encrypt_type": 0
+      }
+    }
+  },
+  "expect": {
+    "requests": [
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000004",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [
+            {
+              "type": 5,
+              "video_item": {
+                "media": {
+                  "encrypt_query_param": "enc-param-upload-3",
+                  "aes_key": "aes-key-upload-3"
+                }
+              }
+            }
+          ]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      },
+      {
+        "msg": {
+          "from_user_id": "",
+          "to_user_id": "wx-user-1",
+          "client_id": "00000000-0000-4000-8000-000000000004",
+          "message_type": 2,
+          "message_state": 2,
+          "context_token": "ctx-1",
+          "item_list": [
+            {
+              "type": 2,
+              "image_item": {
+                "media": {
+                  "encrypt_query_param": "enc-param-upload-4",
+                  "aes_key": "aes-key-upload-4",
+                  "encrypt_type": 0
+                }
+              }
+            }
+          ]
+        },
+        "base_info": { "channel_version": "2.0.0" }
+      }
+    ]
+  }
+}

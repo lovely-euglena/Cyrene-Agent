@@ -1,0 +1,17 @@
+{
+  "name": "能力表：feishu（audio 已随 ffmpeg 落地，全部可用）",
+  "kind": "capability",
+  "channel": "feishu",
+  "input": { "channel": "feishu" },
+  "expect": {
+    "text": true,
+    "image": true,
+    "audio": true,
+    "file": true,
+    "video": true,
+    "markdown": true,
+    "card": true,
+    "sticker": true,
+    "maxTextLength": 4000
+  }
+}

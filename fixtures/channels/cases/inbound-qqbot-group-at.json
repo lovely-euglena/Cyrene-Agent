@@ -1,0 +1,30 @@
+{
+  "name": "qqbot 群 @ 事件（group + 前导空格 trim）",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "GROUP_AT_MESSAGE_CREATE",
+      "data": {
+        "id": "ROBOT1.0_group_msg_001",
+        "author": { "member_openid": "OPENUSER0000000000000000000002" },
+        "group_openid": "OPENGROUP0000000000000000000001",
+        "content": " 在吗",
+        "timestamp": "2026-08-28T12:00:00+08:00"
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "qqbot",
+      "chatType": "group",
+      "messageId": "ROBOT1.0_group_msg_001",
+      "senderId": "OPENUSER0000000000000000000002",
+      "chatId": "OPENGROUP0000000000000000000001",
+      "text": "在吗",
+      "at": "2026-08-28T04:00:00.000Z"
+    },
+    "media": []
+  }
+}

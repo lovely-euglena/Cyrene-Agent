@@ -26,6 +26,12 @@ import { uploadWechatMedia, uploadWechatMediaFile } from "./wechat-media-upload"
 import { downloadWechatMedia } from "./wechat-media-download";
 import { encodeWechatVoiceSilk } from "./wechat-voice-encoding";
 import {
+  buildFileItem,
+  buildImageItem,
+  buildVideoItem,
+  buildVoiceItem,
+} from "../../normalizers/wechat";
+import {
   SAVE_INTENT_TTL_MS,
   buildUnsupportedWechatFilePrompt,
   buildWechatAsrFailedPrompt,
@@ -509,43 +515,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
   }
 }
 
-function buildImageItem(media: CDNMedia): SendMessageItem {
-  return {
-    type: 2,
-    image_item: { media },
-  };
-}
-
-function buildFileItem(media: CDNMedia, fileName: string): SendMessageItem {
-  return {
-    type: 4,
-    file_item: {
-      file_name: fileName,
-      media,
-    },
-  };
-}
-
-function buildVideoItem(media: CDNMedia): SendMessageItem {
-  return {
-    type: 5,
-    video_item: {
-      media,
-    },
-  };
-}
-
-function buildVoiceItem(media: CDNMedia, playtime: number, sampleRate: number, encodeType: number): SendMessageItem {
-  return {
-    type: 3,
-    voice_item: {
-      media,
-      encode_type: encodeType,
-      sample_rate: sampleRate,
-      playtime,
-    },
-  };
-}
+// 出站 item 构造（buildImageItem/buildFileItem/buildVideoItem/buildVoiceItem）已抽到
+// ../../normalizers/wechat；本文件只保留发送编排。
 
 function firstSaveableMedia(media: InboundMediaDescriptor[]): InboundMediaDescriptor | undefined {
   return media.find((item) =>

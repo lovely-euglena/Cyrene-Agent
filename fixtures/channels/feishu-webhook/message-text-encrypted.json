@@ -1,0 +1,29 @@
+{
+  "name": "文本事件加密入站（归一化 + 去重落库）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791187200",
+      "nonce": "nonce-text-1",
+      "signature": "b1cd180f72007c933165bd8fbef8bf376c2deba4e1a9ae8365fb49041d08d02b",
+      "body": "{\"encrypt\":\"Hu5KiVpdeNZqMphPBvM1Kdy0m0kjVjx3hQTnPADqKs4M7apJY+FN8enVLYwinIBSUAxgNXdtr4hyzD//2+JHJsTDQ0z8nUdNKv0AGricISH8sZDTuOiX1YiHV+bLPlfmu5ZGP6WXU5q3/OV3wHfhWnQvqVuEU2h8E3HnTJIoZhRzaqYlvgSV8IM+7NpkL2s4oFW4wxEMh3xyN+9HkOROTJl2ok3qptC3Q4IXuQ6A2tcaN1+MdB7ucsg+TIKDBPoBxtIidronastWn66mInn4oQiYlaBD36Ag7QZx2qfJTdeIdtNLcOTozF4ErzRbvYI0Y5esS2b26vNQ8Dq5h7R+7NAlHTETjPUsV0PBKPSUKpmSCBwkJMu4rsJFxXiOHFUzy+Sa0Guh32vcxgYMaPzd3573p3wmppUh3vHzUJOkdridA5EMwXuqtuX7Y6LyWwt+vYvFlGe9rfitz+XqLT6rWA0tEOU46spxbZXuNcBn9mhL2OWB0lYstqFon+a1sM5iyCCv682AbjUsUTYmxr8EHcnqJp0LH9ahINqVc00piqaeu2c4eCguDFJbvPoToSqanD56a+0cSe9AxiPkAKRV+w==\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "duplicate": false,
+        "ignored": false,
+        "messageId": "om_text_1",
+        "text": "你好，昔涟",
+        "media": 0
+      }
+    }
+  ]
+}

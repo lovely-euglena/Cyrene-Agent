@@ -78,6 +78,98 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 - **用量/脱敏**：成功日志记录模型名与 `prompt_tokens / completion_tokens`（不含消息正文）；密钥只在服务端、不进日志；
 - Q2 拍板：Phase 1 用最小聊天环（不引 LoopHost/Agents），工具链留后续批次。
 
+## 渠道托管（Phase 2 渠道批：IKJK3P / IKJK2P / IKJK2R / IKJK2S / IKJK2T）
+
+服务端 24/7 托管渠道适配器（微信 iLink / 飞书 webhook / QQ 官方 bot 被动回复），
+渠道消息进事件流（v0 `message.append` + `presentation.channelSource`），桌面/手机/服务端共享同一历史。
+设计冻结：`docs/design/2026-10-05-server-channel.md`；契约 fixtures：`fixtures/channels/`。
+
+- `CLOUD_CHANNELS` 为空 = 渠道层整体关闭（不注册存储/托管服务，零内存占用）；
+  渠道托管要求服务端生成已启用（`CLOUD_LLM_API_KEY` 非空），否则状态 `config_missing` 且不拉取消息（设计 §2.4 R6）；
+- 默认归属：**服务端持有**；桌面显式 claim 后租约持有（TTL 默认 180s，心跳续约，release 宽限 5s 恢复）；
+  桌面在 owner=server 时绝不启动本机适配器（`channels.remote`，见下）；
+- 渠道凭据服务端自持：`CLOUD_TOKEN` 非空时 `channels.db` 内 AES-GCM 加密（状态标注 `credentialProtection:"aes-gcm"`）；
+  未设时降级 0600 明文（标注 `plain`，生产强烈建议设置 `CLOUD_TOKEN`）；凭据与消息正文永不进日志；
+- 媒体落 `CYRENE_CLOUD_DATA/media/<渠道>/`，总量按 `CLOUD_CHANNEL_MEDIA_DIR_MB` LRU + TTL 7 天；
+  媒体本体不进事件流（文本占位 `[图片]` / `[文件: name]` / `[附件: path]`）。
+
+### 渠道环境变量（服务端）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `CLOUD_CHANNELS` | 空 | 逗号列表 `wechat,feishu,qqbot`；空 = 渠道层关闭 |
+| `CLOUD_CHANNEL_OWNERSHIP_TTL_SECONDS` | 180 | 桌面认领租约 TTL（30–86400 钳制） |
+| `CLOUD_CHANNEL_FAILOVER_GRACE_SECONDS` | 300 | 桌面兜底不可达宽限（服务端已解析；桌面兜底判定由桌面侧配置，本批未经 API 暴露） |
+| `CLOUD_CHANNEL_WECHAT_BASE_URL` | `https://ilinkai.weixin.qq.com` | iLink 端点（扫码登录 + 协议客户端基址） |
+| `CLOUD_CHANNEL_WECHAT_MEDIA_MAX_MB` | 20 | 微信入站媒体上限（图片 10 / 文件 20 分档） |
+| `CLOUD_CHANNEL_FEISHU_APP_ID` / `_APP_SECRET` | 空 | 飞书应用凭据（自持；齐备才托管） |
+| `CLOUD_CHANNEL_FEISHU_VERIFICATION_TOKEN` | 空 | webhook 校验（托管门槛之一） |
+| `CLOUD_CHANNEL_FEISHU_ENCRYPT_KEY` | 空 | 事件解密 + 签名强制（配置后 `X-Lark-Signature` 必校验） |
+| `CLOUD_CHANNEL_FEISHU_AUDIO` | 开 | `0` = 出站语音降级文本（无 ffmpeg 或体积敏感时关闭） |
+| `CLOUD_CHANNEL_FEISHU_FFMPEG` / `FFMPEG_PATH` | PATH 查找 | ffmpeg 可执行文件路径（转 Ogg Opus 用） |
+| `CLOUD_CHANNEL_QQBOT_APP_ID` / `_APP_SECRET` | 空 | QQ 开放平台凭据（齐备才托管；仅被动回复） |
+| `CLOUD_CHANNEL_QQBOT_ALLOW_ANY_PRIVATE` / `_ALLOWED_OPENIDS` | `0` / 空 | 私聊白名单（镜像桌面语义；被拒 openid 进状态 detail） |
+| `CLOUD_CHANNEL_QQBOT_STRIP_URLS` | `0` | 含链接消息发送失败时替换为 `[链接]` 的兜底开关 |
+| `CLOUD_CHANNEL_VISION` | 空 | 预留（未接线、无消费点）：图片/文件当前仅事件占位文本；视觉输入（caption / 直读）为后续批次 |
+| `CLOUD_CHANNEL_MEDIA_DIR_MB` | 256 | 媒体缓存总量上限 |
+| `CLOUD_CHANNEL_ASR_*` / `CLOUD_CHANNEL_TTS_*` | 空 | 语音分期配置（当前 SILK 占位，未接线，见下「已知缺口」） |
+
+> 测试注入点（生产不需要，缺省官方端点）：`CLOUD_CHANNEL_FEISHU_BASE_URL`、`CLOUD_CHANNEL_WECHAT_CDN_BASE_URL`、
+> `CLOUD_CHANNEL_QQBOT_API_BASE` / `_TOKEN_URL` —— `scripts/channel-smoke-test.py` 指向本机 mock 上游。
+
+### 渠道控制面 API（复用 `/v1/*` Bearer；`GET /v1/capabilities` 公开）
+
+- `GET /v1/channels/ownership` → `{serverId, leaseTtlSeconds, channels:{<id>:{owner,holder?,leaseExpiresAt?}}}`（桌面 30s 轮询）；
+- `POST /v1/channels/ownership/claim|heartbeat|release`（holder = 当前鉴权 deviceId/`master`；多设备先到先得）；
+- `GET /v1/channels/status` → 各渠道 `{id, phase, enabled, owner, detail}`（`detail` 含 `botId`/`wsReady`/`lastErrorCode` 等）；
+- `POST /v1/channels/{id}/proactive` — `{sessionId?, intentId, text}`，intentId 幂等；无收件人 400 `E_CHANNEL_RECIPIENT_MISSING`，
+  owner=desktop 409 `E_CHANNEL_OWNED_BY_OTHER`；capability 不支持主动的渠道（qqbot）前置 400 `E_CHANNEL_UNSUPPORTED`，
+  不在 `capabilities.channels.proactive`（不支持主动通知）；
+- `POST /v1/channels/wechat/login/start` → `{loginId, pngBase64, expiresAt}`；`GET .../login/status?loginId=` → `pending|scanned|confirmed|expired|error`；
+  `POST .../wechat/logout`（幂等）；
+- `POST /v1/channels/feishu/webhook`（**公开路由**，兼容别名 `/events`）：Verification Token + 签名 + ±5min 时间戳 + AES-256-CBC 解密。
+
+### 桌面侧 `channels.remote`（服务端托管接线）
+
+桌面设置 `channels.remote = {enabled, baseUrl?, preferServer, failover}`（`src/main/channels/settings-store.ts`）：
+
+- `enabled`：启用「云端托管」；`baseUrl` 缺省复用同步服务端地址（IKJK2I 接线前可显式填写）；
+- token 复用同步 device token（不新增凭据面）；控制面请求 12s 超时（停止时中止在途并尽力交回租约）；
+  remote 配置 5s TTL 缓存（保存后立即失效）；
+- `preferServer=true`（默认）：**自动兜底（failover）期间**服务端恢复后自动 release 并停本机；
+  `false` 则重新 claim 维持本机；手动「本机运行」不参与自动交回（继续续租）；
+- `failover=local`（默认关）：服务端连续不可达 ≥ 宽限期才本机兜底启动，重连后必须 claim/release 二选一（残余双主窗口由幂等吸收，文档明示）。
+
+### 部署要点
+
+- 裸跑（systemd）建议 `apt install ffmpeg` 以启用飞书语音；不装或体积敏感时设 `CLOUD_CHANNEL_FEISHU_AUDIO=0`（语音降级文本）；
+- 容器镜像已内置 ffmpeg（`Dockerfile`，+~80MB 体积，Q1 拍板接受）；`docker compose` 的 `mem_limit 512m` 即渠道层内存兜底；
+- 飞书事件订阅 URL 填 `https://<域名>/v1/channels/feishu/webhook`（Caddy 反代即可，无需额外放行；该路由自带校验）；
+- 渠道层目标峰值 ≤420MB（整机 2G 预算内）；`CLOUD_CHANNELS` 可随时整体关闭，同步/PWA 不受影响；
+- 故障隔离：单渠道启动/发送失败只记状态与日志，不影响其它渠道与 `/v1/sync`。
+
+### 真机冒烟清单（§1.3 豁免项的替代证据入口）
+
+CI 用 mock e2e（`scripts/channel-smoke-test.py`，57 项；Linux CI 追加 4 项落盘权限断言 = 61 项）+ C# 自测（`channel-selftest all`，286 项；无 ffmpeg，含 ffmpeg 287）覆盖协议与编排；
+以下**真机项**需人工执行一次，并在部署/PR 记录日期、commit、结果（截图或日志片段）；
+执行前一律为「待真机执行时确认」口径，不写「已验证」：
+
+| 渠道 | 步骤 | 通过标准 |
+| --- | --- | --- |
+| 微信 | 设置页「云端微信登录」扫码 → 收文本 → 回文本 → 收/发图片 → 断网 30s 再恢复 → 触发 `ret=-14`（换 token） | 状态 running；文本/图片往返；断线自动重连；`ret=-14` 后状态 error + 「会话已过期」提示且不重试 |
+| 飞书 | 真 App 凭据 + 事件订阅 URL；私聊文本/图片；桌面触发一条主动消息 | webhook challenge 通过；文本/图片往返；主动消息实测可达（服务端 REST 发送成功） |
+| 飞书（明文时间戳） | 明文模式确认飞书事件推送是否携带 `X-Lark-Request-Timestamp`（当前保持校验；若缺失需评估） | 待真机执行时确认（抓包或服务端日志核对请求头） |
+| QQ | 真 AppID/Secret；私聊被动回复；连发 5 条触发上限 | 60 分钟内最多 4 条回复；超限/超窗返回明确错误；白名单拒绝在状态 detail 可见 |
+| 大文件 | 任选渠道发 1 个视频/超大文件 | 大小上限文案拒绝（不落盘、不崩溃） |
+| 日志脱敏 | `journalctl -u cyrene-cloud-server` 抽查渠道相关行 | 无 bot token / app secret / 消息正文 |
+
+### 已知缺口（设计 §1.3 分期）
+
+- **SILK 语音**：`ISilkCodec` 为占位实现（`SilkUnavailableCodec`），入站语音回「未配置语音识别」文案、出站语音降级文本 + 状态 `voice:false`（§4.2 阶段 7 未落地）；
+- **图片视觉输入**：`CLOUD_CHANNEL_VISION` 预留未接线（无消费点）；图片/文件仅事件占位文本，caption / 模型直读为后续批次（§3.3）；
+- **服务端自主主动消息调度**：未做（依赖 IKJK2O）；当前仅 `POST /v1/channels/{id}/proactive` + 桌面转发唯一化（§5.4 Q3）；
+- **真机冒烟**：上表待人工执行；微信出站图片、飞书语音转码的 CI 覆盖在 C# `channel-selftest wechat|feishu`。
+
 ## 容器（备选）
 
 ```bash
@@ -166,6 +258,11 @@ python scripts/dotnet-cloud-sync-test.py        # 本地 full：同步收敛 + �
 python scripts/dotnet-cloud-sync-test.py --profile core   # 本地核心档（同步核心 + 配对 + 能力声明）
 python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN   # 远端形态核心档（CF / PHP / …）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
+dotnet <发布目录>/cyrene-cloud-server.dll channel-selftest all   # 渠道五套 C# 自测（framework/wechat/feishu/qqbot/ownership；286 项（无 ffmpeg，含 ffmpeg 287），mock HTTP/WS 无网络）
+#   `--selftest <suite>` 为同义通用别名（如 --selftest wechat）；未知子集退出码 2，不会误落回真服务启动
+python scripts/channel-smoke-test.py <发布目录>/cyrene-cloud-server.dll   # 渠道 mock e2e（iLink 扫码/文本/图片/重连、飞书 webhook 加密/去重/别名/413、QQ 网关被动回复、归属（含 401/越权反向断言）、主动消息；57 项，Linux +4 落盘权限）
+dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels   # 渠道契约 fixtures（C# 侧 runner，62 项；TS 侧 npx vitest run src/main/channels）
+npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"   # schema 规范校验（draft-07，62 例全过；命令同 fixtures/channels/README.md）
 node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
 node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN   # 远端 e2e（不 spawn；--expect-echo 开启生成断言）
 ```

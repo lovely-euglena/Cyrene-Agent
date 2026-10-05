@@ -2,10 +2,10 @@
 name: dotnet-backend
 on:
   push:
-    branches: [feature/dotnet-backend, main]
-    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    branches: [main]
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
   pull_request:
-    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
 
 permissions:
   contents: read
@@ -38,9 +38,10 @@ jobs:
           python3 scripts/dotnet-edge-test.py
           python3 scripts/dotnet-tools-matrix.py
           python3 scripts/dotnet-agent-loop-test.py
-      - name: sync-protocol v0 契约（C# 读取器跑共享 fixtures）
+      - name: sync-protocol v0 + channels 契约（C# 读取器跑共享 fixtures）
         run: |
           dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-protocol fixtures/sync-protocol/cases
+          dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -53,12 +54,17 @@ jobs:
         run: |
           dotnet publish dotnet/cloud-server -c Release -o artifacts/cyrene-cloud
           python3 scripts/dotnet-cloud-sync-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
-      - name: TS 类型检查 + 工具单测 + 双轨基线 + sync-protocol 契约（TS 侧）
+      - name: 渠道套件：C# 五套自测 + mock e2e 冒烟（iLink/飞书 webhook/QQ 网关/归属）
+        run: |
+          dotnet artifacts/cyrene-cloud/cyrene-cloud-server.dll channel-selftest all
+          python3 scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
+      - name: TS 类型检查 + 工具单测 + 双轨基线 + sync-protocol/渠道契约（TS 侧）
         run: |
           npm ci --registry=https://registry.npmmirror.com || npm install --registry=https://registry.npmmirror.com
           npx tsc -p tsconfig.main.json --noEmit
           npx vitest run src/main/orchestrator/tools
           npx vitest run src/main/sync src/pwa
+          npx vitest run src/main/channels src/main/proactive
           npx tsx scripts/dual-track-diff.ts
       - name: PWA 端到端冒烟（Edge 通道：配对 / 查看 / 续聊 / 离线缓存）
         run: |

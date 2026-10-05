@@ -1,0 +1,17 @@
+{
+  "name": "qqbot 不支持的出站类型（仅文本被动回复）",
+  "kind": "outbound",
+  "channel": "qqbot",
+  "input": {
+    "message": {
+      "channel": "qqbot",
+      "targetId": "OPENUSER0000000000000000000001",
+      "parts": [{ "kind": "image", "filePath": "C:/tmp/pic.png" }]
+    },
+    "messageId": "ROBOT1.0_c2c_msg_004"
+  },
+  "expect": {
+    "requests": [],
+    "error": "QQ Bot 官方渠道暂不支持发送 image 类型内容"
+  }
+}

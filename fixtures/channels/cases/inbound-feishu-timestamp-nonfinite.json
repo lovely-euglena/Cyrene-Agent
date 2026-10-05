@@ -1,0 +1,34 @@
+{
+  "name": "feishu 超大毫秒数（1e400 → 非有限）回退注入 now",
+  "kind": "inbound",
+  "channel": "feishu",
+  "input": {
+    "raw": {
+      "schema": "2.0",
+      "header": { "event_id": "evt-nonfinite-1", "event_type": "im.message.receive_v1" },
+      "event": {
+        "sender": { "sender_id": { "open_id": "ou_user_1" } },
+        "message": {
+          "message_id": "om_nonfinite_1",
+          "chat_id": "oc_1",
+          "chat_type": "p2p",
+          "message_type": "text",
+          "content": "{\"text\":\"溢出时间戳\"}",
+          "timestamp": "1e400"
+        }
+      }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": {
+    "message": {
+      "channel": "feishu",
+      "senderId": "ou_user_1",
+      "chatId": "oc_1",
+      "messageId": "om_nonfinite_1",
+      "text": "溢出时间戳",
+      "at": "2026-09-01T00:00:00.000Z"
+    },
+    "media": []
+  }
+}

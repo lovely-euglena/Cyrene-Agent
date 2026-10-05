@@ -1,0 +1,12 @@
+{
+  "name": "文本分片：maxParts 截断（首尾合并）",
+  "kind": "text-split",
+  "channel": "feishu",
+  "input": {
+    "text": "一。二。三。四。",
+    "limit": 2
+  },
+  "expect": {
+    "parts": ["一。", "二。三。四。"]
+  }
+}

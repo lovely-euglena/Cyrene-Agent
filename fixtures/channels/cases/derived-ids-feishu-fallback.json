@@ -1,0 +1,21 @@
+{
+  "name": "派生 id：feishu 无 messageId（at:text 回退 + 换行压缩）",
+  "kind": "derived-ids",
+  "channel": "feishu",
+  "input": {
+    "channel": "feishu",
+    "chatId": "oc_abc",
+    "at": "2026-08-28T04:00:00.000Z",
+    "text": "第一行\n第二行",
+    "anchorEventId": "anchor-x",
+    "intentId": "intent-y"
+  },
+  "expect": {
+    "sessionId": "channel:feishu:12d20a8eea01dbf8",
+    "userTurnId": "feishu:oc_abc:1787889600000:第一行 第二行:user",
+    "assistantTurnId": "feishu:oc_abc:1787889600000:第一行 第二行:assistant",
+    "userEventId": "ch-feishu-0c114a8dbbb8cc394fb835bbc8f14853",
+    "assistantEventId": "gen-50482386cab0e3b25bc9a3f1085fecdc",
+    "proactiveEventId": "proactive-ab2444478cfe344edcca2c93efc8dfd3"
+  }
+}

@@ -22,6 +22,12 @@ import * as path from "path";
 import { app, safeStorage } from "electron";
 import type { ChannelId } from "./types";
 import { normalizeQqListenMode, type QqListenMode } from "../../shared/qq-listen";
+import {
+  normalizeChannelsRemoteConfig,
+  type ChannelsRemoteConfig,
+} from "./ownership";
+
+export type { ChannelsRemoteConfig } from "./ownership";
 
 /** safeStorage 加密后的前缀。读取时遇到这个前缀就解密 */
 const ENC_PREFIX = "enc:";
@@ -197,6 +203,11 @@ export interface ChannelsSettings {
   feishu: FeishuChannelConfig;
   qq: QqChannelConfig;
   qqbot: QqBotChannelConfig;
+  /**
+   * 服务端渠道托管配置（Q6：独立字段，不与同步设置合并；IKJK2I 接线后自动复用）。
+   * token 为显式 Bearer（磁盘加密，规则同 appSecret）。
+   */
+  remote: ChannelsRemoteConfig;
   /** 入站 HTTP server 绑定的端口。0 = 随机空闲。 */
   inboundPort: number;
   /** HMAC 共享密钥。启动时若为空则自动生成。 */
@@ -235,6 +246,7 @@ const DEFAULT_SETTINGS: ChannelsSettings = {
     allowedUserOpenids: [],
     allowedGroupOpenids: [],
   },
+  remote: normalizeChannelsRemoteConfig(null),
   inboundPort: 0,
   sharedSecret: "",
   rateLimitPerUser: 10,
@@ -332,6 +344,7 @@ feishu: {
       allowedUserOpenids: normalizeOpenids(b?.allowedUserOpenids),
       allowedGroupOpenids: normalizeOpenids(b?.allowedGroupOpenids),
     },
+    remote: normalizeChannelsRemoteConfig(input?.remote),
     inboundPort: safeNum(input?.inboundPort, 0, 0, 65535),
     sharedSecret: typeof input?.sharedSecret === "string" ? input.sharedSecret : "",
     rateLimitPerUser: safeNum(input?.rateLimitPerUser, 10, 1, 1000),
@@ -359,6 +372,9 @@ export function loadChannelsSettings(): ChannelsSettings {
     if (loaded.qqbot.appSecret) {
       loaded.qqbot.appSecret = decryptField(loaded.qqbot.appSecret);
     }
+    if (loaded.remote.token) {
+      loaded.remote.token = decryptField(loaded.remote.token);
+    }
     return loaded;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -372,6 +388,7 @@ export function saveChannelsSettings(patch: Partial<ChannelsSettings>): Channels
   if (patch.feishu) merged.feishu = { ...existing.feishu, ...patch.feishu };
   if (patch.qq) merged.qq = { ...existing.qq, ...patch.qq };
   if (patch.qqbot) merged.qqbot = { ...existing.qqbot, ...patch.qqbot };
+  if (patch.remote) merged.remote = { ...existing.remote, ...patch.remote };
 
   // 私密字段加密边界：UI 传来的是明文，写盘前要 wrap
   // 避开"密文回传"场景：检测 enc:/obf:/plain: 前缀，避免重复加密。
@@ -391,6 +408,12 @@ export function saveChannelsSettings(patch: Partial<ChannelsSettings>): Channels
     const v = merged.qqbot.appSecret;
     if (!v.startsWith(ENC_PREFIX) && !v.startsWith(OBF_PREFIX) && !v.startsWith(PLAIN_PREFIX)) {
       merged.qqbot.appSecret = encryptField(v);
+    }
+  }
+  if (typeof merged.remote?.token === "string" && merged.remote.token) {
+    const v = merged.remote.token;
+    if (!v.startsWith(ENC_PREFIX) && !v.startsWith(OBF_PREFIX) && !v.startsWith(PLAIN_PREFIX)) {
+      merged.remote.token = encryptField(v);
     }
   }
 
@@ -415,6 +438,10 @@ export function saveChannelsSettings(patch: Partial<ChannelsSettings>): Channels
       ...final.qqbot,
       appSecret: decryptField(final.qqbot.appSecret ?? ""),
     },
+    remote: {
+      ...final.remote,
+      token: decryptField(final.remote.token ?? ""),
+    },
   };
   return out;
 }
@@ -425,6 +452,7 @@ export type ChannelConfigPatch = Partial<{
   feishu: Partial<FeishuChannelConfig>;
   qq: Partial<QqChannelConfig>;
   qqbot: Partial<QqBotChannelConfig>;
+  remote: Partial<ChannelsRemoteConfig>;
   inboundPort: number;
   sharedSecret: string;
   rateLimitPerUser: number;

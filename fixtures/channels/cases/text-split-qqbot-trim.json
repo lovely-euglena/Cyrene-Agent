@@ -1,0 +1,12 @@
+{
+  "name": "文本分片：qqbot 码点上限（前导空白 trim）",
+  "kind": "text-split",
+  "channel": "qqbot",
+  "input": {
+    "text": "  你好。",
+    "limit": 1500
+  },
+  "expect": {
+    "parts": ["你好。"]
+  }
+}

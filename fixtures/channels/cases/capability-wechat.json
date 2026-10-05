@@ -1,0 +1,17 @@
+{
+  "name": "能力表：wechat（服务端冻结值）",
+  "kind": "capability",
+  "channel": "wechat",
+  "input": { "channel": "wechat" },
+  "expect": {
+    "text": true,
+    "image": true,
+    "audio": false,
+    "file": true,
+    "video": true,
+    "markdown": false,
+    "card": false,
+    "sticker": true,
+    "maxTextLength": 2048
+  }
+}

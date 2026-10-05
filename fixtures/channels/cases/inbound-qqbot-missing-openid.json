@@ -1,0 +1,13 @@
+{
+  "name": "qqbot 缺 openid 拒绝",
+  "kind": "inbound",
+  "channel": "qqbot",
+  "input": {
+    "raw": {
+      "type": "C2C_MESSAGE_CREATE",
+      "data": { "id": "ROBOT1.0_no_author", "content": "x" }
+    },
+    "now": "2026-09-01T00:00:00.000Z"
+  },
+  "expect": { "message": null, "media": [] }
+}

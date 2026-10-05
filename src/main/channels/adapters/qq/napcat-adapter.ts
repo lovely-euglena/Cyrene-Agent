@@ -21,6 +21,9 @@ import {
   type OneBotVersionInfo,
 } from "./onebot-types";
 import type { QqChannelConfig } from "../../settings-store";
+import { splitQqText } from "../../normalizers/qq-text";
+
+export { splitQqText } from "../../normalizers/qq-text";
 
 const CAPABILITY: ChannelCapability = {
   text: true,
@@ -35,30 +38,6 @@ const CAPABILITY: ChannelCapability = {
 };
 
 const DEDUPE_TTL_MS = 10 * 60_000;
-const TEXT_CHUNK_CODEPOINTS = 1500;
-
-export function splitQqText(text: string, maxCodepoints = TEXT_CHUNK_CODEPOINTS): string[] {
-  const source = text.trim();
-  if (!source) return [];
-  const result: string[] = [];
-  let rest = Array.from(source);
-  while (rest.length > maxCodepoints) {
-    const window = rest.slice(0, maxCodepoints);
-    let splitAt = -1;
-    for (let i = window.length - 1; i >= Math.floor(maxCodepoints * 0.55); i--) {
-      if (/[。！？!?；;…\n]/u.test(window[i])) {
-        splitAt = i + 1;
-        break;
-      }
-    }
-    if (splitAt < 0) splitAt = maxCodepoints;
-    result.push(window.slice(0, splitAt).join("").trim());
-    rest = rest.slice(splitAt);
-  }
-  const tail = rest.join("").trim();
-  if (tail) result.push(tail);
-  return result.filter(Boolean);
-}
 
 export function isQqEventAllowed(
   event: { message_type: "private" | "group"; user_id: string | number; group_id?: string | number; message: OneBotSegment[] },

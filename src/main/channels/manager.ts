@@ -21,9 +21,35 @@ export class ChannelManager {
   private dispatchFn: DispatchFn | null = null;
   /** 启动后已开启的 adapter（start 成功的才会调 stop） */
   private startedAdapters = new Set<ChannelId>();
+  /**
+   * 单渠道启停串行队列（P2-1）：同渠道的 start/stop 按调用顺序执行，
+   * 避免在途 startOne 与 pauseOne/stopAll 交错出「已 stop 又被标记已启动」。
+   */
+  private channelOps = new Map<ChannelId, Promise<void>>();
+  /**
+   * 启动门闩（归属第一道防线）：owner=server 时桌面不启动适配器（§5.1 R4）。
+   * 缺省 null = 全部放行（保持既有本地行为）；init.ts 按归属控制器注入。
+   */
+  private startGate: ((id: ChannelId) => boolean) | null = null;
 
   has(id: ChannelId): boolean {
     return this.adapters.has(id);
+  }
+
+  /** 设置启动门闩；传 null 恢复放行。门闩抛错时 fail-open（不影响渠道可用性）。 */
+  setStartGate(gate: ((id: ChannelId) => boolean) | null): void {
+    this.startGate = gate;
+  }
+
+  /** 当前是否允许本机启动该渠道（UI/测试可见）。 */
+  allowedToStart(id: ChannelId): boolean {
+    if (!this.startGate) return true;
+    try {
+      return this.startGate(id);
+    } catch (err) {
+      console.warn(LOG, `启动门闩异常，按放行处理 [${id}]:`, err instanceof Error ? err.message : err);
+      return true;
+    }
   }
 
   /** 注册 adapter（必须在 startAll 之前调用；重复 id 一律拒绝） */
@@ -43,22 +69,11 @@ export class ChannelManager {
     }
   }
 
-  /** 启动所有已注册 adapter（失败的跳过、记 log） */
+  /** 启动所有已注册 adapter（失败的跳过、记 log；归属门闩拒绝的跳过） */
   async startAll(): Promise<void> {
-    for (const adapter of this.adapters.values()) {
-      // 跳过已启动的 adapter（插件注册渠道场景：registerChannelAdapter 已 startOne）
-      if (this.startedAdapters.has(adapter.id)) continue;
-      try {
-        // 每次 start 前重新注入 handler（防止 setDispatcher 之前 adapter 已经被外部注入 null）
-        if (this.dispatchFn) {
-          setAdapterHandler(adapter, this.makeAdapterHandler(adapter.id));
-        }
-        await adapter.start();
-        this.startedAdapters.add(adapter.id);
-        logger.info(LogTag.Channels, `started: ${adapter.id} (${adapter.displayName})`);
-      } catch (err) {
-        console.error(LOG, `渠道启动失败 [${adapter.id}]:`, err instanceof Error ? err.message : err);
-      }
+    // 逐渠道走 startOne：复用归属门闩 + 单渠道串行队列 + 失败回滚（P2-1）
+    for (const id of Array.from(this.adapters.keys())) {
+      await this.startOne(id);
     }
   }
 
@@ -66,44 +81,100 @@ export class ChannelManager {
   async unregister(id: ChannelId): Promise<boolean> {
     const adapter = this.adapters.get(id);
     if (!adapter) return false;
-    if (this.startedAdapters.has(id)) {
-      try {
-        await adapter.stop();
-      } catch (err) {
-        console.warn(LOG, `渠道停止失败 [${id}]:`, err instanceof Error ? err.message : err);
-      }
-      this.startedAdapters.delete(id);
-    }
+    // 先等在途 start/stop 收敛，再摘除（避免摘除后被在途 start 标记为已启动）
+    await this.pauseOne(id);
     this.adapters.delete(id);
     logger.info(LogTag.Channels, `unregistered: ${id}`);
     return true;
   }
 
-  /** 启动单个 adapter（运行时启用插件渠道用） */
+  /**
+   * 启动单个 adapter（运行时启用插件渠道用）；归属门闩拒绝时保持关闭。
+   * 同渠道已有启停在途时排队；排队后二次检查防止重复 start（P2-1）。
+   * 不在此处按 startedAdapters 提前返回（P2-4）：pauseOne 在途（慢 disconnect）期间
+   * 并发的 start 必须入队，否则 start 意图被静默丢弃、要等下一轮 applyPlan 才自愈。
+   */
   async startOne(id: ChannelId): Promise<void> {
     const adapter = this.adapters.get(id);
     if (!adapter) return;
-    if (this.startedAdapters.has(id)) return;
-    if (this.dispatchFn) {
-      setAdapterHandler(adapter, this.makeAdapterHandler(id));
-    }
-    await adapter.start();
-    this.startedAdapters.add(id);
-    logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+    await this.enqueueChannelOp(id, async () => {
+      if (this.startedAdapters.has(id)) return; // 排队期间已被前序操作启动
+      // 排队期间被 unregister 摘除/替换：不得再启动旧实例（P2-6.2）
+      if (this.adapters.get(id) !== adapter) return;
+      if (!this.allowedToStart(id)) {
+        logger.info(LogTag.Channels, `skipped (ownership): ${id}`);
+        return;
+      }
+      if (this.dispatchFn) {
+        setAdapterHandler(adapter, this.makeAdapterHandler(id));
+      }
+      try {
+        await adapter.start();
+        // start 在途期间可能被 unregister 摘除：立即停止该实例且不标记已启动，
+        // 避免「已启动但不在 adapters 表」的孤儿实例逃过 stopAll（P2-6.2）
+        if (this.adapters.get(id) !== adapter) {
+          logger.info(LogTag.Channels, `rolled back (unregistered): ${id}`);
+          try {
+            await adapter.stop();
+          } catch (err) {
+            console.warn(LOG, `渠道回滚停止失败 [${id}]:`, err instanceof Error ? err.message : err);
+          }
+          return;
+        }
+        this.startedAdapters.add(id);
+        logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+      } catch (err) {
+        // 单渠道失败不抛出：applyPlan/重启等路径不因一个渠道 reject 而中断
+        console.error(LOG, `渠道启动失败 [${id}]:`, err instanceof Error ? err.message : err);
+      }
+    });
   }
 
-  /** 关闭所有已启动的 adapter */
-  async stopAll(): Promise<void> {
-    for (const id of this.startedAdapters) {
-      const adapter = this.adapters.get(id);
-      if (!adapter) continue;
+  /**
+   * 暂停单个 adapter（归属切换用）：已启动则 stop，但保留注册（可再 startOne）。
+   * 与 stopAll 的差别只在语义命名与单渠道粒度。
+   */
+  async pauseOne(id: ChannelId): Promise<void> {
+    const adapter = this.adapters.get(id);
+    if (!adapter) return;
+    await this.enqueueChannelOp(id, async () => {
+      if (!this.startedAdapters.has(id)) return; // 在途 start 未完成或本就未启动
       try {
         await adapter.stop();
       } catch (err) {
-        console.warn(LOG, `渠道停止失败 [${id}]:`, err instanceof Error ? err.message : err);
+        console.warn(LOG, `渠道暂停失败 [${id}]:`, err instanceof Error ? err.message : err);
       }
+      this.startedAdapters.delete(id);
+      logger.info(LogTag.Channels, `paused: ${id}`);
+    });
+  }
+
+  /** 该渠道当前是否已启动（归属状态展示/测试用）。 */
+  isStarted(id: ChannelId): boolean {
+    return this.startedAdapters.has(id);
+  }
+
+  /** 关闭所有已启动的 adapter（逐渠道排队，等在途 start 收敛后再 stop） */
+  async stopAll(): Promise<void> {
+    for (const id of Array.from(this.adapters.keys())) {
+      await this.pauseOne(id);
     }
-    this.startedAdapters.clear();
+  }
+
+  /** 单渠道操作串行化：同渠道前序操作完成后才执行本次操作（P2-1）。 */
+  private enqueueChannelOp(id: ChannelId, op: () => Promise<void>): Promise<void> {
+    const previous = this.channelOps.get(id) ?? Promise.resolve();
+    const next = previous.then(op, op);
+    this.channelOps.set(id, next);
+    void next.then(
+      () => {
+        if (this.channelOps.get(id) === next) this.channelOps.delete(id);
+      },
+      () => {
+        if (this.channelOps.get(id) === next) this.channelOps.delete(id);
+      },
+    );
+    return next;
   }
 
   getAdapter(channel: ChannelId): ChannelAdapter | undefined {

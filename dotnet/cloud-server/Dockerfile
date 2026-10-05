@@ -19,8 +19,10 @@ COPY dotnet/cloud-server/ cloud-server/
 RUN dotnet publish cloud-server/CloudServer.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# ffmpeg：飞书出站语音转 Ogg Opus（设计 §6.3，Q1 拍板入镜像；+~80MB 镜像体积，
+# 体积敏感可 CLOUD_CHANNEL_FEISHU_AUDIO=0 关闭并走文本降级）
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin cyrene \
     && mkdir -p /data \

@@ -1,0 +1,23 @@
+{
+  "name": "feishu 出站群聊 receive_id_type=chat_id",
+  "kind": "outbound",
+  "channel": "feishu",
+  "input": {
+    "message": {
+      "channel": "feishu",
+      "chatType": "group",
+      "targetId": "oc_group_1",
+      "parts": [{ "kind": "text", "text": "群消息" }]
+    }
+  },
+  "expect": {
+    "receiveIdType": "chat_id",
+    "requests": [
+      {
+        "receive_id": "oc_group_1",
+        "msg_type": "text",
+        "content": "{\"text\":\"群消息\"}"
+      }
+    ]
+  }
+}

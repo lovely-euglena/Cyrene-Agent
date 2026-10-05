@@ -1,0 +1,24 @@
+{
+  "name": "时间戳过期拒绝（防重放，401）",
+  "config": {
+    "verificationToken": "cyrene-test-token",
+    "encryptKey": "cyrene-test-encrypt-key",
+    "now": "2026-10-05T08:00:00.000Z"
+  },
+  "requests": [
+    {
+      "timestamp": "1791186600",
+      "nonce": "nonce-stale",
+      "signature": "c36e24b2d37f9404772ad937c239258432a49bcb562207b001fa0f2f43ad69ba",
+      "body": "{\"encrypt\":\"qfvgVNBZGsYn1Viu9Wufog2vSRIlWuZaT8Vj+w1kGtbhFG1YByPWmjjquNI3LnQe9YT8FxbHthWi5mr0Ofqyb6RzMXM0xjYH7kSb6shSAFazzEgFkINH6VBu7gsqaadMEpUn6pKRnykp7qfQBXC/QZSqOfaRXmI3yQ2xTyZoYRCHIHSOL/osyK3IGxWEx7/mkm1kk/laCxBKSP5he4/GvnqCO/YK29Y8Veu1RQR30IIkXphFKrMF1req4MMJrEzt1mzKK26+ajnEb1PONrEvyKg13KHDHIhT0TDNhWCfiCIrFj74roNYuXd8yY9XBSN4iFfokM1saq1sjHv/zQapLPP+cZll6KwmeqbpASZLkq0YUv3kK59SXZUGxe5u8C/rLFpzhKjg9WQ+u23zrv7y7ttA7UGXyRzHVp8ppgsquNj0o7pQrs/ms7YBVFEzQ1tWOpcFni2+FrPYHOL6En9omJAPnG7ozmOvyH5zBBj2GG/8AgaF8Xfiy1J/3gpA21scRHmqyPbrtbh8zxabnidqQPDuu9makm4ZYz/7HJs0udSKFSHMcZZmKeqKw5l6bLea\"}"
+    }
+  ],
+  "expect": [
+    {
+      "status": 401,
+      "body": {
+        "code": "E_FEISHU_TIMESTAMP"
+      }
+    }
+  ]
+}
