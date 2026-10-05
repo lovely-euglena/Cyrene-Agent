@@ -1415,6 +1415,7 @@ internal static class ChannelSelfTest
         await CheckQqBotApiClientAsync(Check);
         await CheckQqBotWsProtocolAsync(Check);
         await CheckQqBotWsSendSerializationAsync(Check);
+        await CheckQqBotWsSendTimeoutAsync(Check);
         await CheckQqBotAdapterAsync(Check);
 
         Console.WriteLine(failures == 0
@@ -1451,6 +1452,15 @@ internal static class ChannelSelfTest
             && QqBotUrlPolicy.StripUrls("https://a.example/x?q=1&b=2 完") == "[链接] 完"
             && QqBotUrlPolicy.ContainsUrl("见 https://a.example/x，谢谢"),
             QqBotUrlPolicy.StripUrls("看 https://a.example/x，谢谢"));
+        // P2-6.4：扩展截断集合——假名/谚文/CJK 扩展 A/B/全角标点等残余区段不再被吞入 URL
+        check("qqbot: URL 截断扩展区段（假名/谚文/扩展 A/B/全角）",
+            QqBotUrlPolicy.StripUrls("看 https://a.example/xありがとう") == "看 [链接]ありがとう"
+            && QqBotUrlPolicy.StripUrls("看 https://a.example/x한국어") == "看 [链接]한국어"
+            && QqBotUrlPolicy.StripUrls("看 https://a.example/x㐀尾") == "看 [链接]㐀尾"
+            && QqBotUrlPolicy.StripUrls("看 https://a.example/x\U00020000尾") == "看 [链接]\U00020000尾"
+            && QqBotUrlPolicy.StripUrls("看 https://a.example/x！尾") == "看 [链接]！尾",
+            QqBotUrlPolicy.StripUrls("看 https://a.example/xありがとう")
+            + " | " + QqBotUrlPolicy.StripUrls("看 https://a.example/x\U00020000尾"));
     }
 
     private static async Task CheckQqBotApiClientAsync(CheckFn check)
@@ -1692,6 +1702,50 @@ internal static class ChannelSelfTest
             string.Join(";", errors.Select(item => item.Message)));
     }
 
+    /// <summary>
+    /// P2-5：单项发送限时——发送挂起（网络黑洞 / TCP 重传期）时释放发送门并强制断开触发重连，
+    /// 心跳自愈不再被单个挂起的 Send 卡死（Identify/Resume 同样不再无限排队）。
+    /// </summary>
+    private static async Task CheckQqBotWsSendTimeoutAsync(CheckFn check)
+    {
+        var gateway = new FakeQqBotGateway();
+        var errors = new List<Exception>();
+        await using var client = new QqBotWsClient(new QqBotWsClientOptions
+        {
+            GatewayUrl = "wss://fake",
+            GetAccessToken = _ => Task.FromResult("fake-token"),
+            SocketFactory = gateway.Factory,
+            InitialBackoff = TimeSpan.FromMilliseconds(30),
+            MaxBackoff = TimeSpan.FromMilliseconds(60),
+            MinHeartbeatIntervalMs = 20,
+            SendTimeout = TimeSpan.FromMilliseconds(40),
+            OnReadyChange = _ => { },
+            OnError = error => { lock (errors) errors.Add(error); },
+        });
+        await client.StartAsync();
+        check("qqbot ws: 发送限时建连", await WaitUntilAsync(() => gateway.Sockets.Count == 1));
+        var socket = gateway.Latest!;
+        socket.SendDelayMs = 60_000; // 模拟发送挂起（永不完成；仅在超时取消时返回）
+        // Hello → Identify 发送挂起：40ms 后超时 → AbortSocket → 退避重连（发送门已释放）
+        socket.Push(new { op = 10, d = new { heartbeat_interval = 60_000 } });
+        check("qqbot ws: 发送挂起 → 限时 abort + 重连（第 2 个 socket）",
+            await WaitUntilAsync(() => gateway.Sockets.Count == 2) && socket.Aborted,
+            $"sockets={gateway.Sockets.Count} aborted={socket.Aborted}");
+        check("qqbot ws: 发送超时错误可见（与停止取消区分）",
+            errors.Any(item => item.Message.Contains("发送超时")),
+            string.Join(";", errors.Select(item => item.Message)));
+        var second = gateway.Sockets[1];
+        second.Push(new { op = 10, d = new { heartbeat_interval = 60_000 } });
+        check("qqbot ws: 超时重连后 Identify 正常发送（发送门已释放）",
+            await WaitUntilAsync(() => second.SentOps(2).Count == 1));
+        second.Push(new { op = 0, t = "READY", s = 1, d = new { session_id = "sess-timeout" } });
+        check("qqbot ws: 超时重连后恢复 ready", await WaitUntilAsync(() => client.IsReady));
+        await client.StopAsync();
+        check("qqbot ws: 停止后无未预期错误（仅发送超时/心跳类）",
+            errors.All(item => item.Message.Contains("发送超时") || item.Message.Contains("心跳超时")),
+            string.Join(";", errors.Select(item => item.Message)));
+    }
+
     private static async Task CheckQqBotAdapterAsync(CheckFn check)
     {
         var options = new ChannelOptions
@@ -1908,8 +1962,10 @@ internal static class ChannelSelfTest
             check("qqbot adapter: allowAnyPrivate 放行", await WaitUntilAsync(() => harness.Received.Count == 1));
         }
 
-        // P2-3(a)：GET /gateway 首败必须冒泡——ChannelManager 不标记 started，sweep 自愈才会重试
+        // P2-6.5：GET /gateway 首败必须冒泡（manager 不记 started，sweep 可自愈）；
+        // 网关 URL 成功但 WS 首连失败时，同样必须冒泡并清理本次启动资源（ws StopAsync + 不动注入 api）。
         var gatewayDown = true;
+        var wsConnectDown = true;
         var failHandler = new FakeQqBotHttpHandler
         {
             Responder = (request, _) =>
@@ -1930,24 +1986,48 @@ internal static class ChannelSelfTest
         var failApi = new QqBotApiClient(
             "102146862", "secret", new HttpClient(failHandler),
             apiBase: "https://api.test", tokenUrl: "https://bots.test/app/getAppAccessToken", timeProvider: failTime);
+        QqBotWsClient? failWs = null;
+        CancellationToken failConnectToken = default;
+        var failSocketCalls = 0;
         var failAdapter = new QqBotAdapter(
             options, NullLogger<QqBotAdapter>.Instance, failApi,
-            wsOptions => new QqBotWsClient(new QqBotWsClientOptions
+            wsOptions =>
             {
-                GatewayUrl = wsOptions.GatewayUrl,
-                GetAccessToken = wsOptions.GetAccessToken,
-                OnDispatch = wsOptions.OnDispatch,
-                OnReadyChange = wsOptions.OnReadyChange,
-                OnError = wsOptions.OnError,
-                SocketFactory = failGateway.Factory,
-                InitialBackoff = TimeSpan.FromMilliseconds(30),
-                MaxBackoff = TimeSpan.FromMilliseconds(60),
-                MinHeartbeatIntervalMs = 20,
-                TimeProvider = failTime,
-            }),
+                var ws = new QqBotWsClient(new QqBotWsClientOptions
+                {
+                    GatewayUrl = wsOptions.GatewayUrl,
+                    GetAccessToken = wsOptions.GetAccessToken,
+                    OnDispatch = wsOptions.OnDispatch,
+                    OnReadyChange = wsOptions.OnReadyChange,
+                    // 替身注入：把首连错误继续上抛（生产回调不抛），驱动适配器「启动失败清理」分支
+                    OnError = error =>
+                    {
+                        wsOptions.OnError?.Invoke(error);
+                        throw new InvalidOperationException("注入首连致命失败", error);
+                    },
+                    SocketFactory = (uri, ct) =>
+                    {
+                        Interlocked.Increment(ref failSocketCalls);
+                        if (wsConnectDown)
+                        {
+                            failConnectToken = ct;
+                            throw new HttpRequestException("ws connect refused");
+                        }
+                        return failGateway.Factory(uri, ct);
+                    },
+                    InitialBackoff = TimeSpan.FromMilliseconds(30),
+                    MaxBackoff = TimeSpan.FromMilliseconds(60),
+                    MinHeartbeatIntervalMs = 20,
+                    TimeProvider = failTime,
+                });
+                failWs = ws;
+                return ws;
+            },
             failTime);
         var failManager = new ChannelManager(NullLogger<ChannelManager>.Instance);
         failManager.Register(failAdapter);
+
+        // 第一段：GET /gateway HTTP 首败（ws 尚未创建）→ 冒泡
         await failManager.StartAsync(ChannelIds.QqBot);
         var failedStatus = failAdapter.GetStatus();
         check("qqbot adapter: GET /gateway 首败冒泡 + detail.lastErrorCode 记录（manager 不记 started，sweep 可自愈）",
@@ -1955,7 +2035,31 @@ internal static class ChannelSelfTest
             && failedStatus.Detail?.GetProperty("lastErrorCode").GetString() == QqBotAdapter.ErrorCodeGateway,
             $"running={failManager.IsRunning(ChannelIds.QqBot)} phase={failedStatus.Phase} detail={failedStatus.Detail?.GetRawText()}");
 
+        // 第二段：网关 URL 成功但 WS 首连失败 → 适配器清理 ws（StopAsync 取消在途连接令牌）
         gatewayDown = false;
+        await failManager.StartAsync(ChannelIds.QqBot);
+        check("qqbot adapter: WS 首连失败冒泡 + ws 清理（StopAsync 取消连接令牌）",
+            !failManager.IsRunning(ChannelIds.QqBot)
+            && failAdapter.GetStatus().Phase == ChannelPhases.Error
+            && failWs is not null && failSocketCalls == 1
+            && failConnectToken.IsCancellationRequested,
+            $"ws={(failWs is null ? "null" : "created")} calls={failSocketCalls} tokenCanceled={failConnectToken.IsCancellationRequested}");
+
+        // 注入 api 归调用方：失败清理不得 dispose（token 过期后仍可刷新）
+        failTime.Advance(TimeSpan.FromHours(3));
+        var apiUsable = true;
+        try
+        {
+            apiUsable = await failApi.GetAccessTokenAsync() == "tok";
+        }
+        catch (ObjectDisposedException)
+        {
+            apiUsable = false;
+        }
+        check("qqbot adapter: 首败清理不动注入 api（所有权归调用方）", apiUsable, "injected api disposed");
+
+        // 第三段：ws 恢复后重试成功（running）
+        wsConnectDown = false;
         await failManager.StartAsync(ChannelIds.QqBot);
         var recoveredSocket = failGateway.Latest!;
         recoveredSocket.Push(new { op = 10, d = new { heartbeat_interval = 30_000 } });

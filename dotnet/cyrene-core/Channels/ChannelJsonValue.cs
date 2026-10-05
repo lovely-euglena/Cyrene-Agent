@@ -56,4 +56,23 @@ public static class ChannelJsonValue
     /// <summary>Unix 毫秒 → DateTimeOffset（UTC）。</summary>
     public static DateTimeOffset FromUnixTimeMilliseconds(double milliseconds) =>
         DateTimeOffset.FromUnixTimeMilliseconds((long)milliseconds);
+
+    /// <summary>
+    /// Unix 毫秒 → DateTimeOffset（UTC），带范围收口：非有限值或超出 DateTimeOffset 可表示范围
+    /// （如 19 位毫秒数）返回 null，由调用方回退 now——避免 (long) 溢出后
+    /// FromUnixTimeMilliseconds 抛 ArgumentOutOfRangeException 丢整条事件（P2-1 飞书/微信同口径）。
+    /// 残余双端差异：TS new Date 可表示范围为 ±8.64e15，越界为 Invalid Date（契约序列化 null）；
+    /// 未越界但年份 &gt;9999 时 TS 输出 5 位年份 ISO。见 fixtures/channels/README.md「已知超纲差异」。
+    /// </summary>
+    public static DateTimeOffset? TryFromUnixTimeMilliseconds(double? milliseconds)
+    {
+        if (milliseconds is not { } value || !double.IsFinite(value)) return null;
+        var truncated = Math.Truncate(value);
+        if (truncated < DateTimeOffset.MinValue.ToUnixTimeMilliseconds()
+            || truncated > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds())
+        {
+            return null;
+        }
+        return FromUnixTimeMilliseconds(truncated);
+    }
 }

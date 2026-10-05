@@ -56,6 +56,7 @@ internal static class FeishuSelfTest
 
         await CheckCryptoAsync(Check);
         await CheckWebhookFixturesAsync(Check);
+        CheckTimestampRange(Check);
         await CheckEndpointAsync(Check);
         await CheckDedupeAsync(Check);
         await CheckTranscoderAsync(Check);
@@ -240,6 +241,36 @@ internal static class FeishuSelfTest
                 && outcome.Body.GetProperty("challenge").GetString() == "cyrene-challenge-2",
                 outcome.Body.GetRawText());
         }
+    }
+
+    // ── 2a. 共享毫秒范围助手（P2-1）──────────────────────────────────────────
+
+    /// <summary>
+    /// P2-1：`ChannelJsonValue.TryFromUnixTimeMilliseconds` 范围收口——非有限/越界毫秒数
+    /// （如 19 位数字）返回 null 由调用方回退 now，不再 (long) 溢出抛 ArgumentOutOfRangeException
+    /// 丢整条事件；飞书/微信同口径。残余双端差异（TS 越界为 Invalid Date）见
+    /// fixtures/channels/README.md「已知超纲差异」。
+    /// </summary>
+    private static void CheckTimestampRange(Action<string, bool, string> check)
+    {
+        var now = DateTimeOffset.Parse("2026-09-01T00:00:00.000Z");
+        check("normalizer: 毫秒范围助手（越界/非有限 → null，边界可表示）",
+            ChannelJsonValue.TryFromUnixTimeMilliseconds(null) is null
+            && ChannelJsonValue.TryFromUnixTimeMilliseconds(double.NaN) is null
+            && ChannelJsonValue.TryFromUnixTimeMilliseconds(double.PositiveInfinity) is null
+            && ChannelJsonValue.TryFromUnixTimeMilliseconds(1e20) is null
+            && ChannelJsonValue.TryFromUnixTimeMilliseconds(253402300799999) is not null
+            && ChannelJsonValue.TryFromUnixTimeMilliseconds(-62135596800000) is not null, "");
+
+        using var wechatDocument = JsonDocument.Parse(
+            "{\"message_type\":1,\"from_user_id\":\"u\",\"create_time_ms\":1e20,\"item_list\":[]}");
+        var wechatAt = WeChatNormalizer.NormalizeInbound(wechatDocument.RootElement, now)?.Message.At;
+        using var feishuDocument = JsonDocument.Parse(
+            "{\"header\":{\"event_type\":\"im.message.receive_v1\"},\"event\":{\"message\":" +
+            "{\"chat_type\":\"p2p\",\"timestamp\":1e20}}}");
+        var feishuAt = FeishuNormalizer.NormalizeInbound(feishuDocument.RootElement, now)?.Message.At;
+        check("normalizer: 微信/飞书毫秒越界回退 now（不再抛异常丢事件）",
+            wechatAt == now && feishuAt == now, $"wechat={wechatAt:O} feishu={feishuAt:O}");
     }
 
     // ── 2b. webhook 路由接线（P2-5c）────────────────────────────────────────
@@ -483,22 +514,30 @@ internal static class FeishuSelfTest
                     ex.ErrorCode == "E_FEISHU_MEDIA_TOO_LARGE" && !File.Exists(tooLargeDest), ex.ErrorCode);
             }
 
-            // 传输超时：上游发头后卡住（ResponseHeadersRead 下 HttpClient.Timeout 不覆盖响应体读取）
-            var hangHandler = new FakeFeishuHandler { HangResource = true };
+            // P2-6.5：传输超时 + 半成品清理——上游发头后先回前缀字节（File.Create 落盘半成品）
+            // 再卡住；超时必须删除半成品。此前断言在文件尚未落盘时也成立，未真正命中清理分支。
+            // 前缀取 16KB（> FileStream 4KB 缓冲，确保字节真正落盘可观测）。
+            var hangPrefix = Enumerable.Repeat((byte)0x41, 16 * 1024).ToArray();
+            var hangHandler = new FakeFeishuHandler { HangResource = true, HangResourcePrefix = hangPrefix };
             using (var hangClient = new FeishuApiClient(
                 "cli_test_app", "secret_test", hangHandler,
                 transferTimeout: TimeSpan.FromMilliseconds(150)))
             {
                 var hangDest = Path.Combine(dir, "hang.bin");
+                var hangTask = hangClient.DownloadResourceAsync("om_1", "hang_key", "file", hangDest, 1024 * 1024);
+                // 等半成品先落盘（前缀写入后请求体才进入无限挂起）
+                var partialOnDisk = await WaitUntilAsync(
+                    () => File.Exists(hangDest) && new FileInfo(hangDest).Length > 0);
                 try
                 {
-                    await hangClient.DownloadResourceAsync("om_1", "hang_key", "file", hangDest, 1024 * 1024);
-                    check("api: 媒体下载传输超时（发头后卡住 → E_FEISHU_MEDIA_TIMEOUT）", false, "未抛异常");
+                    await hangTask;
+                    check("api: 媒体下载传输超时（半成品落盘后卡住 → E_FEISHU_MEDIA_TIMEOUT）", false, "未抛异常");
                 }
                 catch (FeishuApiException ex)
                 {
-                    check("api: 媒体下载传输超时（发头后卡住 → E_FEISHU_MEDIA_TIMEOUT）",
-                        ex.ErrorCode == "E_FEISHU_MEDIA_TIMEOUT" && !File.Exists(hangDest), ex.ErrorCode);
+                    check("api: 媒体下载传输超时（半成品落盘后卡住 → E_FEISHU_MEDIA_TIMEOUT）",
+                        ex.ErrorCode == "E_FEISHU_MEDIA_TIMEOUT" && partialOnDisk && !File.Exists(hangDest),
+                        $"{ex.ErrorCode} partial={partialOnDisk} exists={File.Exists(hangDest)}");
                 }
             }
 
@@ -832,6 +871,8 @@ internal static class FeishuSelfTest
         public byte[] ResourceBytes { get; set; } = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         public bool SendError;
         public bool HangResource;
+        /// <summary>P2-6.5：挂起前先回写的前缀字节（半成品落盘后再超时，真实命中清理分支）。</summary>
+        public byte[] HangResourcePrefix { get; set; } = [0x89, 0x50, 0x4E, 0x47];
         public int? ForceHttpStatus;
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -887,7 +928,7 @@ internal static class FeishuSelfTest
             {
                 ResourceQueries.Add(uri.Query);
                 return HangResource
-                    ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new HangingContent() }
+                    ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new HangingContent(HangResourcePrefix) }
                     : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ResourceBytes) };
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound)
@@ -900,8 +941,11 @@ internal static class FeishuSelfTest
             new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     }
 
-    /// <summary>发头后卡住的响应体（读取只在取消时返回），模拟上游发头后不传数据。</summary>
-    private sealed class HangingContent : HttpContent
+    /// <summary>
+    /// 发头后卡住的响应体（P2-6.5）：先回 <paramref name="prefix"/> 前缀字节再挂起，
+    /// 让下载侧 File.Create 落盘半成品后超时，从而真实命中「超时清理半成品」分支。
+    /// </summary>
+    private sealed class HangingContent(byte[] prefix) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
             Task.Delay(Timeout.Infinite);
@@ -913,13 +957,15 @@ internal static class FeishuSelfTest
         }
 
         protected override Task<Stream> CreateContentReadStreamAsync() =>
-            Task.FromResult<Stream>(new HangingStream());
+            Task.FromResult<Stream>(new HangingStream(prefix));
 
         protected override Task<Stream> CreateContentReadStreamAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<Stream>(new HangingStream());
+            Task.FromResult<Stream>(new HangingStream(prefix));
 
-        private sealed class HangingStream : Stream
+        private sealed class HangingStream(byte[] prefix) : Stream
         {
+            private int _offset;
+
             public override bool CanRead => true;
             public override bool CanSeek => false;
             public override bool CanWrite => false;
@@ -937,14 +983,22 @@ internal static class FeishuSelfTest
             public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
             public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-                WaitAsync(cancellationToken);
+                WaitAsync(buffer, cancellationToken);
 
             public override Task<int> ReadAsync(
                 byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-                WaitAsync(cancellationToken).AsTask();
+                WaitAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-            private static async ValueTask<int> WaitAsync(CancellationToken cancellationToken)
+            private async ValueTask<int> WaitAsync(Memory<byte> buffer, CancellationToken cancellationToken)
             {
+                // 先交付前缀（半成品落盘），之后无限挂起直到传输超时取消
+                if (_offset < prefix.Length)
+                {
+                    var take = Math.Min(buffer.Length, prefix.Length - _offset);
+                    prefix.AsMemory(_offset, take).CopyTo(buffer);
+                    _offset += take;
+                    return take;
+                }
                 await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
                 return 0;
             }
@@ -1109,6 +1163,18 @@ internal static class FeishuSelfTest
     private static string NewTempDir(string label) =>
         Directory.CreateDirectory(
             Path.Combine(Path.GetTempPath(), $"cyrene-channel-selftest-{label}-{Guid.NewGuid():N}")).FullName;
+
+    /// <summary>轮询等待条件成立（P2-6.5：观测半成品文件落盘后再放行超时判定）。</summary>
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, int timeoutMs = 2_000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(10);
+        }
+        return condition();
+    }
 
     private static void CleanupTempDir(string dir)
     {

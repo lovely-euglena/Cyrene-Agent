@@ -31,6 +31,12 @@ public sealed class QqBotWsClientOptions
     /// <summary>心跳间隔下限（TS 侧 Math.max(1000, heartbeat_interval)；selftest 调小）。</summary>
     public int MinHeartbeatIntervalMs { get; init; } = 1_000;
 
+    /// <summary>
+    /// P2-5：单项发送限时（缺省 10s）。发送挂起（网络黑洞 / TCP 重传期）时释放发送门并强制断开
+    /// 触发重连，避免心跳/Identify/Resume 排队等锁导致自愈停摆；≤0 关闭限时（不推荐）。
+    /// </summary>
+    public TimeSpan SendTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>Dispatch 事件（READY/RESUMED 由客户端内部消费，不转发）。</summary>
@@ -428,13 +434,25 @@ public sealed class QqBotWsClient
 
     private async Task SendRawAsync(IQqBotWebSocket socket, string json, CancellationToken cancellationToken)
     {
+        // P2-5：单项发送限时——发送挂起时不能无限占用发送门（否则心跳循环停在
+        // await SendPayloadAsync，走不到「连续两周期无 ACK → AbortSocket」判定，
+        // Identify/Resume 也全部排队）。停止取消（外部 token）与发送超时（linked CTS）区分：
+        // 前者静默放弃；后者视连接不可信，强制断开触发重连自愈。
+        var timeout = _options.SendTimeout;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (timeout > TimeSpan.Zero) linked.CancelAfter(timeout);
         try
         {
-            await socket.SendTextAsync(json, cancellationToken);
+            await socket.SendTextAsync(json, linked.Token);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // 停止中：忽略
+        }
+        catch (OperationCanceledException) when (timeout > TimeSpan.Zero && linked.IsCancellationRequested)
+        {
+            HandleError(new TimeoutException($"QQ Bot 发送超时（{timeout.TotalSeconds:0}s），重连"));
+            AbortSocket();
         }
         catch (Exception ex)
         {
