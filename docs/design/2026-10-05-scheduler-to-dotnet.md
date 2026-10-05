@@ -41,11 +41,10 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `SchedulerModels.cs` | `ScheduleKind` / `ScheduleConfig` / `ScheduledTask` / `NewScheduledTaskInput` / `ScheduledTaskPatch` / `ScheduledTaskHistoryEntry` / `SchedulerRunResult`（字段与 `src/main/scheduler/types.ts` 一一对应） |
+| `SchedulerModels.cs` | `ScheduleKind` / `ScheduleConfig` / `ScheduledTask` / `NewScheduledTaskInput` / `ScheduledTaskPatch` / `ScheduledTaskHistoryEntry` / `SchedulerRunResult`（字段与 `src/main/scheduler/types.ts` 一一对应）+ 共享 `SchedulerJson`（`JsonSerializerOptions` + ISO 工具；受交付文件清单约束，不单独成文件） |
 | `ScheduleCalculator.cs` | 7 种排期 + 逾期归一（逐行对照 `schedule-calculator.ts`） |
 | `SchedulerStore.cs` | 加载/校验/归一 + CRUD + 历史 JSONL（每任务 50 / 总 1000）+ `Changed` 事件 |
 | `SchedulerEngine.cs` | 单 timer（1h 封顶）/ 逾期归一 / 先发起执行（同步登记 running）再推进排期 / running 去重 / `FireNow` |
-| `SchedulerModels.cs` | DTO 与共享 `SchedulerJson`（`JsonSerializerOptions` + ISO 工具；受交付文件清单约束，不单独成文件） |
 
 契约：
 - **时间**：DTO 中一律保留 ISO 字符串（与 TS 字节级一致，含 `toISOString()` 的
@@ -103,8 +102,9 @@ Tray → Electron：
 - 收到 `sched.fire` → 复用 `scheduler-runner` 执行（历史经 `sched.report`）；
   `canRunTask` 状态经 `sched.plugin-state` 同步给托盘。
 - headless：`Cyrene.exe --scheduled-task <id> [--scheduled-history <histId>]`——最小 core
-  启动（不建窗口/托盘），连管道取任务，跑 runner，回报历史 + `tray.notify`，退出。
-- 托盘自启：登录项注册改为 `cyrene-native --tray --data-dir <userData>`（安装器
+  启动（不建窗口/托盘），连管道取任务，跑 runner，经 `sched.report` 回报历史后退出；
+  气泡由托盘在 `sched.report` 终态统一弹（headless 自身不发 `tray.notify`）。
+- 托盘自启：登录项注册改为 `cyrene-native --tray --scheduler --data-dir <userData>`（安装器
   「开机自启」勾选沿用 `installer-options.json` 链路；开关关闭/exe 缺失回退 Electron
   登录项）。**Electron 不主动拉起托盘**（避免双调度）——托盘未运行时启动期回退 TS scheduler。
 
@@ -128,8 +128,24 @@ Tray → Electron：
 - 复审修复（2026-10-05）：headless 拉起串行排队 + 进程退出无 report → failed 历史/气泡；
   托盘启动把遗留 running 标为中断；headless 执行 30min 超时看门狗；本地 TS 模式
   重连 watchdog + disarm 重试回执；登录项 `--data-dir` 引号包裹；headless 不建窗口。
+- 二轮复审修复（2026-10-05）：headless 回退读取前先 load 本地 store（真实进程内
+  离线回退此前恒读空数组）；宽限兜底查既有终态不覆写 TS 回退结果；排队出队复核
+  启用/可运行；`Exited` 先订阅后开事件；headless 失败置非零退出码；管道 E2E 接入
+  `dotnet-smoke.ps1`。
 
-## 8. 覆盖范围（本 PR 对应 issue 任务）
+## 8. 已知边界（复审 P2-8，入档不阻断）
+
+- **headless 执行期用户动作被静默吞**：headless 实例（最长 30 分钟）不建窗口/托盘，
+  单实例锁使执行期用户拉起应用的激活请求被忽略（`src/main/index.ts:63-65`、
+  `src/main/application/single-instance.ts:16-18`、`default-dependencies.ts:1128-1134`）。
+- **开关关闭 + 托盘晚于 ~7.5s 起时不会 disarm**：`CYRENE_SCHEDULER_HOST=0` 启动期
+  disarm 重试窗口约 7.5s，托盘晚起则残余双调度窗口直到下次应用启动
+  （`default-dependencies.ts:2000-2005`、`host-client.ts:324-330`）。
+- **`CYRENE_LAZY_CHAT_WINDOW=0` 时 headless 仍物化隐藏聊天窗**（`core-bootstrap.ts:301-303`）。
+- **`Global\cyrene-tray` 机器级互斥的多用户限制**：第二个 Windows 用户/会话的托盘
+  静默不启动（单写者不变量优先；`TrayHost.cs:117-121`）。
+
+## 9. 覆盖范围（本 PR 对应 issue 任务）
 
 - [x] C# 移植 calculator/types/store/engine + `--selftest scheduler`（Linux 可跑）
 - [x] tray 集成：timer + 单写者 + 历史压缩 + 退出语义（菜单拆项）
@@ -139,4 +155,5 @@ Tray → Electron：
 - [x] 插件任务离线语义（skip 记历史；指纹校验仍在 TS）
 - [x] 启动注册（Electron ensure-spawn + 登录项改指 `--tray`）
 - [x] 打包确认（`native-windows` 已随包）+ 冒烟脚本接入（`dotnet-smoke-linux.py` 增加
-  `--selftest scheduler`，CI `dotnet-backend.yml` 覆盖）
+  `--selftest scheduler`，CI `dotnet-backend.yml` 覆盖；Windows `dotnet-smoke.ps1`
+  挂 `--selftest tray-scheduler` + `scripts/tray-scheduler-e2e.mjs` 管道 E2E）
