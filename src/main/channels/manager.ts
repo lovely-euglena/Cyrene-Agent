@@ -116,9 +116,14 @@ export class ChannelManager {
     if (this.dispatchFn) {
       setAdapterHandler(adapter, this.makeAdapterHandler(id));
     }
-    await adapter.start();
-    this.startedAdapters.add(id);
-    logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+    try {
+      await adapter.start();
+      this.startedAdapters.add(id);
+      logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+    } catch (err) {
+      // 单渠道失败不抛出：applyPlan/重启等路径不因一个渠道 reject 而中断
+      console.error(LOG, `渠道启动失败 [${id}]:`, err instanceof Error ? err.message : err);
+    }
   }
 
   /**

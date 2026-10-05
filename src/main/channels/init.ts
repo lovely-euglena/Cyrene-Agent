@@ -182,6 +182,26 @@ export async function shutdownChannels(): Promise<void> {
   started = false;
 }
 
+/**
+ * 运行期 remote 开关切换（settings 保存后调用）：
+ *   - 开启：启动归属控制器；否则快照恒空 → unknown，入站被门闩静默丢弃。
+ *   - 关闭：停控制器并恢复本机启动（本地模式行为不变）。
+ * 缓存失效顺序：关闭时先 stop（用旧配置尽力 release）再 invalidate，最后 startAll 用新配置判定。
+ */
+async function syncOwnershipRuntime(): Promise<void> {
+  if (!started || !ownershipController) return;
+  const remote = loadChannelsSettings().remote;
+  if (remote.enabled) {
+    ownershipController.client.invalidateConfig();
+    if (!ownershipController.isRunning) await ownershipController.start();
+    return;
+  }
+  if (!ownershipController.isRunning) return; // 本来就是本地模式：行为零变化
+  await ownershipController.stop();
+  ownershipController.client.invalidateConfig();
+  await channelManager.startAll();
+}
+
 /** 注册进程间通信处理器。 */
 function registerChannelsIpc(
   ipcOption: IpcScope | undefined,
@@ -190,9 +210,11 @@ function registerChannelsIpc(
   const ipc = ipcOption ?? createIpcScope();
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
-  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
+  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown) => {
     saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
     reloadDispatcherSettings();
+    await syncOwnershipRuntime();
+    broadcastChannelsStatus();
     return getPublicChannelsSettings();
   });
 
@@ -210,8 +232,14 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_RESTART, async () => {
     await channelManager.stopAll();
-    if (ownershipController) {
-      await ownershipController.syncNow();
+    // 本地模式必须走 startAll（syncNow 依赖控制器运行态，且本地模式不应受归属门闩牵制）
+    const remote = loadChannelsSettings().remote;
+    if (remote.enabled && ownershipController) {
+      if (ownershipController.isRunning) {
+        await ownershipController.syncNow();
+      } else {
+        await ownershipController.start();
+      }
     } else {
       await channelManager.startAll();
     }
