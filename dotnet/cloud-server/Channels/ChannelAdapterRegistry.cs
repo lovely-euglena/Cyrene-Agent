@@ -24,11 +24,13 @@ public interface IChannelAdapterRegistration
 /// <summary>
 /// 适配器注册表（阶段 3-6 的插入位）。
 ///
-/// 阶段 2 框架批为空：没有任何具体适配器 = capabilities.channels.hosted 为空。
-/// 追加示例（阶段 3）：
-/// <code>new WeChatAdapterRegistration(),</code>
+/// 已注册：阶段 6 QQ 官方 bot（仅被动回复，proactive:false）。
+/// 阶段 3-5（微信 / 飞书）在各自轨道追加；本文件合并时保留全部条目。
 /// </summary>
 public static class ChannelAdapterCatalog
 {
-    public static IReadOnlyList<IChannelAdapterRegistration> All { get; } = [];
+    public static IReadOnlyList<IChannelAdapterRegistration> All { get; } =
+    [
+        new Adapters.QqBot.QqBotAdapterRegistration(),
+    ];
 }
