@@ -22,6 +22,7 @@ import type { RuntimeStateService } from "../orchestrator/runtime-state-service"
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
 import { initReranker, getRerankerInstallStatus, resetReranker } from "../rag/reranker";
 import { switchEmbeddingModel } from "../rag";
+import { finalizeEmbeddingModelSwitch } from "../rag/embedding-switch-finalize";
 import { resolveSidecarPath } from "../rag/embedding-sidecar";
 import { downloadEmbeddingModel, deleteEmbeddingModel } from "../embedding-manager";
 import * as os from "os";
@@ -401,11 +402,14 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       try {
         const result = await switchEmbeddingModel(modelKey, action);
         if (result.ok) {
-          await reconcileUserMemoryIndex();
+          // 与 native/WPF 入口同口径收尾（P1-4）：用户记忆对账 + 贴纸索引失效/重建
+          await finalizeEmbeddingModelSwitch({
+            reconcileUserMemoryIndex,
+            invalidateStickerEmbeddingIndex: () => embeddingIndexService.invalidateStickerEmbeddingIndex(),
+            refreshStickerEmbeddingIndex: (reason) => embeddingIndexService.refreshStickerEmbeddingIndex(reason),
+          });
           saveModelSettings({ embeddingModel: modelKey === "e5-small" ? "e5-small" : "bgem3" });
           broadcastModelConfigChanged();
-          embeddingIndexService.invalidateStickerEmbeddingIndex();
-          embeddingIndexService.refreshStickerEmbeddingIndex("embedding-model-switch");
         }
         return result;
       } catch (err) {

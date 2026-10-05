@@ -76,6 +76,7 @@ import {
   isUserMemoryVectorStoreReady,
 } from "../rag";
 import { getEmbeddingProvider, getSceneEmbeddingProvider } from "../rag/embedding";
+import { finalizeEmbeddingModelSwitch } from "../rag/embedding-switch-finalize";
 import { isMemoryEnabled, isSummaryMemoryEnabled, setMemoryMode, type MemoryMode } from "../memory/memory-mode";
 import { initializeSummaryMemoryScheduler, enableSummaryMemoryScheduler, flushAllSummaryMemory, scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
 import { createConversationSessionMigration } from "../orchestrator/conversation-session-migration";
@@ -1351,7 +1352,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               if (patch.embeddingModel && patch.embeddingModel !== loadModelSettings().embeddingModel) {
                 void import("../rag")
                   .then(({ switchEmbeddingModel }) => switchEmbeddingModel(patch.embeddingModel!, embeddingModelAction))
-                  .then((result) => {
+                  .then(async (result) => {
                     if (!result.ok) {
                       const hint = result.requires === "rebuild"
                         ? "旧索引需要重建（备份后全量重嵌入）或清空后才能切换，请确认迁移方式"
@@ -1374,6 +1375,15 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
                       );
                       return;
                     }
+                    // 与渲染端 IPC 成功路径同口径收尾（P1-4）：用户记忆对账 +
+                    // 贴纸索引失效/重建（否则重启前贴纸匹配用旧模型向量算余弦）
+                    await finalizeEmbeddingModelSwitch({
+                      reconcileUserMemoryIndex,
+                      invalidateStickerEmbeddingIndex: () =>
+                        stickerEmbeddingIndexService?.invalidateStickerEmbeddingIndex(),
+                      refreshStickerEmbeddingIndex: (reason) =>
+                        stickerEmbeddingIndexService?.refreshStickerEmbeddingIndex(reason),
+                    });
                     saveModelSettings({ ...settingsPatch, embeddingModel: patch.embeddingModel });
                     broadcastModelChanged();
                     pushSettingsSnapshotToNative();
