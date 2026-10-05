@@ -5,10 +5,10 @@ import {
   createSchedulerActions,
   projectTaskForRenderer,
   type RendererScheduledTask,
+  type SchedulerEngineLike,
   type SchedulerStoreLike,
   type SchedulerToolInfo,
 } from "./scheduler-actions";
-import type { SchedulerEngine } from "./scheduler-engine";
 import type { ToolDefinition } from "../orchestrator/tools/registry/tool-registry";
 
 export type { RendererScheduledTask, SchedulerStoreLike, SchedulerToolInfo };
@@ -19,7 +19,7 @@ let schedulerIpcRegistered = false;
 /** 注册 scheduler IPC。idempotent：同一 channel 重复注册会抛错。 */
 export function registerSchedulerIpc(
   store: SchedulerStoreLike,
-  engine: SchedulerEngine,
+  engine: SchedulerEngineLike,
   getTools: () => ToolDefinition[],
   ipcOption?: IpcScope,
 ): void {

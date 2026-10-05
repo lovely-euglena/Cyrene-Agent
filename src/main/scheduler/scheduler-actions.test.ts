@@ -60,17 +60,31 @@ describe("createSchedulerActions", () => {
     expect(result.value[0]).not.toHaveProperty("pluginUserEnabled");
   });
 
-  it("用户任务 toggle 直接写 enabled + 通知", () => {
+  it("用户任务 toggle 直接写 enabled + 通知", async () => {
     const { actions, store, notify } = harness();
-    const result = actions.toggle("task-1", false);
+    const result = await actions.toggle("task-1", false);
     expect(result.ok).toBe(true);
     expect(store.updateTask).toHaveBeenCalledWith("task-1", { enabled: false });
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("插件任务 toggle 走授权位（pluginTaskTogglePatch）+ 通知", () => {
+  it("写操作必须 await store Promise（resolve 前不通知）（复审 P2-5）", async () => {
+    const { actions, store, notify } = harness();
+    let resolveUpdate: (value: unknown) => void = () => { /* 占位 */ };
+    store.updateTask.mockReturnValueOnce(new Promise((resolve) => { resolveUpdate = resolve; }));
+
+    const pending = actions.update("task-1", { enabled: false });
+    await Promise.resolve();
+    expect(notify).not.toHaveBeenCalled();
+
+    resolveUpdate({ id: "task-1" });
+    await pending;
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("插件任务 toggle 走授权位（pluginTaskTogglePatch）+ 通知", async () => {
     const { actions, store, notify } = harness([task({ ownerPluginId: "plugin-a", enabled: false })]);
-    actions.toggle("task-1", true);
+    await actions.toggle("task-1", true);
     const patch = store.updateTask.mock.calls[0][1] as Record<string, unknown>;
     // 授权 patch 改写 pluginUserEnabled/approvalFingerprint，而不是裸 enabled
     expect(patch).toHaveProperty("pluginUserEnabled");
@@ -78,11 +92,11 @@ describe("createSchedulerActions", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("add/remove/history 转发 store 并通知（history 不通知）", () => {
+  it("add/remove/history 转发 store 并通知（history 不通知）", async () => {
     const { actions, store, notify } = harness();
-    actions.add({ title: "t", prompt: "p" } as never);
-    actions.remove("task-1");
-    actions.history("task-1", 10);
+    await actions.add({ title: "t", prompt: "p" } as never);
+    await actions.remove("task-1");
+    await actions.history("task-1", 10);
     expect(store.addTask).toHaveBeenCalledTimes(1);
     expect(store.deleteTask).toHaveBeenCalledWith("task-1");
     expect(store.getHistory).toHaveBeenCalledWith("task-1", 10);

@@ -7,7 +7,7 @@ import { syncLaunchAtLogin } from "./launch-at-login";
 const themeMock = vi.hoisted(() => ({ dark: false }));
 
 vi.mock("electron", () => ({
-  app: {}, nativeImage: {},
+  app: { getPath: vi.fn(() => "C:\\test-userdata") }, nativeImage: {},
   nativeTheme: { get shouldUseDarkColors() { return themeMock.dark; } },
 }));
 vi.mock("../windows/broadcast", () => ({ broadcastToAllWindows: vi.fn() }));
@@ -19,7 +19,10 @@ vi.mock("../orchestrator/mcp-manager", () => ({
 vi.mock("../app-icon", () => ({ getAppIconPath: vi.fn() }));
 vi.mock("../orchestrator/tools/registry/tool-registration", () => ({ syncBuiltInToolToggles: vi.fn() }));
 vi.mock("./model-settings", () => ({ loadModelSettings: vi.fn(), getPublicModelConfig: vi.fn() }));
-vi.mock("./launch-at-login", () => ({ syncLaunchAtLogin: vi.fn() }));
+vi.mock("./launch-at-login", () => ({
+  syncLaunchAtLogin: vi.fn(),
+  resolveTrayLoginItemOptions: vi.fn(() => undefined),
+}));
 
 function createHarness(petVisible = true) {
   const settings = {
@@ -83,7 +86,11 @@ describe("general settings window lifecycle", () => {
     expect(h.isVisible()).toBe(false);
     expect(h.windowManager.setPetWindowAlwaysOnTop).toHaveBeenCalledWith(false);
     expect(h.windowManager.applyPetWindowZoom).toHaveBeenCalledWith(1.5);
-    expect(syncLaunchAtLogin).toHaveBeenCalledWith(true, {});
+    expect(syncLaunchAtLogin).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ getPath: expect.any(Function) }),
+      undefined,
+    );
   });
 
   it("syncs native windows when window corner radius changes (and only then)", () => {
@@ -115,6 +122,10 @@ describe("general settings window lifecycle", () => {
     expect(visible ? h.windowManager.showPetWindow : h.windowManager.hidePetWindow).toHaveBeenCalledOnce();
     expect(h.windowManager.setPetWindowAlwaysOnTop).toHaveBeenCalledWith(true);
     expect(h.windowManager.applyPetWindowZoom).toHaveBeenCalledWith(1);
-    expect(syncLaunchAtLogin).toHaveBeenCalledWith(false, {});
+    expect(syncLaunchAtLogin).toHaveBeenCalledWith(
+      false,
+      expect.objectContaining({ getPath: expect.any(Function) }),
+      undefined,
+    );
   });
 });

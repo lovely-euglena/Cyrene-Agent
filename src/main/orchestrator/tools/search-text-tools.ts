@@ -417,13 +417,13 @@ export function registerSearchTextTool(): void {
       required: ["query"],
     },
     execute: async (args, ctx) => {
-      // native 轨：工作区根由包装层注入（模型参数里不可见）；失败整体回退 TS
+      // native 轨：工作区根由包装层经 internalArgs 注入（模型参数里不可见）；失败整体回退 TS
       const workspaceRoot = ctx?.resolvedWorkspaceRoot ?? path.resolve(process.cwd());
       return nativeFirst(
         "search_text",
-        { ...args, __cyreneWorkspaceRoot: workspaceRoot },
+        args,
         (nativeArgs) => executeSearchText(nativeArgs, ctx),
-        { signal: ctx?.signal },
+        { signal: ctx?.signal, internalArgs: { __cyreneWorkspaceRoot: workspaceRoot } },
       );
     },
   });

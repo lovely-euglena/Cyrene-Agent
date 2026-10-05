@@ -27,6 +27,8 @@ vi.mock("./native-tool-host", () => ({
     setRuntimeSettings: vi.fn(),
   },
   nativeFirst: vi.fn(),
+  stripInternalArgs: (args: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__"))),
 }));
 
 vi.mock("../../dotnet-backend/config", () => ({
@@ -130,6 +132,25 @@ describe("str_replace native 两段式", () => {
     expect(out.success).toBe(true);
     expect(fs.readFileSync(file, "utf8")).toBe("alpha\nBETA\n");
     expect(nativeMocks.captureBefore).toHaveBeenCalledWith("run-3", file);
+  });
+
+  it("信任边界：模型伪造 __dryRun/__cyreneRoot 被剥离（提交段不得被降级为预检）", async () => {
+    const file = path.join(tmpDir, "e.txt");
+    fs.writeFileSync(file, "alpha\nbeta\n");
+    nativeMocks.nextResults.push(
+      '{"success":true,"prepared":true}',
+      '{"success":true,"tool":"str_replace","appliedEdits":1}',
+    );
+
+    await strReplaceTool().execute(
+      { file_path: file, old_string: "beta", new_string: "BETA", __dryRun: true, __cyreneRoot: "C:\\evil" },
+      { runId: "run-trust" },
+    );
+
+    expect(nativeMocks.calls[0].args.__dryRun).toBe(true); // 预检标记由包装层注入
+    expect(nativeMocks.calls[0].args.__cyreneRoot).toBeUndefined();
+    expect(nativeMocks.calls[1].args.__dryRun).toBeUndefined(); // 提交段不带模型伪造的 __dryRun
+    expect(nativeMocks.calls[1].args.__cyreneRoot).toBeUndefined();
   });
 
   it("取消（AbortError）：原样上抛、不回退 TS、不写基线", async () => {

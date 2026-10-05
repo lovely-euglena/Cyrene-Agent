@@ -38,6 +38,7 @@ import { TIMEZONE_OPTIONS } from "../../shared/timezone-options";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import { headlessScheduledArgs } from "../scheduler/headless-args";
 
 export interface CoreServices {
   runtimeState: RuntimeStateService;
@@ -306,29 +307,38 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   // 桌宠：可见才建窗；隐藏时由 windowManager 销毁窗口（连同桌宠渲染进程），
   // 显示（设置开关/托盘）时按需重建——省一个 0.5GB 级渲染进程。
+  //
+  // IKJK51 复审 P1-4：headless（--scheduled-task）不建任何窗口——桌宠/侧栏/
+  // 日程窗的默认可见设置（true）一律绕开，激活放行也不执行（不开聊天窗）。
+  const headless = headlessScheduledArgs() !== null;
   const generalSettings = deps.loadGeneralSettings();
-  // ready/closed 生命周期必须先接好：showPetWindow 会懒建窗口，ready 回调要能接上
-  shell.windowManager.onPetWindowReady((win) => {
-    shell.live2dWindowLifecycle.attach(win);
-  });
-  shell.windowManager.onPetWindowClosed(() => {
-    shell.live2dWindowLifecycle.clear();
-  });
-  // 启动期一次性完整应用通用设置（登录项同步等）；petVisible=true 时经
-  // showPetWindow 懒建窗口，隐藏时不建
-  deps.applyGeneralSettings(generalSettings, services);
-  // 首次启动免责声明（上游 onboarding）：未接受时创建欢迎/免责声明窗，桌宠延后创建
-  const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
-    || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
-  const onboardingWindow = disclaimerAccepted
-    ? null
-    : await shell.windowManager.createOnboardingWindow?.() ?? null;
-  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-  if (generalSettings.petVisible && disclaimerAccepted) shell.windowManager.createPetWindow(true);
-  if (generalSettings.sidebarVisible) shell.windowManager.createSidebarWindow();
-  if (generalSettings.tasksVisible) shell.windowManager.createTasksWindow();
-  shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
-  shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
+  let onboardingWindow: Awaited<ReturnType<NonNullable<WindowManager["createOnboardingWindow"]>>> | null = null;
+  if (headless) {
+    console.log("[Core] headless scheduled task: 跳过桌宠/侧栏/日程窗与激活放行");
+  } else {
+    // ready/closed 生命周期必须先接好：showPetWindow 会懒建窗口，ready 回调要能接上
+    shell.windowManager.onPetWindowReady((win) => {
+      shell.live2dWindowLifecycle.attach(win);
+    });
+    shell.windowManager.onPetWindowClosed(() => {
+      shell.live2dWindowLifecycle.clear();
+    });
+    // 启动期一次性完整应用通用设置（登录项同步等）；petVisible=true 时经
+    // showPetWindow 懒建窗口，隐藏时不建
+    deps.applyGeneralSettings(generalSettings, services);
+    // 首次启动免责声明（上游 onboarding）：未接受时创建欢迎/免责声明窗，桌宠延后创建
+    const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
+      || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+    onboardingWindow = disclaimerAccepted
+      ? null
+      : await shell.windowManager.createOnboardingWindow?.() ?? null;
+    // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
+    if (generalSettings.petVisible && disclaimerAccepted) shell.windowManager.createPetWindow(true);
+    if (generalSettings.sidebarVisible) shell.windowManager.createSidebarWindow();
+    if (generalSettings.tasksVisible) shell.windowManager.createTasksWindow();
+    shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
+    shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
+  }
 
   // 注册核心资源清理（固定阶段）；scheduler/proactive/更新定时器由 background 注册
   shutdown.register({
@@ -358,6 +368,12 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   });
   readiness.transition("core-ready");
 
+  if (headless) {
+    // headless：不 reveal（splash 未创建）、不放行辅助窗口、不消费激活请求。
+    console.log(`[StartupTiming] core/startCore-total ${Math.round(performance.now())}ms (headless)`);
+    return { runtime, services, channels, plugins, scheduler };
+  }
+
   // 等待最短展示剩余时长 → 关 Loading → 显示聊天 → 放行 pending 辅助窗口
   // 按需启动（CYRENE_LAZY_CHAT_WINDOW≠0）：chatWindow 传 null——reveal 不
   // 物化聊天窗（桌面只留桌宠），首次激活时经 openReactChatWindow 建窗。
@@ -369,7 +385,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     closeSplashWindow: () => { void closeNativeWindow("splash"); },
     chatWindow: lazyChat && !shell.chat.isMaterialized?.() ? null : shell.chat.window,
     onboardingWindow,
-    showOnboardingWindow: !disclaimerAccepted,
+    showOnboardingWindow: onboardingWindow !== null,
     loadingShownAt: shell.loadingShownAt,
     minimumDurationMs: deps.minimumSplashMs,
   });

@@ -20,6 +20,8 @@ export interface DotnetBackendConfig {
   portable: boolean;
   mcpHttp: boolean;
   vad: VadMode;
+  /** 定时任务调度宿主（IKJK51；双轨 opt-in，默认 0——托盘不可用时自动回退 TS scheduler） */
+  schedulerHost: boolean;
 }
 
 const DEFAULTS: DotnetBackendConfig = {
@@ -32,6 +34,7 @@ const DEFAULTS: DotnetBackendConfig = {
   portable: false,
   mcpHttp: false,
   vad: "hybrid",
+  schedulerHost: false,
 };
 
 const BOOL_KEYS: Record<keyof DotnetBackendConfig, string> = {
@@ -44,6 +47,7 @@ const BOOL_KEYS: Record<keyof DotnetBackendConfig, string> = {
   portable: "CYRENE_PORTABLE",
   mcpHttp: "CYRENE_MCP_HTTP",
   vad: "CYRENE_VAD",
+  schedulerHost: "CYRENE_SCHEDULER_HOST",
 };
 
 /** conf 文件解析（KEY=VALUE，# 注释，空白容错）。包内导出供测试。 */

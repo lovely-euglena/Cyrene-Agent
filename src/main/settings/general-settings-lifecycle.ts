@@ -12,7 +12,7 @@ import { syncBuiltInToolToggles } from "../orchestrator/tools/registry/tool-regi
 import { loadModelSettings, getPublicModelConfig } from "./model-settings";
 import type { GeneralSettings } from "./general-settings";
 import type { UiIcon } from "../../shared/ui-icon";
-import { syncLaunchAtLogin } from "./launch-at-login";
+import { syncLaunchAtLogin, resolveTrayLoginItemOptions } from "./launch-at-login";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 import { getEffectiveUiTheme } from "../system-ui-theme";
 
@@ -62,7 +62,8 @@ export function applyGeneralSettings(
     }, 0);
   }
   if (!before || before.launchAtLogin !== settings.launchAtLogin) {
-    syncLaunchAtLogin(settings.launchAtLogin, app);
+    // IKJK51：调度常驻时登录项指向 cyrene-native --tray（见 resolveTrayLoginItemOptions）
+    syncLaunchAtLogin(settings.launchAtLogin, app, resolveTrayLoginItemOptions(app.getPath("userData")));
   }
   if (!before || before.petZoom !== settings.petZoom) {
     deps.windowManager?.applyPetWindowZoom(settings.petZoom);

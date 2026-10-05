@@ -66,10 +66,22 @@ describe("buildTrayMenuTemplate", () => {
     const clicks = clickByLabel(buildTrayMenuTemplate(deps));
 
     clicks.get("显示/隐藏桌宠")!();
-    clicks.get("退出")!();
+    clicks.get("完全退出")!();
 
     expect(deps.togglePetWindow).toHaveBeenCalledOnce();
     expect(deps.quit).toHaveBeenCalledOnce();
+    expect(requests).toEqual([]);
+  });
+
+  it("IKJK51：隐藏窗口走 hideWindows（不等于退出，调度继续常驻）", () => {
+    const { deps, requests } = makeDeps();
+    deps.hideWindows = vi.fn();
+    const clicks = clickByLabel(buildTrayMenuTemplate(deps));
+
+    clicks.get("隐藏窗口")!();
+
+    expect(deps.hideWindows).toHaveBeenCalledOnce();
+    expect(deps.quit).not.toHaveBeenCalled();
     expect(requests).toEqual([]);
   });
 });

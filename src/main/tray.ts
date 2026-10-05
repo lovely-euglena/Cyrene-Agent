@@ -13,6 +13,8 @@ export interface CreateTrayDependencies {
    * 返回切换后的新状态（菜单项 label 复选框用）。
    */
   setPetDragMode?(enabled: boolean): boolean;
+  /** IKJK51：隐藏全部应用窗口（托盘与调度继续常驻）。 */
+  hideWindows?(): void;
   quit(): void;
 }
 
@@ -46,7 +48,12 @@ export function buildTrayMenuTemplate(deps: CreateTrayDependencies): MenuItemCon
     },
     { type: "separator" },
     {
-      label: "退出",
+      // IKJK51：隐藏窗口 ≠ 退出——托盘与调度继续常驻
+      label: "隐藏窗口",
+      click: () => { deps.hideWindows?.(); },
+    },
+    {
+      label: "完全退出",
       click: () => { deps.quit(); },
     },
   ];

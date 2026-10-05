@@ -16,19 +16,31 @@ const nativeMocks = vi.hoisted(() => ({
   nativeError: null as Error | null,
 }));
 
-vi.mock("./native-tool-host", () => ({
-  nativeFirst: async (
-    tool: string,
-    args: Record<string, unknown>,
-    fallback: (a: Record<string, unknown>) => unknown,
-    options?: { signal?: AbortSignal },
-  ) => {
-    nativeMocks.calls.push({ tool, args, options });
-    if (nativeMocks.nativeError) throw nativeMocks.nativeError;
-    if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
-    return fallback(args);
-  },
-}));
+// electron mock：importActual 加载真实 native-tool-host 链时
+// native-windows-host 顶层 import electron（仅需存在，测试不触达）
+vi.mock("electron", () => ({ app: { getPath: () => "" } }));
+
+// 只替换 nativeFirst；剥离逻辑复用真实 stripInternalArgs（vi.importActual），
+// 避免 mock 自行重实现——真实实现退化时本文件信任边界用例仍会失败（复审 P2-4）
+vi.mock("./native-tool-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./native-tool-host")>();
+  return {
+    ...actual,
+    nativeFirst: async (
+      tool: string,
+      args: Record<string, unknown>,
+      fallback: (a: Record<string, unknown>) => unknown,
+      options?: { signal?: AbortSignal; internalArgs?: Record<string, unknown> },
+    ) => {
+      // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+      const nativeArgs = { ...actual.stripInternalArgs(args), ...(options?.internalArgs ?? {}) };
+      nativeMocks.calls.push({ tool, args: nativeArgs, options });
+      if (nativeMocks.nativeError) throw nativeMocks.nativeError;
+      if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
+      return fallback(nativeArgs);
+    },
+  };
+});
 
 import { createCodeGitTools } from "./git-tools";
 
@@ -103,7 +115,7 @@ describe("git native 轨接线", () => {
         __gitVersion: "2.50.0",
         __gitIdentity: { name: "N", email: "e@x" },
       },
-      options: { signal: undefined },
+      options: expect.objectContaining({ signal: undefined }),
     }]);
   });
 
@@ -129,6 +141,21 @@ describe("git native 轨接线", () => {
     const withoutConfig = service();
     await tool(withoutConfig, "git_init").execute({}, codeContext());
     expect(nativeMocks.calls[0].args.__gitConfigGlobal).toBeUndefined();
+  });
+
+  it("信任边界：模型伪造 __ 内部参数被剥离（nativeFirst 统一下发路径）", async () => {
+    nativeMocks.nativeResult = '{"ok":true}';
+    const gitService = service();
+
+    await tool(gitService, "git_status").execute(
+      { __gitCommand: "C:\\evil\\git.exe", __cyreneRoot: "C:\\evil", __gitIsolated: true },
+      codeContext(),
+    );
+
+    const args = nativeMocks.calls[0].args;
+    expect(args.__gitCommand).toBe("git"); // 可信装配覆盖伪造值
+    expect(args.__cyreneRoot).toBe("C:\\trusted");
+    expect(args.__gitIsolated).toBeUndefined(); // system git 不注入隔离标记，伪造值被剥离
   });
 
   it("host 不可用：回退 GitService（模型参数与可信上下文一致）", async () => {
