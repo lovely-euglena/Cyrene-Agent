@@ -174,6 +174,58 @@ describe("ChannelManager", () => {
     expect(mgr.isStarted("qq" as never)).toBe(true);
   });
 
+  it("已启动 + stop 在途 + 并发 start：start 意图入队不丢失、只补启动一次（P2-4）", async () => {
+    const mgr = new ChannelManager();
+    let running = false;
+    let starts = 0;
+    const stopGate = deferred();
+    const adapter = fakeAdapter("qq");
+    adapter.start = async () => {
+      starts += 1;
+      running = true;
+    };
+    adapter.stop = async () => {
+      running = false;
+      await stopGate.promise; // 慢 disconnect：stop 在途
+    };
+    mgr.register(adapter);
+    await mgr.startOne("qq" as never);
+    expect(starts).toBe(1);
+
+    const pausing = mgr.pauseOne("qq" as never);
+    const starting = mgr.startOne("qq" as never); // 旧实现此处被外层早退静默丢弃
+    stopGate.resolve();
+    await Promise.all([pausing, starting]);
+
+    expect(running).toBe(true);
+    expect(mgr.isStarted("qq" as never)).toBe(true);
+    expect(starts).toBe(2); // 只补启动一次（无重复 start）
+  });
+
+  it("unregister 与并发 startOne 的微任务窗口：不留「已启动但未注册」的孤儿实例（P2-6.2）", async () => {
+    const mgr = new ChannelManager();
+    let running = false;
+    const adapter = fakeAdapter("qq");
+    adapter.start = async () => {
+      running = true;
+    };
+    adapter.stop = async () => {
+      running = false;
+    };
+    mgr.register(adapter);
+
+    // unregister 先入队，但其摘除发生在后续微任务；此刻 startOne 仍能看到注册表实例并排队
+    const removing = mgr.unregister("qq" as never);
+    const starting = mgr.startOne("qq" as never);
+    await Promise.all([removing, starting]);
+
+    expect(mgr.getAdapter("qq" as never)).toBeUndefined();
+    expect(mgr.isStarted("qq" as never)).toBe(false);
+    expect(running).toBe(false); // 无孤儿：若启动过必须已被回滚停止
+    await mgr.stopAll(); // 此后 stopAll 也应无运行实例可停
+    expect(running).toBe(false);
+  });
+
   it("只委托入站处理，不重复发送 dispatcher 返回的消息", async () => {
     const mgr = new ChannelManager();
     const adapter = fakeAdapter("qq");

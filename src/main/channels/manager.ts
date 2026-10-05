@@ -91,13 +91,16 @@ export class ChannelManager {
   /**
    * 启动单个 adapter（运行时启用插件渠道用）；归属门闩拒绝时保持关闭。
    * 同渠道已有启停在途时排队；排队后二次检查防止重复 start（P2-1）。
+   * 不在此处按 startedAdapters 提前返回（P2-4）：pauseOne 在途（慢 disconnect）期间
+   * 并发的 start 必须入队，否则 start 意图被静默丢弃、要等下一轮 applyPlan 才自愈。
    */
   async startOne(id: ChannelId): Promise<void> {
     const adapter = this.adapters.get(id);
     if (!adapter) return;
-    if (this.startedAdapters.has(id)) return;
     await this.enqueueChannelOp(id, async () => {
       if (this.startedAdapters.has(id)) return; // 排队期间已被前序操作启动
+      // 排队期间被 unregister 摘除/替换：不得再启动旧实例（P2-6.2）
+      if (this.adapters.get(id) !== adapter) return;
       if (!this.allowedToStart(id)) {
         logger.info(LogTag.Channels, `skipped (ownership): ${id}`);
         return;
@@ -107,6 +110,17 @@ export class ChannelManager {
       }
       try {
         await adapter.start();
+        // start 在途期间可能被 unregister 摘除：立即停止该实例且不标记已启动，
+        // 避免「已启动但不在 adapters 表」的孤儿实例逃过 stopAll（P2-6.2）
+        if (this.adapters.get(id) !== adapter) {
+          logger.info(LogTag.Channels, `rolled back (unregistered): ${id}`);
+          try {
+            await adapter.stop();
+          } catch (err) {
+            console.warn(LOG, `渠道回滚停止失败 [${id}]:`, err instanceof Error ? err.message : err);
+          }
+          return;
+        }
         this.startedAdapters.add(id);
         logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
       } catch (err) {

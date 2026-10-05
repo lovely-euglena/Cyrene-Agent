@@ -290,6 +290,46 @@ describe("channels/init 运行期 remote 开关与重启分流（P1-4）", () =>
     expect(channelManager.isStarted("feishu" as never)).toBe(true);
     expect(channelManager.isStarted("wechat" as never)).toBe(false);
   });
+
+  it("CHANNELS_RESTART：并发重启等待在途同步的补跑落地后再返回（P2-6.6）", async () => {
+    // 兜底：单跑本用例时前序 remote 状态可能未建立，先用正常响应确保控制器已启动
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } },
+    })));
+    await ipcHandlers.get(IPC.CHANNELS_SAVE_CONFIG)!({}, { remote: REMOTE_PATCH });
+
+    // 让首个重启的 poll 挂起，制造在途同步
+    let releasePoll: (() => void) | null = null;
+    let pollCalls = 0;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/v1/channels/ownership")) {
+        pollCalls += 1;
+        if (pollCalls === 1) {
+          return await new Promise<Response>((resolve) => {
+            releasePoll = () => resolve(jsonResponse({
+              serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } },
+            }));
+          });
+        }
+        return jsonResponse({
+          serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } },
+        });
+      }
+      return jsonResponse({ granted: [], denied: [], released: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const restart = ipcHandlers.get(IPC.CHANNELS_RESTART)!;
+    const first = restart({}); // 停全渠道后 syncNow 挂起在 poll#1
+    await vi.waitFor(() => expect(pollCalls).toBe(1));
+    const second = restart({}); // 并发重启：登记补跑并等待链尾
+    releasePoll!();
+    await second; // 返回时必须已等到补跑轮次落地
+    expect(pollCalls).toBe(2);
+    expect(channelManager.isStarted("feishu" as never)).toBe(true);
+    expect(channelManager.isStarted("wechat" as never)).toBe(false);
+    await first;
+  });
 });
 
 describe("channels/init 手动 IPC 启动门闩（P1-3）", () => {

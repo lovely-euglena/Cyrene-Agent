@@ -268,6 +268,8 @@ function registerChannelsIpc(
       controllerRunning: ownershipController?.isRunning ?? false,
     });
     if (action === "sync") {
+      // syncNow 返回链尾 promise（P2-6.6）：在途同步登记的补跑也会被 await，
+      // 确保渠道恢复后再返回 { ok: true }
       await ownershipController!.syncNow();
     } else if (action === "start-controller") {
       await ownershipController!.start();

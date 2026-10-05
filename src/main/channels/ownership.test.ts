@@ -821,6 +821,54 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
     expect(pollCalls).toBe(2); // 首次 + 合并后的一次串行补跑
   });
 
+  it("syncNow 链尾等待（P2-6.6）：在途触发 await 到补跑轮次落地后才返回", async () => {
+    const manager = new ChannelManager();
+    manager.register(fakeAdapter("wechat"));
+    const config: ChannelsRemoteConfig = { ...REMOTE_ON };
+    let pollCalls = 0;
+    let releaseFirstPoll: (() => void) | null = null;
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/v1/channels/ownership")) {
+        pollCalls += 1;
+        if (pollCalls === 1) {
+          // 首轮 poll 挂起：制造在途同步
+          return await new Promise<Response>((resolve) => {
+            releaseFirstPoll = () => resolve(jsonResponse({
+              serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } },
+            }));
+          });
+        }
+        // 补跑轮：服务端不再托管 → wechat 恢复本机
+        return jsonResponse({ serverId: "s1", leaseTtlSeconds: 180, channels: {} });
+      }
+      return jsonResponse({ granted: [], denied: [], released: [] });
+    }) as unknown as typeof fetch;
+    const client = new ChannelOwnershipClient({
+      loadConfig: () => config,
+      fetchImpl,
+      now: () => now,
+      log: () => undefined,
+    });
+    const controller = createChannelOwnershipController({
+      manager,
+      loadConfig: () => config,
+      client,
+      setIntervalImpl: (() => 1) as unknown as typeof setInterval,
+      clearIntervalImpl: (() => undefined) as unknown as typeof clearInterval,
+      log: () => undefined,
+    });
+
+    const starting = controller.start(); // 首轮同步挂起在 poll#1
+    const queued = controller.syncNow(); // 在途触发：登记补跑并等待链尾
+    expect(pollCalls).toBe(1);
+    releaseFirstPoll!();
+    await queued;
+    // queued resolve 时补跑必须已落地：poll#2 完成且 wechat 已按未托管恢复本机
+    expect(pollCalls).toBe(2);
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    await starting;
+  });
+
   it("server 不可达时 remote 开启（start-controller 分支）：门闩关闭、渠道保持停用（P1-4）", async () => {
     pollFails = true;
     const { manager, controller } = makeController();

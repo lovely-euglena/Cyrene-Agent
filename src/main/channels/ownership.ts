@@ -569,18 +569,25 @@ export class ChannelOwnershipController {
   /**
    * 一轮同步（P2-1 单飞 + 排队）：定时轮询 / IPC 重启 / 运行期开关 / 启动多源触发时，
    * 已有同步在途则并入当前轮并登记一次补跑，避免并发对同一渠道重复 claim/startOne。
+   * 返回链尾 promise（P2-6.6）：在途触发方也等到补跑轮次落地后才 resolve，
+   * 调用方（如 CHANNELS_RESTART）可 await 到渠道恢复完成后再返回。
    */
   syncNow(): Promise<void> {
     if (this.syncInFlight) {
       this.syncQueued = true;
-      return this.syncInFlight;
+      // 等当前链结束；若结束时的关窗补跑已挂到 syncInFlight，继续等它（P2-6.6）
+      const pending = this.syncInFlight;
+      return pending.then(async () => {
+        await this.syncInFlight;
+      });
     }
     this.syncInFlight = this.drainSync().finally(() => {
       this.syncInFlight = null;
       // 关窗：drain 退出与 finally 之间到达的触发不丢，串行补跑（P2-1）
       if (this.syncQueued && this.running) {
         this.syncQueued = false;
-        void this.syncNow();
+        // 补跑接到链上而非 void：等待方经上面的 pending.then 继续 await 它（P2-6.6）
+        this.syncInFlight = this.syncNow();
       }
     });
     return this.syncInFlight;
