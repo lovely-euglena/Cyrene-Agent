@@ -21,9 +21,30 @@ export class ChannelManager {
   private dispatchFn: DispatchFn | null = null;
   /** 启动后已开启的 adapter（start 成功的才会调 stop） */
   private startedAdapters = new Set<ChannelId>();
+  /**
+   * 启动门闩（归属第一道防线）：owner=server 时桌面不启动适配器（§5.1 R4）。
+   * 缺省 null = 全部放行（保持既有本地行为）；init.ts 按归属控制器注入。
+   */
+  private startGate: ((id: ChannelId) => boolean) | null = null;
 
   has(id: ChannelId): boolean {
     return this.adapters.has(id);
+  }
+
+  /** 设置启动门闩；传 null 恢复放行。门闩抛错时 fail-open（不影响渠道可用性）。 */
+  setStartGate(gate: ((id: ChannelId) => boolean) | null): void {
+    this.startGate = gate;
+  }
+
+  /** 当前是否允许本机启动该渠道（UI/测试可见）。 */
+  allowedToStart(id: ChannelId): boolean {
+    if (!this.startGate) return true;
+    try {
+      return this.startGate(id);
+    } catch (err) {
+      console.warn(LOG, `启动门闩异常，按放行处理 [${id}]:`, err instanceof Error ? err.message : err);
+      return true;
+    }
   }
 
   /** 注册 adapter（必须在 startAll 之前调用；重复 id 一律拒绝） */
@@ -43,11 +64,15 @@ export class ChannelManager {
     }
   }
 
-  /** 启动所有已注册 adapter（失败的跳过、记 log） */
+  /** 启动所有已注册 adapter（失败的跳过、记 log；归属门闩拒绝的跳过） */
   async startAll(): Promise<void> {
     for (const adapter of this.adapters.values()) {
       // 跳过已启动的 adapter（插件注册渠道场景：registerChannelAdapter 已 startOne）
       if (this.startedAdapters.has(adapter.id)) continue;
+      if (!this.allowedToStart(adapter.id)) {
+        logger.info(LogTag.Channels, `skipped (ownership): ${adapter.id}`);
+        continue;
+      }
       try {
         // 每次 start 前重新注入 handler（防止 setDispatcher 之前 adapter 已经被外部注入 null）
         if (this.dispatchFn) {
@@ -79,17 +104,42 @@ export class ChannelManager {
     return true;
   }
 
-  /** 启动单个 adapter（运行时启用插件渠道用） */
+  /** 启动单个 adapter（运行时启用插件渠道用）；归属门闩拒绝时保持关闭 */
   async startOne(id: ChannelId): Promise<void> {
     const adapter = this.adapters.get(id);
     if (!adapter) return;
     if (this.startedAdapters.has(id)) return;
+    if (!this.allowedToStart(id)) {
+      logger.info(LogTag.Channels, `skipped (ownership): ${id}`);
+      return;
+    }
     if (this.dispatchFn) {
       setAdapterHandler(adapter, this.makeAdapterHandler(id));
     }
     await adapter.start();
     this.startedAdapters.add(id);
     logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+  }
+
+  /**
+   * 暂停单个 adapter（归属切换用）：已启动则 stop，但保留注册（可再 startOne）。
+   * 与 stopAll 的差别只在语义命名与单渠道粒度。
+   */
+  async pauseOne(id: ChannelId): Promise<void> {
+    const adapter = this.adapters.get(id);
+    if (!adapter || !this.startedAdapters.has(id)) return;
+    try {
+      await adapter.stop();
+    } catch (err) {
+      console.warn(LOG, `渠道暂停失败 [${id}]:`, err instanceof Error ? err.message : err);
+    }
+    this.startedAdapters.delete(id);
+    logger.info(LogTag.Channels, `paused: ${id}`);
+  }
+
+  /** 该渠道当前是否已启动（归属状态展示/测试用）。 */
+  isStarted(id: ChannelId): boolean {
+    return this.startedAdapters.has(id);
   }
 
   /** 关闭所有已启动的 adapter */

@@ -131,4 +131,43 @@ describe("channels/settings-store", () => {
 
     expect(loadChannelsSettings().toolSandbox).toBe("off");
   });
+
+  it("channels.remote 默认关闭且不与其他渠道设置合并（Q6）", () => {
+    const defaults = loadChannelsSettings();
+    expect(defaults.remote).toEqual({
+      enabled: false,
+      preferServer: true,
+      failover: "off",
+      failoverGraceSeconds: 300,
+    });
+  });
+
+  it("channels.remote 保存往返：token 加密落盘、运行时明文；failover/宽限收敛", () => {
+    saveChannelsSettings({
+      remote: {
+        enabled: true,
+        baseUrl: "https://cloud.example.com/",
+        token: "remote-secret",
+        preferServer: false,
+        failover: "local",
+        failoverGraceSeconds: 120,
+      },
+    });
+    const raw = fs.readFileSync(path.join(os.tmpdir(), "channels-settings.json"), "utf8");
+    expect(raw).not.toContain("remote-secret");
+    expect(raw).toContain("cloud.example.com");
+    const loaded = loadChannelsSettings();
+    expect(loaded.remote).toMatchObject({
+      enabled: true,
+      baseUrl: "https://cloud.example.com",
+      token: "remote-secret",
+      preferServer: false,
+      failover: "local",
+      failoverGraceSeconds: 120,
+    });
+
+    // 局部补丁不丢 token（深合并）
+    saveChannelsSettings({ remote: { enabled: false } });
+    expect(loadChannelsSettings().remote.token).toBe("remote-secret");
+  });
 });

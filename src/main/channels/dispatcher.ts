@@ -21,6 +21,7 @@ import type { ChannelsSettings } from "./settings-store";
 import { appendLog } from "./message-log";
 import type { MobileMessageSegmentationMode } from "../../shared/preferences";
 import { rememberProactiveChannelRecipient } from "./proactive-delivery";
+import { shouldProcessChannel } from "./ownership";
 import type { ChannelRateLimiter } from "./rate-limiter";
 import type { KeyedQueue } from "./keyed-queue";
 import type { ChannelDeliveryService } from "./delivery-service";
@@ -159,6 +160,11 @@ export class ChannelDispatcher {
    * 返回的出站消息仅供调用方观测和测试，不要求适配器再次发送。
    */
   async handleIncoming(msg: IncomingMessage): Promise<OutgoingMessage | null> {
+    // 归属门闩（第二道防线，§5.6）：owner=server 时桌面不处理入站，防交接窗口双主
+    if (!shouldProcessChannel(msg.channel)) {
+      console.warn(LOG, `归属门闩丢弃（owner≠desktop）[${msg.channel}]`);
+      return null;
+    }
     const sessionId = makeSessionId(msg.channel, msg.chatId);
     // 读取设置会同步刷新限速器，必须发生在本轮额度消费之前。
     void this.settings;
