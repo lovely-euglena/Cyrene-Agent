@@ -44,8 +44,8 @@
 | `SchedulerModels.cs` | `ScheduleKind` / `ScheduleConfig` / `ScheduledTask` / `NewScheduledTaskInput` / `ScheduledTaskPatch` / `ScheduledTaskHistoryEntry` / `SchedulerRunResult`（字段与 `src/main/scheduler/types.ts` 一一对应） |
 | `ScheduleCalculator.cs` | 7 种排期 + 逾期归一（逐行对照 `schedule-calculator.ts`） |
 | `SchedulerStore.cs` | 加载/校验/归一 + CRUD + 历史 JSONL（每任务 50 / 总 1000）+ `Changed` 事件 |
-| `SchedulerEngine.cs` | 单 timer（1h 封顶）/ 逾期归一 / 先推进再派发 / running 去重 / `FireNow` |
-| `SchedulerJson.cs` | 共享 `JsonSerializerOptions`（Web defaults）+ ISO 工具 |
+| `SchedulerEngine.cs` | 单 timer（1h 封顶）/ 逾期归一 / 先发起执行（同步登记 running）再推进排期 / running 去重 / `FireNow` |
+| `SchedulerModels.cs` | DTO 与共享 `SchedulerJson`（`JsonSerializerOptions` + ISO 工具；受交付文件清单约束，不单独成文件） |
 
 契约：
 - **时间**：DTO 中一律保留 ISO 字符串（与 TS 字节级一致，含 `toISOString()` 的
@@ -53,8 +53,9 @@
   月份/闰年非法组合「跳过不夹取」与 TS 一致。
 - **JSON**：`JsonSerializerDefaults.Web`（camelCase）；任务文件 `{ "tasks": [...] }`。
 - **引擎语义**（与 TS 对齐）：`NormalizeOverdueTasks`（once 逾期 → 写 `skipped/"missed while
-  app was closed"` 历史 + 停用）；`FireDueTasks` 先 `updateTask({nextFireAt,lastFiredAt})`
-  再并发执行；`runCount` 由 `lastFiredAt` 隐式 +1；`maxRuns/endAt/once` 边界一致。
+  app was closed"` 历史 + 停用）；`FireDueTasks` 先发起执行（同步登记 running 并启动
+  runner）再 `updateTask({nextFireAt,lastFiredAt})`；`runCount` 由 `lastFiredAt` 隐式 +1；
+  `maxRuns/endAt/once` 边界一致。
 - **插件任务**：C# 不计算授权指纹（TS 侧维护不变量）；启用口径 = `pluginUserEnabled &&
   approvalFingerprint 非空`；到点运行与否由 `CanRun` 委托决定（离线/插件未运行 → skip +
   写 `skipped/"plugin not running"` 历史，与 TS 一致）。
@@ -119,10 +120,14 @@ Tray → Electron：
 
 - 旧 `scheduled-tasks.json` / history 由 C# 加载器直接读取（同格式即迁移，无需转换）；
   归一规则与 TS `normalizeLoadedTask` 一致（旧插件任务停用、无工作区用户任务停用等）。
-- 首启（托盘）加载后立即持久化一次归一结果，保证两侧口径一致。
-- 回退零数据丢失：host 不可用时 TS 原样接管同一文件；C# 引擎「先推进再派发」保证崩溃
-  窗口内不重复触发（磁盘 nextFireAt 已前进）。
-- 单实例：托盘加 `Mutex` 守护（现状仅靠管道占用拒绝，双托盘会双调度）。
+  归一结果在下一次写操作时随文件落盘（不在首启时单独强制持久化）。
+- 回退零数据丢失：host 不可用时 TS 原样接管同一文件；C# 引擎「先发起执行（登记 running）
+  再推进排期」保证崩溃窗口内不重复触发（磁盘 nextFireAt 已前进）。
+- 单实例：托盘加 `Global\cyrene-tray` Mutex 守护（机器级，与管道名同作用域——Local
+  会话级锁在多会话/多用户下会各起托盘共享同一 data-dir，单写者不变量失效）。
+- 复审修复（2026-10-05）：headless 拉起串行排队 + 进程退出无 report → failed 历史/气泡；
+  托盘启动把遗留 running 标为中断；headless 执行 30min 超时看门狗；本地 TS 模式
+  重连 watchdog + disarm 重试回执；登录项 `--data-dir` 引号包裹；headless 不建窗口。
 
 ## 8. 覆盖范围（本 PR 对应 issue 任务）
 

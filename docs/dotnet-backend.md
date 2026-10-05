@@ -1,13 +1,13 @@
 # Cyrene .NET 后端总览（dotnet-backend）
 
-> 状态：功能级完成 + Linux 侧五套实测（96+ 项，见下「测试矩阵」）；2026-10-04 跨平台协议类抽入 `dotnet/cyrene-core`（IKJK2G），本地（Windows）全量复跑全绿，Linux 复跑由 CI 工作流承接（脚本已去硬编码路径）；Windows 实机冒烟已跑通（`scripts/dotnet-smoke.ps1` 4/4）。
+> 状态：功能级完成 + Linux 侧五套实测（96+ 项，见下「测试矩阵」）；2026-10-04 跨平台协议类抽入 `dotnet/cyrene-core`（IKJK2G），本地（Windows）全量复跑全绿，Linux 复跑由 CI 工作流承接（脚本已去硬编码路径）；Windows 实机冒烟已跑通（`scripts/dotnet-smoke.ps1` 5/5，含 tray-scheduler 自测）。
 > 决策记录：docs/dotnet-migration-decisions.md（A1-A19）
 
 ## 测试矩阵（Linux 冒烟壳 dotnet/smoke-host，引用 dotnet/cyrene-core 跨平台核心）
 
 | 套件 | 覆盖 | 结果 |
 |---|---|---|
-| `scripts/dotnet-smoke-linux.py` | 六 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测） | 23/23 |
+| `scripts/dotnet-smoke-linux.py` | 六 host 全链帧序（fs/计算器/RAG 迁移+混合检索/Agent 闭环/loop/记忆六表/越权自测） | 24/24 |
 | `scripts/dotnet-edge-test.py` | 畸形帧/路径穿越/SQL 注入/1e308 权重/5MB payload/幽灵会话 | 13/13 |
 | `scripts/dotnet-tools-matrix.py` | 工具逐个真实调用（calculator/now/sysinfo/fs 三件/expense/search_text/str_replace 两段式/apply_patch 事务/下载黑名单/**git 八件（真实仓库 + 本地 bare 远程）/ web_search/weather/plan_trip（config 帧确定性路径）**；含 write 三态 changes 证据、账本与字符串数字校验、git 校验拒绝路径） | 91/91 |
 | `scripts/dotnet-agent-loop-test.py` | 多轮工具环闭环/MaxTurns 硬闸/并发会话隔离/destroy 语义/畸形回注/白名单环内拦截 | 13/13 |
@@ -25,7 +25,7 @@ git commit 漏子命令、IPC argv 双传。
 | Host | 入口 | 阶段 | 状态 |
 |---|---|---|---|
 | 原生窗口 | `cyrene-native serve`（默认） | 前置 | 生产 |
-| 分离托盘 | `cyrene-native --tray` | 前置 | 生产 |
+| 分离托盘 | `cyrene-native --tray` | 前置 | 生产（托盘 UI + spawn Electron + 常驻调度：SchedulerStore/Engine、sched.* 管道协议、离线 headless 拉起；见 `docs/design/2026-10-05-scheduler-to-dotnet.md`） |
 | MCP 连接 | `cyrene-native --mcp-host` | M4 前置 | 生产骨架（stdio/SSE + 重连/超时/进程树清理） |
 | 内置工具 | `cyrene-native --tool-host` | D | calculator/now/clipboard/sysinfo + fs 三件 + exchange_rate/expense/search_text + git 八件/apply_patch/download + web_search/weather/plan_trip 接线（evidence 帧协议 v1 + config 帧 + weather_card 事件帧，91 项矩阵实测） |
 | Agent 会话 | `cyrene-native --agent-host` | H/J | LLM 回调闭环 + 多轮工具环 + orchestrate/mailbox/白名单**主路径拦截**（13 项实测） |
@@ -77,7 +77,8 @@ git commit 漏子命令、IPC argv 双传。
 ## Windows 冒烟（C3，必跑清单）
 
 `scripts/dotnet-smoke.ps1`：tool-host 五工具双轨 diff、agent-host 闭环、
-rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关。
+rag-host 迁移+逐 query、voice-host TTS mock、VAD 三模式、便携开关、
+`--selftest tray-scheduler`（托盘调度宿主：协议/arm/离线失败/队列/中断，IKJK51 复审 P1-6）。
 
 ## 云端昔涟 cloud-server（IKJK2J / IKJK2K）
 
