@@ -7,6 +7,7 @@ import {
   createChannelOwnershipController,
   decideChannelOwnership,
   normalizeChannelsRemoteConfig,
+  OWNERSHIP_CONFIG_CACHE_MS,
   type ChannelsRemoteConfig,
   type OwnershipDecisionInput,
 } from "./ownership";
@@ -320,6 +321,66 @@ describe("channels/ownership 客户端 HTTP（§5.2/§5.7）", () => {
     await disabled.poll();
     expect(disabled.shouldForwardProactive("wechat")).toBe(false);
   });
+
+  it("failover 兜底期间 shouldForwardProactive=false（不再转发到不可达服务端，P2-8①）", async () => {
+    let fail = false;
+    const fetchImpl = vi.fn(async () => {
+      if (fail) throw new Error("unreachable");
+      return jsonResponse({
+        serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } },
+      });
+    }) as unknown as typeof fetch;
+    const client = makeClient(fetchImpl, { failover: "local", failoverGraceSeconds: 30 });
+    await client.poll();
+    expect(client.shouldForwardProactive("wechat")).toBe(true);
+
+    fail = true;
+    now += 200_000; // 超 TTL 180s 且 ≥ 宽限 30s → failover_local
+    await client.poll();
+    expect(client.decide("wechat").phase).toBe("failover_local");
+    expect(client.shouldForwardProactive("wechat")).toBe(false);
+  });
+
+  it("remote 配置读取带 TTL 缓存，invalidateConfig 立即失效（P2-8④）", () => {
+    let loads = 0;
+    const config = { ...REMOTE_ON };
+    const client = new ChannelOwnershipClient({
+      loadConfig: () => { loads += 1; return config; },
+      fetchImpl: (async () => jsonResponse({})) as unknown as typeof fetch,
+      now: () => now,
+      log: () => undefined,
+    });
+    client.decide("wechat");
+    client.decide("feishu");
+    expect(loads).toBe(1);
+
+    now += OWNERSHIP_CONFIG_CACHE_MS + 1;
+    client.decide("wechat");
+    expect(loads).toBe(2);
+
+    client.invalidateConfig();
+    client.decide("wechat");
+    expect(loads).toBe(3);
+  });
+
+  it("控制面请求带超时信号；abortInFlight 中止在途请求（P1-5）", async () => {
+    let signal: AbortSignal | undefined;
+    const fetchImpl = vi.fn((_url: string | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+    }) as unknown as typeof fetch;
+    const client = makeClient(fetchImpl);
+    const pending = client.poll();
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+
+    client.abortInFlight();
+    await expect(pending).resolves.toBeNull();
+    expect(signal?.aborted).toBe(true);
+    expect(client.getFailureCount()).toBe(1);
+  });
 });
 
 describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
@@ -329,11 +390,15 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
   let heartbeatPayload: unknown = { renewed: [], lost: [] };
   let releasePayload: unknown = { released: [] };
   let pollFails = false;
+  let claimFails = false;
 
   function makeFetch() {
     return vi.fn(async (url: string | URL) => {
       const path = String(url);
-      if (path.endsWith("/claim")) return jsonResponse(claimPayload);
+      if (path.endsWith("/claim")) {
+        if (claimFails) throw new Error("claim unreachable");
+        return jsonResponse(claimPayload);
+      }
       if (path.endsWith("/heartbeat")) return jsonResponse(heartbeatPayload);
       if (path.endsWith("/release")) return jsonResponse(releasePayload);
       if (pollFails) throw new Error("unreachable");
@@ -366,6 +431,7 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
   beforeEach(() => {
     now = 1_000_000;
     pollFails = false;
+    claimFails = false;
     ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: {} };
     claimPayload = { granted: [], denied: [], leaseExpiresAt: undefined };
     heartbeatPayload = { renewed: [], lost: [] };
@@ -458,6 +524,167 @@ describe("channels/ownership 控制器与门闩（§5.3/§5.6）", () => {
     await controller.requestLocalRun(["wechat" as never]);
     expect(manager.isStarted("wechat" as never)).toBe(true);
     expect(controller.getPhase("wechat" as never)).toBe("failover_local");
+  });
+
+  it("applyPlan 单渠道启动失败不影响其它渠道（P1-4）", async () => {
+    const manager = new ChannelManager();
+    const bad = fakeAdapter("wechat");
+    bad.start = async () => { throw new Error("start boom"); };
+    manager.register(bad);
+    manager.register(fakeAdapter("feishu"));
+    const config: ChannelsRemoteConfig = { ...REMOTE_ON };
+    const client = new ChannelOwnershipClient({
+      loadConfig: () => config,
+      fetchImpl: makeFetch(),
+      now: () => now,
+      log: () => undefined,
+    });
+    const controller = createChannelOwnershipController({
+      manager,
+      loadConfig: () => config,
+      client,
+      setIntervalImpl: (() => 1) as unknown as typeof setInterval,
+      clearIntervalImpl: (() => undefined) as unknown as typeof clearInterval,
+      log: () => undefined,
+    });
+
+    await expect(controller.start()).resolves.toBeUndefined();
+    expect(manager.isStarted("feishu" as never)).toBe(true);
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+  });
+
+  it("stop 中止在途控制面请求且不再落地启停（P1-5）", async () => {
+    const manager = new ChannelManager();
+    const adapter = fakeAdapter("wechat");
+    manager.register(adapter);
+    const config: ChannelsRemoteConfig = { ...REMOTE_ON };
+    let pollHangs = false;
+    let releasePoll: (() => void) | null = null;
+    let pollSignal: AbortSignal | undefined;
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/v1/channels/ownership") && pollHangs) {
+        pollSignal = init?.signal ?? undefined;
+        return await new Promise<Response>((resolve) => {
+          releasePoll = () => resolve(jsonResponse({ serverId: "s1", leaseTtlSeconds: 180, channels: {} }));
+        });
+      }
+      return jsonResponse({
+        serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } },
+      });
+    }) as unknown as typeof fetch;
+    const client = new ChannelOwnershipClient({
+      loadConfig: () => config,
+      fetchImpl,
+      now: () => now,
+      log: () => undefined,
+    });
+    const controller = createChannelOwnershipController({
+      manager,
+      loadConfig: () => config,
+      client,
+      setIntervalImpl: (() => 1) as unknown as typeof setInterval,
+      clearIntervalImpl: (() => undefined) as unknown as typeof clearInterval,
+      log: () => undefined,
+    });
+
+    await controller.start(); // owner=server → 本机不启动
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+
+    pollHangs = true;
+    const syncing = controller.syncNow(); // 挂起在 poll
+    await Promise.resolve();
+    await controller.stop();
+    expect(pollSignal?.aborted).toBe(true);
+
+    releasePoll?.(); // 黑洞请求晚到：applyPlan 不得再启动渠道
+    await syncing;
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+  });
+
+  it("preferServer=true（默认）：兜底后服务端恢复 → release 并停本机（§5.5）", async () => {
+    const { manager, controller } = makeController({ failover: "local", failoverGraceSeconds: 300 });
+    await controller.start();
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    await controller.syncNow();
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+
+    pollFails = true;
+    now += 310_000;
+    await controller.syncNow();
+    expect(controller.getPhase("wechat" as never)).toBe("failover_local");
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+
+    const releaseSpy = vi.spyOn(controller.client, "release");
+    pollFails = false;
+    releasePayload = { released: ["wechat"] };
+    await controller.syncNow();
+    expect(releaseSpy).toHaveBeenCalledWith(["wechat"]);
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+    expect(controller.getPhase("wechat" as never)).toBe("paused_remote");
+  });
+
+  it("preferServer=false：兜底后服务端恢复 → claim 维持本机（§5.5）", async () => {
+    const { manager, controller } = makeController({
+      failover: "local", failoverGraceSeconds: 300, preferServer: false,
+    });
+    await controller.start();
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    await controller.syncNow();
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+
+    pollFails = true;
+    now += 310_000;
+    await controller.syncNow();
+    expect(controller.getPhase("wechat" as never)).toBe("failover_local");
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+
+    const claimSpy = vi.spyOn(controller.client, "claim");
+    pollFails = false;
+    claimPayload = { granted: ["wechat"], denied: [], leaseExpiresAt: "2026-10-05T00:10:00.000Z" };
+    await controller.syncNow();
+    expect(claimSpy).toHaveBeenCalledWith(["wechat"]);
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    expect(controller.getPhase("wechat" as never)).toBe("running_local");
+    expect(controller.client.wantsLocal("wechat" as never)).toBe(true);
+  });
+
+  it("手动兜底（本机运行）在服务端恢复后维持本机，不自动交回（§5.5）", async () => {
+    pollFails = true;
+    const { manager, controller } = makeController({ failover: "local" });
+    await controller.start();
+    expect(controller.getPhase("wechat" as never)).toBe("unknown");
+    await controller.requestLocalRun(["wechat" as never]); // claim 未授予 → 手动兜底
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    expect(controller.getPhase("wechat" as never)).toBe("failover_local");
+
+    const releaseSpy = vi.spyOn(controller.client, "release");
+    pollFails = false;
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    claimPayload = { granted: ["wechat"], denied: [], leaseExpiresAt: "2026-10-05T00:10:00.000Z" };
+    await controller.syncNow();
+    expect(releaseSpy).not.toHaveBeenCalled();
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    expect(controller.getPhase("wechat" as never)).toBe("running_local");
+  });
+
+  it("claim denied 清除手动兜底标记，停止残余本机运行（P2-8②）", async () => {
+    pollFails = true;
+    claimFails = true;
+    const { manager, controller } = makeController({ failover: "local" });
+    await controller.start();
+    await controller.requestLocalRun(["wechat" as never]); // claim 网络失败 → 手动兜底启动
+    expect(manager.isStarted("wechat" as never)).toBe(true);
+    expect(controller.client.wantsManualLocal("wechat" as never)).toBe(true);
+
+    pollFails = false;
+    claimFails = false;
+    ownershipPayload = { serverId: "s1", leaseTtlSeconds: 180, channels: { wechat: { owner: "server" } } };
+    claimPayload = { granted: [], denied: ["wechat"] };
+    await controller.syncNow();
+    expect(controller.client.wantsManualLocal("wechat" as never)).toBe(false);
+    expect(controller.client.wantsLocal("wechat" as never)).toBe(false);
+    expect(manager.isStarted("wechat" as never)).toBe(false);
+    expect(controller.getPhase("wechat" as never)).toBe("paused_remote");
   });
 
   it("manager 启动门闩：startAll/startOne 跳过 owner=server 渠道", async () => {

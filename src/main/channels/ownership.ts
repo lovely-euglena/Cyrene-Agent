@@ -30,6 +30,10 @@ export const DEFAULT_FAILOVER_GRACE_SECONDS = 300;
 export const DEFAULT_LEASE_TTL_SECONDS = 180;
 export const OWNERSHIP_POLL_INTERVAL_MS = 30_000;
 export const OWNERSHIP_HEARTBEAT_INTERVAL_MS = 60_000;
+/** 控制面请求超时：网络黑洞时避免 stop/退出流程被无限期阻塞（§5.7）。 */
+export const OWNERSHIP_REQUEST_TIMEOUT_MS = 12_000;
+/** remote 配置读取缓存：入站门闩每条消息都会 decide()，避免同步读盘 + token 解密。 */
+export const OWNERSHIP_CONFIG_CACHE_MS = 5_000;
 
 /** 配置规范化（settings-store 与测试共用；baseUrl 去尾斜杠）。 */
 export function normalizeChannelsRemoteConfig(input: unknown): ChannelsRemoteConfig {
@@ -171,6 +175,10 @@ export class ChannelOwnershipClient {
   private lastSuccessAt: number | null = null;
   private consecutiveFailures = 0;
   private lastError: string | null = null;
+  /** remote 配置 TTL 缓存（配置保存后由调用方 invalidateConfig 立即失效）。 */
+  private configCache: { value: ChannelsRemoteConfig; at: number } | null = null;
+  /** 在途控制面请求的中止开关（stop/shutdown 调 abortInFlight）。 */
+  private abortController = new AbortController();
   /** 本机想持有租约的渠道（claim 成功或手动指定；用于 lost 后下一轮重新 claim）。 */
   private readonly desiredLocal = new Set<ChannelId>();
   /** 用户显式「在本机运行」但服务端不可达时的手动兜底标记。 */
@@ -184,6 +192,33 @@ export class ChannelOwnershipClient {
 
   private log(message: string): void {
     (this.options.log ?? ((text: string) => console.warn(text)))(message);
+  }
+
+  /** 读取 remote 配置（TTL 缓存）：高频入站路径不重复同步读盘 + 解密 token。 */
+  private config(): ChannelsRemoteConfig {
+    const at = this.now();
+    if (this.configCache && at - this.configCache.at < OWNERSHIP_CONFIG_CACHE_MS) {
+      return this.configCache.value;
+    }
+    const value = this.options.loadConfig();
+    this.configCache = { value, at };
+    return value;
+  }
+
+  /** 配置变更（settings 保存）后立即失效缓存。 */
+  invalidateConfig(): void {
+    this.configCache = null;
+  }
+
+  /** 服务端恢复后是否优先交回（§5.5，默认 true）。 */
+  prefersServer(): boolean {
+    return this.config().preferServer !== false;
+  }
+
+  /** 中止所有在途控制面请求（stop/shutdown 用）；之后的新请求不受影响。 */
+  abortInFlight(): void {
+    this.abortController.abort();
+    this.abortController = new AbortController();
   }
 
   getSnapshot(): OwnershipSnapshot | null {
@@ -238,14 +273,17 @@ export class ChannelOwnershipClient {
     for (const channel of channels) this.forceLocal.delete(channel);
   }
 
-  /** 归属=server 且远程配置可用时，proactive 应转发到服务端（§5.4）。 */
+  /** 归属=server 且本机未在服务时，proactive 应转发到服务端（§5.4/§5.5）。 */
   shouldForwardProactive(channel: ChannelId): boolean {
-    const config = this.options.loadConfig();
-    return config.enabled && Boolean(config.baseUrl) && this.getChannelState(channel)?.owner === "server";
+    const config = this.config();
+    if (!config.enabled || !config.baseUrl) return false;
+    // 兜底/本机运行期间本机已在服务，且服务端可能不可达：不再转发（避免消息丢失）
+    if (this.decide(channel).runLocal) return false;
+    return this.getChannelState(channel)?.owner === "server";
   }
 
   decide(channel: ChannelId): OwnershipDecision {
-    const config = this.options.loadConfig();
+    const config = this.config();
     return decideChannelOwnership({
       remoteEnabled: config.enabled && Boolean(config.baseUrl),
       state: this.getChannelState(channel),
@@ -263,7 +301,7 @@ export class ChannelOwnershipClient {
   // ── HTTP（控制面 §5.2；失败返回 error 字段，不抛）─────────────────────────
 
   async poll(): Promise<OwnershipSnapshot | null> {
-    const config = this.options.loadConfig();
+    const config = this.config();
     if (!config.enabled || !config.baseUrl) return null;
     try {
       const response = await this.request(config, "GET", "/v1/channels/ownership");
@@ -287,7 +325,7 @@ export class ChannelOwnershipClient {
   }
 
   async claim(channels: ChannelId[], ttlSeconds?: number): Promise<OwnershipClaimOutcome> {
-    const config = this.options.loadConfig();
+    const config = this.config();
     if (!config.enabled || !config.baseUrl) return { granted: [], denied: [], error: "remote_disabled" };
     try {
       const response = await this.request(config, "POST", "/v1/channels/ownership/claim", {
@@ -300,8 +338,16 @@ export class ChannelOwnershipClient {
       };
       const granted = (body.granted ?? []) as ChannelId[];
       const denied = (body.denied ?? []) as ChannelId[];
-      for (const channel of granted) this.desiredLocal.add(channel);
-      for (const channel of denied) this.desiredLocal.delete(channel);
+      // granted：租约到手，手动兜底标记可清；denied：他机持有，必须清手动标记
+      // 否则 decide() 的 manualLocal 优先分支会继续本机运行，形成残余双主
+      for (const channel of granted) {
+        this.desiredLocal.add(channel);
+        this.forceLocal.delete(channel);
+      }
+      for (const channel of denied) {
+        this.desiredLocal.delete(channel);
+        this.forceLocal.delete(channel);
+      }
       this.applyLease(granted, body.leaseExpiresAt);
       return { granted, denied, leaseExpiresAt: body.leaseExpiresAt };
     } catch (error) {
@@ -311,7 +357,7 @@ export class ChannelOwnershipClient {
   }
 
   async heartbeat(channels: ChannelId[]): Promise<OwnershipHeartbeatOutcome> {
-    const config = this.options.loadConfig();
+    const config = this.config();
     if (!config.enabled || !config.baseUrl) return { renewed: [], lost: [], error: "remote_disabled" };
     if (channels.length === 0) return { renewed: [], lost: [] };
     try {
@@ -332,7 +378,7 @@ export class ChannelOwnershipClient {
   }
 
   async release(channels: ChannelId[]): Promise<OwnershipReleaseOutcome> {
-    const config = this.options.loadConfig();
+    const config = this.config();
     if (!config.enabled || !config.baseUrl) return { released: [], error: "remote_disabled" };
     if (channels.length === 0) return { released: [] };
     try {
@@ -354,7 +400,7 @@ export class ChannelOwnershipClient {
 
   /** 转发主动消息（§5.4）：服务端 intentId 幂等；失败不回退本机（避免双发）。 */
   async deliverProactive(channel: ChannelId, input: ProactiveForwardInput): Promise<ProactiveForwardResult> {
-    const config = this.options.loadConfig();
+    const config = this.config();
     if (!config.enabled || !config.baseUrl) return { ok: false, error: "remote_disabled" };
     try {
       const response = await this.request(
@@ -399,9 +445,15 @@ export class ChannelOwnershipClient {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const fetchImpl = this.options.fetchImpl
       ?? ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => fetch(input, init));
+    // 超时 + 控制器级 abort：网络黑洞不阻塞 stop/退出流程（§5.7）
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(OWNERSHIP_REQUEST_TIMEOUT_MS),
+      this.abortController.signal,
+    ]);
     return await fetchImpl(`${base}${path}`, {
       method,
       headers,
+      signal,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
   }
@@ -455,6 +507,8 @@ export class ChannelOwnershipController {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  /** 自动兜底（非手动）中的渠道：服务端恢复后按 preferServer 交回或维持本机（§5.5）。 */
+  private readonly autoFailover = new Set<ChannelId>();
   private readonly phases = new Map<ChannelId, LocalChannelPhase>();
 
   constructor(options: ChannelOwnershipControllerOptions) {
@@ -470,20 +524,28 @@ export class ChannelOwnershipController {
     this.clearIntervalImpl = options.clearIntervalImpl ?? clearInterval;
   }
 
+  /** 控制器是否在运行（运行期 remote 开关切换/重启路径判定用）。 */
+  get isRunning(): boolean {
+    return this.running;
+  }
+
   /** 启动：首次同步 + 30s 轮询 + 60s 心跳（timer unref，不阻塞进程退出）。 */
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
     await this.syncNow();
+    if (!this.running) return; // 首次同步期间被 stop：不得再挂定时器
     this.pollTimer = this.setIntervalImpl(() => { void this.syncNow(); }, this.pollIntervalMs);
     this.heartbeatTimer = this.setIntervalImpl(() => { void this.heartbeatNow(); }, this.heartbeatIntervalMs);
     (this.pollTimer as { unref?: () => void }).unref?.();
     (this.heartbeatTimer as { unref?: () => void }).unref?.();
   }
 
-  /** 停止：清定时器 + 尽力交回本机租约（服务端可立即恢复，不用等 TTL）。 */
+  /** 停止：清定时器 + 中止在途请求 + 尽力交回本机租约（服务端可立即恢复，不用等 TTL）。 */
   async stop(): Promise<void> {
     this.running = false;
+    // 中止在途控制面请求：网络黑洞时 stop/退出流程不被无限期阻塞（§5.7）
+    this.client.abortInFlight();
     if (this.pollTimer) {
       this.clearIntervalImpl(this.pollTimer);
       this.pollTimer = null;
@@ -492,13 +554,16 @@ export class ChannelOwnershipController {
       this.clearIntervalImpl(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    this.autoFailover.clear();
     const desired = this.client.desiredLocalChannels();
     if (desired.length > 0) await this.client.release(desired);
   }
 
-  /** 一轮同步：poll → 同设备租约探测 → 意图重 claim → 落地启停。 */
+  /** 一轮同步：poll → 同设备租约探测 → 兜底恢复判定 → 意图重 claim → 落地启停。 */
   async syncNow(): Promise<void> {
+    if (!this.running) return;
     const snapshot = await this.client.poll();
+    if (!this.running) return; // stop 后不得再落地启停
     if (snapshot) {
       // 桌面进程重启：owner=desktop 但本进程无意图 → 心跳探测（holder=deviceId 时 renewed）
       const foreign = (Object.entries(snapshot.channels ?? {}) as Array<[string, OwnershipChannelState]>)
@@ -509,22 +574,38 @@ export class ChannelOwnershipController {
         const probe = await this.client.heartbeat(foreign);
         if (probe.renewed.length > 0) this.client.markDesiredLocal(probe.renewed);
       }
-      // 租约丢失/服务端收回后下一轮重新 claim（§5.7）
+      // 兜底恢复（§5.5）：服务端恢复后按 preferServer 交回（默认）或 claim 维持本机（用户偏好）。
+      // 手动「本机运行」是用户明确意图，不在此列（由 reclaim 续租维持）。
+      if (this.client.serverReachable && this.autoFailover.size > 0) {
+        const recovering = Array.from(this.autoFailover).filter((id) => !this.client.wantsManualLocal(id));
+        if (recovering.length > 0) {
+          if (this.client.prefersServer()) {
+            const outcome = await this.client.release(recovering);
+            if (!outcome.error) for (const id of recovering) this.autoFailover.delete(id);
+          } else {
+            const outcome = await this.client.claim(recovering);
+            if (!outcome.error) for (const id of recovering) this.autoFailover.delete(id);
+          }
+          if (!this.running) return;
+        }
+      }
+      // 租约丢失/服务端收回后下一轮重新 claim（§5.7）；
+      // claim 内部按 granted/denied 清理 desiredLocal 与 forceLocal
       const reclaim = this.client.desiredLocalChannels()
         .filter((id) => this.client.getChannelState(id)?.owner !== "desktop");
-      if (reclaim.length > 0) {
-        const outcome = await this.client.claim(reclaim);
-        if (outcome.granted.length > 0) this.client.clearForceLocal(outcome.granted);
-      }
+      if (reclaim.length > 0) await this.client.claim(reclaim);
     }
+    if (!this.running) return;
     await this.applyPlan();
   }
 
   /** 一轮心跳：lost 的渠道立即停本机适配器（§5.7），下一轮 sync 重新 claim。 */
   async heartbeatNow(): Promise<void> {
+    if (!this.running) return;
     const desired = this.client.desiredLocalChannels();
     if (desired.length === 0) return;
     const outcome = await this.client.heartbeat(desired);
+    if (!this.running) return; // stop 后不得再落地启停
     if (outcome.lost.length > 0) {
       this.log(`租约丢失，立即停本机适配器: ${outcome.lost.join(",")}`);
       await this.applyPlan();
@@ -535,9 +616,9 @@ export class ChannelOwnershipController {
   async requestLocalRun(channels: ChannelId[]): Promise<OwnershipClaimOutcome> {
     this.client.markForceLocal(channels);
     this.client.markDesiredLocal(channels);
+    // 手动意图优先：不再参与「服务端恢复自动交回」
+    for (const id of channels) this.autoFailover.delete(id);
     const outcome = await this.client.claim(channels);
-    if (outcome.granted.length > 0) this.client.clearForceLocal(outcome.granted);
-    if (outcome.denied.length > 0) this.client.clearForceLocal(outcome.denied);
     await this.applyPlan();
     return outcome;
   }
@@ -545,16 +626,26 @@ export class ChannelOwnershipController {
   /** 用户切回云端：release + 停本机（服务端宽限后恢复）。 */
   async requestServerRun(channels: ChannelId[]): Promise<OwnershipReleaseOutcome> {
     this.client.clearForceLocal(channels);
+    for (const id of channels) this.autoFailover.delete(id);
     const outcome = await this.client.release(channels);
     await this.applyPlan();
     return outcome;
   }
 
-  /** 按当前归属判定落地每个渠道的启停（manager.startOne / pauseOne 均幂等）。 */
+  /** 按当前归属判定落地每个渠道的启停（manager.startOne / pauseOne 均幂等且单渠道容错）。 */
   async applyPlan(): Promise<void> {
     for (const id of this.manager.listChannels()) {
+      if (!this.running) return; // stop 后不得再落地启停
       const decision = this.client.decide(id);
       this.phases.set(id, decision.phase);
+      // 自动兜底标记（仅服务端托管过的渠道）：服务端恢复后按 preferServer 交回/维持（§5.5）
+      if (decision.phase === "failover_local"
+        && this.client.getChannelState(id) !== null
+        && !this.client.wantsManualLocal(id)) {
+        this.autoFailover.add(id);
+      } else if (decision.phase === "local") {
+        this.autoFailover.delete(id);
+      }
       if (decision.runLocal) await this.manager.startOne(id);
       else await this.manager.pauseOne(id);
     }

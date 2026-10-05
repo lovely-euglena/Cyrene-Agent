@@ -78,6 +78,22 @@ describe("ChannelManager", () => {
     expect(starts).toBe(1);
   });
 
+  it("startOne 单渠道启动失败：不抛出、不标记已启动，其它渠道不受影响（P1-4）", async () => {
+    const mgr = new ChannelManager();
+    const bad = fakeAdapter("qq");
+    bad.start = async () => { throw new Error("start boom"); };
+    const good = fakeAdapter("feishu");
+    mgr.register(bad);
+    mgr.register(good);
+
+    await expect(mgr.startOne("qq" as never)).resolves.toBeUndefined();
+    expect(mgr.isStarted("qq" as never)).toBe(false);
+    expect(mgr.isStarted("feishu" as never)).toBe(false);
+
+    await mgr.startOne("feishu" as never);
+    expect(mgr.isStarted("feishu" as never)).toBe(true);
+  });
+
   it("只委托入站处理，不重复发送 dispatcher 返回的消息", async () => {
     const mgr = new ChannelManager();
     const adapter = fakeAdapter("qq");
