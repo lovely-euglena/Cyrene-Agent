@@ -91,7 +91,8 @@
 - **rebuild**：先 `backupRagDataForRebuild`（sqlite `VACUUM INTO` / JSON 拷贝，
   保留最近 3 份）→ `store.reembedAll(newProvider)` 分批重嵌入 → upsert → IVF 重建 →
   `setIndexMetaForProvider`；
-- **clear**：`store.clearAll()` + meta 重置；
+- **clear**：`store.clearAll({ strict: true, nextProvider })`（清空并直接写入新
+  provider meta；persist/meta 写失败回滚内存与磁盘后抛错，不返回 ok）；
 - 旧数据兼容：无 meta 时按向量维度推断模型（1024 → bgem3）；
 - 两个设置页与 WPF 均把 requires 呈现为「重建（保留记忆）/ 清空（不可恢复）/ 取消」。
 

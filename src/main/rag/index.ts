@@ -334,8 +334,19 @@ async function performEmbeddingSwitch(
           })
         : 0;
     } else if (mismatch && action === "clear") {
-      clearedEntries = store ? store.clearAll() : 0;
+      // P2-1（复审）：clear 走严格落盘——persist/meta 任一失败内部回滚后抛出，
+      // 不再出现「磁盘旧向量 + 新 meta」或忽略 saveMeta 返回值仍返回 ok。
+      clearedEntries = store
+        ? store.clearAll({ strict: true, nextProvider: newProvider })
+        : 0;
       clearRebuildBackups(getDataDir());
+    }
+
+    // 迁移流程（reembedAll / clearAll strict）已各自严格写入新 provider meta，
+    // 写失败已在上方抛出；这里只做不变量校验，避免未来路径漏写 meta 却返回 ok
+    // （原实现此处忽略 setIndexMetaForProvider 返回值——复审 P2-1）。
+    if (mismatch && store && store.getIndexMeta() === null) {
+      throw new Error("[RAG] index metadata missing after embedding switch migration");
     }
 
     // provider 切换（embedding.ts：清缓存 + 切 current key + 丢旧 pipeline）。
@@ -344,7 +355,6 @@ async function performEmbeddingSwitch(
     switchModel(modelKey);
     provider = getEmbeddingProvider("auto", undefined, undefined, modelKey) ?? newProvider;
     if (store) {
-      if (mismatch) store.setIndexMetaForProvider(newProvider);
       retriever = new HybridRetriever(store, provider);
     }
 

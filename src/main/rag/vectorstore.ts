@@ -258,7 +258,13 @@ class JsonStoreBackend implements VectorStoreBackend {
       if (!renamed) {
         console.warn("[RAG] atomic rename contended, falling back to direct write");
         fs.writeFileSync(this.filePath, fs.readFileSync(tmp, "utf8"), "utf8");
-        fs.unlinkSync(tmp);
+        try {
+          fs.unlinkSync(tmp);
+        } catch (err) {
+          // P2-2①（复审）：主文件已写成功，tmp 清理失败不影响提交结果，仅告警；
+          // 此前并入外层 catch 会误报 failed:true → 调用方回滚内存却不写 meta。
+          console.warn("[RAG] failed to remove temp vector store file after direct write:", err);
+        }
       }
       return { needsReload: false, failed: false };
     } catch (err) {
@@ -458,7 +464,15 @@ class SqliteStoreBackend implements VectorStoreBackend {
       return { needsReload: false, failed: true };
     }
     // 本地提交后发现 rev 跳变 > 1：期间有外部提交 → 内存副本可能不完整，需整体重载
-    const post = this.readRev();
+    // P2-2②（复审）：COMMIT 已成功，读 rev 失败不能逃逸（异常会跳过 failed 上报）——
+    // 读不到 rev 时保守要求整体重载。
+    let post: string | null;
+    try {
+      post = this.readRev();
+    } catch (err) {
+      console.warn("[RAG] sqlite rev read failed after commit; requesting reload:", err);
+      return { needsReload: true, failed: false };
+    }
     return { needsReload: post !== nextRev(pre), failed: false };
   }
 
@@ -775,10 +789,14 @@ export abstract class VectorStore {
             `but provider declares ${providerDims}-dim. Rebuild the index first.`
           );
         }
-        // 维度一致，补写元数据
-        this.indexMeta = this.buildIndexMeta(provider, providerDims);
-        this.backend.saveMeta(this.indexMeta);
-        console.log("[RAG] migrated index metadata (inferred from existing vectors):", this.indexMeta);
+        // 维度一致，补写元数据（P2-2③：写盘成功后再赋内存，与 ensureIndexMeta 同口径）
+        const meta = this.buildIndexMeta(provider, providerDims);
+        if (this.backend.saveMeta(meta)) {
+          this.indexMeta = meta;
+          console.log("[RAG] migrated index metadata (inferred from existing vectors):", meta);
+        } else {
+          console.warn("[RAG] inferred index metadata not persisted; will retry on next write");
+        }
       }
       return;
     }
@@ -932,11 +950,13 @@ export abstract class VectorStore {
     // 基于最新盘面应用（只覆盖重算过的 id；期间新增条目不受影响）
     this.ensureFresh();
     const touched: MemoryEntry[] = [];
-    const previousEmbeddings: number[][] = [];
+    // P2-2④（复审）：按 id 记录旧向量——persist 的 needsReload 分支会 reload()
+    // 整体替换 this.entries，回滚/补偿必须能从当前 this.entries 重新定位对象。
+    const previousEmbeddings = new Map<string, number[]>();
     for (const entry of this.entries) {
       const embedding = embeddingsById.get(entry.id);
       if (!embedding) continue;
-      previousEmbeddings.push(entry.embedding);
+      previousEmbeddings.set(entry.id, entry.embedding);
       entry.embedding = embedding;
       touched.push(entry);
     }
@@ -946,16 +966,20 @@ export abstract class VectorStore {
         this.persistNowStrict({ kind: "reembed", entries: touched });
       } catch (err) {
         // 回滚内存向量：磁盘未更新，内存也不能是「新向量」状态
-        this.rollbackReembeddedEntries(touched, previousEmbeddings);
+        this.rollbackReembeddedEntries(previousEmbeddings);
         throw err;
       }
       // meta 必须与已落盘的新向量一致；写失败则回滚内存并尽力恢复磁盘旧向量
       if (!this.setIndexMetaForProvider(provider)) {
-        this.rollbackReembeddedEntries(touched, previousEmbeddings);
+        const restored = this.rollbackReembeddedEntries(previousEmbeddings);
         try {
-          this.persistNowStrict({ kind: "reembed", entries: touched });
+          if (restored.length > 0) {
+            this.persistNowStrict({ kind: "reembed", entries: restored });
+          }
         } catch (rollbackErr) {
           console.warn("[RAG] failed to restore vectors after metadata write failure:", rollbackErr);
+          // 补偿写失败：磁盘可能仍是新向量，以磁盘为准重载，避免内存/磁盘错位
+          this.reload();
         }
         throw new Error("[RAG] failed to persist index metadata after reembed; switch aborted");
       }
@@ -966,12 +990,22 @@ export abstract class VectorStore {
     return touched.length;
   }
 
-  /** 回滚重嵌批次的内存向量并标记索引需重建。 */
-  private rollbackReembeddedEntries(touched: MemoryEntry[], previous: number[][]): void {
-    for (let i = 0; i < touched.length; i++) {
-      touched[i].embedding = previous[i];
+  /**
+   * 回滚重嵌批次的内存向量并标记索引需重建。
+   * P2-2④（复审）：按 id 从当前 this.entries 重定位——persist 的 needsReload 分支
+   * 会 reload() 替换 this.entries，旧的 touched 引用已不在内存副本中。
+   * 返回实际恢复的条目，供调用方补偿写盘。
+   */
+  private rollbackReembeddedEntries(previous: Map<string, number[]>): MemoryEntry[] {
+    const restored: MemoryEntry[] = [];
+    for (const entry of this.entries) {
+      const previousEmbedding = previous.get(entry.id);
+      if (!previousEmbedding) continue;
+      entry.embedding = previousEmbedding;
+      restored.push(entry);
     }
     this.markIndexDirty();
+    return restored;
   }
 
   /** 检查是否需重建索引，每次数据库变化后调用 */
@@ -1296,15 +1330,54 @@ export abstract class VectorStore {
   /**
    * 清空全部条目 + 索引元数据（换 embedding 模型维度不匹配时使用）。
    * 同时清理迁移用 JSON，避免下次启动把旧条目迁回。
+   *
+   * strict（切换流程用，复审 P2-1）：
+   *   - persist / meta 写失败不再只告警：回滚内存并尽力恢复磁盘后抛出，调用方
+   *     据此返回 ok:false，不产生「磁盘旧向量 + 新 meta」的静默劣化；
+   *   - nextProvider 传入时清空后直接写入新 provider meta（与 reembedAll 同口径），
+   *     避免调用方再以忽略返回值的 setIndexMetaForProvider 补写。
+   * 默认（无 options）保持既有 best-effort 行为。
    */
-  clearAll(): number {
+  clearAll(options?: { strict?: boolean; nextProvider?: EmbeddingProvider }): number {
     this.ensureFresh();
     const removed = this.entries.length;
+    if (options?.strict !== true) {
+      this.entries = [];
+      this.markIndexDirty();
+      this.indexMeta = null;
+      this.persistNow({ kind: "replace" });
+      this.backend.saveMeta(null);
+      this.backend.resetLegacy();
+      return removed;
+    }
+
+    const previousEntries = this.entries;
+    const previousMeta = this.indexMeta;
     this.entries = [];
-    this.markIndexDirty();
     this.indexMeta = null;
-    this.persistNow({ kind: "replace" });
-    this.backend.saveMeta(null);
+    this.markIndexDirty();
+    try {
+      this.persistNowStrict({ kind: "replace" });
+      const metaWritten = options.nextProvider
+        ? this.setIndexMetaForProvider(options.nextProvider)
+        : this.backend.saveMeta(null);
+      if (!metaWritten) {
+        throw new Error("[RAG] failed to persist index metadata after clear");
+      }
+    } catch (err) {
+      // 回滚内存，并尽力把旧向量/旧 meta 写回磁盘（可能已清空）
+      this.entries = previousEntries;
+      this.indexMeta = previousMeta;
+      this.markIndexDirty();
+      try {
+        this.persistNowStrict({ kind: "replace" });
+        this.backend.saveMeta(previousMeta);
+      } catch (rollbackErr) {
+        console.warn("[RAG] failed to restore vector store after clear failure:", rollbackErr);
+        this.reload();
+      }
+      throw err;
+    }
     this.backend.resetLegacy();
     return removed;
   }
