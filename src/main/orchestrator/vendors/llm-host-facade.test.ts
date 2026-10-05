@@ -345,7 +345,24 @@ describe("复审 P2-2：dropped/truncated 告警口径（回收累计 ≠ 缺口
     expect(resp.text).toBe("a");
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain("无增量缺口");
-    expect(String(warn.mock.calls[0][0])).toContain("3");
+    expect(String(warn.mock.calls[0][0])).toContain("ring 累计回收 3 条"); // 收紧：dropped=3 且只提示一次
+  });
+
+  it("P2-2（复审3）：先回收提示后 truncated=true → 真实缺口仍独立告警（不被静默）", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [
+      { events: [{ type: "delta", text: "a" }], dropped: 2 },          // 回收累计提示（无缺口）
+      { events: [{ type: "delta", text: "b" }], dropped: 7, truncated: true }, // 真实缺口
+      { events: [{ type: "finish", reason: "stop" }, { type: "done" }] },
+    ];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { });
+    const resp = await callLLMViaLlmHost(options());
+    expect(resp.text).toBe("ab");
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0][0])).toContain("无增量缺口");
+    expect(String(warn.mock.calls[1][0])).toContain("增量缺口");
+    expect(String(warn.mock.calls[1][0])).toContain("已丢弃段");
   });
 
   it("truncated=true（请求 cursor 落在已丢弃段）→ 缺口告警", async () => {

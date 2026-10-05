@@ -115,7 +115,7 @@ public sealed class LlmJob
     public long DroppedEvents { get { lock (_gate) return _dropped; } }
     public bool IsTerminal => State is LlmJobState.Done or LlmJobState.Error or LlmJobState.Cancelled;
 
-    /// <summary>未确认事件量（生产-消费差）：高水位反压按此判定，poll 消费推进后回落。</summary>
+    /// <summary>未确认事件量（生产-消费差）：LowWater 反压按此判定，poll 消费推进后回落。</summary>
     public int PendingCount { get { lock (_gate) return _base + _events.Count - (int)Math.Min((long)_base + _events.Count, Interlocked.Read(ref _polledCursor)); } }
 
     /// <summary>

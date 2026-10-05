@@ -20,7 +20,8 @@ namespace CyreneNative.Llm;
 ///   - 已有可见增量：任何失败 → 直接 error 收口（绝不重放副作用）；
 ///   - retry-after 头优先，否则指数退避 1s→2s→4s…封顶 30s；
 ///   - 总时长兜底：timeoutMs 经 linked CTS 生效（P1-5，超时 = 不可重试终态）。
-/// 反压（复审 P0-2 修复）：高水位按「未确认量」暂停上游读（poll 消费推进恢复），
+/// 反压（复审 P0-2 修复 + 复审3 P2-2 口径订正）：未确认量 > LowWater（单一阈值）暂停
+/// 上游读（poll 消费推进恢复），
 /// 消费者死亡由 stall 兜底（60s）→ truncated 终态；ring 满防御性 drop-oldest。
 /// </summary>
 public sealed class LlmJobService : IDisposable
@@ -269,7 +270,7 @@ public sealed class LlmJobService : IDisposable
         }
     }
 
-    /// <summary>一次流式尝试；wire → 归一事件落 ring（含高水位反压）。流自然结束后补发 finish → usage → done 并置 Done。</summary>
+    /// <summary>一次流式尝试；wire → 归一事件落 ring（含 LowWater 反压）。流自然结束后补发 finish → usage → done 并置 Done。</summary>
     private async Task StreamAttemptAsync(LlmJob job, CancellationToken ct, IReadOnlyDictionary<string, string> headers)
     {
         var finish = default(string);

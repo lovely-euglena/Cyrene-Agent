@@ -147,7 +147,10 @@ async function collectJob(
   let thinking = "";
   let finishReason = "stop";
   let usage: ChatResponse["usage"] | undefined;
-  let warnedDropped = false;
+  // 复审3 P2-2：回收累计提示与真实缺口独立标志——先出现「ring 回收」提示不得静默
+  // 后续 truncated=true 的真实缺口（反向同理：缺口告警后仍可补一次回收提示）。
+  let warnedRecycled = false;
+  let warnedGap = false;
   const toolAcc = new Map<number, { id: string; name: string; arguments: string }>();
 
   while (!signal.aborted) {
@@ -164,15 +167,17 @@ async function collectJob(
       throw err;
     }
     cursor = result.nextCursor;
-    // 复审 P2-2：dropped 是 ring 回收累计（含「已 poll 消费、仅因 ring 满被回收」的事件），
-    // truncated 才是请求 cursor 落在已丢弃段（真实增量缺口）。分开告警，每次作业一次。
-    if (!warnedDropped && ((result.dropped ?? 0) > 0 || result.truncated === true)) {
-      warnedDropped = true;
-      if (result.truncated === true) {
-        console.warn(`[llm-host] job ${jobId} 增量缺口：请求 cursor 落在已丢弃段（ring 累计回收 ${result.dropped ?? 0} 条）`);
-      } else {
-        console.warn(`[llm-host] job ${jobId} ring 累计回收 ${result.dropped ?? 0} 条已消费事件（无增量缺口）`);
+    // 复审 P2-2 + 复审3 P2-2：dropped 是 ring 回收累计（含「已 poll 消费、仅因 ring 满
+    // 被回收」的事件），truncated 才是请求 cursor 落在已丢弃段（真实增量缺口）。两者
+    // 独立标志：缺口告警优先且不吞后续回收提示；先回收提示也不静默后续真实缺口。
+    if (result.truncated === true) {
+      if (!warnedGap) {
+        warnedGap = true;
+        console.warn(`[llm-host] job ${jobId} 增量缺口：请求 cursor 落在已丢弃段（该段事件不可恢复；ring 累计回收 ${result.dropped ?? 0} 条）`);
       }
+    } else if ((result.dropped ?? 0) > 0 && !warnedRecycled) {
+      warnedRecycled = true;
+      console.warn(`[llm-host] job ${jobId} ring 累计回收 ${result.dropped ?? 0} 条已消费事件（无增量缺口）`);
     }
 
     for (const ev of result.events) {
