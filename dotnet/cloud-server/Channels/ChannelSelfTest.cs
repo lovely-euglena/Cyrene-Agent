@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CyreneCloud.Channels.Adapters.Feishu;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Channels;
@@ -23,7 +24,9 @@ internal static class ChannelSelfTest
         {
             return suite switch
             {
-                "framework" or "all" => RunFrameworkAsync().GetAwaiter().GetResult(),
+                "framework" => RunFrameworkAsync().GetAwaiter().GetResult(),
+                "feishu" => FeishuSelfTest.RunAsync().GetAwaiter().GetResult(),
+                "all" => RunAll(),
                 _ => Unknown(suite),
             };
         }
@@ -35,11 +38,21 @@ internal static class ChannelSelfTest
         }
     }
 
+    private static int RunAll()
+    {
+        var failures = RunFrameworkAsync().GetAwaiter().GetResult();
+        failures += FeishuSelfTest.RunAsync().GetAwaiter().GetResult();
+        Console.WriteLine(failures == 0
+            ? "SELFTEST channel all: ALL PASS"
+            : $"SELFTEST channel all: {failures} FAILURES");
+        return failures;
+    }
+
     private delegate void CheckFn(string name, bool ok, string detail = "");
 
     private static int Unknown(string suite)
     {
-        Console.WriteLine($"未知渠道自测子集: {suite}（可用: framework | all）");
+        Console.WriteLine($"未知渠道自测子集: {suite}（可用: framework | feishu | all）");
         return 2;
     }
 

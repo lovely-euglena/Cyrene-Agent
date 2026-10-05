@@ -1,3 +1,5 @@
+using CyreneCloud.Channels.Adapters.Feishu;
+
 namespace CyreneCloud.Channels;
 
 /// <summary>
@@ -24,11 +26,14 @@ public interface IChannelAdapterRegistration
 /// <summary>
 /// 适配器注册表（阶段 3-6 的插入位）。
 ///
-/// 阶段 2 框架批为空：没有任何具体适配器 = capabilities.channels.hosted 为空。
-/// 追加示例（阶段 3）：
+/// 阶段 5 起：飞书（webhook + 自研 REST）。
+/// 追加示例（阶段 3/6）：
 /// <code>new WeChatAdapterRegistration(),</code>
 /// </summary>
 public static class ChannelAdapterCatalog
 {
-    public static IReadOnlyList<IChannelAdapterRegistration> All { get; } = [];
+    public static IReadOnlyList<IChannelAdapterRegistration> All { get; } =
+    [
+        new FeishuAdapterRegistration(),
+    ];
 }
