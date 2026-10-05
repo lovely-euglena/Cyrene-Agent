@@ -1,7 +1,8 @@
 // 服务端渠道能力冻结表（docs/design/2026-10-05-server-channel.md §2.2）。
 //
-// 与桌面 adapter 的 capability 声明刻意区分：服务端按分期冻结（如飞书 audio 在
-// ffmpeg 落地前为 false），fixtures/channels 双端锁定。
+// 与桌面 adapter 的 capability 声明刻意区分：服务端按分期冻结；2026-10-05 阶段 5
+// ffmpeg 入镜像（Q1 拍板）后飞书 audio false → true（§6.3），微信 SILK 仍按分期（§4）。
+// fixtures/channels 双端锁定。
 import type { ChannelCapability } from "../types";
 
 export const CHANNEL_CAPABILITIES: Record<"wechat" | "feishu" | "qqbot", ChannelCapability> = {
@@ -19,7 +20,7 @@ export const CHANNEL_CAPABILITIES: Record<"wechat" | "feishu" | "qqbot", Channel
   feishu: {
     text: true,
     image: true,
-    audio: false,
+    audio: true,
     file: true,
     video: true,
     markdown: true,

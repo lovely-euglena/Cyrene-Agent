@@ -108,6 +108,7 @@
     },
     "channelCapability": {
       "type": "object",
+      "$comment": "服务端冻结能力表见 docs/design/2026-10-05-server-channel.md §2.2；2026-10-05 阶段 5 ffmpeg 入镜像后 feishu.audio=true（§6.3/Q1）。执行值以 capability 用例 + 双端表为准。",
       "required": ["text", "image", "audio", "file", "video", "markdown", "card", "sticker", "maxTextLength"],
       "properties": {
         "text": { "type": "boolean" },

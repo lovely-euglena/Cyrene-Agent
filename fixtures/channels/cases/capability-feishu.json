@@ -1,12 +1,12 @@
 {
-  "name": "能力表：feishu（audio 分期，其余可用）",
+  "name": "能力表：feishu（audio 已随 ffmpeg 落地，全部可用）",
   "kind": "capability",
   "channel": "feishu",
   "input": { "channel": "feishu" },
   "expect": {
     "text": true,
     "image": true,
-    "audio": false,
+    "audio": true,
     "file": true,
     "video": true,
     "markdown": true,
