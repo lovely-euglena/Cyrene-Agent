@@ -46,15 +46,37 @@ export interface DetachedTrayInput {
   requestActivation(request: WindowActivationRequest): void;
   togglePetWindow(): void;
   setPetDragMode?(enabled: boolean): boolean;
+  /** 当前桌宠拖动模式状态（连接建立时同步一次勾选；缺省按 false）。 */
+  getPetDragMode?(): boolean;
   quit(): void;
 }
 
 const PIPE_NAME = "cyrene-tray";
 const PIPE_PATH = `\\\\.\\pipe\\${PIPE_NAME}`;
 
+/** Electron → 托盘的状态帧：拖动模式勾选以宿主实际状态为准。 */
+type TrayDragModeStateFrame = { op: "tray.drag-mode-state"; checked: boolean };
+
+/**
+ * 连接建立时发送的握手帧（导出供测试锁定协议）：
+ *   tray.ready 后同步一次拖动模式勾选——TrayHost 常驻、Electron 可独立退出
+ *   重启，托盘菜单勾选可能停留在上一次 Electron 会话（拖动模式不持久化）。
+ */
+export function buildConnectFrames(input: Pick<DetachedTrayInput, "getPetDragMode">): Array<Record<string, unknown>> {
+  return [
+    { op: "tray.ready" },
+    { op: "tray.drag-mode-state", checked: input.getPetDragMode?.() ?? false },
+  ];
+}
+
 interface TrayCommand {
   op: "cmd";
   action: string;
+  /**
+   * 拖动模式目标状态（TrayHost 菜单勾选透传）。旧版托盘不发该字段，
+   * 缺省按 true 兼容（旧行为：drag-mode 恒开启）。
+   */
+  checked?: boolean;
 }
 
 /**
@@ -87,7 +109,7 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
     socket = nodeNet.connect(PIPE_PATH);
     socket.on("error", () => { /* pipe 断开：托盘先走，静默 */ });
     socket.on("connect", () => {
-      send({ op: "tray.ready" });
+      for (const frame of buildConnectFrames(input)) send(frame);
     });
     socket.on("data", (chunk: Buffer) => {
       lineBuffer += chunk.toString("utf8");
@@ -97,7 +119,7 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
         const line = lineBuffer.slice(0, idx).trim();
         lineBuffer = lineBuffer.slice(idx + 1);
         if (!line) continue;
-        dispatchLine(line, input);
+        dispatchLine(line, input, send);
       }
     });
     socket.on("close", () => {
@@ -147,7 +169,15 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
   };
 }
 
-function dispatchLine(line: string, input: DetachedTrayInput): void {
+/**
+ * 托盘命令分发（导出供测试锁定协议；生产路径由 socket 数据回调调用）。
+ * notify 为状态回执通道：拖动模式命令执行后回执宿主实际结果。
+ */
+export function dispatchLine(
+  line: string,
+  input: DetachedTrayInput,
+  notify?: (frame: TrayDragModeStateFrame) => void,
+): void {
   let msg: TrayCommand;
   try {
     msg = JSON.parse(line) as TrayCommand;
@@ -168,9 +198,15 @@ function dispatchLine(line: string, input: DetachedTrayInput): void {
     case "toggle-pet":
       input.togglePetWindow();
       break;
-    case "drag-mode":
-      input.setPetDragMode?.(true);
+    case "drag-mode": {
+      // 勾选状态随命令透传（修复「只能开不能关」）；旧版托盘无 checked → true 兼容
+      const target = typeof msg.checked === "boolean" ? msg.checked : true;
+      const applied = input.setPetDragMode?.(target) ?? false;
+      // 结果回执：TrayHost 按实际应用结果对齐勾选（setPetDragMode 拒绝时
+      // 不再停留在点击时的保守翻转，分离托盘从单向管道变为有回执）。
+      notify?.({ op: "tray.drag-mode-state", checked: applied });
       break;
+    }
     case "quit":
       input.quit();
       break;

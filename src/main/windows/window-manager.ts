@@ -58,6 +58,8 @@ export interface WindowManager {
   setPetWindowDragging(isDragging: boolean): void;
   /** 桌宠拖动模式（托盘兜底）：整窗交互态，穿透关闭；返回切换结果。 */
   setPetDragMode(enabled: boolean): boolean;
+  /** 当前桌宠拖动模式状态（分离托盘连接建立时同步勾选；仅成功应用时更新）。 */
+  getPetDragMode(): boolean;
   movePetWindowRelative(dx: number, dy: number): void;
   movePetWindowTo(x: number, y: number): void;
   applyPetWindowZoom(zoom: number): void;
@@ -77,6 +79,9 @@ export interface WindowManager {
 
 export function createWindowManager(options: WindowManagerOptions): WindowManager {
   let petWindow: BrowserWindow | null = null;
+  // 桌宠拖动模式目标状态（仅 setPetDragMode 成功应用时更新）：分离托盘连接建立
+  // 时同步勾选、命令结果回执对齐用。不随桌宠窗口重建重放（与内置托盘勾选同语义）。
+  let petDragMode = false;
   let onboardingWindow: BrowserWindow | null = null;
   let chatShell: ReactChatWindowHandle | null = null;
   let chatLoadPromise: Promise<void> | null = null;
@@ -365,11 +370,15 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         // 退出拖动模式时交还渲染侧 hit-test 控制（设回穿透，等下一
         // 次 mousemove 命中再切换）。
         win.setIgnoreMouseEvents(!enabled, { forward: true });
+        petDragMode = enabled;
         return enabled;
       } catch (error) {
         console.warn("[WindowManager] setPetDragMode failed:", error);
         return false;
       }
+    },
+    getPetDragMode(): boolean {
+      return petDragMode;
     },
     movePetWindowRelative(dx: number, dy: number): void {
       petWindowMoveController.moveRelative(dx, dy);
