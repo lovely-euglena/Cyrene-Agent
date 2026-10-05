@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CyreneCloud.Channels.Adapters.WeChat;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
 using CyreneNative.Channels;
@@ -13,14 +14,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace CyreneCloud.Channels;
 
 /// <summary>
-/// 渠道自测（裸跑：cyrene-cloud-server channel-selftest framework|ownership；--selftest framework 同义）。
+/// 渠道自测（裸跑：cyrene-cloud-server channel-selftest framework|wechat|qqbot|ownership|all；--selftest framework 同义）。
 ///
-/// 覆盖阶段 2 框架批（设计 §8.2/§8.3）：ChannelOptions 解析、ChannelStore（去重/收件人/回执/
+/// framework = 阶段 2 框架批（设计 §8.2/§8.3）：ChannelOptions 解析、ChannelStore（去重/收件人/回执/
 /// 凭据加解密/归属表原语）、ChannelManager（注册/单实例守卫/状态）、ServerEventWriter
 /// （lamport/seq 原子分配、幂等、presentation 形态）、ChannelDispatcher 端到端（写事件/生成/
 /// 投递/回执/门闩）与 ChannelDeliveryService 重试。
-/// 覆盖阶段 4 归属批：ChannelOwnershipService 状态机/租约过期/交拍时序/进程重启接管、
-/// ChannelProactiveService intentId 幂等与投递失败回执。阶段 3-6 追加 wechat/feishu/qqbot 子集。
+/// wechat = 阶段 3 微信 iLink 试点（mock iLink HTTP：文本/图片收发、CDN、重连、QR 状态机）；
+/// qqbot = 阶段 6 被动回复；ownership = 阶段 4 归属批（状态机/租约过期/交拍时序/进程重启接管、
+/// ChannelProactiveService intentId 幂等与投递失败回执）。阶段 5 飞书在途。
 /// </summary>
 internal static class ChannelSelfTest
 {
@@ -31,6 +33,7 @@ internal static class ChannelSelfTest
             return suite switch
             {
                 "framework" => RunFrameworkAsync().GetAwaiter().GetResult(),
+                "wechat" => WeChatSelfTest.RunAsync().GetAwaiter().GetResult(),
                 "qqbot" => RunQqBotAsync().GetAwaiter().GetResult(),
                 "ownership" => RunOwnershipAsync().GetAwaiter().GetResult(),
                 "all" => RunAllAsync().GetAwaiter().GetResult(),
@@ -48,6 +51,7 @@ internal static class ChannelSelfTest
     private static async Task<int> RunAllAsync()
     {
         var failures = await RunFrameworkAsync();
+        failures += WeChatSelfTest.RunAsync().GetAwaiter().GetResult();
         failures += await RunQqBotAsync();
         failures += await RunOwnershipAsync();
         Console.WriteLine(failures == 0
@@ -60,7 +64,7 @@ internal static class ChannelSelfTest
 
     private static int Unknown(string suite)
     {
-        Console.WriteLine($"未知渠道自测子集: {suite}（可用: framework | qqbot | ownership | all）");
+        Console.WriteLine($"未知渠道自测子集: {suite}（可用: framework | wechat | qqbot | ownership | all）");
         return 2;
     }
 

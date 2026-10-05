@@ -32,5 +32,6 @@ public static class ChannelAdapterCatalog
     public static IReadOnlyList<IChannelAdapterRegistration> All { get; } =
     [
         new Adapters.QqBot.QqBotAdapterRegistration(),
+        new Adapters.WeChat.WeChatAdapterRegistration(),
     ];
 }

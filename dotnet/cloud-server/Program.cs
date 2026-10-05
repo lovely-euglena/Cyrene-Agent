@@ -6,8 +6,10 @@ using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using CyreneCloud.Auth;
 using CyreneCloud.Channels;
+using CyreneCloud.Channels.Adapters.WeChat;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
+using CyreneNative.Channels;
 using CyreneNative.Sync;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
@@ -98,7 +100,7 @@ var masterTokenBytes = string.IsNullOrEmpty(masterToken) ? null : Encoding.UTF8.
 // ── 服务端渠道层（Phase 2 渠道批，§2.3/§2.4）──
 // CLOUD_CHANNELS 为空 = 渠道层整体关闭（不注册存储/托管，零内存占用）；
 // capabilities.channels 仍声明（hosted=[]），老客户端宽容解析。
-var channelOptions = ChannelOptions.FromEnvironment();
+var channelOptions = ChannelOptions.FromEnvironment(dataDir);
 builder.Services.AddSingleton(channelOptions);
 if (channelOptions.ChannelsEnabled)
 {
@@ -128,10 +130,22 @@ if (channelOptions.ChannelsEnabled)
         sp.GetRequiredService<ChannelDeliveryService>(),
         sp.GetRequiredService<ILogger<ChannelDispatcher>>(),
         sp.GetRequiredService<ChannelOwnershipService>()));
-    // 适配器注册表（阶段 3-6 在 ChannelAdapterCatalog 追加；本批为空）
+    // 适配器注册表（阶段 3-6 在 ChannelAdapterCatalog 追加；已含 wechat/qqbot）
     foreach (var registration in ChannelAdapterCatalog.All)
     {
         builder.Services.AddSingleton<IChannelAdapterRegistration>(registration);
+    }
+    // 微信 iLink 专属运行时（媒体缓存/CDN/协议；SILK 阶段 7 占位）+ 扫码登录服务（§3.4）
+    if (channelOptions.IsChannelEnabled(ChannelIds.WeChat))
+    {
+        builder.Services.AddSingleton(new WeChatMediaStore(channelOptions.DataDir, channelOptions.MediaDirMb));
+        builder.Services.AddSingleton(new WeChatCdnClient(WeChatHttp.CreateClient()));
+        builder.Services.AddSingleton<ISilkCodec, SilkUnavailableCodec>();
+        builder.Services.AddSingleton(sp => new WeChatQrLogin(
+            channelOptions,
+            sp.GetRequiredService<ChannelStore>(),
+            sp.GetRequiredService<ChannelManager>(),
+            sp.GetRequiredService<ILogger<WeChatQrLogin>>()));
     }
     builder.Services.AddHostedService<ChannelHostedService>();
 }
@@ -491,6 +505,57 @@ sync.MapGet("/clone", async (HttpContext context, EventStore store, string? sess
     }
 });
 
+// ── 微信 iLink 扫码登录（§3.4；阶段 3）──
+// 控制面：桌面设置页调 start 拿 PNG 显示 → 3s 轮询 status → confirmed 后凭据已加密落库并自动重启适配器。
+// 渠道未启用/未配置 wechat 时返回 E_CHANNEL_NOT_HOSTED（API 面稳定，老客户端宽容处理）。
+
+app.MapPost("/v1/channels/wechat/login/start", async (HttpContext context) =>
+{
+    var login = context.RequestServices.GetService<WeChatQrLogin>();
+    if (login is null)
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelNotHosted });
+    }
+    var result = await login.StartAsync(context.RequestAborted);
+    if (!result.Ok)
+    {
+        return Results.Json(new { code = CloudApi.ChannelLogin, error = result.Error },
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+    return Results.Json(new
+    {
+        loginId = result.LoginId,
+        pngBase64 = result.PngBase64,
+        expiresAt = result.ExpiresAt,
+    });
+}).RequireRateLimiting("sync");
+
+app.MapGet("/v1/channels/wechat/login/status", (HttpContext context, string? loginId) =>
+{
+    var login = context.RequestServices.GetService<WeChatQrLogin>();
+    if (login is null)
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelNotHosted });
+    }
+    if (string.IsNullOrEmpty(loginId))
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelLogin, error = "缺少 loginId" });
+    }
+    var status = login.GetStatus(loginId);
+    return Results.Json(new { status = status.Status, botId = status.BotId, error = status.Error });
+}).RequireRateLimiting("sync");
+
+app.MapPost("/v1/channels/wechat/logout", async (HttpContext context) =>
+{
+    var login = context.RequestServices.GetService<WeChatQrLogin>();
+    if (login is null)
+    {
+        return Results.BadRequest(new { code = CloudApi.ChannelNotHosted });
+    }
+    await login.LogoutAsync(context.RequestAborted);
+    return Results.Json(new { ok = true });
+}).RequireRateLimiting("sync");
+
 app.Run();
 
 // ── 顶层辅助 ──
@@ -605,6 +670,10 @@ internal static class CloudApi
     public const string BatchTooLarge = "E_SYNC_BATCH_TOO_LARGE";
     public const string BatchRejected = "E_SYNC_BATCH_REJECTED";
     public const string Cursor = "E_SYNC_CURSOR";
+
+    // 渠道控制面（阶段 3 微信；错误码冻结见设计 §5.2）
+    public const string ChannelNotHosted = "E_CHANNEL_NOT_HOSTED";
+    public const string ChannelLogin = "E_CHANNEL_LOGIN";
 }
 
 /// <summary>POST /v1/pair 请求体。</summary>
