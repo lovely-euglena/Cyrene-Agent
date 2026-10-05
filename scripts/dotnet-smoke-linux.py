@@ -239,6 +239,15 @@ check("selftest llm-stream 退出码=0", code == 0, f"exit={code} {err[-200:] if
 out2, code2, _ = run_host(["--selftest", "llm-jobs"], [])
 check("selftest llm-jobs 退出码=0", code2 == 0, f"exit={code2}")
 
+# ── 9. selftest scheduler（IKJK51：排期/存储/引擎向量）──
+print("\n=== 9. selftest（调度核心）===")
+out3, code3, err3 = run_host(["--selftest", "scheduler"], [])
+for frame in out3:
+    raw = frame.get("_raw", "") if isinstance(frame, dict) else ""
+    if "PASS" in raw or "FAIL" in raw:
+        print("  ", raw.strip())
+check("selftest scheduler 退出码=0", code3 == 0, f"exit={code3} {err3[-200:] if code3 else ''}")
+
 # ── 汇总 ──
 passed = sum(1 for _, ok, _ in results if ok)
 failed = sum(1 for _, ok, _ in results if not ok)

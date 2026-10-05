@@ -21,13 +21,14 @@ import type {
 } from "../scheduler/types";
 import { pluginHostError } from "./errors";
 
-/** 调度存储的最小只读视图；真实实现是 scheduler-store，测试注入内存假件。 */
+/** 调度存储的最小只读视图；真实实现是 scheduler-store，测试注入内存假件。
+ *  host 模式（IKJK51）下写操作经管道异步完成——写方法返回「值 | Promise」。 */
 export interface PluginSchedulerStore {
   getTasks(): ScheduledTask[];
-  addTask(input: NewScheduledTaskInput): ScheduledTask;
-  updateTask(id: string, patch: ScheduledTaskPatch): ScheduledTask;
-  deleteTask(id: string): boolean;
-  getHistory(taskId: string, limit?: number): ScheduledTaskHistoryEntry[];
+  addTask(input: NewScheduledTaskInput): ScheduledTask | Promise<ScheduledTask>;
+  updateTask(id: string, patch: ScheduledTaskPatch): ScheduledTask | Promise<ScheduledTask>;
+  deleteTask(id: string): boolean | Promise<boolean>;
+  getHistory(taskId: string, limit?: number): ScheduledTaskHistoryEntry[] | Promise<ScheduledTaskHistoryEntry[]>;
 }
 
 export interface PluginSchedulerServiceOptions {
@@ -147,7 +148,7 @@ export function createPluginSchedulerService(options: PluginSchedulerServiceOpti
       try {
         // 宿主内部字段不来自插件输入：enabled/toolMode/pluginUserEnabled/
         // approvalFingerprint 全部由这里固定写入。
-        task = store.addTask({
+        task = await store.addTask({
           title: input.title.trim(),
           prompt: input.prompt.trim(),
           enabled: false,
@@ -211,7 +212,7 @@ export function createPluginSchedulerService(options: PluginSchedulerServiceOpti
 
       let updated: ScheduledTask;
       try {
-        updated = store.updateTask(id, internalPatch);
+        updated = await store.updateTask(id, internalPatch);
       } catch (err) {
         throw pluginHostError("E_INTERNAL", "更新调度任务失败", { cause: err, logPrefix });
       }
@@ -225,7 +226,7 @@ export function createPluginSchedulerService(options: PluginSchedulerServiceOpti
       }
       findOwnedTask(id);
       try {
-        return store.deleteTask(id);
+        return await store.deleteTask(id);
       } catch (err) {
         throw pluginHostError("E_INTERNAL", "删除调度任务失败", { cause: err, logPrefix });
       }
@@ -241,9 +242,8 @@ export function createPluginSchedulerService(options: PluginSchedulerServiceOpti
         throw pluginHostError("E_INVALID_ARGUMENT", `非法历史条数: ${String(limit)}（1-${MAX_HISTORY_LIMIT}）`);
       }
       findOwnedTask(id);
-      return store
-        .getHistory(id, effectiveLimit)
-        .map(projectHistory);
+      const entries = await store.getHistory(id, effectiveLimit);
+      return entries.map(projectHistory);
     },
   };
 }

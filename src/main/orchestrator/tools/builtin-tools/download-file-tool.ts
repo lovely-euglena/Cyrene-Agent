@@ -211,9 +211,13 @@ async function executeDownloadFileNativeFirst(
     ?? (require("electron") as typeof import("electron")).app.getPath("desktop");
   return nativeFirst(
     "download_file",
-    { ...args, __cyreneRoot: String(root) },
+    args,
     (nativeArgs) => executeDownloadFile(nativeArgs, ctx),
-    { timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS, signal: ctx?.signal },
+    {
+      timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS,
+      signal: ctx?.signal,
+      internalArgs: { __cyreneRoot: String(root) },
+    },
   );
 }
 

@@ -23,8 +23,11 @@ internal static class Program
                 return LlmJobsSelfTest.Run();
             if (args[1] == "llm-stream")
                 return LlmStreamSelfTest.RunAsync().GetAwaiter().GetResult();
+            if (args[1] == "scheduler")
+                return SchedulerSelfTest.Run();
             return OrchestratorSelfTest.Run();
         }
+        if (args.Length > 1 && args[0] == "--pdf-text") return PdfTextProbe.Run(args[1]);
         if (args.Length > 0 && args[0] == "--tool-host") return ToolHost.Run();
         if (args.Length > 0 && args[0] == "--rag-host") return RagHost.RunProtocolLoop();
         if (args.Length > 0 && args[0] == "--memory-host") return MemoryHost.RunProtocolLoop();

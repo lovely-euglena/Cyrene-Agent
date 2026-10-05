@@ -16,11 +16,14 @@ vi.mock("../native-tool-host", () => ({
     tool: string,
     args: Record<string, unknown>,
     fallback: (a: Record<string, unknown>) => unknown,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: { timeoutMs?: number; signal?: AbortSignal; internalArgs?: Record<string, unknown> },
   ) => {
-    nativeMocks.calls.push({ tool, args, options });
+    // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+    const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
+    const nativeArgs = { ...clean, ...(options?.internalArgs ?? {}) };
+    nativeMocks.calls.push({ tool, args: nativeArgs, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
-    return fallback(args);
+    return fallback(nativeArgs);
   },
 }));
 
@@ -45,7 +48,7 @@ describe("download_file native 轨", () => {
       {
         tool: "download_file",
         args: { url: "https://example.com/a.png", __cyreneRoot: "C:\\ws" },
-        options: { timeoutMs: 600_000 },
+        options: expect.objectContaining({ timeoutMs: 600_000 }),
       },
     ]);
   });

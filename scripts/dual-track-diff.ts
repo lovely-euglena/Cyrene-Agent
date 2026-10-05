@@ -8,6 +8,10 @@
  * tool-host：list/call 帧序握手（fs 三件+calculator roundtrip）。
  * web_search：确定性校验路径双轨（引擎/key 经 config 帧注入，无网络）。
  * weather / plan_trip：确定性路径双轨（配置/缺参/未启用，无网络）。
+ * fetch_url：本地 HTTP fixture 双轨（raw 逐字 / markdown 归一投影 / 表格已知差异）。
+ * 文档四件：读回投影双轨（单元格/数字格式/列宽/docx run 属性/PDF 文本提取）。
+ * 邮件四件：校验路径逐字双轨（IMAP/SMTP 快乐路径由矩阵 fake 服务器覆盖）。
+ * ast_grep 两件：TS napi ↔ 随包 CLI 逐字双轨（搜索/校验/dryRun/写入字节）。
  * git 八件：镜像仓库 + 本地 bare 远程（TS 纯回退实现 ↔ smoke host；commit/log/revert hash 归一）。
  * Linux 用 dotnet/smoke-host（冒烟壳）；Windows 优先 cyrene-native.exe。
  */
@@ -15,7 +19,7 @@ import { DUAL_TRACK_USER_DATA } from "./dual-track-env";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { evaluateExpression } from "../src/main/orchestrator/tools/builtin-tools/utility-tools";
@@ -872,6 +876,536 @@ async function runWeatherTravelDualTrack(): Promise<number> {
   return failed;
 }
 
+// ── fetch_url 双轨（本地 HTTP fixture；raw 逐字、markdown 归一投影）──
+//
+// 库替代（Turndown → ReverseMarkdown）无法逐字节一致，双轨按"归一投影"比对：
+//  - 列表项缩进宽度（Turndown 4 列 vs ReverseMarkdown 1 列）与行尾空白归一；
+//  - 表格：Turndown 核心不支持表格（拍平为文本块），ReverseMarkdown 输出 GFM 管道表——
+//    显式断言该已知差异（两者都保留单元格文字，NET 结构更完整），防未来静默漂移；
+//  - 正文容器路径（article ≥200 字）严格比对；整页回退路径的 <title> 差异见 FetchUrlTool.cs 头注释。
+
+/** fetch_url markdown 归一投影：列表缩进宽度 + 行尾空白。 */
+function normalizeFetchMarkdown(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .map((line) => line.replace(/^(\s*)([-*+])\s{1,4}/, "$1$2 "))
+    .map((line) => line.replace(/^(\s*)(\d+\.)\s{1,4}/, "$1$2 "))
+    .join("\n");
+}
+
+async function runFetchUrlDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] fetch_url ${name}`);
+    else { failed++; console.log(`[FAIL] fetch_url ${name} —— ${detail}`); }
+  };
+
+  const filler = "填充文字".repeat(30); // 120 字：保证 article 正文稳定 ≥200 字阈值（走正文容器路径）
+  const page = `<!doctype html><html><head><title>Fixture</title><style>.x{}</style><script>var a=1;</script></head>
+<body><nav>导航链接 首页</nav><header>页头</header>
+<article><h1>大标题</h1>
+<p>这是正文段落，包含<strong>加粗</strong>与<em>斜体</em>以及<a href="https://example.com/x">链接</a>。${filler}</p>
+<ul><li>项目一</li><li>项目二</li></ul>
+<pre><code>const x = 1;</code></pre>
+<p>结尾段落：${filler}</p>
+</article><footer>页脚</footer><aside>侧栏</aside></body></html>`;
+  const tablePage = `<!doctype html><html><body><article><h1>表格页</h1>
+<p>${filler}</p>
+<table><thead><tr><th>列A</th><th>列B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>
+<p>${filler}</p></article></body></html>`;
+
+  const server = createServer((req, res) => {
+    const url = req.url ?? "/";
+    if (url === "/page.html") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(page);
+    } else if (url === "/table.html") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(tablePage);
+    } else {
+      res.statusCode = 404;
+      res.end("nope");
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  // 强制 TS 轨：临时关闭 toolHost 并重置配置缓存，确保比对的是 TS 原实现而非 native 转发
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const { fetchUrlTool } = await import("../src/main/orchestrator/tools/builtin-tools/fetch-url-tool");
+    const tsFetch = (args: Record<string, unknown>): Promise<string> => fetchUrlTool.execute(args, undefined);
+
+    // 1. markdown（正文容器路径）：归一投影比对
+    const tsMd = await tsFetch({ url: `${base}/page.html` });
+    const netMdHost = await callSmokeTool("fetch_url", { url: `${base}/page.html` });
+    const netMd = String(netMdHost.data ?? "");
+    check("markdown 归一投影（标题/段落/列表/代码块）",
+      normalizeFetchMarkdown(tsMd) === normalizeFetchMarkdown(netMd),
+      `ts=${JSON.stringify(normalizeFetchMarkdown(tsMd).slice(0, 220))} net=${JSON.stringify(normalizeFetchMarkdown(netMd).slice(0, 220))}`);
+
+    // 2. raw：逐字比对
+    const tsRaw = await tsFetch({ url: `${base}/page.html`, format: "raw" });
+    const netRawHost = await callSmokeTool("fetch_url", { url: `${base}/page.html`, format: "raw" });
+    const netRaw = String(netRawHost.data ?? "");
+    check("raw 逐字（原文不转换）", tsRaw === netRaw, `ts=${JSON.stringify(tsRaw.slice(0, 160))} net=${JSON.stringify(netRaw.slice(0, 160))}`);
+
+    // 3. 404：错误文案逐字
+    const ts404 = await tsFetch({ url: `${base}/missing` });
+    const net404Host = await callSmokeTool("fetch_url", { url: `${base}/missing` });
+    check("404 错误文案", ts404 === String(net404Host.data ?? "") && ts404.startsWith("[错误] HTTP 404"), `ts=${ts404} net=${net404Host.data}`);
+
+    // 4. 非法协议：校验文案逐字
+    const tsBad = await tsFetch({ url: "ftp://example.com/x" });
+    const netBadHost = await callSmokeTool("fetch_url", { url: "ftp://example.com/x" });
+    check("非法协议拒绝文案", tsBad === String(netBadHost.data ?? ""), `ts=${tsBad} net=${netBadHost.data}`);
+
+    // 5. 表格：已知库差异显式断言（都保留单元格文字；NET 输出 GFM 管道表，TS 拍平）
+    const tsTable = await tsFetch({ url: `${base}/table.html` });
+    const netTableHost = await callSmokeTool("fetch_url", { url: `${base}/table.html` });
+    const netTable = String(netTableHost.data ?? "");
+    check("表格已知差异（TS 拍平 / NET GFM 管道表，均保留文字）",
+      tsTable.includes("列A") && tsTable.includes("列B") && !tsTable.includes("| 列A |")
+      && netTable.includes("| 列A |") && netTable.includes("| 列B |"),
+      `ts=${JSON.stringify(tsTable.slice(0, 200))} net=${JSON.stringify(netTable.slice(0, 200))}`);
+  } finally {
+    server.close();
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+  }
+  return failed;
+}
+
+// ── 文档四件双轨（write_markdown / write_excel / write_word / write_pdf）──
+//
+// 库替代（exceljs→ClosedXML、docx→Open XML SDK、pdfkit→QuestPDF）无法逐字节一致：
+//  - write_markdown：结果 JSON 投影（success/tool/append/changes）+ 落盘字节逐字节；
+//  - write_excel：exceljs 读回两文件比对投影（值/数字格式/列宽容差 ±1/主题色/冻结/筛选）；
+//  - write_word：JSZip（经 exceljs 传递依赖解析）抽 word/document.xml，比对段落文本 +
+//    run 属性（字体/字号/颜色/加粗/段落间距）；
+//  - write_pdf：结果文案 + 文件签名；.NET 侧文本提取（smoke-host --pdf-text）断言标题/段落
+//    （pdfkit 无读回能力，TS 侧不做文本提取——内容校验由 .NET 侧承担，已在决策文档注明）。
+
+/** 经 exceljs 的依赖树解析 jszip（项目未直接依赖 zip 库；pnpm 隔离布局下用 paths 解析）。 */
+function loadJsZip(): { loadAsync(data: Buffer): Promise<{ file(name: string): { async(type: string): Promise<string> } | null }> } {
+  const requireFn = require as unknown as ((id: string) => unknown) & { resolve(id: string, opts?: { paths?: string[] }): string };
+  const jszipPath = requireFn.resolve("jszip", { paths: [requireFn.resolve("exceljs")] });
+  return requireFn(jszipPath) as never;
+}
+
+/**
+ * xlsx 投影读取（JSZip + 前缀归一 + 正则）：同时兼容 exceljs（无前缀）与
+ * ClosedXML（x: 前缀）两种写法。exceljs 的读取器只认无前缀标签，读不了
+ * ClosedXML 输出（WorkbookXform 按精确 tag 匹配），故不依赖读取库。
+ * 投影：sheet 名 / 单元格（值 + 数字格式）/ 列宽 / 冻结 / 自动筛选。
+ */
+async function readXlsxProjection(file: string): Promise<Record<string, unknown>> {
+  const JSZip = loadJsZip();
+  const zip = await JSZip.loadAsync(readFileSync(file));
+  const read = async (name: string): Promise<string> => {
+    const entry = zip.file(name);
+    const xml = entry ? await entry.async("string") : "";
+    // 去元素前缀（<x:foo> → <foo>），属性前缀（r:id / mc:*）不动
+    return xml.replace(/<\/?x:/g, (m) => (m.startsWith("</") ? "</" : "<"));
+  };
+
+  const workbook = await read("xl/workbook.xml");
+  const sheet = workbook.match(/<sheet[^>]*name="([^"]*)"/)?.[1] ?? "";
+
+  const sharedXml = await read("xl/sharedStrings.xml");
+  const sharedStrings = [...sharedXml.matchAll(/<si>([\s\S]*?)<\/si>/g)]
+    .map((m) => [...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join(""));
+
+  const stylesXml = await read("xl/styles.xml");
+  const numFmtMap = new Map<number, string>();
+  for (const m of stylesXml.matchAll(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"[^>]*\/>/g)) {
+    numFmtMap.set(Number(m[1]), m[2]);
+  }
+  const builtinNumFmt: Record<number, string> = {
+    0: "General", 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00",
+    9: "0%", 10: "0.00%", 14: "mm-dd-yy", 49: "@",
+  };
+  const cellXfsXml = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] ?? "";
+  const styleNumFmtIds = [...cellXfsXml.matchAll(/<xf[^>]*numFmtId="(\d+)"/g)].map((m) => Number(m[1]));
+  const numFmtOf = (styleIdx: number): string => {
+    const id = styleNumFmtIds[styleIdx] ?? 0;
+    const code = numFmtMap.get(id) ?? builtinNumFmt[id] ?? "";
+    return code === "General" ? "" : code;
+  };
+
+  const sheetXml = await read("xl/worksheets/sheet1.xml");
+  const cells: Array<{ addr: string; value: unknown; numFmt: string }> = [];
+  for (const m of sheetXml.matchAll(/<c r="([A-Z]+\d+)"(?:[^>]*\bs="(\d+)")?[^>]*?(?:\bt="(\w+)")?[^>]*>([\s\S]*?)<\/c>/g)) {
+    const addr = m[1];
+    const styleIdx = m[2] !== undefined ? Number(m[2]) : 0;
+    const type = m[3] ?? "n";
+    const raw = m[4].match(/<v>([^<]*)<\/v>/)?.[1];
+    let value: unknown = null;
+    if (type === "s" && raw !== undefined) value = sharedStrings[Number(raw)] ?? "";
+    else if (type === "inlineStr") value = [...m[4].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join("");
+    else if (raw !== undefined) value = Number(raw);
+    cells.push({ addr, value, numFmt: numFmtOf(styleIdx) });
+  }
+
+  const widths: Record<number, number> = {};
+  for (const m of sheetXml.matchAll(/<col[^>]*min="(\d+)"[^>]*max="(\d+)"[^>]*width="([\d.]+)"/g)) {
+    for (let i = Number(m[1]); i <= Number(m[2]); i++) widths[i] = Number(m[3]);
+  }
+  const frozen = /<pane[^>]*ySplit="1"/.test(sheetXml);
+  const autoFilter = sheetXml.match(/<autoFilter ref="([^"]*)"/)?.[1] ?? null;
+  const solidFills = [...stylesXml.matchAll(/patternType="solid"[^>]*>\s*<fgColor rgb="([0-9A-Fa-f]{8})"/g)]
+    .map((m) => m[1].toUpperCase()).sort();
+
+  return { sheet, cells, widths, frozen, autoFilter, solidFills };
+}
+
+/** 列宽逐列比较（ClosedXML 写入 width 含 0.71 字符内边距，容差 ±1）。 */
+function widthsClose(tsWidths: Record<number, number>, netWidths: Record<number, number>): boolean {
+  const keys = new Set([...Object.keys(tsWidths), ...Object.keys(netWidths)].map(Number));
+  for (const key of keys) {
+    const a = tsWidths[key];
+    const b = netWidths[key];
+    if (a === undefined || b === undefined) return false;
+    if (Math.abs(a - b) > 1) return false;
+  }
+  return true;
+}
+
+async function readDocxProjection(file: string): Promise<unknown> {
+  const JSZip = loadJsZip();
+  const zip = await JSZip.loadAsync(readFileSync(file));
+  const entry = zip.file("word/document.xml");
+  const xml = entry ? await entry.async("string") : "";
+  return [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)].map((m) => {
+    const p = m[0];
+    const texts = [...p.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map((t) => t[1]);
+    const rpr = p.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/)?.[1] ?? "";
+    return {
+      text: texts.join(""),
+      bold: /<w:b\s*\/>/.test(rpr),
+      sz: rpr.match(/<w:sz w:val="(\d+)"/)?.[1] ?? null,
+      color: rpr.match(/<w:color w:val="([0-9A-Fa-f]{6})"/)?.[1] ?? null,
+      fonts: [...rpr.matchAll(/w:(?:ascii|eastAsia|hAnsi)="([^"]+)"/g)].map((m) => m[1]).sort().join(","),
+      after: p.match(/<w:spacing[^>]*w:after="(\d+)"/)?.[1] ?? null,
+      line: p.match(/<w:spacing[^>]*w:line="(\d+)"/)?.[1] ?? null,
+    };
+  });
+}
+
+async function runDocumentDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] document ${name}`);
+    else { failed++; console.log(`[FAIL] document ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "doc-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "doc-dual-net-"));
+
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const docTools = await import("../src/main/orchestrator/tools/document-tools");
+    docTools.registerDocumentTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = toolRegistry.getById(id);
+      if (!tool) throw new Error(`TS 工具未注册: ${id}`);
+      return tool.execute(args, { resolvedWorkspaceRoot: tsHome } as never);
+    };
+    const normalize = (text: string): string => text.split(tsHome).join(netHome);
+
+    // 1. write_markdown：新建 / 追加 / 覆盖（结果投影 + 落盘字节）
+    {
+      const cases: Array<{ name: string; args: Record<string, unknown>; path: string }> = [
+        { name: "新建", args: { filename: "笔记.md", content: "第一行\n第二行" }, path: "笔记.md" },
+        { name: "追加", args: { filename: "笔记.md", content: "第三行", append: true }, path: "笔记.md" },
+        { name: "覆盖", args: { filename: "覆盖.md", content: "a\nb\nc" }, path: "覆盖.md" },
+      ];
+      for (const c of cases) {
+        const tsOut = await runTs("write_markdown", c.args);
+        const host = await callSmokeTool("write_markdown", { path: path.join(netHome, c.path), content: c.args.content, append: c.args.append ?? false });
+        const netOut = String(host.data ?? "");
+        const proj = (text: string): unknown => {
+          const j = JSON.parse(text) as Record<string, unknown>;
+          return {
+            success: j.success, tool: j.tool, append: j.append,
+            changes: (j.changes as Array<Record<string, unknown>>).map((ch) => ({
+              kind: ch.kind, insertions: ch.insertions, deletions: ch.deletions, diff: ch.diff,
+            })),
+          };
+        };
+        const bytesSame = Buffer.compare(readFileSync(path.join(tsHome, c.path)), readFileSync(path.join(netHome, c.path))) === 0;
+        check(`write_markdown ${c.name}（投影 + 字节）`,
+          JSON.stringify(proj(tsOut)) === JSON.stringify(proj(netOut)) && bytesSame,
+          `ts=${JSON.stringify(proj(tsOut)).slice(0, 180)} net=${JSON.stringify(proj(netOut)).slice(0, 180)} bytes=${bytesSame}`);
+      }
+    }
+
+    // 2. write_excel：读回投影（值/数字格式/列宽 ±1/主题色/冻结/筛选/边框）
+    {
+      const args = {
+        filename: "成绩.xlsx",
+        sheets: [{ name: "成绩", headers: ["姓名", "分数", "比率"], rows: [["张三", 95, 0.5], ["李四", 1200, 0.25]] }],
+      };
+      const tsOut = await runTs("write_excel", args);
+      const host = await callSmokeTool("write_excel", {
+        path: path.join(netHome, "成绩.xlsx"),
+        sheets: args.sheets,
+        theme: { headerFill: "FF1F4E79", headerFont: "FFFFFFFF", headerBorder: "FF1F4E79", zebraFill: "FFF2F2F2", borderColor: "FFBFBFBF" },
+      });
+      const netOut = String(host.data ?? "");
+      const tsProj = await readXlsxProjection(path.join(tsHome, "成绩.xlsx"));
+      const netProj = await readXlsxProjection(path.join(netHome, "成绩.xlsx"));
+      const tsWidths = tsProj.widths as Record<number, number>;
+      const netWidths = netProj.widths as Record<number, number>;
+      const widthsOk = widthsClose(tsWidths, netWidths);
+      const sameExceptWidths = JSON.stringify({ ...tsProj, widths: null }) === JSON.stringify({ ...netProj, widths: null });
+      check("write_excel 投影（值/数字格式/主题色/冻结/筛选 + 列宽容差 ±1）",
+        normalize(tsOut) === netOut && sameExceptWidths && widthsOk,
+        `result=${normalize(tsOut) === netOut} proj=${sameExceptWidths} widths=${widthsOk} ts=${JSON.stringify(tsProj).slice(0, 260)} net=${JSON.stringify(netProj).slice(0, 260)}`);
+    }
+
+    // 3. write_word：抽 document.xml 比对段落文本 + run 属性
+    {
+      const args = { filename: "报告.docx", title: "季度报告", paragraphs: ["第一段正文。", "第二段正文。"] };
+      const tsOut = await runTs("write_word", args);
+      const host = await callSmokeTool("write_word", {
+        path: path.join(netHome, "报告.docx"),
+        title: args.title,
+        paragraphs: args.paragraphs,
+        theme: { titleColor: "1F4E79", titleSize: 28, titleFont: "微软雅黑", bodyFont: "微软雅黑", bodySize: 24, bodyColor: "333333", lineSpacing: 360, headingColor: "1F4E79" },
+      });
+      const netOut = String(host.data ?? "");
+      const tsProj = await readDocxProjection(path.join(tsHome, "报告.docx"));
+      const netProj = await readDocxProjection(path.join(netHome, "报告.docx"));
+      check("write_word 段落文本 + run 属性（字体/字号/颜色/加粗/间距）",
+        normalize(tsOut) === netOut && JSON.stringify(tsProj) === JSON.stringify(netProj),
+        `ts=${JSON.stringify(tsProj).slice(0, 260)} net=${JSON.stringify(netProj).slice(0, 260)}`);
+    }
+
+    // 4. write_pdf：结果文案 + 签名 + .NET 文本提取
+    // 注意：TS 轨 pdfkit 与本机 msyh.ttc 不兼容（既有问题：fontkit 集合对象无 createSubset，
+    // doc.text() 抛错）——该环境下跳过 TS 侧生成比对，只校验 .NET 轨；QuestPDF 正确支持
+    // TTC（迁移顺带修复）。Linux（无 CJK 字体）中文断言仅在 Windows 跑。
+    {
+      const args = { filename: "合同.pdf", title: "PDF Report 合作协议", paragraphs: ["Alpha 甲方：示例公司", "Beta 乙方：测试公司"] };
+      let tsOut: string | null = null;
+      try {
+        tsOut = await runTs("write_pdf", args);
+      } catch (error) {
+        console.log(`[INFO] document write_pdf TS 轨生成失败（已知 msyh.ttc/pdfkit 兼容问题），仅校验 .NET 轨: ${error instanceof Error ? error.message : error}`);
+      }
+      const host = await callSmokeTool("write_pdf", { path: path.join(netHome, "合同.pdf"), title: args.title, paragraphs: args.paragraphs });
+      const netOut = String(host.data ?? "");
+      const netSig = readFileSync(path.join(netHome, "合同.pdf")).subarray(0, 5).toString() === "%PDF-";
+      const tsSig = tsOut === null ? true : readFileSync(path.join(tsHome, "合同.pdf")).subarray(0, 5).toString() === "%PDF-";
+      const probe = spawnSync("dotnet", [SMOKE_DLL, "--pdf-text", path.join(netHome, "合同.pdf")], { encoding: "utf-8", cwd: path.dirname(SMOKE_DLL) });
+      const pdfText = probe.stdout ?? "";
+      const asciiOk = pdfText.includes("PDF Report") && pdfText.includes("Alpha") && pdfText.includes("Beta");
+      const cjkOk = process.platform !== "win32"
+        || (pdfText.includes("合作协议") && pdfText.includes("甲方：示例公司") && pdfText.includes("乙方：测试公司"));
+      check("write_pdf 文案 + 签名 + 文本提取（标题/段落）",
+        (tsOut === null || normalize(tsOut) === netOut) && netSig && tsSig && asciiOk && cjkOk,
+        `result=${tsOut === null ? "ts-skip" : normalize(tsOut) === netOut} sig=${netSig} tsSig=${tsSig} text=${JSON.stringify(pdfText.slice(0, 160))}`);
+    }
+  } finally {
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
+// ── 邮件四件双轨（确定性校验路径：配置缺失/参数非法，无网络）──
+//
+// IMAP/SMTP 快乐路径依赖 fake 服务器（矩阵侧已覆盖 C# 轨）；双轨比对校验文案与
+// 回退契约：TS（getter 注入）↔ .NET（config 帧注入）在校验失败时逐字一致。
+
+async function runEmailDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] email ${name}`);
+    else { failed++; console.log(`[FAIL] email ${name} —— ${detail}`); }
+  };
+
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const emailTools = await import("../src/main/orchestrator/tools/email-tools");
+    emailTools.registerEmailTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = toolRegistry.getById(id);
+      if (!tool) throw new Error(`TS 工具未注册: ${id}`);
+      return tool.execute(args, undefined as never);
+    };
+    const inject = (cfg: Record<string, unknown>): void => {
+      emailTools.setEmailConfig(
+        () => cfg.enabled as boolean,
+        () => cfg.host as string,
+        () => cfg.port as number,
+        () => cfg.secure as boolean,
+        () => cfg.user as string,
+        () => cfg.pass as string,
+        () => cfg.fromName as string,
+        () => cfg.imapHost as string,
+        () => cfg.imapPort as number,
+        () => cfg.imapSecure as boolean,
+      );
+    };
+    const netCfg = (cfg: Record<string, unknown> | null): Record<string, unknown> | null => cfg === null ? null : {
+      enabled: cfg.enabled, smtpHost: cfg.host ?? "", smtpPort: cfg.port ?? 465, smtpSecure: cfg.secure ?? true,
+      user: cfg.user ?? "", pass: cfg.pass ?? "", fromName: cfg.fromName ?? "",
+      imapHost: cfg.imapHost ?? "", imapPort: cfg.imapPort ?? 993, imapSecure: cfg.imapSecure ?? true,
+    };
+
+    const full = {
+      enabled: true, host: "smtp.example.com", port: 465, secure: true, user: "u@example.com", pass: "p",
+      fromName: "C", imapHost: "imap.example.com", imapPort: 993, imapSecure: true,
+    };
+    const cases: Array<{ name: string; tool: string; args: Record<string, unknown>; cfg: Record<string, unknown>; expected: string }> = [
+      { name: "email_list 未启用", tool: "email_list", args: {}, cfg: { enabled: false },
+        expected: "[错误] 邮件功能未启用，请在设置里开启" },
+      { name: "email_list 缺 IMAP 主机", tool: "email_list", args: {}, cfg: { ...full, imapHost: "" },
+        expected: "[错误] IMAP 未配置：请在设置 → 插件 → 邮件 填写 IMAP 服务器（收信与发信共用邮箱与授权码）" },
+      { name: "email_list 缺凭据", tool: "email_list", args: {}, cfg: { ...full, user: "" },
+        expected: "[错误] IMAP 配置不完整：缺少发件邮箱/授权码（收信与发信共用）" },
+      { name: "email_read 缺 uid", tool: "email_read", args: {}, cfg: full,
+        expected: "[错误] 缺少有效的邮件 uid（先用 email_list 获取 uid）" },
+      { name: "email_mark 缺 uid", tool: "email_mark", args: { uid: 0 }, cfg: full,
+        expected: "[错误] 缺少有效的邮件 uid（先用 email_list 获取 uid）" },
+      { name: "send_email 未启用", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "b" }, cfg: { enabled: false },
+        expected: "[错误] 邮件功能未启用，请在设置里开启" },
+      { name: "send_email SMTP 配置不完整", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "b" }, cfg: { ...full, host: "" },
+        expected: "[错误] SMTP 配置不完整：缺少 主机/用户名/授权码" },
+      { name: "send_email 空收件人", tool: "send_email", args: { to: [], subject: "s", body: "b" }, cfg: full,
+        expected: "[错误] 收件人列表为空" },
+      { name: "send_email 收件人无效", tool: "send_email", args: { to: ["bad"], subject: "s", body: "b" }, cfg: full,
+        expected: "[错误] 收件人邮箱无效：bad" },
+      { name: "send_email 主题为空", tool: "send_email", args: { to: ["a@b.com"], subject: " ", body: "b" }, cfg: full,
+        expected: "[错误] 邮件主题不能为空" },
+      { name: "send_email 正文为空", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "" }, cfg: full,
+        expected: "[错误] 邮件正文不能为空" },
+      { name: "send_email 附件不存在", tool: "send_email", args: { to: ["a@b.com"], subject: "s", body: "b", attachments: ["C:/definitely/not/exists-xyz.txt"] }, cfg: full,
+        expected: "[错误] 附件不存在：C:/definitely/not/exists-xyz.txt" },
+    ];
+    for (const c of cases) {
+      inject(c.cfg);
+      const tsOut = await runTs(c.tool, c.args);
+      const host = await callSmokeTool(c.tool, c.args, [{ op: "config", email: netCfg(c.cfg) }]);
+      const netOut = String(host.data ?? "");
+      check(c.name, tsOut === c.expected && netOut === c.expected, `ts=${tsOut} net=${netOut} expected=${c.expected}`);
+    }
+  } finally {
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+  }
+  return failed;
+}
+
+// ── ast_grep 双轨（共享 fixture 工作区；TS napi ↔ .NET CLI JSON）──
+//
+// 显式有序 paths 规避目录枚举顺序差异；输出 JSON 逐字比对（路径为相对路径，两侧一致）；
+// 改写落盘后字节级比对。CLI 平台包缺失时跳过（TS 侧仍可运行）。
+
+async function runAstGrepDualTrack(): Promise<number> {
+  let failed = 0;
+  const check = (name: string, ok: boolean, detail = ""): void => {
+    if (ok) console.log(`[PASS] ast_grep ${name}`);
+    else { failed++; console.log(`[FAIL] ast_grep ${name} —— ${detail}`); }
+  };
+
+  const tsHome = mkdtempSync(path.join(os.tmpdir(), "sg-dual-ts-"));
+  const netHome = mkdtempSync(path.join(os.tmpdir(), "sg-dual-net-"));
+  for (const home of [tsHome, netHome]) {
+    mkdirSync(path.join(home, "src"), { recursive: true });
+    writeFileSync(path.join(home, "src", "a.ts"), 'console.log("a", x);\nconst y = 1;\nconsole.log(y);\n', "utf8");
+    writeFileSync(path.join(home, "src", "b.ts"), 'function f() { console.log("b"); }\n', "utf8");
+  }
+
+  const prevEnv = process.env.CYRENE_TOOL_HOST;
+  process.env.CYRENE_TOOL_HOST = "0";
+  try {
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    const sgTools = await import("../src/main/orchestrator/tools/ast-grep-tools");
+    sgTools.registerAstGrepTools();
+    const { toolRegistry } = await import("../src/main/orchestrator/tools/registry/tool-registry");
+    const cli = sgTools.resolveAstGrepCommand();
+    if (!cli) {
+      console.log("[SKIP] ast_grep 双轨（ast-grep CLI 平台包未安装）");
+      return 0;
+    }
+    if (process.platform !== "win32") {
+      try { chmodSync(cli, 0o755); } catch { /* npm 解包丢可执行位时补齐 */ }
+    }
+    const runTs = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const tool = toolRegistry.getById(id);
+      if (!tool) throw new Error(`TS 工具未注册: ${id}`);
+      return tool.execute(args, { resolvedWorkspaceRoot: tsHome } as never);
+    };
+    const runNet = async (id: string, args: Record<string, unknown>): Promise<string> => {
+      const host = await callSmokeTool(id, { ...args, __cyreneWorkspaceRoot: netHome, __astGrepCommand: cli });
+      return String(host.data ?? "");
+    };
+
+    const searchCases: Array<{ name: string; args: Record<string, unknown> }> = [
+      { name: "search 多捕获（$$$，2 文件 3 处）", args: { pattern: "console.log($$$A)", paths: ["src/a.ts", "src/b.ts"] } },
+      { name: "search 单捕获（$A）", args: { pattern: "console.log($A)", paths: ["src/a.ts", "src/b.ts"] } },
+      { name: "search 限定路径/语言", args: { pattern: "console.log($$$A)", paths: ["src/a.ts"], language: "TypeScript" } },
+      { name: "search 无匹配", args: { pattern: "zzz_no_match", paths: ["src/a.ts", "src/b.ts"] } },
+      { name: "search maxMatches 截断", args: { pattern: "console.log($$$A)", paths: ["src/a.ts", "src/b.ts"], maxMatches: 1 } },
+      { name: "search 非法语言（校验）", args: { pattern: "x", language: "Bogus", paths: ["src/a.ts"] } },
+      { name: "search 空 pattern（校验）", args: { pattern: "", paths: ["src/a.ts"] } },
+      { name: "search 路径逃逸跳过", args: { pattern: "x", paths: ["../escape"] } },
+    ];
+    for (const c of searchCases) {
+      const tsOut = await runTs("ast_grep_search", c.args);
+      const netOut = await runNet("ast_grep_search", c.args);
+      check(c.name, tsOut === netOut, `ts=${tsOut.slice(0, 200)} net=${netOut.slice(0, 200)}`);
+    }
+
+    // replace dryRun：完整输出（含 diff 证据）逐字比对
+    const dryArgs = { pattern: "console.log($$$A)", rewrite: "logger.info($$$A)", dryRun: true, paths: ["src/a.ts", "src/b.ts"] };
+    const tsDry = await runTs("ast_grep_replace", dryArgs);
+    const netDry = await runNet("ast_grep_replace", dryArgs);
+    check("replace dryRun（含 $$$ 展开 diff 证据）", tsDry === netDry, `ts=${tsDry.slice(0, 260)} net=${netDry.slice(0, 260)}`);
+
+    // replace 写入：输出 + 落盘字节
+    const writeArgs = { pattern: "console.log($$$A)", rewrite: "logger.info($$$A)", dryRun: false, paths: ["src/a.ts", "src/b.ts"] };
+    const tsWrite = await runTs("ast_grep_replace", writeArgs);
+    const netWrite = await runNet("ast_grep_replace", writeArgs);
+    const bytesSame = ["src/a.ts", "src/b.ts"].every((rel) =>
+      Buffer.compare(readFileSync(path.join(tsHome, rel)), readFileSync(path.join(netHome, rel))) === 0);
+    check("replace 写入（输出 + 落盘字节）", tsWrite === netWrite && bytesSame,
+      `ts=${tsWrite.slice(0, 200)} net=${netWrite.slice(0, 200)} bytes=${bytesSame}`);
+  } finally {
+    if (prevEnv === undefined) delete process.env.CYRENE_TOOL_HOST;
+    else process.env.CYRENE_TOOL_HOST = prevEnv;
+    const { resetDotnetConfigCache } = await import("../src/main/dotnet-backend/config");
+    resetDotnetConfigCache();
+    rmSync(tsHome, { recursive: true, force: true });
+    rmSync(netHome, { recursive: true, force: true });
+  }
+  return failed;
+}
+
 // ── git 八件双轨（真实镜像仓库 + 本地 bare 远程；commit/log/revert hash 归一）──
 
 /** 递归排序 key 的稳定序列化（与两轨 JSON 键序无关）。 */
@@ -1131,6 +1665,18 @@ async function main(): Promise<void> {
     // weather / plan_trip 双轨（确定性路径）
     if (useSmoke) failures += await runWeatherTravelDualTrack();
     else console.log("[SKIP] weather/plan_trip 双轨（仅 smoke dll 轨支持）");
+    // fetch_url 双轨（本地 HTTP fixture；raw 逐字 / markdown 归一投影）
+    if (useSmoke) failures += await runFetchUrlDualTrack();
+    else console.log("[SKIP] fetch_url 双轨（仅 smoke dll 轨支持）");
+    // 文档四件双轨（write_markdown/excel/word/pdf；读回投影比对）
+    if (useSmoke) failures += await runDocumentDualTrack();
+    else console.log("[SKIP] 文档四件双轨（仅 smoke dll 轨支持）");
+    // 邮件四件双轨（校验路径；IMAP/SMTP 快乐路径由矩阵 fake 服务器覆盖）
+    if (useSmoke) failures += await runEmailDualTrack();
+    else console.log("[SKIP] 邮件四件双轨（仅 smoke dll 轨支持）");
+    // ast_grep 双轨（TS napi ↔ .NET CLI；共享 fixture 工作区）
+    if (useSmoke) failures += await runAstGrepDualTrack();
+    else console.log("[SKIP] ast_grep 双轨（仅 smoke dll 轨支持）");
     // git 八件双轨（镜像仓库 + 本地 bare 远程）
     if (useSmoke) failures += await runGitDualTrack();
     else console.log("[SKIP] git 双轨（仅 smoke dll 轨支持）");

@@ -2,10 +2,13 @@
 """tool-host 全工具逐项调用矩阵（真实调用验证）。
 
 calculator / now / clipboard / sysinfo / fs / expense / search_text /
-str_replace / apply_patch / download_file / git 八件（真实仓库 + 本地 bare 远程）
+str_replace / apply_patch / download_file / git 八件（真实仓库 + 本地 bare 远程）/
+web_search / weather / plan_trip / fetch_url（本地 HTTP fixture + GitHub mock）/
+文档四件（write_markdown/excel/word/pdf，zip 结构与 PdfPig 文本提取断言）/
+邮件四件（本地 fake SMTP + fake IMAP）/ ast_grep 两件（随包 CLI）
 每个工具多组输入：正常 + 参数缺失 + 参数类型错。验响应形状与错误语义。
 """
-import subprocess, json, os, tempfile, sys, re, shutil
+import subprocess, json, os, tempfile, sys, re, shutil, atexit, socket
 
 # Windows 控制台默认 GBK：错误 detail 含 emoji（如 🚗）会撑爆 print；强制 UTF-8 输出
 try:
@@ -38,6 +41,8 @@ def check(name, ok, detail=""):
     print(f"{'[PASS]' if ok else '[FAIL]'} {name}" + (f" —— {str(detail)[:160]}" if not ok else (f" —— {str(detail)[:80]}" if detail else "")))
 
 tmp = tempfile.mkdtemp(prefix="tools-matrix-")
+# 任意退出路径（含断言失败 sys.exit(1)）清理临时目录
+atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
 
 frames = []
 n = 0
@@ -174,8 +179,339 @@ c_pt2 = req("plan_trip", {"origin": "A", "destination": "B"})
 frames.append(json.dumps({"op": "config", "travel": {"amapKey": "k", "enabled": True}}))
 c_pt3 = req("plan_trip", {"destination": "B"})
 
+# fetch_url：本地 HTTP fixture（正文提取/markdown/raw/截断/404/缓存）+ GitHub API mock
+import http.server, socketserver, threading
+FU_FILLER = "填充文字" * 30  # 120 字：保证 article 正文稳定 ≥200 字阈值（走正文容器路径）
+FU_PAGE = """<!doctype html><html><head><title>Fixture</title><style>.x{}</style><script>var a=1;</script></head>
+<body><nav>导航链接 首页</nav><header>页头</header>
+<article><h1>大标题</h1>
+<p>这是正文段落，包含<strong>加粗</strong>与<em>斜体</em>以及<a href="https://example.com/x">链接</a>。""" + FU_FILLER + """</p>
+<ul><li>项目一</li><li>项目二</li></ul>
+<pre><code>const x = 1;</code></pre>
+<table><thead><tr><th>列A</th><th>列B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>
+<p>结尾段落：""" + FU_FILLER + """</p>
+</article><footer>页脚</footer><aside>侧栏</aside></body></html>"""
+
+class _FuHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, body, ctype):
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path == "/page.html":
+            self._send(200, FU_PAGE, "text/html; charset=utf-8")
+        elif path == "/big.html":
+            self._send(200, "<html><body><article><p>" + ("很长的正文" * 40000) + "</p></article></body></html>", "text/html; charset=utf-8")
+        elif path == "/repos/o/r":
+            self._send(200, json.dumps({"description": "演示仓库", "stargazers_count": 42, "forks_count": 7,
+                                        "language": "TypeScript", "default_branch": "main",
+                                        "license": {"spdx_id": "MIT"}}), "application/json")
+        elif path == "/repos/o/r/readme":
+            self._send(200, "# 演示 README\n\n这是 README 正文。\n", "text/plain; charset=utf-8")
+        else:
+            self._send(404, "not found", "text/plain; charset=utf-8")
+
+fu_srv = socketserver.TCPServer(("127.0.0.1", 0), _FuHandler)
+fu_base = "http://127.0.0.1:" + str(fu_srv.server_address[1])
+threading.Thread(target=fu_srv.serve_forever, daemon=True).start()
+c_fu1 = req("fetch_url", {"url": fu_base + "/page.html"})
+c_fu2 = req("fetch_url", {"url": fu_base + "/page.html"})          # 缓存命中
+c_fu3 = req("fetch_url", {"url": fu_base + "/page.html", "format": "raw"})
+c_fu4 = req("fetch_url", {"url": fu_base + "/big.html"})
+c_fu5 = req("fetch_url", {"url": fu_base + "/missing"})
+c_fu6 = req("fetch_url", {"url": "ftp://example.com/x"})
+c_fu7 = req("fetch_url", {"url": "https://github.com/o/r", "__githubApiBase": fu_base})
+
+# 文档四件（write_markdown / write_excel / write_word / write_pdf）
+docdir = os.path.join(tmp, "docs")
+os.makedirs(docdir, exist_ok=True)
+DOC_MD_NEW = os.path.join(docdir, "新建.md")
+DOC_MD_APPEND = os.path.join(docdir, "追加.md")
+DOC_MD_OVER = os.path.join(docdir, "覆盖.md")
+DOC_XLSX = os.path.join(docdir, "成绩.xlsx")
+DOC_DOCX = os.path.join(docdir, "报告.docx")
+DOC_PDF = os.path.join(docdir, "合同.pdf")
+DOC_THEME_XLSX = {"headerFill": "FF1F4E79", "headerFont": "FFFFFFFF", "headerBorder": "FF1F4E79",
+                  "zebraFill": "FFF2F2F2", "borderColor": "FFBFBFBF"}
+DOC_THEME_WORD = {"titleColor": "1F4E79", "titleSize": 28, "titleFont": "微软雅黑", "bodyFont": "微软雅黑",
+                  "bodySize": 24, "bodyColor": "333333", "lineSpacing": 360, "headingColor": "1F4E79"}
+c_dm1 = req("write_markdown", {"path": DOC_MD_NEW, "content": "第一行\n第二行"})
+c_dm2a = req("write_markdown", {"path": DOC_MD_APPEND, "content": "第一行\n第二行"})
+c_dm2b = req("write_markdown", {"path": DOC_MD_APPEND, "content": "第三行", "append": True})
+c_dm3a = req("write_markdown", {"path": DOC_MD_OVER, "content": "第一行\n第二行\n第三行"})
+c_dm3b = req("write_markdown", {"path": DOC_MD_OVER, "content": "x"})
+c_dm4 = req("write_markdown", {"path": "", "content": "x"})
+c_dx1 = req("write_excel", {"path": DOC_XLSX, "theme": DOC_THEME_XLSX, "sheets": [
+    {"name": "成绩", "headers": ["姓名", "分数", "比率"], "rows": [["张三", 95, 0.5], ["李四", 1200, 0.25]]}]})
+c_dx2 = req("write_excel", {"path": os.path.join(docdir, "空.xlsx"), "sheets": []})
+c_dw1 = req("write_word", {"path": DOC_DOCX, "title": "季度报告", "theme": DOC_THEME_WORD,
+                           "paragraphs": ["第一段正文。", "第二段正文。"]})
+c_dw2 = req("write_word", {"path": "", "title": "x", "paragraphs": []})
+c_dp1 = req("write_pdf", {"path": DOC_PDF, "title": "PDF Report 合作协议", "paragraphs": ["Alpha 甲方：示例公司", "Beta 乙方：测试公司"]})
+c_dp2 = req("write_pdf", {"path": "", "title": "x", "paragraphs": []})
+
+# 邮件四件：本地 fake SMTP + fake IMAP（ASCII fixture；中文 MIME 编码由 MimeKit 库保证）
+_SMTP_MESSAGES = []
+
+class _SmtpHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.wfile.write(b"220 fake ESMTP ready\r\n")
+        in_data = False
+        data_lines = []
+        auth_login_step = 0
+        while True:
+            line = self.rfile.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").rstrip("\r\n")
+            if in_data:
+                if text == ".":
+                    in_data = False
+                    _SMTP_MESSAGES.append("\n".join(data_lines))
+                    self.wfile.write(b"250 OK queued\r\n")
+                else:
+                    data_lines.append(text[1:] if text.startswith("..") else text)
+                continue
+            if auth_login_step == 1:
+                auth_login_step = 2
+                self.wfile.write(b"334 UGFzc3dvcmQ6\r\n")
+                continue
+            if auth_login_step == 2:
+                auth_login_step = 0
+                self.wfile.write(b"235 Authentication successful\r\n")
+                continue
+            upper = text.upper()
+            if upper.startswith("EHLO") or upper.startswith("HELO"):
+                self.wfile.write(b"250-fake\r\n250-AUTH PLAIN LOGIN\r\n250 OK\r\n")
+            elif upper.startswith("AUTH LOGIN"):
+                auth_login_step = 1
+                self.wfile.write(b"334 VXNlcm5hbWU6\r\n")
+            elif upper.startswith("AUTH PLAIN"):
+                if len(text.split(" ")) >= 3:
+                    self.wfile.write(b"235 Authentication successful\r\n")
+                else:
+                    self.rfile.readline()
+                    self.wfile.write(b"235 Authentication successful\r\n")
+            elif upper.startswith("MAIL FROM") or upper.startswith("RCPT TO"):
+                self.wfile.write(b"250 OK\r\n")
+            elif upper.startswith("DATA"):
+                in_data = True
+                self.wfile.write(b"354 End data with <CR><LF>.<CR><LF>\r\n")
+            elif upper.startswith("RSET"):
+                self.wfile.write(b"250 OK\r\n")
+            elif upper.startswith("QUIT"):
+                self.wfile.write(b"221 Bye\r\n")
+                break
+            else:
+                self.wfile.write(b"250 OK\r\n")
+
+_IMAP_MAILS = [
+    {"uid": 1, "flags": ["\\Seen"], "subject": "Hello One", "name": "Sender A", "addr": "a@example.com",
+     "date": "Mon, 05 Oct 2026 01:00:00 +0800", "body": "Body one"},
+    {"uid": 2, "flags": [], "subject": "Hello Two", "name": "Sender B", "addr": "b@example.com",
+     "date": "Mon, 05 Oct 2026 02:00:00 +0800", "body": "Body two",
+     "attachment": "note.txt"},
+]
+
+def _imap_raw(m):
+    if m.get("attachment"):
+        att = "A" * 2048
+        return ("From: {name} <{addr}>\r\nTo: to@example.com\r\nSubject: {subject}\r\nDate: {date}\r\n"
+                "Message-ID: <m{uid}@example.com>\r\nMIME-Version: 1.0\r\n"
+                "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n\r\n"
+                "--BOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n"
+                "--BOUND\r\nContent-Type: text/plain; name=\"note.txt\"\r\n"
+                "Content-Disposition: attachment; filename=\"note.txt\"\r\n"
+                "Content-Transfer-Encoding: 8bit\r\n\r\n{att}\r\n--BOUND--\r\n"
+                ).format(att=att, **m).encode("utf-8")
+    return ("From: {name} <{addr}>\r\nTo: to@example.com\r\nSubject: {subject}\r\nDate: {date}\r\n"
+            "Message-ID: <m{uid}@example.com>\r\nMIME-Version: 1.0\r\n"
+            "Content-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n").format(**m).encode("utf-8")
+
+def _imap_envelope(m):
+    from_addr = '(({name} NIL {mailbox} {host}))'.format(name=m["name"], mailbox=m["addr"].split("@")[0], host=m["addr"].split("@")[1])
+    return '("{date}" "{subject}" {from_addr} {from_addr} {from_addr} NIL NIL NIL NIL "msgid")'.format(
+        date=m["date"], subject=m["subject"], from_addr=from_addr)
+
+def _parse_uid_set(spec):
+    ids = set()
+    for part in spec.split(","):
+        if ":" in part:
+            a, b = part.split(":", 1)
+            lo, hi = min(int(a), int(b)), max(int(a), int(b))
+            for i in range(lo, hi + 1):
+                ids.add(i)
+        elif part.isdigit():
+            ids.add(int(part))
+    return ids
+
+class _ImapHandler(socketserver.StreamRequestHandler):
+    def _ok(self, tag, text):
+        self.wfile.write(f"{tag} OK {text}\r\n".encode())
+
+    def handle(self):
+        self.wfile.write(b"* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] Fake IMAP ready\r\n")
+        while True:
+            line = self.rfile.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").rstrip("\r\n")
+            parts = text.split(" ")
+            tag = parts[0] if parts else "?"
+            cmd = parts[1].upper() if len(parts) > 1 else ""
+            if cmd == "AUTHENTICATE":
+                self.wfile.write(b"+ \r\n")
+                self.rfile.readline()  # base64 凭据（fake 不校验）
+                self._ok(tag, "AUTHENTICATE completed")
+            elif cmd == "CAPABILITY":
+                self.wfile.write(b"* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n")
+                self._ok(tag, "CAPABILITY completed")
+            elif cmd == "LIST":
+                pattern = parts[-1].strip('"') if len(parts) > 2 else ""
+                if pattern == "":
+                    self.wfile.write(b"* LIST (\\Noselect) \"/\" \"\"\r\n")
+                elif "INBOX" in pattern.upper() or pattern == "*":
+                    self.wfile.write(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                self._ok(tag, "LIST completed")
+            elif cmd == "LOGIN":
+                self._ok(tag, "LOGIN completed")
+            elif cmd in ("SELECT", "EXAMINE"):
+                self.wfile.write(b"* 2 EXISTS\r\n* 0 RECENT\r\n")
+                self.wfile.write(b"* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n")
+                self.wfile.write(b"* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)] Flags permitted.\r\n")
+                self.wfile.write(b"* OK [UIDVALIDITY 1] UIDs valid\r\n")
+                self.wfile.write(b"* OK [UIDNEXT 3] Predicted next UID\r\n")
+                mode = "READ-ONLY" if cmd == "EXAMINE" else "READ-WRITE"
+                self._ok(tag, f"[{mode}] {cmd} completed")
+            elif cmd == "CLOSE":
+                self._ok(tag, "CLOSE completed")
+            elif cmd == "LOGOUT":
+                self.wfile.write(b"* BYE Logging out\r\n")
+                self._ok(tag, "LOGOUT completed")
+                break
+            elif cmd == "NOOP":
+                self._ok(tag, "NOOP completed")
+            elif cmd == "UID":
+                sub = parts[2].upper() if len(parts) > 2 else ""
+                if sub == "SEARCH":
+                    crit = " ".join(parts[3:]).upper()
+                    ids = [m["uid"] for m in _IMAP_MAILS if "UNSEEN" not in crit or "\\Seen" not in m["flags"]]
+                    self.wfile.write(("* SEARCH" + "".join(f" {i}" for i in ids) + "\r\n").encode())
+                    self._ok(tag, "UID SEARCH completed")
+                elif sub == "FETCH":
+                    uids = _parse_uid_set(parts[3]) if len(parts) > 3 else set()
+                    items = text[text.find("("):].upper() if "(" in text else ""
+                    for m in _IMAP_MAILS:
+                        if m["uid"] not in uids:
+                            continue
+                        if "BODY" in items or "RFC822" in items:
+                            raw = _imap_raw(m)
+                            self.wfile.write(f"* {m['uid']} FETCH (UID {m['uid']} BODY[] {{{len(raw)}}}\r\n".encode())
+                            self.wfile.write(raw + b")\r\n")
+                        else:
+                            size = len(_imap_raw(m))
+                            flags = " ".join(m["flags"])
+                            self.wfile.write(
+                                f"* {m['uid']} FETCH (UID {m['uid']} FLAGS ({flags}) ENVELOPE {_imap_envelope(m)} RFC822.SIZE {size})\r\n".encode())
+                    self._ok(tag, "UID FETCH completed")
+                elif sub == "STORE":
+                    uids = _parse_uid_set(parts[3]) if len(parts) > 3 else set()
+                    op = parts[4] if len(parts) > 4 else ""
+                    for m in _IMAP_MAILS:
+                        if m["uid"] not in uids:
+                            continue
+                        if op.startswith("+"):
+                            if "\\Seen" in text and "\\Seen" not in m["flags"]:
+                                m["flags"].append("\\Seen")
+                        elif op.startswith("-"):
+                            if "\\Seen" in text and "\\Seen" in m["flags"]:
+                                m["flags"].remove("\\Seen")
+                    self._ok(tag, "UID STORE completed")
+                else:
+                    self._ok(tag, "unsupported UID subcommand")
+            else:
+                self._ok(tag, "unsupported command")
+
+smtp_srv = socketserver.TCPServer(("127.0.0.1", 0), _SmtpHandler)
+imap_srv = socketserver.TCPServer(("127.0.0.1", 0), _ImapHandler)
+threading.Thread(target=smtp_srv.serve_forever, daemon=True).start()
+threading.Thread(target=imap_srv.serve_forever, daemon=True).start()
+frames.append(json.dumps({"op": "config", "email": {
+    "enabled": True, "smtpHost": "127.0.0.1", "smtpPort": smtp_srv.server_address[1], "smtpSecure": False,
+    "user": "sender@example.com", "pass": "authcode", "fromName": "Cyrene",
+    "imapHost": "127.0.0.1", "imapPort": imap_srv.server_address[1], "imapSecure": False}}))
+c_em1 = req("send_email", {"to": ["to@example.com"], "cc": ["cc@example.com"], "subject": "Hello Subject", "body": "Hello body"})
+c_em2 = req("send_email", {"to": [], "subject": "s", "body": "b"})
+c_em3 = req("send_email", {"to": ["bad"], "subject": "s", "body": "b"})
+c_em4 = req("email_list", {})
+c_em5 = req("email_list", {"unreadOnly": True})
+c_em6 = req("email_read", {"uid": 2, "markSeen": True})
+c_em7 = req("email_list", {})
+c_em8 = req("email_mark", {"uid": 1, "seen": False})
+c_em9 = req("email_read", {"uid": 99})
+c_em10 = req("email_list", {})
+frames.append(json.dumps({"op": "config", "email": None}))
+c_em11 = req("email_list", {})
+c_em12 = req("send_email", {"to": ["a@b.com"], "subject": "s", "body": "b"})
+# PR #20 复审 P1：SMTP 连接拒绝（连接阶段失败，确定未发出）→ ok=false + E_EMAIL_PRECONDITION
+_refused = socket.socket()
+_refused.bind(("127.0.0.1", 0))
+_refused_port = _refused.getsockname()[1]
+_refused.close()
+frames.append(json.dumps({"op": "config", "email": {
+    "enabled": True, "smtpHost": "127.0.0.1", "smtpPort": _refused_port, "smtpSecure": False,
+    "user": "sender@example.com", "pass": "authcode", "fromName": "Cyrene",
+    "imapHost": "127.0.0.1", "imapPort": imap_srv.server_address[1], "imapSecure": False}}))
+c_em13 = req("send_email", {"to": ["to@example.com"], "subject": "s", "body": "b"})
+frames.append(json.dumps({"op": "config", "email": None}))
+
+# ast_grep：随包 CLI（__astGrepCommand 注入；搜索/校验/dryRun/写入）
+import glob as _glob
+def _ast_grep_cli():
+    hits = []
+    for exe in ("ast-grep.exe", "ast-grep"):
+        # pnpm 布局：node_modules/.pnpm/@ast-grep+cli-*@ver/node_modules/@ast-grep/cli-*/<exe>
+        hits += _glob.glob(os.path.join(ROOT, "node_modules", ".pnpm", "@ast-grep+cli-*",
+                                        "node_modules", "@ast-grep", "cli-*", exe))
+        # npm 平铺布局（CI 用 npm install）：node_modules/@ast-grep/cli-*/<exe>
+        hits += _glob.glob(os.path.join(ROOT, "node_modules", "@ast-grep", "cli-*", exe))
+    cli = hits[0] if hits else None
+    if cli and os.name != "nt":
+        try:
+            os.chmod(cli, 0o755)  # npm 解包可能丢可执行位（Linux CI）
+        except Exception:
+            pass
+    return cli
+
+sg_ws = os.path.join(tmp, "sgws")
+os.makedirs(os.path.join(sg_ws, "src"))
+open(os.path.join(sg_ws, "src", "a.ts"), "w", encoding="utf-8").write('console.log("a", x);\nconst y = 1;\nconsole.log(y);\n')
+open(os.path.join(sg_ws, "src", "b.ts"), "w", encoding="utf-8").write('function f() { console.log("b"); }\n')
+AST_CLI = _ast_grep_cli()
+SG = {"__cyreneWorkspaceRoot": sg_ws, "__astGrepCommand": AST_CLI}
+c_sg1 = req("ast_grep_search", {"pattern": "console.log($$$A)", **SG})
+c_sg2 = req("ast_grep_search", {"pattern": "console.log($$$A)", "paths": ["src/a.ts"], "language": "TypeScript", **SG})
+c_sg3 = req("ast_grep_search", {"pattern": "zzz_no_match", **SG})
+c_sg4 = req("ast_grep_search", {"pattern": "console.log($$$A)", "maxMatches": 1, **SG})
+c_sg5 = req("ast_grep_search", {"pattern": "x", "language": "Bogus", **SG})
+c_sg6 = req("ast_grep_search", {"pattern": "", **SG})
+c_sg7 = req("ast_grep_search", {"pattern": "x", "paths": ["../escape"], **SG})
+c_sg8 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": True, **SG})
+c_sg8b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"], **SG})
+c_sg9 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": False, "paths": ["src/a.ts"], **SG})
+c_sg9b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"], **SG})
+c_sg10 = req("ast_grep_search", {"pattern": "x", "__cyreneWorkspaceRoot": sg_ws})
+
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
+fu_srv.shutdown()
+smtp_srv.shutdown()
+imap_srv.shutdown()
 by = {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
 
 def data_json(cid):
@@ -360,11 +696,164 @@ check("plan_trip 缺 key",
       data_text(c_pt2))
 check("plan_trip 缺起点", data_text(c_pt3) == "[错误] 请提供起点和终点", data_text(c_pt3))
 
+print("\n=== fetch_url（本地 HTTP fixture + GitHub API mock）===")
+fu1 = data_text(c_fu1)
+check("fetch_url markdown 正文提取（标题/列表/代码/表格）",
+      "# 大标题" in fu1 and "- 项目一" in fu1 and "```" in fu1 and "| 列A |" in fu1, fu1[:200])
+check("fetch_url 剥导航/页头/页脚/侧栏",
+      "导航链接" not in fu1 and "页头" not in fu1 and "页脚" not in fu1 and "侧栏" not in fu1, fu1[:200])
+check("fetch_url 缓存命中标注", data_text(c_fu2).startswith("[缓存] 摄取于 "), data_text(c_fu2)[:60])
+fu3 = data_text(c_fu3)
+check("fetch_url raw 原文（不转换）", "<article>" in fu3 and "Content-Type: text/html" in fu3, fu3[:120])
+fu4 = data_text(c_fu4)
+check("fetch_url 512KB 截断标注", "[已截断到 524288 字节]" in fu4, fu4[:160])
+check("fetch_url 404", data_text(c_fu5).startswith("[错误] HTTP 404"), data_text(c_fu5))
+check("fetch_url 非法协议拒绝", data_text(c_fu6) == "[错误] url 必须以 http:// 或 https:// 开头", data_text(c_fu6))
+fu7 = data_text(c_fu7)
+check("fetch_url GitHub API 特化（元信息 + README）",
+      "# o/r" in fu7 and "> 演示仓库" in fu7 and "stars: 42" in fu7 and "license: MIT" in fu7
+      and "这是 README 正文" in fu7, fu7[:300])
+
+print("\n=== 文档四件（write_markdown / write_excel / write_word / write_pdf）===")
+import zipfile
+d = data_json(c_dm1)
+check("write_markdown 新建（added 证据 2 行）", d and d.get("success") and d.get("append") is False
+      and d["changes"][0].get("kind") == "added" and d["changes"][0].get("insertions") == 2, d)
+check("write_markdown 新建文件内容", open(DOC_MD_NEW, encoding="utf-8").read() == "第一行\n第二行",
+      open(DOC_MD_NEW, encoding="utf-8").read())
+d = data_json(c_dm2b)
+check("write_markdown 追加补换行（added 1 行）", d and d.get("append") is True
+      and d["changes"][0].get("insertions") == 1
+      and open(DOC_MD_APPEND, encoding="utf-8").read() == "第一行\n第二行\n第三行", d)
+d = data_json(c_dm3b)
+check("write_markdown 覆盖（modified 3→1 + remove/add diff）", d and d["changes"][0].get("kind") == "modified"
+      and d["changes"][0].get("insertions") == 1 and d["changes"][0].get("deletions") == 3
+      and [l.get("type") for l in d["changes"][0]["diff"]] == ["remove", "remove", "remove", "add"], d)
+check("write_markdown 空 path 拒绝", by.get(c_dm4, {}).get("ok") is False, by.get(c_dm4))
+
+check("write_excel 生成结果文案", data_text(c_dx1) == "[write_excel] 已生成：" + DOC_XLSX, data_text(c_dx1))
+if os.path.exists(DOC_XLSX):
+    z = zipfile.ZipFile(DOC_XLSX)
+    ss = z.read("xl/sharedStrings.xml").decode("utf-8")
+    st = z.read("xl/styles.xml").decode("utf-8")
+    sh = z.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    check("write_excel 单元格值（sharedStrings）",
+          all(s in ss for s in ["姓名", "分数", "比率", "张三", "李四"]), ss[:200])
+    check("write_excel 数字格式（0.0% / #,##0 / #,##0.00）",
+          'formatCode="0.0%"' in st and 'formatCode="#,##0"' in st and 'formatCode="#,##0.00"' in st, "")
+    check("write_excel 主题色（表头/斑马纹 solid fill）",
+          'rgb="FF1F4E79"' in st and 'rgb="FFF2F2F2"' in st, "")
+    check("write_excel 冻结首行 + 自动筛选 + 列宽",
+          "<x:pane" in sh and 'ySplit="1"' in sh and "<x:autoFilter" in sh and "<x:cols>" in sh, "")
+else:
+    check("write_excel 文件存在", False)
+check("write_excel sheets 为空拒绝", by.get(c_dx2, {}).get("ok") is False, by.get(c_dx2))
+
+check("write_word 生成结果文案", data_text(c_dw1) == "[write_word] 已生成：" + DOC_DOCX, data_text(c_dw1))
+if os.path.exists(DOC_DOCX):
+    doc = zipfile.ZipFile(DOC_DOCX).read("word/document.xml").decode("utf-8")
+    check("write_word 文本与样式（标题/正文/字号/颜色/加粗/行距）",
+          "季度报告" in doc and "第一段正文。" in doc and "第二段正文。" in doc
+          and 'w:val="28"' in doc and 'w:val="24"' in doc
+          and 'w:val="1F4E79"' in doc and 'w:val="333333"' in doc
+          and "<w:b />" in doc and 'w:after="200"' in doc and 'w:after="120"' in doc, doc[:200])
+else:
+    check("write_word 文件存在", False)
+check("write_word 空 path 拒绝", by.get(c_dw2, {}).get("ok") is False, by.get(c_dw2))
+
+check("write_pdf 生成结果文案", data_text(c_dp1) == "[write_pdf] 已生成：" + DOC_PDF, data_text(c_dp1))
+check("write_pdf 文件签名", os.path.exists(DOC_PDF) and open(DOC_PDF, "rb").read(5) == b"%PDF-")
+check("write_pdf 空 path 拒绝", by.get(c_dp2, {}).get("ok") is False, by.get(c_dp2))
+if os.path.exists(DOC_PDF):
+    probe = subprocess.run(["dotnet", NATIVE, "--pdf-text", DOC_PDF], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", cwd=ROOT)
+    pdf_text = probe.stdout or ""
+    ascii_ok = "PDF Report" in pdf_text and "Alpha" in pdf_text and "Beta" in pdf_text
+    # Linux 无 CJK 字体（QuestPDF 回退 Lato），中文断言仅在 Windows 跑
+    cjk_ok = os.name != "nt" or ("合作协议" in pdf_text and "甲方：示例公司" in pdf_text and "乙方：测试公司" in pdf_text)
+    check("write_pdf 文本提取（标题/段落）", ascii_ok and cjk_ok, pdf_text[:120])
+else:
+    check("write_pdf 文本提取（文件缺失）", False)
+
+print("\n=== 邮件四件（fake SMTP + fake IMAP）===")
+check("send_email 成功文案", data_text(c_em1) == "[send_email] 已发送：to@example.com 主题：Hello Subject", data_text(c_em1))
+if _SMTP_MESSAGES:
+    raw = _SMTP_MESSAGES[-1]
+    check("send_email SMTP 捕获（To/Cc/Subject/正文）",
+          "to@example.com" in raw and "cc@example.com" in raw and "Hello Subject" in raw and "Hello body" in raw,
+          raw[:220])
+else:
+    check("send_email SMTP 捕获", False)
+check("send_email 空收件人拒绝", data_text(c_em2) == "[错误] 收件人列表为空", data_text(c_em2))
+check("send_email 收件人无效拒绝", data_text(c_em3) == "[错误] 收件人邮箱无效：bad", data_text(c_em3))
+el4 = data_text(c_em4)
+check("email_list 两封（uid/已读/发件人/主题）",
+      "uid=2" in el4 and "uid=1" in el4 and "未读" in el4 and "已读" in el4
+      and "Sender A <a@example.com>" in el4 and "Hello One" in el4 and "共 2 封" in el4, el4[:220])
+el5 = data_text(c_em5)
+check("email_list 仅未读（uid=2）", "uid=2" in el5 and "uid=1" not in el5 and "未读" in el5, el5[:220])
+er6 = data_text(c_em6)
+check("email_read 详情（主题/发件人/收件人/附件/正文）",
+      "uid=2" in er6 and "Hello Two" in er6 and "Sender B <b@example.com>" in er6
+      and "to@example.com" in er6 and "note.txt" in er6 and "Body two" in er6, er6[:300])
+el7 = data_text(c_em7)
+check("email_read 默认标已读（再列两封均已读）", el7.count("已读") == 2, el7[:220])
+check("email_mark 标未读", data_text(c_em8) == "[email_mark] uid=1 已标记为未读（folder=INBOX）", data_text(c_em8))
+el10 = data_text(c_em10)
+check("email_mark 生效（uid=1 未读）", "uid=1" in el10 and "未读" in el10, el10[:220])
+check("email_read 不存在 uid", data_text(c_em9) == "[错误] 未找到 uid=99 的邮件（folder=INBOX）", data_text(c_em9))
+check("email 关闭后校验（list）", data_text(c_em11) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em11))
+check("email 关闭后校验（send）", data_text(c_em12) == "[错误] 邮件功能未启用，请在设置里开启", data_text(c_em12))
+r_em13 = by.get(c_em13, {})
+check("send_email SMTP 连接拒绝 → ok=false 且 E_EMAIL_PRECONDITION",
+      r_em13.get("ok") is False and r_em13.get("errorCode") == "E_EMAIL_PRECONDITION", r_em13)
+
+print("\n=== ast_grep（随包 CLI）===")
+if not AST_CLI:
+    # CI 的矩阵步骤早于 npm install（node 依赖此时未安装）；ast-grep 由后续 dual-track 步骤覆盖
+    print("[SKIP] ast-grep CLI 未安装（本地安装 pnpm deps 后全量跑；CI 由 dual-track 覆盖）")
+else:
+    check("ast-grep CLI 已解析", True)
+    d = data_json(c_sg1)
+    check("ast_grep_search 全工作区（3 处 / 2 文件 / 坐标）",
+          d and d.get("matchCount") == 3 and d.get("filesWithMatches") == 2 and d.get("scannedFiles") == 2
+          and d["matches"][0] == {"line": 1, "column": 1, "endLine": 1, "text": 'console.log("a", x)', "file": "src/a.ts"}, d)
+    d = data_json(c_sg2)
+    check("ast_grep_search 限定路径/语言", d and d.get("scannedFiles") == 1 and d.get("matchCount") == 2
+          and d.get("language") == "TypeScript", d)
+    d = data_json(c_sg3)
+    check("ast_grep_search 无匹配", d and d.get("matchCount") == 0 and d.get("truncated") is False, d)
+    d = data_json(c_sg4)
+    check("ast_grep_search maxMatches 截断", d and d.get("matchCount") == 1 and d.get("truncated") is True, d)
+    d = data_json(c_sg5)
+    check("ast_grep_search 非法语言", d and d.get("success") is False and "不支持的语言" in d["errors"][0], d)
+    d = data_json(c_sg6)
+    check("ast_grep_search 空 pattern", d and d.get("errors")[0] == "pattern 参数不能为空", d)
+    d = data_json(c_sg7)
+    check("ast_grep_search 路径逃逸跳过", d and d.get("scannedFiles") == 0 and "skipped" in d, d)
+    d = data_json(c_sg8)
+    check("ast_grep_replace dryRun（2 文件 / 3 处 + diff 证据）",
+          d and d.get("dryRun") is True and d.get("filesToChange") == 2 and d.get("totalMatches") == 3
+          and d["changes"][0]["diff"][1]["text"] == 'logger.info("a", x)'
+          and "note" in d, d)
+    d = data_json(c_sg8b)
+    check("ast_grep_replace dryRun 不落盘", d and d.get("matchCount") == 0, d)
+    d = data_json(c_sg9)
+    check("ast_grep_replace 写入（限定路径）", d and d.get("dryRun") is False and d.get("changedFiles") == 1
+          and d.get("changed") == ["src/a.ts"], d)
+    d = data_json(c_sg9b)
+    check("ast_grep_replace 落盘生效（改写后可搜到）", d and d.get("matchCount") == 2, d)
+    check("ast_grep_replace 落盘内容", open(os.path.join(sg_ws, "src", "a.ts"), encoding="utf-8").read()
+          == 'logger.info("a", x);\nconst y = 1;\nlogger.info(y);\n', open(os.path.join(sg_ws, "src", "a.ts"), encoding="utf-8").read())
+    f10 = by.get(c_sg10, {})
+    check("ast_grep_search 缺 CLI 错误帧", f10.get("ok") is False and "ast-grep CLI 不可用" in (f10.get("error") or ""), f10)
+
 print("\n=== git ===")
 if not shutil.which("git"):
     print("[SKIP] git 段（未检测到系统 git）")
 else:
     gbase = tempfile.mkdtemp(prefix="tools-git-")
+    atexit.register(lambda: shutil.rmtree(gbase, ignore_errors=True))
     grepo = os.path.join(gbase, "repo")
     os.makedirs(grepo)
     gplain = os.path.join(gbase, "plain")

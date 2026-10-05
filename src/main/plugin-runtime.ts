@@ -33,7 +33,7 @@ import type { AgentRuntime } from "./orchestrator/agent-runtime";
 
 /** 调度存储视图：插件服务读写任务，卸载清理时按归属批量删除插件任务。 */
 export type PluginRuntimeSchedulerStore = PluginSchedulerStore & {
-  deleteTasksByOwner(pluginId: string): number;
+  deleteTasksByOwner(pluginId: string): number | Promise<number>;
 };
 
 export interface PluginRuntimeDeps {
@@ -152,7 +152,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     getConfiguredPluginMemoryLimitMb: () => loadGeneralSettings().pluginMemoryLimitMb,
     // 真正卸载时删除该插件创建的定时任务；清理失败由管理器中止目录删除。
     cleanupPersistentResources: async (pluginId) => {
-      deps.schedulerStore.deleteTasksByOwner(pluginId);
+      await deps.schedulerStore.deleteTasksByOwner(pluginId);
     },
     selectPluginZip: async () => pickPluginZipFile(),
     confirmPluginReplace: async (plugin) => {
