@@ -27,9 +27,12 @@ vi.mock("../../windows/native-windows-host", () => ({
   resolveNativeWindowsExe: mocks.resolveNativeWindowsExe,
 }));
 
-import { NativeToolHost, nativeFirst, nativeToolHost, withNativeFirst } from "./native-tool-host";
+import { NativeToolHost, NativeCallNotDispatchedError, nativeFirst, nativeToolHost, withNativeFirst } from "./native-tool-host";
 import type { ToolDefinition } from "./registry/tool-registry";
+import { ToolExecutionError } from "./registry/tool-execution-error";
 import { resetDotnetConfigCache } from "../../dotnet-backend/config";
+import { dispatchToolCall } from "../harness/tool-dispatcher";
+import type { AgentState } from "../harness/types";
 
 class FakeChild extends EventEmitter {
   pid = 5150;
@@ -113,6 +116,50 @@ describe("NativeToolHost.call 看门狗", () => {
     );
 
     warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("host 退出：排队未派发调用带 E_TOOL_NOT_DISPATCHED sentinel，在途调用保持普通失败", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+
+    const inFlight = host.call("send_email", {}, 10_000);
+    const queued = host.call("send_email", {}, 10_000);
+    const inFlightErr = inFlight.catch((error: Error) => error);
+    const queuedErr = queued.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    child.emit("exit", 1, null);
+
+    const inFlightError = await inFlightErr;
+    const queuedError = await queuedErr;
+    // 在途调用：call 帧已下发，状态可能未知（普通 Error，不能按确定未执行处理）
+    expect(inFlightError).toBeInstanceOf(Error);
+    expect(inFlightError).not.toBeInstanceOf(NativeCallNotDispatchedError);
+    // 排队调用：call 帧从未写入 stdin，确定未派发 → 独立 sentinel
+    expect(queuedError).toBeInstanceOf(NativeCallNotDispatchedError);
+    expect((queuedError as { code?: string }).code).toBe("E_TOOL_NOT_DISPATCHED");
+    vi.useRealTimers();
+  });
+
+  it("错误帧 errorCode 透传到 Error.code（B5 错误码契约）", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+
+    const pending = host.call("send_email", {}, 10_000);
+    const outcome = pending.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    child.stdout.write(`${JSON.stringify({
+      op: "result", callId: "t1", ok: false, error: "发送失败（未进入发送阶段）：认证失败", errorCode: "E_EMAIL_PRECONDITION",
+    })}\n`);
+    const error = await outcome;
+    expect(error.message).toContain("未进入发送阶段");
+    expect((error as { code?: string }).code).toBe("E_EMAIL_PRECONDITION");
     vi.useRealTimers();
   });
 
@@ -270,15 +317,48 @@ describe("nativeFirst 信任边界（__ 内部参数）", () => {
     );
   });
 
-  it("fallbackOnError=false：native 失败不重跑副作用，返回不确定态提示", async () => {
+  it("fallbackOnError=false：native 在途失败不重跑副作用，结构化上抛 effectState=unknown", async () => {
     vi.spyOn(nativeToolHost, "call").mockRejectedValue(new Error("native 工具 send_email 超时"));
+    const fallback = vi.fn(() => "已发送");
+
+    const failure = await nativeFirst("send_email", { to: ["a@b.com"] }, fallback, { fallbackOnError: false })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ToolExecutionError);
+    expect(failure).toMatchObject({
+      code: "E_TOOL_EFFECT_UNKNOWN",
+      effectState: "unknown",
+      retryable: false,
+    });
+    expect((failure as Error).message).toContain("状态未知");
+    expect((failure as Error).message).toContain("超时");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("fallbackOnError=false：排队未派发 sentinel 确定未执行 → 安全回退 TS", async () => {
+    vi.spyOn(nativeToolHost, "call").mockRejectedValue(new NativeCallNotDispatchedError());
     const fallback = vi.fn(() => "已发送");
 
     const out = await nativeFirst("send_email", { to: ["a@b.com"] }, fallback, { fallbackOnError: false });
 
-    expect(out).toContain("状态未知");
-    expect(out).toContain("超时");
-    expect(fallback).not.toHaveBeenCalled();
+    expect(out).toBe("已发送");
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("fallbackOnError=false：safeFallbackCodes（E_EMAIL_PRECONDITION 确定未进入发送）→ 安全回退 TS", async () => {
+    vi.spyOn(nativeToolHost, "call").mockRejectedValue(Object.assign(
+      new Error("发送失败（未进入发送阶段）：认证失败"),
+      { code: "E_EMAIL_PRECONDITION" },
+    ));
+    const fallback = vi.fn(() => "已发送");
+
+    const out = await nativeFirst("send_email", { to: ["a@b.com"] }, fallback, {
+      fallbackOnError: false,
+      safeFallbackCodes: ["E_EMAIL_PRECONDITION"],
+    });
+
+    expect(out).toBe("已发送");
+    expect(fallback).toHaveBeenCalledTimes(1);
   });
 
   it("fallbackOnError=false：宿主不可用（call 返回 null）仍安全回退 TS", async () => {
@@ -346,5 +426,78 @@ describe("withNativeFirst 信任边界（__ 内部参数）", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("prepare 返回 null：TS 回退收到已剥离 __ 的 args（P2-6④ 口径一致）", async () => {
+    const call = vi.spyOn(nativeToolHost, "call");
+    const seen: Record<string, unknown>[] = [];
+    const base: ToolDefinition = {
+      id: "fake_tool",
+      name: "fake",
+      description: "fake",
+      enabled: true,
+      risk: "safe",
+      modes: ["code"],
+      effectKind: "read",
+      inputSchema: { type: "object" },
+      execute: async (args) => {
+        seen.push(args);
+        return "ts";
+      },
+    };
+    const wrapped = withNativeFirst(base, "fake_tool", () => null);
+
+    const out = await wrapped.execute({ pattern: "x", __evil: "1" }, undefined);
+
+    expect(out).toBe("ts");
+    expect(call).not.toHaveBeenCalled();
+    expect(seen).toEqual([{ pattern: "x" }]);
+  });
+});
+
+// ── 不确定副作用入账（P2-1）────────────────────────────────
+
+describe("不确定副作用入账（P2-1）", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fallbackOnError=false 的在途失败：outcome=unknown 且同 fingerprint 重放被拦截", async () => {
+    vi.spyOn(nativeToolHost, "call").mockRejectedValue(new Error("native 工具 send_email 超时"));
+    const state: AgentState = { todoItems: [], uncertainEffects: [] };
+    const sendTool: ToolDefinition = {
+      id: "send_email",
+      name: "发送邮件",
+      description: "send",
+      enabled: true,
+      inputSchema: { type: "object" },
+      effectKind: "external_side_effect",
+      execute: () => nativeFirst(
+        "send_email",
+        { to: ["a@b.com"] },
+        () => "已发送",
+        { fallbackOnError: false },
+      ),
+    };
+    const context = {
+      state,
+      tools: [sendTool],
+      toolContext: { userQuery: "", runId: "run-1" },
+    };
+    const call = (id: string) => ({
+      id,
+      name: "send_email",
+      arguments: JSON.stringify({ to: ["a@b.com"] }),
+    });
+
+    const first = await dispatchToolCall(call("call-1"), context);
+    expect(first.outcome).toBe("unknown");
+    expect(state.uncertainEffects).toHaveLength(1);
+    expect(state.uncertainEffects[0].fingerprint).toBeTruthy();
+
+    // 同 fingerprint 重放：被 uncertainEffects 拦截，不重复投递
+    const replay = await dispatchToolCall(call("call-1"), context);
+    expect(replay.outcome).toBe("not_executed");
+    expect(replay.message).toContain(state.uncertainEffects[0].id);
   });
 });

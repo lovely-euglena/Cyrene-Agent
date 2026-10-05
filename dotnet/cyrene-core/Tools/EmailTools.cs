@@ -17,7 +17,8 @@ namespace CyreneNative.Tools;
 ///     （B1：仅宿主内存驻留，不落盘；TS 每次调用前实时刷新）；
 ///   - 校验文案与 TS 逐字对齐（未启用 / 配置不完整 / 收件人无效 / uid 无效等），
 ///     校验失败按普通结果返回（不回退）；收信连接/协议失败抛错误帧 → TS 包装层回退原实现；
-///     send_email 失败抛错误帧后 TS 不自动重发（发送状态可能未知，避免重复投递）；
+///     send_email 分两段：组装/连接/认证等前置失败抛 E_EMAIL_PRECONDITION（确定未发出，
+///     TS 侧可安全回退）；Send 阶段失败抛 E_EMAIL_SEND（状态可能未知，TS 不自动重发避免重复投递）；
 ///     发送成功后的断开失败仅日志，不计入发送失败（防 TS 误判触发重复投递）。
 ///   - 发信确认卡在 TS（B2 审批在 Electron），本工具只做确认后的实际发送；
 ///   - email_read 正文 4000 字符截断（附"…（正文已截断）"），默认标记已读（失败不阻断阅读）。
@@ -64,26 +65,48 @@ internal static class EmailTools
         var client = new SmtpClient { Timeout = ClientTimeoutMs };
         try
         {
-            var message = new MimeMessage();
-            message.From.Add(new MailboxAddress(fromName, user));
-            foreach (var addr in to) message.To.Add(MailboxAddress.Parse(addr));
-            foreach (var addr in cc) message.Cc.Add(MailboxAddress.Parse(addr));
-            message.Subject = subject;
-            var builder = new BodyBuilder();
-            if (body.Length > 0) builder.TextBody = body;
-            if (html.Length > 0) builder.HtmlBody = html;
-            foreach (var p in attachments) builder.Attachments.Add(p);
-            message.Body = builder.ToMessageBody();
+            MimeMessage message;
+            try
+            {
+                message = new MimeMessage();
+                message.From.Add(new MailboxAddress(fromName, user));
+                foreach (var addr in to) message.To.Add(MailboxAddress.Parse(addr));
+                foreach (var addr in cc) message.Cc.Add(MailboxAddress.Parse(addr));
+                message.Subject = subject;
+                var builder = new BodyBuilder();
+                if (body.Length > 0) builder.TextBody = body;
+                if (html.Length > 0) builder.HtmlBody = html;
+                foreach (var p in attachments) builder.Attachments.Add(p);
+                message.Body = builder.ToMessageBody();
+            }
+            catch (Exception ex)
+            {
+                // 组装阶段（附件读取/地址解析）失败：确定未进入发送
+                throw new ToolHostException("E_EMAIL_PRECONDITION", "发送失败（未进入发送阶段）：" + ex.Message);
+            }
 
-            client.Connect(host, port, secure ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTlsWhenAvailable);
-            client.Authenticate(user, pass);
-            client.Send(message);
-        }
-        catch (Exception ex)
-        {
-            // 连接/认证/发送失败：抛错误帧；TS 包装层对 send_email 不自动重发
-            // （发送状态可能未知，避免重复投递）
-            throw new ToolHostException("E_EMAIL_SEND", "发送失败：" + ex.Message);
+            try
+            {
+                client.Connect(host, port, secure ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTlsWhenAvailable);
+                client.Authenticate(user, pass);
+            }
+            catch (Exception ex)
+            {
+                // 前置阶段（连接/认证）失败：主机不可达、授权码错误等确定未发出；
+                // 独立错误码 E_EMAIL_PRECONDITION，TS 侧按确定失败安全回退（复审 P2-3）
+                throw new ToolHostException("E_EMAIL_PRECONDITION", "发送失败（未进入发送阶段）：" + ex.Message);
+            }
+
+            try
+            {
+                client.Send(message);
+            }
+            catch (Exception ex)
+            {
+                // 发送阶段失败：可能发生在服务器已收件、确认未回之后 → 状态未知
+                // （E_EMAIL_SEND）；TS 包装层不自动重发（避免重复投递）
+                throw new ToolHostException("E_EMAIL_SEND", "发送失败：" + ex.Message);
+            }
         }
         finally
         {

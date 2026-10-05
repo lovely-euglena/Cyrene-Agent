@@ -295,6 +295,19 @@ describe("email_list / email_read / email_mark（IMAP 收信）", () => {
     expect(res).toMatch(/时间：\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}:\d{2}/);
   });
 
+  it("email_read：Invalid Date 回退（未知），不输出 NaN（复审 P2-6②）", async () => {
+    fetchOneMock.mockResolvedValue({ uid: 9, source: Buffer.from("raw") });
+    simpleParserMock.mockResolvedValue({
+      subject: "s",
+      from: { text: "f" },
+      date: new Date("invalid"),
+      text: "t",
+    });
+    const res = await readExec({ uid: 9 });
+    expect(res).toContain("时间：(未知)");
+    expect(res).not.toContain("NaN");
+  });
+
   it("email_read：markSeen=false 不标记；非法 uid 不建连", async () => {
     fetchOneMock.mockResolvedValue({ uid: 8, source: Buffer.from("raw") });
     simpleParserMock.mockResolvedValue({ subject: "s", from: { text: "f" }, text: "t" });

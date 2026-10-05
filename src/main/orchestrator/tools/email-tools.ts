@@ -196,8 +196,10 @@ async function sendEmailTs(plan: SendEmailPlan): Promise<string> {
 /**
  * send_email：校验 → 确认卡（B2 审批保持在 Electron/TS）→ native 优先发送。
  * native 失败不自动回退 nodemailer：失败可能发生在「服务器已收件、确认未回」
- * 之后，自动重发会重复投递——返回明确的不确定态提示（fallbackOnError:false）；
- * 仅宿主未启动（call 返回 null）时安全回退 TS（确定未发送）。
+ * 之后，自动重发会重复投递——返回明确的不确定态提示（fallbackOnError:false）。
+ * 仅以下「确定未发送」情形安全回退 TS：宿主未启动（call 返回 null）、
+ * 排队未派发（E_TOOL_NOT_DISPATCHED sentinel）、SMTP 前置阶段失败
+ * （E_EMAIL_PRECONDITION：连接/认证失败，未进入发送）。
  */
 async function executeSendEmail(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
   const plan = prepareSendEmail(args);
@@ -242,9 +244,12 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
     {
       timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
       signal: context?.signal,
-      // 副作用安全（审查 P1-3）：超时/进程故障/错误帧可能是「已发送、确认未回」，
-      // 自动回退会重复投递 → 禁止回退，返回明确的不确定态提示。
+      // 副作用安全（审查 P1-3 / 复审 P2-1/P2-3）：超时/进程故障/Send 阶段错误帧
+      // 可能是「已发送、确认未回」，自动回退会重复投递 → 禁止回退，结构化上抛
+      // effectState:"unknown" 交由 Harness 入账；仅确定未进入发送的前置失败
+      // （E_EMAIL_PRECONDITION）安全回退 TS。
       fallbackOnError: false,
+      safeFallbackCodes: ["E_EMAIL_PRECONDITION"],
       uncertainFailureMessage: (error) =>
         `[错误] 邮件发送状态未知：native 发送未收到确认（${error.message}）。` +
         "为避免重复投递，不会自动重发；请先到邮箱「已发送」确认，必要时再手动重试。",
@@ -330,8 +335,10 @@ function formatAddress(address: { name?: string; address?: string } | undefined)
 /**
  * 邮件时间固定格式（与 native 轨 C# `yyyy/M/d HH:mm:ss` 对齐）：
  * 不用 toLocaleString——locale 随环境变化会让双轨输出分叉（审查 P2-1③）。
+ * Invalid Date（如 IMAP 时间戳无法解析）回退 `(未知)`，不输出 NaN 串（复审 P2-6②）。
  */
 function formatEmailDate(date: Date): string {
+  if (Number.isNaN(date.getTime())) return "(未知)";
   const pad = (n: number): string => String(n).padStart(2, "0");
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ` +
     `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;

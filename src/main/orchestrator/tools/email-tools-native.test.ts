@@ -1,7 +1,8 @@
 /**
  * email 四件 native 轨接线测试（IKJK3V T2 库替代批）：
  *  - send_email：校验 + 确认卡（TS/B2）→ config 帧下发（含授权码，B1 仅内存）→ native 发送（60s 看门狗）；
- *    native 失败不自动重发（发送状态未知，避免重复投递）；宿主未启动时安全回退 nodemailer
+ *    native 在途失败不自动重发（结构化上抛 effectState=unknown，避免重复投递）；
+ *    宿主未启动 / 排队未派发 / E_EMAIL_PRECONDITION 前置失败时安全回退 nodemailer
  *  - email_list / email_read / email_mark：config 帧下发 + native 调用 + 失败回退 + 取消信号透传
  *  - 校验路径（未启用/收件人无效/取消）不触达 native
  */
@@ -38,6 +39,7 @@ vi.mock("../../user-choice", () => ({
 import { nativeToolHost } from "./native-tool-host";
 import { registerEmailTools, setEmailConfig } from "./email-tools";
 import { toolRegistry } from "./registry/tool-registry";
+import { ToolExecutionError } from "./registry/tool-execution-error";
 
 registerEmailTools();
 
@@ -136,20 +138,40 @@ describe("email 四件 native 轨", () => {
     expect(h.requestUserChoice).not.toHaveBeenCalled();
   });
 
-  it("send_email：native 失败不自动重发（发送状态未知提示，nodemailer 不触达）", async () => {
+  it("send_email：native 在途失败结构化上抛 unknown（不自动重发，nodemailer 不触达）", async () => {
     injectConfig();
     h.requestUserChoice.mockResolvedValue("send");
     h.nativeError = new Error("native 工具 send_email 超时");
+
+    const failure = await getTool("send_email").execute(
+      { to: ["to@example.com"], subject: "Hi", body: "Hello" },
+      {},
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ToolExecutionError);
+    expect(failure).toMatchObject({ effectState: "unknown", retryable: false });
+    expect((failure as Error).message).toContain("发送状态未知");
+    expect((failure as Error).message).toContain("不会自动重发");
+    expect(h.sendMail).not.toHaveBeenCalled();
+    expect(h.requestUserChoice).toHaveBeenCalledTimes(1); // 确认只发生一次
+  });
+
+  it("send_email：native 前置失败（E_EMAIL_PRECONDITION）→ 安全回退 nodemailer（确定未发送）", async () => {
+    injectConfig();
+    h.requestUserChoice.mockResolvedValue("send");
+    h.nativeError = Object.assign(
+      new Error("发送失败（未进入发送阶段）：认证失败"),
+      { code: "E_EMAIL_PRECONDITION" },
+    );
+    h.sendMail.mockResolvedValue({ messageId: "m2" });
 
     const out = await getTool("send_email").execute(
       { to: ["to@example.com"], subject: "Hi", body: "Hello" },
       {},
     );
 
-    expect(out).toContain("发送状态未知");
-    expect(out).toContain("不会自动重发");
-    expect(h.sendMail).not.toHaveBeenCalled();
-    expect(h.requestUserChoice).toHaveBeenCalledTimes(1); // 确认只发生一次
+    expect(out).toBe("[send_email] 已发送：to@example.com 主题：Hi");
+    expect(h.sendMail).toHaveBeenCalledTimes(1);
   });
 
   it("send_email：宿主不可用（call 返回 null）→ 安全回退 nodemailer（确定未发送）", async () => {
