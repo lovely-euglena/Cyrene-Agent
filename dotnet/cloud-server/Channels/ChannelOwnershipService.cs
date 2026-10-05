@@ -38,6 +38,8 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     private readonly CancellationTokenSource _shutdown = new();
     private readonly object _pendingStartsLock = new();
     private readonly List<Task> _pendingStarts = new();
+    private readonly object _graceLock = new();
+    private readonly Dictionary<string, DateTimeOffset> _graceDeadlines = new(StringComparer.Ordinal);
 
     public ChannelOwnershipService(
         ChannelStore store,
@@ -93,6 +95,7 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
             {
                 if (byChannel.TryGetValue(channel, out var record) && IsDesktopLeaseValid(record, now))
                 {
+                    // 持久化表未存 TTL（契约冻结）：重启恢复后心跳回落服务端默认 TTL
                     var held = new OwnershipState(
                         OwnerDesktop, record.Holder, ParseLease(record.LeaseExpiresAt), now);
                     SetState(channel, held);
@@ -114,7 +117,11 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
         }
     }
 
-    /// <summary>归属快照（控制面 GET /v1/channels/ownership）。</summary>
+    /// <summary>
+    /// 归属快照（控制面 GET /v1/channels/ownership）。
+    /// leaseTtlSeconds 契约冻结为「服务端默认 TTL」；桌面 claim 传入 per-request TTL 时，
+    /// 心跳续期按该渠道实际 TTL 计算（见 <see cref="HeartbeatAsync"/>），快照不再重复该口径。
+    /// </summary>
     public OwnershipSnapshot GetSnapshot()
     {
         Dictionary<string, OwnershipChannelView> channels;
@@ -167,7 +174,7 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
                 {
                     if (state.Holder == holder)
                     {
-                        var renewed = new OwnershipState(OwnerDesktop, holder, now + ttl, now);
+                        var renewed = new OwnershipState(OwnerDesktop, holder, now + ttl, now, ttl);
                         await PersistAsync(channel, renewed, cancellationToken).ConfigureAwait(false);
                         SetState(channel, renewed);
                         granted.Add(channel);
@@ -184,7 +191,7 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
 
                 cancellationToken.ThrowIfCancellationRequested();
                 await StopForHandoffAsync(channel, cancellationToken).ConfigureAwait(false);
-                var claimed = new OwnershipState(OwnerDesktop, holder, now + ttl, now);
+                var claimed = new OwnershipState(OwnerDesktop, holder, now + ttl, now, ttl);
                 try
                 {
                     await PersistAsync(channel, claimed, cancellationToken).ConfigureAwait(false);
@@ -234,7 +241,8 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
                 }
                 if (state.LeaseExpiresAt > now)
                 {
-                    var next = state with { LeaseExpiresAt = now + LeaseTtl, UpdatedAt = now };
+                    // P2-8：续期沿用该渠道 claim 时的实际 TTL（per-request），无记录（重启恢复）时回落默认
+                    var next = state with { LeaseExpiresAt = now + (state.LeaseTtl ?? LeaseTtl), UpdatedAt = now };
                     await PersistAsync(channel, next, cancellationToken).ConfigureAwait(false);
                     SetState(channel, next);
                     renewed.Add(channel);
@@ -315,8 +323,10 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
                     }
                     continue;
                 }
-                // owner=server 自愈：适配器应运行而未运行（claim 补偿失败/启动失败）→ 补启动
-                if (!_manager.IsRunning(channel))
+                // owner=server 自愈：适配器应运行而未运行（claim 补偿失败/启动失败）→ 补启动；
+                // release 宽限期内跳过（P1-2b）：宽限 5s 是给桌面停本机适配器的窗口，
+                // 若 sweep 立即补启动会与桌面同启、抵消「先停后授」。
+                if (!_manager.IsRunning(channel) && !IsWithinGrace(channel, now))
                 {
                     await StartOwnedAsync(channel, cancellationToken).ConfigureAwait(false);
                 }
@@ -380,14 +390,21 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
         }
     }
 
+    /// <summary>
+    /// 安排 release 宽限后恢复：登记宽限截止（sweep 自愈据此跳过，P1-2b），
+    /// 到期走 <see cref="StartServerOwnedAsync"/>（持 _mutex + 复查归属，P1-2a）——
+    /// 与 claim 串行，claim 已授予时不会再把服务端适配器拉起。
+    /// </summary>
     private void ScheduleServerStart(string channel)
     {
+        var deadline = _clock.GetUtcNow() + ReleaseGrace;
+        lock (_graceLock) _graceDeadlines[channel] = deadline;
         Task task = Task.Run(async () =>
         {
             try
             {
                 await Task.Delay(ReleaseGrace, _shutdown.Token).ConfigureAwait(false);
-                await StartOwnedAsync(channel, _shutdown.Token).ConfigureAwait(false);
+                await StartServerOwnedAsync(channel, _shutdown.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -397,11 +414,35 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
             {
                 _logger.LogWarning(ex, "渠道 release 宽限恢复失败 channel={Channel}", channel);
             }
+            finally
+            {
+                ClearGraceDeadline(channel, deadline);
+            }
         });
         lock (_pendingStartsLock) _pendingStarts.Add(task);
         _ = task.ContinueWith(
             completed => { lock (_pendingStartsLock) _pendingStarts.Remove(completed); },
             CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    private bool IsWithinGrace(string channel, DateTimeOffset now)
+    {
+        lock (_graceLock)
+        {
+            return _graceDeadlines.TryGetValue(channel, out var deadline) && now < deadline;
+        }
+    }
+
+    private void ClearGraceDeadline(string channel, DateTimeOffset deadline)
+    {
+        lock (_graceLock)
+        {
+            // 只清理自己登记的截止时间：期间若再次 release，保留新宽限
+            if (_graceDeadlines.TryGetValue(channel, out var current) && current == deadline)
+            {
+                _graceDeadlines.Remove(channel);
+            }
+        }
     }
 
     /// <summary>
@@ -479,9 +520,10 @@ public sealed class ChannelOwnershipService : IChannelOwnershipGate
     }
 }
 
-/// <summary>内部归属状态（LeaseExpiresAt 已解析）。</summary>
+/// <summary>内部归属状态（LeaseExpiresAt 已解析；LeaseTtl = claim 时实际 TTL，null = 服务端默认）。</summary>
 public sealed record OwnershipState(
-    string Owner, string? Holder, DateTimeOffset? LeaseExpiresAt, DateTimeOffset UpdatedAt);
+    string Owner, string? Holder, DateTimeOffset? LeaseExpiresAt, DateTimeOffset UpdatedAt,
+    TimeSpan? LeaseTtl = null);
 
 /// <summary>控制面快照（leaseExpiresAt 为同步协议 ISO 毫秒字符串）。</summary>
 public sealed record OwnershipSnapshot(

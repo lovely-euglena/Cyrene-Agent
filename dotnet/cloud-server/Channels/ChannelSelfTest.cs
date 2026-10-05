@@ -193,6 +193,21 @@ internal static class ChannelSelfTest
                 await plainStore.LoadCredentialAsync("feishu") == "plain-value"
                 && await plainStore.CredentialProtectionAsync("feishu") == ChannelCredentialProtector.PlainScheme);
 
+            // P2-8：凭据行损坏（tag 长度非法）→ AesGcm 构造抛 ArgumentException，读不到返回 null 不抛
+            using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+            {
+                connection.Open();
+                using var corrupt = connection.CreateCommand();
+                corrupt.CommandText = "UPDATE channel_credentials SET value=@value WHERE channel=@channel";
+                corrupt.Parameters.AddWithValue("@value",
+                    $"{ChannelCredentialProtector.AesGcmScheme}:{Convert.ToBase64String(new byte[12])}:"
+                    + $"{Convert.ToBase64String(Encoding.UTF8.GetBytes("x"))}:{Convert.ToBase64String(new byte[4])}");
+                corrupt.Parameters.AddWithValue("@channel", "wechat");
+                corrupt.ExecuteNonQuery();
+            }
+            check("store: 凭据行损坏返回 null（不抛 ArgumentException）",
+                await store.LoadCredentialAsync("wechat") is null);
+
             await store.UpsertOwnershipAsync("wechat", "server", null, null);
             var ownership = await store.ListOwnershipAsync();
             check("store: 归属表读写原语（状态机属阶段 4）",
@@ -268,6 +283,30 @@ internal static class ChannelSelfTest
         await stopTask;
         check("manager: 启动完成后补停 + IsRunning=false",
             starting.StopCount == 1 && !manager.IsRunning(ChannelIds.Feishu), $"stops={starting.StopCount}");
+
+        // P2-1：停止在途（drain 超时后旧 StopAsync 未完成）时 StartAsync 必须排队等待，不能并发拉起
+        var serialized = new FakeAdapter(ChannelIds.QqBot);
+        manager.Register(serialized);
+        await manager.StartAsync(ChannelIds.QqBot);
+        var order = new List<string>();
+        serialized.StartImpl = () => { order.Add("start"); return Task.CompletedTask; };
+        var stopEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        serialized.StopImpl = _ => { order.Add("stop"); stopEntered.TrySetResult(); return stopGate.Task; };
+        var slowStop = manager.StopAsync(ChannelIds.QqBot);
+        await stopEntered.Task;
+        var queuedStart = manager.StartAsync(ChannelIds.QqBot);
+        await Task.Delay(100);
+        check("manager: 停止在途时 StartAsync 排队等待（按渠道串行）",
+            serialized.StartCount == 1 && !manager.IsRunning(ChannelIds.QqBot),
+            $"starts={serialized.StartCount} running={manager.IsRunning(ChannelIds.QqBot)}");
+        stopGate.TrySetResult();
+        await slowStop;
+        await queuedStart;
+        check("manager: 停止完成后才启动（顺序 stop→start）",
+            order.SequenceEqual(["stop", "start"]) && manager.IsRunning(ChannelIds.QqBot)
+            && serialized.StopCount == 1 && serialized.StartCount == 2,
+            $"order={string.Join(",", order)} stops={serialized.StopCount} starts={serialized.StartCount}");
     }
 
     // ── 4. ServerEventWriter ─────────────────────────────────────────────────
@@ -493,6 +532,9 @@ internal static class ChannelSelfTest
         await CheckOwnershipRestartAsync(Check);
         await CheckOwnershipHandoffSafetyAsync(Check);
         await CheckOwnershipStopSafetyAsync(Check);
+        await CheckOwnershipGraceAsync(Check);
+        await CheckOwnershipLeaseTtlAsync(Check);
+        await CheckChannelApiStatusOwnerAsync(Check);
         await CheckProactiveIdempotencyAsync(Check);
 
         Console.WriteLine(failures == 0
@@ -896,7 +938,194 @@ internal static class ChannelSelfTest
         }
     }
 
-    // ── 13. 主动消息 intentId 幂等与失败回执（§5.4）─────────────────────────
+    // ── 13. release 宽限 × claim/sweep（P1-2a/P1-2b）──────────────────────────
+
+    private static async Task CheckOwnershipGraceAsync(CheckFn check)
+    {
+        // P1-2a①：宽限期内被 claim → 宽限任务到期复查归属后跳过（不会再把服务端适配器拉起）
+        var dir = NewTempDir("ownership-grace-claim");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            var adapter = new FakeAdapter(ChannelIds.WeChat);
+            manager.Register(adapter);
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.FromMilliseconds(300));
+            await ownership.InitializeAsync([ChannelIds.WeChat]);
+            await manager.StartAsync(ChannelIds.WeChat);
+            await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", null);
+            await ownership.ReleaseAsync([ChannelIds.WeChat], "device-a");
+            var claim = await ownership.ClaimAsync([ChannelIds.WeChat], "device-b", null);
+            await Task.Delay(600);
+            check("ownership: 宽限期内被 claim → 宽限任务到期复查跳过（不拉起）",
+                claim.Granted.SequenceEqual([ChannelIds.WeChat])
+                && ownership.GetState(ChannelIds.WeChat).Owner == "desktop"
+                && adapter.StartCount == 1 && !manager.IsRunning(ChannelIds.WeChat),
+                $"starts={adapter.StartCount} running={manager.IsRunning(ChannelIds.WeChat)}");
+            await ownership.CancelPendingStartsAsync();
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+
+        // P1-2a②：宽限启动在途（持 _mutex）时 claim 必须等待；授予后不残留运行中的服务端适配器
+        dir = NewTempDir("ownership-grace-race");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            var adapter = new FakeAdapter(ChannelIds.WeChat);
+            manager.Register(adapter);
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.FromMilliseconds(150));
+            await ownership.InitializeAsync([ChannelIds.WeChat]);
+            await manager.StartAsync(ChannelIds.WeChat);
+            await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", null);
+            var startEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            adapter.StartImpl = () => { startEntered.TrySetResult(); return startGate.Task; };
+            await ownership.ReleaseAsync([ChannelIds.WeChat], "device-a");
+            await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(5)); // 宽限任务已持锁进入启动
+            var claimTask = ownership.ClaimAsync([ChannelIds.WeChat], "device-b", null);
+            await Task.Delay(150);
+            check("ownership: 宽限启动在途时 claim 等待（持锁复查，不并发授予）",
+                !claimTask.IsCompleted, $"completed={claimTask.IsCompleted}");
+            startGate.TrySetResult();
+            var claim = await claimTask;
+            await ownership.CancelPendingStartsAsync();
+            check("ownership: claim 授予后不残留运行中的服务端适配器",
+                claim.Granted.SequenceEqual([ChannelIds.WeChat])
+                && ownership.GetState(ChannelIds.WeChat).Owner == "desktop"
+                && !manager.IsRunning(ChannelIds.WeChat),
+                $"starts={adapter.StartCount} stops={adapter.StopCount} running={manager.IsRunning(ChannelIds.WeChat)}");
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+
+        // P1-2b：sweep 自愈跳过 release 宽限期；宽限到期后可补启动
+        dir = NewTempDir("ownership-sweep-grace");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            var adapter = new FakeAdapter(ChannelIds.WeChat);
+            manager.Register(adapter);
+            var clock = new ManualTimeProvider();
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.FromSeconds(5), clock);
+            await ownership.InitializeAsync([ChannelIds.WeChat]);
+            await manager.StartAsync(ChannelIds.WeChat);
+            await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", null);
+            await ownership.ReleaseAsync([ChannelIds.WeChat], "device-a");
+            var during = await ownership.SweepExpiredAsync();
+            check("ownership: sweep 宽限期内不补启动（不抵消先停后授）",
+                during.Count == 0 && adapter.StartCount == 1 && !manager.IsRunning(ChannelIds.WeChat),
+                $"starts={adapter.StartCount} running={manager.IsRunning(ChannelIds.WeChat)}");
+            clock.Now += TimeSpan.FromSeconds(6);
+            var after = await ownership.SweepExpiredAsync();
+            check("ownership: sweep 宽限到期后自愈补启动",
+                after.Count == 0 && adapter.StartCount == 2 && manager.IsRunning(ChannelIds.WeChat),
+                $"starts={adapter.StartCount} running={manager.IsRunning(ChannelIds.WeChat)}");
+            await ownership.CancelPendingStartsAsync();
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
+    // ── 14. per-request TTL 口径（P2-8）──────────────────────────────────────
+
+    private static async Task CheckOwnershipLeaseTtlAsync(CheckFn check)
+    {
+        var dir = NewTempDir("ownership-ttl");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            var adapter = new FakeAdapter(ChannelIds.WeChat);
+            manager.Register(adapter);
+            var clock = new ManualTimeProvider();
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.Zero, clock);
+            await ownership.InitializeAsync([ChannelIds.WeChat]);
+            await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", 300);
+            clock.Now += TimeSpan.FromSeconds(200);
+            var first = await ownership.HeartbeatAsync([ChannelIds.WeChat], "device-a");
+            // 距 claim 450s：若按默认 180s 续期则已过期（会被收回），按 claim 的 300s 仍有效
+            clock.Now += TimeSpan.FromSeconds(250);
+            var second = await ownership.HeartbeatAsync([ChannelIds.WeChat], "device-a");
+            check("ownership: 心跳续期沿用 claim 实际 TTL（非默认）",
+                first.Renewed.SequenceEqual([ChannelIds.WeChat])
+                && second.Renewed.SequenceEqual([ChannelIds.WeChat])
+                && ownership.GetState(ChannelIds.WeChat).Owner == "desktop",
+                JsonSerializer.Serialize(second));
+            var snapshot = ownership.GetSnapshot();
+            check("ownership: 快照 leaseTtlSeconds 口径=服务端默认（契约冻结）",
+                snapshot.LeaseTtlSeconds == 180
+                && snapshot.Channels[ChannelIds.WeChat].Owner == "desktop");
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
+    // ── 15. status 端点 detail.owner 覆盖（P2-7）────────────────────────────
+
+    private static async Task CheckChannelApiStatusOwnerAsync(CheckFn check)
+    {
+        var dir = NewTempDir("ownership-api-status");
+        try
+        {
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"));
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            var wechat = new FakeAdapter(ChannelIds.WeChat)
+            {
+                StatusDetail = JsonSerializer.SerializeToElement(new { owner = "server", botId = "bot-1" }),
+            };
+            var feishu = new FakeAdapter(ChannelIds.Feishu)
+            {
+                StatusDetail = JsonSerializer.SerializeToElement(new { owner = "server", webhook = "ready" }),
+            };
+            manager.Register(wechat);
+            manager.Register(feishu);
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.Zero);
+            await ownership.InitializeAsync([ChannelIds.WeChat, ChannelIds.Feishu]);
+            await manager.StartAsync(ChannelIds.Feishu);
+            await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", null);
+
+            var payload = ChannelApi.BuildStatusPayload(manager, ownership);
+            var views = payload.GetProperty("channels").EnumerateArray()
+                .ToDictionary(item => item.GetProperty("id").GetString()!, StringComparer.Ordinal);
+            check("api: status detail.owner 按归属覆盖（desktop）+ 其余字段保留",
+                views[ChannelIds.WeChat].GetProperty("owner").GetString() == "desktop"
+                && views[ChannelIds.WeChat].GetProperty("detail").GetProperty("owner").GetString() == "desktop"
+                && views[ChannelIds.WeChat].GetProperty("detail").GetProperty("botId").GetString() == "bot-1",
+                views[ChannelIds.WeChat].GetRawText());
+            check("api: status detail.owner 服务端持有保持 server",
+                views[ChannelIds.Feishu].GetProperty("owner").GetString() == "server"
+                && views[ChannelIds.Feishu].GetProperty("detail").GetProperty("owner").GetString() == "server"
+                && views[ChannelIds.Feishu].GetProperty("detail").GetProperty("webhook").GetString() == "ready",
+                views[ChannelIds.Feishu].GetRawText());
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
+    // ── 16. 主动消息 intentId 幂等与失败回执（§5.4）─────────────────────────
 
     private static async Task CheckProactiveIdempotencyAsync(CheckFn check)
     {
@@ -1001,6 +1230,7 @@ internal static class ChannelSelfTest
         public int StartCount { get; private set; }
         public int StopCount { get; private set; }
         public int SendCount { get; private set; }
+        public JsonElement? StatusDetail { get; set; }
         public Func<OutgoingMessage, ChannelSendResult> SendImpl { get; set; } = _ => ChannelSendResult.Success;
         public Func<Task>? StartImpl { get; set; }
         public Func<CancellationToken, Task>? StopImpl { get; set; }
@@ -1023,7 +1253,12 @@ internal static class ChannelSelfTest
             return Task.FromResult(SendImpl(message));
         }
 
-        public ChannelStatus GetStatus() => new() { Enabled = true, Phase = ChannelPhases.Running };
+        public ChannelStatus GetStatus() => new()
+        {
+            Enabled = true,
+            Phase = ChannelPhases.Running,
+            Detail = StatusDetail,
+        };
     }
 
     private sealed class FakeDialogEngine : IDialogEngine

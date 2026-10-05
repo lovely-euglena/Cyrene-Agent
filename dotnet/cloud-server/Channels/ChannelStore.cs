@@ -372,5 +372,10 @@ public sealed class ChannelCredentialProtector
         {
             return null;
         }
+        catch (ArgumentException)
+        {
+            // P2-8：AesGcm 构造/解密对非法 nonce/tag 长度抛 ArgumentException（凭据行损坏）
+            return null;
+        }
     }
 }
