@@ -45,6 +45,7 @@ internal static class WeChatSelfTest
         await CheckAdapterMediaAsync(Check);
         await CheckReconnectAsync(Check);
         await CheckQrLoginAsync(Check);
+        await CheckQrLoginOwnershipAsync(Check);
         CheckRegistration(Check);
 
         Console.WriteLine(failures == 0
@@ -924,6 +925,70 @@ internal static class WeChatSelfTest
             check("QR: logout 删凭据 + 停适配器（幂等）",
                 await store.LoadCredentialAsync(ChannelIds.WeChat) is null && fake.StopCount == 2,
                 $"stops={fake.StopCount}");
+        }
+        finally
+        {
+            CleanupTempDir(dir);
+        }
+    }
+
+    // ── 6b. 扫码确认 × 归属门闩（R3 P2-3）：桌面持有中完成扫码确认不拉起服务端适配器 ──
+
+    private static async Task CheckQrLoginOwnershipAsync(CheckFn check)
+    {
+        var dir = NewTempDir("wechat-qr-ownership");
+        try
+        {
+            var options = new ChannelOptions { EnabledChannels = [ChannelIds.WeChat], DataDir = dir };
+            var protector = ChannelCredentialProtector.Create("test-master-token", dir);
+            var store = new ChannelStore(Path.Combine(dir, "channels.db"), protector);
+            var manager = new ChannelManager(NullLogger<ChannelManager>.Instance);
+            var fake = new FakeAdapter(ChannelIds.WeChat);
+            manager.Register(fake);
+            var ownership = new ChannelOwnershipService(
+                store, manager, NullLogger<ChannelOwnershipService>.Instance,
+                "test-server", TimeSpan.FromSeconds(180), TimeSpan.Zero);
+            await ownership.InitializeAsync([ChannelIds.WeChat]);
+            await manager.StartAsync(ChannelIds.WeChat);
+            var claim = await ownership.ClaimAsync([ChannelIds.WeChat], "device-a", null);
+            check("QR 归属: 桌面 claim 后服务端适配器已停（场景准备）",
+                claim.Granted.SequenceEqual([ChannelIds.WeChat])
+                && fake.StartCount == 1 && fake.StopCount == 1
+                && !manager.IsRunning(ChannelIds.WeChat),
+                $"starts={fake.StartCount} stops={fake.StopCount}");
+
+            var handler = new MockILinkHandler();
+            handler.QrStatuses.Enqueue("""
+                {"status":"confirmed","bot_token":"tok-r3","ilink_bot_id":"bot-r3",
+                 "baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"u-r3"}
+                """);
+            using var http = NewHttp(handler);
+            var login = new WeChatQrLogin(
+                options, store, manager, NullLogger<WeChatQrLogin>.Instance,
+                () => new ILinkLoginClient(http, "https://mock.ilink.test", () => "dGVzdC11aW4="),
+                TimeSpan.FromMilliseconds(10));
+            var started = await login.StartAsync();
+            check("QR 归属: 桌面持有中扫码确认不重启服务端适配器（无双连接）",
+                await WaitUntilAsync(() => login.GetStatus(started.LoginId!).Error?.Contains("交回后") == true,
+                    TimeSpan.FromSeconds(5))
+                && fake.StartCount == 1 && fake.StopCount == 1
+                && !manager.IsRunning(ChannelIds.WeChat),
+                $"starts={fake.StartCount} stops={fake.StopCount} status={JsonSerializer.Serialize(login.GetStatus(started.LoginId!))}");
+            check("QR 归属: 状态提示「交回后加载」",
+                login.GetStatus(started.LoginId!).Status == "confirmed"
+                && login.GetStatus(started.LoginId!).BotId == "bot-r3"
+                && login.GetStatus(started.LoginId!).Error?.Contains("交回后") == true,
+                JsonSerializer.Serialize(login.GetStatus(started.LoginId!)));
+            var credential = await store.LoadCredentialAsync(ChannelIds.WeChat);
+            check("QR 归属: 凭据已落库（交回后由归属启动加载）",
+                credential is not null && credential.Contains("bot-r3"), credential ?? "null");
+
+            // 桌面交回：宽限 0 → 服务端适配器恢复（与普通 release 同一归属入口）
+            var release = await ownership.ReleaseAsync([ChannelIds.WeChat], "device-a");
+            check("QR 归属: 桌面交回后服务端适配器恢复",
+                release.Released.SequenceEqual([ChannelIds.WeChat])
+                && fake.StartCount == 2 && manager.IsRunning(ChannelIds.WeChat),
+                $"starts={fake.StartCount} released={JsonSerializer.Serialize(release)}");
         }
         finally
         {

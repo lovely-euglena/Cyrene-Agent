@@ -65,6 +65,8 @@ public sealed class QqBotAdapter : IChannelAdapter, IChannelSendRetryPolicy
     private DateTimeOffset? _startedAt;
     private bool _wsReady;
     private string _lastErrorCode = "";
+    // R3 P2-6.3：网关启动失败日志节流——sweep 每 5s 自愈重试，持续失败只在首次记 Error（节奏不变）
+    private bool _gatewayFailureLogged;
     private string? _lastRejectedOpenId;
     private long _ignoredGroupEvents;
 
@@ -123,6 +125,10 @@ public sealed class QqBotAdapter : IChannelAdapter, IChannelSendRetryPolicy
             ws = CreateWsClient(gatewayUrl, api);
             _ws = ws;
             await ws.StartAsync(cancellationToken);
+            // P2-6.3：启动成功清理上一轮自愈残留——detail.lastErrorCode 不跨成功周期残留，
+            // 失败日志节流标记复位（下次失败重新按首次 Error 记录）
+            _lastErrorCode = "";
+            _gatewayFailureLogged = false;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -131,7 +137,16 @@ public sealed class QqBotAdapter : IChannelAdapter, IChannelSendRetryPolicy
         catch (Exception ex)
         {
             _lastErrorCode = ErrorCodeGateway;
-            _logger.LogError(ex, "QQ Bot 网关启动失败 channel={Channel}", Id);
+            // P2-6.3：sweep 每 5s 重试——持续失败只在首次记 Error，后续降 Debug，避免刷屏（节奏不变）
+            if (_gatewayFailureLogged)
+            {
+                _logger.LogDebug(ex, "QQ Bot 网关启动失败（持续失败，日志已按状态变化节流）channel={Channel}", Id);
+            }
+            else
+            {
+                _logger.LogError(ex, "QQ Bot 网关启动失败 channel={Channel}", Id);
+            }
+            _gatewayFailureLogged = true;
             SetStatus(ChannelPhases.Error, ex.Message);
             // P2-3(a)：失败必须冒泡——ChannelManager.StartAsync 不标记 started，sweep 才能自愈重试；
             // 同时释放本次启动资源，避免重试时泄漏（注入的 api 归调用方）。
@@ -425,6 +440,12 @@ public sealed class QqBotAdapter : IChannelAdapter, IChannelSendRetryPolicy
     private void HandleReadyChange(bool ready)
     {
         _wsReady = ready;
+        if (ready)
+        {
+            // P2-6.3：网关自愈成功（重连 READY）清理残留错误码与失败日志节流标记
+            _lastErrorCode = "";
+            _gatewayFailureLogged = false;
+        }
         var nickname = _ws?.BotNickname ?? "";
         SetStatus(
             ready ? ChannelPhases.Running : ChannelPhases.Starting,

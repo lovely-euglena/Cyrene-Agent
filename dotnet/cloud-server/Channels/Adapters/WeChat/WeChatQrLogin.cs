@@ -255,15 +255,27 @@ public sealed class WeChatQrLogin
         state.BotId = credentials.IlinkBotId;
         SetState(state, "confirmed", null);
         _logger.LogInformation("微信扫码登录成功 botId={BotId}", credentials.IlinkBotId);
-        await RestartAdapterAsync(cancellationToken);
+        await RestartAdapterAsync(state, cancellationToken);
     }
 
-    private async Task RestartAdapterAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// 扫码确认后加载新凭据（R3 P2-3）：重启前先做归属判定——
+    /// owner=desktop 期间只落凭据、不拉起服务端适配器（避免与桌面双连接），状态提示「交回后加载」；
+    /// release 宽限/下轮 sweep 会按归属重新评估并加载新凭据。
+    /// </summary>
+    private async Task RestartAdapterAsync(LoginState state, CancellationToken cancellationToken)
     {
+        var channel = ILinkBotAdapter.CredentialChannel;
+        if (!_manager.IsStartAllowed(channel))
+        {
+            SetState(state, "confirmed", "凭据已保存；渠道当前由桌面端持有，交回后自动加载");
+            _logger.LogInformation("微信扫码凭据已更新，但渠道由桌面持有，等待交回后加载 channel=wechat");
+            return;
+        }
         try
         {
-            await _manager.StopAsync(ILinkBotAdapter.CredentialChannel, cancellationToken);
-            await _manager.StartAsync(ILinkBotAdapter.CredentialChannel, cancellationToken);
+            await _manager.StopAsync(channel, cancellationToken);
+            await _manager.StartAsync(channel, cancellationToken);
         }
         catch (Exception ex)
         {
