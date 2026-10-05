@@ -46,11 +46,13 @@ config.json
 onnx/model_quantized.onnx
 ```
 
-> 三个文件齐全且大小达标才会被判定为「已安装」；缺文件时设置页会列出缺少项。
+> 设置页/运行链路的探测只按三个必装文件**是否齐全**判定「已安装」（缺文件时
+> 会列出缺少项），**不校验大小**；大小达标由下载窗与安装脚本保证——口径与
+> `dotnet/native-windows/ModelDownload/ModelDownloader.cs` 的 `ModelDownloadSpecs`
+> 一致（onnx ≥ 50MB、tokenizer ≥ 1MB、config ≥ 10B）。截断/损坏的文件不会被
+> 设置页拦截，请用下载窗或脚本重新下载。
 > 建议一并下载 `tokenizer_config.json`、`special_tokens_map.json`、
 > `sentencepiece.bpe.model`（transformers.js 兜底路径更稳，脚本与下载窗会自动带上）。
-> 大小校验口径与 `dotnet/native-windows/ModelDownload/ModelDownloader.cs` 的
-> `ModelDownloadSpecs`（onnx ≥ 50MB、tokenizer ≥ 1MB、config ≥ 10B）一致。
 
 ## 3. 放置目录
 

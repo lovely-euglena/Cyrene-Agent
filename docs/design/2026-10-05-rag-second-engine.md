@@ -32,7 +32,8 @@
   `RerankerMode = 'standard' | 'v2-m3' | 'none'`（`src/main/settings/model-settings.ts`）；
 - 必装文件（四模型同构）：`onnx/model_quantized.onnx`（≥50MB）、`tokenizer.json`（≥1MB）、
   `config.json`（≥10B）；可选：`tokenizer_config.json`、`special_tokens_map.json`、
-  `sentencepiece.bpe.model`。下载窗 / 脚本 / TS 探测三处同口径。
+  `sentencepiece.bpe.model`。大小达标由下载窗 / 脚本保证（与 `ModelDownloadSpecs`
+  同口径）；TS 设置页探测只按文件是否齐全判定，不校验大小（截断文件由下载器/脚本拦截）。
 
 ## 3. 协议与数据流
 
@@ -103,5 +104,12 @@
    transformers.js worker 回退路径对 e5-small / v2-m3 尚未在真实设备上验证。
 3. **HF-cache-only 对 v2-m3 无兜底**：v2-m3 源仓库是 `onnx-community/*`，HF 缓存布局
    不在 `Xenova/` 下；只放 HF 缓存而不放项目 `models/bge-reranker-v2-m3/` 时探测不到。
-4. **rebuild 无进度信道**：`EmbeddingSwitchOptions.onProgress` 已预留，但 IPC / native
-   通道未透出进度；重建期间 UI 只显示 loading 文案（「正在重建索引…」）。
+4. **rebuild 无进度信道、暂不支持取消**：`EmbeddingSwitchOptions.onProgress` /
+   `isCancelled` 已预留，但 IPC / native 通道未透出进度、也未接入取消入口
+   （生产调用方均不传 options）；重建期间 UI 只显示 loading 文案（「正在重建索引…」）。
+   主进程侧已做提交前取消检查（`reembedAll` 落盘前再查一次 `isCancelled`），
+   后续接入 UI 时无需再改迁移核心。
+5. **旧 sidecar（无池）doc-import 的路由确认**：旧 exe 忽略请求 `modelDir` 且
+   doc-import 响应无 `dim`/`modelKey`，客户端在发送前按 ready 维度/启动参数确认；
+   无法确认时先回退重启一次，重启后仍无法确认则失败（不写入错误维度向量）。
+   新 exe 的 doc-import 响应回显 `modelKey`/`dim`，与 embed/search 同口径断言。

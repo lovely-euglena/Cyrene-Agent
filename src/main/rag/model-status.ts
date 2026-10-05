@@ -14,7 +14,9 @@ export interface ModelInstallStatus {
   reranker: { standard: boolean; "v2-m3": boolean };
 }
 
-// All models require these files to be considered "installed"
+// All models require these files to be considered "installed".
+// 仅检查存在性（不校验大小）：大小达标由下载窗/安装脚本的 MinBytes 口径保证，
+// 见 docs/local-models.md 第 2 节与 ModelDownloadSpecs。
 const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
 
 // Possible sub-paths for each model.
