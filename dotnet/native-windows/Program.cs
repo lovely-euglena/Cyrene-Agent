@@ -1,3 +1,4 @@
+using System.IO;
 using WpfApplication = System.Windows.Application;
 
 namespace CyreneNative;
@@ -10,11 +11,17 @@ namespace CyreneNative;
 ///                              sidebar / tasks 三个原生窗口，协议见
 ///                              HostProtocol。stdin EOF（宿主退出）→
 ///                              全窗口安全关闭。
-///   cyrene-native --tray       分离托盘模式：NotifyIcon 常驻 +
+///   cyrene-native --tray [--scheduler] [--data-dir <dir>]
+///                              分离托盘模式：NotifyIcon 常驻 +
 ///                              named pipe cyrene-tray + spawn/管理
-///                              Electron 主程序（见 TrayHost）。托盘
-///                              独立于 Electron 生死——Electron 全退
-///                              后仅托盘驻留（~20MB vs 主进程 ~150MB）。
+///                              Electron 主程序 + 常驻调度
+///                              （SchedulerStore/Engine，见 TrayHost /
+///                              TraySchedulerHost）。托盘独立于 Electron
+///                              生死——Electron 全退后仅托盘驻留
+///                              （~20MB vs 主进程 ~150MB）。
+///                              --scheduler 启动即调度；缺省仅托盘 UI，
+///                              待 Electron 经 sched.mode arm。
+///                              --data-dir 缺省 %APPDATA%\Cyrene。
 /// </summary>
 public static class Program
 {
@@ -27,8 +34,12 @@ public static class Program
 
         if (args.Length > 0 && args[0] == "--tray")
         {
-            TrayHost.Run(TrayHost.ResolveElectronExe());
-            return 0;
+            // --data-dir：登录项传 Electron userData；缺省 %APPDATA%\Cyrene（productName）。
+            // --scheduler：登录项启用常驻调度；缺省仅托盘 UI（等 Electron sched.mode arm）。
+            return TrayHost.Run(
+                TrayHost.ResolveElectronExe(),
+                ResolveTrayDataDir(args),
+                Array.IndexOf(args, "--scheduler") >= 0);
         }
 
         // MCP 桥宿主模式：无窗口后台进程，承载全部 MCP server 连接管理
@@ -142,5 +153,21 @@ public static class Program
         app.Run();
         protocol.Dispose();
         return 0;
+    }
+
+    /// <summary>
+    /// --tray 的 data-dir：登录项传 Electron userData（`--data-dir &lt;dir&gt;`）；
+    /// 缺省 %APPDATA%\Cyrene（productName），保证无参 `--tray` 启动仍可用。
+    /// </summary>
+    private static string ResolveTrayDataDir(string[] args)
+    {
+        for (var i = 0; i + 1 < args.Length; i++)
+        {
+            if (args[i] == "--data-dir" && !string.IsNullOrWhiteSpace(args[i + 1]))
+                return args[i + 1];
+        }
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "Cyrene");
     }
 }
