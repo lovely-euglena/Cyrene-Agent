@@ -150,7 +150,7 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 
 ### 真机冒烟清单（§1.3 豁免项的替代证据入口）
 
-CI 用 mock e2e（`scripts/channel-smoke-test.py`，57 项；Linux CI 追加 4 项落盘权限断言 = 61 项）+ C# 自测（`channel-selftest all`，266 项）覆盖协议与编排；
+CI 用 mock e2e（`scripts/channel-smoke-test.py`，57 项；Linux CI 追加 4 项落盘权限断言 = 61 项）+ C# 自测（`channel-selftest all`，286 项；无 ffmpeg，含 ffmpeg 287）覆盖协议与编排；
 以下**真机项**需人工执行一次，并在部署/PR 记录日期、commit、结果（截图或日志片段）；
 执行前一律为「待真机执行时确认」口径，不写「已验证」：
 
@@ -258,11 +258,11 @@ python scripts/dotnet-cloud-sync-test.py        # 本地 full：同步收敛 + �
 python scripts/dotnet-cloud-sync-test.py --profile core   # 本地核心档（同步核心 + 配对 + 能力声明）
 python scripts/dotnet-cloud-sync-test.py --base-url URL --master-token TOKEN   # 远端形态核心档（CF / PHP / …）
 python scripts/dotnet-cloud-sync-test.py <发布目录>/cyrene-cloud-server.dll   # 裸产物直测
-dotnet <发布目录>/cyrene-cloud-server.dll channel-selftest all   # 渠道五套 C# 自测（framework/wechat/feishu/qqbot/ownership；266 项，mock HTTP/WS 无网络）
+dotnet <发布目录>/cyrene-cloud-server.dll channel-selftest all   # 渠道五套 C# 自测（framework/wechat/feishu/qqbot/ownership；286 项（无 ffmpeg，含 ffmpeg 287），mock HTTP/WS 无网络）
 #   `--selftest <suite>` 为同义通用别名（如 --selftest wechat）；未知子集退出码 2，不会误落回真服务启动
 python scripts/channel-smoke-test.py <发布目录>/cyrene-cloud-server.dll   # 渠道 mock e2e（iLink 扫码/文本/图片/重连、飞书 webhook 加密/去重/别名/413、QQ 网关被动回复、归属（含 401/越权反向断言）、主动消息；57 项，Linux +4 落盘权限）
-dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels   # 渠道契约 fixtures（C# 侧 runner，61 项；TS 侧 npx vitest run src/main/channels）
-npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"   # schema 规范校验（draft-07，61 例全过；命令同 fixtures/channels/README.md）
+dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels   # 渠道契约 fixtures（C# 侧 runner，62 项；TS 侧 npx vitest run src/main/channels）
+npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"   # schema 规范校验（draft-07，62 例全过；命令同 fixtures/channels/README.md）
 node scripts/pwa-e2e-test.mjs <发布目录>/cyrene-cloud-server.dll   # 手机 PWA e2e（Microsoft Edge 通道：配对/查看/续聊/离线缓存）
 node scripts/pwa-e2e-test.mjs --base-url URL --master-token TOKEN   # 远端 e2e（不 spawn；--expect-echo 开启生成断言）
 ```

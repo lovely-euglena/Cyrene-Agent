@@ -5,8 +5,9 @@
 > 服务端自主主动消息调度未做（依赖 IKJK2O，§5.4 Q3）；真机冒烟待人工执行（清单见 `dotnet/cloud-server/README.md`「真机冒烟清单」）。
 > **R1 评审收口（2026-10-05）**：飞书出站缺省 `receive_id_type=chat_id`（§6.3）、`E_CHANNEL_UNSUPPORTED`（§5.2）、
 > preferServer 已实现（§5.5）、QQ 附件-only 拦截文案（§7.2/Q7）等已并入；`healthz.channels` 与 RSS>380MB 告警
-> 本批未实现（§3.5/§5.7/§8.3，后续批次）；fixtures 61 例。
+> 本批未实现（§3.5/§5.7/§8.3，后续批次）；fixtures 62 例。
 > **R2 评审收口（2026-10-05）**：契约 runner 布尔比较 + 负向探针（§8.1）、归属宽限任务持锁复查与 sweep 跳过宽限期（§5.3）、preferServer 空集交回（§5.5）、`status.detail.owner` 按归属覆盖（§2.2）、QQ 确定性失败不重试（§7.2）、QQ/微信畸形输入按 JS 语义对齐（§2.2）。
+> **R3 评审收口（2026-10-05）**：生命周期锁有界等待与归属启动门闩（§5.1/§5.3）、扫码确认重启受归属约束（§5.3）、QQ 发送限时与错误码清理（§7.2）、微信时间戳越界与飞书同口径（§2.2）、真机清单补明文时间戳确认项（§6.2）。
 > **关联**：RFC `docs/design/2026-10-03-cloud-cyrene-rfc.md`（§0.3 阶段范围 / §1 总体架构 / §6 issue 映射）·
 > 服务端四形态 `docs/design/2026-10-04-cloud-server-forms.md` · 同步协议 v0
 > `docs/specs/2026-10-04-sync-protocol-v0.md` + `fixtures/sync-protocol/` ·
@@ -627,7 +628,7 @@ fixtures/channels/
 ├─ schema/channel-contract-v1.schema.json   规范镜像（非执行器）：IncomingMessage/OutgoingMessage/派生 id
 ├─ feishu-webhook/*.json              飞书 webhook 回放（非双端契约；channel-selftest feishu 用）：
 │                                     challenge 明文/加密、坏签名、越界时间戳、密文文本/图片、群忽略、重投去重
-└─ cases/                             共 61 例（2026-10-05 R2 收口）
+└─ cases/                             共 62 例（2026-10-05 R3 收口）
    ├─ inbound-wechat-*.json     （§3.2 清单 + message_type 严格 ==1 边界 2 例）
    ├─ inbound-feishu-*.json     （文本/图片/文件/音频、群忽略、缺时间戳、content 非字符串 3 例、duration 非整数）
    ├─ inbound-qqbot-*.json      （C2C/群 @/附件/白名单拒/缺 openid/坏时间戳/未知事件）
@@ -651,7 +652,7 @@ case 格式（与 sync-protocol 同风格）：
 ```
 
 - `kind`：`inbound` / `outbound` / `derived-ids` / `text-split` / `capability`；`expect` 逐字段 deep-equal（缺省键必须缺省）；
-- schema 规范校验（draft-07，61 例全过）：`npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"`（命令与说明见 fixtures README）；
+- schema 规范校验（draft-07，62 例全过）：`npx --yes ajv-cli@5 validate -s fixtures/channels/schema/channel-contract-v1.schema.json -d "fixtures/channels/cases/*.json"`（命令与说明见 fixtures README）；
 - 用例来源：桌面适配器现有测试向量 + 协议文档样例 + 匿名化真机抓包（§3.2）；
 - 破坏性修改（字段/枚举）必须同时改 TS 类型、C# record、schema、fixtures，双端 runner 全绿才算契约成立。
 
