@@ -5,7 +5,7 @@ namespace CyreneCloud.Channels.Adapters.WeChat;
 
 /// <summary>
 /// 微信渠道 HTTP 辅助（§3.5 内存预算：连接池复用、响应体上限流式读取）。
-/// 超时统一由调用方 CTS 控制（长轮询 40s / 普通请求 30s），HttpClient 自身不设超时。
+/// 超时统一由调用方 CTS 控制（长轮询 40s / 普通请求 30s / CDN 传输 60s），HttpClient 自身不设超时。
 /// </summary>
 internal static class WeChatHttp
 {

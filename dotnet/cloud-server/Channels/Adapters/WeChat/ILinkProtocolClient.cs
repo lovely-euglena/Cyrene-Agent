@@ -17,7 +17,7 @@ namespace CyreneCloud.Channels.Adapters.WeChat;
 /// ret=-14 → <see cref="ILinkSessionExpiredException"/>（不重试，等人工重登）。
 /// 构造注入 <see cref="HttpClient"/>（测试用 mock HttpMessageHandler，无网络）。
 /// </summary>
-public sealed class ILinkProtocolClient
+public sealed class ILinkProtocolClient : IDisposable
 {
     public const string DefaultBaseUrl = "https://ilinkai.weixin.qq.com";
     public const string ChannelVersion = "2.0.0";
@@ -29,15 +29,18 @@ public sealed class ILinkProtocolClient
     private const int MaxResponseBytes = 4 * 1024 * 1024;
 
     private readonly HttpClient _http;
+    private readonly bool _ownsHttp;
     private readonly string _baseUrl;
     private readonly string _botToken;
     private readonly string _wechatUin;
+    private bool _disposed;
 
     public ILinkProtocolClient(
         ILinkCredentials credentials,
         HttpClient? http = null,
         Func<string>? wechatUin = null)
     {
+        _ownsHttp = http is null;
         _http = http ?? WeChatHttp.CreateClient();
         _baseUrl = (string.IsNullOrWhiteSpace(credentials.BaseUrl) ? DefaultBaseUrl : credentials.BaseUrl.TrimEnd('/'));
         _botToken = credentials.BotToken;
@@ -84,7 +87,7 @@ public sealed class ILinkProtocolClient
             foreach (var wire in msgs.EnumerateArray())
             {
                 var messageType = ChannelJsonValue.NumberOrNull(wire, "message_type");
-                if (messageType is null || (int)messageType.Value != 1) continue; // 过滤 bot 自身回声
+                if (messageType != 1) continue; // 过滤 bot 自身回声（非整数同过滤，与桌面 TS 严格 ===1 一致）
                 messages.Add(ToWeixinMessage(wire));
             }
         }
@@ -255,21 +258,43 @@ public sealed class ILinkProtocolClient
         var value = Random.Shared.NextInt64(0, 0x1_0000_0000L);
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(value.ToString(CultureInfo.InvariantCulture)));
     }
+
+    /// <summary>释放自建 HttpClient 的连接池（注入的 HttpClient 归调用方管理）。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (_ownsHttp) _http.Dispose();
+    }
 }
 
 /// <summary>
 /// iLink 匿名登录客户端（get_bot_qrcode / get_qrcode_status；无 bot 凭据，仅 X-WECHAT-UIN）。
 /// 桌面同流程见 `qr.ts` + `init.ts`（qrcode_img_content 是 liteapp URL，需渲染成二维码）。
 /// </summary>
-public sealed class ILinkLoginClient
+public sealed class ILinkLoginClient : IDisposable
 {
     private readonly HttpClient _http;
+    private readonly bool _ownsHttp;
     private readonly string _baseUrl;
     private readonly string _wechatUin;
+    private bool _disposed;
 
     public ILinkLoginClient(HttpClient http, string baseUrl, Func<string>? wechatUin = null)
+        : this(http, baseUrl, wechatUin, ownsHttp: false)
+    {
+    }
+
+    /// <summary>自建 HttpClient（默认工厂用；Dispose 时释放连接池）。</summary>
+    public ILinkLoginClient(string baseUrl, Func<string>? wechatUin = null)
+        : this(WeChatHttp.CreateClient(), baseUrl, wechatUin, ownsHttp: true)
+    {
+    }
+
+    private ILinkLoginClient(HttpClient http, string baseUrl, Func<string>? wechatUin, bool ownsHttp)
     {
         _http = http;
+        _ownsHttp = ownsHttp;
         _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? ILinkProtocolClient.DefaultBaseUrl : baseUrl.TrimEnd('/');
         _wechatUin = (wechatUin ?? ILinkProtocolClient.RandomWechatUin)();
     }
@@ -299,6 +324,8 @@ public sealed class ILinkLoginClient
 
     private async Task<JsonElement> GetJsonAsync(string url, CancellationToken cancellationToken)
     {
+        // qrcode ticket 是登录会话凭据：异常只带 path，不带查询参数（与桌面同口径）
+        var path = PathOnly(url);
         try
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -309,19 +336,31 @@ public sealed class ILinkLoginClient
             var text = await WeChatHttp.ReadLimitedStringAsync(response.Content, 4 * 1024 * 1024, linked.Token);
             if (!response.IsSuccessStatusCode)
             {
-                throw new ILinkProtocolException($"HTTP {(int)response.StatusCode} GET {url}: {text[..Math.Min(200, text.Length)]}");
+                throw new ILinkProtocolException($"HTTP {(int)response.StatusCode} GET {path}: {text[..Math.Min(200, text.Length)]}");
             }
             using var document = JsonDocument.Parse(text);
             return document.RootElement.Clone();
         }
         catch (JsonException)
         {
-            throw new ILinkProtocolException($"非 JSON 响应 GET {url}");
+            throw new ILinkProtocolException($"非 JSON 响应 GET {path}");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new ILinkProtocolException($"GET {url} 超时");
+            throw new ILinkProtocolException($"GET {path} 超时");
         }
+    }
+
+    /// <summary>只取 URL path（查询串可能含 qrcode ticket 等会话凭据，不进日志/异常）。</summary>
+    private static string PathOnly(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : url;
+
+    /// <summary>释放自建 HttpClient 的连接池（注入的 HttpClient 归调用方管理）。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (_ownsHttp) _http.Dispose();
     }
 }
 

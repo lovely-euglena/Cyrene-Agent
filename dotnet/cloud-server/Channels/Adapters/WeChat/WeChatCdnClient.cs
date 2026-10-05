@@ -20,19 +20,25 @@ public static class WeChatMediaTypes
 ///
 /// 上传：AES-128-ECB 加密 → getuploadurl（filekey/rawsize/rawfilemd5/filesize/aeskey）→
 /// CDN `POST /c2c/upload`（x-encrypted-param 响应头）；下载：`GET /c2c/download?encrypted_query_param=`，
-/// aes_key 支持 hex / base64 / 双层 hex，encrypt_type===0 时不解密。全部走注入的 HttpClient（测试 mock）。
+/// aes_key 支持 hex / base64 / 双层 hex，encrypt_type===0 时不解密。全部走注入的 HttpClient（测试 mock）；
+/// CDN GET/POST 用 linked CTS 限时（默认 60s），连接挂起不会无限期阻塞长轮询。
 /// </summary>
 public sealed class WeChatCdnClient
 {
     public const string DefaultBaseUrl = "https://novac2c.cdn.weixin.qq.com/c2c";
 
+    /// <summary>CDN 传输超时（含连接与响应体读取；测试可注入更短值）。</summary>
+    public static readonly TimeSpan DefaultTransferTimeout = TimeSpan.FromSeconds(60);
+
     private readonly HttpClient _http;
     private readonly string _baseUrl;
+    private readonly TimeSpan _transferTimeout;
 
-    public WeChatCdnClient(HttpClient http, string? baseUrl = null)
+    public WeChatCdnClient(HttpClient http, string? baseUrl = null, TimeSpan? transferTimeout = null)
     {
         _http = http;
         _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? DefaultBaseUrl : baseUrl.TrimEnd('/');
+        _transferTimeout = transferTimeout ?? DefaultTransferTimeout;
     }
 
     // ── 下载 ────────────────────────────────────────────────────────────────
@@ -47,14 +53,23 @@ public sealed class WeChatCdnClient
         }
         var key = DecodeAesKey(media.AesKey);
         var url = $"{_baseUrl}/download?encrypted_query_param={Uri.EscapeDataString(encryptQueryParam)}";
-        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(_transferTimeout);
+        try
         {
-            var message = await SafeReadAsync(response, cancellationToken);
-            throw new WeChatCdnException($"CDN download failed: HTTP {(int)response.StatusCode} {Truncate(message)}");
+            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, linked.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await SafeReadAsync(response, linked.Token);
+                throw new WeChatCdnException($"CDN download failed: HTTP {(int)response.StatusCode} {Truncate(message)}");
+            }
+            var encrypted = await WeChatHttp.ReadLimitedBytesAsync(response.Content, maxBytes, linked.Token);
+            return media.EncryptType == 0 ? encrypted : DecryptEcb(encrypted, key);
         }
-        var encrypted = await WeChatHttp.ReadLimitedBytesAsync(response.Content, maxBytes, cancellationToken);
-        return media.EncryptType == 0 ? encrypted : DecryptEcb(encrypted, key);
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new WeChatCdnException($"CDN 下载超时（{_transferTimeout.TotalSeconds:0}s）");
+        }
     }
 
     // ── 上传 ────────────────────────────────────────────────────────────────
@@ -100,25 +115,34 @@ public sealed class WeChatCdnClient
 
         using var content = new ByteArrayContent(ciphertext);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        using var response = await _http.PostAsync(uploadUrl, content, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(_transferTimeout);
+        try
         {
-            var errorMessage = response.Headers.TryGetValues("x-error-message", out var values)
-                ? values.FirstOrDefault()
-                : null;
-            throw new WeChatCdnException($"CDN upload failed: {errorMessage ?? $"HTTP {(int)response.StatusCode}"}");
+            using var response = await _http.PostAsync(uploadUrl, content, linked.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMessage = response.Headers.TryGetValues("x-error-message", out var values)
+                    ? values.FirstOrDefault()
+                    : null;
+                throw new WeChatCdnException($"CDN upload failed: {errorMessage ?? $"HTTP {(int)response.StatusCode}"}");
+            }
+            if (!response.Headers.TryGetValues("x-encrypted-param", out var paramValues)
+                || string.IsNullOrEmpty(paramValues.FirstOrDefault()))
+            {
+                throw new WeChatCdnException("CDN upload response missing x-encrypted-param header");
+            }
+            return new WeChatCdnMedia
+            {
+                EncryptQueryParam = paramValues.First()!,
+                AesKey = EncodeAesKeyBase64(key),
+                EncryptType = 1,
+            };
         }
-        if (!response.Headers.TryGetValues("x-encrypted-param", out var paramValues)
-            || string.IsNullOrEmpty(paramValues.FirstOrDefault()))
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new WeChatCdnException("CDN upload response missing x-encrypted-param header");
+            throw new WeChatCdnException($"CDN 上传超时（{_transferTimeout.TotalSeconds:0}s）");
         }
-        return new WeChatCdnMedia
-        {
-            EncryptQueryParam = paramValues.First()!,
-            AesKey = EncodeAesKeyBase64(key),
-            EncryptType = 1,
-        };
     }
 
     /// <summary>读文件上传（大小超限在读取前拒绝，避免大文件进内存）。</summary>
