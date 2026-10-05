@@ -51,9 +51,16 @@ function updateCurrentMode(): void {
   const cards = document.querySelectorAll<HTMLButtonElement>(".rag-model-card:not([data-reranker])");
   const KEY = "cyrene.rag.model";
   const saved = readEmbeddingKey(localStorage.getItem(KEY));
+  // P2-2：切换（含分钟级 rebuild）在途期间禁用全部卡片，避免二次点击并发迁移；
+  // 主进程另有互斥兜底（switchEmbeddingModel 返回 switch-in-progress）。
+  let busy = false;
 
   function setActive(value: string): void {
     cards.forEach((card) => card.classList.toggle("is-active", card.dataset.value === value));
+  }
+
+  function setCardsDisabled(disabled: boolean): void {
+    cards.forEach((card) => { card.disabled = disabled; });
   }
 
   function rollback(previousValue: string | undefined): void {
@@ -67,7 +74,9 @@ function updateCurrentMode(): void {
     if (!value) return;
     card.classList.toggle("is-active", value === saved);
     card.addEventListener("click", async () => {
-      if (card.classList.contains("is-active")) return;
+      if (busy || card.classList.contains("is-active")) return;
+      busy = true;
+      setCardsDisabled(true);
       const previousActive = document.querySelector(".rag-model-card.is-active:not([data-reranker])") as HTMLElement | null;
       const previousValue = previousActive?.dataset.value;
 
@@ -151,6 +160,9 @@ function updateCurrentMode(): void {
         // Rollback on error
         rollback(previousValue);
         console.error("[settings] embedding switch error:", err);
+      } finally {
+        busy = false;
+        setCardsDisabled(false);
       }
     });
   });

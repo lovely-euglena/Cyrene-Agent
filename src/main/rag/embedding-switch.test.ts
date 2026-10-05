@@ -19,6 +19,8 @@ const state = vi.hoisted(() => {
     arr[h % dims] = 1;
     return arr;
   };
+  // 互斥测试用闸门：设置后 embedBatch 挂起，直到 release
+  let gate: Promise<void> | null = null;
   const make = (model: string, dims: number) => ({
     name: "local-" + model.split("/").pop(),
     dims,
@@ -26,12 +28,16 @@ const state = vi.hoisted(() => {
     resolvedDimensions: dims,
     cacheIdentity: { provider: "local", model, dimensions: dims },
     async embed(text: string) { return vec(text, dims); },
-    async embedBatch(texts: string[]) { return texts.map((text) => vec(text, dims)); },
+    async embedBatch(texts: string[]) {
+      if (gate) await gate;
+      return texts.map((text) => vec(text, dims));
+    },
   });
   return {
     userDataDir: "",
     bgem3: make("Xenova/bge-m3", 1024),
     e5: make("Xenova/multilingual-e5-small", 384),
+    setGate: (promise: Promise<void> | null) => { gate = promise; },
   };
 });
 
@@ -70,6 +76,7 @@ const originalStoreMode = process.env.CYRENE_RAG_STORE;
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rag-switch-test-"));
   state.userDataDir = tmpDir;
+  state.setGate(null);
   process.env.CYRENE_RAG_STORE = "json";
   await initVectorMemory();
   await addMemory("alpha memory", "user_memory");
@@ -77,6 +84,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  state.setGate(null);
   resetRAG();
   if (originalStoreMode === undefined) delete process.env.CYRENE_RAG_STORE;
   else process.env.CYRENE_RAG_STORE = originalStoreMode;
@@ -124,7 +132,52 @@ describe("switchEmbeddingModel: 默认拒绝（不静默清库）", () => {
   });
 });
 
+describe("switchEmbeddingModel: 入口防线（P1-1 / P2-2）", () => {
+  it("非法 action（真值字符串）→ 拒绝且不落盘、不切 provider、不写 meta", async () => {
+    const result = await switchEmbeddingModel("e5-small", "REBUILD" as unknown as "rebuild" | "clear");
+
+    expect(result).toMatchObject({ ok: false, reason: "invalid-action", clearedEntries: 0 });
+    expect(result.error).toMatch(/Invalid embedding switch action/);
+    expect(getRAGStats().total).toBe(2);
+    expect(getEntriesBySource("user_memory").every((entry) => entry.embedding.length === 1024)).toBe(true);
+    expect(getIndexMetadata()?.model).toBe("Xenova/bge-m3");
+
+    // provider 未切换：后续写入仍走旧模型 1024 维
+    await addMemory("delta memory", "user_memory");
+    const delta = getEntriesBySource("user_memory").find((entry) => entry.text === "delta memory");
+    expect(delta?.embedding.length).toBe(1024);
+  });
+
+  it("切换在途：第二次请求被拒绝（互斥），首次完成后可再次切换", async () => {
+    let release!: () => void;
+    state.setGate(new Promise<void>((resolve) => { release = resolve; }));
+    const first = switchEmbeddingModel("e5-small", "rebuild");
+    await Promise.resolve();
+
+    const second = await switchEmbeddingModel("e5-small", "rebuild");
+    expect(second).toMatchObject({ ok: false, reason: "switch-in-progress" });
+    expect(second.error).toMatch(/in progress/);
+
+    release();
+    expect(await first).toMatchObject({ ok: true, rebuiltEntries: 2 });
+
+    // 首次结束后互斥释放
+    const third = await switchEmbeddingModel("bgem3", "clear");
+    expect(third.ok).toBe(true);
+  });
+});
+
 describe("switchEmbeddingModel: action=clear", () => {
+  it("clear 一并删除重建备份目录（P2-4：与「删除后不可恢复」文案一致）", async () => {
+    await switchEmbeddingModel("e5-small", "rebuild");
+    const backupDir = path.join(tmpDir, "rag-data", "index-rebuild-backups");
+    expect(fs.existsSync(backupDir)).toBe(true);
+
+    const result = await switchEmbeddingModel("bgem3", "clear");
+    expect(result).toMatchObject({ ok: true, clearedEntries: 2 });
+    expect(fs.existsSync(backupDir)).toBe(false);
+  });
+
   it("显式清空并写入新模型 meta", async () => {
     const result = await switchEmbeddingModel("e5-small", "clear");
 

@@ -177,6 +177,29 @@ function pruneRebuildBackups(backupDir: string, prefix: string, extension: strin
 }
 
 /**
+ * clear 动作：一并删除重建备份目录（P2-4）。
+ * 旧设置页/设计稿对 clear 的承诺是「删除后不可恢复」；备份目录是 rebuild 的内部
+ * 快照（最多 3 份），若保留则旧记忆仍可从 rag-data/index-rebuild-backups 恢复，
+ * 与文案不符。删除失败只告警（clear 本身已生效，残留备份不应让切换失败）。
+ */
+function clearRebuildBackups(dataDir: string): void {
+  const backupDir = path.join(dataDir, "index-rebuild-backups");
+  try {
+    fs.rmSync(backupDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn("[RAG] failed to remove rebuild backups after clear:", err);
+  }
+}
+
+/** 切换进行中标记（P2-2 互斥）：进行中拒绝新请求，避免两次迁移交错落盘。 */
+let embeddingSwitchInFlight = false;
+
+/** 合法的切换动作（运行时白名单；P1-1 渲染层输入不可信，编译期类型不算数）。 */
+function isEmbeddingSwitchAction(value: unknown): value is EmbeddingSwitchAction {
+  return value === "rebuild" || value === "clear";
+}
+
+/**
  * 切换 embedding 模型（第二引擎 IKIH28）。
  *
  * 与旧实现的区别：模型/维度变化**不再静默 clearAll**。
@@ -184,8 +207,45 @@ function pruneRebuildBackups(backupDir: string, prefix: string, extension: strin
  *     不动库、不动 provider（requires = 有数据 ? "rebuild" : "clear"）。
  *   - action="rebuild"：先备份 → 全量分批重嵌入 → 原地 upsert → IVF 重建 → meta 更新。
  *   - action="clear"：显式清空（含 meta），再切 provider。
+ *
+ * 入口防线：
+ *   - action 运行时白名单（P1-1）：非法值直接拒绝，不落盘、不切 provider、不写 meta
+ *     （渲染层可传任意真值字符串；与 native sanitize 白名单同口径）；
+ *   - 切换互斥（P2-2）：进行中拒绝并回 reason="switch-in-progress"。
  */
 export async function switchEmbeddingModel(
+  modelKey: string,
+  action?: EmbeddingSwitchAction,
+  options?: EmbeddingSwitchOptions,
+): Promise<EmbeddingSwitchResult> {
+  if (action !== undefined && !isEmbeddingSwitchAction(action)) {
+    console.warn("[RAG] rejected embedding switch with invalid action:", action);
+    return {
+      ok: false,
+      modelKey,
+      clearedEntries: 0,
+      reason: "invalid-action",
+      error: `Invalid embedding switch action: ${String(action)} (expected "rebuild" | "clear")`,
+    };
+  }
+  if (embeddingSwitchInFlight) {
+    return {
+      ok: false,
+      modelKey,
+      clearedEntries: 0,
+      reason: "switch-in-progress",
+      error: "Another embedding model switch is already in progress",
+    };
+  }
+  embeddingSwitchInFlight = true;
+  try {
+    return await performEmbeddingSwitch(modelKey, action, options);
+  } finally {
+    embeddingSwitchInFlight = false;
+  }
+}
+
+async function performEmbeddingSwitch(
   modelKey: string,
   action?: EmbeddingSwitchAction,
   options?: EmbeddingSwitchOptions,
@@ -275,6 +335,7 @@ export async function switchEmbeddingModel(
         : 0;
     } else if (mismatch && action === "clear") {
       clearedEntries = store ? store.clearAll() : 0;
+      clearRebuildBackups(getDataDir());
     }
 
     // provider 切换（embedding.ts：清缓存 + 切 current key + 丢旧 pipeline）。
