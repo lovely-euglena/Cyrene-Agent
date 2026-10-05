@@ -17,6 +17,8 @@ internal static class Program
         {
             if (args[1] == "sync-protocol")
                 return SyncProtocolSelfTest.Run(args.Length > 2 ? args[2] : "fixtures/sync-protocol/cases");
+            if (args[1] == "scheduler")
+                return SchedulerSelfTest.Run();
             return OrchestratorSelfTest.Run();
         }
         if (args.Length > 1 && args[0] == "--pdf-text") return PdfTextProbe.Run(args[1]);

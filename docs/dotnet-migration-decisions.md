@@ -44,6 +44,7 @@
 | CYRENE_VAD | hybrid | VAD 模式 local\|hybrid\|cloud |
 | CYRENE_PORTABLE | 0 | 便携模式 |
 | CYRENE_MCP_HTTP | 0 | Streamable HTTP MCP |
+| CYRENE_SCHEDULER_HOST | 0 | 定时任务调度宿主双轨（tray 承载 store/engine；关闭回退 TS scheduler） |
 
 ## 2026-10-03 增量：记忆系统 .NET 双轨接线（A7 落地）
 

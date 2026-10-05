@@ -13,17 +13,25 @@ import {
   isPluginTaskEffectivelyEnabled,
   pluginTaskTogglePatch,
 } from "./execution-spec";
-import type { SchedulerEngine } from "./scheduler-engine";
 import type { NewScheduledTaskInput, ScheduledTask, ScheduledTaskPatch, SchedulerIpcResult } from "./types";
 import type { ToolDefinition } from "../orchestrator/tools/registry/tool-registry";
 
+/** 动作层所需的最小 engine 面（host 模式由适配器实现，IKJK51）。 */
+export interface SchedulerEngineLike {
+  fireNow(taskId: string): Promise<{ ok: boolean; reason?: string }>;
+}
+
+/**
+ * 动作层最小 store 视图。host 模式（IKJK51）下写操作经管道异步完成，
+ * 因此写方法返回「值 | Promise」；动作层统一 await，两种实现同形。
+ */
 export interface SchedulerStoreLike {
   getTasks(): ScheduledTask[];
-  addTask(input: NewScheduledTaskInput): unknown;
-  updateTask(id: string, patch: ScheduledTaskPatch): unknown;
-  deleteTask(id: string): boolean;
-  toggleTask(id: string, enabled: boolean): unknown;
-  getHistory(taskId: string, limit?: number): unknown[];
+  addTask(input: NewScheduledTaskInput): unknown | Promise<unknown>;
+  updateTask(id: string, patch: ScheduledTaskPatch): unknown | Promise<unknown>;
+  deleteTask(id: string): boolean | Promise<boolean>;
+  toggleTask(id: string, enabled: boolean): unknown | Promise<unknown>;
+  getHistory(taskId: string, limit?: number): unknown[] | Promise<unknown[]>;
 }
 
 export interface SchedulerToolInfo {
@@ -64,7 +72,7 @@ export function broadcastSchedulerChanged(): void {
 
 export interface SchedulerActionsDeps {
   store: SchedulerStoreLike;
-  engine: SchedulerEngine;
+  engine: SchedulerEngineLike;
   getTools(): ToolDefinition[];
   /** 覆盖变更通知（测试注入）；缺省 = broadcastSchedulerChanged。 */
   notifyChanged?: () => void;
@@ -73,11 +81,11 @@ export interface SchedulerActionsDeps {
 export interface SchedulerActions {
   list(): SchedulerIpcResult<RendererScheduledTask[]>;
   getTools(): SchedulerIpcResult<SchedulerToolInfo[]>;
-  add(input: NewScheduledTaskInput): SchedulerIpcResult<unknown>;
-  update(id: string, patch: ScheduledTaskPatch): SchedulerIpcResult<unknown>;
-  remove(id: string): SchedulerIpcResult<boolean>;
-  toggle(id: string, enabled: boolean): SchedulerIpcResult<unknown>;
-  history(taskId: string, limit?: number): SchedulerIpcResult<unknown[]>;
+  add(input: NewScheduledTaskInput): Promise<SchedulerIpcResult<unknown>>;
+  update(id: string, patch: ScheduledTaskPatch): Promise<SchedulerIpcResult<unknown>>;
+  remove(id: string): Promise<SchedulerIpcResult<boolean>>;
+  toggle(id: string, enabled: boolean): Promise<SchedulerIpcResult<unknown>>;
+  history(taskId: string, limit?: number): Promise<SchedulerIpcResult<unknown[]>>;
   fireNow(id: string): Promise<SchedulerIpcResult<true> | { ok: false; reason?: string }>;
 }
 
@@ -100,9 +108,9 @@ export function createSchedulerActions(deps: SchedulerActionsDeps): SchedulerAct
       risk: tool.risk ?? "undeclared",
     }))),
 
-    add(input) {
+    async add(input) {
       try {
-        const result = ok(deps.store.addTask(input));
+        const result = ok(await deps.store.addTask(input));
         notify();
         return result;
       } catch (err) {
@@ -110,14 +118,14 @@ export function createSchedulerActions(deps: SchedulerActionsDeps): SchedulerAct
       }
     },
 
-    update(id, patch) {
+    async update(id, patch) {
       try {
         const current = deps.store.getTasks().find((task) => task.id === id);
         // 插件任务的保存编辑走授权转换：按保存后的规格重算指纹，剔除宿主不变量字段。
         const effective = current?.ownerPluginId
           ? authorizePluginTaskUpdatePatch(current, patch)
           : patch;
-        const result = ok(deps.store.updateTask(id, effective));
+        const result = ok(await deps.store.updateTask(id, effective));
         notify();
         return result;
       } catch (err) {
@@ -125,9 +133,9 @@ export function createSchedulerActions(deps: SchedulerActionsDeps): SchedulerAct
       }
     },
 
-    remove(id) {
+    async remove(id) {
       try {
-        const result = ok(deps.store.deleteTask(id));
+        const result = ok(await deps.store.deleteTask(id));
         notify();
         return result;
       } catch (err) {
@@ -135,14 +143,14 @@ export function createSchedulerActions(deps: SchedulerActionsDeps): SchedulerAct
       }
     },
 
-    toggle(id, enabled) {
+    async toggle(id, enabled) {
       try {
         const task = deps.store.getTasks().find((item) => item.id === id);
         // 用户任务直接写 enabled；插件任务的启停写授权位，启用时按当前规格写入指纹。
         const patch = task?.ownerPluginId
           ? pluginTaskTogglePatch(task, enabled)
           : { enabled };
-        const result = ok(deps.store.updateTask(id, patch));
+        const result = ok(await deps.store.updateTask(id, patch));
         notify();
         return result;
       } catch (err) {
@@ -150,9 +158,9 @@ export function createSchedulerActions(deps: SchedulerActionsDeps): SchedulerAct
       }
     },
 
-    history(taskId, limit) {
+    async history(taskId, limit) {
       try {
-        return ok(deps.store.getHistory(taskId, limit));
+        return ok(await deps.store.getHistory(taskId, limit));
       } catch (err) {
         return fail(err);
       }

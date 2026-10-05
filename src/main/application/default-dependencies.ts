@@ -136,6 +136,11 @@ import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
 import { createSchedulerSubsystem, type SchedulerSubsystem } from "../scheduler/bootstrap";
 import { createSchedulerActions } from "../scheduler/scheduler-actions";
+import { createSchedulerHostClient, disarmSchedulerHost } from "../scheduler/host-client";
+import { resolveDotnetConfig } from "../dotnet-backend/config";
+import { isTrayPipeAvailable } from "../tray-pipe";
+import { headlessScheduledArgs } from "../scheduler/headless-args";
+import type { CoreResult } from "./core-bootstrap";
 import {
   buildApiSectionSnapshot,
   buildAsrSectionSnapshot,
@@ -380,9 +385,15 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       ipc: shellIpcRef(),
       schedulerStore: scheduler.store,
       agentRuntime: runtime,
-      onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
+      onPluginRunningStateChange: () => {
+        scheduler.engine.refreshPluginTasks();
+        // IKJK51：host 模式下插件运行状态是宿主 CanRun 的依据
+        scheduler.syncPluginRunningState?.(currentPluginRunning());
+      },
       getPanelHostWebContents: () => (settingsWindow?.webContents ? [settingsWindow.webContents] : []),
     });
+    // IKJK51：启动后立即同步一次插件运行状态（宿主侧插件任务定时器依据）
+    scheduler.syncPluginRunningState?.(currentPluginRunning());
     return pluginManager;
   };
 
@@ -859,7 +870,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
   /** WPF「定时任务」section 动作（动作层与 scheduler IPC 共用；写操作自动广播刷新）。
    *  返回值用于动作回执：任务编辑器据此决定关窗（成功）或就地报错（失败）。 */
-  const nativeSchedulerAction = (verb: string, payload: Record<string, unknown>): unknown => {
+  const nativeSchedulerAction = async (verb: string, payload: Record<string, unknown>): Promise<unknown> => {
     const actions = nativeSchedulerActions;
     if (!actions) {
       nativeNotice("tasks", "error", "调度器尚未就绪");
@@ -867,51 +878,50 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     }
     switch (verb) {
       case "add": {
-        const result = actions.add(asObj(payload.input) as unknown as Parameters<typeof actions.add>[0]);
+        const result = await actions.add(asObj(payload.input) as unknown as Parameters<typeof actions.add>[0]);
         nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已创建" : `创建失败：${result.error ?? "未知错误"}`);
         return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "update": {
         const id = asStr(payload.id);
         if (!id) return { ok: false, error: "缺少任务 id" };
-        const result = actions.update(id, asObj(payload.patch) as unknown as Parameters<typeof actions.update>[1]);
+        const result = await actions.update(id, asObj(payload.patch) as unknown as Parameters<typeof actions.update>[1]);
         nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已保存" : `保存失败：${result.error ?? "未知错误"}`);
         return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "toggle": {
         const id = asStr(payload.id);
         if (!id) return { ok: false, error: "缺少任务 id" };
-        const result = actions.toggle(id, payload.enabled === true);
+        const result = await actions.toggle(id, payload.enabled === true);
         if (!result.ok) nativeNotice("tasks", "error", `启停失败：${result.error ?? "未知错误"}`);
         return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "fire": {
         const id = asStr(payload.id);
         if (!id) return { ok: false, error: "缺少任务 id" };
-        return actions.fireNow(id).then((result) => {
-          if (result.ok) return { ok: true };
-          const reason = "reason" in result ? result.reason : undefined;
-          const errorText = "error" in result ? result.error : undefined;
-          const message = reason === "task already running"
-            ? "该任务正在运行中"
-            : reason === "plugin not running"
-              ? "插件已停用，等待插件启用后再运行"
-              : (errorText ?? reason ?? "立即运行失败");
-          nativeNotice("tasks", "error", message);
-          return { ok: false, error: message };
-        });
+        const result = await actions.fireNow(id);
+        if (result.ok) return { ok: true };
+        const reason = "reason" in result ? result.reason : undefined;
+        const errorText = "error" in result ? result.error : undefined;
+        const message = reason === "task already running"
+          ? "该任务正在运行中"
+          : reason === "plugin not running"
+            ? "插件已停用，等待插件启用后再运行"
+            : (errorText ?? reason ?? "立即运行失败");
+        nativeNotice("tasks", "error", message);
+        return { ok: false, error: message };
       }
       case "delete": {
         const id = asStr(payload.id);
         if (!id) return { ok: false, error: "缺少任务 id" };
-        const result = actions.remove(id);
+        const result = await actions.remove(id);
         nativeNotice("tasks", result.ok ? "ok" : "error", result.ok ? "任务已删除" : `删除失败：${result.error ?? "未知错误"}`);
         return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
       }
       case "history": {
         const id = asStr(payload.id);
         if (!id) return { ok: false, error: "缺少任务 id" };
-        const result = actions.history(id, 10);
+        const result = await actions.history(id, 10);
         // 读取失败也写 error：WPF 据此显示错误行（旧实现只存 rows，失败被吞成「暂无运行历史」）
         nativeTaskHistory = {
           taskId: id,
@@ -1115,7 +1125,13 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         configureDocumentIndexQueue(
           isSidecarEnabled() ? runDocumentImportJobViaSidecar : runDocumentIndexJob,
         ),
-      installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
+      installSingleInstance: (onSecondInstance) =>
+        installSingleInstanceGuard(app, () => {
+          // IKJK51 复审 P1-4：headless 执行实例不响应激活（否则会在后台任务
+          // 期间被 second-instance 拉起聊天窗）；主实例聚焦行为不变。
+          if (headlessScheduledArgs()) return;
+          onSecondInstance();
+        }),
       migrateLegacyUserData: () => {
         migrateLegacyUserData({
           appDataPath: app.getPath("appData"),
@@ -1148,7 +1164,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         logger.info(LogTag.Runtime, "starting Cyrene Agent");
       },
       createIpcScope: () => createIpcScope(),
-      createSplashWindow: (options) => createSplashWindow({ isDev, onShown: options.onShown }),
+      createSplashWindow: (options) => (headlessScheduledArgs() ? null : createSplashWindow({ isDev, onShown: options.onShown })),
       createWindowManager: () => createWindowManager({
         getCurrentAppIconPath,
         isDev,
@@ -1536,6 +1552,16 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
 createTray: (input) => {
+        // IKJK51 headless：不建托盘（托盘进程正在运行且由它拉起本实例）
+        if (headlessScheduledArgs()) {
+          return {
+            isDestroyed: () => false,
+            destroy: () => { /* noop */ },
+            setImage: () => { /* noop */ },
+            setToolTip: () => { /* noop */ },
+            displayBalloon: () => { /* noop */ },
+          };
+        }
         // 分离托盘（默认优先；CYRENE_DETACHED_TRAY=0 关闭）：
         // 托盘进程在跑（pipe 存在）→ 外部托盘；否则回退内置 Electron Tray
         if (process.env.CYRENE_DETACHED_TRAY !== "0") {
@@ -1544,6 +1570,11 @@ createTray: (input) => {
             togglePetWindow: input.togglePetWindow,
             setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
             getPetDragMode: () => input.getPetDragMode?.() ?? false,
+            hideWindows: () => {
+              for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) win.hide();
+              }
+            },
             quit: () => app.quit(),
           });
           if (detached) return detached;
@@ -1552,12 +1583,30 @@ createTray: (input) => {
           togglePetWindow: input.togglePetWindow,
           requestActivation: input.requestActivation,
           setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
+          hideWindows: () => {
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) win.hide();
+            }
+          },
           quit: () => app.quit(),
         });
       },
       flushTokenUsage,
     }),
 
+    /** IKJK51：`--scheduled-task` headless 分支（application.start 在 core 后调用）。 */
+    runHeadlessScheduledTask: async (core: CoreResult): Promise<void> => {
+      const args = headlessScheduledArgs();
+      if (!args) return;
+      // 结果通知由托盘在 sched.report 终态统一弹出（避免 headless 与托盘双气泡）
+      const result = await core.scheduler.runScheduledTaskForHeadless?.(args.taskId, args.historyId, args.fireAt);
+      // 复审 P2-2：失败必须可观察——写 stderr 日志并置非零退出码（application.start
+      // 的 finally 只调 app.quit()，不会覆盖 process.exitCode），供托盘/冒烟诊断。
+      if (result && !result.ok) {
+        console.warn(`[Scheduler] headless task ${args.taskId} failed: ${result.error ?? "unknown"}`);
+        process.exitCode = 1;
+      }
+    },
     startCore: (shell) => {
       // 插件管理壳/运行时与核心 IPC 共用应用级 scope：运行期动态启用时
       // removeHandler / 二次 handle 才能命中同一注册表（否则 plugins:list
@@ -1947,6 +1996,20 @@ createTray: (input) => {
       getPluginsSnapshot: () => buildPluginSnapshot(),
 
       createScheduler: (runtime) => {
+        // IKJK51：调度宿主双轨——开关开即建 host 客户端（本地回退 + 周期重连 watchdog
+        // 在 host-mode 适配器内）；否则回退 TS scheduler。
+        const schedulerHostEnabled = resolveDotnetConfig().schedulerHost;
+        const schedulerHostClient = schedulerHostEnabled ? createSchedulerHostClient() : null;
+        if (schedulerHostEnabled && !isTrayPipeAvailable()) {
+          console.warn("[scheduler] CYRENE_SCHEDULER_HOST=1 但托盘管道暂不可用——先本地调度，watchdog 周期重连");
+        }
+        if (!schedulerHostClient && isTrayPipeAvailable()) {
+          // 开关关闭但托盘在跑（登录项残留等）：停用托盘调度，避免双调度。
+          // 复审 P1-2：带重试 + 回执；重试耗尽显式告警，不再静默放弃。
+          void disarmSchedulerHost().then((ok) => {
+            if (!ok) console.warn("[scheduler] 停用托盘调度失败（重试耗尽）——请检查托盘进程/管道");
+          });
+        }
         const subsystem = createSchedulerSubsystem({
           agentRuntime: runtime,
           getReactChatWindow: () => reactChatWindow,
@@ -1961,6 +2024,7 @@ createTray: (input) => {
           // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
           canRunTask: (task) => !task.ownerPluginId
             || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
+          ...(schedulerHostClient ? { hostClient: schedulerHostClient } : {}),
         });
         // native 设置窗「定时任务」动作与快照共用同一动作层（与 scheduler IPC 行为一致）
         nativeSchedulerActions = createSchedulerActions({
@@ -2195,7 +2259,8 @@ createTray: (input) => {
           },
         });
       },
-      revealStartupWindows,
+      revealStartupWindows: (input: Parameters<typeof revealStartupWindows>[0]) =>
+        (headlessScheduledArgs() ? Promise.resolve() : revealStartupWindows(input)),
       });
     },
 

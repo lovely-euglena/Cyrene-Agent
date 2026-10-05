@@ -15,6 +15,7 @@ import type { PreReadyResult } from "./pre-ready";
 import type { ShellResult } from "./shell-bootstrap";
 import type { CoreResult } from "./core-bootstrap";
 import type { BackgroundHandle } from "./background";
+import { headlessScheduledArgs } from "../scheduler/headless-args";
 
 export interface ApplicationDependencies {
   app: Pick<App, "whenReady" | "quit" | "on" | "removeListener">;
@@ -26,6 +27,8 @@ export interface ApplicationDependencies {
   startShell(): Promise<ShellResult>;
   startCore(shell: ShellResult): Promise<CoreResult>;
   startBackground(core: CoreResult): BackgroundHandle;
+  /** IKJK51：headless 定时任务执行（`--scheduled-task`）；执行后由 start() 收尾退出。 */
+  runHeadlessScheduledTask?(core: CoreResult): Promise<void>;
   logFatal(error: unknown): void;
 }
 
@@ -58,6 +61,15 @@ export function createApplication(deps: ApplicationDependencies): Application {
     async start(): Promise<void> {
       shell = await deps.startShell();
       const core = await deps.startCore(shell);
+      // IKJK51：headless 定时任务——core 就绪即执行，跳过 background（不建窗口/托盘）
+      if (headlessScheduledArgs() && deps.runHeadlessScheduledTask) {
+        try {
+          await deps.runHeadlessScheduledTask(core);
+        } finally {
+          deps.app.quit();
+        }
+        return;
+      }
       deps.readiness.transition("background-starting");
       const background = deps.startBackground(core);
       context = {
@@ -76,8 +88,11 @@ export function createApplication(deps: ApplicationDependencies): Application {
       installAppShutdownHandlers({ app: deps.app, coordinator: deps.shutdown });
       // 全部窗口关闭不退出（托盘常驻，与旧行为一致）
       deps.app.on("window-all-closed", () => { /* no-op */ });
-      // macOS 标准激活行为：统一走激活代理
-      deps.app.on("activate", () => { deps.activation.request({ kind: "chat" }); });
+      // macOS 标准激活行为：统一走激活代理；headless 执行实例不响应（不弹聊天窗）。
+      deps.app.on("activate", () => {
+        if (headlessScheduledArgs()) return;
+        deps.activation.request({ kind: "chat" });
+      });
     },
 
     async handleFatalStartup(error: unknown): Promise<void> {

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
+using CyreneNative.Scheduler;
 using WpfApplication = System.Windows.Application;
 using WF = System.Windows.Forms;
 
@@ -14,12 +15,15 @@ namespace CyreneNative;
 ///
 /// 架构：托盘进程常驻（约 15-25MB），Electron 主程序成为「按需工作进程」——
 /// 用户把桌宠/窗口全关后 Electron 可整体退出，仅托盘驻留，从托盘再拉起。
+/// 单实例：Global\cyrene-tray Mutex（机器级，与管道名同作用域；双托盘会双调度，设计 §7）。
 /// 通信：named pipe cyrene-tray（JSON 行协议，\n 分隔）：
 ///   Electron → tray：{"op":"tray.ready"} / {"op":"tray.icon","path":...} /
-///                    {"op":"tray.notify","text":...} /
+///                    {"op":"tray.notify","text":...} / {"op":"tray.tooltip","text":...} /
 ///                    {"op":"tray.drag-mode-state","checked":bool}（勾选对齐）/
-///                    {"op":"tray.byefrom.electron"}
-///   tray → Electron：{"op":"cmd","action":"chat|sidebar|settings|toggle-pet|show-pet|quit"}
+///                    {"op":"tray.byefrom.electron"} /
+///                    sched.*（见 TraySchedulerHost；带 id 必回 reply）
+///   tray → Electron：{"op":"cmd","action":"chat|sidebar|settings|hide-windows|
+///                    toggle-pet|show-pet|drag-mode|quit"} / {"op":"event",name:"sched.*",data}
 /// Electron 直启（未经过托盘 spawn）或 pipe 断开时走 Electron 内置 Tray 兜底，
 /// 两种模式对用户等价。
 /// </summary>
@@ -36,9 +40,14 @@ public sealed class TrayHost
     /// <summary>当前托盘图标的 HICON 句柄（PNG→Icon 转换产物，替换/退出时销毁）。</summary>
     private IntPtr _trayIconHandle = IntPtr.Zero;
     private string _electronExe = "";
+    private string _dataDir = "";
+    /// <summary>--scheduler：托盘启动即启用常驻调度；缺省仅托盘 UI，待 sched.mode arm。</summary>
+    private bool _schedulerEnabled;
     private bool _electronLaunching;
     /// <summary>Electron 未连接时暂存的托盘动作（含可选勾选状态），连接建立后补投一次。</summary>
     private (string Action, bool? Checked)? _pendingAction;
+    /// <summary>常驻调度宿主（IKJK51）：SchedulerStore/Engine + sched.* 协议。</summary>
+    private TraySchedulerHost? _scheduler;
 
 
     /// <summary>
@@ -102,26 +111,35 @@ public sealed class TrayHost
         public override System.Drawing.Color SeparatorLight => System.Drawing.Color.FromArgb(0xE5, 0xE5, 0xEA);
     }
 
-    /// <summary>托盘模式入口：WPF Dispatcher 消息循环 + NotifyIcon。</summary>
-    public static void Run(string electronExe)
+    /// <summary>托盘模式入口：单实例守护 + WPF Dispatcher 消息循环 + NotifyIcon。</summary>
+    public static int Run(string electronExe, string dataDir, bool schedulerEnabled)
     {
+        // 单实例守护（设计 §7 + 复审 P2-6）：双托盘会双调度；管道名是机器级
+        // （\\.\pipe\cyrene-tray），锁也用 Global 命名空间——同机多会话/多用户
+        // 下与管道作用域一致，避免 Local 会话级锁各起一个托盘共享同一 data-dir。
+        using var mutex = new Mutex(initiallyOwned: true, @"Global\cyrene-tray", out var createdNew);
+        if (!createdNew) return 0;
         var app = new WpfApplication { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-        var host = new TrayHost { _electronExe = electronExe };
+        var host = new TrayHost { _electronExe = electronExe, _dataDir = dataDir, _schedulerEnabled = schedulerEnabled };
         app.Dispatcher.Invoke(() => host.Attach(app));
         // 托盘常驻：启动即拉起 Electron（用户双击托盘 exe 的预期）
         app.Dispatcher.BeginInvoke(new Action(host.LaunchElectron), DispatcherPriority.Background);
         app.Run();
         host.DetachIcon();
+        return 0;
     }
 
     private void Attach(WpfApplication app)
     {
         _dispatcher = app.Dispatcher;
+        StartScheduler();
         var menu = new WF.ContextMenuStrip();
         ApplyModernMenuStyle(menu);
         menu.Items.Add("打开聊天窗口", null, (_, _) => SendCmd("chat"));
         menu.Items.Add("打开状态面板", null, (_, _) => SendCmd("sidebar"));
         menu.Items.Add("设置", null, (_, _) => SendCmd("settings"));
+        // 隐藏窗口（§6）：只藏 Electron 窗口，托盘与调度继续常驻
+        menu.Items.Add("隐藏窗口", null, (_, _) => SendCmd("hide-windows"));
         menu.Items.Add(new WF.ToolStripSeparator());
         menu.Items.Add("显示/隐藏桌宠", null, (_, _) => SendCmd("toggle-pet"));
         // 桌宠拖动模式（对齐 Electron 内置托盘菜单项；宿主 setPetDragMode 设置目标状态）
@@ -137,8 +155,11 @@ public sealed class TrayHost
         };
         menu.Items.Add(dragItem);
         menu.Items.Add(new WF.ToolStripSeparator());
-        menu.Items.Add("退出", null, (_, _) =>
+        // 完全退出（§6）：停调度（engine.Stop()）→ 受控退出 Electron → 扫尾 → 托盘退出。
+        menu.Items.Add("完全退出", null, (_, _) =>
         {
+            // 先停调度：退出窗口内不再触发，也不再把任务拉起为 headless。
+            _scheduler?.Stop();
             // 退出 = Electron 一起退（托盘是父入口，退出语义包含整个应用）。
             // 先发 quit 走受控退出（总超时 10s），等它自然退出；超时才强杀，
             // 且必须整棵进程树一起杀——只杀 Cyrene.exe 会留下渲染进程/子宿主
@@ -171,6 +192,27 @@ public sealed class TrayHost
         _notifyIcon.Icon = LoadInitialIcon();
         _notifyIcon.DoubleClick += (_, _) => SendCmd("chat");
         StartPipeServer();
+    }
+
+    /// <summary>
+    /// 常驻调度宿主（IKJK51）：store.Load →（--scheduler 时）engine.Start。
+    /// 初始化失败不拖垮托盘（sched.* 帧回 ok:false，托盘 UI 仍可用）。
+    /// </summary>
+    private void StartScheduler()
+    {
+        try
+        {
+            var scheduler = new TraySchedulerHost(
+                _dataDir, _electronExe, _schedulerEnabled, SendEvent, ShowTrayBalloon,
+                () => _pipe is { IsConnected: true });
+            scheduler.Start();
+            _scheduler = scheduler;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[TrayHost] scheduler init failed: {ex.Message}");
+            _scheduler = null;
+        }
     }
 
     /// <summary>初始托盘图标：优先 Electron 主程序图标（真实应用图标），
@@ -245,6 +287,9 @@ public sealed class TrayHost
 
     private void DetachIcon()
     {
+        // 完全退出流程已停；其余退出路径（异常/会话结束）兜底停引擎。
+        try { _scheduler?.Stop(); } catch { }
+        _scheduler = null;
         try { _notifyIcon?.Dispose(); } catch { }
         if (_trayIconHandle != IntPtr.Zero)
         {
@@ -374,7 +419,28 @@ public sealed class TrayHost
         try
         {
             using var doc = JsonDocument.Parse(line);
-            var op = doc.RootElement.TryGetProperty("op", out var opEl) ? opEl.GetString() : null;
+            var root = doc.RootElement;
+            var op = root.TryGetProperty("op", out var opEl) && opEl.ValueKind == JsonValueKind.String
+                ? opEl.GetString()
+                : null;
+            if (string.IsNullOrEmpty(op)) return;
+            // 协议兼容（设计 §4）：带 id（number/string）的帧必回 reply；
+            // 无 id 维持旧单向语义（tray.ready/icon/notify/tooltip 原样）。
+            JsonElement? requestId = root.TryGetProperty("id", out var idEl)
+                && idEl.ValueKind is JsonValueKind.String or JsonValueKind.Number
+                    ? idEl.Clone()
+                    : null;
+
+            if (op.StartsWith("sched.", StringComparison.Ordinal))
+            {
+                var scheduler = _scheduler;
+                var result = scheduler is null
+                    ? SchedulerOpResult.Failure("scheduler unavailable")
+                    : scheduler.Handle(op, root);
+                if (requestId is { } schedId) SendReply(schedId, result.Ok, result.Data, result.Error);
+                return;
+            }
+
             switch (op)
             {
                 case "tray.ready":
@@ -382,19 +448,19 @@ public sealed class TrayHost
                     break;
                 case "tray.icon":
                     // 状态图标（陪伴中/思考中/自定义应用图标）：PNG 路径 → HICON
-                    var iconPath = doc.RootElement.TryGetProperty("path", out var p) ? p.GetString() : null;
+                    var iconPath = root.TryGetProperty("path", out var p) ? p.GetString() : null;
                     if (!string.IsNullOrEmpty(iconPath)) ApplyTrayIconFile(iconPath);
                     break;
                 case "tray.notify":
                     // 气泡通知：{title, content}（缺省标题 Cyrene）
-                    var title = doc.RootElement.TryGetProperty("title", out var tEl) ? tEl.GetString() : null;
-                    var content = doc.RootElement.TryGetProperty("content", out var cEl) ? cEl.GetString() : null;
+                    var title = root.TryGetProperty("title", out var tEl) ? tEl.GetString() : null;
+                    var content = root.TryGetProperty("content", out var cEl) ? cEl.GetString() : null;
                     ShowTrayBalloon(
                         string.IsNullOrEmpty(title) ? "Cyrene" : title,
                         content ?? "");
                     break;
                 case "tray.tooltip":
-                    var text = doc.RootElement.TryGetProperty("text", out var textEl) ? textEl.GetString() : null;
+                    var text = root.TryGetProperty("text", out var textEl) ? textEl.GetString() : null;
                     if (!string.IsNullOrEmpty(text)) _dispatcher?.BeginInvoke(new Action(() =>
                     {
                         try { if (_notifyIcon is not null) _notifyIcon.Text = text.Length > 63 ? text[..63] : text; }
@@ -417,8 +483,10 @@ public sealed class TrayHost
                     break;
                 default:
                     System.Diagnostics.Debug.WriteLine($"[TrayHost] unknown op: {op}");
-                    break;
+                    if (requestId is { } unknownId) SendReply(unknownId, false, null, $"unknown op: {op}");
+                    return;
             }
+            if (requestId is { } ackId) SendReply(ackId, true, null, null);
         }
         catch (JsonException)
         {
@@ -467,6 +535,58 @@ public sealed class TrayHost
         var pending = _pendingAction;
         if (pending is null) return;
         if (TryWriteCmd(pipe, pending.Value.Action, pending.Value.Checked)) _pendingAction = null;
+    }
+
+    // ── 托盘 → Electron 事件/回执（sched.* 协议，设计 §4） ─────────
+
+    /// <summary>事件帧：{op:"event",name,data}（与 SendCmd 并存；cmd 行为不变）。</summary>
+    private bool SendEvent(string name, object data)
+        => SendJson(new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["op"] = "event",
+            ["name"] = name,
+            ["data"] = data,
+        });
+
+    /// <summary>回执帧：{op:"reply",id,ok,error?,data?}（id 原样回显，number/string 均可）。</summary>
+    private void SendReply(JsonElement id, bool ok, object? data, string? error)
+    {
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["op"] = "reply",
+            ["id"] = id,
+            ["ok"] = ok,
+        };
+        if (ok)
+        {
+            if (data is not null) payload["data"] = data;
+        }
+        else
+        {
+            payload["error"] = error ?? "unknown error";
+        }
+        SendJson(payload);
+    }
+
+    /// <summary>统一出站序列化（Web defaults = camelCase）；未连接/写失败返回 false。</summary>
+    private bool SendJson(object payload)
+    {
+        var pipe = _pipe;
+        if (pipe is not { IsConnected: true }) return false;
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, SchedulerJson.Options) + "\n");
+            lock (pipe)
+            {
+                pipe.Write(bytes, 0, bytes.Length);
+                pipe.Flush();
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
