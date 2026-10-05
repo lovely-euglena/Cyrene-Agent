@@ -2,11 +2,12 @@
  * llm-host 双轨 facade 测试（复审放行条件 2：宿主拉起与双轨链路）。
  *
  * 覆盖：ensureStarted 显式拉起（P0-1——宿主不可用 → E_LLM_HOST_LOST 回退直连）、
- * submit→poll 事件翻译 → ChatResponse（文本/usage/finish 对齐直连语义）、
- * poll 丢失即 cancel（P1-11 防双计费）、路由判定（双开关 + openai + 流式）。
+ * submit→poll 事件翻译 → ChatResponse（文本/usage/finish/tool_calls 对齐直连语义）、
+ * poll 丢失即 cancel（P1-11 防双计费）、路由判定（双开关 + openai + 流式）、
+ * 取消窗口（P1-4/P2-5）、业务码分类与 retryable 透传（P1-3/P2-4）、dropped 告警口径（P2-2）。
  * 环境：CYRENE_LLM_HOST=1 + CYRENE_SECRETS_HOST=1 + keyring 预 hydrate（桩客户端）。
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   __setLlmHostClientForTests,
   callLLMViaLlmHost,
@@ -37,10 +38,17 @@ class StubLlmHostClient {
   failStart = false;
   submitPayloads: Array<Record<string, unknown>> = [];
   submitImpl: ((payload: Record<string, unknown>) => Promise<string>) | null = null;
-  script: Array<{ events: Array<{ type: string; text?: string; reason?: string; code?: string; message?: string; inputTokens?: number; outputTokens?: number; attempt?: number; delayMs?: number; category?: string; retryable?: boolean }> }> = [];
+  /** P2-5 用例：挂起 ensureStarted（冷启动窗口）。 */
+  startImpl: (() => Promise<boolean>) | null = null;
+  script: Array<{
+    events: Array<{ type: string; text?: string; reason?: string; code?: string; message?: string; inputTokens?: number; outputTokens?: number; attempt?: number; delayMs?: number; category?: string; retryable?: boolean; calls?: unknown }>;
+    dropped?: number;
+    truncated?: boolean;
+  }> = [];
   enabled() { return true; }
   async ensureStarted() {
     this.startedCalls++;
+    if (this.startImpl) return this.startImpl();
     if (this.failStart) return false;
     return true;
   }
@@ -52,9 +60,14 @@ class StubLlmHostClient {
   }
   async poll(jobId: string, cursor: number): Promise<{
     jobId: string; cursor: number; nextCursor: number; final: boolean; events: Array<Record<string, unknown>>;
+    dropped?: number; truncated?: boolean;
   }> {
     const frame = this.script[cursor] ?? { events: [] };
-    return { jobId, cursor, nextCursor: cursor + 1, final: cursor + 1 >= this.script.length, events: frame.events };
+    return {
+      jobId, cursor, nextCursor: cursor + 1, final: cursor + 1 >= this.script.length, events: frame.events,
+      ...(frame.dropped !== undefined ? { dropped: frame.dropped } : {}),
+      ...(frame.truncated !== undefined ? { truncated: frame.truncated } : {}),
+    };
   }
   async cancel(jobId: string) { this.cancelledJobIds.push(jobId); }
   async status() { return { jobs: 0, running: 0, queued: 0, secrets: true }; }
@@ -111,6 +124,8 @@ afterAll(() => {
   __resetKeyringForTests();
 });
 
+afterEach(() => { vi.restoreAllMocks(); });
+
 describe("shouldRouteViaLlmHost（双轨路由判定）", () => {
   it("双开 + hydrate + 流式 + openai → true", () => {
     expect(shouldRouteViaLlmHost(vendorConfig, chatRequest)).toBe(true);
@@ -159,6 +174,22 @@ describe("callLLMViaLlmHost（宿主拉起 + 事件翻译）", () => {
     expect(resp.thinking).toBe("思考");
   });
 
+  it("P2-8：tool_calls_delta 聚合（OpenAI 原样透传：index 对齐 + id/name 首块 + 参数分片拼接）", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [
+      { events: [{ type: "tool_calls_delta", calls: [{ index: 0, id: "call_1", function: { name: "read_file", arguments: '{"path"' } }] }] },
+      { events: [
+        { type: "tool_calls_delta", calls: [{ index: 0, function: { arguments: ':"a.txt"}' } }] },
+        { type: "finish", reason: "tool_calls" }, { type: "done" },
+      ] },
+    ];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const resp = await callLLMViaLlmHost(options());
+    expect(resp.toolCalls).toEqual([{ id: "call_1", name: "read_file", arguments: '{"path":"a.txt"}' }]);
+    expect(resp.finishReason).toBe("tool_calls");
+    expect(resp.assistantMessage.toolCalls).toEqual(resp.toolCalls);
+  });
+
   it("流内错误 → E_MODEL_REQUEST_FAILED（不回退、不重放）", async () => {
     const stub = new StubLlmHostClient();
     stub.script = [
@@ -204,6 +235,17 @@ describe("复审 P1-3：submit/poll 错误码分类（业务码不回退直连�
     expect(stub.cancelledJobIds).toEqual(["j-test"]);
   });
 
+  it("P2-4：业务码 retryable 透传（E_LLM_HOST_LANE_FULL retryable:true 不丢可重试信号）", async () => {
+    const stub = new StubLlmHostClient();
+    stub.submitImpl = async () => {
+      throw Object.assign(new Error("low lane queue is full"), { errorCode: "E_LLM_HOST_LANE_FULL", retryable: true });
+    };
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const err = await callLLMViaLlmHost(options()).catch((e: unknown) => e) as { code?: string; modelFailure?: { category?: string; retryable?: boolean } };
+    expect(err.code).toBe("E_MODEL_REQUEST_FAILED");
+    expect(err.modelFailure).toMatchObject({ category: "SERVER_ERROR", retryable: true });
+  });
+
   it("无 errorCode（进程失败）仍归宿主丢失 → E_LLM_HOST_LOST（回退直连）", async () => {
     const stub = new StubLlmHostClient();
     stub.submitImpl = async () => { throw new Error("host 退出"); };
@@ -236,6 +278,23 @@ describe("复审 P1-4：取消窗口（入口预检 + submit 期间补发 cancel
     release();
     await expect(pending).rejects.toThrow(/E_SOUL_ONLY_CANCELLED/);
     expect(stub.cancelledJobIds).toEqual(["j-test"]);
+  });
+
+  it("P2-5：ensureStarted 窗口内中止 → 预检拦截，不 submit、不建 .NET 作业", async () => {
+    const stub = new StubLlmHostClient();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    stub.startImpl = async () => { await gate; return true; };
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const ac = new AbortController();
+    const pending = callLLMViaLlmHost(options({ signal: ac.signal }));
+    await new Promise((r) => setTimeout(r, 10)); // 让 ensureStarted 挂起
+    ac.abort();
+    release();
+    await expect(pending).rejects.toThrow(/E_SOUL_ONLY_CANCELLED/);
+    expect(stub.startedCalls).toBe(1);
+    expect(stub.submitPayloads.length).toBe(0);
+    expect(stub.cancelledJobIds).toEqual([]);
   });
 });
 
@@ -270,5 +329,36 @@ describe("复审 P1-5 / P2-2：maxRetries 透传与错误分类消费", () => {
     stub.script = [{ events: [{ type: "error", code: "E_LLM_CANCELLED", message: "cancelled" }] }];
     __setLlmHostClientForTests(stub as unknown as LlmHostClient);
     await expect(callLLMViaLlmHost(options())).rejects.toThrow(/E_SOUL_ONLY_CANCELLED/);
+  });
+});
+
+describe("复审 P2-2：dropped/truncated 告警口径（回收累计 ≠ 缺口）", () => {
+  it("dropped>0 但 truncated=false → 提示性告警（无缺口），每次作业只告警一次", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [
+      { events: [{ type: "delta", text: "a" }], dropped: 3 },
+      { events: [{ type: "finish", reason: "stop" }, { type: "done" }], dropped: 4 },
+    ];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { });
+    const resp = await callLLMViaLlmHost(options());
+    expect(resp.text).toBe("a");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("无增量缺口");
+    expect(String(warn.mock.calls[0][0])).toContain("3");
+  });
+
+  it("truncated=true（请求 cursor 落在已丢弃段）→ 缺口告警", async () => {
+    const stub = new StubLlmHostClient();
+    stub.script = [
+      { events: [{ type: "delta", text: "a" }], dropped: 5, truncated: true },
+      { events: [{ type: "finish", reason: "stop" }, { type: "done" }] },
+    ];
+    __setLlmHostClientForTests(stub as unknown as LlmHostClient);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { });
+    await callLLMViaLlmHost(options());
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("增量缺口");
+    expect(String(warn.mock.calls[0][0])).toContain("已丢弃段");
   });
 });
