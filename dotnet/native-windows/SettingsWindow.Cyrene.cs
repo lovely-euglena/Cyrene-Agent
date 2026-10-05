@@ -118,6 +118,10 @@ public sealed partial class SettingsWindow
         // Embedding 两张卡：选中态 + 各自安装状态；点击切换走宿主索引迁移
         Border? bgem3Card = null;
         Border? e5Card = null;
+        // 点击守卫用可变选中态而非构建期快照局部变量：宿主切换失败的 catch 只发通知、
+        // 不推设置快照重建，窗口内快照值不会刷新，过期值会让「切走后再切回初始档位」
+        // 被早退守卫吞掉（与 reranker 同一模式）。
+        var embeddingSelected = embeddingModel;
         void ApplyEmbeddingSelection(string model)
         {
             if (bgem3Card is not null) ApplyModelCardSelected(bgem3Card, model == "bgem3");
@@ -130,7 +134,8 @@ public sealed partial class SettingsWindow
             embeddingModel == "bgem3",
             () =>
             {
-                if (embeddingModel == "bgem3") return;
+                if (embeddingSelected == "bgem3") return;
+                embeddingSelected = "bgem3";
                 ApplyEmbeddingSelection("bgem3");
                 SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = "bgem3" });
             });
@@ -141,7 +146,8 @@ public sealed partial class SettingsWindow
             embeddingModel == "e5-small",
             () =>
             {
-                if (embeddingModel == "e5-small") return;
+                if (embeddingSelected == "e5-small") return;
+                embeddingSelected = "e5-small";
                 ApplyEmbeddingSelection("e5-small");
                 SendCyreneSave(new Dictionary<string, object?> { ["embeddingModel"] = "e5-small" });
             });

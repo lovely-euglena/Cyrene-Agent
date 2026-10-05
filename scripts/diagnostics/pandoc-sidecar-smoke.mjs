@@ -142,6 +142,8 @@ try {
   const rst = await docImport(rstPath, pandocPath);
   check("rst → text", rst.kind === "text", JSON.stringify(rst));
   check("rst 内容正确", String(rst.text ?? "").includes("hello **world**"));
+  check("rst 回显 modelKey/dim（doc-import 路由身份）", rst.modelKey === "bgem3" && rst.dim === 1024,
+    JSON.stringify({ modelKey: rst.modelKey, dim: rst.dim }));
 
   const docx = await docImport(docxPath, pandocPath);
   check("docx → text", docx.kind === "text", JSON.stringify(docx));
