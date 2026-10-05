@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CyreneNative.Channels;
 
 namespace CyreneCloud.Channels;
@@ -20,24 +21,7 @@ public static class ChannelApi
 
         // GET /v1/channels/status —— 渠道状态 + owner（UI/桌面轮询）
         group.MapGet("/status", (ChannelManager manager, ChannelOwnershipService ownership) =>
-        {
-            var statuses = manager.GetAllStatus();
-            var snapshot = ownership.GetSnapshot();
-            var channels = manager.ListChannels().Select(id =>
-            {
-                statuses.TryGetValue(id, out var status);
-                snapshot.Channels.TryGetValue(id, out var channelOwnership);
-                return new
-                {
-                    id,
-                    phase = status?.Phase ?? ChannelPhases.Offline,
-                    enabled = status?.Enabled ?? false,
-                    owner = channelOwnership?.Owner ?? ChannelOwnershipService.OwnerServer,
-                    detail = status?.Detail,
-                };
-            }).ToArray();
-            return Results.Json(new { channels });
-        });
+            Results.Json(BuildStatusPayload(manager, ownership)));
 
         // POST /v1/channels/ownership/claim —— 桌面认领（先停服务端适配器再授予；Q8 先到先得）
         group.MapPost("/ownership/claim", async (
@@ -126,6 +110,41 @@ public static class ChannelApi
                 }),
             };
         });
+    }
+
+    /// <summary>
+    /// GET /v1/channels/status 载荷（提取为静态方法供自测直调）。
+    /// P2-7：三适配器 detail.owner 硬编码 "server"（适配器不感知归属），
+    /// 这里用归属快照覆盖，桌面持有时输出 "desktop"；其余 detail 字段原样保留。
+    /// </summary>
+    internal static JsonElement BuildStatusPayload(ChannelManager manager, ChannelOwnershipService ownership)
+    {
+        var statuses = manager.GetAllStatus();
+        var snapshot = ownership.GetSnapshot();
+        var channels = manager.ListChannels().Select(id =>
+        {
+            statuses.TryGetValue(id, out var status);
+            snapshot.Channels.TryGetValue(id, out var channelOwnership);
+            var owner = channelOwnership?.Owner ?? ChannelOwnershipService.OwnerServer;
+            return new
+            {
+                id,
+                phase = status?.Phase ?? ChannelPhases.Offline,
+                enabled = status?.Enabled ?? false,
+                owner,
+                detail = OverrideDetailOwner(status?.Detail, owner),
+            };
+        }).ToArray();
+        return JsonSerializer.SerializeToElement(new { channels });
+    }
+
+    private static JsonElement? OverrideDetailOwner(JsonElement? detail, string owner)
+    {
+        if (detail is not { ValueKind: JsonValueKind.Object } value) return detail;
+        var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var property in value.EnumerateObject()) fields[property.Name] = property.Value.Clone();
+        fields["owner"] = JsonSerializer.SerializeToElement(owner);
+        return JsonSerializer.SerializeToElement(fields);
     }
 
     private static IResult? ValidateChannels(ChannelManager manager, string[] channels)
