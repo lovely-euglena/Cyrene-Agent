@@ -349,7 +349,7 @@ export class EmbeddingSidecarClient {
           );
         }
         return attempt();
-      });
+      }, opts.expectedDims);
     }
 
     try {
@@ -360,7 +360,7 @@ export class EmbeddingSidecarClient {
         `[EmbeddingSidecar] request for "${modelKey}" failed on sidecar ready with "${this.modelKey}" ` +
         `(${error instanceof Error ? error.message : String(error)}); restarting with the requested model`,
       );
-      return this.restartAndRetry(modelKey, attempt);
+      return this.restartAndRetry(modelKey, attempt, opts.expectedDims);
     }
   }
 
@@ -382,15 +382,25 @@ export class EmbeddingSidecarClient {
    * 回退重启 + 重试（单飞）：并发回退在这里串行化（持锁到重试结束），后到者
    * 不会在重试途中 dispose 掉前者刚拉起的新进程。doc-import 重试可能分钟级，
    * 持锁期间其它回退排队等待——过渡态下正确性优先（初始请求不受影响）。
+   *
+   * P2-4（复审）：等待者拿到锁后**先复查路由**——前一持有者可能已把进程修好，
+   * 此时直接重试，不再无条件 dispose + 重启（避免重复重启与等待放大）。
    */
-  private async restartAndRetry<T>(modelKey: string, retry: () => Promise<T>): Promise<T> {
+  private async restartAndRetry<T>(modelKey: string, retry: () => Promise<T>, expectedDims?: number): Promise<T> {
     const previous = this.restartLock;
     let release!: () => void;
     this.restartLock = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try {
-      await this.dispose("model-routing-fallback");
-      await this.ensureStarted(modelKey);
+      if (!this.isRoutingConfirmed(modelKey, expectedDims)) {
+        await this.dispose("model-routing-fallback");
+        await this.ensureStarted(modelKey);
+      } else {
+        console.warn(
+          `[EmbeddingSidecar] fallback for "${modelKey}" skipped restart: routing already confirmed ` +
+          `by a concurrent fallback (ready "${this.modelKey}", ready dim ${this.readyDims})`,
+        );
+      }
       return await retry();
     } finally {
       release();
@@ -450,7 +460,10 @@ export class EmbeddingSidecarClient {
         const pending = this.pending.get(id);
         if (!pending) return;
         this.pending.delete(id);
-        // sidecar 疑似卡死：回收进程（下次调用自动重启），本次走调用方兜底
+        // sidecar 疑似卡死：回收进程（下次调用自动重启），本次走调用方兜底。
+        // P2-4 取舍：该 dispose 不入 restartLock（也不等待）——超时请求本身已
+        // reject；若排队等锁持有者的分钟级重试，只会放大延迟。打断在途重试的
+        // 代价是该次重试失败、调用方走 worker 兜底，下次请求懒重启。
         void this.dispose("request-timeout");
         reject(new Error(`Embedding sidecar request timeout (${timeoutMs}ms, ${label})`));
       }, timeoutMs);
@@ -669,6 +682,14 @@ export class EmbeddingSidecarClient {
     this.resetForRespawn();
   }
 
+  /**
+   * 回收进程（异步等待退出，最多 3s）。
+   *
+   * P2-4 取舍：与 restartAndRetry 的单飞锁不互斥、也不等待锁——本方法被请求
+   * 超时回收、resetEmbeddingProvider、before-quit 调用；若等待锁，分钟级的
+   * doc-import 回退重试会阻塞退出/重置，且锁持有者自身也调用本方法（自锁）。
+   * 打断在途重试时该次重试失败，调用方走 worker 兜底，下次请求懒重启。
+   */
   async dispose(reason: string): Promise<void> {
     const child = this.child;
     if (child && child.exitCode === null) {
@@ -697,6 +718,7 @@ export function getEmbeddingSidecarClient(): EmbeddingSidecarClient | null {
   return sharedClient;
 }
 
+/** 模块级单例回收（reset/退出）；best-effort，不等待回退单飞锁（取舍见 dispose 注释）。 */
 export async function disposeEmbeddingSidecar(reason = "manual"): Promise<void> {
   if (sharedClient) {
     await sharedClient.dispose(reason);

@@ -405,7 +405,7 @@ describe("EmbeddingSidecarClient: 回退重启健壮性（P2-5）", () => {
     await expect(second).resolves.toHaveProperty("0.length", bgem3Dims);
   });
 
-  it("并发回退单飞：两次回退串行重启，互不打断（均成功）", async () => {
+  it("并发回退单飞：等待者复查路由已确认 → 直接重试不重复重启（P2-4）", async () => {
     const client = new EmbeddingSidecarClient("fake.exe");
     const bgem3Dims = LOCAL_MODELS.bgem3.dims;
     const e5Dims = LOCAL_MODELS["e5-small"].dims;
@@ -439,14 +439,16 @@ describe("EmbeddingSidecarClient: 回退重启健壮性（P2-5）", () => {
     lastChild().emitVectors(retryA.id, [vector(e5Dims)]);
     await expect(requestA).resolves.toHaveProperty("0.length", e5Dims);
 
-    // A 完成后 B 才重启（串行单飞）
-    await flush();
-    await flush();
-    expect(state.children).toHaveLength(3);
-    lastChild().emitReady("e5-small", e5Dims);
-    await flush();
-    const retryB = lastChild().lastHeader();
+    // B 拿到锁后复查路由：A 已把进程修好（ready dim = 384）→ 直接重试，
+    // 不再 dispose + 重启（否则会产生第 3 个进程）
+    for (let i = 0; i < 10 && !lastChild().frames().some((header) => header.op === "embed" && header.id > retryA.id); i++) {
+      await flush();
+    }
+    expect(state.children).toHaveLength(2);
+    const retryB = lastChild().frames().find((header) => header.op === "embed" && header.id > retryA.id);
+    expect(retryB).toMatchObject({ modelKey: "e5-small" });
     lastChild().emitVectors(retryB.id, [vector(e5Dims)]);
     await expect(requestB).resolves.toHaveProperty("0.length", e5Dims);
+    expect(state.children).toHaveLength(2);
   });
 });
