@@ -415,13 +415,15 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
       try {
         const result = await switchEmbeddingModel(modelKey, action);
         if (result.ok) {
+          // P2-3（复审）：先落盘设置再 best-effort 收尾——收尾（对账/贴纸）已
+          // 保证不抛错，但设置先写可避免进程在收尾期间退出导致已生效切换不落盘。
+          saveModelSettings({ embeddingModel: modelKey === "e5-small" ? "e5-small" : "bgem3" });
           // 与 native/WPF 入口同口径收尾（P1-4）：用户记忆对账 + 贴纸索引失效/重建
           await finalizeEmbeddingModelSwitch({
             reconcileUserMemoryIndex,
             invalidateStickerEmbeddingIndex: () => embeddingIndexService.invalidateStickerEmbeddingIndex(),
             refreshStickerEmbeddingIndex: (reason) => embeddingIndexService.refreshStickerEmbeddingIndex(reason),
           });
-          saveModelSettings({ embeddingModel: modelKey === "e5-small" ? "e5-small" : "bgem3" });
           broadcastModelConfigChanged();
         }
         return result;

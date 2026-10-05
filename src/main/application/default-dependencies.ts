@@ -39,6 +39,7 @@ import { createModelBackedConversationTranscriptCompactor } from "../orchestrato
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
+import { notifyEmbeddingSwitchRejected, runNativeEmbeddingSwitch } from "../settings/embedding-switch-native";
 import { registerPortableIpc, applyPortableChange } from "../portable/portable-ipc";
 import { registerCacheDirIpc } from "../portable/cache-ipc";
 import { registerOcrIpc } from "../ocr/ocr-ipc";
@@ -76,7 +77,6 @@ import {
   isUserMemoryVectorStoreReady,
 } from "../rag";
 import { getEmbeddingProvider, getSceneEmbeddingProvider } from "../rag/embedding";
-import { finalizeEmbeddingModelSwitch } from "../rag/embedding-switch-finalize";
 import { isMemoryEnabled, isSummaryMemoryEnabled, setMemoryMode, type MemoryMode } from "../memory/memory-mode";
 import { initializeSummaryMemoryScheduler, enableSummaryMemoryScheduler, flushAllSummaryMemory, scheduleSummaryTurn } from "../memory/summary-memory-scheduler";
 import { createConversationSessionMigration } from "../orchestrator/conversation-session-migration";
@@ -1375,54 +1375,32 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
               const { embeddingModelAction, ...settingsPatch } = patch;
               // embedding 模型切换（第二引擎）：走索引迁移（rebuild/clear）。
               // 默认拒绝不落盘（宿主回 rebuild-required，UI 需带 action 重试）。
+              // 流程与失败回执统一在 embedding-switch-native（P1-1：reject / 动态
+              // import 失败与 ok:false 同口径带结构化 data，WPF 才会重建 section
+              // 撤销卡片乐观选中）；动态 import 避免 rag 顶层循环依赖。
               if (patch.embeddingModel && patch.embeddingModel !== loadModelSettings().embeddingModel) {
+                const embeddingModel = patch.embeddingModel;
                 void import("../rag")
-                  .then(({ switchEmbeddingModel }) => switchEmbeddingModel(patch.embeddingModel!, embeddingModelAction))
-                  .then(async (result) => {
-                    if (!result.ok) {
-                      const hint = result.requires === "rebuild"
-                        ? "旧索引需要重建（备份后全量重嵌入）或清空后才能切换，请确认迁移方式"
-                        : result.requires === "clear"
-                          ? "旧索引元数据需要清空确认后才能切换"
-                          : result.error ?? "未知错误";
-                      // rebuild-required：带结构化 data 回传，WPF 弹确认后带 embeddingModelAction 重发；
-                      // 其它失败也回传模型键，WPF 据此撤销卡片乐观选中
-                      nativeNotice(
-                        "cyrene",
-                        "error",
-                        `嵌入模型切换未生效：${hint}`,
-                        result.reason === "rebuild-required"
-                          ? {
-                              rebuildRequired: true,
-                              embeddingModel: patch.embeddingModel,
-                              requires: result.requires ?? "rebuild",
-                            }
-                          : { embeddingSwitchFailed: true, embeddingModel: patch.embeddingModel },
-                      );
-                      return;
-                    }
-                    // 与渲染端 IPC 成功路径同口径收尾（P1-4）：用户记忆对账 +
-                    // 贴纸索引失效/重建（否则重启前贴纸匹配用旧模型向量算余弦）
-                    await finalizeEmbeddingModelSwitch({
-                      reconcileUserMemoryIndex,
-                      invalidateStickerEmbeddingIndex: () =>
-                        stickerEmbeddingIndexService?.invalidateStickerEmbeddingIndex(),
-                      refreshStickerEmbeddingIndex: (reason) =>
-                        stickerEmbeddingIndexService?.refreshStickerEmbeddingIndex(reason),
-                    });
-                    saveModelSettings({ ...settingsPatch, embeddingModel: patch.embeddingModel });
-                    broadcastModelChanged();
-                    pushSettingsSnapshotToNative();
-                    nativeNotice(
-                      "cyrene",
-                      "ok",
-                      `嵌入模型已切换（重建 ${result.rebuiltEntries ?? 0} 条，清空 ${result.clearedEntries} 条）`,
-                    );
-                  })
+                  .then(({ switchEmbeddingModel }) =>
+                    runNativeEmbeddingSwitch(embeddingModel, embeddingModelAction, settingsPatch, {
+                      switchEmbeddingModel,
+                      finalize: {
+                        reconcileUserMemoryIndex,
+                        invalidateStickerEmbeddingIndex: () =>
+                          stickerEmbeddingIndexService?.invalidateStickerEmbeddingIndex(),
+                        refreshStickerEmbeddingIndex: (reason) =>
+                          stickerEmbeddingIndexService?.refreshStickerEmbeddingIndex(reason),
+                      },
+                      saveModelSettings,
+                      broadcastModelChanged,
+                      pushSettingsSnapshotToNative,
+                      nativeNotice,
+                    }),
+                  )
                   .catch((err) => {
-                    nativeNotice("cyrene", "error", `嵌入模型切换失败：${err instanceof Error ? err.message : String(err)}`);
-                    // P2-2（复审配合）：切换 Promise reject 时 WPF 卡片仍保留乐观选中，
-                    // 推一次设置快照触发既有 section 重建，把卡片回退到实际档位。
+                    // 动态 import 失败等（runNativeEmbeddingSwitch 内部失败已自行回执）：
+                    // 与流程内 reject 同一结构化回执，保证 WPF 卡片回退
+                    notifyEmbeddingSwitchRejected(nativeNotice, err, embeddingModel);
                     pushSettingsSnapshotToNative();
                   });
                 return;

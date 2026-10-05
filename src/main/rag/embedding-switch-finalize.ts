@@ -22,11 +22,12 @@ export const EMBEDDING_SWITCH_STICKER_REASON = "embedding-model-switch";
 
 /**
  * 切换成功收尾：用户记忆对账 → 贴纸索引失效 → 贴纸索引重建。
- * 调用方在 switchEmbeddingModel 返回 ok 后、保存设置/广播前调用。
+ * 调用方在 switchEmbeddingModel 返回 ok 后调用（P2-3 复审起两个入口均为
+ * 先 saveModelSettings 落盘、再本收尾、最后广播）。
  *
- * P2-1（复审）：对账是 best-effort——reconcile 失败（如备份步骤抛错）只告警
- * 继续，不能让已生效的模型切换被当作失败（否则 IPC 返回 ok:false、设置不落盘，
- * 重启后旧配置与新索引 meta 不符）。贴纸收尾与设置保存照常进行。
+ * P2-1/P2-3（复审）：三步均为 best-effort——任一步抛错只告警继续，不能让已
+ * 生效的模型切换被入口反向标记为失败（否则 IPC/native 返回 ok:false、设置不
+ * 落盘，重启后旧配置与新索引 meta 不符）。invalidate 失败不阻断 refresh。
  */
 export async function finalizeEmbeddingModelSwitch(deps: EmbeddingSwitchFinalizeDeps): Promise<void> {
   try {
@@ -37,6 +38,20 @@ export async function finalizeEmbeddingModelSwitch(deps: EmbeddingSwitchFinalize
       error instanceof Error ? error.message : String(error),
     );
   }
-  deps.invalidateStickerEmbeddingIndex();
-  deps.refreshStickerEmbeddingIndex(EMBEDDING_SWITCH_STICKER_REASON);
+  try {
+    deps.invalidateStickerEmbeddingIndex();
+  } catch (error) {
+    console.warn(
+      "[RAG] sticker embedding index invalidation failed after embedding switch (continuing):",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  try {
+    deps.refreshStickerEmbeddingIndex(EMBEDDING_SWITCH_STICKER_REASON);
+  } catch (error) {
+    console.warn(
+      "[RAG] sticker embedding index refresh failed after embedding switch (continuing):",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }

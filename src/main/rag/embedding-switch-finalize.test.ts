@@ -45,4 +45,36 @@ describe("finalizeEmbeddingModelSwitch", () => {
       "backup failed",
     );
   });
+
+  it("invalidate / refresh 抛错同样 best-effort：不抛出，后续步骤照常（P2-3）", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const calls: string[] = [];
+
+    await expect(
+      finalizeEmbeddingModelSwitch({
+        reconcileUserMemoryIndex: async () => { calls.push("reconcile"); },
+        invalidateStickerEmbeddingIndex: () => { throw new Error("invalidate boom"); },
+        refreshStickerEmbeddingIndex: (reason) => { calls.push(`refresh:${reason}`); },
+      }),
+    ).resolves.toBeUndefined();
+    expect(calls).toEqual(["reconcile", `refresh:${EMBEDDING_SWITCH_STICKER_REASON}`]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("invalidation failed"),
+      "invalidate boom",
+    );
+
+    calls.length = 0;
+    await expect(
+      finalizeEmbeddingModelSwitch({
+        reconcileUserMemoryIndex: async () => { calls.push("reconcile"); },
+        invalidateStickerEmbeddingIndex: () => { calls.push("invalidate"); },
+        refreshStickerEmbeddingIndex: () => { throw new Error("refresh boom"); },
+      }),
+    ).resolves.toBeUndefined();
+    expect(calls).toEqual(["reconcile", "invalidate"]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("refresh failed"),
+      "refresh boom",
+    );
+  });
 });

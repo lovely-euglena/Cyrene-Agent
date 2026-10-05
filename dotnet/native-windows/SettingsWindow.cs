@@ -933,7 +933,7 @@ public sealed partial class SettingsWindow : NativeWindow
             if (savedProfileId.Length > 0 && _apiForm is not null) _apiForm.ProfileId = savedProfileId;
         }
         // 昔涟 section：embedding 切换回执 → rebuild-required 弹迁移确认（重建/清空/取消）；
-        // 其它失败（模型未安装等）刷新 section 撤销卡片乐观选中
+        // 其它失败（模型未安装、切换 Promise reject / 动态导入失败等）刷新 section 撤销卡片乐观选中
         if (section == "cyrene" && notice.TryGetProperty("data", out var cyreneData) && cyreneData.ValueKind == JsonValueKind.Object)
         {
             if (GetBool(cyreneData, "rebuildRequired"))

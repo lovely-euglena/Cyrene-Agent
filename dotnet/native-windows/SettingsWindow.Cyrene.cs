@@ -118,9 +118,11 @@ public sealed partial class SettingsWindow
         // Embedding 两张卡：选中态 + 各自安装状态；点击切换走宿主索引迁移
         Border? bgem3Card = null;
         Border? e5Card = null;
-        // 点击守卫用可变选中态而非构建期快照局部变量：宿主切换失败的 catch 只发通知、
-        // 不推设置快照重建，窗口内快照值不会刷新，过期值会让「切走后再切回初始档位」
-        // 被早退守卫吞掉（与 reranker 同一模式）。
+        // 点击守卫用可变选中态而非构建期快照局部变量：点击后先乐观选中，宿主回执
+        // 到达前快照值仍是旧档位（避免同一档位重复发保存）；切换失败时宿主会带
+        // embeddingSwitchFailed 结构化回执触发本 section 重建（ApplyNotice →
+        // RefreshSection），成功后快照推送按源变化重建——重建后选中态从新快照重置
+        // （与 reranker 同一模式）。
         var embeddingSelected = embeddingModel;
         void ApplyEmbeddingSelection(string model)
         {
@@ -195,8 +197,9 @@ public sealed partial class SettingsWindow
         Border? rerankerStandardCard = null;
         Border? rerankerV2M3Card = null;
         Border? rerankerNoneCard = null;
-        // 点击守卫用可变选中态而非构建期快照局部变量：reranker 保存成功后宿主不推设置快照，
-        // 本窗口内快照值不会刷新，过期值会让「切走后再切回初始档位」被早退守卫吞掉。
+        // 点击守卫用可变选中态而非构建期快照局部变量：宿主在 reranker 保存成功后
+        // 已推设置快照重建本 section；守卫仍覆盖回执到达前的乐观选中窗口，避免
+        // 同一档位重复发保存（与 embedding 卡同一模式）。
         var rerankerSelected = rerankerMode;
         void ApplyRerankerSelection(string mode)
         {
