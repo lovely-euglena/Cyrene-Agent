@@ -186,7 +186,7 @@
 }
 ```
 
-- **物化契约**（`fixtures/sync-protocol/materialize-cases/`，6 组）：输入 JSONL → `readBatch` →
+- **物化契约**（`fixtures/sync-protocol/materialize-cases/`，7 组）：输入 JSONL → `readBatch` →
   物化 → 期望 `{ memories, mood }`（可选断言 `errors` / `droppedDuplicates`）：
 
 | 用例 | 演练点 |
@@ -197,6 +197,7 @@
 | `04-mood-last-wins` | 双端心情交替 → 最后（规范序）生效 |
 | `05-convergence-drill` | **双端离线分叉 → 交换 → 收敛**（乱序 + 重复事件，断言去重与最终状态） |
 | `06-non-aux-ignored` | 会话类事件 no-op；非法行记 `errors` 不影响物化 |
+| `07-proto-key` | 原型链键安全：`memoryId=__proto__` 作为普通键参与物化（双端一致） |
 
 - **双端执行**：TS `npx vitest run src/main/sync`；C# `--selftest sync-materialize
   fixtures/sync-protocol/materialize-cases`。同套向量双端全绿即物化契约成立。
@@ -214,9 +215,9 @@
 
 - TS：`src/main/sync/sync-protocol.ts`（`validateSyncEvent` / `readSyncBatch`）
 - C#：`dotnet/cyrene-core/Sync/SyncProtocolV0.cs`（`ValidateEvent` / `ReadBatch`）
-- fixtures：`fixtures/sync-protocol/cases/`（13 组：正常 / 乱序 / 重复 / 半截 / 坏行 /
+- fixtures：`fixtures/sync-protocol/cases/`（14 组：正常 / 乱序 / 重复 / 半截 / 坏行 /
   未知类型 / 信封非法 / 载荷非法 / presentation / 空白行 / 空输入 / 新增 `12-memory-mood` /
-  `13-memory-mood-payload-invalid`）+ `materialize-cases/`（6 组：物化折叠与收敛，§5）
+  `13-memory-mood-payload-invalid` / `14-id-control-char`）+ `materialize-cases/`（7 组：物化折叠与收敛，§5）
 
 ```bash
 npx vitest run src/main/sync

@@ -94,7 +94,7 @@ PMRS op → 事件映射（导出器口径，IKJK2I 落地）：
 
 ## 3. 冲突演练（共享向量）
 
-- **读取契约**（`cases/`）：新增 `12-memory-mood.json`（合法批：乱序 → 规范排序）与 `13-memory-mood-payload-invalid.json`（`E_SYNC_PAYLOAD` 边界：缺字段 / delete 携带字段 / 未知键 / 枚举外 / 越界 weight / 命名空间不符等）。
+- **读取契约**（`cases/`）：新增 `12-memory-mood.json`（合法批：乱序 → 规范排序）、`13-memory-mood-payload-invalid.json`（`E_SYNC_PAYLOAD` 边界：缺字段 / delete 携带字段 / 未知键 / 枚举外 / 越界 weight / 命名空间不符等）与 `14-id-control-char.json`（id / ts / prevHash 尾随换行 → `E_SYNC_ENVELOPE`，R1 增补）。
 - **物化契约**（`materialize-cases/`，本批新增）：输入 JSONL → `readBatch` → 物化 → 期望 `{ memories, mood }`（可选断言 `errors` / `droppedDuplicates`）。用例：
 
 | 用例 | 演练点 |
@@ -105,6 +105,7 @@ PMRS op → 事件映射（导出器口径，IKJK2I 落地）：
 | `04-mood-last-wins` | 双端心情交替 → 最后（规范序）生效 |
 | `05-convergence-drill` | **双端离线分叉 → 交换 → 收敛**（乱序 + 重复事件，断言去重与最终状态） |
 | `06-non-aux-ignored` | 会话类事件 no-op；非法行记 `errors` 不影响物化 |
+| `07-proto-key` | 原型链键安全：`memoryId=__proto__` 作为普通键参与物化（R1 增补） |
 
 - 双端执行：TS `npx vitest run src/main/sync`；C# `--selftest sync-materialize fixtures/sync-protocol/materialize-cases`。同套向量双端全绿即契约成立。
 
