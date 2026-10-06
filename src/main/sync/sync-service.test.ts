@@ -367,6 +367,63 @@ describe("sync/sync-service", () => {
     expect(built.state.serverDeviceId).toBe("dev_1");
   });
 
+  it("pair：换服务器地址重置 fetchCursor/pushedCount/serverDeviceId（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.pair({ baseUrl: "https://b.example.com", code: "CODE-1" });
+
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.serverDeviceId).toBe("dev_1");
+  });
+
+  it("pair：同址重配对保留游标与推送水位，仅刷新服务器设备身份（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.pair({ code: "CODE-1" });
+
+    expect(built.state.fetchCursor).toBe("42");
+    expect(built.state.pushedCount).toBe(3);
+    expect(built.state.serverDeviceId).toBe("dev_1");
+  });
+
+  it("saveConfig：换 baseUrl 重置同步状态（游标/推送水位/服务器身份）（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    // 已有 state 文件（生产语义：A 服务器同步过）——peekState 按真实存在性判断
+    fs.mkdirSync(path.join(mocks.userDataDir, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(mocks.userDataDir, "sync", "state.json"), "{}");
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com" });
+
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：同址保存不动同步状态（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    fs.mkdirSync(path.join(mocks.userDataDir, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(mocks.userDataDir, "sync", "state.json"), "{}");
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.saveConfig({ enabled: false });
+
+    expect(built.state.fetchCursor).toBe("42");
+    expect(built.state.pushedCount).toBe(3);
+    expect(built.state.serverDeviceId).toBe("dev_a");
+  });
+
   it("unpair：清 token / serverDeviceId / fetchCursor，保留 outbox", async () => {
     saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
     const store = new FakeStore();

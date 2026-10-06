@@ -430,6 +430,18 @@ class SyncServiceController implements SyncService {
     if (baseUrlChanged && input.clearToken !== true && !hasNewToken) patch.token = "";
     this.settings = saveSyncSettings(patch);
 
+    // #IKJSNA：换址即换服务器——state 中的游标/推送水位/服务器身份属于旧服务器，
+    // 一并重置（peekState：state 不存在时不创建、零副作用；重配对时会重新 clone/重推）。
+    if (baseUrlChanged) {
+      const state = await this.peekState();
+      if (state) {
+        state.fetchCursor = null;
+        state.pushedCount = 0;
+        state.serverDeviceId = null;
+        await this.persistState();
+      }
+    }
+
     if (this.settings.enabled) {
       if (this.running) void this.syncNow(); // 配置保存后一次
       else await this.start(); // start 内含首轮
@@ -452,9 +464,19 @@ class SyncServiceController implements SyncService {
     const paired = await client.pair(code, deviceName);
     if (!paired.token) throw new SyncHttpError("http", 0, undefined, "服务器未返回 token");
 
-    // token 落盘（加密）+ 服务器设备身份写入 state；协议身份（deviceId）保持不变
+    // #IKJSNA：换服务器（地址变化）时旧游标/推送水位/服务器设备身份全部失效——
+    // fetchCursor 是 A 服务器的插入序游标，带到 B 会静默漏拉远端事件；pushedCount
+    // 是全局推送水位，不归零则本地历史永不重推到 B。换址时一并重置（重 clone / 重推）。
+    const baseUrlChanged = normalizeBaseUrlKey(baseUrl) !== normalizeBaseUrlKey(current.baseUrl);
     this.settings = saveSyncSettings({ baseUrl, deviceName, token: paired.token });
-    state.serverDeviceId = paired.deviceId || state.serverDeviceId;
+    if (baseUrlChanged) {
+      state.fetchCursor = null;
+      state.pushedCount = 0;
+      state.serverDeviceId = paired.deviceId || null;
+    } else {
+      // 同址重配对：协议身份与游标/水位继续有效，仅刷新服务器设备身份
+      state.serverDeviceId = paired.deviceId || state.serverDeviceId;
+    }
     await this.persistState();
 
     if (this.settings.enabled) {
