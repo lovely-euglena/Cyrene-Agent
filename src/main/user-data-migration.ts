@@ -26,10 +26,16 @@ export interface LegacyUserDataMigrationInput {
   appDataPath: string;
   /** app.getPath("userData") —— 迁移目标，即应用当前真正使用的数据目录 */
   targetUserDataPath: string;
+  /**
+   * 命令行显式指定 --user-data-dir（自定义 profile）。此时不做迁移：
+   * 该开关常用于调试/测试隔离，迁移会把真实数据搬进临时目录（实测踩坑）。
+   */
+  explicitUserDataDir?: boolean;
 }
 
 export type LegacyUserDataMigrationStatus =
   | "skipped" // 目录已是目标（同一路径），无需迁移
+  | "skipped-explicit" // 显式 --user-data-dir：自定义 profile 不迁移
   | "none" // 旧目录不存在（新用户），无需迁移
   | "renamed" // 目标不存在，旧目录整体原子重命名
   | "merged" // 两者并存，逐项并入且全部成功
@@ -40,9 +46,17 @@ export interface LegacyUserDataMigrationResult {
   status: LegacyUserDataMigrationStatus;
 }
 
+/** 命令行是否显式指定 --user-data-dir（兼容 `=` 与空格两种写法）。 */
+export function hasExplicitUserDataDirArg(argv: readonly string[]): boolean {
+  return argv.some((arg) => arg === "--user-data-dir" || arg.startsWith("--user-data-dir="));
+}
+
 export function migrateLegacyUserData(
   input: LegacyUserDataMigrationInput,
 ): LegacyUserDataMigrationResult {
+  if (input.explicitUserDataDir === true) {
+    return { status: "skipped-explicit" };
+  }
   const legacyPath = path.join(input.appDataPath, LEGACY_USER_DATA_DIR_NAME);
   if (path.resolve(legacyPath) === path.resolve(input.targetUserDataPath)) {
     return { status: "skipped" };

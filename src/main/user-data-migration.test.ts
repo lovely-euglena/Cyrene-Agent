@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { migrateLegacyUserData } from "./user-data-migration";
+import { hasExplicitUserDataDirArg, migrateLegacyUserData } from "./user-data-migration";
 
 // 用临时目录模拟 appData，构造旧目录 live2d-cyrene 与新目录 Cyrene 的各种组合
 let root: string;
@@ -86,5 +86,28 @@ describe("migrateLegacyUserData", () => {
     expect(fs.readFileSync(path.join(targetDir(), "lockfile"), "utf8")).toBe("fresh-pid");
     expect(fs.existsSync(path.join(targetDir(), "memory.json"))).toBe(true);
     expect(fs.existsSync(legacyDir())).toBe(false);
+  });
+
+  it("显式 --user-data-dir：跳过迁移，新旧目录都不动", () => {
+    writeFixture(legacyDir(), "app-settings.json", "{}");
+
+    const result = migrateLegacyUserData({
+      appDataPath: root,
+      targetUserDataPath: targetDir(),
+      explicitUserDataDir: true,
+    });
+
+    expect(result.status).toBe("skipped-explicit");
+    expect(fs.existsSync(legacyDir())).toBe(true);
+    expect(fs.existsSync(targetDir())).toBe(false);
+  });
+});
+
+describe("hasExplicitUserDataDirArg", () => {
+  it("识别 --user-data-dir 的两种写法，忽略其他参数", () => {
+    expect(hasExplicitUserDataDirArg([])).toBe(false);
+    expect(hasExplicitUserDataDirArg(["--remote-debugging-port=9223"])).toBe(false);
+    expect(hasExplicitUserDataDirArg(["--user-data-dir=C:/tmp/profile"])).toBe(true);
+    expect(hasExplicitUserDataDirArg(["--user-data-dir", "C:/tmp/profile"])).toBe(true);
   });
 });

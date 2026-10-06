@@ -197,7 +197,7 @@ import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/gi
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { dedicatedGitConfigPath, syncDedicatedGitConfig } from "../code-git/dedicated-git-config";
 import { installSingleInstanceGuard } from "../single-instance";
-import { migrateLegacyUserData } from "../user-data-migration";
+import { hasExplicitUserDataDirArg, migrateLegacyUserData } from "../user-data-migration";
 import { createWindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
 import { setSidebarWindowVisible, setTasksWindowVisible } from "../windows/create-aux-windows";
@@ -1153,6 +1153,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         migrateLegacyUserData({
           appDataPath: app.getPath("appData"),
           targetUserDataPath: app.getPath("userData"),
+          explicitUserDataDir: hasExplicitUserDataDirArg(process.argv),
         });
       },
       registerPrivilegedSchemes,
