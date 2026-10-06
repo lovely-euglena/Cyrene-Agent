@@ -7,9 +7,12 @@ declare(strict_types=1);
  * 与 TS（src/main/sync/sync-protocol.ts）/ C#（dotnet/cyrene-core/Sync/SyncProtocolV0.cs）
  * 逐字段一致：fixtures/sync-protocol/cases 为共享契约（tests/run.php 执行同一组向量）。
  * 行级容错 / 幂等去重（首见）/ 规范序 (lamport, deviceId 序数, seq) / truncatedTail 语义同双端。
+ * v0.1（IKJK2O）：+memory.write / mood.shift（伪 sessionId 命名空间 __memory__ / __mood__ 强制）。
  */
 
-const SYNC_EVENT_TYPES = ['session.create', 'message.append', 'turn_rewind', 'tombstone'];
+const SYNC_EVENT_TYPES = ['session.create', 'message.append', 'turn_rewind', 'tombstone', 'memory.write', 'mood.shift'];
+/** mood.shift 九值枚举（对齐端侧 RUNTIME_FEELINGS）。 */
+const SYNC_MOOD_FEELINGS = ['平静', '开心', '温柔', '激动', '撒娇', '担心', '难过', '感动', '害羞'];
 const SYNC_ERROR_CODES = ['E_SYNC_BAD_JSON', 'E_SYNC_ENVELOPE', 'E_SYNC_TYPE', 'E_SYNC_PAYLOAD'];
 const SYNC_PRESENTATION_PATCH_KEYS = [
     'content', 'reasoning', 'reasoningBlocks', 'processMessages', 'agentRounds',
@@ -118,10 +121,10 @@ function sync_validate_event(mixed $value): ?string
     if (!isset($value['payload']) || !is_array($value['payload'])) {
         return 'E_SYNC_PAYLOAD';
     }
-    return sync_validate_payload($value['type'], $value['payload']) ? null : 'E_SYNC_PAYLOAD';
+    return sync_validate_payload($value['type'], $value['payload'], $value['sessionId']) ? null : 'E_SYNC_PAYLOAD';
 }
 
-function sync_validate_payload(string $type, array $payload): bool
+function sync_validate_payload(string $type, array $payload, string $sessionId): bool
 {
     switch ($type) {
         case 'session.create':
@@ -174,6 +177,40 @@ function sync_validate_payload(string $type, array $payload): bool
             return sync_has_only_keys($payload, ['targetUserTurnId', 'reason'])
                 && isset($payload['targetUserTurnId']) && sync_is_id($payload['targetUserTurnId'])
                 && ($payload['reason'] ?? null) === 'pending_withdrawn';
+        case 'memory.write':
+            // 伪会话命名空间（设计 §1.3）：不匹配 → E_SYNC_PAYLOAD
+            if ($sessionId !== '__memory__') {
+                return false;
+            }
+            if (!sync_has_only_keys($payload, ['memoryId', 'op', 'content', 'weight', 'pinned'])) {
+                return false;
+            }
+            if (!isset($payload['memoryId']) || !sync_is_id($payload['memoryId'])) {
+                return false;
+            }
+            $op = $payload['op'] ?? null;
+            if ($op === 'upsert') {
+                // upsert = 全量快照：content + weight（安全整数 0–100）必填；pinned 可选 bool
+                if (!isset($payload['content']) || !is_string($payload['content'])) {
+                    return false;
+                }
+                if (!isset($payload['weight']) || !sync_is_safe_integer($payload['weight']) || $payload['weight'] > 100) {
+                    return false;
+                }
+                return sync_optional_field($payload, 'pinned', 'is_bool');
+            }
+            if ($op === 'delete') {
+                // delete = 墓碑：content / weight / pinned 必须缺省（出现即 E_SYNC_PAYLOAD）
+                return !array_key_exists('content', $payload)
+                    && !array_key_exists('weight', $payload)
+                    && !array_key_exists('pinned', $payload);
+            }
+            return false;
+        case 'mood.shift':
+            // 单键闭合 + 九值枚举 + 伪会话命名空间
+            return $sessionId === '__mood__'
+                && sync_has_only_keys($payload, ['feeling'])
+                && in_array($payload['feeling'] ?? null, SYNC_MOOD_FEELINGS, true);
     }
     return false;
 }
