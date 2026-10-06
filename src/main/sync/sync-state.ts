@@ -3,8 +3,12 @@
  *
  * 契约（设计稿附录 A）：{schemaVersion:1, deviceId, lamport, seq, fetchCursor, pushedCount,
  * serverDeviceId, conversations, updatedAt}；load 对缺失 / 损坏做恢复，save 原子写（tmp+rename）。
- * 本文件为接口冻结占位：签名不变，实现体由 A 簇落地。
  */
+
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { readSyncBatch, type SyncEventV0 } from "./sync-protocol";
 
 export interface SyncConversationState {
   /** 已导出到 outbox 的最大 CTA entry seq（快路径水位）。 */
@@ -33,17 +37,142 @@ export interface SyncState {
   updatedAt: string;
 }
 
+const STATE_FILE_NAME = "state.json";
+const LOCAL_EVENTS_FILE_NAME = "events-local.jsonl";
+const REMOTE_EVENTS_FILE_NAME = "events-remote.jsonl";
+
+/** 首次启用生成协议身份 `desk-<12hex>`（与服务器 deviceId 解耦，重配对不改变事件身份）。 */
 export function createSyncState(): SyncState {
-  throw new Error("IKJK2I: sync-state 实现见 A 簇（接口冻结占位）");
+  return {
+    schemaVersion: 1,
+    deviceId: `desk-${randomBytes(6).toString("hex")}`,
+    lamport: 0,
+    seq: 0,
+    fetchCursor: null,
+    pushedCount: 0,
+    serverDeviceId: null,
+    conversations: {},
+    updatedAt: new Date().toISOString(),
+  };
 }
 
+/**
+ * 读取状态：
+ * - 缺失 → 新建（生成设备身份）并落盘，保证身份稳定；
+ * - 损坏（JSON / 形状非法）→ 隔离重命名为 `state.json.corrupt-<ts>`，
+ *   再按事件库恢复（deviceId 取 outbox 首个事件、lamport 取两库最大值、
+ *   seq 取 outbox 最大值、会话水位清空由 eventId 去重兜底），并落盘。
+ */
 export async function loadSyncState(syncDir: string): Promise<SyncState> {
-  void syncDir;
-  throw new Error("IKJK2I: sync-state 实现见 A 簇（接口冻结占位）");
+  const file = path.join(syncDir, STATE_FILE_NAME);
+  let raw: string | undefined;
+  try {
+    raw = await fs.promises.readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (raw !== undefined) {
+    const parsed = parseSyncState(raw);
+    if (parsed) return parsed;
+    await quarantineCorruptState(file);
+    const recovered = await recoverStateFromStore(syncDir);
+    await saveSyncState(syncDir, recovered);
+    return recovered;
+  }
+  const created = createSyncState();
+  await saveSyncState(syncDir, created);
+  return created;
 }
 
+/** 原子写：先写同目录临时文件再 rename，避免崩溃留下半写状态；updatedAt 刷新为写入时刻。 */
 export async function saveSyncState(syncDir: string, state: SyncState): Promise<void> {
-  void syncDir;
-  void state;
-  throw new Error("IKJK2I: sync-state 实现见 A 簇（接口冻结占位）");
+  state.updatedAt = new Date().toISOString();
+  await fs.promises.mkdir(syncDir, { recursive: true });
+  const file = path.join(syncDir, STATE_FILE_NAME);
+  const tmpFile = `${file}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmpFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await fs.promises.rename(tmpFile, file);
+}
+
+/** 形状校验：任何字段非法都视为损坏（fail-closed，走隔离恢复而不是带病使用）。 */
+function parseSyncState(raw: string): SyncState | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  if (value.schemaVersion !== 1) return null;
+  if (!isValidId(value.deviceId)) return null;
+  if (!isNonNegativeSafeInteger(value.lamport) || !isNonNegativeSafeInteger(value.seq)) return null;
+  if (!(value.fetchCursor === null || typeof value.fetchCursor === "string")) return null;
+  if (!isNonNegativeSafeInteger(value.pushedCount)) return null;
+  if (!(value.serverDeviceId === null || typeof value.serverDeviceId === "string")) return null;
+  if (!isRecord(value.conversations)) return null;
+  for (const conversation of Object.values(value.conversations)) {
+    if (!isRecord(conversation)) return null;
+    if (!isNonNegativeSafeInteger(conversation.exportedThroughSeq)) return null;
+    if (!isNonNegativeSafeInteger(conversation.titleRevision)) return null;
+    if (typeof conversation.lastTitle !== "string") return null;
+  }
+  if (typeof value.updatedAt !== "string") return null;
+  return {
+    schemaVersion: 1,
+    deviceId: value.deviceId,
+    lamport: value.lamport,
+    seq: value.seq,
+    fetchCursor: value.fetchCursor as string | null,
+    pushedCount: value.pushedCount,
+    serverDeviceId: value.serverDeviceId as string | null,
+    conversations: value.conversations as Record<string, SyncConversationState>,
+    updatedAt: value.updatedAt,
+  };
+}
+
+async function quarantineCorruptState(file: string): Promise<void> {
+  await fs.promises.rename(file, `${file}.corrupt-${Date.now()}`);
+}
+
+/** 损坏恢复：从 outbox / inbox 事件推导协议身份与时钟水位，会话水位清空重扫。 */
+async function recoverStateFromStore(syncDir: string): Promise<SyncState> {
+  const [local, remote] = await Promise.all([
+    readEventFile(path.join(syncDir, LOCAL_EVENTS_FILE_NAME)),
+    readEventFile(path.join(syncDir, REMOTE_EVENTS_FILE_NAME)),
+  ]);
+  const state = createSyncState();
+  // deviceId 取 outbox 首个事件（规范序）：保证重入后事件流身份连续。
+  if (local.length > 0) state.deviceId = local[0].deviceId;
+  // lamport 取 local + remote 最大值、seq 取 outbox 最大值：后续导出时钟不回退。
+  state.lamport = Math.max(
+    state.lamport,
+    local.reduce((max, event) => Math.max(max, event.lamport), 0),
+    remote.reduce((max, event) => Math.max(max, event.lamport), 0),
+  );
+  state.seq = local.reduce((max, event) => Math.max(max, event.seq), 0);
+  return state;
+}
+
+async function readEventFile(file: string): Promise<SyncEventV0[]> {
+  let text = "";
+  try {
+    text = await fs.promises.readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return readSyncBatch(text).events;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** 协议 id 规则：非空、≤200 码元、不含控制符（与 sync-protocol 一致）。 */
+function isValidId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 200 &&
+    !/[\u0000-\u001f\u007f]/.test(value);
 }
