@@ -222,9 +222,14 @@ function collectPresentations(entries: TranscriptEntry[]): Map<string, Presentat
 /**
  * 按别名查找 presentation 快照：assistant 的 UI 消息 id 为 `turnId ?? entry.id`，
  * 而渠道等写入路径以 entry id 键控补丁（dispatcher 的 getLastAssistantEntryId）。
- * 对齐投影层别名语义（conversation-transcript-projection 的 byAlias：entryId 与
- * turnId 指向同一 UI 消息）：两个别名都查；命中多处时按 (patchRevision, seq) 取新者
- * 为基准、旧者并入，与逐键合并的语义一致。
+ * 两个别名都查；命中多处时跨键按 (patchRevision, seq) 取新者为基准、旧者并入，
+ * 重叠字段以新者为准。
+ *
+ * 与投影层的口径差异（conversation-transcript-projection.ts:782-801 逐 messageId
+ * 键独立合并、915-918 经 byAlias 按插入序依次 applyPatch）：投影对两个键各自合并后
+ * 再按插入序应用，重叠字段以后应用者为准；exporter 为单次快照合并，始终取
+ * (patchRevision, seq) 新者。仅当「两键字段重叠且低 (rev,seq) 键在投影中更晚应用」
+ * 时两者结果不同；当前无调用方同时写两键，属防御性分支。
  */
 function lookupPresentation(
   presentations: Map<string, PresentationSnapshot>,

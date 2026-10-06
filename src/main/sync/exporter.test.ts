@@ -288,6 +288,24 @@ describe("createSyncExporter", () => {
     });
   });
 
+  it("assistant presentation 别名反向：turnId 键控较新、entry.id 键控较旧时同样取新并合并", async () => {
+    const h = await createHarness();
+    addMeta(h, { id: "s1", title: "t", createdAt: 1_000 });
+    await h.journal.appendUser("s1", { turnId: "u1", text: "问", at: 2_000 });
+    const entryId = await appendAssistant(h.journal, "s1", "run1", "a1", "答");
+    // entry.id 键（渠道路径）较早且修订低，turnId 键（UI 路径）较晚且修订高；
+    // 重叠字段 content 以新者为准，非重叠字段 reasoning 保留旧者。
+    await h.journal.appendPresentation("s1", entryId, 1, { content: "渠道旧正文", reasoning: "旧思路" });
+    await h.journal.appendPresentation("s1", "a1", 2, { content: "UI 新正文" });
+
+    await h.exporter.exportPending();
+    const event = eventsById(h.eventStore).get(entryId)!;
+    expect(event.payload.presentation).toEqual({
+      patchRevision: 2,
+      patch: { reasoning: "旧思路", content: "UI 新正文" },
+    });
+  });
+
   it("跳过 visibility=internal / 空文本 assistant 与缺失 turnId 的 user（防御）", async () => {
     const h = await createHarness({
       wrapAuditEntries: (entries) => [
