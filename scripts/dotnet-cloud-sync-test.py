@@ -819,6 +819,71 @@ def main():
               and sum(1 for i in ordered if i.startswith("cb")) == 5,
               f"n={len(view_a)}")
 
+        # 3b. 记忆/心情事件（v0.1，IKJK2O）：双端离线分叉 push → fetch 收敛；未知类型拒绝
+        run = str(int(time.time()))
+        fork_errors = []
+
+        def memory_client(name, device, content, feeling, lamport):
+            batch = [
+                ev(f"{run}-{name}-mem", session_id="__memory__", device=device, lamport=lamport, seq=1,
+                   typ="memory.write",
+                   payload={"memoryId": f"l2-{run}", "op": "upsert", "content": content, "weight": 50}),
+                ev(f"{run}-{name}-mood", session_id="__mood__", device=device, lamport=lamport + 1, seq=1,
+                   typ="mood.shift", payload={"feeling": feeling}),
+            ]
+            status, body, _ = push(base, batch)
+            if status != 200:
+                fork_errors.append((name, status, body[:120]))
+
+        # 保留命名空间 sessionId 固定（__memory__ / __mood__），deviceId 带 run 前缀避免持久化实例重跑时 seq 撞链
+        thread_ma = threading.Thread(target=memory_client, args=("ma", f"dev-ma-{run}", "A版", "开心", 10))
+        thread_mb = threading.Thread(target=memory_client, args=("mb", f"dev-mb-{run}", "B版", "温柔", 10))
+        thread_ma.start()
+        thread_mb.start()
+        thread_ma.join()
+        thread_mb.join()
+        check("记忆/心情分叉 push 全 200（双端并发）", not fork_errors, str(fork_errors)[:200])
+
+        def fold_memory_mood(items):
+            """最小物化镜像（规范序折叠：后写覆盖 + sticky 墓碑），锁 e2e 收敛结论。"""
+            memories, deleted, mood = {}, set(), None
+            for item in sorted(items, key=lambda e: (e["lamport"], e["deviceId"], e["seq"])):
+                if item["type"] == "memory.write":
+                    payload = item["payload"]
+                    if payload.get("op") == "delete":
+                        deleted.add(payload["memoryId"])
+                        memories.pop(payload["memoryId"], None)
+                    elif payload.get("memoryId") not in deleted:
+                        memories[payload["memoryId"]] = (payload["content"], payload["weight"], payload.get("pinned", False))
+                elif item["type"] == "mood.shift":
+                    mood = item["payload"]["feeling"]
+            return memories, mood
+
+        mem_view_a, _ = fetch_all(base)
+        mem_view_b, _ = fetch_all(base)
+        run_mem_a = [item for item in mem_view_a if item["eventId"].startswith(run + "-")
+                     and item["type"] in ("memory.write", "mood.shift")]
+        run_mem_b = [item for item in mem_view_b if item["eventId"].startswith(run + "-")
+                     and item["type"] in ("memory.write", "mood.shift")]
+        check("记忆/心情双端 fetch 收敛（事件集合与规范序一致）",
+              canonical_ids(run_mem_a) == canonical_ids(run_mem_b) and len(run_mem_a) == 4
+              and {item["eventId"] for item in run_mem_a} == {item["eventId"] for item in run_mem_b},
+              f"a={canonical_ids(run_mem_a)} b={canonical_ids(run_mem_b)}")
+        check("记忆/心情分叉物化一致（规范序后写覆盖 → B版 / 温柔）",
+              fold_memory_mood(run_mem_a) == fold_memory_mood(run_mem_b)
+              == ({f"l2-{run}": ("B版", 50, False)}, "温柔"),
+              f"a={fold_memory_mood(run_mem_a)} b={fold_memory_mood(run_mem_b)}")
+
+        status, body, _ = push(base, [ev(f"{run}-unk1", session_id="__memory__", device=f"dev-u-{run}", lamport=1, seq=1,
+                                         typ="memory.append",
+                                         payload={"memoryId": "m-unknown", "op": "upsert", "content": "x", "weight": 10})])
+        data = json.loads(body) if status == 400 else {}
+        after_unknown, _ = fetch_all(base)
+        check("未知类型拒绝（memory.append → 400 E_SYNC_TYPE，未落库）",
+              status == 400 and data.get("code") == "E_SYNC_BATCH_INVALID"
+              and any(e.get("code") == "E_SYNC_TYPE" for e in data.get("errors", []))
+              and all(item["eventId"] != f"{run}-unk1" for item in after_unknown), body[:200])
+
         # 4. 链校验（基线动态计算）
         baseline = len(fetch_all(base)[0])
         h1, h2, h3 = "a" * 64, "b" * 64, "c" * 64
