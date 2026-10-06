@@ -25,6 +25,11 @@ describe("resolveSettingsDestination", () => {
     expect(resolveSettingsDestination("music")).toEqual({ kind: "settings", section: "preferences" });
   });
 
+  it("routes cloud sync sections (cloud/sync) to the cloud panel", () => {
+    expect(resolveSettingsDestination("cloud")).toEqual({ kind: "settings", section: "cloud" });
+    expect(resolveSettingsDestination("sync")).toEqual({ kind: "settings", section: "cloud" });
+  });
+
   it("defaults unknown legacy sections to appearance", () => {
     expect(resolveSettingsDestination("missing-section")).toEqual({ kind: "settings", section: "appearance" });
   });

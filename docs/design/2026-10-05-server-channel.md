@@ -510,7 +510,7 @@ sequenceDiagram
 | TS | `src/main/channels/manager.ts`、`init.ts` | `startAll` 前按归属过滤；运行期变更时 `stopOne/startOne`（新增 `pauseOne`/`resumeOne` 语义） |
 | TS | `src/main/channels/dispatcher.ts` | 门闩（第二道防线）+ 状态广播 |
 | TS | `src/main/proactive/proactive-lifecycle.ts`、`proactive-delivery.ts` | 转发/本机二选一 |
-| TS | `src/main/channels/settings-store.ts` | `channels.remote` 配置：`{enabled, baseUrl?, preferServer, failover}`；token 复用同步配置（IKJK2I 接线前允许显式填写） |
+| TS | `src/main/channels/settings-store.ts` | `channels.remote` 配置：`{enabled, baseUrl?, preferServer, failover}`；token 复用同步配置（IKJK2I 接线前允许显式填写；2026-10-06 注：已在 IKJK2I 落地） |
 
 ### 5.7 失败模式与可观测性
 
@@ -753,7 +753,7 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
 | 8 | **飞书 webhook 公开面** | 伪造/重放 | Verification Token + 签名 + 时间戳 + 去重表；限流桶；Host 白名单 |
 | 9 | **媒体不进事件流** | 桌面看不到渠道图片本体 | 稳定占位文本 + 文档；后续 v0.x 附件扩展 |
 | 10 | **ffmpeg 镜像体积** | 部署包变大 | `CLOUD_CHANNEL_FEISHU_AUDIO=0` 可关；或后续改纯托管 Opus |
-| 11 | **桌面同步客户端（IKJK2I）尚未接线** | 渠道远程配置/令牌复用暂缺 | 本 PR 允许 `channels.remote` 显式填写 baseUrl/token；接线后自动复用 |
+| 11 | **桌面同步客户端（IKJK2I）已接线（2026-10-06 关闭）** | 渠道远程配置/令牌复用暂缺 | 本 PR 允许 `channels.remote` 显式填写 baseUrl/token；2026-10-06：已由 IKJK2I 落地（未显式配置时自动复用同步配置），风险关闭 |
 | 12 | **凭据保护依赖 `CLOUD_TOKEN`** | 未设主控令牌时降级明文 0600 | 状态标注 + README 建议；后续接入 `Secrets`/DPAPI 等价物（Linux 静态保护 Q6 未决） |
 
 ---

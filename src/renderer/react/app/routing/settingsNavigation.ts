@@ -28,6 +28,9 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   channels: "channels",
   disclaimer: "disclaimer",
   browser: "browser",
+  // 云端同步（IKJK2I）：`cloud` 为规范 id，`sync` 兼容旧入口别名
+  cloud: "cloud",
+  sync: "cloud",
   // fork 旧 section 名 → 聊天窗设置页落点（2026-10 入口统一后，
   // 主进程可能带着这些历史 section 进来；不能落错页）
   user: "general", // 个人资料在头像菜单的用户资料弹窗维护

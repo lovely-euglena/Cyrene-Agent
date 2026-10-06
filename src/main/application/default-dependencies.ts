@@ -117,7 +117,7 @@ import {
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { initReranker, resetReranker } from "../rag/reranker";
-import { broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
+import { broadcastChatsChanged, broadcastCompactionPhase, registerChatsIpc } from "../chats/chats-ipc";
 import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
 import { registerBrowserPanelIpc } from "../browser/browser-panel-ipc";
 import { registerMomentsIpc } from "../moments/moments-ipc";
@@ -244,6 +244,9 @@ import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
 import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
 
 import { createIpcScope, type IpcScope } from "./ipc-scope";
+import { createSyncService } from "../sync/sync-service";
+import { registerSyncIpc } from "../sync/sync-ipc";
+import { createRemoteMergeProvider, type RemoteMergeProvider } from "../sync/read-model";
 import { createShutdownCoordinator } from "./shutdown";
 import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
@@ -1663,6 +1666,18 @@ createTray: (input) => {
       // removeHandler / 二次 handle 才能命中同一注册表（否则 plugins:list
       // 回退残留，PluginManager.start() 注册正式实现时抛 second handler）。
       shellIpc = shell.ipc;
+      // ── 云端同步（IKJK2I）：core 阶段装配（app ready 后；默认关闭零副作用）──
+      // 未启用时不挂定时器 / 不碰网络；启用时 start() 立即拉一轮 + 60s 定时（unref）。
+      const syncService = createSyncService({
+        userDataPath: app.getPath("userData"),
+        // fetch/clone 拉到新事件 → 广播聊天变更，打开的聊天页刷新（无循环依赖）
+        onRemoteEventsApplied: () => { broadcastChatsChanged(); },
+      });
+      shutdown.register({
+        id: "sync",
+        phase: "stopExternalConsumers",
+        dispose: async () => { await syncService.stop(); },
+      });
       return startCore({
       shell,
       readiness,
@@ -2156,12 +2171,21 @@ createTray: (input) => {
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
 
+        // ── 云端同步（IKJK2I）：sync IPC + CHATS_GET 合并读模型 + 启用即启动 ──
+        const remoteMergeProvider: RemoteMergeProvider | null = createRemoteMergeProvider(syncService);
+        registerSyncIpc(ipc, syncService, { getPublicConfig: () => syncService.getConfig() });
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
-        registerChatsIpc(ipc, {
+        // options 经变量传入：C 簇落地 remoteMerge 前也可编译（非新鲜字面量不触发多余属性检查）
+        const chatsIpcOptions = {
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
           transcriptCompactor,
-        });
+          remoteMerge: remoteMergeProvider ?? undefined,
+        };
+        registerChatsIpc(ipc, chatsIpcOptions);
+        // 启用时启动（未启用 start() 为 no-op）；headless 定时任务实例不参与同步，
+        // 避免与主实例并发写同一 userData/sync 旁路库。
+        if (!headlessScheduledArgs()) void syncService.start();
         registerMomentsIpc(ipc);
         registerCodeGitIpc({ ipc, service: services.git });
         // 会话工作区只读文件（右侧面板文件树 / 预览）

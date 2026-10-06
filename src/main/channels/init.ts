@@ -24,7 +24,9 @@ import {
   setActiveOwnershipClient,
   setChannelProcessGate,
   type ChannelOwnershipController,
+  type ChannelsRemoteConfig,
 } from "./ownership";
+import { loadSyncSettings } from "../sync/sync-settings";
 import type { ChannelId, ChannelStatus, MessageHandler } from "./types";
 import { getChannelConversationBindingStore } from "./conversation-binding-store";
 import { listSessions, getSession } from "../chats/chats-store";
@@ -54,6 +56,26 @@ export const CLOUD_MANAGED_START_ERROR = "云端托管中，请先在本机运�
  */
 function denyManualStart(id: ChannelId): { ok: false; error: string } | null {
   return channelManager.allowedToStart(id) ? null : { ok: false, error: CLOUD_MANAGED_START_ERROR };
+}
+
+/**
+ * channels.remote 配置解析（IKJK2I §7 渠道 remote 复用）：
+ * 显式 baseUrl / token 优先；未显式配置时回退 sync 设置（单一来源，token = 同步 device token）。
+ * sync 未配置（对应字段为空）时维持 channels 现状；仅在构造 ownership client 前调用。
+ */
+function resolveChannelsRemoteConfig(): ChannelsRemoteConfig {
+  const remote = loadChannelsSettings().remote;
+  let { baseUrl, token } = remote;
+  if (!baseUrl || !token) {
+    try {
+      const sync = loadSyncSettings();
+      if (!baseUrl && sync.baseUrl) baseUrl = sync.baseUrl;
+      if (!token && sync.token) token = sync.token;
+    } catch {
+      // sync 设置不可读（磁盘损坏等）：维持 channels 显式配置，不阻塞渠道启动
+    }
+  }
+  return { ...remote, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
 }
 
 let initialized = false;
@@ -125,7 +147,8 @@ export function initializeChannels(options: InitializeChannelsOptions): void {
   // + proactive 转发端口。channels.remote.enabled=false 时决策恒为 local，行为零变化。
   ownershipController = createChannelOwnershipController({
     manager: channelManager,
-    loadConfig: () => loadChannelsSettings().remote,
+    // baseUrl/token 缺省回退 sync 配置（IKJK2I §7；显式优先，sync 未配置维持现状）
+    loadConfig: () => resolveChannelsRemoteConfig(),
   });
   channelManager.setStartGate((id) => ownershipController?.shouldRunLocal(id) ?? true);
   setChannelProcessGate((channel) => ownershipController?.shouldProcess(channel) ?? true);
