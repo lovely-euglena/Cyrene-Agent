@@ -682,3 +682,38 @@
   若缺失需评估，已登记 cloud-server README 真机冒烟清单）；`dotnet-backend.md` / 设计稿 /
   cloud-server README 计数与实现口径同步。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3P / #IKJK2P / #IKJK2R / #IKJK2S / #IKJK2T。
+
+## 2026-10-06 增量：桌面端云接线（IKJK2I，里程碑「云端昔涟：不落」Phase 1 收尾）
+
+- **范围**：CTA journal（audit 全量）→ 同步事件导出器（4 类映射 + presentation 随行 + 过滤；
+  幂等 / 崩溃可重入；含 `session.create` 与标题修订）；存量迁移驱动（全量会话复用既有 v1→v2
+  迁移器，不重写）；旁路事件库与同步状态（`<userData>/sync/`：outbox / inbox JSONL + 原子 state）；
+  HTTP 同步客户端 + 同步服务（单飞 / 60s 调度 / 错误退避 / 401 提示重配对）；桌面重放物化视图
+  （与 PWA 共享核心）+ 合并读模型（`CHATS_GET` 仅同步启用时合并）；设置页「云端」section + IPC +
+  preload（token 加密落盘）；渠道 `channels.remote` 未显式配置时回退 sync 配置。设计定稿
+  `docs/design/2026-10-06-desktop-cloud-wiring.md`；本批不依赖 IKJK2O（v0.1 事件）。
+- **Q4 拍板：远端事件落盘 = 旁路事件库（`<userData>/sync/`），不回填 CTA。**
+  理由：CTA 是富领域模型（工具条目 / presentation / 压缩 / 归档），远端事件是协议层最小文本事件；
+  回填需伪造 CTA 条目并处理「导入条目再导出」环路标记，触碰校验 / 审计 / 压缩语义（issue 明言
+  「只读导出，不改变现有写入路径」）；旁路库可直接复用协议读取器，语义纯粹、可测。
+  **已否决备选**：回填 CTA（其唯一收益「UI 免合并」已由本批合并读模型覆盖）。
+- **决策 D1–D10 摘要**：D1 Q4 = 旁路事件库；D2 协议 deviceId 本地生成（`desk-*`），与服务器
+  deviceId（`dev_*`）解耦；D3 时钟 = 持久化全局 lamport / seq；D4 `session.create` 按标题修订号
+  重发（`screate:<cid>:r<n>`）；D5 presentation 为导出时快照（随 assistant 事件、白名单过滤）；
+  D6 合并读模型在 IPC 层（`CHATS_GET`），同步关闭零变化；D7 全量迁移驱动复用既有迁移器；
+  D8 渠道 remote 回退 sync 配置；D9 记忆 / 心情事件发射接线另批；D10 空文本 assistant / internal
+  消息不导出。
+- **接口冻结（契约提交先行）**：`src/shared/ipc-channels.ts` 新增 `sync:*` 常量（`SYNC_GET_CONFIG` /
+  `SYNC_SAVE_CONFIG` / `SYNC_GET_STATUS` / `SYNC_NOW` / `SYNC_PAIR` / `SYNC_PAIR_CODE` /
+  `SYNC_UNPAIR` / `SYNC_CHANGED`）；`src/shared/sync-types.ts` 新增（`SyncConfigPublic` /
+  `SyncSaveConfigInput` / `SyncStatus` / `SyncPairInput` / `SyncPairCodeResult` / `SyncOpResult<T>`）；
+  模块签名冻结——`sync-state` / `event-store` / `exporter` / `http-client` / `sync-service` /
+  `materializer` / `read-model`（`RemoteMergeSource` / `createRemoteMergeProvider`）与
+  `chats-ipc` 的 `remoteMerge?` 选项，详见设计稿附录 A。
+- **验证口径**：`npx tsc -p tsconfig.main.json --noEmit` + `build:main` / `build:preload` /
+  `check:renderer` 三端 0 错误；`npx vitest run src/main/sync src/pwa`（导出器 / 旁路库与状态 /
+  HTTP 客户端 / 同步服务 / 读模型；PWA replay 共享核心不回归）与 `src/main/chats src/main/orchestrator`
+  回归；手动 dry-run（设 `CYRENE_SYNC_DRY_RUN=1` + `CYRENE_SYNC_DRY_RUN_USERDATA=<真实 userData>`
+  跑 `npx vitest run src/main/sync/export-dry-run.manual.test.ts`，默认 skip、输出计数与样例不写盘）；
+  真机冒烟（启用同步 → 手机打开桌面历史 → 手机发送桌面可见 → 桌面回复手机可见）。测试计数见 PR 验证。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2I。

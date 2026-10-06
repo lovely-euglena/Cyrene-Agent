@@ -35,7 +35,9 @@ php/cloud-server/          # PHP 空间版服务端（IKJN7C）：public/ 站点
 src/main/dotnet-backend/   # TS 侧：config.ts（双轨开关唯一解析）、
                            # host-clients.ts（LineHostClient IPC）、native-tool-host
 src/main/sync/             # 同步协议 v0：读取器/校验器（fixtures/sync-protocol/ 双端向量）+
-                           # Git 仓库 remote 适配器（IKJN7B）；事件导出器/客户端/物化视图属 IKJK2I
+                           # Git 仓库 remote 适配器（IKJN7B）；事件导出器 / 同步客户端 / 物化视图
+                           # 已由 IKJK2I 交付（入口 exporter / event-store / sync-state /
+                           # http-client / sync-service / materializer / read-model）
 src/plugins/               # 插件层（含 dotnet-adapter.ts：.NET 插件进程适配）
 scripts/                   # 测试/发版脚本（见 §5）
 release/                   # 打包产物（gitignore 外的工作区）

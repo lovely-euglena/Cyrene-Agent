@@ -510,7 +510,7 @@ sequenceDiagram
 | TS | `src/main/channels/manager.ts`、`init.ts` | `startAll` 前按归属过滤；运行期变更时 `stopOne/startOne`（新增 `pauseOne`/`resumeOne` 语义） |
 | TS | `src/main/channels/dispatcher.ts` | 门闩（第二道防线）+ 状态广播 |
 | TS | `src/main/proactive/proactive-lifecycle.ts`、`proactive-delivery.ts` | 转发/本机二选一 |
-| TS | `src/main/channels/settings-store.ts` | `channels.remote` 配置：`{enabled, baseUrl?, preferServer, failover}`；token 复用同步配置（IKJK2I 接线前允许显式填写） |
+| TS | `src/main/channels/settings-store.ts` | `channels.remote` 配置：`{enabled, baseUrl?, preferServer, failover}`；token 复用同步配置（IKJK2I 接线前允许显式填写；2026-10-06 注：已在 IKJK2I 落地） |
 
 ### 5.7 失败模式与可观测性
 

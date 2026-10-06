@@ -201,6 +201,12 @@ npm --prefix src/pwa run build # → dotnet/cloud-server/wwwroot/
 - 本地开发：`npm --prefix src/pwa run dev`（vite 代理 `/v1`、`/healthz` → 127.0.0.1:7789）；
 - 设计文档：`docs/design/2026-10-04-pwa-mobile-client-design.md`。
 
+## 桌面客户端（IKJK2I）
+
+桌面主进程内置同步客户端（事件导出器 / 旁路事件库 / HTTP 客户端 / 同步服务 / 合并读模型，
+`src/main/sync/`）：设置页「云端」完成配对与启停；`channels.remote` 未显式配置时自动复用同步配置。
+设计见 `docs/design/2026-10-06-desktop-cloud-wiring.md`。
+
 ## API（camelCase JSON）
 
 鉴权（IKJK2K）：除 `POST /v1/pair`（兑换）与 `GET /v1/capabilities`（公开只读）外，`/v1/*` 需
