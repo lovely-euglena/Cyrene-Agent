@@ -20,6 +20,7 @@ import type {
 } from "../../../../shared/sync-types";
 import { SettingsInput, SettingsPasswordInput, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { Card } from "../../components/ui/Card";
+import { useTranslation } from "../../i18n";
 
 type BusyKey = "" | "save" | "clearToken" | "pair" | "pairCode" | "sync" | "unpair";
 
@@ -29,18 +30,19 @@ interface Feedback {
 }
 
 /** ISO 时间 → 本地可读文本（非法值原样回显，不抛错） */
-function formatDateTime(value: string | null): string {
-  if (!value) return "从未";
+function formatDateTime(value: string | null, t: (key: string) => string): string {
+  if (!value) return t("settingsPage.cloud.never");
   const time = new Date(value);
   return Number.isNaN(time.getTime()) ? value : time.toLocaleString();
 }
 
 /** 动作类错误统一文案：message + 稳定 code，便于用户报障 / 分支判断 */
-function errorText(error: { code: string; message: string }): string {
-  return `${error.message}（${error.code}）`;
+function errorText(error: { code: string; message: string }, t: (key: string, options?: Record<string, unknown>) => string): string {
+  return t("settingsPage.cloud.errorCode", { message: error.message, code: error.code });
 }
 
 export function CloudSyncSettingsPanel() {
+  const { t } = useTranslation();
   const api = window.settings;
   const [config, setConfig] = useState<SyncConfigPublic | null>(null);
   const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -71,15 +73,15 @@ export function CloudSyncSettingsPanel() {
       applyConfig(nextConfig);
       setStatus(nextStatus);
     } catch (error) {
-      if (!silent) setFeedback({ type: "error", text: error instanceof Error ? error.message : "加载云端同步配置失败。" });
+      if (!silent) setFeedback({ type: "error", text: error instanceof Error ? error.message : t("settingsPage.cloud.loadFailed") });
     }
-  }, [api, applyConfig]);
+  }, [api, applyConfig, t]);
 
   useEffect(() => {
     let active = true;
     if (!api?.syncGetConfig || !api.syncGetStatus) {
       setLoading(false);
-      setFeedback({ type: "error", text: "云端同步接口不可用。" });
+      setFeedback({ type: "error", text: t("settingsPage.cloud.unavailable") });
       return;
     }
     void load().finally(() => { if (active) setLoading(false); });
@@ -98,19 +100,19 @@ export function CloudSyncSettingsPanel() {
     try {
       const result = await action();
       if (!result.ok) {
-        setFeedback({ type: "error", text: errorText(result.error) });
+        setFeedback({ type: "error", text: errorText(result.error, t) });
         return null;
       }
       setFeedback({ type: "info", text: successText });
       await load(true);
       return result.data;
     } catch (error) {
-      setFeedback({ type: "error", text: error instanceof Error ? error.message : "操作失败，请稍后重试。" });
+      setFeedback({ type: "error", text: error instanceof Error ? error.message : t("settingsPage.cloud.actionFailed") });
       return null;
     } finally {
       setBusy("");
     }
-  }, [load]);
+  }, [load, t]);
 
   const saveConnection = () => {
     if (!api?.syncSaveConfig) return;
@@ -121,21 +123,21 @@ export function CloudSyncSettingsPanel() {
     };
     // 输入了 token 才下发；留空保存不覆盖原值（清除走下方按钮）
     if (tokenDraft.trim()) input.token = tokenDraft.trim();
-    void runAction("save", () => api.syncSaveConfig!(input), "已保存。").then((saved) => {
+    void runAction("save", () => api.syncSaveConfig!(input), t("settingsPage.cloud.connection.saved")).then((saved) => {
       if (saved) setTokenDraft("");
     });
   };
 
   const clearToken = () => {
     if (!api?.syncSaveConfig) return;
-    void runAction("clearToken", () => api.syncSaveConfig!({ clearToken: true }), "已清除访问令牌。");
+    void runAction("clearToken", () => api.syncSaveConfig!({ clearToken: true }), t("settingsPage.cloud.connection.tokenCleared"));
   };
 
   const redeemPairCode = () => {
     if (!api?.syncPair) return;
     const code = pairCodeDraft.trim().toUpperCase();
     if (!code) {
-      setFeedback({ type: "error", text: "请输入配对码。" });
+      setFeedback({ type: "error", text: t("settingsPage.cloud.pairing.codeRequired") });
       return;
     }
     const input: SyncPairInput = { code };
@@ -143,120 +145,120 @@ export function CloudSyncSettingsPanel() {
     const deviceName = deviceNameDraft.trim();
     if (baseUrl) input.baseUrl = baseUrl;
     if (deviceName) input.deviceName = deviceName;
-    void runAction("pair", () => api.syncPair!(input), "配对成功。").then((paired) => {
+    void runAction("pair", () => api.syncPair!(input), t("settingsPage.cloud.pairing.paired")).then((paired) => {
       if (paired) setPairCodeDraft("");
     });
   };
 
   const generatePairCode = () => {
     if (!api?.syncPairCode) return;
-    void runAction("pairCode", () => api.syncPairCode!(), "已生成配对码，请在手机端兑换。").then((data) => {
+    void runAction("pairCode", () => api.syncPairCode!(), t("settingsPage.cloud.pairing.codeGenerated")).then((data) => {
       if (data) setGeneratedCode(data);
     });
   };
 
   const syncNow = () => {
-    if (api?.syncNow) void runAction("sync", () => api.syncNow!(), "同步完成。");
+    if (api?.syncNow) void runAction("sync", () => api.syncNow!(), t("settingsPage.cloud.status.syncDone"));
   };
 
   const unpair = () => {
-    if (api?.syncUnpair) void runAction("unpair", () => api.syncUnpair!(), "已解除配对，重新配对后会继续同步历史事件。");
+    if (api?.syncUnpair) void runAction("unpair", () => api.syncUnpair!(), t("settingsPage.cloud.status.unpaired"));
   };
 
   const anyBusy = busy !== "";
   const lastError = status?.lastError ?? null;
   const connectionText = !status
-    ? "未知"
+    ? t("settingsPage.cloud.status.unknown")
     : status.syncing
-      ? "同步中…"
+      ? t("settingsPage.cloud.status.syncing")
       : status.lastError
-        ? "异常"
+        ? t("settingsPage.cloud.status.abnormal")
         : status.configured
-          ? "就绪"
-          : "未配置";
+          ? t("settingsPage.cloud.status.ready")
+          : t("settingsPage.cloud.status.unconfigured");
 
   return <>
-    <h1>云端</h1>
-    <p className="cy-settings-intro">把本机对话同步到云端服务器，手机端可与桌面接力；令牌加密存储，仅在保存时下发明文。</p>
+    <h1>{t("settingsPage.cloud.title")}</h1>
+    <p className="cy-settings-intro">{t("settingsPage.cloud.description")}</p>
     {feedback && <Alert className="cy-settings-alert" type={feedback.type} showIcon message={feedback.text} />}
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>
       <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Link2 size={18} />连接</h2><p>服务器地址与设备身份；保存后生效。</p></div>
+        <div className="cy-settings-section__heading"><h2><Link2 size={18} />{t("settingsPage.cloud.connection.title")}</h2><p>{t("settingsPage.cloud.connection.description")}</p></div>
         <Card>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>启用云端同步</strong><span>关闭时桌面行为与现状完全一致。</span></div>
-            <SettingsSwitch ariaLabel="启用云端同步" checked={enabledDraft} onChange={setEnabledDraft} />
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.connection.enable")}</strong><span>{t("settingsPage.cloud.connection.enableHint")}</span></div>
+            <SettingsSwitch ariaLabel={t("settingsPage.cloud.connection.enable")} checked={enabledDraft} onChange={setEnabledDraft} />
           </div>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>服务器地址</strong><span>云端同步服务根地址，例如 http://192.168.1.10:8787。</span></div>
-            <SettingsInput value={baseUrlDraft} placeholder="http://..." aria-label="服务器地址" onChange={(event) => setBaseUrlDraft(event.target.value)} />
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.connection.baseUrl")}</strong><span>{t("settingsPage.cloud.connection.baseUrlHint")}</span></div>
+            <SettingsInput value={baseUrlDraft} placeholder="http://..." aria-label={t("settingsPage.cloud.connection.baseUrl")} onChange={(event) => setBaseUrlDraft(event.target.value)} />
           </div>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>设备名</strong><span>手机端显示的设备名称。</span></div>
-            <SettingsInput value={deviceNameDraft} placeholder="我的桌面" aria-label="设备名" onChange={(event) => setDeviceNameDraft(event.target.value)} />
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.connection.deviceName")}</strong><span>{t("settingsPage.cloud.connection.deviceNameHint")}</span></div>
+            <SettingsInput value={deviceNameDraft} placeholder={t("settingsPage.cloud.connection.deviceNamePlaceholder")} aria-label={t("settingsPage.cloud.connection.deviceName")} onChange={(event) => setDeviceNameDraft(event.target.value)} />
           </div>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong>访问令牌（高级）</strong>
-              <span>{config?.hasToken ? "已保存令牌；输入留空保存不会覆盖原值。" : "可选：直接填写服务器主令牌，适合运维场景。"}</span>
+              <strong>{t("settingsPage.cloud.connection.token")}</strong>
+              <span>{config?.hasToken ? t("settingsPage.cloud.connection.tokenSavedHint") : t("settingsPage.cloud.connection.tokenHint")}</span>
             </div>
             <div className="cy-settings-row__control cy-settings-button-group">
-              <SettingsPasswordInput value={tokenDraft} placeholder={config?.hasToken ? "已保存（留空不修改）" : "粘贴令牌"} autoComplete="new-password" showLabel="显示令牌" hideLabel="隐藏令牌" aria-label="访问令牌" onChange={(event) => setTokenDraft(event.target.value)} />
-              {config?.hasToken && <Button danger loading={busy === "clearToken"} disabled={anyBusy && busy !== "clearToken"} onClick={clearToken}>清除 token</Button>}
-              <Button type="primary" loading={busy === "save"} disabled={anyBusy && busy !== "save"} onClick={saveConnection}>保存</Button>
+              <SettingsPasswordInput value={tokenDraft} placeholder={config?.hasToken ? t("settingsPage.cloud.connection.tokenSavedPlaceholder") : t("settingsPage.cloud.connection.tokenPlaceholder")} autoComplete="new-password" showLabel={t("settingsPage.cloud.connection.showToken")} hideLabel={t("settingsPage.cloud.connection.hideToken")} aria-label={t("settingsPage.cloud.connection.accessToken")} onChange={(event) => setTokenDraft(event.target.value)} />
+              {config?.hasToken && <Button danger loading={busy === "clearToken"} disabled={anyBusy && busy !== "clearToken"} onClick={clearToken}>{t("settingsPage.cloud.connection.clearToken")}</Button>}
+              <Button type="primary" loading={busy === "save"} disabled={anyBusy && busy !== "save"} onClick={saveConnection}>{t("settingsPage.cloud.connection.save")}</Button>
             </div>
           </div>
         </Card>
       </section>
 
       <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><KeyRound size={18} />配对</h2><p>用服务器配对码兑换令牌，或为手机生成一次性配对码。</p></div>
+        <div className="cy-settings-section__heading"><h2><KeyRound size={18} />{t("settingsPage.cloud.pairing.title")}</h2><p>{t("settingsPage.cloud.pairing.description")}</p></div>
         <Card>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>兑换配对码</strong><span>在服务器生成配对码后在此兑换（XXXX-XXXX）。</span></div>
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.pairing.redeem")}</strong><span>{t("settingsPage.cloud.pairing.redeemHint")}</span></div>
             <div className="cy-settings-row__control cy-settings-button-group">
-              <SettingsInput value={pairCodeDraft} placeholder="XXXX-XXXX" aria-label="配对码" onChange={(event) => setPairCodeDraft(event.target.value.toUpperCase())} />
-              <Button type="primary" loading={busy === "pair"} disabled={!pairCodeDraft.trim() || (anyBusy && busy !== "pair")} onClick={redeemPairCode}>兑换</Button>
+              <SettingsInput value={pairCodeDraft} placeholder="XXXX-XXXX" aria-label={t("settingsPage.cloud.pairing.code")} onChange={(event) => setPairCodeDraft(event.target.value.toUpperCase())} />
+              <Button type="primary" loading={busy === "pair"} disabled={!pairCodeDraft.trim() || (anyBusy && busy !== "pair")} onClick={redeemPairCode}>{t("settingsPage.cloud.pairing.redeemAction")}</Button>
             </div>
           </div>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>生成配对码</strong><span>为手机端生成一次性配对码；需要已配对桌面。</span></div>
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.pairing.generate")}</strong><span>{t("settingsPage.cloud.pairing.generateHint")}</span></div>
             <div className="cy-settings-row__control cy-settings-button-group">
-              <Button loading={busy === "pairCode"} disabled={!config?.hasToken || (anyBusy && busy !== "pairCode")} onClick={generatePairCode}>生成配对码</Button>
+              <Button loading={busy === "pairCode"} disabled={!config?.hasToken || (anyBusy && busy !== "pairCode")} onClick={generatePairCode}>{t("settingsPage.cloud.pairing.generate")}</Button>
             </div>
           </div>
           {generatedCode && (
             <div className="cy-settings-row">
               <div className="cy-settings-row__copy">
                 <strong style={{ fontFamily: "monospace", fontSize: 18, letterSpacing: "0.08em" }}>{generatedCode.code}</strong>
-                <span>到期时间：{formatDateTime(generatedCode.expiresAt)}；一次性使用。</span>
+                <span>{t("settingsPage.cloud.pairing.expiresAt", { time: formatDateTime(generatedCode.expiresAt, t) })}</span>
               </div>
-              <Tag color="processing">待兑换</Tag>
+              <Tag color="processing">{t("settingsPage.cloud.pairing.pending")}</Tag>
             </div>
           )}
         </Card>
       </section>
 
       <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Activity size={18} />状态</h2><p>同步进度与最近一次结果（只读快照）。</p></div>
+        <div className="cy-settings-section__heading"><h2><Activity size={18} />{t("settingsPage.cloud.status.title")}</h2><p>{t("settingsPage.cloud.status.description")}</p></div>
         <Card>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>连接状态</strong><span>{connectionText}</span></div>
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.connection")}</strong><span>{connectionText}</span></div>
             <div className="cy-settings-row__control cy-settings-button-group">
-              <Button icon={<RefreshCw size={15} aria-hidden="true" />} loading={busy === "sync"} disabled={!status?.configured || (anyBusy && busy !== "sync")} onClick={syncNow}>立即同步</Button>
-              <Button danger icon={<Unlink size={15} aria-hidden="true" />} loading={busy === "unpair"} disabled={!status?.hasToken || (anyBusy && busy !== "unpair")} onClick={unpair}>解除配对</Button>
+              <Button icon={<RefreshCw size={15} aria-hidden="true" />} loading={busy === "sync"} disabled={!status?.configured || (anyBusy && busy !== "sync")} onClick={syncNow}>{t("settingsPage.cloud.status.syncNow")}</Button>
+              <Button danger icon={<Unlink size={15} aria-hidden="true" />} loading={busy === "unpair"} disabled={!status?.hasToken || (anyBusy && busy !== "unpair")} onClick={unpair}>{t("settingsPage.cloud.status.unpair")}</Button>
             </div>
           </div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>启用状态</strong><span>{status?.enabled ? "已启用" : "未启用"}</span></div></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>配置状态</strong><span>{status?.configured ? "已配置服务器与令牌" : "未配置"}</span></div></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>上次同步</strong><span>{formatDateTime(status?.lastSyncAt ?? null)}</span></div></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>待推送事件</strong><span>{status?.pendingCount ?? 0}</span></div></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>拉取游标</strong><span>{status?.cursor ?? "尚未拉取"}</span></div></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>本地 / 远端事件</strong><span>{status ? `${status.localEventCount} / ${status.remoteEventCount}` : "—"}</span></div></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>协议设备 / 服务器设备</strong><span>{status ? `${status.deviceId ?? "—"} / ${status.serverDeviceId ?? "未配对"}` : "—"}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.enableState")}</strong><span>{status?.enabled ? t("settingsPage.cloud.status.enabled") : t("settingsPage.cloud.status.disabled")}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.configState")}</strong><span>{status?.configured ? t("settingsPage.cloud.status.configured") : t("settingsPage.cloud.status.unconfigured")}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.lastSync")}</strong><span>{formatDateTime(status?.lastSyncAt ?? null, t)}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.pendingEvents")}</strong><span>{status?.pendingCount ?? 0}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.cursor")}</strong><span>{status?.cursor ?? t("settingsPage.cloud.status.cursorEmpty")}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.eventCounts")}</strong><span>{status ? `${status.localEventCount} / ${status.remoteEventCount}` : "—"}</span></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.devices")}</strong><span>{status ? `${status.deviceId ?? "—"} / ${status.serverDeviceId ?? t("settingsPage.cloud.status.serverUnpaired")}` : "—"}</span></div></div>
           {lastError && (
             <div className="cy-settings-row">
-              <Alert className="cy-settings-alert" type="error" showIcon message={errorText(lastError)} />
+              <Alert className="cy-settings-alert" type="error" showIcon message={errorText(lastError, t)} />
             </div>
           )}
         </Card>

@@ -7,6 +7,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SyncConfigPublic, SyncStatus } from "../../../../shared/sync-types";
+import { setUiLocale, t } from "../../i18n";
 import { CloudSyncSettingsPanel } from "./CloudSyncSettingsPanel";
 
 Object.assign(globalThis, {
@@ -71,6 +72,8 @@ afterEach(async () => {
   roots.length = 0;
   document.body.innerHTML = "";
   delete (window as Window & { settings?: unknown }).settings;
+  // 语言是 i18next 全局单例，用例改过后必须还原（等切换完成再进入下一用例）
+  await act(async () => { setUiLocale("zh-CN"); await flush(); });
   vi.restoreAllMocks();
 });
 
@@ -86,8 +89,8 @@ describe("CloudSyncSettingsPanel", () => {
     expect(syncGetConfig).toHaveBeenCalledTimes(1);
     expect(syncGetStatus).toHaveBeenCalledTimes(1);
     expect(onSyncChanged).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain("云端");
-    expect(host.querySelector<HTMLInputElement>("input[aria-label='服务器地址']")?.value).toBe(baseConfig.baseUrl);
+    expect(host.textContent).toContain(t("settingsPage.cloud.title"));
+    expect(host.querySelector<HTMLInputElement>(`input[aria-label='${t("settingsPage.cloud.connection.baseUrl")}']`)?.value).toBe(baseConfig.baseUrl);
     expect(host.textContent).toContain("3"); // pendingCount
     expect(host.textContent).toContain("12 / 5"); // 本地 / 远端事件
     expect(host.textContent).toContain("desk-0123456789ab / dev_test");
@@ -105,16 +108,16 @@ describe("CloudSyncSettingsPanel", () => {
     });
     const host = await renderPanel();
 
-    await act(async () => { buttonByText(host, "保存")!.click(); await flush(); });
+    await act(async () => { buttonByText(host, t("settingsPage.cloud.connection.save"))!.click(); await flush(); });
     expect(syncSaveConfig).toHaveBeenNthCalledWith(1, {
       enabled: true,
       baseUrl: baseConfig.baseUrl,
       deviceName: baseConfig.deviceName,
     });
 
-    const tokenInput = host.querySelector<HTMLInputElement>("input[aria-label='访问令牌']")!;
+    const tokenInput = host.querySelector<HTMLInputElement>(`input[aria-label='${t("settingsPage.cloud.connection.accessToken")}']`)!;
     await act(async () => { typeInto(tokenInput, "tok-secret"); });
-    await act(async () => { buttonByText(host, "保存")!.click(); await flush(); });
+    await act(async () => { buttonByText(host, t("settingsPage.cloud.connection.save"))!.click(); await flush(); });
     expect(syncSaveConfig).toHaveBeenNthCalledWith(2, {
       enabled: true,
       baseUrl: baseConfig.baseUrl,
@@ -122,7 +125,7 @@ describe("CloudSyncSettingsPanel", () => {
       token: "tok-secret",
     });
     // 保存成功后清空 token 草稿（不会把明文回显到输入框）
-    expect((host.querySelector<HTMLInputElement>("input[aria-label='访问令牌']") as HTMLInputElement).value).toBe("");
+    expect((host.querySelector<HTMLInputElement>(`input[aria-label='${t("settingsPage.cloud.connection.accessToken")}']`) as HTMLInputElement).value).toBe("");
   });
 
   it("动作失败时展示 error.message 与 error.code", async () => {
@@ -137,9 +140,9 @@ describe("CloudSyncSettingsPanel", () => {
     });
     const host = await renderPanel();
 
-    await act(async () => { buttonByText(host, "立即同步")!.click(); await flush(); });
+    await act(async () => { buttonByText(host, t("settingsPage.cloud.status.syncNow"))!.click(); await flush(); });
     expect(syncNow).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain("连接服务器失败（network）");
+    expect(host.textContent).toContain(t("settingsPage.cloud.errorCode", { message: "连接服务器失败", code: "network" }));
   });
 
   it("收到 onSyncChanged 广播后刷新配置与状态", async () => {
@@ -174,9 +177,26 @@ describe("CloudSyncSettingsPanel", () => {
     });
     const host = await renderPanel();
 
-    await act(async () => { buttonByText(host, "生成配对码")!.click(); await flush(); });
+    await act(async () => { buttonByText(host, t("settingsPage.cloud.pairing.generate"))!.click(); await flush(); });
     expect(syncPairCode).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("ABCD-EF12");
-    expect(host.textContent).toContain("到期时间：");
+    expect(host.textContent).toContain(t("settingsPage.cloud.pairing.expiresAt", { time: new Date("2026-10-06T09:00:00.000Z").toLocaleString() }));
+  });
+
+  it("切换 UI 语言后按对应语言渲染（en）", async () => {
+    Object.assign(window, {
+      settings: {
+        syncGetConfig: async () => baseConfig,
+        syncGetStatus: async () => baseStatus,
+        onSyncChanged: () => () => {},
+      },
+    });
+    const host = await renderPanel();
+
+    await act(async () => { setUiLocale("en"); await flush(); });
+    expect(host.textContent).toContain("Cloud"); // 英文资源字面量：语言切换失败时不会误判为通过
+    expect(host.textContent).toContain(t("settingsPage.cloud.title"));
+    expect(host.textContent).toContain(t("settingsPage.cloud.connection.enable"));
+    expect(buttonByText(host, t("settingsPage.cloud.status.syncNow"))).toBeDefined();
   });
 });
