@@ -583,7 +583,8 @@
   的模型参数路径（str_replace 两段式 / fs 只读）同样先剥离。用例：
   `native-tool-host.test.ts`（nativeFirst / withNativeFirst 剥离 + internalArgs 覆盖 +
   fallbackOnError 语义）、`git-tools-native` / `str-replace-native` / `ast-grep-native`
-  接线级伪造注入用例。
+  接线级伪造注入用例。（IKJLP4 起内部参数改 call 帧 meta 通道、`internalArgs` 更名
+  `meta`、args `__` 旧键不再被宿主读取——见 2026-10-06 增量。）
 - **P1-1 ast-grep asar**：`resolveAstGrepCommand` 返回前做 `app.asar` →
   `app.asar.unpacked` 重写（对照 sandbox-exec / sync-mcp-builtin），新增
   `toUnpackedAsarPath` 的 asar 风格路径断言。
@@ -682,3 +683,41 @@
   若缺失需评估，已登记 cloud-server README 真机冒烟清单）；`dotnet-backend.md` / 设计稿 /
   cloud-server README 计数与实现口径同步。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3P / #IKJK2P / #IKJK2R / #IKJK2S / #IKJK2T。
+
+## 2026-10-06 增量：ToolHost 内部参数协议字段化（IKJLP4）
+
+- **背景**：内部注入参数（`__cyreneRoot` / `__cyreneWorkspaceRoot` / git 系列 /
+  `__dryRun` / `__astGrepCommand` / `__githubApiBase`）此前与模型参数同走 args JSON
+  （PR #20 P0 修复后由包装层统一剥离 + internalArgs/prepare 两条可信通道注入）；
+  本批把内部参数整体移出 args——call 帧新增独立 `meta` 字段，宿主工具只从 meta
+  读取，「模型输入」与「内部参数」协议层解耦（PR #1 影响分析后续优化项）。
+- **协议**：`→ {"op":"call","callId":"c1","tool":"...","meta":{...},"args":{...}}`；
+  meta 平铺字段：`workspaceRoot`（统一原 `__cyreneRoot` 与 `__cyreneWorkspaceRoot`）、
+  `sessionId`、`gitCommand` / `gitSource` / `gitVersion` / `gitIsolated` /
+  `gitIdentity` / `gitConfigGlobal`、`astGrepCommand`、`dryRun`（apply_patch /
+  str_replace 两段式）、`githubApiBase`（fetch_url，矩阵测试注入）。无内部参数的
+  调用帧不含 meta 键（形状不变）。
+- **兼容策略（明确不保留旧键）**：cyrene-native.exe 随应用打包（electron-builder
+  extraResources），与 TS 同版本发布、无独立升级窗口；新旧混跑场景下各工具安全
+  降级回 TS 实现（nativeFirst/withNativeFirst/直连调用均有失败回退，不产生错误
+  副作用）。因此不保留 args `__` 旧键——宿主只读 meta（即使未来剥离逻辑回归，
+  模型注入也无法在宿主侧生效）；整体回退仍可用 `CYRENE_TOOL_HOST=0`。
+  matrix 新增 2 条负例锁定：search `E_SEARCH_NO_ROOT`、git `E_GIT_NO_ROOT`。
+- **TS 侧**：新增 `NativeCallMeta` 类型；`NativeToolHost.call()` 第 5 形参 meta
+  全链透传（QueuedCall / dispatchNext / 出帧）；`NativeFirstOptions.internalArgs`
+  更名 `meta`；`withNativeFirst` prepare 第三参装配 meta；git 八件 / search_text /
+  download_file / apply_patch / str_replace / ast_grep 全部接线切换；模型 args 的
+  `__` 键剥离（信任边界 §2.3）与 TS 回退语义保持不变。
+- **宿主侧**：新增 `CallMeta` 读取助手；`ToolHost` call 分支解析并下发 meta；
+  git 八件 / search_text / download_file / apply_patch / str_replace / ast_grep /
+  fetch_url 改从 meta 取值；fetch_url 原有 `__githubApiBase` 一并字段化。
+- **测试脚本**：matrix（`req()`/`grun()` 支持 meta）与 dual-track
+  （`callSmokeTool` 支持 meta）全部注入点迁移。
+- **文档**：`ToolHost.cs` 头注释即协议规范（已更新）；`docs/dotnet-backend.md`
+  契约索引与计数同步；`docs/pr-review-rules.md` §2.3 措辞同步。
+- **验证（2026-10-06，Windows 本地）**：`tsc -p tsconfig.main.json --noEmit` 0 错；
+  `vitest run src/main/orchestrator/tools` **507/507**（+3：出帧验收 / 空 meta 不
+  下发 / prepare 未写 meta）；矩阵 **148/148**（本地全量，较上批 +2 旧键拒绝负例；
+  ast-grep CLI 就绪）；dual-track **PASS**；`check-cyrene-core-clean.py` PASS；
+  smoke-host 构建 0 错。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJLP4（PR #1 影响分析「后续优化」；#IKJK3V）。
