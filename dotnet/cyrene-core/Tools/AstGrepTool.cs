@@ -9,8 +9,8 @@ namespace CyreneNative.Tools;
 /// ast_grep_search / ast_grep_replace（与 ast-grep-tools.ts 同语义，IKJK3V T2 库替代批）。
 ///
 /// 无官方 .NET 绑定 → 随包 ast-grep CLI 走 JSON（tree-sitter 自研成本高一个量级）：
-///   - CLI 路径由 TS 包装器解析后经内部参数注入（__astGrepCommand；找不到则 TS 走 napi）；
-///   - 工作区根经内部参数注入（__cyreneWorkspaceRoot）；文件收集/语言过滤/Skip 目录/
+///   - CLI 路径由 TS 包装器解析后经 call 帧 meta 注入（meta.astGrepCommand；找不到则 TS 走 napi）；
+///   - 工作区根经 call 帧 meta 注入（meta.workspaceRoot）；文件收集/语言过滤/Skip 目录/
 ///     上限（500 文件、50 匹配）与 TS 逐项对齐；CLI 按扩展名自动识别语言；
 ///   - search：--json=stream 逐匹配解析 → TS 输出形状（line/column 1-based、endLine、text、file）；
 ///   - replace：-r 模板经 CLI 展开（replacement 字段，$$$ 语义与 napi 展开一致）；
@@ -49,24 +49,24 @@ internal static class AstGrepTool
 
     // ── 入口 ────────────────────────────────────────────────
 
-    public static string Search(JsonElement args)
+    public static string Search(JsonElement args, JsonElement meta)
     {
         if (!TryReadCommon(args, out var pattern, out var language, out var paths, out var error))
             return ErrorJson("matches", error);
-        var workspace = Str(args, "__cyreneWorkspaceRoot").Trim();
+        var workspace = CallMeta.Str(meta, "workspaceRoot").Trim();
         if (workspace.Length == 0)
             return ErrorJson("matches", "未绑定工作区，无法执行代码搜索");
 
         var maxMatches = ReadMaxMatches(args);
         var (files, skipped) = CollectFiles(workspace, paths, language);
-        var command = Str(args, "__astGrepCommand").Trim();
+        var command = CallMeta.Str(meta, "astGrepCommand").Trim();
 
         var matches = new List<object>();
         var filesWithMatches = 0;
         var truncated = false;
         if (files.Count > 0)
         {
-            if (command.Length == 0) throw new ToolHostException("E_AST_GREP_MISSING", "ast-grep CLI 不可用（__astGrepCommand 未注入）");
+            if (command.Length == 0) throw new ToolHostException("E_AST_GREP_MISSING", "ast-grep CLI 不可用（meta.astGrepCommand 未注入）");
             var cli = RunCli(command, pattern, null, files);
             var byFile = cli.GroupBy(m => NormalizePath(m.File)).ToDictionary(g => g.Key, g => g.OrderBy(m => m.StartByte).ToList());
             foreach (var file in files)
@@ -104,18 +104,18 @@ internal static class AstGrepTool
         return JsonSerializer.Serialize(result, Json);
     }
 
-    public static string Replace(JsonElement args)
+    public static string Replace(JsonElement args, JsonElement meta)
     {
         if (!TryReadCommon(args, out var pattern, out var language, out var paths, out var error))
             return ErrorJson("changed", error);
-        var workspace = Str(args, "__cyreneWorkspaceRoot").Trim();
+        var workspace = CallMeta.Str(meta, "workspaceRoot").Trim();
         if (workspace.Length == 0)
             return ErrorJson("changed", "未绑定工作区，无法执行代码改写");
 
         var rewrite = Str(args, "rewrite");
         var dryRun = !(args.ValueKind == JsonValueKind.Object && args.TryGetProperty("dryRun", out var d) && d.ValueKind == JsonValueKind.False);
         var (files, skipped) = CollectFiles(workspace, paths, language);
-        var command = Str(args, "__astGrepCommand").Trim();
+        var command = CallMeta.Str(meta, "astGrepCommand").Trim();
 
         var planned = new List<object>();
         var changes = new List<Dictionary<string, object?>>();
@@ -125,7 +125,7 @@ internal static class AstGrepTool
 
         if (files.Count > 0)
         {
-            if (command.Length == 0) throw new ToolHostException("E_AST_GREP_MISSING", "ast-grep CLI 不可用（__astGrepCommand 未注入）");
+            if (command.Length == 0) throw new ToolHostException("E_AST_GREP_MISSING", "ast-grep CLI 不可用（meta.astGrepCommand 未注入）");
             var cli = RunCli(command, pattern, rewrite, files);
             var byFile = cli.GroupBy(m => NormalizePath(m.File)).ToDictionary(g => g.Key, g => g.OrderBy(m => m.StartByte).ToList());
             foreach (var file in files)

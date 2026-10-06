@@ -1,6 +1,6 @@
 /**
  * apply_patch native 轨两段式接线测试：
- *  - ① __dryRun 预检成功 → ② 对每个 hunk 写 review 基线（update+move 记 rename）→ ③ 提交
+ *  - ① meta.dryRun 预检成功 → ② 对每个 hunk 写 review 基线（update+move 记 rename）→ ③ 提交
  *  - 预检失败：失败结果透传、无基线、无提交
  *  - host 故障：整体回退 TS 实现（真实落盘）
  */
@@ -11,7 +11,7 @@ import * as os from "os";
 import * as path from "path";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown> }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown> }>,
   nextResults: [] as Array<string | Error>,
   captureBefore: vi.fn(),
   recordRename: vi.fn(),
@@ -19,8 +19,8 @@ const nativeMocks = vi.hoisted(() => ({
 
 vi.mock("./native-tool-host", () => ({
   nativeToolHost: {
-    call: async (tool: string, args: Record<string, unknown>) => {
-      nativeMocks.calls.push({ tool, args });
+    call: async (tool: string, args: Record<string, unknown>, _timeoutMs?: number, _signal?: AbortSignal, meta?: Record<string, unknown>) => {
+      nativeMocks.calls.push({ tool, args, meta });
       const next = nativeMocks.nextResults.shift();
       if (next instanceof Error) throw next;
       return next ?? null;
@@ -112,8 +112,8 @@ describe("apply_patch native 两段式", () => {
 
     expect(out).toContain('"success":true');
     expect(nativeMocks.calls).toEqual([
-      { tool: "apply_patch", args: { patch: UPDATE_ADD_PATCH, __cyreneRoot: tmpDir, __dryRun: true } },
-      { tool: "apply_patch", args: { patch: UPDATE_ADD_PATCH, __cyreneRoot: tmpDir } },
+      { tool: "apply_patch", args: { patch: UPDATE_ADD_PATCH }, meta: { workspaceRoot: tmpDir, dryRun: true } },
+      { tool: "apply_patch", args: { patch: UPDATE_ADD_PATCH }, meta: { workspaceRoot: tmpDir } },
     ]);
     expect(nativeMocks.captureBefore).toHaveBeenCalledWith("run-1", path.join(tmpDir, "a.txt"), "a.txt");
     expect(nativeMocks.captureBefore).toHaveBeenCalledWith("run-1", path.join(tmpDir, "sub", "new.txt"), "sub/new.txt");

@@ -12,8 +12,9 @@ namespace CyreneNative.Tools;
 /// 与 git-tools.ts + code-git/git-service.ts 同语义（simple-git 3.36 命令与解析逐条对齐）。
 ///
 /// 信任边界：workspaceRoot / git 可执行 / 提交身份均由 TS 包装器从 ToolContext 与
-/// GitService 注入内部参数（__cyreneRoot / __gitCommand / __gitSource / __gitVersion /
-/// __gitIsolated / __gitIdentity / __sessionId），模型参数不参与。
+/// GitService 注入 call 帧 meta（workspaceRoot / gitCommand / gitSource / gitVersion /
+/// gitIsolated / gitIdentity / sessionId，IKJLP4），模型参数不参与；args 的 `__`
+/// 旧键不再被读取（明确不保留）。
 /// 凭证：完全沿用系统 git 凭据链（helper/环境），宿主不接触也不落盘任何凭证（B1）。
 /// 取消：在途取消由 NativeToolHost 杀 host 中止（git 子进程可能短暂孤儿化，见设计稿 §2）。
 /// 错误：校验/命令失败抛错误帧 → TS 包装层回退 GitService 原实现（错误语义一致）。
@@ -31,16 +32,16 @@ internal static class GitTools
 
     // ── 公共入口 ─────────────────────────────────────────────
 
-    public static string Status(JsonElement args)
+    public static string Status(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
-        var sessionId = Str(args, "__sessionId");
-        if (!IsRepository(args, root))
+        var root = Root(meta);
+        var sessionId = CallMeta.Str(meta, "sessionId");
+        if (!IsRepository(meta, root))
             return EmptyStatusJson(sessionId, "not_repository", "这个目录还不是 Git 仓库");
 
-        var summary = RunStatusSummary(args, root);
-        var branches = RunBranches(args, root);
-        var (insertions, deletions, byPath) = LineStats(args, root, summary.Files);
+        var summary = RunStatusSummary(meta, root);
+        var branches = RunBranches(meta, root);
+        var (insertions, deletions, byPath) = LineStats(meta, root, summary.Files);
         var conflicted = new HashSet<string>(summary.Conflicted, StringComparer.Ordinal);
 
         var files = new List<Dictionary<string, object?>>();
@@ -70,8 +71,8 @@ internal static class GitTools
             ["state"] = "ready",
             ["executable"] = new Dictionary<string, object?>
             {
-                ["source"] = Str(args, "__gitSource"),
-                ["version"] = Str(args, "__gitVersion"),
+                ["source"] = CallMeta.Str(meta, "gitSource"),
+                ["version"] = CallMeta.Str(meta, "gitVersion"),
             },
             ["branch"] = new Dictionary<string, object?>
             {
@@ -89,41 +90,41 @@ internal static class GitTools
         return Serialize(output);
     }
 
-    public static string Init(JsonElement args)
+    public static string Init(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         // 初始分支固定 main：不随环境 init.defaultBranch 漂移（CI=master / 本机=main 曾导致矩阵断言分裂）
-        var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "init", "-b", "main" }));
+        var result = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "init", "-b", "main" }));
         if (result.ExitCode != 0) throw GitFailed("git init", result);
         return "已初始化 Git 仓库";
     }
 
-    public static string Commit(JsonElement args)
+    public static string Commit(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         var message = Str(args, "message").Trim();
         if (message.Length == 0) throw new ToolHostException("E_GIT_INPUT", "缺少有效参数：message");
         var paths = StringArray(args, "paths");
         if (paths.Count == 0 || paths.Any(p => !IsSafeRelativePath(p)))
             throw new ToolHostException("E_GIT_INPUT", "请提供要提交的仓库内文件路径");
 
-        var identity = GitIdentity(args);
+        var identity = GitIdentity(meta);
         var email = identity?.Email?.Trim() ?? "";
         if (email.Length == 0)
             throw new ToolHostException("E_GIT_IDENTITY",
                 "尚未配置 Git 提交邮箱：请在 设置 → 通用设置 → 「Git 提交身份」填写邮箱（提交作者名默认 Cyrene）");
         var name = identity?.Name?.Trim() is { Length: > 0 } n ? n : "Cyrene";
 
-        var status = RunStatusSummary(args, root);
+        var status = RunStatusSummary(meta, root);
         if (status.Conflicted.Count > 0)
             throw new ToolHostException("E_GIT_CONFLICT", "存在冲突文件，请先处理冲突后再提交");
 
-        var add = RunGit(args, root, Concat(BaseConfig(args), new[] { "add", "-A", "--" }, paths));
+        var add = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "add", "-A", "--" }, paths));
         if (add.ExitCode != 0) throw GitFailed("git add", add);
 
-        var config = BaseConfig(args, new GitIdentityInfo(name, email));
+        var config = BaseConfig(meta, new GitIdentityInfo(name, email));
         var commitArgs = Concat(config, new[] { "-c", "core.abbrev=40", "commit", "-m", message });
-        var result = RunGit(args, root, commitArgs);
+        var result = RunGit(meta, root, commitArgs);
         if (result.ExitCode != 0) throw GitFailed("git commit", result);
 
         var match = Regex.Match(result.Stdout, @"^\[([^\s]+)( \([^)]+\))? ([^\]]+)", RegexOptions.Multiline);
@@ -131,22 +132,22 @@ internal static class GitTools
         return hash.Length > 0 ? $"已创建提交 {hash}" : "已创建提交";
     }
 
-    public static string SwitchBranch(JsonElement args)
+    public static string SwitchBranch(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         var branch = Str(args, "branch").Trim();
         if (branch.Length == 0) throw new ToolHostException("E_GIT_INPUT", "缺少有效参数：branch");
         if (!IsSafeBranchName(branch)) throw new ToolHostException("E_GIT_INPUT", "分支名称不合法");
         var create = BoolArg(args, "create") || Str(args, "create") == "true";
         var gitArgs = create ? new[] { "checkout", "-b", branch } : new[] { "checkout", branch };
-        var result = RunGit(args, root, Concat(BaseConfig(args), gitArgs));
+        var result = RunGit(meta, root, Concat(BaseConfig(meta), gitArgs));
         if (result.ExitCode != 0) throw GitFailed("git checkout", result);
         return $"已切换到分支 {branch}";
     }
 
-    public static string Push(JsonElement args)
+    public static string Push(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         string remote;
         if (HasProperty(args, "remote"))
         {
@@ -160,39 +161,39 @@ internal static class GitTools
         if (!Regex.IsMatch(remote, "^[A-Za-z0-9._-]+$"))
             throw new ToolHostException("E_GIT_INPUT", "远端名称不合法");
 
-        var status = RunStatusSummary(args, root);
+        var status = RunStatusSummary(meta, root);
         var branch = status.Current ?? "HEAD";
         var setUpstream = string.IsNullOrEmpty(status.Tracking) && branch != "HEAD";
         var gitArgs = setUpstream
             ? new[] { "push", "--set-upstream", remote, branch, "--verbose", "--porcelain" }
             : new[] { "push", remote, "--verbose", "--porcelain" };
-        var result = RunGit(args, root, Concat(BaseConfig(args), gitArgs));
+        var result = RunGit(meta, root, Concat(BaseConfig(meta), gitArgs));
         if (result.ExitCode != 0) throw GitFailed("git push", result);
         return setUpstream ? $"已推送到 {remote}/{branch} 并建立跟踪关系" : $"已推送到 {remote}";
     }
 
-    public static string Revert(JsonElement args)
+    public static string Revert(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         var commit = Str(args, "commit").Trim();
         if (!Regex.IsMatch(commit, "^[0-9a-f]{7,40}$", RegexOptions.IgnoreCase))
             throw new ToolHostException("E_GIT_INPUT", "提交标识必须是 7 到 40 位十六进制 hash");
         // 与 commit 一致：revert 也会产生提交，身份必须来自设置（不依赖环境全局 git config）
-        var identity = GitIdentity(args);
+        var identity = GitIdentity(meta);
         var email = identity?.Email?.Trim() ?? "";
         if (email.Length == 0)
             throw new ToolHostException("E_GIT_IDENTITY",
                 "尚未配置 Git 提交邮箱：请在 设置 → 通用设置 → 「Git 提交身份」填写邮箱（提交作者名默认 Cyrene）");
         var name = identity?.Name?.Trim() is { Length: > 0 } n ? n : "Cyrene";
-        var result = RunGit(args, root, Concat(BaseConfig(args, new GitIdentityInfo(name, email)),
+        var result = RunGit(meta, root, Concat(BaseConfig(meta, new GitIdentityInfo(name, email)),
             new[] { "revert", "--no-edit", commit }));
         if (result.ExitCode != 0) throw GitFailed("git revert", result);
         return $"已创建回退提交 {commit}";
     }
 
-    public static string Diff(JsonElement args)
+    public static string Diff(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         string gitRef;
         if (HasProperty(args, "ref"))
         {
@@ -218,8 +219,8 @@ internal static class GitTools
         diffArgs.Add(gitRef);
         if (paths.Count > 0) { diffArgs.Add("--"); diffArgs.AddRange(paths); }
 
-        var summaryResult = RunGit(args, root, Concat(BaseConfig(args), new[] { "diff", "--stat=4096" }, diffArgs));
-        var patchResult = RunGit(args, root, Concat(BaseConfig(args), new[] { "diff" }, diffArgs));
+        var summaryResult = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "diff", "--stat=4096" }, diffArgs));
+        var patchResult = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "diff" }, diffArgs));
         var failed = summaryResult.ExitCode != 0 || patchResult.ExitCode != 0;
         if (failed && IsBadRevision(summaryResult) || failed && IsBadRevision(patchResult))
             return DiffJson(gitRef, staged, null, "", maxPatchLines);
@@ -230,9 +231,9 @@ internal static class GitTools
         return DiffJson(gitRef, staged, summary, patch, maxPatchLines);
     }
 
-    public static string Log(JsonElement args)
+    public static string Log(JsonElement args, JsonElement meta)
     {
-        var root = Root(args);
+        var root = Root(meta);
         var gitRef = "";
         if (HasProperty(args, "ref"))
         {
@@ -259,7 +260,7 @@ internal static class GitTools
         };
         if (gitRef.Length > 0) logArgs.Add(gitRef);
         if (logPath.Length > 0) { logArgs.Add("--"); logArgs.Add(logPath); }
-        var result = RunGit(args, root, Concat(BaseConfig(args), logArgs));
+        var result = RunGit(meta, root, Concat(BaseConfig(meta), logArgs));
         if (result.ExitCode != 0) throw GitFailed("git log", result);
 
         var entries = new List<Dictionary<string, object?>>();
@@ -389,9 +390,9 @@ internal static class GitTools
     private static readonly Regex TrackingRe = new(@"\.\.\.(\S*)", RegexOptions.Compiled);
     private static readonly Regex OnEmptyBranchRe = new(@"\son\s(\S+?)(?=\.\.\.|$)", RegexOptions.Compiled);
 
-    private static StatusSummary RunStatusSummary(JsonElement args, string root)
+    private static StatusSummary RunStatusSummary(JsonElement meta, string root)
     {
-        var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "status", "--porcelain", "-b", "-u", "--null" }));
+        var result = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "status", "--porcelain", "-b", "-u", "--null" }));
         if (result.ExitCode != 0) throw GitFailed("git status", result);
 
         var summary = new StatusSummary();
@@ -457,9 +458,9 @@ internal static class GitTools
     private static readonly Regex GenericBranchRe = new(
         @"^([*+]\s)?(\S+)\s+([a-z0-9]+)\s?(.*)$", RegexOptions.Compiled | RegexOptions.Singleline);
 
-    private static List<string> RunBranches(JsonElement args, string root)
+    private static List<string> RunBranches(JsonElement meta, string root)
     {
-        var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "branch", "-v" }));
+        var result = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "branch", "-v" }));
         if (result.ExitCode != 0) throw GitFailed("git branch", result);
         var all = new List<string>();
         foreach (var rawLine in result.Stdout.Split('\n'))
@@ -476,7 +477,7 @@ internal static class GitTools
 
     // ── 行数统计（simple-git diffSummary + untracked numstat 同构）──
 
-    private static (int, int, Dictionary<string, (int, int)>) LineStats(JsonElement args, string root, List<StatusFile> files)
+    private static (int, int, Dictionary<string, (int, int)>) LineStats(JsonElement meta, string root, List<StatusFile> files)
     {
         var insertions = 0;
         var deletions = 0;
@@ -485,7 +486,7 @@ internal static class GitTools
         StatResult? tracked = null;
         try
         {
-            var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "diff", "--stat=4096", "HEAD" }));
+            var result = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "diff", "--stat=4096", "HEAD" }));
             if (result.ExitCode == 0) tracked = ParseDiffStat(result.Stdout);
         }
         catch (ToolHostException) { /* 与 TS .catch(zeros) 一致 */ }
@@ -502,7 +503,7 @@ internal static class GitTools
             GitResult result;
             try
             {
-                result = RunGit(args, root, Concat(BaseConfig(args),
+                result = RunGit(meta, root, Concat(BaseConfig(meta),
                     new[] { "diff", "--no-index", "--numstat", "--", "/dev/null", file.Path }));
             }
             catch (ToolHostException) { continue; } // 与 TS spawn 失败跳过一致
@@ -587,11 +588,11 @@ internal static class GitTools
 
     private sealed record GitResult(int ExitCode, string Stdout, string Stderr);
 
-    private static GitResult RunGit(JsonElement args, string cwd, List<string> gitArgs)
+    private static GitResult RunGit(JsonElement meta, string cwd, List<string> gitArgs)
     {
-        var command = Str(args, "__gitCommand");
+        var command = CallMeta.Str(meta, "gitCommand");
         if (command.Length == 0)
-            throw new ToolHostException("E_GIT_NO_COMMAND", "缺少 __gitCommand（git 可执行路径），git 工具需经宿主包装器调用");
+            throw new ToolHostException("E_GIT_NO_COMMAND", "缺少 gitCommand（meta，git 可执行路径），git 工具需经宿主包装器调用");
 
         var psi = new ProcessStartInfo(command)
         {
@@ -604,18 +605,18 @@ internal static class GitTools
             StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var a in gitArgs) psi.ArgumentList.Add(a);
-        if (BoolArg(args, "__gitIsolated"))
+        if (CallMeta.IsTrue(meta, "gitIsolated"))
         {
             psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         }
-        // 独立配置文件（IKJMO8）：开关开时 TS 注入 __gitConfigGlobal → 覆盖 GLOBAL 目标；
+        // 独立配置文件（IKJMO8）：开关开时 TS 经 meta 注入 gitConfigGlobal → 覆盖 GLOBAL 目标；
         // 未注入时内置 git 维持 NUL 隔离（原行为）。
-        var configGlobal = Str(args, "__gitConfigGlobal");
+        var configGlobal = CallMeta.Str(meta, "gitConfigGlobal");
         if (configGlobal.Length > 0)
         {
             psi.Environment["GIT_CONFIG_GLOBAL"] = configGlobal;
         }
-        else if (BoolArg(args, "__gitIsolated"))
+        else if (CallMeta.IsTrue(meta, "gitIsolated"))
         {
             psi.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
         }
@@ -634,11 +635,11 @@ internal static class GitTools
         return new GitResult(proc.ExitCode, stdoutTask.GetAwaiter().GetResult(), stderrTask.GetAwaiter().GetResult());
     }
 
-    private static bool IsRepository(JsonElement args, string root)
+    private static bool IsRepository(JsonElement meta, string root)
     {
         try
         {
-            var result = RunGit(args, root, Concat(BaseConfig(args), new[] { "rev-parse", "--is-inside-work-tree" }));
+            var result = RunGit(meta, root, Concat(BaseConfig(meta), new[] { "rev-parse", "--is-inside-work-tree" }));
             return result.ExitCode == 0 && result.Stdout.Trim() == "true";
         }
         catch (ToolHostException)
@@ -648,9 +649,9 @@ internal static class GitTools
     }
 
     /// <summary>与 TS buildGitBaseConfig 同构：safe.directory 两种写法 +（仅 commit）身份配置。</summary>
-    private static List<string> BaseConfig(JsonElement args, GitIdentityInfo? identity = null)
+    private static List<string> BaseConfig(JsonElement meta, GitIdentityInfo? identity = null)
     {
-        var root = Root(args);
+        var root = Root(meta);
         var config = new List<string>
         {
             "-c", $"safe.directory={root}",
@@ -707,20 +708,19 @@ internal static class GitTools
 
     private sealed record GitIdentityInfo(string Name, string Email);
 
-    private static GitIdentityInfo? GitIdentity(JsonElement args)
+    private static GitIdentityInfo? GitIdentity(JsonElement meta)
     {
-        if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty("__gitIdentity", out var id)
-            || id.ValueKind != JsonValueKind.Object) return null;
+        if (!CallMeta.TryObject(meta, "gitIdentity", out var id)) return null;
         var name = id.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString()! : "";
         var email = id.TryGetProperty("email", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString()! : "";
         return new GitIdentityInfo(name, email);
     }
 
-    private static string Root(JsonElement args)
+    private static string Root(JsonElement meta)
     {
-        var root = Str(args, "__cyreneRoot");
+        var root = CallMeta.Str(meta, "workspaceRoot");
         if (string.IsNullOrWhiteSpace(root))
-            throw new ToolHostException("E_GIT_NO_ROOT", "缺少 __cyreneRoot（工作区根），git 工具需经宿主包装器调用");
+            throw new ToolHostException("E_GIT_NO_ROOT", "缺少 workspaceRoot（meta，工作区根），git 工具需经宿主包装器调用");
         return root;
     }
 

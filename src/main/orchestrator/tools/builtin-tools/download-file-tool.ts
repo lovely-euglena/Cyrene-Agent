@@ -200,7 +200,7 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
 }
 
 /**
- * download_file native 轨：输出根由包装层注入（工作区/桌面），其余语义（沙箱、
+ * download_file native 轨：输出根由包装层经 call 帧 meta 注入（工作区/桌面），其余语义（沙箱、
  * 黑名单、上限、空闲超时、落盘）在 ToolHost；host 故障/缺失整体回退 TS 实现。
  */
 async function executeDownloadFileNativeFirst(
@@ -216,7 +216,7 @@ async function executeDownloadFileNativeFirst(
     {
       timeoutMs: DOWNLOAD_NATIVE_TIMEOUT_MS,
       signal: ctx?.signal,
-      internalArgs: { __cyreneRoot: String(root) },
+      meta: { workspaceRoot: String(root) },
     },
   );
 }
