@@ -152,7 +152,7 @@ function registerExpenseTools(): void {
         dateLocale: getDateLocale(),
         timezone: currentUserTimezone(),
       });
-      return nativeFirst("query_expense", args, queryExpenseExecute, { signal: ctx?.signal });
+      return nativeFirst("query_expense", args, queryExpenseExecute, { signal: ctx?.signal, abandonOnTimeout: true });
     },
   });
 }
@@ -222,6 +222,7 @@ function registerExchangeRateTool(): void {
       return nativeFirst("exchange_rate", args, exchangeRateExecute, {
         timeoutMs: EXCHANGE_NATIVE_TIMEOUT_MS,
         signal: ctx?.signal,
+        abandonOnTimeout: true,
       });
     },
   });

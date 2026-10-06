@@ -48,8 +48,11 @@ internal sealed class SafeDoubleJsonConverter : JsonConverter<double>
 /// 仅由主进程可信装配注入、模型不可见；工具只从 meta 读取内部参数，**不再**读取
 /// args 的 `__` 键（旧键明确不保留）。缺失时视为空对象。
 ///
-/// 容错：逐调用超时由宿主侧控制（超时即重启本进程——工具全部纯函数
-/// 化无状态，重启零成本）；stdout 协议独占，诊断走 log 帧/stderr。
+/// 容错：逐调用超时由 TS 客户端看门狗控制（NativeToolHost；本进程不判超时）——
+/// 默认超时即杀本进程重启（工具全部纯函数化无状态，重启零成本）；只读调用可经
+/// abandonOnTimeout 轻量隔离：超时仅放弃当次、等迟到结果帧排空后继续，兜底窗口
+/// 到期仍无结果才杀进程收敛（#IKJLP2；详见 native-tool-host.ts 头注释）。
+/// stdout 协议独占，诊断走 log 帧/stderr。
 /// </summary>
 /// <summary>B5 错误码契约：宿主可据此决定回退/重试语义。</summary>
 internal sealed class ToolHostException : Exception

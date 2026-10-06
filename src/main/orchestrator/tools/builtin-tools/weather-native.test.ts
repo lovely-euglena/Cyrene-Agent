@@ -72,8 +72,9 @@ describe("weather native 轨", () => {
     const call = nativeMocks.calls[0];
     expect(call.tool).toBe("weather");
     expect(call.args).toEqual({});
-    const options = call.options as { timeoutMs: number; signal?: AbortSignal; onEvent?: (e: { kind: string; payload: unknown }) => void };
+    const options = call.options as { timeoutMs: number; signal?: AbortSignal; onEvent?: (e: { kind: string; payload: unknown }) => void; abandonOnTimeout?: boolean };
     expect(options.timeoutMs).toBe(40_000);
+    expect(options.abandonOnTimeout).toBe(true); // 只读轻量隔离（#IKJLP2）
     expect(typeof options.onEvent).toBe("function");
 
     // 卡片事件路由：weather_card → weatherCardCallback(payload, context)

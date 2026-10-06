@@ -51,6 +51,8 @@ function isNativeFailurePayload(text: string): boolean {
  * options.timeoutMs：按件看门狗覆盖（与 nativeFirst 同款接口）。fs 三件入参
  * 有界（读 10MB / 列 200 项 / 内存缓冲），当前调用点保持默认 5s；接口保留
  * 覆盖能力，避免未来长耗时文件操作再改签名。
+ * options.abandonOnTimeout：只读轻量隔离（#IKJLP2），透传 NativeToolHost——
+ * 超时只拒绝当次、host 保留（见 native-tool-host.ts 头注释）。
  */
 async function nativeFirstFs(
   nativeTool: string,
@@ -62,7 +64,7 @@ async function nativeFirstFs(
   if (!resolveDotnetConfig().toolHost) return fallback();
   try {
     // 信任边界：只读三件无可信内部参数，模型 args 里的 `__` 键一律剥离
-    const result = await nativeToolHost.call(nativeTool, stripInternalArgs(args), options.timeoutMs, signal);
+    const result = await nativeToolHost.call(nativeTool, stripInternalArgs(args), options.timeoutMs, signal, undefined, undefined, options.abandonOnTimeout);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;
@@ -242,7 +244,7 @@ toolRegistry.register(wrapFsForNativeHost({
     required: ["path"],
   },
   execute: executeReadFile,
-}, "fs_read_file"));
+}, "fs_read_file", { abandonOnTimeout: true }));
 
 // ── 工具 2：list_dir ──────────────────────────────────────
 
@@ -344,7 +346,7 @@ toolRegistry.register(wrapFsForNativeHost({
     required: ["path"],
   },
   execute: executeListDir,
-}, "fs_list_dir"));
+}, "fs_list_dir", { abandonOnTimeout: true }));
 
 // ── 工具 3：write_file ────────────────────────────────────
 

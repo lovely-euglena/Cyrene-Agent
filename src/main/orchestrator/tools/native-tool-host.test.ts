@@ -10,6 +10,8 @@
  *  - 缺省仍为 5s：短工具的默认保护不被长任务参数污染
  *  - 串行闸门：前一调用未 settle 时，后一调用不写入 stdin
  *  - 取消：在途杀 host 以 AbortError 拒绝；排队直接摘除不触达 host
+ *  - 超时轻量隔离（#IKJLP2）：abandonOnTimeout 调用超时不杀 host，等迟到
+ *    结果帧排空后再派发排队调用；兜底窗口到期才杀 host（排队 sentinel 回退）
  */
 
 import { EventEmitter } from "node:events";
@@ -314,6 +316,192 @@ describe("NativeToolHost.call 看门狗", () => {
   });
 });
 
+// ── 超时轻量隔离（#IKJLP2）─────────────────────────────────
+
+describe("超时轻量隔离（abandonOnTimeout）", () => {
+  beforeEach(() => {
+    mocks.spawn.mockReset();
+    mocks.resolveNativeWindowsExe.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("超时不杀 host：排队调用等迟到结果帧排空后正常派发（无连带拒绝）", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, child } = startHost();
+
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
+    const second = host.call("read_file", { path: "C:\\a.txt" });
+    const firstErr = first.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 看门狗到期：轻量隔离——当次拒绝、host 保留、排队调用不被连带拒绝
+    await vi.advanceTimersByTimeAsync(50);
+    const error = await firstErr;
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error.message)).toContain("超时");
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("轻量隔离"),
+    );
+
+    const writtenTools = (): string[] =>
+      child.stdin.write.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes('"op":"call"'))
+        .map((line) => (JSON.parse(line) as { tool: string }).tool);
+    expect(writtenTools()).toEqual(["search_text"]); // 排空完成前不派发后续调用
+
+    // 迟到结果帧到达：丢弃结果、排空完成、继续派发排队调用
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "late" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writtenTools()).toEqual(["search_text", "read_file"]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("结果帧到达（丢弃）"),
+    );
+    expect(vi.getTimerCount()).toBe(1); // 兜底计时器已清除（仅剩 read_file 看门狗）
+
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t2", ok: true, data: "ok2" })}\n`);
+    await expect(second).resolves.toBe("ok2");
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0); // 排空完成路径无计时器遗留
+
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("排空兜底：窗口到期仍无结果 → 杀 host 收敛，排队调用按 sentinel 安全回退", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, child } = startHost();
+
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
+    const second = host.call("read_file", { path: "C:\\a.txt" });
+    const firstErr = first.catch((error: Error) => error);
+    const secondErr = second.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 看门狗到期：当次拒绝、不杀 host（排空兜底 = max(50ms, 5s) = 5s）
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(firstErr).resolves.toBeInstanceOf(Error);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(child.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("排空超时"),
+    );
+
+    // 真实 kill 后进程退出：排队调用以「确定未派发」sentinel 安全回退
+    child.emit("exit", 1, null);
+    const secondError = await secondErr;
+    expect(secondError).toBeInstanceOf(NativeCallNotDispatchedError);
+    expect((secondError as { code?: string }).code).toBe("E_TOOL_NOT_DISPATCHED");
+
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("排空期间 host 自行退出：兜底计时器清除，排队调用 sentinel 回退、不误杀", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
+    const second = host.call("read_file", { path: "C:\\a.txt" });
+    const firstErr = first.catch((error: Error) => error);
+    const secondErr = second.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(firstErr).resolves.toBeInstanceOf(Error);
+
+    // host 崩溃退出：排空标记随之清除，排队调用确定性回退
+    child.emit("exit", 1, null);
+    await expect(secondErr).resolves.toBeInstanceOf(NativeCallNotDispatchedError);
+    expect(vi.getTimerCount()).toBe(0); // 兜底计时器已随退出清除（直接断言，不依赖兜底守卫）
+
+    // 排空兜底计时器已清除：远超窗口也不会再触发 kill
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("排空窗口内取消：当次已结算不再杀 host，排队调用按既有逻辑摘除", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+    const controller = new AbortController();
+
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
+    const second = host.call("read_file", { path: "C:\\a.txt" }, undefined, controller.signal);
+    const firstErr = first.catch((error: Error) => error);
+    const secondErr = second.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(50); // 进入排空窗口（当次已结算）
+    await expect(firstErr).resolves.toBeInstanceOf(Error);
+
+    // 排队调用取消：摘除 + AbortError；不触达 host、不杀进程（父运行取消不影响已放弃的只读调用）
+    controller.abort();
+    await expect(secondErr).resolves.toMatchObject({ name: "AbortError" });
+    expect(child.kill).not.toHaveBeenCalled();
+
+    // 迟到结果到达、排空完成；队列已空 → 无新帧、无杀进程、无计时器遗留
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "late" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.useRealTimers();
+  });
+
+  it("被放弃调用自身的取消信号：排空窗口内 abort 不杀 host、无二次结算", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+    const controller = new AbortController();
+
+    const first = host.call("search_text", { query: "x" }, 50, controller.signal, undefined, undefined, true);
+    const firstErr = first.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(50); // 超时：当次结算为「超时」，abort 监听随结算移除
+    const error = await firstErr;
+    expect(String(error.message)).toContain("超时");
+    expect((error as Error).name).not.toBe("AbortError");
+
+    // 排空窗口内 abort：已结算调用不再响应（若监听未移除，会经 onAbort 误杀 host——旧语义的连带场景）
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    // 迟到结果仍能完成排空
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "late" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.useRealTimers();
+  });
+});
+
 // ── 信任边界（P0，docs/pr-review-rules.md §2.3）────────────
 
 describe("nativeFirst 信任边界（__ 内部参数）", () => {
@@ -339,6 +527,7 @@ describe("nativeFirst 信任边界（__ 内部参数）", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
     );
     expect(fallback).not.toHaveBeenCalled();
   });
@@ -359,6 +548,7 @@ describe("nativeFirst 信任边界（__ 内部参数）", () => {
       undefined,
       undefined,
       { workspaceRoot: "C:\\trusted" },
+      undefined,
       undefined,
     );
   });
@@ -473,6 +663,8 @@ describe("withNativeFirst 信任边界（__ 内部参数）", () => {
       undefined,
       undefined,
       { workspaceRoot: "C:\\trusted" },
+      undefined,
+      false,
     );
   });
 
@@ -493,7 +685,7 @@ describe("withNativeFirst 信任边界（__ 内部参数）", () => {
 
     await wrapped.execute({ pattern: "x" }, undefined);
 
-    expect(call).toHaveBeenCalledWith("fake_tool", { pattern: "x" }, undefined, undefined, undefined);
+    expect(call).toHaveBeenCalledWith("fake_tool", { pattern: "x" }, undefined, undefined, undefined, undefined, false);
   });
 
   it("prepare 返回 null：TS 回退收到已剥离 __ 的 args（P2-6④ 口径一致）", async () => {

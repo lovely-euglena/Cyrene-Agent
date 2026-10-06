@@ -2,6 +2,7 @@
  * search_text native 轨接线测试：
  *  - native 可用：工作区根经 call 帧 meta.workspaceRoot 注入，参数透传
  *  - native 不可用：回退 TS 实现（真实工作区扫描），行为零差异
+ *  - 只读轻量隔离（#IKJLP2）：abandonOnTimeout 透传锁定（超时只拒绝当次）
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +11,7 @@ import * as os from "os";
 import * as path from "path";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown> }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown>; abandonOnTimeout?: boolean }>,
   nativeResult: null as string | null,
 }));
 
@@ -19,11 +20,11 @@ vi.mock("./native-tool-host", () => ({
     tool: string,
     args: Record<string, unknown>,
     fallback: (a: Record<string, unknown>) => unknown,
-    options?: { meta?: Record<string, unknown> },
+    options?: { meta?: Record<string, unknown>; abandonOnTimeout?: boolean },
   ) => {
     // 模拟真实 nativeFirst 的信任边界 + meta 通道（IKJLP4）
     const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
-    nativeMocks.calls.push({ tool, args: clean, meta: options?.meta });
+    nativeMocks.calls.push({ tool, args: clean, meta: options?.meta, abandonOnTimeout: options?.abandonOnTimeout });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
     return fallback(clean);
   },
@@ -76,6 +77,8 @@ describe("search_text native 轨", () => {
         tool: "search_text",
         args: { query: "hello", mode: "regex" },
         meta: { workspaceRoot: "C:\\ws" },
+        // 只读轻量隔离（#IKJLP2）：锁住接线，防退化
+        abandonOnTimeout: true,
       },
     ]);
   });

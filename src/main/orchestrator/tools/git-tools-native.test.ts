@@ -11,7 +11,7 @@ import type { GitService } from "../../code-git/git-service";
 import type { ToolContext } from "./registry/tool-context";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown>; options?: { signal?: AbortSignal } }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown>; options?: { signal?: AbortSignal; meta?: Record<string, unknown>; abandonOnTimeout?: boolean } }>,
   nativeResult: null as string | null,
   nativeError: null as Error | null,
 }));
@@ -172,6 +172,18 @@ describe("git native 轨接线", () => {
       "m",
       ["a.ts"],
     );
+  });
+
+  it("只读轻量隔离（#IKJLP2）：git_status/git_diff/git_log 透传 abandonOnTimeout，写类不透传", async () => {
+    nativeMocks.nativeResult = '{"ok":true}';
+    const gitService = service();
+
+    await tool(gitService, "git_status").execute({}, codeContext());
+    await tool(gitService, "git_diff").execute({}, codeContext());
+    await tool(gitService, "git_log").execute({}, codeContext());
+    await tool(gitService, "git_commit").execute({ message: "m", paths: ["a.ts"] }, codeContext());
+
+    expect(nativeMocks.calls.map((c) => c.options?.abandonOnTimeout)).toEqual([true, true, true, false]);
   });
 
   it("取消（AbortError）：原样上抛、不回退、不执行 GitService", async () => {

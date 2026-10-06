@@ -76,7 +76,7 @@ describe("exchange_rate native 轨", () => {
       {
         tool: "exchange_rate",
         args: { from: "USD", to: "CNY", amount: 100 },
-        options: { timeoutMs: 65_000, signal: undefined },
+        options: { timeoutMs: 65_000, signal: undefined, abandonOnTimeout: true },
       },
     ]);
     expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
@@ -117,7 +117,7 @@ describe("expense native 轨", () => {
 
     expect(out).toContain("合计 53.00 元");
     expect(nativeMocks.calls).toEqual([
-      { tool: "query_expense", args: { days: 30, summary: true }, options: { signal: undefined } },
+      { tool: "query_expense", args: { days: 30, summary: true }, options: { signal: undefined, abandonOnTimeout: true } },
     ]);
     expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
       dateLocale: "zh-CN",

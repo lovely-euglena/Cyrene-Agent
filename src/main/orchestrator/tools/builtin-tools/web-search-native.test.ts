@@ -60,7 +60,7 @@ describe("web_search native 轨", () => {
       {
         tool: "web_search",
         args: { query: "上海天气" },
-        options: { timeoutMs: 25_000, signal: undefined },
+        options: { timeoutMs: 25_000, signal: undefined, abandonOnTimeout: true },
       },
     ]);
   });
