@@ -34,7 +34,10 @@ export function resolveChannelAgentPolicy(
     executionMode: "work",
     exposeTools: true,
     includeInteractiveTools: false,
-    permissionMode: "allow_all",
+    // #IKJSN9：渠道输入者是外部人（任何可私聊 bot 的 QQ/微信联系人），不能与
+    // scheduler/plugin 的无人值守 allow_all 同档——allow_all 会绕过用户档位并让
+    // run_shell 直跑（无沙箱）。渠道统一走 normal：沿用桌面端权限档位与沙箱约束。
+    permissionMode: "normal",
   };
 }
 
