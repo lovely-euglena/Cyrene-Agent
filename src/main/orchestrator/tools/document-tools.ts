@@ -74,8 +74,9 @@ function captureBaseline(context: ToolContext | undefined, outputPath: string): 
  */
 function resolveOutputPath(filename: string, workspaceRoot?: string): string | null {
   const normalized = path.normalize(filename).replace(/\\/g, "/");
-  // 禁止目录穿越和绝对路径
-  if (normalized.includes("..") || path.isAbsolute(normalized)) return null;
+  // #IKJSNI：逐段等值检查（与 download-file-tool 同规则）——整串 includes("..")
+  // 会误杀 a..b.txt 等合法文件名；normalize 后 ".." 只可能作为前导段出现。
+  if (normalized.split("/").includes("..") || path.isAbsolute(normalized)) return null;
   const outputRoot = path.resolve(workspaceRoot || app.getPath("desktop"));
   const fullPath = path.resolve(outputRoot, normalized);
   const relative = path.relative(outputRoot, fullPath);

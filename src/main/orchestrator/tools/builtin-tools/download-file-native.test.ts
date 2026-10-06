@@ -4,7 +4,7 @@
  *  - host 不可用回退 TS（危险后缀/路径逃逸在联网前拒绝，便于离线断言）
  */
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
   calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown>; options?: { timeoutMs?: number; signal?: AbortSignal } }>,
@@ -35,6 +35,10 @@ function execute(args: Record<string, unknown>, ctx?: Record<string, unknown>): 
 beforeEach(() => {
   nativeMocks.calls.length = 0;
   nativeMocks.nativeResult = null;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("download_file native 轨", () => {
@@ -70,5 +74,13 @@ describe("download_file native 轨", () => {
   it("host 不可用回退 TS：目录穿越在联网前拒绝", async () => {
     const out = await execute({ url: "https://example.com/a.png", filename: "../escape.png" }, { resolvedWorkspaceRoot: "C:\\ws" });
     expect(out).toContain("路径不合法");
+  });
+
+  it("host 不可用回退 TS：a..b.txt 合法文件名不再误杀（#IKJSNI）", async () => {
+    // fetch 被 stub 为离线失败：只要未命中「路径不合法」，即证明文件名通过了沙箱校验
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline-test"); }));
+    const out = await execute({ url: "https://example.com/a.png", filename: "a..b.txt" }, { resolvedWorkspaceRoot: "C:\\ws" });
+    expect(out).not.toContain("路径不合法");
+    expect(out).toContain("下载失败");
   });
 });

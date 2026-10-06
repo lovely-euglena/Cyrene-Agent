@@ -74,7 +74,9 @@ function hasDangerousChars(filename: string): boolean {
  */
 function resolveOutputPath(filename: string, workspaceRoot?: string): string | null {
   const normalized = path.normalize(filename).replace(/\\/g, "/");
-  if (normalized.includes("..") || path.isAbsolute(normalized)) return null;
+  // #IKJSNI：逐段等值检查——整串 includes("..") 会误杀 a..b.txt 等合法文件名；
+  // normalize 后 ".." 只可能作为前导段出现（穿越语义），末段 GetRelativePath 仍兜底。
+  if (normalized.split("/").includes("..") || path.isAbsolute(normalized)) return null;
   let root: string;
   if (workspaceRoot) {
     root = path.resolve(workspaceRoot);

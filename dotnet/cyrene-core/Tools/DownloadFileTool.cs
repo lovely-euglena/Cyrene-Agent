@@ -176,7 +176,10 @@ internal static class DownloadFileTool
             parts.Add(raw);
         }
         var normalized = string.Join("/", parts);
-        if (normalized.Contains("..") || Path.IsPathRooted(normalized)) return null;
+        // #IKJSNI：逐段等值检查——整串 Contains("..") 会误杀 a..b.txt / report..final.pdf
+        // 等合法文件名；normalize 后 parts 只可能在前导处保留字面 ".." 段。
+        // （GetRelativePath 双检仍在兜底，穿越语义不受影响。）
+        if (parts.Contains("..") || Path.IsPathRooted(normalized)) return null;
 
         var rootFull = Path.GetFullPath(root);
         var fullPath = Path.GetFullPath(Path.Combine(rootFull, normalized.Replace('/', Path.DirectorySeparatorChar)));

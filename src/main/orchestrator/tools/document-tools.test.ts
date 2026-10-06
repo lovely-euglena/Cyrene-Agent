@@ -90,6 +90,16 @@ describe("filename 校验报错（参数缺失时回传实际键名）", () => {
     expect(fs.readFileSync(path.join(tmpDir, "todo.txt"), "utf8")).toBe("第一行\n第二行");
   });
 
+  it("write_markdown 接受含连续点的合法文件名（a..b.txt 不再误杀，#IKJSNI）", async () => {
+    const raw = await getTool("write_markdown").execute(
+      { filename: "a..b.txt", content: "x" },
+      {},
+    );
+    const result = JSON.parse(raw);
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "a..b.txt"))).toBe(true);
+  });
+
   it("write_excel / write_word / write_pdf 缺 filename 时同样回传键名（不生成文件）", async () => {
     for (const [id, args, ext] of [
       ["write_excel", { sheets: [{ name: "S1", headers: [], rows: [] }] }, ".xlsx"],
