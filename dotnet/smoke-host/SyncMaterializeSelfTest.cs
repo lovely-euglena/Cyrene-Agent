@@ -34,8 +34,10 @@ internal static class SyncMaterializeSelfTest
                 var input = root.GetProperty("input").GetString() ?? "";
                 var expect = root.GetProperty("expect");
                 var batch = SyncProtocolV0.ReadBatch(input);
+                var actual = MemoryMoodMaterializer.Materialize(batch.Events);
                 ok = CompareRead(batch, expect, out detail)
-                    && CompareMaterialized(MemoryMoodMaterializer.Materialize(batch.Events), expect, out detail);
+                    && CompareMaterialized(actual, expect, out detail)
+                    && CompareWireShape(actual, expect, out detail);
             }
             catch (Exception ex)
             {
@@ -147,6 +149,68 @@ internal static class SyncMaterializeSelfTest
             }
         }
 
+        detail = "";
+        return true;
+    }
+
+    /// <summary>
+    /// wire 形状回归锁（复审 R2 P2-1）：默认 JsonSerializer 选项序列化后必须为
+    /// { memories: {…{content,weight,pinned}}, mood: { feeling } | null }（spec §5 / TS 输出形状），
+    /// 且 memories 键集合与 expect 一致——防止 JsonPropertyName / 嵌套类型回退导致形状漂移。
+    /// </summary>
+    private static bool CompareWireShape(MemoryMoodMaterializeResult actual, JsonElement expect, out string detail)
+    {
+        var wire = JsonSerializer.Serialize(actual);
+        using var document = JsonDocument.Parse(wire);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("memories", out var memories) || memories.ValueKind != JsonValueKind.Object)
+        {
+            detail = $"wire.memories 形状非法: {wire}";
+            return false;
+        }
+        var expectedIds = expect.TryGetProperty("memories", out var expectedMemories)
+            ? expectedMemories.EnumerateObject().Select(property => property.Name).ToArray()
+            : Array.Empty<string>();
+        var wireIds = memories.EnumerateObject().Select(property => property.Name).ToArray();
+        // 键集合比较（顺序无关）：JSON 对象键序无语义；C# Dictionary 删除后槽位复用与
+        // TS 对象的插入序可以不同（如 fixture 03：C# [m3,m2] vs TS [m2,m3]）。
+        if (!wireIds.ToHashSet(StringComparer.Ordinal).SetEquals(expectedIds))
+        {
+            detail = $"wire.memories 键集合: got [{string.Join(",", wireIds)}] want [{string.Join(",", expectedIds)}]";
+            return false;
+        }
+        foreach (var property in memories.EnumerateObject())
+        {
+            if (!property.Value.TryGetProperty("content", out _)
+                || !property.Value.TryGetProperty("weight", out _)
+                || !property.Value.TryGetProperty("pinned", out _))
+            {
+                detail = $"wire.memories[{property.Name}] 字段缺失: {wire}";
+                return false;
+            }
+        }
+        if (!root.TryGetProperty("mood", out var mood))
+        {
+            detail = $"wire.mood 缺失: {wire}";
+            return false;
+        }
+        var expectMoodNull = !expect.TryGetProperty("mood", out var expectedMood)
+            || expectedMood.ValueKind == JsonValueKind.Null;
+        if (expectMoodNull)
+        {
+            if (mood.ValueKind != JsonValueKind.Null)
+            {
+                detail = $"wire.mood 应为 null: {wire}";
+                return false;
+            }
+        }
+        else if (mood.ValueKind != JsonValueKind.Object
+            || !mood.TryGetProperty("feeling", out var feeling)
+            || feeling.ValueKind != JsonValueKind.String)
+        {
+            detail = $"wire.mood.feeling 形状非法: {wire}";
+            return false;
+        }
         detail = "";
         return true;
     }

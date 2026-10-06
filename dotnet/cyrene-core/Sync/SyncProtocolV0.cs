@@ -56,7 +56,10 @@ public static class SyncProtocolV0
     // 锚点用 \A...\z：.NET 的 `$` 可匹配串尾换行符之前（"abc\n" 也匹配），会误收含 C0 的 id /
     // ts / hex；\z 仅匹配绝对串尾，与 TS 的 `$`（JS 无 multiline 时仅匹配绝对串尾）对齐。
     private static readonly Regex IdRegex = new(@"\A[^\u0000-\u001f\u007f]{1,200}\z", RegexOptions.Compiled);
-    private static readonly Regex IsoUtcRegex = new(@"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z", RegexOptions.Compiled);
+    // 字符类用 [0-9] 而非 \d：.NET 的 \d 默认接受 Unicode Nd（如阿拉伯-印度数字），
+    // 而 TS（JS \d）/ PHP（无 /u 的 PCRE）仅接受 ASCII [0-9]；fixture 15-unicode-digits
+    // 锁定三端一致（复审 R2 P2-2）。
+    private static readonly Regex IsoUtcRegex = new(@"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\z", RegexOptions.Compiled);
     private static readonly Regex Hex64Regex = new(@"\A[0-9a-f]{64}\z", RegexOptions.Compiled);
 
     /// <summary>JSONL 批读取：容错 → 校验 → 去重 → 规范排序。</summary>

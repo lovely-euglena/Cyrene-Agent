@@ -94,7 +94,7 @@ PMRS op → 事件映射（导出器口径，IKJK2I 落地）：
 
 ## 3. 冲突演练（共享向量）
 
-- **读取契约**（`cases/`）：新增 `12-memory-mood.json`（合法批：乱序 → 规范排序）、`13-memory-mood-payload-invalid.json`（`E_SYNC_PAYLOAD` 边界：缺字段 / delete 携带字段 / 未知键 / 枚举外 / 越界 weight / 命名空间不符等）与 `14-id-control-char.json`（id / ts / prevHash 尾随换行 → `E_SYNC_ENVELOPE`，R1 增补）。
+- **读取契约**（`cases/`）：新增 `12-memory-mood.json`（合法批：乱序 → 规范排序）、`13-memory-mood-payload-invalid.json`（`E_SYNC_PAYLOAD` 边界：缺字段 / delete 携带字段 / 未知键 / 枚举外 / 越界 weight / 命名空间不符等）、`14-id-control-char.json`（id / ts / prevHash 尾随换行 → `E_SYNC_ENVELOPE`，R1 增补）与 `15-unicode-digits.json`（Unicode 数字 ts 拒绝，三端一致；R2 增补）。
 - **物化契约**（`materialize-cases/`，本批新增）：输入 JSONL → `readBatch` → 物化 → 期望 `{ memories, mood }`（可选断言 `errors` / `droppedDuplicates`）。用例：
 
 | 用例 | 演练点 |

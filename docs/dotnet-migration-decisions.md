@@ -697,13 +697,14 @@
   `{memoryId, op, content, weight, pinned}`，op=delete ⇒ content/weight/pinned 必须缺省（出现即 `E_SYNC_PAYLOAD`）；
   `mood.shift` 载荷 `{feeling}`（九值枚举，对齐 `RUNTIME_FEELINGS`）；命名空间不符 → `E_SYNC_PAYLOAD`；
   物化折叠：upsert 后写覆盖 / delete sticky 墓碑 / mood 后写覆盖 / 其它 no-op。
-- **fixtures 计数**：读取契约 `cases/` **14 组**（新增 `12-memory-mood` / `13-memory-mood-payload-invalid` /
-  `14-id-control-char`）+ 物化契约 `materialize-cases/` **7 组**（01–07，含双端离线分叉收敛演练与原型键安全）。
+- **fixtures 计数**：读取契约 `cases/` **15 组**（新增 `12-memory-mood` / `13-memory-mood-payload-invalid` /
+  `14-id-control-char` / `15-unicode-digits`）+ 物化契约 `materialize-cases/` **7 组**（01–07，含双端离线分叉收敛演练与原型键安全）。
 - **双端命令**：`npx vitest run src/main/sync`；`dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll
   --selftest sync-protocol fixtures/sync-protocol/cases`；同 `--selftest sync-materialize
   fixtures/sync-protocol/materialize-cases`；`python scripts/dotnet-cloud-sync-test.py`（云同步 e2e）。
-- **实测口径（2026-10-06，R1 修复后，Windows 本地）**：`tsc` 0；`vitest run src/main/sync src/pwa`
-  **9 文件 / 86 用例**；`--selftest sync-protocol` **14/14**；`--selftest sync-materialize` **7/7**；
-  `dotnet-cloud-sync-test.py` full **55/0** / core **36/0**；PHP（便携 8.4）**50/0**。
+- **实测口径（2026-10-06，R2 复审修复后，Windows 本地）**：`tsc` 0；`vitest run src/main/sync src/pwa`
+  **9 文件 / 87 用例**；`--selftest sync-protocol` **15/15**；`--selftest sync-materialize` **7/7**
+  （含 wire 形状回归锁）；`dotnet-cloud-sync-test.py` full **55/0** / core **36/0**；
+  PHP（便携 8.4）**51/0**。
 - **未实测面**：CF 测试本机未执行（依赖未安装；CF 复用共享 TS 校验器，契约由 TS 侧覆盖）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2O。

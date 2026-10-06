@@ -215,9 +215,9 @@
 
 - TS：`src/main/sync/sync-protocol.ts`（`validateSyncEvent` / `readSyncBatch`）
 - C#：`dotnet/cyrene-core/Sync/SyncProtocolV0.cs`（`ValidateEvent` / `ReadBatch`）
-- fixtures：`fixtures/sync-protocol/cases/`（14 组：正常 / 乱序 / 重复 / 半截 / 坏行 /
+- fixtures：`fixtures/sync-protocol/cases/`（15 组：正常 / 乱序 / 重复 / 半截 / 坏行 /
   未知类型 / 信封非法 / 载荷非法 / presentation / 空白行 / 空输入 / 新增 `12-memory-mood` /
-  `13-memory-mood-payload-invalid` / `14-id-control-char`）+ `materialize-cases/`（7 组：物化折叠与收敛，§5）
+  `13-memory-mood-payload-invalid` / `14-id-control-char` / `15-unicode-digits`）+ `materialize-cases/`（7 组：物化折叠与收敛，§5）
 
 ```bash
 npx vitest run src/main/sync
