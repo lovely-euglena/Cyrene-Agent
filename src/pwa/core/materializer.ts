@@ -11,7 +11,11 @@
  *
  * 手机端因此渲染的活动分支与桌面/服务端生成所用分支一致。
  */
-import type { SyncEventV0 } from "../../main/sync/sync-protocol";
+import {
+  SYNC_MEMORY_SESSION_ID,
+  SYNC_MOOD_SESSION_ID,
+  type SyncEventV0,
+} from "../../main/sync/sync-protocol";
 
 export interface BranchMessage {
   role: "user" | "assistant";
@@ -120,10 +124,15 @@ export interface SessionSummary {
   messageCount: number;
 }
 
-/** 全部事件 → 会话摘要列表（按最近活动倒序；标题取最后一个非空 session.create）。 */
+/**
+ * 全部事件 → 会话摘要列表（按最近活动倒序；标题取最后一个非空 session.create）。
+ * 保留命名空间（__memory__ / __mood__）只承载记忆/心情事件，不是真实会话：
+ * 跳过其分组，避免会话列表出现空预览伪会话（IKJK2O P2-5）。
+ */
 export function summarizeSessions(events: readonly SyncEventV0[]): SessionSummary[] {
   const bySession = new Map<string, SyncEventV0[]>();
   for (const event of events) {
+    if (event.sessionId === SYNC_MEMORY_SESSION_ID || event.sessionId === SYNC_MOOD_SESSION_ID) continue;
     const list = bySession.get(event.sessionId);
     if (list) list.push(event);
     else bySession.set(event.sessionId, [event]);
