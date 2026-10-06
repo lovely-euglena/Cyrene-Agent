@@ -160,3 +160,5 @@ dotnet build dotnet/cloud-server -c Release
 python scripts/dotnet-cloud-sync-test.py
 php php/cloud-server/tests/run.php   # 有 PHP 环境时
 ```
+
+- **未实测面**：CF 测试本机未执行（依赖未安装；CF 复用共享 TS 校验器，契约由 TS 侧覆盖）——已在 PR #25 与决策记录登记。
