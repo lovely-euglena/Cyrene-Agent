@@ -53,9 +53,11 @@ public static class SyncProtocolV0
         "eventId", "sessionId", "type", "lamport", "deviceId", "seq", "ts", "payload", "prevHash", "hash",
     ];
 
-    private static readonly Regex IdRegex = new(@"^[^\u0000-\u001f\u007f]{1,200}$", RegexOptions.Compiled);
-    private static readonly Regex IsoUtcRegex = new(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", RegexOptions.Compiled);
-    private static readonly Regex Hex64Regex = new(@"^[0-9a-f]{64}$", RegexOptions.Compiled);
+    // 锚点用 \A...\z：.NET 的 `$` 可匹配串尾换行符之前（"abc\n" 也匹配），会误收含 C0 的 id /
+    // ts / hex；\z 仅匹配绝对串尾，与 TS 的 `$`（JS 无 multiline 时仅匹配绝对串尾）对齐。
+    private static readonly Regex IdRegex = new(@"\A[^\u0000-\u001f\u007f]{1,200}\z", RegexOptions.Compiled);
+    private static readonly Regex IsoUtcRegex = new(@"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z", RegexOptions.Compiled);
+    private static readonly Regex Hex64Regex = new(@"\A[0-9a-f]{64}\z", RegexOptions.Compiled);
 
     /// <summary>JSONL 批读取：容错 → 校验 → 去重 → 规范排序。</summary>
     public static SyncReadResult ReadBatch(string jsonlText)

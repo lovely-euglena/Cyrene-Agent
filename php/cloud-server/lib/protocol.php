@@ -44,7 +44,8 @@ function sync_is_id(mixed $value): bool
     if ($units < 1 || $units > 200) {
         return false;
     }
-    // 拒绝 U+0000-U+001F 与 U+007F（ASCII 字节扫描；多字节序列字节均 >= 0x80，不受影响）
+    // 拒绝 U+0000-U+001F 与 U+007F（ASCII 字节扫描；多字节序列字节均 >= 0x80，不受影响）。
+    // 注：这里不用 PCRE——`$` 默认容忍串尾换行（等价 \Z），字节扫描天然拒绝含 C0 的 id。
     $length = strlen($value);
     for ($i = 0; $i < $length; $i++) {
         $byte = ord($value[$i]);
@@ -57,8 +58,10 @@ function sync_is_id(mixed $value): bool
 
 function sync_is_iso_utc(mixed $value): bool
 {
+    // D 修饰符：PCRE 的 `$` 默认可匹配串尾换行之前（等价 \Z），会误收 "...Z\n"；
+    // D = $ 仅匹配绝对串尾，与 TS 的 `$`（JS 无 multiline 时仅匹配绝对串尾）/ C# 的 \z 对齐。
     return is_string($value)
-        && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', $value) === 1;
+        && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/D', $value) === 1;
 }
 
 /** 安全整数（JS Number.isSafeInteger 语义：接受整数值浮点，如 2.0）。 */
@@ -80,7 +83,8 @@ function sync_optional_field(array $value, string $key, callable $predicate): bo
 
 function sync_is_hex64(mixed $value): bool
 {
-    return is_string($value) && preg_match('/^[0-9a-f]{64}$/', $value) === 1;
+    // D 修饰符：同 sync_is_iso_utc——`$` 不容忍串尾换行，与 TS / C# 对齐。
+    return is_string($value) && preg_match('/^[0-9a-f]{64}$/D', $value) === 1;
 }
 
 /** 单事件校验：返回 null = 有效；错误码优先级 BAD_JSON > ENVELOPE > TYPE > PAYLOAD。 */
