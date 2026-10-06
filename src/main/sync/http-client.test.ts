@@ -215,6 +215,50 @@ describe("sync/http-client", () => {
     await expect(client.clone()).rejects.toMatchObject({ code: "network" });
   });
 
+  // ── P2-1：响应头已到、读体阶段的中止 / 超时归类 ────────────────────────────
+
+  it("readText：响应头已到、读体阶段外部中止 → aborted（非 network）", async () => {
+    const controller = new AbortController();
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+    const fetchImpl = vi.fn<SyncFetchLike>(async (_url, init) => ({
+      ok: true,
+      status: 200,
+      text: () => new Promise<string>((_resolve, reject) => {
+        markReadStarted();
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      }),
+    }) as unknown as Response);
+    const client = createSyncHttpClient({ baseUrl: BASE, token: "tok-1", signal: controller.signal, fetchImpl });
+
+    const pending = client.fetch("1").catch((error: unknown) => error as SyncHttpError);
+    await readStarted;
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({ code: "aborted" });
+  });
+
+  it("readText：响应头已到、读体阶段超时 → timeout（非 network）", async () => {
+    const fetchImpl = vi.fn<SyncFetchLike>(async (_url, init) => ({
+      ok: true,
+      status: 200,
+      text: () => new Promise<string>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      }),
+    }) as unknown as Response);
+    const client = createSyncHttpClient({ baseUrl: BASE, token: "tok-1", timeoutMs: 20, fetchImpl });
+
+    await expect(client.fetch("1")).rejects.toMatchObject({ code: "timeout" });
+  });
+
   it("错误映射：401 unauthorized / 429 rate_limited / 400 batch_invalid / 400 E_PAIR_CODE / 404 / 421", async () => {
     const cases: Array<{ status: number; body: unknown; expected: string }> = [
       { status: 401, body: { code: "E_UNAUTHORIZED" }, expected: "unauthorized" },

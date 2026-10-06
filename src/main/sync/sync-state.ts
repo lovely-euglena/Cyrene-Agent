@@ -37,7 +37,7 @@ export interface SyncState {
   updatedAt: string;
 }
 
-const STATE_FILE_NAME = "state.json";
+export const STATE_FILE_NAME = "state.json";
 const LOCAL_EVENTS_FILE_NAME = "events-local.jsonl";
 const REMOTE_EVENTS_FILE_NAME = "events-remote.jsonl";
 

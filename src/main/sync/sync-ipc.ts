@@ -65,13 +65,14 @@ function normalizeSaveInput(input: unknown): SyncSaveConfigInput {
   return out;
 }
 
+/** 配对输入同样走 baseUrl 校验（首次填地址主路径；空值允许，由 service 回退当前配置）。 */
 function normalizePairInput(input: unknown): SyncPairInput | null {
   const record = (input ?? {}) as Record<string, unknown>;
   const code = typeof record.code === "string" ? record.code : "";
   if (!code.trim()) return null;
   return {
     code,
-    ...(typeof record.baseUrl === "string" ? { baseUrl: record.baseUrl } : {}),
+    ...(typeof record.baseUrl === "string" ? { baseUrl: normalizeBaseUrlInput(record.baseUrl) } : {}),
     ...(typeof record.deviceName === "string" ? { deviceName: record.deviceName } : {}),
   };
 }
@@ -124,9 +125,10 @@ export function registerSyncIpc(
   });
 
   ipc.handle(IPC.SYNC_PAIR, async (_event, input: unknown): Promise<SyncOpResult<SyncConfigPublic>> => {
-    const pairInput = normalizePairInput(input);
-    if (!pairInput) return { ok: false, error: { code: "invalid_config", message: "缺少配对码" } };
     try {
+      // 校验（含 baseUrl）移入 try：非法地址统一映射为 SyncOpResult.invalid_config
+      const pairInput = normalizePairInput(input);
+      if (!pairInput) return { ok: false, error: { code: "invalid_config", message: "缺少配对码" } };
       const data = await service.pair(pairInput);
       broadcastSyncChanged(data);
       return { ok: true, data };

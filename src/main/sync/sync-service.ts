@@ -34,17 +34,24 @@ import {
 } from "./http-client";
 import type { SyncEventV0 } from "./sync-protocol";
 import { loadSyncSettings, saveSyncSettings, toPublicSyncConfig, type SyncSettings } from "./sync-settings";
-import { loadSyncState, saveSyncState, type SyncState } from "./sync-state";
+import { loadSyncState, saveSyncState, STATE_FILE_NAME, type SyncState } from "./sync-state";
 
 /** 定时同步周期（启用时；timer unref，不阻塞退出）。 */
 export const SYNC_INTERVAL_MS = 60_000;
 
-/** state 文件名（与 sync-state.ts 的 STATE_FILE_NAME 一致；读路径存在性探测用）。 */
-const STATE_FILE_NAME = "state.json";
-
-/** baseUrl 比较键：去首尾空白与尾部斜杠（与 http-client 归一化口径一致）。 */
+/**
+ * baseUrl 比较键：按 URL origin（protocol + host，大小写不敏感）归一化——
+ * 路径差异不算换主机（避免无谓清 token 重配对）；非法 / 空值退化为去空白与尾斜杠比较。
+ */
 function normalizeBaseUrlKey(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+  } catch {
+    return trimmed.replace(/\/+$/, "");
+  }
 }
 
 export interface SyncRunResult {

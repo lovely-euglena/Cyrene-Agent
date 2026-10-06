@@ -70,6 +70,12 @@ export class SyncHttpError extends Error {
 
 export type SyncFetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** 单次请求的响应 + 本次合并信号（外部中止 + 超时）；读体失败据此归类 aborted/timeout。 */
+interface SyncHttpExchange {
+  response: Response;
+  signal: AbortSignal;
+}
+
 export interface SyncHttpClientConfig {
   baseUrl: string;
   token: string;
@@ -241,8 +247,8 @@ class SyncHttpClientImpl implements SyncHttpClient {
 
   async pair(code: string, deviceName: string): Promise<SyncPairResult> {
     this.assertBaseUrl();
-    const response = await this.send("POST", "/v1/pair", { json: { code, deviceName } });
-    const body = await this.readJson(response);
+    const { response, signal } = await this.send("POST", "/v1/pair", { json: { code, deviceName } });
+    const body = await this.readJson(response, signal);
     const token = typeof body.token === "string" ? body.token : "";
     if (!token) throw new SyncHttpError("http", response.status, undefined, "服务器未返回 token");
     return {
@@ -254,8 +260,8 @@ class SyncHttpClientImpl implements SyncHttpClient {
 
   async createPairCode(): Promise<SyncPairCodeResult> {
     this.assertConfigured();
-    const response = await this.send("POST", "/v1/pair/code", { auth: true });
-    const body = await this.readJson(response);
+    const { response, signal } = await this.send("POST", "/v1/pair/code", { auth: true });
+    const body = await this.readJson(response, signal);
     return {
       code: typeof body.code === "string" ? body.code : "",
       expiresAt: normalizeDotNetExpiresAt(body.expiresAt),
@@ -264,8 +270,8 @@ class SyncHttpClientImpl implements SyncHttpClient {
 
   async capabilities(): Promise<Record<string, unknown>> {
     this.assertBaseUrl();
-    const response = await this.send("GET", "/v1/capabilities", {});
-    return await this.readJson(response);
+    const { response, signal } = await this.send("GET", "/v1/capabilities", {});
+    return await this.readJson(response, signal);
   }
 
   async push(events: readonly SyncEventV0[]): Promise<SyncPushResult> {
@@ -289,12 +295,12 @@ class SyncHttpClientImpl implements SyncHttpClient {
     let duplicates = 0;
     let cursor = "";
     for (const chunk of chunks) {
-      const response = await this.send("POST", "/v1/sync/push", {
+      const { response, signal } = await this.send("POST", "/v1/sync/push", {
         auth: true,
         rawBody: chunk.join("\n"),
         contentType: "application/x-ndjson; charset=utf-8",
       });
-      const body = await this.readJson(response);
+      const body = await this.readJson(response, signal);
       accepted += toNonNegativeInt(body.accepted);
       duplicates += toNonNegativeInt(body.duplicates);
       cursor = cursorString(body.cursor, cursor);
@@ -308,8 +314,8 @@ class SyncHttpClientImpl implements SyncHttpClient {
     if (since) query.set("since", since);
     query.set("limit", String(options.limit ?? SYNC_FETCH_DEFAULT_LIMIT));
     if (options.sessionId) query.set("sessionId", options.sessionId);
-    const response = await this.send("GET", `/v1/sync/fetch?${query.toString()}`, { auth: true });
-    const body = await this.readJson(response);
+    const { response, signal } = await this.send("GET", `/v1/sync/fetch?${query.toString()}`, { auth: true });
+    const body = await this.readJson(response, signal);
     const { events, dropped } = collectValidEvents(body.events);
     return {
       events,
@@ -324,14 +330,14 @@ class SyncHttpClientImpl implements SyncHttpClient {
     const query = new URLSearchParams();
     if (options.sessionId) query.set("sessionId", options.sessionId);
     const path = query.toString() ? `/v1/sync/clone?${query.toString()}` : "/v1/sync/clone";
-    const response = await this.send("GET", path, { auth: true });
+    const { response, signal } = await this.send("GET", path, { auth: true });
     if (!response.ok) {
-      const text = await this.readText(response);
+      const text = await this.readText(response, signal);
       throw this.httpError(response.status, parseJsonObject(text));
     }
     const header = response.headers?.get?.("X-Sync-Cursor") ?? null;
     const cursor = header && header.length > 0 ? header : null;
-    const parsed = await this.readEventStream(response);
+    const parsed = await this.readEventStream(response, signal);
     parsed.events.sort(compareSyncEvents);
     return { events: parsed.events, cursor, dropped: parsed.dropped };
   }
@@ -351,7 +357,7 @@ class SyncHttpClientImpl implements SyncHttpClient {
     method: string,
     path: string,
     options: { auth?: boolean; json?: unknown; rawBody?: string; contentType?: string },
-  ): Promise<Response> {
+  ): Promise<SyncHttpExchange> {
     const headers: Record<string, string> = {};
     if (options.auth) headers.Authorization = `Bearer ${this.token}`;
     let body: string | undefined;
@@ -365,12 +371,13 @@ class SyncHttpClientImpl implements SyncHttpClient {
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = this.signal ? AbortSignal.any([timeoutSignal, this.signal]) : timeoutSignal;
     try {
-      return await this.fetchImpl(`${this.baseUrl}${path}`, {
+      const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         ...(body !== undefined ? { body } : {}),
         signal,
       });
+      return { response, signal };
     } catch (error) {
       if (this.signal?.aborted) throw new SyncHttpError("aborted", 0, undefined, DEFAULT_ERROR_MESSAGES.aborted);
       if (isTimeoutError(error) || timeoutSignal.aborted) {
@@ -380,17 +387,31 @@ class SyncHttpClientImpl implements SyncHttpClient {
     }
   }
 
-  /** 读取响应文本；失败抛 network（避免被 catch 成空 body 而误判成功）。 */
-  private async readText(response: Response): Promise<string> {
+  /**
+   * 读体阶段失败归类（响应头已到、仍在读体时 stop / 超时同样命中）：
+   * 外部中止 → aborted；请求超时 → timeout；其余 network（避免被 catch 成空 body 而误判成功）。
+   */
+  private classifyBodyReadError(error: unknown, signal: AbortSignal): SyncHttpError {
+    if (this.signal?.aborted) {
+      return new SyncHttpError("aborted", 0, undefined, DEFAULT_ERROR_MESSAGES.aborted);
+    }
+    if (isTimeoutError(error) || signal.aborted) {
+      return new SyncHttpError("timeout", 0, undefined, DEFAULT_ERROR_MESSAGES.timeout);
+    }
+    return new SyncHttpError("network", 0, undefined, DEFAULT_ERROR_MESSAGES.network);
+  }
+
+  /** 读取响应文本；失败按中止/超时/网络归类（不按空 body 记成功）。 */
+  private async readText(response: Response, signal: AbortSignal): Promise<string> {
     try {
       return await response.text();
-    } catch {
-      throw new SyncHttpError("network", 0, undefined, DEFAULT_ERROR_MESSAGES.network);
+    } catch (error) {
+      throw this.classifyBodyReadError(error, signal);
     }
   }
 
-  private async readJson(response: Response): Promise<Record<string, unknown>> {
-    const text = await this.readText(response);
+  private async readJson(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const text = await this.readText(response, signal);
     const body = parseJsonObject(text);
     if (!response.ok) throw this.httpError(response.status, body);
     return body;
@@ -418,7 +439,10 @@ class SyncHttpClientImpl implements SyncHttpClient {
   }
 
   /** NDJSON 流式解析：逐行 JSON + 协议校验；坏行计入 dropped。 */
-  private async readEventStream(response: Response): Promise<{ events: SyncEventV0[]; dropped: number }> {
+  private async readEventStream(
+    response: Response,
+    signal: AbortSignal,
+  ): Promise<{ events: SyncEventV0[]; dropped: number }> {
     const events: SyncEventV0[] = [];
     let dropped = 0;
     const pushLine = (line: string): void => {
@@ -440,7 +464,13 @@ class SyncHttpClientImpl implements SyncHttpClient {
       const decoder = new TextDecoder();
       let buffer = "";
       for (;;) {
-        const { done, value } = await reader.read();
+        let chunk: Awaited<ReturnType<typeof reader.read>>;
+        try {
+          chunk = await reader.read();
+        } catch (error) {
+          throw this.classifyBodyReadError(error, signal);
+        }
+        const { done, value } = chunk;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -451,8 +481,8 @@ class SyncHttpClientImpl implements SyncHttpClient {
       pushLine(buffer);
       return { events, dropped };
     }
-    // 测试桩 / 无 body 流：退化为整体文本解析（text() 失败同样抛 network，不记成功）
-    const text = await this.readText(response);
+    // 测试桩 / 无 body 流：退化为整体文本解析（text() 失败同样归类，不记成功）
+    const text = await this.readText(response, signal);
     for (const line of text.split("\n")) pushLine(line);
     return { events, dropped };
   }
