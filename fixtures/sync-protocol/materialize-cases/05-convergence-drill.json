@@ -1,0 +1,12 @@
+{
+  "name": "冲突演练：双端离线分叉 → 交换 → 收敛一致",
+  "description": "dev-a 分叉：upsert m1「A版」(L1) / mood 开心(L2) / upsert m2「共享」(L3)；dev-b 分叉：upsert m1「B版」(L1) / delete m2(L2) / mood 温柔(L3)。输入乱序且含重复事件（aa、bb 各重复一次）。规范序折叠：m1 取 B版（L1 组 dev-a < dev-b，后写覆盖）；m2 被 L2 墓碑 sticky（L3 的 upsert 忽略）；mood 取温柔。",
+  "input": "{\"eventId\":\"bc\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":3,\"deviceId\":\"dev-b\",\"seq\":2,\"ts\":\"2026-10-06T03:04:05.000Z\",\"payload\":{\"feeling\":\"温柔\"}}\n{\"eventId\":\"aa\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:04:00.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"A版\",\"weight\":40}}\n{\"eventId\":\"bb\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-b\",\"seq\":1,\"ts\":\"2026-10-06T03:04:03.000Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"delete\"}}\n{\"eventId\":\"ac\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T03:04:04.000Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"upsert\",\"content\":\"共享\",\"weight\":30}}\n{\"eventId\":\"ba\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-b\",\"seq\":0,\"ts\":\"2026-10-06T03:04:01.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"B版\",\"weight\":60}}\n{\"eventId\":\"ab\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T03:04:02.000Z\",\"payload\":{\"feeling\":\"开心\"}}\n{\"eventId\":\"aa\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:04:00.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"A版\",\"weight\":40}}\n{\"eventId\":\"bb\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-b\",\"seq\":1,\"ts\":\"2026-10-06T03:04:03.000Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"delete\"}}",
+  "expect": {
+    "memories": {
+      "m1": { "content": "B版", "weight": 60, "pinned": false }
+    },
+    "mood": { "feeling": "温柔" },
+    "droppedDuplicates": ["aa", "bb"]
+  }
+}

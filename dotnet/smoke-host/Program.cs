@@ -19,6 +19,8 @@ internal static class Program
         {
             if (args[1] == "sync-protocol")
                 return SyncProtocolSelfTest.Run(args.Length > 2 ? args[2] : "fixtures/sync-protocol/cases");
+            if (args[1] == "sync-materialize")
+                return SyncMaterializeSelfTest.Run(args.Length > 2 ? args[2] : "fixtures/sync-protocol/materialize-cases");
             if (args[1] == "channel-contract")
                 return ChannelContractSelfTest.Run(args.Length > 2 ? args[2] : "fixtures/channels");
             if (args[1] == "llm-jobs")

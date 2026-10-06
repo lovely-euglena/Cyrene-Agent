@@ -1,0 +1,20 @@
+{
+  "name": "原型键：memoryId=\"__proto__\" 与普通条目共存（TS 折叠不得触发原型 setter）",
+  "description": "回归：TS 物化器若用普通对象承载折叠，memories[\"__proto__\"] 会触发 Object.prototype 原型 setter 致条目丢失（C# Dictionary 正常 → 双端分歧）。期望双端一致：\"__proto__\" 以普通自有键出现在输出 memories 中，与 m1 共存。",
+  "input": "{\"eventId\":\"e1\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T05:00:00.000Z\",\"payload\":{\"memoryId\":\"__proto__\",\"op\":\"upsert\",\"content\":\"原型键记忆\",\"weight\":70,\"pinned\":true}}\n{\"eventId\":\"e2\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T05:00:01.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"普通记忆\",\"weight\":50}}",
+  "expect": {
+    "memories": {
+      "__proto__": {
+        "content": "原型键记忆",
+        "weight": 70,
+        "pinned": true
+      },
+      "m1": {
+        "content": "普通记忆",
+        "weight": 50,
+        "pinned": false
+      }
+    },
+    "mood": null
+  }
+}

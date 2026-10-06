@@ -682,3 +682,29 @@
   若缺失需评估，已登记 cloud-server README 真机冒烟清单）；`dotnet-backend.md` / 设计稿 /
   cloud-server README 计数与实现口径同步。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3P / #IKJK2P / #IKJK2R / #IKJK2S / #IKJK2T。
+
+## 2026-10-06 增量：Phase 2 记忆与心情事件化（IKJK2O）
+
+- **范围**：同步协议 v0 → **v0.1**——新增 `memory.write`（快照式 upsert + 墓碑删除）与 `mood.shift` 两类事件；
+  幂等与重放规则 + 双端物化器（TS / C# 纯函数镜像，确定性折叠 `{ memories, mood }`）；
+  冲突演练（双端离线分叉 → 交换 → 重放收敛）；服务端接收与云同步 e2e（存储层类型无关，无需迁移）。
+  设计稿 `docs/design/2026-10-06-memory-mood-events.md`；spec 修订 `docs/specs/2026-10-04-sync-protocol-v0.md`（v0.1）。
+- **D1–D7 摘要**：D1 两类型（`memory.write` / `mood.shift`）而非 `memory.*` 多类型（upsert/delete 用 op 区分）；
+  D2 状态迁移（全量快照）而非增量 diff；D3 sticky 墓碑（删除后同 id 不复活，并发删除安全）；
+  D4 保留伪 sessionId `__memory__` / `__mood__` 并强制；D5 物化器纯函数、双端镜像、输入假定已去重 + 排序；
+  D6 `weight` 取安全整数 0–100（导出器整数化）；D7 L0/L1 与端侧运行态字段不同步。
+- **契约口径**：`type` 六类（v0 四类 + `memory.write` / `mood.shift`）；`memory.write` 载荷
+  `{memoryId, op, content, weight, pinned}`，op=delete ⇒ content/weight/pinned 必须缺省（出现即 `E_SYNC_PAYLOAD`）；
+  `mood.shift` 载荷 `{feeling}`（九值枚举，对齐 `RUNTIME_FEELINGS`）；命名空间不符 → `E_SYNC_PAYLOAD`；
+  物化折叠：upsert 后写覆盖 / delete sticky 墓碑 / mood 后写覆盖 / 其它 no-op。
+- **fixtures 计数**：读取契约 `cases/` **15 组**（新增 `12-memory-mood` / `13-memory-mood-payload-invalid` /
+  `14-id-control-char` / `15-unicode-digits`）+ 物化契约 `materialize-cases/` **7 组**（01–07，含双端离线分叉收敛演练与原型键安全）。
+- **双端命令**：`npx vitest run src/main/sync`；`dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll
+  --selftest sync-protocol fixtures/sync-protocol/cases`；同 `--selftest sync-materialize
+  fixtures/sync-protocol/materialize-cases`；`python scripts/dotnet-cloud-sync-test.py`（云同步 e2e）。
+- **实测口径（2026-10-06，R2 复审修复后，Windows 本地）**：`tsc` 0；`vitest run src/main/sync src/pwa`
+  **9 文件 / 87 用例**；`--selftest sync-protocol` **15/15**；`--selftest sync-materialize` **7/7**
+  （含 wire 形状回归锁）；`dotnet-cloud-sync-test.py` full **55/0** / core **36/0**；
+  PHP（便携 8.4）**51/0**。
+- **未实测面**：CF 测试本机未执行（依赖未安装；CF 复用共享 TS 校验器，契约由 TS 侧覆盖）。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2O。

@@ -123,4 +123,36 @@ describe("summarizeSessions", () => {
     expect(summary.preview).toBe("");
     expect(summary.lastTs).toBe("2026-10-04T03:00:00.000Z");
   });
+
+  it("过滤保留命名空间：__memory__ / __mood__ 不产出伪会话，正常会话不受影响", () => {
+    const events = [
+      event({ type: "session.create", payload: { title: "会话甲", createdAt: "2026-10-04T01:00:00.000Z" }, sessionId: "s1" }),
+      userMessage("甲的消息", "t1", { sessionId: "s1", eventId: "u1", ts: "2026-10-04T01:01:00.000Z" }),
+      event({
+        type: "memory.write",
+        payload: { memoryId: "m1", op: "upsert", content: "记忆内容", weight: 50 },
+        sessionId: "__memory__",
+        eventId: "mem1",
+        ts: "2026-10-04T02:00:00.000Z",
+      }),
+      event({
+        type: "mood.shift",
+        payload: { feeling: "开心" },
+        sessionId: "__mood__",
+        eventId: "mood1",
+        ts: "2026-10-04T02:01:00.000Z",
+      }),
+    ];
+    const summaries = summarizeSessions(events);
+    expect(summaries.map((item) => item.sessionId)).toEqual(["s1"]);
+    expect(summaries[0]).toMatchObject({ title: "会话甲", preview: "甲的消息", messageCount: 1 });
+  });
+
+  it("仅保留命名空间事件 → 空会话列表", () => {
+    const events = [
+      event({ type: "memory.write", payload: { memoryId: "m1", op: "delete" }, sessionId: "__memory__", eventId: "mem1" }),
+      event({ type: "mood.shift", payload: { feeling: "温柔" }, sessionId: "__mood__", eventId: "mood1" }),
+    ];
+    expect(summarizeSessions(events)).toEqual([]);
+  });
 });

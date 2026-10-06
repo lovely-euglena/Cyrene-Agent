@@ -1,0 +1,9 @@
+{
+  "name": "心情 last-wins：双端交替 shift → 规范序最后生效",
+  "description": "规范序 [ea(L1 开心), eb(L2 难过), ec(L3 温柔)] → mood 取「温柔」。",
+  "input": "{\"eventId\":\"ec\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T03:03:02.000Z\",\"payload\":{\"feeling\":\"温柔\"}}\n{\"eventId\":\"ea\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:03:00.000Z\",\"payload\":{\"feeling\":\"开心\"}}\n{\"eventId\":\"eb\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":2,\"deviceId\":\"dev-b\",\"seq\":0,\"ts\":\"2026-10-06T03:03:01.000Z\",\"payload\":{\"feeling\":\"难过\"}}",
+  "expect": {
+    "memories": {},
+    "mood": { "feeling": "温柔" }
+  }
+}

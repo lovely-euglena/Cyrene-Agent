@@ -1,0 +1,9 @@
+{
+  "name": "Unicode 数字时间戳：拒绝（三端一致）",
+  "description": "第 1 行 ts 使用阿拉伯-印度数字（U+0660–U+0669）：.NET 的 \\d 默认接受 Unicode Nd，而 TS（JS \\d）/ PHP（无 /u 的 PCRE）仅接受 ASCII [0-9]。修复后三端一致记 E_SYNC_ENVELOPE；第 2 行合法。",
+  "input": "{\"eventId\":\"e1\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"٢٠٢٦-١٠-٠٦T٠٢:٠٠:٠٠.٠٠٠Z\",\"payload\":{\"role\":\"user\",\"text\":\"x\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"e2\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T02:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"ok\",\"turnId\":\"turn-2\"}}",
+  "expect": {
+    "events": ["e2"],
+    "errors": [{ "index": 0, "code": "E_SYNC_ENVELOPE" }]
+  }
+}

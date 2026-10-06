@@ -1,0 +1,12 @@
+{
+  "name": "多记录混合：add / update / delete 逐条收敛",
+  "description": "规范序 [ea(L1), eb(L2), ec(L3), ed(L4), ee(L5)]：m1 被删；m2 B→B2；m3 置顶 C。",
+  "input": "{\"eventId\":\"ed\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":4,\"deviceId\":\"dev-b\",\"seq\":1,\"ts\":\"2026-10-06T03:02:03.000Z\",\"payload\":{\"memoryId\":\"m3\",\"op\":\"upsert\",\"content\":\"C\",\"weight\":90,\"pinned\":true}}\n{\"eventId\":\"ea\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:02:00.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"A\",\"weight\":50}}\n{\"eventId\":\"ee\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":5,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T03:02:04.000Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"upsert\",\"content\":\"B2\",\"weight\":20}}\n{\"eventId\":\"eb\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T03:02:01.000Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"upsert\",\"content\":\"B\",\"weight\":10}}\n{\"eventId\":\"ec\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":3,\"deviceId\":\"dev-b\",\"seq\":0,\"ts\":\"2026-10-06T03:02:02.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"delete\"}}",
+  "expect": {
+    "memories": {
+      "m2": { "content": "B2", "weight": 20, "pinned": false },
+      "m3": { "content": "C", "weight": 90, "pinned": true }
+    },
+    "mood": null
+  }
+}
