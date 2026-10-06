@@ -1,0 +1,9 @@
+{
+  "name": "墓碑 sticky：删除 vs 并发 upsert（含更晚 upsert）→ 不复活",
+  "description": "输入序 [ec, ea, eb]；规范序 [ea(L1 upsert A), eb(L2 delete), ec(L3 upsert A2)]。删除后规范序更晚的 upsert 被忽略 → m1 不存在。",
+  "input": "{\"eventId\":\"ec\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T03:01:02.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"A2\",\"weight\":55}}\n{\"eventId\":\"ea\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:01:00.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"A\",\"weight\":50}}\n{\"eventId\":\"eb\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-b\",\"seq\":0,\"ts\":\"2026-10-06T03:01:01.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"delete\"}}",
+  "expect": {
+    "memories": {},
+    "mood": null
+  }
+}

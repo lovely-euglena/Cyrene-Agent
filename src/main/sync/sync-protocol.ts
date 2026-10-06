@@ -1,9 +1,12 @@
 /**
- * 云端昔涟 · 同步协议 v0：事件读取器与校验器（TS 侧）。
+ * 云端昔涟 · 同步协议 v0 / v0.1：事件读取器与校验器（TS 侧）。
  *
  * 契约权威：docs/specs/2026-10-04-sync-protocol-v0.md +
  * fixtures/sync-protocol/（双端共享测试向量；C# 对照实现
  * dotnet/cyrene-core/Sync/SyncProtocolV0.cs）。
+ * v0.1（IKJK2O）：新增 memory.write / mood.shift，保留命名空间
+ * `__memory__` / `__mood__` 由校验器强制（设计稿
+ * docs/design/2026-10-06-memory-mood-events.md §1）。
  *
  * 纯函数零 I/O：JSONL 文本 → 规范化事件序列 + 错误清单：
  * - 行级容错：跳过空白行；末条非空行 JSON 不完整 ⇒ 修剪（truncatedTail），
@@ -13,8 +16,15 @@
  * 校验规则、错误码与上述语义必须与 C# 侧逐字一致，由 fixtures 锁定。
  */
 
-export const SYNC_EVENT_TYPES = ["session.create", "message.append", "turn_rewind", "tombstone"] as const;
+export const SYNC_EVENT_TYPES = ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift"] as const;
 export type SyncEventTypeV0 = (typeof SYNC_EVENT_TYPES)[number];
+
+/** 非会话事件的保留伪 sessionId（v0.1；不匹配 → E_SYNC_PAYLOAD）。 */
+export const SYNC_MEMORY_SESSION_ID = "__memory__";
+export const SYNC_MOOD_SESSION_ID = "__mood__";
+
+/** mood.shift 九值枚举（对齐 src/main/runtime-state.ts 的 RUNTIME_FEELINGS；fixtures 锁定）。 */
+export const SYNC_MOOD_FEELINGS = ["平静", "开心", "温柔", "激动", "撒娇", "担心", "难过", "感动", "害羞"] as const;
 
 export const SYNC_ERROR_CODES = ["E_SYNC_BAD_JSON", "E_SYNC_ENVELOPE", "E_SYNC_TYPE", "E_SYNC_PAYLOAD"] as const;
 export type SyncErrorCode = (typeof SYNC_ERROR_CODES)[number];
@@ -106,10 +116,11 @@ export function validateSyncEvent(value: unknown): SyncErrorCode | null {
   if (!optionalField(value, "hash", (field) => typeof field === "string" && HEX64_RE.test(field))) return "E_SYNC_ENVELOPE";
   if (!(SYNC_EVENT_TYPES as readonly string[]).includes(value.type)) return "E_SYNC_TYPE";
   if (!isRecord(value.payload)) return "E_SYNC_PAYLOAD";
-  return validatePayload(value.type as SyncEventTypeV0, value.payload) ? null : "E_SYNC_PAYLOAD";
+  return validatePayload(value.type as SyncEventTypeV0, value.payload, value.sessionId) ? null : "E_SYNC_PAYLOAD";
 }
 
-function validatePayload(type: SyncEventTypeV0, payload: Record<string, unknown>): boolean {
+/** 载荷校验；sessionId 仅 v0.1 的 memory.write / mood.shift 用于保留命名空间约束。 */
+function validatePayload(type: SyncEventTypeV0, payload: Record<string, unknown>, sessionId: string): boolean {
   switch (type) {
     case "session.create":
       return hasOnlyKeys(payload, ["title", "createdAt"])
@@ -142,7 +153,35 @@ function validatePayload(type: SyncEventTypeV0, payload: Record<string, unknown>
       return hasOnlyKeys(payload, ["targetUserTurnId", "reason"])
         && isId(payload.targetUserTurnId)
         && payload.reason === "pending_withdrawn";
+    case "memory.write":
+      return sessionId === SYNC_MEMORY_SESSION_ID && isMemoryWritePayload(payload);
+    case "mood.shift":
+      return sessionId === SYNC_MOOD_SESSION_ID
+        && hasOnlyKeys(payload, ["feeling"])
+        && typeof payload.feeling === "string"
+        && (SYNC_MOOD_FEELINGS as readonly string[]).includes(payload.feeling);
   }
+}
+
+/**
+ * memory.write 载荷（闭合键）：
+ * - op=upsert：content / weight 必填，pinned 可选；
+ * - op=delete：content / weight / pinned 必须缺省（墓碑）。
+ */
+function isMemoryWritePayload(payload: Record<string, unknown>): boolean {
+  if (!hasOnlyKeys(payload, ["memoryId", "op", "content", "weight", "pinned"])) return false;
+  if (!isId(payload.memoryId)) return false;
+  if (payload.op === "upsert") {
+    return typeof payload.content === "string"
+      && isSafeNonNegInt(payload.weight) && payload.weight <= 100
+      && optionalField(payload, "pinned", (field) => typeof field === "boolean");
+  }
+  if (payload.op === "delete") {
+    return !Object.prototype.hasOwnProperty.call(payload, "content")
+      && !Object.prototype.hasOwnProperty.call(payload, "weight")
+      && !Object.prototype.hasOwnProperty.call(payload, "pinned");
+  }
+  return false;
 }
 
 function isReplacementUser(value: unknown): boolean {
