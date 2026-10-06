@@ -28,6 +28,11 @@ describe.skipIf(!enabled)("导出 dry-run（真实 userData，只读）", () => 
     const syncDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-sync-dry-run-"));
     try {
       const indexFile = path.join(userDataPath, "cyrene-chats", "index.json");
+      if (!fs.existsSync(indexFile)) {
+        // 旧布局 / 未跑过新版的 userData（如仅 sessions/ 目录）：无法列会话，优雅跳过。
+        console.log(`[dry-run] 未找到 ${indexFile}（该 userData 无 cyrene-chats/index.json）；跳过。`);
+        return;
+      }
       const metas = JSON.parse(fs.readFileSync(indexFile, "utf8")) as ChatSessionMeta[];
       const transcripts = new ConversationTranscriptStore(userDataPath);
       const store = await SyncEventStore.open({ syncDir });

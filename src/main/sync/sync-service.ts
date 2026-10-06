@@ -151,8 +151,10 @@ class SyncServiceController implements SyncService {
       ensureMigrated: async (sessionId: string) => {
         await migration.ensureConversationMigrated(sessionId);
       },
+      // 必须用 readAuditEntries（审计全量）：read() 只返回热快照，归档段（segments/）
+      // 不在其中；直接用会导致已归档会话的历史漏导出（store 注释：Unlike read()…）。
       readAuditEntries: async (sessionId: string): Promise<TranscriptEntry[]> =>
-        (await transcriptStore.read(sessionId)).entries,
+        transcriptStore.readAuditEntries(sessionId),
     };
   }
 
