@@ -315,8 +315,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         <SettingsNavItem section="models" currentSection={section} icon={<Boxes size={18} strokeWidth={1.8} />} label={t("settingsPage.modelSettings.title")} onSelect={onSelectSection} />
         <SettingsNavItem section="usage" currentSection={section} icon={<BarChart3 size={18} strokeWidth={1.8} />} label={t("settingsPage.usage.title")} onSelect={onSelectSection} />
         <SettingsNavItem section="browser" currentSection={section} icon={<Globe size={18} strokeWidth={1.8} />} label={t("settingsPage.browserControl.navLabel")} onSelect={onSelectSection} />
-        {/* 云端同步（IKJK2I）：文案暂为字面中文（i18n key 随文案批次补齐） */}
-        <SettingsNavItem section="cloud" currentSection={section} icon={<Cloud size={18} strokeWidth={1.8} />} label="云端" onSelect={onSelectSection} />
+        <SettingsNavItem section="cloud" currentSection={section} icon={<Cloud size={18} strokeWidth={1.8} />} label={t("settingsPage.cloud.title")} onSelect={onSelectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.agentAbilities")}</div>
         <SettingsNavItem section="toolToggle" currentSection={section} icon={<Power size={18} strokeWidth={1.8} />} label={t("settingsPage.toolToggle.title")} onSelect={onSelectSection} />
         <SettingsNavItem section="tools" currentSection={section} icon={<Wrench size={18} strokeWidth={1.8} />} label={t("settingsPage.tools.title")} onSelect={onSelectSection} />
