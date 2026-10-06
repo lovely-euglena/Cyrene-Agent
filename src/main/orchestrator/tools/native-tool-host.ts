@@ -9,7 +9,10 @@
  *   - ensureStarted 失败 → 本轮全部走 TS 实现（静默降级，不重试
  *     到下次调用，避免每工具调用付一次探测成本）
  *   - 单次调用超时（默认 5s；长任务可经 NativeFirstOptions.timeoutMs 按件
- *     覆盖）→ 杀掉 host 重启（工具无状态，重启零成本），当次调用回退 TS
+ *     覆盖）→ 默认杀掉 host 重启（工具无状态，重启零成本），当次调用回退 TS；
+ *     只读调用可经 NativeFirstOptions.abandonOnTimeout 走轻量隔离（#IKJLP2）：
+ *     超时只拒绝当次、host 保留，等迟到结果帧排空后再派发后续调用；兜底窗口
+ *     max(timeoutMs, 5s) 到期仍无结果才杀 host 收敛
  *   - 用户取消（AbortSignal）：排队中直接摘除；在途立即杀 host 中止
  *     （下载等先缓冲后一次性落盘，杀进程保证取消后不再落盘），并以
  *     AbortError 拒绝——调用方必须原样上抛，禁止回退 TS 重跑副作用
@@ -36,6 +39,9 @@ import type { ToolContext } from "./registry/tool-context";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 
 const LOG_PREFIX = "[ToolHost]";
+
+/** 轻量隔离排空兜底的窗口下限（#IKJLP2）：max(当次 timeoutMs, 本值)。 */
+const ABANDON_DRAIN_MIN_MS = 5_000;
 
 /** 宿主事件帧（op:"event"）：天气卡片等调用内副作用，随 callId 路由给对应调用。 */
 export interface HostToolEvent {
@@ -67,6 +73,8 @@ interface QueuedCall {
   onAbort?: () => void;
   /** 调用内事件回调（event 帧按 callId 路由）。 */
   onEvent?: (event: HostToolEvent) => void;
+  /** 超时轻量隔离（只读调用，#IKJLP2）：超时不杀 host，排空完成前不派发新帧。 */
+  abandonOnTimeout?: boolean;
 }
 
 /** 宿主运行时配置（config 帧载荷）。 */
@@ -128,6 +136,14 @@ export interface EmailHostSettings {
 export interface NativeFirstOptions {
   /** 单次调用超时（ms）。缺省 5000；应 ≥ C# 侧内部超时，避免 native 轨被误杀。 */
   timeoutMs?: number;
+  /**
+   * 超时轻量隔离（#IKJLP2，仅限只读调用）：超时只拒绝当次、不杀 host——标记
+   * 「已放弃在途」等迟到结果帧排空后再派发后续调用，排队调用不因当次超时被
+   * 连带拒绝；兜底窗口 max(timeoutMs, 5s) 到期仍无结果才杀 host 收敛（排队
+   * 调用按 E_TOOL_NOT_DISPATCHED sentinel 安全回退，与默认语义一致）。
+   * 副作用类调用必须维持默认杀进程语义：native 完成与 TS 回退并发会重复副作用。
+   */
+  abandonOnTimeout?: boolean;
   /** 父运行取消信号：排队中直接取消，在途杀 host 中止；AbortError 原样上抛不回退。 */
   signal?: AbortSignal;
   /** 调用内事件回调（如 weather_card）：event 帧按 callId 路由；只有 native 轨会触发。 */
@@ -198,6 +214,11 @@ export class NativeToolHost {
   private busy = false;
   /** 已发 kill 等待 exit：期间不向将死进程派发新帧。 */
   private killing = false;
+  /**
+   * 「已放弃在途」调用（轻量隔离，#IKJLP2）：超时后等待迟到结果帧排空，
+   * 排空完成前不派发新帧；兜底计时器到期仍无结果则杀 host 收敛。
+   */
+  private abandoned: { callId: string; tool: string; timer: NodeJS.Timeout } | null = null;
   private callSeq = 0;
   private settings: HostRuntimeSettings = {
     timezone: "Asia/Shanghai",
@@ -265,6 +286,7 @@ export class NativeToolHost {
         this.proc = null;
         this.killing = false;
         this.busy = false;
+        this.clearAbandoned();
         const outstanding = this.describeOutstanding();
         if (outstanding) console.warn(LOG_PREFIX, `host 退出：连带拒绝 ${outstanding}`);
         for (const call of [...this.pending.values()]) {
@@ -337,7 +359,16 @@ export class NativeToolHost {
     if (op === "result") {
       const callId = typeof frame.callId === "string" ? frame.callId : "";
       const call = this.pending.get(callId);
-      if (!call) return;
+      if (!call) {
+        // 轻量隔离（#IKJLP2）：已放弃在途调用的迟到结果帧——丢弃并恢复派发（排空完成）
+        if (this.abandoned?.callId === callId) {
+          const abandonedTool = this.abandoned.tool;
+          this.clearAbandoned();
+          console.warn(LOG_PREFIX, `已放弃调用 ${callId}(${abandonedTool}) 结果帧到达（丢弃），排空完成、继续派发`);
+          this.dispatchNext();
+        }
+        return;
+      }
       if (frame.ok === true) call.resolve(frame.data);
       else {
         const failure = new Error(typeof frame.error === "string" ? frame.error : "工具执行失败");
@@ -361,12 +392,20 @@ export class NativeToolHost {
     return names.length > 0 ? `${names.length} 个在途/排队调用：${names.join(", ")}` : "";
   }
 
+  /** 清除「已放弃在途」标记（结果帧排空 / host 退出 / 兜底杀进程时调用）。 */
+  private clearAbandoned(): void {
+    if (this.abandoned) {
+      clearTimeout(this.abandoned.timer);
+      this.abandoned = null;
+    }
+  }
+
   /**
    * 串行闸门派发：同一时刻至多一个 call 帧在途（看门狗随派发起算）。
    * 上一个调用 settle / host 退出后自动派发下一个。
    */
   private dispatchNext(): void {
-    if (this.busy || this.exited || this.killing) return;
+    if (this.busy || this.exited || this.killing || this.abandoned) return;
     const child = this.proc;
     if (!child) return;
     const entry = this.queue.shift();
@@ -392,6 +431,30 @@ export class NativeToolHost {
     };
 
     const timer = setTimeout(() => {
+      if (entry.abandonOnTimeout) {
+        // 轻量隔离（#IKJLP2，只读调用）：超时只拒绝当次、host 保留；标记
+        // 「已放弃在途」等迟到结果帧排空后再派发——排队调用不因当次超时被
+        // 连带拒绝。兜底窗口到期仍无结果 → 视为真卡死，杀 host 收敛
+        // （排队调用按 E_TOOL_NOT_DISPATCHED sentinel 安全回退，与默认语义一致）。
+        const drainMs = Math.max(timeoutMs, ABANDON_DRAIN_MIN_MS);
+        console.warn(
+          LOG_PREFIX,
+          `工具 ${tool} 超时（${timeoutMs}ms），轻量隔离：放弃当次调用（host 保留，排空兜底 ${drainMs}ms）`,
+        );
+        this.abandoned = {
+          callId,
+          tool,
+          timer: setTimeout(() => {
+            if (this.abandoned?.callId !== callId) return; // 已排空 / 已随 host 退出清除
+            this.clearAbandoned();
+            console.warn(LOG_PREFIX, `已放弃调用 ${callId}(${tool}) 排空超时（${drainMs}ms），杀 host 收敛`);
+            this.killing = true;
+            try { child.kill(); } catch { /* ignore */ }
+          }, drainMs),
+        };
+        finish(() => entry.reject(new Error(`native 工具 ${tool} 超时`)));
+        return;
+      }
       const collateral = this.describeOutstanding(callId);
       console.warn(
         LOG_PREFIX,
@@ -442,13 +505,14 @@ export class NativeToolHost {
     timeoutMs = 5000,
     signal?: AbortSignal,
     onEvent?: (event: HostToolEvent) => void,
+    abandonOnTimeout = false,
   ): Promise<unknown | null> {
     if (signal?.aborted) throw createAbortError();
     if (!(await this.ensureStarted())) return null;
     if (this.exited || !this.proc) return null;
     return new Promise<unknown>((resolve, reject) => {
       const callId = `t${++this.callSeq}`;
-      const entry: QueuedCall = { callId, tool, args, timeoutMs, signal, resolve, reject, onEvent };
+      const entry: QueuedCall = { callId, tool, args, timeoutMs, signal, resolve, reject, onEvent, abandonOnTimeout };
       // 排队期间取消：直接摘除，不触达 host
       if (signal) {
         entry.onAbort = () => {
@@ -498,7 +562,9 @@ export async function nativeFirst(
     ? { ...cleanArgs, ...options.internalArgs }
     : cleanArgs;
   try {
-    const result = await nativeToolHost.call(tool, nativeArgs, options.timeoutMs, options.signal, options.onEvent);
+    const result = await nativeToolHost.call(
+      tool, nativeArgs, options.timeoutMs, options.signal, options.onEvent, options.abandonOnTimeout,
+    );
     if (result !== null) {
       return typeof result === "string" ? result : JSON.stringify(result);
     }
@@ -551,6 +617,7 @@ export function withNativeFirst(
   nativeTool: string,
   prepare: (args: Record<string, unknown>, ctx?: ToolContext) => Record<string, unknown> | null,
   timeoutMs?: number,
+  abandonOnTimeout = false,
 ): ToolDefinition {
   const tsExecute = tool.execute.bind(tool);
   return {
@@ -563,7 +630,7 @@ export function withNativeFirst(
       const nativeArgs = prepare(cleanArgs, ctx);
       if (nativeArgs === null) return tsExecute(cleanArgs, ctx);
       try {
-        const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal);
+        const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal, undefined, abandonOnTimeout);
         if (result !== null) {
           const text = typeof result === "string" ? result : JSON.stringify(result);
           if (!isNativeFailurePayload(text)) return text;
