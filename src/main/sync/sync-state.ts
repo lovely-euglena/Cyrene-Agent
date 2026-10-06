@@ -61,7 +61,8 @@ export function createSyncState(): SyncState {
  * - 缺失 → 新建（生成设备身份）并落盘，保证身份稳定；
  * - 损坏（JSON / 形状非法）→ 隔离重命名为 `state.json.corrupt-<ts>`，
  *   再按事件库恢复（deviceId 取 outbox 首个事件、lamport 取两库最大值、
- *   seq 取 outbox 最大值、会话水位清空由 eventId 去重兜底），并落盘。
+ *   seq 取 outbox 最大值、会话水位清空由 eventId 去重兜底；标题修订 / 上次标题
+ *   从 outbox 的 `screate:<cid>:r<n>` 推导，避免恢复后首次改名被去重吞并），并落盘。
  */
 export async function loadSyncState(syncDir: string): Promise<SyncState> {
   const file = path.join(syncDir, STATE_FILE_NAME);
@@ -89,7 +90,8 @@ export async function saveSyncState(syncDir: string, state: SyncState): Promise<
   state.updatedAt = new Date().toISOString();
   await fs.promises.mkdir(syncDir, { recursive: true });
   const file = path.join(syncDir, STATE_FILE_NAME);
-  const tmpFile = `${file}.${process.pid}.tmp`;
+  // 临时名带 pid + 随机后缀：pair/unpair 与在途轮次并发保存时互不覆盖。
+  const tmpFile = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   await fs.promises.writeFile(tmpFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   await fs.promises.rename(tmpFile, file);
 }
@@ -150,6 +152,24 @@ async function recoverStateFromStore(syncDir: string): Promise<SyncState> {
     remote.reduce((max, event) => Math.max(max, event.lamport), 0),
   );
   state.seq = local.reduce((max, event) => Math.max(max, event.seq), 0);
+  // 标题修订恢复：conversations 清空后，首个标题变更会被重算为 r1 并被 eventId
+  // 去重静默吞并；从 outbox 的 screate:<cid>:r<n> 推导每会话最大修订与对应标题，
+  // 保证恢复后的改名能发出 r(n+1)。
+  for (const event of local) {
+    if (event.type !== "session.create") continue;
+    const match = /^screate:(.+):r(\d+)$/.exec(event.eventId);
+    if (!match || match[1] !== event.sessionId) continue;
+    const revision = Number(match[2]);
+    const title = event.payload.title;
+    if (!Number.isSafeInteger(revision) || typeof title !== "string") continue;
+    const current = state.conversations[event.sessionId];
+    if (current && revision < current.titleRevision) continue;
+    state.conversations[event.sessionId] = {
+      exportedThroughSeq: current?.exportedThroughSeq ?? 0,
+      titleRevision: revision,
+      lastTitle: title,
+    };
+  }
   return state;
 }
 

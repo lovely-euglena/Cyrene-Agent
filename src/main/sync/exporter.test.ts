@@ -241,6 +241,53 @@ describe("createSyncExporter", () => {
     }
   });
 
+  it("assistant presentation 别名：补丁按 entry.id 键控（渠道路径）时也能命中", async () => {
+    const h = await createHarness();
+    addMeta(h, { id: "s1", title: "t", createdAt: 1_000 });
+    await h.journal.appendUser("s1", { turnId: "u1", text: "问", at: 2_000 });
+    const entryId = await appendAssistant(h.journal, "s1", "run1", "a1", "渠道答");
+    // 渠道路径：dispatcher 以 getLastAssistantEntryId()（entry.id）键控补丁。
+    await h.journal.appendPresentation("s1", entryId, 1, {
+      content: "渠道正文",
+      channelSource: { channel: "wechat", chatType: "private" },
+      sticker: "calm",
+    });
+
+    await h.exporter.exportPending();
+    const event = eventsById(h.eventStore).get(entryId)!;
+    expect(event.payload).toEqual({
+      role: "assistant",
+      text: "渠道答",
+      turnId: "a1",
+      presentation: {
+        patchRevision: 1,
+        patch: {
+          content: "渠道正文",
+          channelSource: { channel: "wechat", chatType: "private" },
+          sticker: "calm",
+        },
+      },
+    });
+    expect(validateSyncEvent(event)).toBeNull();
+  });
+
+  it("assistant presentation 别名：entry.id 与 turnId 双键命中时按 (patchRevision, seq) 取新并合并", async () => {
+    const h = await createHarness();
+    addMeta(h, { id: "s1", title: "t", createdAt: 1_000 });
+    await h.journal.appendUser("s1", { turnId: "u1", text: "问", at: 2_000 });
+    const entryId = await appendAssistant(h.journal, "s1", "run1", "a1", "答");
+    // turnId 键（UI 路径）较早且修订低，entry.id 键（渠道路径）较晚且修订高。
+    await h.journal.appendPresentation("s1", "a1", 1, { reasoning: "旧思路" });
+    await h.journal.appendPresentation("s1", entryId, 2, { content: "新正文" });
+
+    await h.exporter.exportPending();
+    const event = eventsById(h.eventStore).get(entryId)!;
+    expect(event.payload.presentation).toEqual({
+      patchRevision: 2,
+      patch: { reasoning: "旧思路", content: "新正文" },
+    });
+  });
+
   it("跳过 visibility=internal / 空文本 assistant 与缺失 turnId 的 user（防御）", async () => {
     const h = await createHarness({
       wrapAuditEntries: (entries) => [
@@ -369,6 +416,32 @@ describe("createSyncExporter", () => {
     expect(all.filter((event) => event.eventId === "screate:s1:r1")).toHaveLength(1);
     const audit = await h.transcriptStore.readAuditEntries("s1");
     expect(h.state.conversations.s1.exportedThroughSeq).toBe(audit.at(-1)!.seq);
+  });
+
+  it("损坏恢复：conversations 从 outbox screate 推导，恢复后改名发出 r(n+1)", async () => {
+    const h = await createHarness();
+    const meta = addMeta(h, { id: "s1", title: "旧名", createdAt: 1_000 });
+    await h.journal.appendUser("s1", { turnId: "u1", text: "问", at: 2_000 });
+    await h.exporter.exportPending();
+    await saveSyncState(h.syncDir, h.state);
+
+    // 模拟 state.json 损坏：隔离后从 outbox 恢复会话标题修订。
+    fs.writeFileSync(path.join(h.syncDir, "state.json"), "{ 这不是 JSON", "utf8");
+    const recovered = await loadSyncState(h.syncDir);
+    expect(recovered.conversations.s1).toEqual({
+      exportedThroughSeq: 0,
+      titleRevision: 1,
+      lastTitle: "旧名",
+    });
+
+    // 恢复后只改一次名：应发出 r2，而不是重算 r1 被 eventId 去重静默吞并。
+    meta.title = "新名";
+    const exporter = buildExporter(h, { state: recovered });
+    expect(await exporter.exportPending()).toEqual({ exported: 1, sessions: 1 });
+    const r2 = eventsById(h.eventStore).get("screate:s1:r2")!;
+    expect(r2.payload.title).toBe("新名");
+    expect(validateSyncEvent(r2)).toBeNull();
+    expect(h.eventStore.getLocalEvents().filter((event) => event.eventId === "screate:s1:r1")).toHaveLength(1);
   });
 
   it("会话按 createdAt 升序（并列按 id）；全局 lamport / seq 严格单调", async () => {
