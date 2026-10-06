@@ -398,8 +398,29 @@ class SqliteStoreBackend implements VectorStoreBackend {
       const rows = this.db
         .prepare("SELECT id, text, source, embedding, weight, created_at, last_recalled_at, metadata FROM entries")
         .all() as SqliteRow[];
-      entries = rows.map(rowToEntry);
+      // 单行隔离（IKJSND）：坏行（metadata JSON 损坏 / blob 异常）只跳过自身并计数，
+      // 不能让一行毒化整库——否则 entries=[] + lastLoadFailed=true 会让 ensureFresh
+      // 反复重试失败（CPU 空转），记忆/RAG 持续瘫痪且坏行永存。
+      entries = [];
+      let skipped = 0;
+      let firstError: unknown = null;
+      for (const row of rows) {
+        try {
+          entries.push(rowToEntry(row));
+        } catch (err) {
+          skipped++;
+          if (firstError === null) firstError = err;
+        }
+      }
+      if (skipped > 0) {
+        // 每次 load 只告警一次（含数量与首个错误摘要），不按行刷屏
+        console.warn(
+          `[RAG] sqlite load skipped ${skipped}/${rows.length} corrupt row(s); first error:`,
+          firstError,
+        );
+      }
     } catch (err) {
+      // 仅整体查询失败（连接/表损坏等）才置位：revision 返回 null，调用方按需重试
       console.warn("[RAG] sqlite load failed:", err);
       this.lastLoadFailed = true;
       entries = [];

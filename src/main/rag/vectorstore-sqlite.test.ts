@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -181,6 +181,47 @@ describe("SqliteVectorStore", () => {
     const reopened = createStore(dir);
     expect(reopened.stats.total).toBe(2);
     expect(reopened.stats.sources.user_memory).toBe(2);
+  });
+
+  it("单行损坏隔离：坏行跳过、其余条目正常加载、revision 非 null（IKJSND）", () => {
+    const dir = makeDir();
+    const store = createStore(dir);
+    const [, second] = store.addPreparedBatch([makeEntry(0), makeEntry(1), makeEntry(2)]);
+
+    // 直接改库注入坏行：metadata 为非法 JSON（模拟单行损坏）
+    const raw = new sqliteDriver.DatabaseSync(path.join(dir, "memory.db"));
+    try {
+      raw.prepare("UPDATE entries SET metadata = '{broken' WHERE id = ?").run(second.id);
+    } finally {
+      raw.close();
+    }
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let reopened: SqliteVectorStore;
+    try {
+      reopened = createStore(dir);
+      // 修复前：整库 load 失败 → entries=[]；修复后：坏行跳过，其余 2 条正常加载
+      expect(reopened.stats.total).toBe(2);
+      expect(reopened.stats.sources.imported_doc).toBe(1);
+      expect(reopened.stats.sources.user_memory).toBe(1);
+
+      // revision 非 null：load 未被标记失败，ensureFresh 不会反复重试（空转）
+      const backend = (reopened as unknown as { backend: { revision(): string | null } }).backend;
+      expect(backend.revision()).not.toBeNull();
+
+      // 坏行只告警一次，含跳过数量与首个错误，不按行刷屏
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0][0])).toContain("1/3");
+      expect(warnSpy.mock.calls[0][1]).toBeInstanceOf(SyntaxError);
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    // 库仍可正常使用：外部实例写入后 ensureFresh 可见（修复前 load 持续失败 → 0 条）
+    const writer = createStore(dir);
+    writer.addPreparedBatch([{ text: "delta", source: "user_memory", embedding: [1, 0] }]);
+    reopened.ensureFresh();
+    expect(reopened.stats.total).toBe(3);
   });
 
   it("clearAll 清空条目并删除迁移 JSON（不会被迁回）", () => {
