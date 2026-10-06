@@ -20,7 +20,7 @@ namespace CyreneNative.Tools;
 ///   - 安全/健壮：20s 超时；单次最多 512KB（超出截断并标注）；HTTP 错误返回 [错误] 文本；
 ///     重定向上限 20（对齐 TS fetch/undici 默认，见 MaxAutomaticRedirections）。
 ///   - 测试注入口（经 TS 包装层后模型不可见；仅矩阵/双轨直连宿主注入）：
-///     __githubApiBase 覆盖 GitHub API 基址（默认 api.github.com）。
+///     meta.githubApiBase 覆盖 GitHub API 基址（默认 api.github.com）。
 ///   - 已知库差异（双轨按已知差异断言，见 scripts/dual-track-diff.ts）：
 ///     整页回退路径（无 article/main 正文容器）ReverseMarkdown 丢 <head>/<title>，
 ///     TS Turndown 保留 <title> 文本；raw 格式两侧逐字一致。
@@ -67,7 +67,7 @@ internal static class FetchUrlTool
         return new Converter(config);
     }
 
-    public static string Execute(JsonElement args)
+    public static string Execute(JsonElement args, JsonElement meta)
     {
         var url = Str(args, "url").Trim();
         if (!Regex.IsMatch(url, "^https?://", RegexOptions.IgnoreCase))
@@ -90,7 +90,7 @@ internal static class FetchUrlTool
             var repo = MatchGithubRepoUrl(url);
             if (repo is not null)
             {
-                var summary = FetchGithubRepoSummary(repo.Value, url, Str(args, "__githubApiBase"));
+                var summary = FetchGithubRepoSummary(repo.Value, url, CallMeta.Str(meta, "githubApiBase"));
                 if (summary is not null)
                 {
                     CacheSet(cacheKey, summary);

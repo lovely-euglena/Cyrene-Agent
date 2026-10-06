@@ -6,7 +6,7 @@ namespace CyreneNative.Tools;
 
 /// <summary>
 /// search_text（含 Glob/Grep 别名共用）：工作区文本搜索——与 search-text-tools.ts 同语义。
-///   - 工作区根由 TS 包装器经内部参数 `__cyreneWorkspaceRoot` 注入（模型不可见）
+///   - 工作区根由 TS 包装器经 call 帧 meta.workspaceRoot 注入（模型不可见）
 ///   - 忽略目录/扩展名、文件大小 1MB、单行 500 字符、匹配上限 100、上下文上限 5
 ///   - literal/regex 两模式；regex 用 ECMAScript 选项贴近 JS 语义；无效正则按无匹配处理
 ///   - 路径逃逸拒绝 / message / rejectedPaths / skippedDirs 输出逐字段对齐
@@ -46,14 +46,14 @@ internal static class SearchTools
         string Path, int Line, int? Column, string Preview,
         List<string> Before, List<string> After);
 
-    public static string Search(JsonElement args)
+    public static string Search(JsonElement args, JsonElement meta)
     {
         var query = GetString(args, "query").Trim();
         if (query.Length == 0) return InvalidQueryResult();
 
-        var workspaceRootRaw = GetString(args, "__cyreneWorkspaceRoot");
+        var workspaceRootRaw = CallMeta.Str(meta, "workspaceRoot");
         if (string.IsNullOrWhiteSpace(workspaceRootRaw))
-            throw new ToolHostException("E_SEARCH_NO_ROOT", "缺少工作区根（__cyreneWorkspaceRoot），search_text 需经宿主包装器调用");
+            throw new ToolHostException("E_SEARCH_NO_ROOT", "缺少工作区根（meta.workspaceRoot），search_text 需经宿主包装器调用");
         var workspaceRoot = Path.GetFullPath(workspaceRootRaw);
 
         var mode = GetString(args, "mode") == "regex" ? "regex" : "literal";
