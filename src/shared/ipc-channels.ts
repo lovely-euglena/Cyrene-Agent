@@ -188,6 +188,15 @@ export const IPC = {
   CLOUD_STORAGE_PROFILE_SAVE: "cloud-storage:profile-save",
   CLOUD_STORAGE_PROFILE_REMOVE: "cloud-storage:profile-remove",
   CLOUD_STORAGE_PROFILE_TEST: "cloud-storage:profile-test",
+  // 云端同步（IKJK2I）：设置页配置 / 状态 / 配对 / 手动同步（动作类经 preload 返回 SyncOpResult）
+  SYNC_GET_CONFIG: "sync:get-config",
+  SYNC_SAVE_CONFIG: "sync:save-config",
+  SYNC_GET_STATUS: "sync:get-status",
+  SYNC_NOW: "sync:now",
+  SYNC_PAIR: "sync:pair",
+  SYNC_PAIR_CODE: "sync:pair-code",
+  SYNC_UNPAIR: "sync:unpair",
+  SYNC_CHANGED: "sync:changed",
   // 昔涟设置：RAG 模型操作（打开目录/安装说明/下载站/体检/删除缓存）
   SETTINGS_CYRENE_MODEL_ACTION: "settings:cyrene-model-action",
   SETTINGS_GET_TIMEOUT_SETTINGS: "settings:get-timeout-settings",
