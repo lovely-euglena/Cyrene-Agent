@@ -741,10 +741,12 @@
   含 `abandoned`（排空完成前不派发新帧——避免「新调用被旧调用看门狗误杀」，即
   PR #1 复审保留项所述场景）；迟到结果帧丢弃并恢复派发；host 退出 / 兜底 kill /
   排空完成三路径清理状态（排队调用仍走 sentinel 分流）。
-- **验证（2026-10-06，Windows 本机）**：`tsc` 三端（main/preload/renderer）0 错；
-  `vitest run src/main/orchestrator/tools` **508/508**（本批 +4：排空后正常派发无
-  连带 / 兜底到期杀 host + sentinel / 崩溃清计时器；git 读/写接线分类断言；
-  search_text / fs / ast_grep / email / weather 接线断言同步锁定）；`vitest run
+- **验证（2026-10-06，Windows 本机；R1/R2 复审修复后复跑）**：`tsc` 三端
+  （main/preload/renderer）0 错；`vitest run src/main/orchestrator/tools`
+  **56 files / 512 tests**（本批 +8：排空后正常派发无连带 / 兜底到期杀 host +
+  sentinel / 崩溃清计时器 / 排空窗口内取消 / 被放弃调用自身信号 abort /
+  calculator·now 接线锁定；git 读/写接线分类断言；search_text / fs / ast_grep /
+  email / weather 接线断言同步锁定）；`vitest run
   src/main/sync src/pwa` **87/87**、`vitest run src/main/channels src/main/proactive`
   **436/436**；工具矩阵 **146/146**（本机 ast-grep CLI 就绪）；dual-track **PASS**。
 - **未做/后续**：下载回退「重复下载」幂等短路仍为观察项（PR #1 挂靠，未纳入）；
