@@ -99,7 +99,12 @@ function readIndexFromDisk(): ChatSessionMeta[] {
         (meta.purpose === undefined || meta.purpose === "proactive-chat")
       );
       if (!valid) continue;
-      const session = readSessionRecordFile(meta.id!);
+      // 性能：只有旧格式索引条目（缺 mode / pinned 字段）才回读会话文件做迁移补全，
+      // 当前格式直接信任 meta——避免启动时为每个会话全量 JSON.parse sessions/<id>.json。
+      // 不能用 workspaceRoot 存在性判断新旧：JSON.stringify 会丢弃 undefined 值，
+      // 当前格式的 chat 会话本来就可能没有 workspaceRoot。
+      const needsSessionRead = typeof meta.mode !== "string" || typeof meta.pinned !== "boolean";
+      const session = needsSessionRead ? readSessionRecordFile(meta.id!) : null;
       const indexedMode = meta.mode;
       const mode = normalizePersistedMode(indexedMode ?? session?.mode, meta.purpose ?? session?.purpose);
       const workspaceRoot = typeof meta.workspaceRoot === "string"
@@ -271,7 +276,9 @@ function metaFromSession(session: ChatSession | ChatSessionRecordV2): ChatSessio
     mode: isConversationMode(session.mode) ? session.mode : inferLegacyMode(session.purpose),
     workspaceRoot: session.workspaceBinding?.workspaceRoot,
     workspaceDisplayName: session.workspaceBinding?.displayName,
-    pinned: session.pinned,
+    // 固定写成布尔：JSON.stringify 会丢弃 undefined，缺 pinned 的索引条目
+    // 会被 readIndexFromDisk 误判为旧格式而回读会话文件。
+    pinned: Boolean(session.pinned),
   };
 }
 
