@@ -80,6 +80,20 @@ interface SettingsWindowApi {
   openChromeGpu: () => void;
   openCustomStylePrompt: () => Promise<unknown>;
   channelsGetStatus: () => Promise<unknown>;
+  // 云端同步（IKJK2I 设置页「云端」面板；动作类统一 SyncOpResult<T>）
+  syncGetConfig?: () => Promise<import("../shared/sync-types").SyncConfigPublic>;
+  syncSaveConfig?: (
+    input: import("../shared/sync-types").SyncSaveConfigInput,
+  ) => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncConfigPublic>>;
+  syncGetStatus?: () => Promise<import("../shared/sync-types").SyncStatus>;
+  syncNow?: () => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncStatus>>;
+  syncPair?: (
+    input: import("../shared/sync-types").SyncPairInput,
+  ) => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncConfigPublic>>;
+  syncPairCode?: () => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncPairCodeResult>>;
+  syncUnpair?: () => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncStatus>>;
+  /** main → 设置页：同步配置 / 状态变化广播（面板据此刷新） */
+  onSyncChanged?: (callback: () => void) => (() => void) | void;
   setPetAlwaysOnTop: (value: boolean) => void;
   setPetVisible: (value: boolean) => void;
   setPetZoom: (value: number) => void;

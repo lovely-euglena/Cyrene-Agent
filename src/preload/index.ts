@@ -27,6 +27,14 @@ import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrgani
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
 import type { BrowserElementSelection, BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
 import type { LearnExamAnswerValue, LearnExamChangedEvent, LearnExamCreatedEvent, LearnExamView } from "../shared/learn-exam";
+import type {
+  SyncConfigPublic,
+  SyncOpResult,
+  SyncPairCodeResult,
+  SyncPairInput,
+  SyncSaveConfigInput,
+  SyncStatus,
+} from "../shared/sync-types";
 
 // 渲染目标标识：preload 每次加载（即每次页面初始化/重新加载）生成一次，
 // 随活动会话一并上报主进程；同一页面内切换会话不改变该标识。
@@ -562,6 +570,22 @@ const settingsApi = {
     const listener = (_e: unknown, payload: { ok: boolean; botId?: string; error?: string }) => callback(payload);
     ipcRenderer.on(IPC.CHANNELS_WECHAT_LOGIN_DONE, listener);
     return () => ipcRenderer.off(IPC.CHANNELS_WECHAT_LOGIN_DONE, listener);
+  },
+  // 云端同步（IKJK2I）：配置 / 状态 / 配对 / 手动同步（动作类统一返回 SyncOpResult）
+  syncGetConfig: () => ipcRenderer.invoke(IPC.SYNC_GET_CONFIG) as Promise<SyncConfigPublic>,
+  syncSaveConfig: (input: SyncSaveConfigInput) =>
+    ipcRenderer.invoke(IPC.SYNC_SAVE_CONFIG, input) as Promise<SyncOpResult<SyncConfigPublic>>,
+  syncGetStatus: () => ipcRenderer.invoke(IPC.SYNC_GET_STATUS) as Promise<SyncStatus>,
+  syncNow: () => ipcRenderer.invoke(IPC.SYNC_NOW) as Promise<SyncOpResult<SyncStatus>>,
+  syncPair: (input: SyncPairInput) =>
+    ipcRenderer.invoke(IPC.SYNC_PAIR, input) as Promise<SyncOpResult<SyncConfigPublic>>,
+  syncPairCode: () => ipcRenderer.invoke(IPC.SYNC_PAIR_CODE) as Promise<SyncOpResult<SyncPairCodeResult>>,
+  syncUnpair: () => ipcRenderer.invoke(IPC.SYNC_UNPAIR) as Promise<SyncOpResult<SyncStatus>>,
+  // main → 设置页：同步配置 / 状态变化广播（保存 / 配对 / 同步结束 / 失败后刷新面板）
+  onSyncChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.SYNC_CHANGED, listener);
+    return () => ipcRenderer.off(IPC.SYNC_CHANGED, listener);
   },
   // 权限档位
   getPermissionLevel: () => ipcRenderer.invoke(IPC.PERMISSION_GET_LEVEL),
