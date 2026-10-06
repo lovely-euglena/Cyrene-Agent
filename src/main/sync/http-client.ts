@@ -7,6 +7,7 @@
  * - 全局 fetch + AbortSignal.timeout（默认 30s；沿 runtime-policy external-http 口径）；
  * - fetchImpl 注入便于单测（不依赖真实网络）；
  * - push：JSONL 按序列化字节 ≤5 MiB 分块（低于服务端 10 MiB 上限），eventId 幂等可重试；
+ *   单事件序列化 > 服务端单事件上限（10 MiB）时预检抛 oversize_event（含 eventId，不发送）；
  * - clone：NDJSON 流式解析（无 body 流时退化为整体文本），游标取 X-Sync-Cursor 响应头；
  * - 错误统一 SyncHttpError{code,status,serverCode?}，文本剥离 token / baseUrl（脱敏）。
  */
@@ -17,6 +18,8 @@ import { compareSyncEvents, validateSyncEvent, type SyncEventV0 } from "./sync-p
 export const SYNC_HTTP_TIMEOUT_MS = 30_000;
 /** push 单批上限（序列化字节；服务端 10 MiB 上限的安全余量）。 */
 export const SYNC_PUSH_MAX_BYTES = 5 * 1024 * 1024;
+/** 服务端单事件上限（序列化字节；超过时独占一批也必被 413 拒绝，需预检拦截）。 */
+export const SYNC_PUSH_MAX_EVENT_BYTES = 10 * 1024 * 1024;
 /** fetch 单页默认条数（服务端允许 1..1000）。 */
 export const SYNC_FETCH_DEFAULT_LIMIT = 200;
 
@@ -29,6 +32,7 @@ export type SyncHttpErrorCode =
   | "batch_rejected"
   | "cursor"
   | "not_found"
+  | "oversize_event"
   | "http"
   | "timeout"
   | "aborted"
@@ -43,6 +47,7 @@ const DEFAULT_ERROR_MESSAGES: Record<SyncHttpErrorCode, string> = {
   batch_rejected: "事件批被服务器拒绝",
   cursor: "同步游标无效",
   not_found: "资源不存在",
+  oversize_event: "事件超过单事件大小上限",
   http: "服务器返回错误",
   timeout: "请求超时",
   aborted: "请求已取消",
@@ -266,7 +271,20 @@ class SyncHttpClientImpl implements SyncHttpClient {
   async push(events: readonly SyncEventV0[]): Promise<SyncPushResult> {
     if (events.length === 0) return { accepted: 0, duplicates: 0, cursor: "" };
     this.assertConfigured();
-    const chunks = chunkJsonLines(events.map((event) => JSON.stringify(event)), SYNC_PUSH_MAX_BYTES);
+    const lines = events.map((event) => JSON.stringify(event));
+    // 预检：单事件超过服务端单事件上限时，独占一批也必被 413 拒绝，该事件将永久停滞；
+    // 提前抛可区分错误（message 含 eventId，不发送任何请求），由 service 记入 lastError 供 UI 展示。
+    for (let index = 0; index < events.length; index += 1) {
+      if (Buffer.byteLength(lines[index]!, "utf8") > SYNC_PUSH_MAX_EVENT_BYTES) {
+        throw new SyncHttpError(
+          "oversize_event",
+          0,
+          undefined,
+          `事件 ${events[index]!.eventId} 超过单事件上限（${SYNC_PUSH_MAX_EVENT_BYTES / (1024 * 1024)} MiB）`,
+        );
+      }
+    }
+    const chunks = chunkJsonLines(lines, SYNC_PUSH_MAX_BYTES);
     let accepted = 0;
     let duplicates = 0;
     let cursor = "";
@@ -308,7 +326,7 @@ class SyncHttpClientImpl implements SyncHttpClient {
     const path = query.toString() ? `/v1/sync/clone?${query.toString()}` : "/v1/sync/clone";
     const response = await this.send("GET", path, { auth: true });
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
+      const text = await this.readText(response);
       throw this.httpError(response.status, parseJsonObject(text));
     }
     const header = response.headers?.get?.("X-Sync-Cursor") ?? null;
@@ -362,8 +380,17 @@ class SyncHttpClientImpl implements SyncHttpClient {
     }
   }
 
+  /** 读取响应文本；失败抛 network（避免被 catch 成空 body 而误判成功）。 */
+  private async readText(response: Response): Promise<string> {
+    try {
+      return await response.text();
+    } catch {
+      throw new SyncHttpError("network", 0, undefined, DEFAULT_ERROR_MESSAGES.network);
+    }
+  }
+
   private async readJson(response: Response): Promise<Record<string, unknown>> {
-    const text = await response.text().catch(() => "");
+    const text = await this.readText(response);
     const body = parseJsonObject(text);
     if (!response.ok) throw this.httpError(response.status, body);
     return body;
@@ -424,8 +451,8 @@ class SyncHttpClientImpl implements SyncHttpClient {
       pushLine(buffer);
       return { events, dropped };
     }
-    // 测试桩 / 无 body 流：退化为整体文本解析
-    const text = await response.text().catch(() => "");
+    // 测试桩 / 无 body 流：退化为整体文本解析（text() 失败同样抛 network，不记成功）
+    const text = await this.readText(response);
     for (const line of text.split("\n")) pushLine(line);
     return { events, dropped };
   }

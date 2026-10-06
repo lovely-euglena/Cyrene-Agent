@@ -7,6 +7,7 @@ import {
   normalizeDotNetExpiresAt,
   SyncHttpError,
   SYNC_PUSH_MAX_BYTES,
+  SYNC_PUSH_MAX_EVENT_BYTES,
   type SyncFetchLike,
 } from "./http-client";
 import type { SyncEventV0 } from "./sync-protocol";
@@ -120,6 +121,22 @@ describe("sync/http-client", () => {
     expect(chunks).toEqual([["aa", "bb"], ["cccccccccc"]]);
   });
 
+  it("push：单事件超过服务端单事件上限 → oversize_event（message 含 eventId，不发请求）", async () => {
+    const fetchImpl = vi.fn<SyncFetchLike>(async () => jsonResponse({ accepted: 1, duplicates: 0, cursor: 1 }));
+    const client = createSyncHttpClient({ baseUrl: BASE, token: "tok-1", fetchImpl });
+    const huge = event("huge-1", 1, {
+      payload: { role: "user", text: "x".repeat(SYNC_PUSH_MAX_EVENT_BYTES + 16), turnId: "t1" },
+    });
+
+    // 超限事件位于批中第二位也必须整批拦下（否则前置事件白白推进，超限事件永久停滞）
+    const error = await client.push([event("ok-1", 0), huge]).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(SyncHttpError);
+    expect((error as SyncHttpError).code).toBe("oversize_event");
+    expect((error as SyncHttpError).message).toContain("huge-1");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("fetch：since/limit/sessionId 查询参数 + 事件校验 + cursor/hasMore", async () => {
     const fetchImpl = vi.fn<SyncFetchLike>(async () =>
       jsonResponse({
@@ -173,6 +190,29 @@ describe("sync/http-client", () => {
 
     expect(result.cursor).toBe("7");
     expect(result.events.map((item) => item.eventId)).toEqual(["e1"]);
+  });
+
+  it("readJson：response.text() 失败 → network（不按空 body 记成功）", async () => {
+    const fetchImpl = vi.fn<SyncFetchLike>(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => { throw new TypeError("stream broken"); },
+    }) as unknown as Response);
+    const client = createSyncHttpClient({ baseUrl: BASE, token: "tok-1", fetchImpl });
+
+    await expect(client.fetch("1")).rejects.toMatchObject({ code: "network" });
+  });
+
+  it("clone：无 body 流且 text() 失败 → network（不返回空事件集）", async () => {
+    const fetchImpl = vi.fn<SyncFetchLike>(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => "7" },
+      text: async () => { throw new TypeError("stream broken"); },
+    }) as unknown as Response);
+    const client = createSyncHttpClient({ baseUrl: BASE, token: "tok-1", fetchImpl });
+
+    await expect(client.clone()).rejects.toMatchObject({ code: "network" });
   });
 
   it("错误映射：401 unauthorized / 429 rate_limited / 400 batch_invalid / 400 E_PAIR_CODE / 404 / 421", async () => {
