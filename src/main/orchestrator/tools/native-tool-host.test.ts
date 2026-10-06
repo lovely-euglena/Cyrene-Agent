@@ -426,6 +426,36 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
 
     vi.useRealTimers();
   });
+
+  it("被放弃调用自身的取消信号：排空窗口内 abort 不杀 host、无二次结算", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+    const controller = new AbortController();
+
+    const first = host.call("search_text", { query: "x" }, 50, controller.signal, undefined, true);
+    const firstErr = first.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(50); // 超时：当次结算为「超时」，abort 监听随结算移除
+    const error = await firstErr;
+    expect(String(error.message)).toContain("超时");
+    expect((error as Error).name).not.toBe("AbortError");
+
+    // 排空窗口内 abort：已结算调用不再响应（若监听未移除，会经 onAbort 误杀 host——旧语义的连带场景）
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    // 迟到结果仍能完成排空
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "late" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.useRealTimers();
+  });
 });
 
 // ── 信任边界（P0，docs/pr-review-rules.md §2.3）────────────
