@@ -724,11 +724,19 @@
   str_replace 两段式）、`githubApiBase`（fetch_url，矩阵测试注入）。无内部参数的
   调用帧不含 meta 键（形状不变）。
 - **兼容策略（明确不保留旧键）**：cyrene-native.exe 随应用打包（electron-builder
-  extraResources），与 TS 同版本发布、无独立升级窗口；新旧混跑场景下各工具安全
-  降级回 TS 实现（nativeFirst/withNativeFirst/直连调用均有失败回退，不产生错误
-  副作用）。因此不保留 args `__` 旧键——宿主只读 meta（即使未来剥离逻辑回归，
-  模型注入也无法在宿主侧生效）；整体回退仍可用 `CYRENE_TOOL_HOST=0`。
-  matrix 新增 2 条负例锁定：search `E_SEARCH_NO_ROOT`、git `E_GIT_NO_ROOT`。
+  extraResources），与 TS 同版本发布、无独立升级窗口。新旧混跑时，依赖工作区根 /
+  CLI 路径（meta 缺失即报错）的工具（git / search_text / download_file /
+  apply_patch / ast_grep）会在落盘前失败（回退 / 透传失败载荷），不产生错误副作用。
+  **例外：`str_replace` 两段式预检**——dryRun 信号在混跑两个方向都会丢失（新 TS
+  只发 meta、旧 exe 只读 args `__dryRun`；反向同理），预检帧会被直读为正式写入并
+  直接落盘，随后 TS 因返回载荷无 `prepared` 按预检失败透传、跳过 review 基线与
+  第二段调用（生产同版本发布不受影响；完整混跑防护需版本/能力协商，列为后续可选
+  加固）。因此不保留 args `__` 旧键——宿主只读 meta（即使未来剥离逻辑回归，模型
+  注入也无法在宿主侧生效）；整体回退仍可用 `CYRENE_TOOL_HOST=0`。matrix 负例：
+  search `E_SEARCH_NO_ROOT`、git `E_GIT_NO_ROOT`；`str_replace` 不设旧键负例——
+  新宿主在旧帧下会直接写入，断言该行为等于固化危险路径；其 TS 侧「无 `prepared`
+  → 透传、不写基线、不二次调用」路径已由 `str-replace-native.test.ts` 单测锁定
+  （PR #28 复审 P2-1 口径）。
 - **TS 侧**：新增 `NativeCallMeta` 类型；`NativeToolHost.call()` 第 5 形参 meta
   全链透传（QueuedCall / dispatchNext / 出帧）；`NativeFirstOptions.internalArgs`
   更名 `meta`；`withNativeFirst` prepare 第三参装配 meta；git 八件 / search_text /

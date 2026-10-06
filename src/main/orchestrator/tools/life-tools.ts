@@ -417,6 +417,10 @@ async function executeStrReplaceNativeFirst(
   // 信任边界：模型 args 里的 `__` 键一律剥离（模型侧内部参数伪造一律丢弃）
   const cleanArgs = stripInternalArgs(args);
   try {
+    // 两段式预检：dryRun 经 call 帧 meta 下发（IKJLP4）。注意混跑例外——若宿主为
+    // 旧版（只读 args `__dryRun`），预检信号丢失、本帧会被直接落盘且跳过后续基线
+    // 捕获；生产随包锁定步不受影响，完整防护需版本协商。见 decisions 2026-10-06
+    // 增量「兼容策略」例外说明（PR #28 复审 P1）。
     const prep = await nativeToolHost.call("str_replace", cleanArgs, undefined, ctx?.signal, { dryRun: true });
     if (prep === null) return executeStrReplaceTs(args, ctx);
     const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
