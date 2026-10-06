@@ -11,9 +11,9 @@ namespace CyreneNative.Tools;
 /// apply_patch：Codex 结构化补丁批量编辑（与 apply-patch-tools.ts 同语义）。
 ///   - Update File（@@ 分块 + 可选 Move to）/ Add File / Delete File
 ///   - 预验证事务：解析 → 全量匹配/存在性/路径沙箱预检，任一失败则全部不执行
-///   - 路径沙箱：工作区根经内部参数 `__cyreneRoot` 注入（模型不可见）
+///   - 路径沙箱：工作区根经 call 帧 meta.workspaceRoot 注入（模型不可见）
 ///   - 保留原文件 EOL（CRLF/LF）；按 \r?\n 拆行（混合 EOL 不残留在行内容）
-///   - 两段式（TS 包装器编排）：`__dryRun=true` 只解析+预检，成功返回
+///   - 两段式（TS 包装器编排）：`meta.dryRun=true` 只解析+预检，成功返回
 ///     {success,prepared,hunks} 供包装层捕获 review 基线，随后再发正式调用落盘；
 ///     预检失败对象与 TS 输出同构，原样透传且无任何副作用
 ///   - evidence：changes/diff 由 ToolEvidence 生成（60/200/200 上限同构）
@@ -48,17 +48,16 @@ internal static class ApplyPatchTool
         public readonly List<Chunk> Chunks = new(); // update
     }
 
-    public static string Execute(JsonElement args)
+    public static string Execute(JsonElement args, JsonElement meta)
     {
         var patch = Str(args, "patch").Trim();
         if (patch.Length == 0) return FailureJson(new List<string> { "patch 参数不能为空" });
 
-        var root = Str(args, "__cyreneRoot");
+        var root = CallMeta.Str(meta, "workspaceRoot");
         if (string.IsNullOrWhiteSpace(root))
-            throw new ToolHostException("E_APPLY_PATCH_NO_ROOT", "缺少 __cyreneRoot（工作区根），apply_patch 需经宿主包装器调用");
+            throw new ToolHostException("E_APPLY_PATCH_NO_ROOT", "缺少工作区根（meta.workspaceRoot），apply_patch 需经宿主包装器调用");
 
-        var dryRun = args.ValueKind == JsonValueKind.Object
-            && args.TryGetProperty("__dryRun", out var dr) && dr.ValueKind == JsonValueKind.True;
+        var dryRun = CallMeta.IsTrue(meta, "dryRun");
 
         return Apply(patch, root, dryRun);
     }

@@ -64,7 +64,7 @@ async function nativeFirstFs(
   if (!resolveDotnetConfig().toolHost) return fallback();
   try {
     // 信任边界：只读三件无可信内部参数，模型 args 里的 `__` 键一律剥离
-    const result = await nativeToolHost.call(nativeTool, stripInternalArgs(args), options.timeoutMs, signal, undefined, options.abandonOnTimeout);
+    const result = await nativeToolHost.call(nativeTool, stripInternalArgs(args), options.timeoutMs, signal, undefined, undefined, options.abandonOnTimeout);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;

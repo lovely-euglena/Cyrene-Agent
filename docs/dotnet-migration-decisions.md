@@ -583,7 +583,8 @@
   的模型参数路径（str_replace 两段式 / fs 只读）同样先剥离。用例：
   `native-tool-host.test.ts`（nativeFirst / withNativeFirst 剥离 + internalArgs 覆盖 +
   fallbackOnError 语义）、`git-tools-native` / `str-replace-native` / `ast-grep-native`
-  接线级伪造注入用例。
+  接线级伪造注入用例。（IKJLP4 起内部参数改 call 帧 meta 通道、`internalArgs` 更名
+  `meta`、args `__` 旧键不再被宿主读取——见 2026-10-06 增量。）
 - **P1-1 ast-grep asar**：`resolveAstGrepCommand` 返回前做 `app.asar` →
   `app.asar.unpacked` 重写（对照 sandbox-exec / sync-mcp-builtin），新增
   `toUnpackedAsarPath` 的 asar 风格路径断言。
@@ -683,6 +684,50 @@
   cloud-server README 计数与实现口径同步。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK3P / #IKJK2P / #IKJK2R / #IKJK2S / #IKJK2T。
 
+## 2026-10-06 增量：桌面端云接线（IKJK2I，里程碑「云端昔涟：不落」Phase 1 收尾）
+
+- **范围**：CTA journal（audit 全量）→ 同步事件导出器（4 类映射 + presentation 随行 + 过滤；
+  幂等 / 崩溃可重入；含 `session.create` 与标题修订）；存量迁移驱动（全量会话复用既有 v1→v2
+  迁移器，不重写）；旁路事件库与同步状态（`<userData>/sync/`：outbox / inbox JSONL + 原子 state）；
+  HTTP 同步客户端 + 同步服务（单飞 / 60s 调度 / 失败保留游标 / 水位并记 `lastError`，
+  下一轮 60s 重试（含 429） / 401 提示重配对）；桌面重放物化视图
+  （与 PWA 共享核心）+ 合并读模型（`CHATS_GET` 仅同步启用时合并）；设置页「云端」section + IPC +
+  preload（token 加密落盘）；渠道 `channels.remote` 未显式配置时回退 sync 配置。设计稿（已实施）
+  `docs/design/2026-10-06-desktop-cloud-wiring.md`；本批不依赖 IKJK2O（v0.1 事件）。
+- **Q4 拍板：远端事件落盘 = 旁路事件库（`<userData>/sync/`），不回填 CTA。**
+  理由：CTA 是富领域模型（工具条目 / presentation / 压缩 / 归档），远端事件是协议层最小文本事件；
+  回填需伪造 CTA 条目并处理「导入条目再导出」环路标记，触碰校验 / 审计 / 压缩语义（issue 明言
+  「只读导出，不改变现有写入路径」）；旁路库可直接复用协议读取器，语义纯粹、可测。
+  **已否决备选**：回填 CTA（其唯一收益「UI 免合并」已由本批合并读模型覆盖）。
+- **决策 D1–D10 摘要**：D1 Q4 = 旁路事件库；D2 协议 deviceId 本地生成（`desk-*`），与服务器
+  deviceId（`dev_*`）解耦；D3 时钟 = 持久化全局 lamport / seq；D4 `session.create` 按标题修订号
+  重发（`screate:<cid>:r<n>`）；D5 presentation 为导出时快照（随 assistant 事件、白名单过滤）；
+  D6 合并读模型在 IPC 层（`CHATS_GET`），同步关闭零变化；D7 全量迁移驱动复用既有迁移器；
+  D8 渠道 remote 回退 sync 配置；D9 记忆 / 心情事件发射接线另批；D10 空文本 assistant / internal
+  消息不导出。
+- **接口冻结（契约提交先行）**：`src/shared/ipc-channels.ts` 新增 `sync:*` 常量（`SYNC_GET_CONFIG` /
+  `SYNC_SAVE_CONFIG` / `SYNC_GET_STATUS` / `SYNC_NOW` / `SYNC_PAIR` / `SYNC_PAIR_CODE` /
+  `SYNC_UNPAIR` / `SYNC_CHANGED`）；`src/shared/sync-types.ts` 新增（`SyncConfigPublic` /
+  `SyncSaveConfigInput` / `SyncStatus` / `SyncPairInput` / `SyncPairCodeResult` / `SyncOpResult<T>`）；
+  模块签名冻结——`sync-state` / `event-store` / `exporter` / `http-client` / `sync-service` /
+  `materializer` / `read-model`（`RemoteMergeSource` / `createRemoteMergeProvider`）与
+  `chats-ipc` 的 `remoteMerge?` 选项，详见设计稿附录 A。
+- **验证口径**：`npx tsc -p tsconfig.main.json --noEmit` + `build:main` / `build:preload` /
+  `check:renderer` 三端 0 错误；`npx vitest run src/main/sync src/pwa`（导出器 / 旁路库与状态 /
+  HTTP 客户端 / 同步服务 / 读模型；PWA replay 共享核心不回归）与 `src/main/chats src/main/orchestrator`
+  回归；手动 dry-run（设 `CYRENE_SYNC_DRY_RUN=1` + `CYRENE_SYNC_DRY_RUN_USERDATA=<真实 userData>`
+  跑 `npx vitest run src/main/sync/export-dry-run.manual.test.ts`，默认 skip、输出计数与样例不写盘）；
+  真机冒烟（启用同步 → 手机打开桌面历史 → 手机发送桌面可见 → 桌面回复手机可见）。
+  **实测（2026-10-06，R3 微调后，Windows 本地）**：三端类型检查（tsc / check:preload / check:renderer）0；
+  `vitest`：sync+chats+pwa **355 passed**（+1 skip=手动 dry-run）、application+channels **446 passed**、
+  renderer（settings/routing/i18n）**83 passed**、orchestrator **1940 passed**（唯一失败
+  `agent-orchestration-contract` 为既有——main 上同样失败，与本批无关）；
+  `build:main` / `build:preload` / `build:renderer` 0；dry-run 对本机真实 userData（旧布局）
+  优雅跳过、合成数据冒烟已验。
+- **未实测面**：真机冒烟（手机 ↔ 桌面收敛）待人工执行；真实 userData 的 v1→v2 全量迁移
+  需在装有新版的机器上由 dry-run / 首次同步验证。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJK2I。
+
 ## 2026-10-06 增量：Phase 2 记忆与心情事件化（IKJK2O）
 
 - **范围**：同步协议 v0 → **v0.1**——新增 `memory.write`（快照式 upsert + 墓碑删除）与 `mood.shift` 两类事件；
@@ -709,6 +754,52 @@
 - **未实测面**：CF 测试本机未执行（依赖未安装；CF 复用共享 TS 校验器，契约由 TS 侧覆盖）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2O。
 
+## 2026-10-06 增量：ToolHost 内部参数协议字段化（IKJLP4）
+
+- **背景**：内部注入参数（`__cyreneRoot` / `__cyreneWorkspaceRoot` / git 系列 /
+  `__dryRun` / `__astGrepCommand` / `__githubApiBase`）此前与模型参数同走 args JSON
+  （PR #20 P0 修复后由包装层统一剥离 + internalArgs/prepare 两条可信通道注入）；
+  本批把内部参数整体移出 args——call 帧新增独立 `meta` 字段，宿主工具只从 meta
+  读取，「模型输入」与「内部参数」协议层解耦（PR #1 影响分析后续优化项）。
+- **协议**：`→ {"op":"call","callId":"c1","tool":"...","meta":{...},"args":{...}}`；
+  meta 平铺字段：`workspaceRoot`（统一原 `__cyreneRoot` 与 `__cyreneWorkspaceRoot`）、
+  `sessionId`、`gitCommand` / `gitSource` / `gitVersion` / `gitIsolated` /
+  `gitIdentity` / `gitConfigGlobal`、`astGrepCommand`、`dryRun`（apply_patch /
+  str_replace 两段式）、`githubApiBase`（fetch_url，矩阵测试注入）。无内部参数的
+  调用帧不含 meta 键（形状不变）。
+- **兼容策略（明确不保留旧键）**：cyrene-native.exe 随应用打包（electron-builder
+  extraResources），与 TS 同版本发布、无独立升级窗口。新旧混跑时，依赖工作区根 /
+  CLI 路径（meta 缺失即报错）的工具（git / search_text / download_file /
+  apply_patch / ast_grep）会在落盘前失败（回退 / 透传失败载荷），不产生错误副作用。
+  **例外：`str_replace` 两段式预检**——dryRun 信号在混跑两个方向都会丢失（新 TS
+  只发 meta、旧 exe 只读 args `__dryRun`；反向同理），预检帧会被直读为正式写入并
+  直接落盘，随后 TS 因返回载荷无 `prepared` 按预检失败透传、跳过 review 基线与
+  第二段调用（生产同版本发布不受影响；完整混跑防护需版本/能力协商，列为后续可选
+  加固）。因此不保留 args `__` 旧键——宿主只读 meta（即使未来剥离逻辑回归，模型
+  注入也无法在宿主侧生效）；整体回退仍可用 `CYRENE_TOOL_HOST=0`。matrix 负例：
+  search `E_SEARCH_NO_ROOT`、git `E_GIT_NO_ROOT`；`str_replace` 不设旧键负例——
+  新宿主在旧帧下会直接写入，断言该行为等于固化危险路径；其 TS 侧「无 `prepared`
+  → 透传、不写基线、不二次调用」路径已由 `str-replace-native.test.ts` 单测锁定
+  （PR #28 复审 P2-1 口径）。
+- **TS 侧**：新增 `NativeCallMeta` 类型；`NativeToolHost.call()` 第 5 形参 meta
+  全链透传（QueuedCall / dispatchNext / 出帧）；`NativeFirstOptions.internalArgs`
+  更名 `meta`；`withNativeFirst` prepare 第三参装配 meta；git 八件 / search_text /
+  download_file / apply_patch / str_replace / ast_grep 全部接线切换；模型 args 的
+  `__` 键剥离（信任边界 §2.3）与 TS 回退语义保持不变。
+- **宿主侧**：新增 `CallMeta` 读取助手；`ToolHost` call 分支解析并下发 meta；
+  git 八件 / search_text / download_file / apply_patch / str_replace / ast_grep /
+  fetch_url 改从 meta 取值；fetch_url 原有 `__githubApiBase` 一并字段化。
+- **测试脚本**：matrix（`req()`/`grun()` 支持 meta）与 dual-track
+  （`callSmokeTool` 支持 meta）全部注入点迁移。
+- **文档**：`ToolHost.cs` 头注释即协议规范（已更新）；`docs/dotnet-backend.md`
+  契约索引与计数同步；`docs/pr-review-rules.md` §2.3 措辞同步。
+- **验证（2026-10-06，Windows 本地）**：`tsc -p tsconfig.main.json --noEmit` 0 错；
+  `vitest run src/main/orchestrator/tools` **507/507**（+3：出帧验收 / 空 meta 不
+  下发 / prepare 未写 meta）；矩阵 **148/148**（本地全量，较上批 +2 旧键拒绝负例；
+  ast-grep CLI 就绪）；dual-track **PASS**；`check-cyrene-core-clean.py` PASS；
+  smoke-host 构建 0 错。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJLP4（PR #1 影响分析「后续优化」；#IKJK3V）。
+
 ## 2026-10-06 增量：ToolHost 超时轻量隔离——只读调用不杀 host（IKJLP2）
 
 - **评估（并发面盘点，#IKJLP2）**：单工具超时原语义 = `child.kill()` → exit 连带
@@ -722,7 +813,8 @@
   email_list|read，25–65s）。仓库内无真实耗时分布采样（未发现统计产物），级联
   频率无法量化——本轮以语义隔离收敛爆炸半径，kill 连带日志（既有）留作后续观察。
 - **决策（方案 a/b/c）**：落地**方案 b（host 优雅收敛）**——只读调用超时轻量隔离
-  （`NativeFirstOptions.abandonOnTimeout` / `NativeToolHost.call` 第 6 参）：超时只
+  （`NativeFirstOptions.abandonOnTimeout` / `NativeToolHost.call` 第 7 参，IKJLP4
+  meta 入第 5 位后）：超时只
   拒绝当次、host 保留，标记「已放弃在途」等迟到结果帧排空后再派发后续调用；
   兜底窗口 `max(timeoutMs, 5s)` 到期仍无结果才杀 host 收敛（排队调用按
   `E_TOOL_NOT_DISPATCHED` sentinel 安全回退，与既有语义一致）。方案 a
@@ -741,14 +833,15 @@
   含 `abandoned`（排空完成前不派发新帧——避免「新调用被旧调用看门狗误杀」，即
   PR #1 复审保留项所述场景）；迟到结果帧丢弃并恢复派发；host 退出 / 兜底 kill /
   排空完成三路径清理状态（排队调用仍走 sentinel 分流）。
-- **验证（2026-10-06，Windows 本机；R1/R2 复审修复后复跑）**：`tsc` 三端
+- **验证（2026-10-06，Windows 本机；并入 main（IKJLP4/IKJK2I）后复跑）**：`tsc` 三端
   （main/preload/renderer）0 错；`vitest run src/main/orchestrator/tools`
-  **56 files / 512 tests**（本批 +8：排空后正常派发无连带 / 兜底到期杀 host +
-  sentinel / 崩溃清计时器 / 排空窗口内取消 / 被放弃调用自身信号 abort /
-  calculator·now 接线锁定；git 读/写接线分类断言；search_text / fs / ast_grep /
-  email / weather 接线断言同步锁定）；`vitest run
-  src/main/sync src/pwa` **87/87**、`vitest run src/main/channels src/main/proactive`
-  **436/436**；工具矩阵 **146/146**（本机 ast-grep CLI 就绪）；dual-track **PASS**。
+  **56 files / 515 tests**（本批 +8；并入 IKJLP4 测试 +3 后合计：排空后正常派发无
+  连带 / 兜底到期杀 host + sentinel / 崩溃清计时器 / 排空窗口内取消 / 被放弃调用
+  自身信号 abort / calculator·now 接线锁定；git 读/写接线分类断言；search_text /
+  fs / ast_grep / email / weather 接线断言同步锁定）；`vitest run
+  src/main/sync src/pwa` **194 通过 / 1 跳过（195）**、`vitest run
+  src/main/channels src/main/proactive` **47 files / 441 tests**；工具矩阵 **148/148**
+  （含 IKJLP4 旧键负例；本机 ast-grep CLI 就绪）；dual-track **PASS**。
 - **未做/后续**：下载回退「重复下载」幂等短路仍为观察项（PR #1 挂靠，未纳入）；
   cancel 帧留待长任务迁移批次（#IKJK3V 前置）；若生产观测到排空窗口内频繁触发
   兜底 kill，再评估窗口调参 / 连续失败阈值。

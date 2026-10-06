@@ -39,11 +39,12 @@ function callSmokeTool(
   tool: string,
   args: Record<string, unknown>,
   extraFrames: Array<Record<string, unknown>> = [],
+  meta?: Record<string, unknown>,
 ): Promise<HostResult> {
   return new Promise((resolve) => {
     const frames = [
       ...extraFrames.map((f) => JSON.stringify(f)),
-      JSON.stringify({ op: "call", callId: "c1", tool, args }),
+      JSON.stringify({ op: "call", callId: "c1", tool, ...(meta ? { meta } : {}), args }),
       JSON.stringify({ op: "shutdown" }),
     ].join("\n");
     const child = spawn("dotnet", [SMOKE_DLL, "--tool-host"], { stdio: ["pipe", "pipe", "inherit"], cwd: path.dirname(SMOKE_DLL) });
@@ -366,7 +367,7 @@ async function runSearchDualTrack(): Promise<number> {
     ];
     for (const c of cases) {
       const tsOut = JSON.parse(await tsSearch(c.args, { resolvedWorkspaceRoot: tsWorkspace })) as Record<string, unknown>;
-      const host = await callSmokeTool("search_text", { ...c.args, __cyreneWorkspaceRoot: netWorkspace });
+      const host = await callSmokeTool("search_text", c.args, [], { workspaceRoot: netWorkspace });
       const netOut = host.ok ? (JSON.parse(String(host.data ?? "")) as Record<string, unknown>) : {};
       const sortMatches = (v: unknown): unknown =>
         (v as Array<Record<string, unknown>>).slice().sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -611,7 +612,7 @@ async function runApplyPatchDualTrack(): Promise<number> {
       c.setup(netCaseDir);
 
       const tsOut = await tsApplyPatch({ patch: c.patch }, { resolvedWorkspaceRoot: tsCaseDir });
-      const host = await callSmokeTool("apply_patch", { patch: c.patch, __cyreneRoot: netCaseDir });
+      const host = await callSmokeTool("apply_patch", { patch: c.patch }, [], { workspaceRoot: netCaseDir });
       const netOut = host.ok ? String(host.data ?? "") : "";
 
       // 相对路径 + relaxed 编码：两轨输出应逐字一致
@@ -678,7 +679,7 @@ async function runDownloadDualTrack(): Promise<number> {
     ];
     for (const c of cases) {
       const tsOut = await tsDownload(c.args, { resolvedWorkspaceRoot: tsHome });
-      const host = await callSmokeTool("download_file", { ...c.args, __cyreneRoot: netHome });
+      const host = await callSmokeTool("download_file", c.args, [], { workspaceRoot: netHome });
       const netOut = host.ok ? String(host.data ?? "") : "";
       const tsNorm = tsOut.split(tsHome).join(netHome);
       let bytesSame = true;
@@ -1361,7 +1362,7 @@ async function runAstGrepDualTrack(): Promise<number> {
       return tool.execute(args, { resolvedWorkspaceRoot: tsHome } as never);
     };
     const runNet = async (id: string, args: Record<string, unknown>): Promise<string> => {
-      const host = await callSmokeTool(id, { ...args, __cyreneWorkspaceRoot: netHome, __astGrepCommand: cli });
+      const host = await callSmokeTool(id, args, [], { workspaceRoot: netHome, astGrepCommand: cli });
       return String(host.data ?? "");
     };
 
@@ -1486,14 +1487,13 @@ async function runGitDualTrack(): Promise<number> {
     };
     const tsRun = (id: string, args: Record<string, unknown>): Promise<string> => tsRunIn(sessionId, id, args);
 
-    const netRunIn = (home: string, id: string, args: Record<string, unknown>, session = sessionId) => callSmokeTool(id, {
-      ...args,
-      __cyreneRoot: home,
-      __sessionId: session,
-      __gitCommand: "git",
-      __gitSource: "system",
-      __gitVersion: version,
-      __gitIdentity: identity,
+    const netRunIn = (home: string, id: string, args: Record<string, unknown>, session = sessionId) => callSmokeTool(id, args, [], {
+      workspaceRoot: home,
+      sessionId: session,
+      gitCommand: "git",
+      gitSource: "system",
+      gitVersion: version,
+      gitIdentity: identity,
     });
     const netRun = (id: string, args: Record<string, unknown>) => netRunIn(netHome, id, args);
     const netData = (host: HostResult): unknown => {
@@ -1604,9 +1604,8 @@ async function runGitDualTrack(): Promise<number> {
     await expectBothFail("空 ref 双侧拒绝", "git_diff", { ref: "" });
     await expectBothFail("非法 revert hash 双侧拒绝", "git_revert", { commit: "xyz" });
     await expectBothFail("非法 paths 类型双侧拒绝", "git_commit", { message: "x", paths: "a.txt" });
-    const noIdentity = await callSmokeTool("git_commit", {
-      message: "x", paths: ["a.txt"], __cyreneRoot: netHome, __sessionId: sessionId,
-      __gitCommand: "git", __gitSource: "system", __gitVersion: version,
+    const noIdentity = await callSmokeTool("git_commit", { message: "x", paths: ["a.txt"] }, [], {
+      workspaceRoot: netHome, sessionId, gitCommand: "git", gitSource: "system", gitVersion: version,
     });
     check("git_commit 无身份 → E_GIT_IDENTITY", noIdentity.ok === false, JSON.stringify(noIdentity).slice(0, 160));
   } finally {

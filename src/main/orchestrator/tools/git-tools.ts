@@ -3,14 +3,14 @@ import type { ToolContext } from "./registry/tool-context";
 import type { ToolDefinition } from "./registry/tool-registry";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges, parseUnifiedPatch } from "./registry/tool-evidence";
-import { nativeFirst } from "./native-tool-host";
+import { nativeFirst, type NativeCallMeta } from "./native-tool-host";
 import { isAbortError } from "../../abort-utils";
 
 /**
  * git native 轨包装（IKJLIL）：
  *  - 可信上下文（工作区 / 会话 / git 可执行 / 提交身份）由 ToolContext 与 GitService
- *    注入内部参数（`__cyreneRoot` / `__sessionId` / `__gitCommand` / ...），经
- *    nativeFirst(options.internalArgs) 通道下发；模型参数里的 `__` 键由 nativeFirst 统一剥离；
+ *    注入内部参数，经 nativeFirst(options.meta) 通道随 call 帧 meta 下发（IKJLP4
+ *    去 args 字段化）；模型参数里的 `__` 键由 nativeFirst 统一剥离；
  *  - host 不可用 / 命令失败 → 回退 GitService 原实现（错误语义一致）；
  *  - AbortError 原样上抛：取消必须中止，不回退重跑副作用。
  */
@@ -29,17 +29,17 @@ function nativeFirstGit(
       if (!executable) return fallback();
       const identity = gitService.getCommitIdentity();
       const configGlobal = gitService.getDedicatedConfigPath();
-      const internalArgs: Record<string, unknown> = {
-        __cyreneRoot: tctx.workspaceRoot,
-        __sessionId: tctx.sessionId,
-        __gitCommand: executable.command,
-        __gitSource: executable.source,
-        __gitVersion: executable.version,
-        ...(executable.source === "bundled" ? { __gitIsolated: true } : {}),
-        ...(identity ? { __gitIdentity: identity } : {}),
-        ...(configGlobal ? { __gitConfigGlobal: configGlobal } : {}),
+      const meta: NativeCallMeta = {
+        workspaceRoot: tctx.workspaceRoot,
+        sessionId: tctx.sessionId,
+        gitCommand: executable.command,
+        gitSource: executable.source,
+        gitVersion: executable.version,
+        ...(executable.source === "bundled" ? { gitIsolated: true } : {}),
+        ...(identity ? { gitIdentity: identity } : {}),
+        ...(configGlobal ? { gitConfigGlobal: configGlobal } : {}),
       };
-      return await nativeFirst(toolId, args, () => fallback(), { signal: ctx?.signal, internalArgs, abandonOnTimeout });
+      return await nativeFirst(toolId, args, () => fallback(), { signal: ctx?.signal, meta, abandonOnTimeout });
     } catch (error) {
       if (isAbortError(error)) throw error;
       return fallback();

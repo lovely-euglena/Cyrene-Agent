@@ -567,7 +567,7 @@ function latestValidCompaction(
     .find((checkpoint) => checkpointCoversActiveBranch(entries, active, checkpoint));
 }
 
-function contentToText(content: ChatMessageContent | undefined): string {
+export function contentToText(content: ChatMessageContent | undefined): string {
   if (typeof content === "string") return content;
   if (!content) return "";
   return content.map((block) => block.type === "text" ? block.text : "[image]").join("");
@@ -647,7 +647,7 @@ function applyPatch(
 }
 
 /** Fold compact item updates into a replay-safe projection patch. */
-function mergePresentationPatch(
+export function mergePresentationPatch(
   previous: TranscriptPresentationPatch | undefined,
   incoming: TranscriptPresentationPatch,
 ): TranscriptPresentationPatch {

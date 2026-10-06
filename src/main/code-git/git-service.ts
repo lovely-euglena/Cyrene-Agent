@@ -175,7 +175,7 @@ export interface GitService {
   getExecutableInfo(): Promise<ResolvedGitExecutable | null>;
   /** 提交身份设置（native 轨注入；与 commit 校验同源）。 */
   getCommitIdentity(): GitCommitIdentity | null;
-  /** 独立 Git 配置文件路径（native 轨注入 __gitConfigGlobal；开关关时为 null）。 */
+  /** 独立 Git 配置文件路径（native 轨经 call 帧 meta.gitConfigGlobal 注入；开关关时为 null）。 */
   getDedicatedConfigPath(): string | null;
 }
 

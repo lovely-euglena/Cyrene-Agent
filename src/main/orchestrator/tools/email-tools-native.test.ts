@@ -86,7 +86,7 @@ beforeEach(() => {
   h.sendMail.mockReset();
   h.requestUserChoice.mockReset();
   vi.spyOn(nativeToolHost, "call").mockImplementation(
-    async (tool: string, args: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal, _onEvent?: (event: unknown) => void, abandonOnTimeout?: boolean) => {
+    async (tool: string, args: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal, _meta?: Record<string, unknown>, _onEvent?: (event: unknown) => void, abandonOnTimeout?: boolean) => {
       h.nativeCalls.push({ tool, args, timeoutMs, signal, abandonOnTimeout });
       if (h.nativeError) throw h.nativeError;
       return h.nativeResult;

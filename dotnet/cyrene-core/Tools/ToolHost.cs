@@ -37,12 +37,16 @@ internal sealed class SafeDoubleJsonConverter : JsonConverter<double>
 ///
 /// 协议（宿主 Electron ↔ 本进程，stdio JSON 行）：
 ///   → {"op":"list"}                          ← {"op":"tools","tools":[{id,...}]}
-///   → {"op":"call","callId":"c1","tool":"calculator","args":{...}}
+///   → {"op":"call","callId":"c1","tool":"calculator","meta":{...},"args":{...}}
 ///   → {"op":"shutdown"}
 ///   ← {"op":"ready"}
 ///   ← {"op":"result","callId":"c1","ok":true,"data":...}
 ///   ← {"op":"result","callId":"c1","ok":false,"error":"..."}
 ///   ← {"op":"log","level":"info","message":"..."}
+///
+/// meta（IKJLP4）：call 帧的内部参数字段（工作区根 / git 配置 / 预检标记等），
+/// 仅由主进程可信装配注入、模型不可见；工具只从 meta 读取内部参数，**不再**读取
+/// args 的 `__` 键（旧键明确不保留）。缺失时视为空对象。
 ///
 /// 容错：逐调用超时由 TS 客户端看门狗控制（NativeToolHost；本进程不判超时）——
 /// 默认超时即杀本进程重启（工具全部纯函数化无状态，重启零成本）；只读调用可经
@@ -196,8 +200,8 @@ internal static class ToolHost
                         new { id = "record_expense", name = "记账(.NET)", description = "本地 JSON 记账（dataDir 注入）" },
                         new { id = "query_expense", name = "查账(.NET)", description = "记账查询/汇总（时区与 locale 随 config 帧）" },
                         new { id = "search_text", name = "文本搜索(.NET)", description = "工作区文本/正则搜索（忽略目录、上下文、上限对齐 TS）" },
-                        new { id = "str_replace", name = "精确替换(.NET)", description = "三层匹配（精确/EOL/空白归一化）+ evidence；__dryRun 预检两段式" },
-                        new { id = "apply_patch", name = "编辑文件(.NET)", description = "Codex 补丁格式批量编辑（预检事务 + 保留 EOL + evidence；__dryRun 两段式）" },
+                        new { id = "str_replace", name = "精确替换(.NET)", description = "三层匹配（精确/EOL/空白归一化）+ evidence；meta.dryRun 预检两段式" },
+                        new { id = "apply_patch", name = "编辑文件(.NET)", description = "Codex 补丁格式批量编辑（预检事务 + 保留 EOL + evidence；meta.dryRun 两段式）" },
                         new { id = "web_search", name = "联网搜索(.NET)", description = "bocha/tavily/anySearch 多源搜索（config 帧注入 key；30 分钟 TTL）" },
                         new { id = "weather", name = "查天气(.NET)", description = "Open-Meteo/高德双源 + 缓存 + weather_card 事件帧（config 帧注入）" },
                         new { id = "plan_trip", name = "路线规划(.NET)", description = "高德驾车/步行/骑行/公交路线（config 帧注入 key）" },
@@ -327,6 +331,10 @@ internal static class ToolHost
                 var tool = root.TryGetProperty("tool", out var t) ? t.GetString() : "";
                 var args = root.TryGetProperty("args", out var a) && a.ValueKind == JsonValueKind.Object
                     ? a.Clone() : (JsonElement?)null;
+                // 内部参数（IKJLP4）：只读 call 帧 meta 字段；缺失传空对象（工具按前置
+                // 条件错误处理），不从 args 的 `__` 键回退（明确不保留旧键）
+                var meta = root.TryGetProperty("meta", out var m) && m.ValueKind == JsonValueKind.Object
+                    ? m.Clone() : EmptyArgs;
                 try
                 {
                     activeStdout = stdout;
@@ -348,22 +356,22 @@ internal static class ToolHost
                         "exchange_rate" => ExchangeRateTool.Execute(args ?? EmptyArgs),
                         "record_expense" => ExpenseTools.Record(args ?? EmptyArgs),
                         "query_expense" => ExpenseTools.Query(args ?? EmptyArgs),
-                        "search_text" => SearchTools.Search(args ?? EmptyArgs),
-                        "str_replace" => StrReplaceTool.Execute(args ?? EmptyArgs),
-                        "apply_patch" => ApplyPatchTool.Execute(args ?? EmptyArgs),
+                        "search_text" => SearchTools.Search(args ?? EmptyArgs, meta),
+                        "str_replace" => StrReplaceTool.Execute(args ?? EmptyArgs, meta),
+                        "apply_patch" => ApplyPatchTool.Execute(args ?? EmptyArgs, meta),
                         "web_search" => WebSearchTool.Execute(args ?? EmptyArgs),
                         "weather" => WeatherTool.Execute(args ?? EmptyArgs),
                         "plan_trip" => TravelTool.Execute(args ?? EmptyArgs),
-                        "git_status" => GitTools.Status(args ?? EmptyArgs),
-                        "git_init" => GitTools.Init(args ?? EmptyArgs),
-                        "git_commit" => GitTools.Commit(args ?? EmptyArgs),
-                        "git_switch_branch" => GitTools.SwitchBranch(args ?? EmptyArgs),
-                        "git_push" => GitTools.Push(args ?? EmptyArgs),
-                        "git_revert" => GitTools.Revert(args ?? EmptyArgs),
-                        "git_diff" => GitTools.Diff(args ?? EmptyArgs),
-                        "git_log" => GitTools.Log(args ?? EmptyArgs),
-                        "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs),
-                        "fetch_url" => FetchUrlTool.Execute(args ?? EmptyArgs),
+                        "git_status" => GitTools.Status(args ?? EmptyArgs, meta),
+                        "git_init" => GitTools.Init(args ?? EmptyArgs, meta),
+                        "git_commit" => GitTools.Commit(args ?? EmptyArgs, meta),
+                        "git_switch_branch" => GitTools.SwitchBranch(args ?? EmptyArgs, meta),
+                        "git_push" => GitTools.Push(args ?? EmptyArgs, meta),
+                        "git_revert" => GitTools.Revert(args ?? EmptyArgs, meta),
+                        "git_diff" => GitTools.Diff(args ?? EmptyArgs, meta),
+                        "git_log" => GitTools.Log(args ?? EmptyArgs, meta),
+                        "download_file" => DownloadFileTool.Execute(args ?? EmptyArgs, meta),
+                        "fetch_url" => FetchUrlTool.Execute(args ?? EmptyArgs, meta),
                         "write_markdown" => WriteMarkdownTool.Execute(args ?? EmptyArgs),
                         "write_excel" => ExcelTool.Execute(args ?? EmptyArgs),
                         "write_word" => WordTool.Execute(args ?? EmptyArgs),
@@ -372,8 +380,8 @@ internal static class ToolHost
                         "email_list" => EmailTools.List(args ?? EmptyArgs),
                         "email_read" => EmailTools.Read(args ?? EmptyArgs),
                         "email_mark" => EmailTools.Mark(args ?? EmptyArgs),
-                        "ast_grep_search" => AstGrepTool.Search(args ?? EmptyArgs),
-                        "ast_grep_replace" => AstGrepTool.Replace(args ?? EmptyArgs),
+                        "ast_grep_search" => AstGrepTool.Search(args ?? EmptyArgs, meta),
+                        "ast_grep_replace" => AstGrepTool.Replace(args ?? EmptyArgs, meta),
                         _ => throw new ToolHostException("E_UNKNOWN_TOOL", $"未知工具: {tool}"),
                     };
                     WriteFrame(stdout, ioLock, new { op = "result", callId, ok = true, data });

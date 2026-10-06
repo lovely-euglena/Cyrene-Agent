@@ -84,7 +84,7 @@ describe("fs native 轨 · 只读三件", () => {
     // 伪造 `__` 键入参：真实 stripInternalArgs 退化为 no-op 时下方 toHaveBeenCalledWith 立即失败（防退化锁定）
     const out = await registeredTools.get("read_file")!.execute({ path: "C:\\x.txt", __forged: "1" } as never);
     expect(out).toBe('{"path":"C:\\\\x.txt","content":"native 12"}');
-    expect(nativeMocks.call).toHaveBeenCalledWith("fs_read_file", { path: "C:\\x.txt" }, undefined, undefined, undefined, true);
+    expect(nativeMocks.call).toHaveBeenCalledWith("fs_read_file", { path: "C:\\x.txt" }, undefined, undefined, undefined, undefined, true);
   });
 
   it("read_file：host 故障时回退 TS（真实读盘）", async () => {
@@ -110,7 +110,7 @@ describe("fs native 轨 · 只读三件", () => {
     nativeMocks.call.mockResolvedValue("dir: C:\\x\ncount: 0\n");
     const out = await registeredTools.get("list_dir")!.execute({ path: "C:\\x" });
     expect(out).toContain("count: 0");
-    expect(nativeMocks.call).toHaveBeenCalledWith("fs_list_dir", { path: "C:\\x" }, undefined, undefined, undefined, true);
+    expect(nativeMocks.call).toHaveBeenCalledWith("fs_list_dir", { path: "C:\\x" }, undefined, undefined, undefined, undefined, true);
   });
 
   it("toolHost 开关=0 时不触达 host", async () => {

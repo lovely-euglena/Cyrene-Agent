@@ -66,6 +66,7 @@ import {
 import { findCyreneAvatarPath, getAvatarPath } from "../settings-store";
 import { collectChatExportAvatars, exportSessionsToDirectory } from "./chat-export";
 import type { ChatExportError, ChatExportFormat, ChatExportRequest } from "../../shared/chat-export";
+import type { RemoteMergeProvider } from "../sync/read-model";
 
 function latestContextUsage(session: ChatSession | null): ContextUsageSnapshot | undefined {
   return session?.messages.reduce<ContextUsageSnapshot | undefined>((latest, message) => {
@@ -185,6 +186,8 @@ export function registerChatsIpc(
     llmClient?: LlmClient;
     isPrimaryModelBusy?: () => boolean;
     transcriptCompactor?: ConversationTranscriptCompactor;
+    /** 合并读模型（同步启用时由 main 注入；未注入 → CHATS_GET 行为与现状一致）。 */
+    remoteMerge?: RemoteMergeProvider;
   } = {},
 ): void {
   const ipc = ipcOption ?? createIpcScope();
@@ -239,7 +242,10 @@ export function registerChatsIpc(
   ipc.handle(IPC.CHATS_GET, async (_event, id: string) => {
     if (!id) return null;
     const session = await sessionMigration.loadComposedSession(id);
-    return session ? withLiveContextWindow(session) : null;
+    if (!session) return null;
+    // 合并读模型：组合会话之后、上下文容量覆盖之前（IKJK2I §5.2/§5.3；未启用 → 原样）。
+    const merged = options.remoteMerge ? await options.remoteMerge(session) : session;
+    return withLiveContextWindow(merged);
   });
   ipc.handle(IPC.TASK_SESSION_GET, (_event, payload: { taskId?: unknown; parentConversationId?: unknown }) => {
     if (typeof payload?.taskId !== "string" || typeof payload.parentConversationId !== "string") return null;

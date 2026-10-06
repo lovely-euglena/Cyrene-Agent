@@ -26,6 +26,12 @@ TS 工具（git-tools.ts）── nativeFirst("git_xxx", 内部参数) ──> T
 取可信值后注入内部参数（`__cyreneRoot` / `__gitCommand` / `__gitSource` / `__gitVersion` /
 `__gitIsolated` / `__gitIdentity` / `__sessionId`），模型参数里不可见也不被采用。
 
+> 注（2026-10-06，IKJLP4）：内部参数已整体迁移到 call 帧 `meta` 字段
+> （`workspaceRoot` / `gitCommand` / `gitSource` / `gitVersion` / `gitIsolated` /
+> `gitIdentity` / `sessionId` / `gitConfigGlobal`），args `__` 旧键不再被宿主读取；
+> 见 `docs/dotnet-migration-decisions.md` 2026-10-06 增量。本稿其余内容保留当时的
+> 设计形态描述。
+
 **GitService 外围责任划分**：
 - 可执行探测（系统 → 随包 mingit + `GIT_CONFIG_NOSYSTEM=1` / `GIT_CONFIG_GLOBAL=NUL` 隔离）：
   仍由 TS `resolveGitExecutable` 完成（装配层缓存），native 调用时注入；C# 不做二次探测。

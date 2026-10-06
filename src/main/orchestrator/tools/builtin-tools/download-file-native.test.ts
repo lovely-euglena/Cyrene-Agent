@@ -1,13 +1,13 @@
 /**
  * download_file native 轨接线测试：
- *  - 输出根注入（ctx.resolvedWorkspaceRoot → __cyreneRoot）
+ *  - 输出根注入（ctx.resolvedWorkspaceRoot → meta.workspaceRoot）
  *  - host 不可用回退 TS（危险后缀/路径逃逸在联网前拒绝，便于离线断言）
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: { timeoutMs?: number; signal?: AbortSignal } }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown>; options?: { timeoutMs?: number; signal?: AbortSignal } }>,
   nativeResult: null as string | null,
 }));
 
@@ -16,14 +16,13 @@ vi.mock("../native-tool-host", () => ({
     tool: string,
     args: Record<string, unknown>,
     fallback: (a: Record<string, unknown>) => unknown,
-    options?: { timeoutMs?: number; signal?: AbortSignal; internalArgs?: Record<string, unknown> },
+    options?: { timeoutMs?: number; signal?: AbortSignal; meta?: Record<string, unknown> },
   ) => {
-    // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+    // 模拟真实 nativeFirst 的信任边界 + meta 通道（IKJLP4）
     const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
-    const nativeArgs = { ...clean, ...(options?.internalArgs ?? {}) };
-    nativeMocks.calls.push({ tool, args: nativeArgs, options });
+    nativeMocks.calls.push({ tool, args: clean, meta: options?.meta, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
-    return fallback(nativeArgs);
+    return fallback(clean);
   },
 }));
 
@@ -47,7 +46,8 @@ describe("download_file native 轨", () => {
     expect(nativeMocks.calls).toEqual([
       {
         tool: "download_file",
-        args: { url: "https://example.com/a.png", __cyreneRoot: "C:\\ws" },
+        args: { url: "https://example.com/a.png" },
+        meta: { workspaceRoot: "C:\\ws" },
         options: expect.objectContaining({ timeoutMs: 600_000 }),
       },
     ]);

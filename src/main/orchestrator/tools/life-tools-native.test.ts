@@ -20,15 +20,14 @@ vi.mock("./native-tool-host", () => ({
     tool: string,
     args: Record<string, unknown>,
     fallback: (a: Record<string, unknown>) => unknown,
-    options?: { timeoutMs?: number; signal?: AbortSignal; internalArgs?: Record<string, unknown> },
+    options?: { timeoutMs?: number; signal?: AbortSignal; meta?: Record<string, unknown> },
   ) => {
-    // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
+    // 模拟真实 nativeFirst 的信任边界 + meta 通道（IKJLP4）
     const clean = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("__")));
-    const nativeArgs = { ...clean, ...(options?.internalArgs ?? {}) };
-    nativeMocks.calls.push({ tool, args: nativeArgs, options });
+    nativeMocks.calls.push({ tool, args: clean, options });
     if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
     // 模拟真实 nativeFirst 的故障回退语义
-    return fallback(nativeArgs);
+    return fallback(clean);
   },
 }));
 

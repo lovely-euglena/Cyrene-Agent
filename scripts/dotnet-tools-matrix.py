@@ -46,11 +46,15 @@ atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
 
 frames = []
 n = 0
-def req(tool, args):
+def req(tool, args, meta=None):
+    """组装 call 帧；meta（IKJLP4 内部参数字段）非空时随帧下发。"""
     global n
     n += 1
     cid = f"t{n}"
-    frames.append(json.dumps({"op": "call", "callId": cid, "tool": tool, "args": args}))
+    frame = {"op": "call", "callId": cid, "tool": tool, "args": args}
+    if meta is not None:
+        frame["meta"] = meta
+    frames.append(json.dumps(frame))
     return cid
 
 # calculator
@@ -98,25 +102,27 @@ c_eq1 = req("query_expense", {"summary": True})
 c_eq2 = req("query_expense", {})
 c_eq3 = req("query_expense", {"days": "30", "summary": True})
 
-# search_text（内部工作区根注入；忽略 node_modules）
+# search_text（内部工作区根经 call 帧 meta 注入；忽略 node_modules）
 sws = os.path.join(tmp, "searchws")
 os.makedirs(os.path.join(sws, "src"))
 os.makedirs(os.path.join(sws, "node_modules"))
 open(os.path.join(sws, "src", "a.ts"), "w", encoding="utf-8").write("hello world\nconst x = 1;\nHELLO again\n")
 open(os.path.join(sws, "src", "b.py"), "w", encoding="utf-8").write("hello python\n")
 open(os.path.join(sws, "node_modules", "c.js"), "w", encoding="utf-8").write("hello dep\n")
-c_s1 = req("search_text", {"query": "hello", "contextLines": 1, "__cyreneWorkspaceRoot": sws})
-c_s2 = req("search_text", {"query": "he.*o", "mode": "regex", "caseSensitive": True, "__cyreneWorkspaceRoot": sws})
-c_s3 = req("search_text", {"query": "zzz-not-exist", "__cyreneWorkspaceRoot": sws})
+c_s1 = req("search_text", {"query": "hello", "contextLines": 1}, {"workspaceRoot": sws})
+c_s2 = req("search_text", {"query": "he.*o", "mode": "regex", "caseSensitive": True}, {"workspaceRoot": sws})
+c_s3 = req("search_text", {"query": "zzz-not-exist"}, {"workspaceRoot": sws})
 # 字符串数字：JS Number() 语义（与 c_s1 输出应完全一致）
-c_s4 = req("search_text", {"query": "hello", "contextLines": "1", "maxMatches": "3", "__cyreneWorkspaceRoot": sws})
+c_s4 = req("search_text", {"query": "hello", "contextLines": "1", "maxMatches": "3"}, {"workspaceRoot": sws})
+# IKJLP4：内部参数只认 call 帧 meta——旧 args `__` 键不再被接受（明确不保留）
+c_s5 = req("search_text", {"query": "hello", "__cyreneWorkspaceRoot": sws})
 
-# str_replace（两段式：__dryRun 预检 → 提交；失败诊断）
+# str_replace（两段式：meta.dryRun 预检 → 提交；失败诊断）
 srf = os.path.join(tmp, "sr.txt")
 srf_dry = os.path.join(tmp, "sr_dry.txt")
 open(srf, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
 open(srf_dry, "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
-c_sr1 = req("str_replace", {"file_path": srf_dry, "old_string": "beta", "new_string": "BETA", "__dryRun": True})
+c_sr1 = req("str_replace", {"file_path": srf_dry, "old_string": "beta", "new_string": "BETA"}, {"dryRun": True})
 c_sr2 = req("str_replace", {"file_path": srf, "old_string": "beta", "new_string": "BETA"})
 c_sr3 = req("str_replace", {"file_path": srf, "old_string": "nope", "new_string": "x"})
 # 空文件播种：old_string="" + 空内容（矩阵补充边界用例）
@@ -133,21 +139,21 @@ open(os.path.join(ap_ws, "dry.txt"), "w", encoding="utf-8").write("d1\nd2\n")
 ap_dry_patch = "*** Begin Patch\n*** Update File: dry.txt\n@@\n-d1\n+D1\n*** End Patch"
 ap_patch1 = ("*** Begin Patch\n*** Update File: a.txt\n@@\n alpha\n-beta\n+BETA\n gamma\n"
              "*** Add File: sub/new.txt\n+hello\n+world\n*** End Patch")
-c_ap0 = req("apply_patch", {"patch": ap_dry_patch, "__cyreneRoot": ap_ws, "__dryRun": True})
-c_ap1 = req("apply_patch", {"patch": ap_patch1, "__cyreneRoot": ap_ws})
-c_ap2 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch", "__cyreneRoot": ap_ws, "__dryRun": True})
-c_ap3 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch", "__cyreneRoot": ap_ws})
-c_ap4 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: a.txt\n+z\n*** End Patch", "__cyreneRoot": ap_ws})
-c_ap5 = req("apply_patch", {"patch": "*** Begin Patch\n*** Delete File: ghost.txt\n*** End Patch", "__cyreneRoot": ap_ws})
-c_ap6 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch", "__cyreneRoot": ap_ws})
-c_ap7 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** Add File: ../escape2.txt\n+z\n*** End Patch", "__cyreneRoot": ap_ws})
-c_ap8 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: m.txt\n*** Move to: moved/m.txt\n@@\n-m1\n+M1\n*** End Patch", "__cyreneRoot": ap_ws})
-c_ap9 = req("apply_patch", {"patch": "not a patch", "__cyreneRoot": ap_ws})
+c_ap0 = req("apply_patch", {"patch": ap_dry_patch}, {"workspaceRoot": ap_ws, "dryRun": True})
+c_ap1 = req("apply_patch", {"patch": ap_patch1}, {"workspaceRoot": ap_ws})
+c_ap2 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch"}, {"workspaceRoot": ap_ws, "dryRun": True})
+c_ap3 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** End Patch"}, {"workspaceRoot": ap_ws})
+c_ap4 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: a.txt\n+z\n*** End Patch"}, {"workspaceRoot": ap_ws})
+c_ap5 = req("apply_patch", {"patch": "*** Begin Patch\n*** Delete File: ghost.txt\n*** End Patch"}, {"workspaceRoot": ap_ws})
+c_ap6 = req("apply_patch", {"patch": "*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch"}, {"workspaceRoot": ap_ws})
+c_ap7 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-nope\n+X\n*** Add File: ../escape2.txt\n+z\n*** End Patch"}, {"workspaceRoot": ap_ws})
+c_ap8 = req("apply_patch", {"patch": "*** Begin Patch\n*** Update File: m.txt\n*** Move to: moved/m.txt\n@@\n-m1\n+M1\n*** End Patch"}, {"workspaceRoot": ap_ws})
+c_ap9 = req("apply_patch", {"patch": "not a patch"}, {"workspaceRoot": ap_ws})
 
 # download_file 扩展黑名单（联网前拒绝，无需 HTTP；与 TS 两侧同步）
-c_dl1 = req("download_file", {"url": "https://example.com/x.hta", "filename": "x.hta", "__cyreneRoot": ap_ws})
-c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.js", "__cyreneRoot": ap_ws})
-c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf", "__cyreneRoot": ap_ws})
+c_dl1 = req("download_file", {"url": "https://example.com/x.hta", "filename": "x.hta"}, {"workspaceRoot": ap_ws})
+c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.js"}, {"workspaceRoot": ap_ws})
+c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf"}, {"workspaceRoot": ap_ws})
 
 # web_search：config 帧注入（引擎/key），覆盖确定性校验路径（不联网）
 frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
@@ -225,7 +231,7 @@ c_fu3 = req("fetch_url", {"url": fu_base + "/page.html", "format": "raw"})
 c_fu4 = req("fetch_url", {"url": fu_base + "/big.html"})
 c_fu5 = req("fetch_url", {"url": fu_base + "/missing"})
 c_fu6 = req("fetch_url", {"url": "ftp://example.com/x"})
-c_fu7 = req("fetch_url", {"url": "https://github.com/o/r", "__githubApiBase": fu_base})
+c_fu7 = req("fetch_url", {"url": "https://github.com/o/r"}, {"githubApiBase": fu_base})
 
 # 文档四件（write_markdown / write_excel / write_word / write_pdf）
 docdir = os.path.join(tmp, "docs")
@@ -470,7 +476,7 @@ frames.append(json.dumps({"op": "config", "email": {
 c_em13 = req("send_email", {"to": ["to@example.com"], "subject": "s", "body": "b"})
 frames.append(json.dumps({"op": "config", "email": None}))
 
-# ast_grep：随包 CLI（__astGrepCommand 注入；搜索/校验/dryRun/写入）
+# ast_grep：随包 CLI（meta.astGrepCommand 注入；搜索/校验/dryRun/写入）
 import glob as _glob
 def _ast_grep_cli():
     hits = []
@@ -493,19 +499,19 @@ os.makedirs(os.path.join(sg_ws, "src"))
 open(os.path.join(sg_ws, "src", "a.ts"), "w", encoding="utf-8").write('console.log("a", x);\nconst y = 1;\nconsole.log(y);\n')
 open(os.path.join(sg_ws, "src", "b.ts"), "w", encoding="utf-8").write('function f() { console.log("b"); }\n')
 AST_CLI = _ast_grep_cli()
-SG = {"__cyreneWorkspaceRoot": sg_ws, "__astGrepCommand": AST_CLI}
-c_sg1 = req("ast_grep_search", {"pattern": "console.log($$$A)", **SG})
-c_sg2 = req("ast_grep_search", {"pattern": "console.log($$$A)", "paths": ["src/a.ts"], "language": "TypeScript", **SG})
-c_sg3 = req("ast_grep_search", {"pattern": "zzz_no_match", **SG})
-c_sg4 = req("ast_grep_search", {"pattern": "console.log($$$A)", "maxMatches": 1, **SG})
-c_sg5 = req("ast_grep_search", {"pattern": "x", "language": "Bogus", **SG})
-c_sg6 = req("ast_grep_search", {"pattern": "", **SG})
-c_sg7 = req("ast_grep_search", {"pattern": "x", "paths": ["../escape"], **SG})
-c_sg8 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": True, **SG})
-c_sg8b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"], **SG})
-c_sg9 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": False, "paths": ["src/a.ts"], **SG})
-c_sg9b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"], **SG})
-c_sg10 = req("ast_grep_search", {"pattern": "x", "__cyreneWorkspaceRoot": sg_ws})
+SGM = {"workspaceRoot": sg_ws, "astGrepCommand": AST_CLI}
+c_sg1 = req("ast_grep_search", {"pattern": "console.log($$$A)"}, SGM)
+c_sg2 = req("ast_grep_search", {"pattern": "console.log($$$A)", "paths": ["src/a.ts"], "language": "TypeScript"}, SGM)
+c_sg3 = req("ast_grep_search", {"pattern": "zzz_no_match"}, SGM)
+c_sg4 = req("ast_grep_search", {"pattern": "console.log($$$A)", "maxMatches": 1}, SGM)
+c_sg5 = req("ast_grep_search", {"pattern": "x", "language": "Bogus"}, SGM)
+c_sg6 = req("ast_grep_search", {"pattern": ""}, SGM)
+c_sg7 = req("ast_grep_search", {"pattern": "x", "paths": ["../escape"]}, SGM)
+c_sg8 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": True}, SGM)
+c_sg8b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"]}, SGM)
+c_sg9 = req("ast_grep_replace", {"pattern": "console.log($$$A)", "rewrite": "logger.info($$$A)", "dryRun": False, "paths": ["src/a.ts"]}, SGM)
+c_sg9b = req("ast_grep_search", {"pattern": "logger.info($$$A)", "paths": ["src/a.ts"]}, SGM)
+c_sg10 = req("ast_grep_search", {"pattern": "x"}, {"workspaceRoot": sg_ws})
 
 frames.append(json.dumps({"op": "shutdown"}))
 out = run(frames)
@@ -601,6 +607,8 @@ s3 = data_json(c_s3)
 check("未命中给 message", isinstance(s3, dict) and s3.get("totalMatches") == 0 and "未找到匹配内容" in str(s3.get("message")), s3)
 s4 = data_json(c_s4)
 check("字符串数值参数（Number 语义）", s4 == s1, s4)
+check("旧 args `__` 键不再被接受（meta 缺失 → E_SEARCH_NO_ROOT）",
+      by.get(c_s5, {}).get("ok") is False and by.get(c_s5, {}).get("errorCode") == "E_SEARCH_NO_ROOT", by.get(c_s5))
 
 print("\n=== str_replace ===")
 sr1 = data_json(c_sr1)
@@ -858,11 +866,17 @@ else:
     os.makedirs(grepo)
     gplain = os.path.join(gbase, "plain")
     os.makedirs(gplain)
-    GITC = {"__gitCommand": "git", "__gitSource": "system", "__gitVersion": "matrix"}
+    # 内部参数只经 call 帧 meta（IKJLP4）；GMETA 为各 git 调用共用的可信元数据
+    GMETA = {"gitCommand": "git", "gitSource": "system", "gitVersion": "matrix"}
     GIDENT = {"name": "Matrix", "email": "matrix@test.local"}
 
     def grun(calls):
-        frames = [json.dumps({"op": "call", "callId": cid, "tool": tool, "args": args}) for cid, tool, args in calls]
+        frames = []
+        for cid, tool, args, meta in calls:
+            frame = {"op": "call", "callId": cid, "tool": tool, "args": args}
+            if meta is not None:
+                frame["meta"] = meta
+            frames.append(json.dumps(frame))
         frames.append(json.dumps({"op": "shutdown"}))
         out = run(frames)
         return {f.get("callId"): f for f in out if isinstance(f, dict) and f.get("op") == "result"}
@@ -875,7 +889,7 @@ else:
         return d
 
     # 批 1：init + 播种文件（真实仓库）
-    g = grun([("g_init", "git_init", {"__cyreneRoot": grepo, **GITC})])
+    g = grun([("g_init", "git_init", {}, {**GMETA, "workspaceRoot": grepo})])
     check("git init 输出", g.get("g_init", {}).get("ok") is True
           and g["g_init"].get("data") == "已初始化 Git 仓库", g.get("g_init"))
     open(os.path.join(grepo, "a.txt"), "w", encoding="utf-8").write("alpha\nbeta\ngamma\n")
@@ -884,10 +898,10 @@ else:
 
     # 批 2：未提交 status / 无 HEAD diff / commit（40 位 hash）
     g = grun([
-        ("g_status1", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_diff0", "git_diff", {"__cyreneRoot": grepo, **GITC}),
-        ("g_commit1", "git_commit", {"message": "initial commit", "paths": ["a.txt", "sub/b.txt"],
-                                      "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
+        ("g_status1", "git_status", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_diff0", "git_diff", {}, {**GMETA, "workspaceRoot": grepo}),
+        ("g_commit1", "git_commit", {"message": "initial commit", "paths": ["a.txt", "sub/b.txt"]},
+         {**GMETA, "workspaceRoot": grepo, "gitIdentity": GIDENT, "sessionId": "gs1"}),
     ])
     d = gdata(g, "g_status1")
     check("git status 未提交（untracked/行数/空分支）",
@@ -909,15 +923,15 @@ else:
     # 批 3：提交后修改/新增的 status + diff + log
     open(os.path.join(grepo, "a.txt"), "w", encoding="utf-8").write("alpha\nBETA\ngamma\n")
     open(os.path.join(grepo, "c.txt"), "w", encoding="utf-8").write("new file\nline2\n")
-    # 独立配置文件（IKJMO8）：__gitConfigGlobal 注入生效的可观察点（diff noprefix）
+    # 独立配置文件（IKJMO8）：meta.gitConfigGlobal 注入生效的可观察点（diff noprefix）
     gcfg = os.path.join(gbase, "dedicated.gitconfig")
     with open(gcfg, "w", encoding="utf-8") as cfg_handle:
         cfg_handle.write("[diff]\n\tnoprefix = true\n")
     g = grun([
-        ("g_status2", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_diff1", "git_diff", {"__cyreneRoot": grepo, **GITC}),
-        ("g_log1", "git_log", {"__cyreneRoot": grepo, **GITC}),
-        ("g_diff_cfg", "git_diff", {"__cyreneRoot": grepo, "__gitConfigGlobal": gcfg, **GITC}),
+        ("g_status2", "git_status", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_diff1", "git_diff", {}, {**GMETA, "workspaceRoot": grepo}),
+        ("g_log1", "git_log", {}, {**GMETA, "workspaceRoot": grepo}),
+        ("g_diff_cfg", "git_diff", {}, {**GMETA, "workspaceRoot": grepo, "gitConfigGlobal": gcfg}),
     ])
     d = gdata(g, "g_status2")
     check("git status 混合变更（modified/added + 行数）",
@@ -935,7 +949,7 @@ else:
     patch_default = d.get("patch", "") if isinstance(d, dict) else ""
     d = gdata(g, "g_diff_cfg")
     patch_cfg = d.get("patch", "") if isinstance(d, dict) else ""
-    check("独立配置文件生效（__gitConfigGlobal → diff noprefix）",
+    check("独立配置文件生效（meta.gitConfigGlobal → diff noprefix）",
           "--- a/a.txt" in patch_default and "--- a.txt" in patch_cfg and "--- a/a.txt" not in patch_cfg,
           f"default={patch_default[:60]!r} cfg={patch_cfg[:60]!r}")
     d = gdata(g, "g_log1")
@@ -945,12 +959,12 @@ else:
           and d[0]["author"] == "Matrix", d)
 
     # 批 4：分支切换 + 提交 + revert（HEAD 反向）
-    g = grun([("g_switch", "git_switch_branch", {"branch": "feat", "create": "true", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC})])
+    g = grun([("g_switch", "git_switch_branch", {"branch": "feat", "create": "true"}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"})])
     check("git switch 创建 feat", g.get("g_switch", {}).get("data") == "已切换到分支 feat", g.get("g_switch"))
     g = grun([
-        ("g_status3", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_commit2", "git_commit", {"message": "feat changes", "paths": ["a.txt"],
-                                      "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
+        ("g_status3", "git_status", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_commit2", "git_commit", {"message": "feat changes", "paths": ["a.txt"]},
+         {**GMETA, "workspaceRoot": grepo, "gitIdentity": GIDENT, "sessionId": "gs1"}),
     ])
     d = gdata(g, "g_status3")
     check("git status feat 分支列表（feat/main 排序）",
@@ -958,7 +972,7 @@ else:
     commit2_text = g.get("g_commit2", {}).get("data")
     check("git commit #2 输出", isinstance(commit2_text, str) and re.match(r"^已创建提交 [0-9a-f]{40}$", commit2_text), commit2_text)
     g_hash2 = commit2_text.split(" ")[-1] if isinstance(commit2_text, str) else ""
-    g = grun([("g_revert", "git_revert", {"commit": g_hash2[:12], "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC})])
+    g = grun([("g_revert", "git_revert", {"commit": g_hash2[:12]}, {**GMETA, "workspaceRoot": grepo, "gitIdentity": GIDENT, "sessionId": "gs1"})])
     check("git revert 消息", g.get("g_revert", {}).get("data") == f"已创建回退提交 {g_hash2[:12]}"
           and g.get("g_revert", {}).get("ok") is True, g.get("g_revert"))
 
@@ -966,9 +980,9 @@ else:
     subprocess.run(["git", "init", "--bare", os.path.join(gbase, "remote.git")], capture_output=True, text=True)
     subprocess.run(["git", "-C", grepo, "remote", "add", "origin", os.path.join(gbase, "remote.git")], capture_output=True, text=True)
     g = grun([
-        ("g_push1", "git_push", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_status4", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_log2", "git_log", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_push1", "git_push", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_status4", "git_status", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_log2", "git_log", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
     ])
     check("git push 建立跟踪（origin/feat）",
           g.get("g_push1", {}).get("data") == "已推送到 origin/feat 并建立跟踪关系", g.get("g_push1"))
@@ -982,23 +996,26 @@ else:
     # 批 6：已跟踪的二次 push
     open(os.path.join(grepo, "d.txt"), "w", encoding="utf-8").write("push me\n")
     g = grun([
-        ("g_commit3", "git_commit", {"message": "third commit", "paths": ["d.txt"],
-                                      "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
-        ("g_push2", "git_push", {"__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_commit3", "git_commit", {"message": "third commit", "paths": ["d.txt"]},
+         {**GMETA, "workspaceRoot": grepo, "gitIdentity": GIDENT, "sessionId": "gs1"}),
+        ("g_push2", "git_push", {}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
     ])
     check("git push 已跟踪（不带 --set-upstream）",
           g.get("g_push2", {}).get("data") == "已推送到 origin", g.get("g_push2"))
 
     # 批 7：非仓库 + 错误路径（校验先于命令，不产生副作用）
     g = grun([
-        ("g_norepo", "git_status", {"__cyreneRoot": gplain, "__sessionId": "gs2", **GITC}),
-        ("g_bad_ident", "git_commit", {"message": "x", "paths": ["a.txt"], "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_bad_ref", "git_diff", {"ref": "", "__cyreneRoot": grepo, **GITC}),
-        ("g_bad_branch", "git_switch_branch", {"branch": "bad..name", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_bad_path", "git_commit", {"message": "x", "paths": ["../escape.txt"], "__cyreneRoot": grepo, "__gitIdentity": GIDENT, "__sessionId": "gs1", **GITC}),
-        ("g_bad_count", "git_log", {"maxCount": 0, "__cyreneRoot": grepo, **GITC}),
-        ("g_bad_revert", "git_revert", {"commit": "zzz", "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
-        ("g_revert_noident", "git_revert", {"commit": g_hash2[:12], "__cyreneRoot": grepo, "__sessionId": "gs1", **GITC}),
+        ("g_norepo", "git_status", {}, {**GMETA, "workspaceRoot": gplain, "sessionId": "gs2"}),
+        ("g_bad_ident", "git_commit", {"message": "x", "paths": ["a.txt"]}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_bad_ref", "git_diff", {"ref": ""}, {**GMETA, "workspaceRoot": grepo}),
+        ("g_bad_branch", "git_switch_branch", {"branch": "bad..name"}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_bad_path", "git_commit", {"message": "x", "paths": ["../escape.txt"]},
+         {**GMETA, "workspaceRoot": grepo, "gitIdentity": GIDENT, "sessionId": "gs1"}),
+        ("g_bad_count", "git_log", {"maxCount": 0}, {**GMETA, "workspaceRoot": grepo}),
+        ("g_bad_revert", "git_revert", {"commit": "zzz"}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        ("g_revert_noident", "git_revert", {"commit": g_hash2[:12]}, {**GMETA, "workspaceRoot": grepo, "sessionId": "gs1"}),
+        # IKJLP4：内部参数只认 call 帧 meta——旧 args `__` 键不再被接受（meta 缺失 → E_GIT_NO_ROOT）
+        ("g_oldkeys", "git_status", {"__cyreneRoot": grepo, "__sessionId": "gs1", "__gitCommand": "git", "__gitSource": "system", "__gitVersion": "matrix"}, None),
     ])
     d = gdata(g, "g_norepo")
     check("git status 非仓库（not_repository 形状）",
@@ -1011,6 +1028,9 @@ else:
           g.get("g_revert_noident", {}).get("ok") is False
           and "Git 提交邮箱" in (g.get("g_revert_noident", {}).get("error") or ""),
           g.get("g_revert_noident"))
+    check("git 旧 args `__` 键不再被接受（meta 缺失 → E_GIT_NO_ROOT）",
+          g.get("g_oldkeys", {}).get("ok") is False and g.get("g_oldkeys", {}).get("errorCode") == "E_GIT_NO_ROOT",
+          g.get("g_oldkeys"))
 
 passed = sum(1 for _, ok, _ in results if ok)
 print(f"\n{'='*50}\n工具矩阵汇总: {passed} passed / {len(results)-passed} failed")

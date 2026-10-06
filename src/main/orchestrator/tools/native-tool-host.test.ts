@@ -270,6 +270,50 @@ describe("NativeToolHost.call 看门狗", () => {
     await expect(rejection).resolves.toBeInstanceOf(Error);
     expect(child.kill).toHaveBeenCalledTimes(1);
   });
+
+  it("call 帧序列化：内部参数只出现在 meta，args 无 `__` 键（IKJLP4 验收口径）", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+
+    const pending = host.call("search_text", { query: "x" }, 10_000, undefined, { workspaceRoot: "C:\\ws" });
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const callFrame = child.stdin.write.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as {
+        op: string; tool?: string; args?: Record<string, unknown>; meta?: Record<string, unknown>;
+      })
+      .find((frame) => frame.op === "call");
+    expect(callFrame).toMatchObject({ tool: "search_text", args: { query: "x" }, meta: { workspaceRoot: "C:\\ws" } });
+    expect(Object.keys(callFrame?.args ?? {}).some((key) => key.startsWith("__"))).toBe(false);
+
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "ok" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toBe("ok");
+    vi.useRealTimers();
+  });
+
+  it("无内部参数的调用帧不含 meta 键（帧形状保持向后一致）", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+
+    const pending = host.call("calculator", { expression: "1+1" }, 10_000);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const callFrame = child.stdin.write.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as { op: string; meta?: unknown })
+      .find((frame) => frame.op === "call");
+    expect(callFrame).toBeTruthy();
+    expect(callFrame).not.toHaveProperty("meta");
+
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "2" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toBe("2");
+    vi.useRealTimers();
+  });
 });
 
 // ── 超时轻量隔离（#IKJLP2）─────────────────────────────────
@@ -289,7 +333,7 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { host, child } = startHost();
 
-    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, true);
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
     const second = host.call("read_file", { path: "C:\\a.txt" });
     const firstErr = first.catch((error: Error) => error);
     await vi.advanceTimersByTimeAsync(0);
@@ -338,7 +382,7 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { host, child } = startHost();
 
-    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, true);
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
     const second = host.call("read_file", { path: "C:\\a.txt" });
     const firstErr = first.catch((error: Error) => error);
     const secondErr = second.catch((error: Error) => error);
@@ -374,7 +418,7 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
     vi.useFakeTimers();
     const { host, child } = startHost();
 
-    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, true);
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
     const second = host.call("read_file", { path: "C:\\a.txt" });
     const firstErr = first.catch((error: Error) => error);
     const secondErr = second.catch((error: Error) => error);
@@ -402,7 +446,7 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
     const { host, child } = startHost();
     const controller = new AbortController();
 
-    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, true);
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, undefined, true);
     const second = host.call("read_file", { path: "C:\\a.txt" }, undefined, controller.signal);
     const firstErr = first.catch((error: Error) => error);
     const secondErr = second.catch((error: Error) => error);
@@ -432,7 +476,7 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
     const { host, child } = startHost();
     const controller = new AbortController();
 
-    const first = host.call("search_text", { query: "x" }, 50, controller.signal, undefined, true);
+    const first = host.call("search_text", { query: "x" }, 50, controller.signal, undefined, undefined, true);
     const firstErr = first.catch((error: Error) => error);
     await vi.advanceTimersByTimeAsync(0);
     ready(child);
@@ -483,25 +527,27 @@ describe("nativeFirst 信任边界（__ 内部参数）", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
     );
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it("internalArgs 可信注入：模型伪造的同名 __ 键被覆盖", async () => {
+  it("meta 可信注入：模型伪造的 __ 键被剥离，内部参数只走 meta 通道（不混入 args）", async () => {
     const call = vi.spyOn(nativeToolHost, "call").mockResolvedValue("ok");
 
     await nativeFirst(
       "search_text",
       { query: "x", __cyreneWorkspaceRoot: "C:\\evil" },
       () => "ts",
-      { internalArgs: { __cyreneWorkspaceRoot: "C:\\trusted" } },
+      { meta: { workspaceRoot: "C:\\trusted" } },
     );
 
     expect(call).toHaveBeenCalledWith(
       "search_text",
-      { query: "x", __cyreneWorkspaceRoot: "C:\\trusted" },
+      { query: "x" },
       undefined,
       undefined,
+      { workspaceRoot: "C:\\trusted" },
       undefined,
       undefined,
     );
@@ -587,7 +633,7 @@ describe("withNativeFirst 信任边界（__ 内部参数）", () => {
     vi.restoreAllMocks();
   });
 
-  it("prepare 收到剥离 __ 后的模型 args；prepare 注入的可信参数保留", async () => {
+  it("prepare 收到剥离 __ 后的模型 args；写入 meta 的可信参数随帧下发（不混入 args）", async () => {
     const call = vi.spyOn(nativeToolHost, "call").mockResolvedValue("ok");
     const seen: Record<string, unknown>[] = [];
     const base: ToolDefinition = {
@@ -601,9 +647,10 @@ describe("withNativeFirst 信任边界（__ 内部参数）", () => {
       inputSchema: { type: "object" },
       execute: async () => "ts",
     };
-    const wrapped = withNativeFirst(base, "fake_tool", (args) => {
+    const wrapped = withNativeFirst(base, "fake_tool", (args, _ctx, meta) => {
       seen.push(args);
-      return { ...args, __trusted: "1" };
+      meta.workspaceRoot = "C:\\trusted";
+      return { ...args, mode: "native" };
     });
 
     const out = await wrapped.execute({ pattern: "x", __evil: "1" }, undefined);
@@ -612,12 +659,33 @@ describe("withNativeFirst 信任边界（__ 内部参数）", () => {
     expect(seen).toEqual([{ pattern: "x" }]);
     expect(call).toHaveBeenCalledWith(
       "fake_tool",
-      { pattern: "x", __trusted: "1" },
+      { pattern: "x", mode: "native" },
       undefined,
       undefined,
+      { workspaceRoot: "C:\\trusted" },
       undefined,
       false,
     );
+  });
+
+  it("prepare 未写 meta：调用帧 meta 为 undefined（不产生空 meta 对象）", async () => {
+    const call = vi.spyOn(nativeToolHost, "call").mockResolvedValue("ok");
+    const base: ToolDefinition = {
+      id: "fake_tool",
+      name: "fake",
+      description: "fake",
+      enabled: true,
+      risk: "safe",
+      modes: ["code"],
+      effectKind: "read",
+      inputSchema: { type: "object" },
+      execute: async () => "ts",
+    };
+    const wrapped = withNativeFirst(base, "fake_tool", (args) => args);
+
+    await wrapped.execute({ pattern: "x" }, undefined);
+
+    expect(call).toHaveBeenCalledWith("fake_tool", { pattern: "x" }, undefined, undefined, undefined, undefined, false);
   });
 
   it("prepare 返回 null：TS 回退收到已剥离 __ 的 args（P2-6④ 口径一致）", async () => {

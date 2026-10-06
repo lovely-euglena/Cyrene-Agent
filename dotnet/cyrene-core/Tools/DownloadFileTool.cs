@@ -7,7 +7,7 @@ namespace CyreneNative.Tools;
 
 /// <summary>
 /// download_file：从 URL 下载二进制文件落盘（与 download-file-tool.ts 同语义）。
-///   - 输出根由 TS 包装器经内部参数 `__cyreneRoot` 注入（工作区根 / 桌面）
+///   - 输出根由 TS 包装器经 call 帧 meta.workspaceRoot 注入（工作区根 / 桌面）
 ///   - 危险字符 / 目录穿越 / 危险后缀黑名单 / 64MiB 上限 / 30s 空闲超时
 ///   - 先完整缓冲校验再一次性落盘：中断不留半截文件
 ///   - 失败以与 TS 相同的文案字符串返回；基础设施缺失（root 未注入）抛错误帧回退
@@ -53,15 +53,15 @@ internal static class DownloadFileTool
         ["application/json"] = ".json",
     };
 
-    public static string Execute(JsonElement args)
+    public static string Execute(JsonElement args, JsonElement meta)
     {
         var url = Str(args, "url").Trim();
         if (!Regex.IsMatch(url, "^https?://", RegexOptions.IgnoreCase))
             return "[错误] url 必须以 http:// 或 https:// 开头";
 
-        var root = Str(args, "__cyreneRoot");
+        var root = CallMeta.Str(meta, "workspaceRoot");
         if (string.IsNullOrWhiteSpace(root))
-            throw new ToolHostException("E_DOWNLOAD_NO_ROOT", "缺少 __cyreneRoot（输出根），download_file 需经宿主包装器调用");
+            throw new ToolHostException("E_DOWNLOAD_NO_ROOT", "缺少输出根（meta.workspaceRoot），download_file 需经宿主包装器调用");
 
         // ── 文件名：显式传入优先，否则从 URL 推断；都没有先用占位名等 Content-Type 补扩展名 ──
         var filename = Str(args, "filename").Trim();

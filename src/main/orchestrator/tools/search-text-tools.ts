@@ -259,7 +259,7 @@ function safeStat(p: string): fs.Stats | null {
 
 /**
  * TS 实现（native 轨回退路径）。native 轨经 nativeFirst 调 ToolHost，
- * 工作区根以内部参数 `__cyreneWorkspaceRoot` 注入（模型不可见）。
+ * 工作区根经 call 帧 meta.workspaceRoot 注入（模型不可见）。
  */
 async function executeSearchText(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const query = String(args.query || "").trim();
@@ -417,14 +417,14 @@ export function registerSearchTextTool(): void {
       required: ["query"],
     },
     execute: async (args, ctx) => {
-      // native 轨：工作区根由包装层经 internalArgs 注入（模型参数里不可见）；失败整体回退 TS
+      // native 轨：工作区根由包装层经 call 帧 meta 注入（模型参数里不可见）；失败整体回退 TS
       const workspaceRoot = ctx?.resolvedWorkspaceRoot ?? path.resolve(process.cwd());
       return nativeFirst(
         "search_text",
         args,
         (nativeArgs) => executeSearchText(nativeArgs, ctx),
         // 只读工具轻量隔离（#IKJLP2）：超时只拒绝当次，不连带排队中的并行批调用
-        { signal: ctx?.signal, internalArgs: { __cyreneWorkspaceRoot: workspaceRoot }, abandonOnTimeout: true },
+        { signal: ctx?.signal, meta: { workspaceRoot }, abandonOnTimeout: true },
       );
     },
   });

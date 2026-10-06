@@ -9,8 +9,8 @@ namespace CyreneNative.Tools;
 /// str_replace：精确字符串替换（匹配核心与 life-tools.ts / str-replace-core.ts 对齐）。
 ///   - 三层逐级放宽：精确 → EOL 归一化 → 空白归一化（命中后按文件真实缩进重排 new_string）
 ///   - 批量 edits 顺序应用，任一失败整体不生效（不落盘）
-///   - 两段式执行（TS 包装器编排）：`__dryRun=true` 只匹配并返回 {success,prepared}，
-///     供包装层确认匹配成功后再写 review 基线；随后再发一次不带 __dryRun 的调用落盘。
+///   - 两段式执行（TS 包装器编排）：`meta.dryRun=true` 只匹配并返回 {success,prepared}，
+///     供包装层确认匹配成功后再写 review 基线；随后再发一次不带 meta.dryRun 的调用落盘。
 ///     失败结果（含 diagnostic 诊断）在 dry-run 阶段原样返回，不触发任何副作用。
 ///   - evidence：changes/diff 由 ToolEvidence 生成（与 TS finalizeFileChanges 同上限）
 /// </summary>
@@ -32,7 +32,7 @@ internal static class StrReplaceTool
         public Dictionary<string, object?>? Diagnostic;
     }
 
-    public static string Execute(JsonElement args)
+    public static string Execute(JsonElement args, JsonElement meta)
     {
         var filePath = Str(args, "file_path");
         if (filePath.Length == 0)
@@ -77,7 +77,7 @@ internal static class StrReplaceTool
         var result = ApplyStrReplaceEdits(content, edits);
         if (!result.Ok) return FailureJson(result);
 
-        var dryRun = args.TryGetProperty("__dryRun", out var dr) && dr.ValueKind == JsonValueKind.True;
+        var dryRun = CallMeta.IsTrue(meta, "dryRun");
         if (dryRun) return "{\"success\":true,\"prepared\":true}";
 
         try { File.WriteAllText(filePath, result.NewContent); }

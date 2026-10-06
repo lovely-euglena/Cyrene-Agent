@@ -1,6 +1,6 @@
 /**
  * str_replace native 轨两段式接线测试：
- *  - ① __dryRun 预检成功 → ② 写基线 → ③ 提交（.NET 落盘）
+ *  - ① meta.dryRun 预检成功 → ② 写基线 → ③ 提交（.NET 落盘）
  *  - 预检失败：失败结果透传、无基线、无提交
  *  - host 故障：整体回退 TS 实现（真实落盘）
  */
@@ -11,15 +11,15 @@ import * as os from "os";
 import * as path from "path";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown> }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown> }>,
   nextResults: [] as Array<string | Error>,
   captureBefore: vi.fn(),
 }));
 
 vi.mock("./native-tool-host", () => ({
   nativeToolHost: {
-    call: async (tool: string, args: Record<string, unknown>) => {
-      nativeMocks.calls.push({ tool, args });
+    call: async (tool: string, args: Record<string, unknown>, _timeoutMs?: number, _signal?: AbortSignal, meta?: Record<string, unknown>) => {
+      nativeMocks.calls.push({ tool, args, meta });
       const next = nativeMocks.nextResults.shift();
       if (next instanceof Error) throw next;
       return next ?? null;
@@ -95,7 +95,7 @@ describe("str_replace native 两段式", () => {
 
     expect(out).toContain('"appliedEdits":1');
     expect(nativeMocks.calls).toEqual([
-      { tool: "str_replace", args: { ...args, __dryRun: true } },
+      { tool: "str_replace", args, meta: { dryRun: true } },
       { tool: "str_replace", args },
     ]);
     expect(nativeMocks.captureBefore).toHaveBeenCalledWith("run-1", file);
@@ -147,10 +147,12 @@ describe("str_replace native 两段式", () => {
       { runId: "run-trust" },
     );
 
-    expect(nativeMocks.calls[0].args.__dryRun).toBe(true); // 预检标记由包装层注入
+    // 模型伪造的 __ 键不得进入 args；预检标记只经 meta 由包装层注入
+    expect(nativeMocks.calls[0].args.__dryRun).toBeUndefined();
     expect(nativeMocks.calls[0].args.__cyreneRoot).toBeUndefined();
-    expect(nativeMocks.calls[1].args.__dryRun).toBeUndefined(); // 提交段不带模型伪造的 __dryRun
-    expect(nativeMocks.calls[1].args.__cyreneRoot).toBeUndefined();
+    expect(nativeMocks.calls[0].meta).toEqual({ dryRun: true });
+    expect(nativeMocks.calls[1].meta).toBeUndefined(); // 提交段不带模型伪造的 __dryRun
+    expect(nativeMocks.calls[1].args.__dryRun).toBeUndefined();
   });
 
   it("取消（AbortError）：原样上抛、不回退 TS、不写基线", async () => {

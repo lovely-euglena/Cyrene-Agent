@@ -404,7 +404,7 @@ function registerStrReplaceTool(): void {
 
 /**
  * str_replace native 轨（两段式）：
- *  ① `__dryRun` 预检匹配——失败结果与 TS 输出同构，直接透传（无副作用）；
+ *  ① meta.dryRun 预检匹配——失败结果与 TS 输出同构，直接透传（无副作用）；
  *  ② 匹配成功 → captureBefore 基线 → 正式提交（.NET 落盘 + evidence）。
  * host 不可用/故障 → 整体回退 TS 实现；预检与提交之间捕获的基线由
  * captureBefore 幂等兜底（回退重跑不会重复快照）。
@@ -415,10 +415,14 @@ async function executeStrReplaceNativeFirst(
   ctx?: ToolContext,
 ): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return executeStrReplaceTs(args, ctx);
-  // 信任边界：模型 args 里的 `__` 键一律剥离（防伪造 __dryRun/__cyreneRoot 等）
+  // 信任边界：模型 args 里的 `__` 键一律剥离（模型侧内部参数伪造一律丢弃）
   const cleanArgs = stripInternalArgs(args);
   try {
-    const prep = await nativeToolHost.call("str_replace", { ...cleanArgs, __dryRun: true }, undefined, ctx?.signal);
+    // 两段式预检：dryRun 经 call 帧 meta 下发（IKJLP4）。注意混跑例外——若宿主为
+    // 旧版（只读 args `__dryRun`），预检信号丢失、本帧会被直接落盘且跳过后续基线
+    // 捕获；生产随包锁定步不受影响，完整防护需版本协商。见 decisions 2026-10-06
+    // 增量「兼容策略」例外说明（PR #28 复审 P1）。
+    const prep = await nativeToolHost.call("str_replace", cleanArgs, undefined, ctx?.signal, { dryRun: true });
     if (prep === null) return executeStrReplaceTs(args, ctx);
     const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
     let prepared = false;

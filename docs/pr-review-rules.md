@@ -101,7 +101,7 @@
 
 ### 2.3 信任边界与内部参数 🔴
 
-- `__` 前缀内部参数（`__cyreneRoot`、`__sessionId`、`__gitCommand`、`__gitIdentity`、`__gitConfigGlobal` 等）只能由主进程可信装配注入；来自模型 / 渲染层的一律视为攻击并拒绝。
+- 内部参数（call 帧独立 `meta` 字段：`workspaceRoot`、`sessionId`、`gitCommand`、`gitIdentity`、`gitConfigGlobal`、`dryRun` 等）只能由主进程可信装配注入；来自模型 / 渲染层的一律视为攻击并拒绝。模型 args 中的 `__` 前缀遗留键由包装层统一剥离且宿主不再读取（IKJLP4 起内部参数不落 args）。
 - 新增 IPC 通道：preload 白名单 + 主进程校验；渲染层输入（路径 / 命令 / URL）不可信。
 - 插件边界：ZIP 导入防护、资源所有权、事件命名空间（`host:*` / `plugin:<id>:`）；放宽需先讨论。
 

@@ -19,7 +19,7 @@ import type { ToolDiffLine, ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges } from "./registry/tool-evidence";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
-import { withNativeFirst, isNativeFailurePayload, nativeToolHost, stripInternalArgs } from "./native-tool-host";
+import { withNativeFirst, isNativeFailurePayload, nativeToolHost, stripInternalArgs, type NativeCallMeta } from "./native-tool-host";
 import { resolveDotnetConfig } from "../../dotnet-backend/config";
 import { isAbortError } from "../../abort-utils";
 
@@ -64,12 +64,13 @@ export function toUnpackedAsarPath(p: string): string {
 
 /**
  * native 参数组装：参数校验（与 parseCommonArgs 同）通过 + CLI 可解析 + 有工作区时返回
- * native 参数（注入 __cyreneWorkspaceRoot / __astGrepCommand）；否则返回 null → TS 原实现。
- * 模型 args 里的 `__` 键先统一剥离（信任边界 §2.3），可信注入随后覆盖。
+ * native 参数（内部参数写入 meta：workspaceRoot / astGrepCommand，IKJLP4 去 args 字段化）；
+ * 否则返回 null → TS 原实现。模型 args 里的 `__` 键先统一剥离（信任边界 §2.3）。
  */
 function buildAstGrepNativeArgs(
   args: Record<string, unknown>,
-  ctx?: ToolContext,
+  ctx: ToolContext | undefined,
+  meta: NativeCallMeta,
   isReplace = false,
 ): Record<string, unknown> | null {
   try {
@@ -81,11 +82,11 @@ function buildAstGrepNativeArgs(
   if (!workspaceRoot) return null;
   const command = resolveAstGrepCommand();
   if (!command) return null;
+  meta.workspaceRoot = workspaceRoot;
+  meta.astGrepCommand = command;
   return {
     ...stripInternalArgs(args),
     ...(isReplace ? { rewrite: String(args.rewrite ?? "") } : {}),
-    __cyreneWorkspaceRoot: workspaceRoot,
-    __astGrepCommand: command,
   };
 }
 
@@ -96,7 +97,8 @@ function buildAstGrepNativeArgs(
  */
 async function executeAstGrepReplaceNativeFirst(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   if (!resolveDotnetConfig().toolHost) return executeAstGrepReplace(args, ctx);
-  const nativeArgs = buildAstGrepNativeArgs(args, ctx, true);
+  const meta: NativeCallMeta = {};
+  const nativeArgs = buildAstGrepNativeArgs(args, ctx, meta, true);
   if (nativeArgs === null) return executeAstGrepReplace(args, ctx);
   try {
     if (ctx?.runId && args.dryRun === false) {
@@ -105,20 +107,21 @@ async function executeAstGrepReplaceNativeFirst(args: Record<string, unknown>, c
         { ...nativeArgs, dryRun: true },
         AST_GREP_NATIVE_TIMEOUT_MS,
         ctx.signal,
+        meta,
       );
       if (planResult !== null) {
         const planText = typeof planResult === "string" ? planResult : JSON.stringify(planResult);
         if (!isNativeFailurePayload(planText)) {
           const plan = JSON.parse(planText) as { planned?: Array<{ file: string }> };
           const tracker = getRunReviewTracker(app.getPath("userData"));
-          const root = String(nativeArgs.__cyreneWorkspaceRoot);
+          const root = String(meta.workspaceRoot);
           for (const p of plan.planned ?? []) {
             tracker.captureBefore(ctx.runId, path.resolve(root, p.file), p.file);
           }
         }
       }
     }
-    const result = await nativeToolHost.call("ast_grep_replace", nativeArgs, AST_GREP_NATIVE_TIMEOUT_MS, ctx?.signal);
+    const result = await nativeToolHost.call("ast_grep_replace", nativeArgs, AST_GREP_NATIVE_TIMEOUT_MS, ctx?.signal, meta);
     if (result !== null) {
       const text = typeof result === "string" ? result : JSON.stringify(result);
       if (!isNativeFailurePayload(text)) return text;
@@ -651,7 +654,7 @@ export function registerAstGrepTools(): void {
       required: ["pattern"],
     },
     execute: executeAstGrepSearch,
-  }, "ast_grep_search", (args, ctx) => buildAstGrepNativeArgs(args, ctx), AST_GREP_NATIVE_TIMEOUT_MS, true));
+  }, "ast_grep_search", (args, ctx, meta) => buildAstGrepNativeArgs(args, ctx, meta), AST_GREP_NATIVE_TIMEOUT_MS, true));
 
   toolRegistry.register({
     id: "ast_grep_replace",

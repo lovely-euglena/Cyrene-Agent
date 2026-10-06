@@ -8,7 +8,7 @@ import * as path from "node:path";
  * - 优先级（低 → 高）：全局配置副本（「一键复制」快照） → 实时 include 用户全局配置
  *   （凭据 helper 等） → Cyrene 身份/初始化覆盖（永远最后生效）；
  * - 开关打开时（默认开），所有 git 调用经 `GIT_CONFIG_GLOBAL` 指向本文件
- *   （TS 客户端 env / native 内部参数 `__gitConfigGlobal` / C# RunGit env）；
+ *   （TS 客户端 env / native call 帧 meta.gitConfigGlobal（IKJLP4）/ C# RunGit env）；
  * - 开关关闭时本文件不被使用，行为维持原状（内置 git NUL 隔离、系统 git 跟随全局）。
  */
 
