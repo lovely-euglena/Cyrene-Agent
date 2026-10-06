@@ -16,7 +16,7 @@
 1. **事件导出器**：CTA journal（audit 全量）→ 同步事件（4 类映射 + presentation 随行 + 过滤），幂等、崩溃可重入；含 `session.create` 与标题修订；
 2. **存量迁移驱动**：对全部会话确保 v1→v2 journal 迁移（复用既有 `ConversationSessionMigration`）并导出初始事件链；
 3. **旁路事件库与同步状态**（`<userData>/sync/`）：outbox / inbox JSONL + 原子 state；
-4. **HTTP 同步客户端**（pair / pair-code / capabilities / push / fetch / clone）+ **同步服务**（单飞、调度、状态、错误退避）；
+4. **HTTP 同步客户端**（pair / pair-code / capabilities / push / fetch / clone）+ **同步服务**（单飞、调度、状态、失败保留游标 / 水位并记 `lastError`，下轮 60s 重试）；
 5. **重放物化视图**（桌面 replay，与 PWA 语义对齐）+ **合并读模型**（本地投影 + 远端 overlay）→ `CHATS_GET` 合并（仅同步启用时）；fetch 到新事件后广播刷新；
 6. **云端设置面**：设置页「云端」section + IPC + preload；token 按 channels 先例加密存储；
 7. **渠道 remote 复用**：`channels.remote` 未显式配置时回退 sync 配置（渠道设计既定约定）；
@@ -173,7 +173,7 @@
 - token 加密落盘 / 公开快照剥离 / 错误脱敏（服务端契约：token 仅在配对 / 轮换响应出现一次）；
 - 只读导出：CTA 零写入（除既有迁移路径）；旁路库独立可删；
 - 未启用同步时行为与现状完全一致（默认关闭）；
-- 服务器兼容：push 不带哈希链（Q3 过渡策略允许）；429 退避重试；
+- 服务器兼容：push 不带哈希链（Q3 过渡策略允许）；失败保留游标 / 水位并记 `lastError`，下一轮 60s 重试（含 429）；
 - 协议版本：本批只产生 v0 四类事件（v0.1 的 memory/mood 另批）。
 
 ## 9. 决策记录
@@ -198,7 +198,7 @@
 - 导出器：4 类映射 / rewind keep+replace / 墓碑 / presentation 合并与白名单过滤 / internal 与空文本跳过 / 标题修订 / 幂等（重复执行零新事件）/ 崩溃重入（模拟中断后重扫）；
 - 库与状态：append+去重 / 规范排序 / 末行截断容错 / state 原子写 / 水位单调；
 - HTTP 客户端：fetchImpl 注入（URL / 头 / 错误码 / token 不泄漏）/ push 分块 / clone 流解析；
-- 同步服务：假客户端全流程（初次 clone / 增量 / 重复幂等 / 401 / 429 退避 / 单飞）；
+- 同步服务：假客户端全流程（初次 clone / 增量 / 重复幂等 / 401 失败保留游标、水位并记 `lastError` 且下轮重试成功 / 单飞）；
 - 读模型：合并排序 / 去重 / 远端 rewind+墓碑 / gating（关闭时零变化）；
 - 设置存储：enc/obf / 归一化 / hasToken；
 - IPC：新通道注册 / `CHATS_GET` 合并开关。
@@ -211,7 +211,9 @@
 
 **手动冒烟（真实 userData，只读）**
 
-- `CYRENE_SYNC_DRY_RUN=1 CYRENE_SYNC_DRY_RUN_USERDATA=<真实 userData> npx vitest run src/main/sync/export-dry-run.manual.test.ts`：默认 skip；输出会话 / 事件计数与样例，不写盘；
+- dry-run（默认 skip；输出会话 / 事件计数与样例，不写盘）：
+  - POSIX：`CYRENE_SYNC_DRY_RUN=1 CYRENE_SYNC_DRY_RUN_USERDATA=<真实 userData> npx vitest run src/main/sync/export-dry-run.manual.test.ts`；
+  - Windows PowerShell：`$env:CYRENE_SYNC_DRY_RUN='1'; $env:CYRENE_SYNC_DRY_RUN_USERDATA='<真实 userData>'; npx vitest run src/main/sync/export-dry-run.manual.test.ts`。
 - 真机（人工）：启用同步 → 手机打开桌面历史（收敛）→ 手机发送 → 桌面聊天页出现（合并读模型）→ 桌面回复 → 手机可见。
 - **未实测面**：真机冒烟待人工执行；本机真实 userData 为旧布局（无 `cyrene-chats/index.json`），dry-run 优雅跳过——已与实测口径一并登记于决策记录。
 
@@ -219,7 +221,7 @@
 
 | issue 验收 | 证据 |
 | --- | --- |
-| 真实 userData 迁移后 UI 无感 | dry-run 冒烟 + 迁移驱动复用既有迁移（零 UI 变更路径）+ 单测 |
+| 真实 userData 迁移后 UI 无感 | dry-run 冒烟（合成数据）+ 迁移驱动复用既有迁移（零 UI 变更路径）+ 单测 |
 | 重复迁移幂等 | 迁移器既有测试 + 导出器幂等单测（重复执行零新事件） |
 | 崩溃后可重入 | 导出 / 状态写入顺序（append→state）+ 崩溃重入单测 + 库末行容错 |
 

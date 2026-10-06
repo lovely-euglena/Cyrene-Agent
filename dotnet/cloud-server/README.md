@@ -133,7 +133,7 @@ VPS（引导）:  dotnet /opt/cyrene-cloud/cyrene-cloud-server.dll pair-code   #
 
 桌面设置 `channels.remote = {enabled, baseUrl?, preferServer, failover}`（`src/main/channels/settings-store.ts`）：
 
-- `enabled`：启用「云端托管」；`baseUrl` 缺省复用同步服务端地址（IKJK2I 接线前可显式填写）；
+- `enabled`：启用「云端托管」；`baseUrl` 缺省复用同步服务端地址（未显式配置时自动复用同步配置，IKJK2I 起）；
 - token 复用同步 device token（不新增凭据面）；控制面请求 12s 超时（停止时中止在途并尽力交回租约）；
   remote 配置 5s TTL 缓存（保存后立即失效）；
 - `preferServer=true`（默认）：**自动兜底（failover）期间**服务端恢复后自动 release 并停本机；

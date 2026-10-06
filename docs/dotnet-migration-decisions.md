@@ -688,9 +688,10 @@
 - **范围**：CTA journal（audit 全量）→ 同步事件导出器（4 类映射 + presentation 随行 + 过滤；
   幂等 / 崩溃可重入；含 `session.create` 与标题修订）；存量迁移驱动（全量会话复用既有 v1→v2
   迁移器，不重写）；旁路事件库与同步状态（`<userData>/sync/`：outbox / inbox JSONL + 原子 state）；
-  HTTP 同步客户端 + 同步服务（单飞 / 60s 调度 / 错误退避 / 401 提示重配对）；桌面重放物化视图
+  HTTP 同步客户端 + 同步服务（单飞 / 60s 调度 / 失败保留游标 / 水位并记 `lastError`，
+  下一轮 60s 重试（含 429） / 401 提示重配对）；桌面重放物化视图
   （与 PWA 共享核心）+ 合并读模型（`CHATS_GET` 仅同步启用时合并）；设置页「云端」section + IPC +
-  preload（token 加密落盘）；渠道 `channels.remote` 未显式配置时回退 sync 配置。设计定稿
+  preload（token 加密落盘）；渠道 `channels.remote` 未显式配置时回退 sync 配置。设计稿（已实施）
   `docs/design/2026-10-06-desktop-cloud-wiring.md`；本批不依赖 IKJK2O（v0.1 事件）。
 - **Q4 拍板：远端事件落盘 = 旁路事件库（`<userData>/sync/`），不回填 CTA。**
   理由：CTA 是富领域模型（工具条目 / presentation / 压缩 / 归档），远端事件是协议层最小文本事件；
