@@ -418,7 +418,7 @@ export function applyPatchHunks(hunks: PatchHunk[], workspaceRoot: string): Appl
 
 /**
  * apply_patch native 轨（两段式）：
- *  ① `__dryRun` 预检（解析 + 全量匹配 + 路径沙箱）——失败结果与 TS 输出
+ *  ① meta.dryRun 预检（解析 + 全量匹配 + 路径沙箱）——失败结果与 TS 输出
  *     同构，直接透传（无副作用）；
  *  ② 预检成功 → captureBefore / recordRename 基线 → 正式提交（.NET 落盘 + evidence）。
  * host 不可用/故障 → 整体回退 TS 实现。
@@ -435,11 +435,10 @@ async function executeApplyPatchNativeFirst(
   if (!patch || !workspaceRoot) return executeApplyPatchTs(args, ctx);
 
   try {
-    const prep = await nativeToolHost.call("apply_patch", {
-      patch,
-      __cyreneRoot: workspaceRoot,
-      __dryRun: true,
-    }, undefined, ctx?.signal);
+    const prep = await nativeToolHost.call("apply_patch", { patch }, undefined, ctx?.signal, {
+      workspaceRoot,
+      dryRun: true,
+    });
     if (prep === null) return executeApplyPatchTs(args, ctx);
     const prepText = typeof prep === "string" ? prep : JSON.stringify(prep);
     let prepared = false;
@@ -467,7 +466,7 @@ async function executeApplyPatchNativeFirst(
       }
     }
 
-    const result = await nativeToolHost.call("apply_patch", { patch, __cyreneRoot: workspaceRoot }, undefined, ctx?.signal);
+    const result = await nativeToolHost.call("apply_patch", { patch }, undefined, ctx?.signal, { workspaceRoot });
     if (result !== null) return typeof result === "string" ? result : JSON.stringify(result);
   } catch (error) {
     if (isAbortError(error)) throw error; // 取消必须中止：回退 TS 会重复改文件

@@ -11,7 +11,7 @@ import type { GitService } from "../../code-git/git-service";
 import type { ToolContext } from "./registry/tool-context";
 
 const nativeMocks = vi.hoisted(() => ({
-  calls: [] as Array<{ tool: string; args: Record<string, unknown>; options?: { signal?: AbortSignal } }>,
+  calls: [] as Array<{ tool: string; args: Record<string, unknown>; meta?: Record<string, unknown>; options?: { signal?: AbortSignal } }>,
   nativeResult: null as string | null,
   nativeError: null as Error | null,
 }));
@@ -30,11 +30,11 @@ vi.mock("./native-tool-host", async (importOriginal) => {
       tool: string,
       args: Record<string, unknown>,
       fallback: (a: Record<string, unknown>) => unknown,
-      options?: { signal?: AbortSignal; internalArgs?: Record<string, unknown> },
+      options?: { signal?: AbortSignal; meta?: Record<string, unknown> },
     ) => {
-      // 模拟真实 nativeFirst 的信任边界 + internalArgs 注入
-      const nativeArgs = { ...actual.stripInternalArgs(args), ...(options?.internalArgs ?? {}) };
-      nativeMocks.calls.push({ tool, args: nativeArgs, options });
+      // 模拟真实 nativeFirst 的信任边界 + meta 通道（IKJLP4）
+      const nativeArgs = actual.stripInternalArgs(args);
+      nativeMocks.calls.push({ tool, args: nativeArgs, meta: options?.meta, options });
       if (nativeMocks.nativeError) throw nativeMocks.nativeError;
       if (nativeMocks.nativeResult !== null) return nativeMocks.nativeResult;
       return fallback(nativeArgs);
@@ -108,18 +108,20 @@ describe("git native 轨接线", () => {
         message: "m",
         paths: ["a.ts"],
         workspaceRoot: "C:\\untrusted",
-        __cyreneRoot: "C:\\trusted",
-        __sessionId: "session-1",
-        __gitCommand: "git",
-        __gitSource: "system",
-        __gitVersion: "2.50.0",
-        __gitIdentity: { name: "N", email: "e@x" },
+      },
+      meta: {
+        workspaceRoot: "C:\\trusted",
+        sessionId: "session-1",
+        gitCommand: "git",
+        gitSource: "system",
+        gitVersion: "2.50.0",
+        gitIdentity: { name: "N", email: "e@x" },
       },
       options: expect.objectContaining({ signal: undefined }),
     }]);
   });
 
-  it("bundled git：附带 __gitIsolated 标记（环境隔离在 C# 侧设置）", async () => {
+  it("bundled git：附带 gitIsolated 标记（meta；环境隔离在 C# 侧设置）", async () => {
     nativeMocks.nativeResult = "已初始化 Git 仓库";
     const gitService = service({
       getExecutableInfo: vi.fn(async () => ({ command: "C:\\res\\mingit\\git.exe", source: "bundled" as const, version: "2.50.0" })),
@@ -127,23 +129,23 @@ describe("git native 轨接线", () => {
 
     await tool(gitService, "git_init").execute({}, codeContext());
 
-    expect(nativeMocks.calls[0].args.__gitIsolated).toBe(true);
-    expect(nativeMocks.calls[0].args.__gitCommand).toBe("C:\\res\\mingit\\git.exe");
+    expect(nativeMocks.calls[0].meta?.gitIsolated).toBe(true);
+    expect(nativeMocks.calls[0].meta?.gitCommand).toBe("C:\\res\\mingit\\git.exe");
   });
 
-  it("独立配置文件：开关开时注入 __gitConfigGlobal，关闭时不注入（IKJMO8）", async () => {
+  it("独立配置文件：开关开时注入 meta.gitConfigGlobal，关闭时不注入（IKJMO8）", async () => {
     nativeMocks.nativeResult = "已初始化 Git 仓库";
     const withConfig = service({ getDedicatedConfigPath: vi.fn(() => "C:\\data\\git\\config") });
     await tool(withConfig, "git_init").execute({}, codeContext());
-    expect(nativeMocks.calls[0].args.__gitConfigGlobal).toBe("C:\\data\\git\\config");
+    expect(nativeMocks.calls[0].meta?.gitConfigGlobal).toBe("C:\\data\\git\\config");
 
     nativeMocks.calls.length = 0;
     const withoutConfig = service();
     await tool(withoutConfig, "git_init").execute({}, codeContext());
-    expect(nativeMocks.calls[0].args.__gitConfigGlobal).toBeUndefined();
+    expect(nativeMocks.calls[0].meta?.gitConfigGlobal).toBeUndefined();
   });
 
-  it("信任边界：模型伪造 __ 内部参数被剥离（nativeFirst 统一下发路径）", async () => {
+  it("信任边界：模型伪造 __ 内部参数被剥离（args 不含 __；可信值只经 meta 下发）", async () => {
     nativeMocks.nativeResult = '{"ok":true}';
     const gitService = service();
 
@@ -152,10 +154,11 @@ describe("git native 轨接线", () => {
       codeContext(),
     );
 
-    const args = nativeMocks.calls[0].args;
-    expect(args.__gitCommand).toBe("git"); // 可信装配覆盖伪造值
-    expect(args.__cyreneRoot).toBe("C:\\trusted");
-    expect(args.__gitIsolated).toBeUndefined(); // system git 不注入隔离标记，伪造值被剥离
+    expect(nativeMocks.calls[0].args).toEqual({});
+    const meta = nativeMocks.calls[0].meta;
+    expect(meta?.gitCommand).toBe("git"); // 可信值只来自装配通道
+    expect(meta?.workspaceRoot).toBe("C:\\trusted");
+    expect(meta?.gitIsolated).toBeUndefined(); // system git 不注入隔离标记
   });
 
   it("host 不可用：回退 GitService（模型参数与可信上下文一致）", async () => {

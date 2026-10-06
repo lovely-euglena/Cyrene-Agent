@@ -43,6 +43,40 @@ export interface HostToolEvent {
   payload: unknown;
 }
 
+/**
+ * call 帧元数据（内部参数通道，IKJLP4）：与 args 分离的 per-call 可信字段，
+ * 模型不可见；只能由主进程可信装配注入（nativeFirst options.meta /
+ * withNativeFirst prepare 装配，或直连调用方显式传参）。
+ *
+ * 兼容性：宿主只读 meta——args 里的 `__` 旧键不再被宿主接受（明确不保留，
+ * 见 docs/dotnet-migration-decisions.md 2026-10-06 增量）；模型 args 中的
+ * `__` 键仍在进入 native 前统一剥离（信任边界，docs/pr-review-rules.md §2.3）。
+ */
+export interface NativeCallMeta {
+  /** 工具作用域根（原 `__cyreneRoot` / `__cyreneWorkspaceRoot` 统一字段）。 */
+  workspaceRoot?: string;
+  /** 会话 ID（git_status 输出）。 */
+  sessionId?: string;
+  /** git 可执行文件路径（GitService 可信来源）。 */
+  gitCommand?: string;
+  /** git 来源标识：system / bundled。 */
+  gitSource?: string;
+  /** git 版本号。 */
+  gitVersion?: string;
+  /** bundled git 环境隔离标记（C# 侧设 GIT_CONFIG_NOSYSTEM / GIT_CONFIG_GLOBAL=NUL）。 */
+  gitIsolated?: boolean;
+  /** 提交身份（设置 → Git 提交身份；C# 侧转 -c user.name/email）。 */
+  gitIdentity?: { name?: string; email?: string };
+  /** 独立 git 配置文件路径（IKJMO8；覆盖 GIT_CONFIG_GLOBAL）。 */
+  gitConfigGlobal?: string;
+  /** ast-grep CLI 可执行路径（TS 解析；找不到则 TS 走 napi）。 */
+  astGrepCommand?: string;
+  /** 两段式预检标记（apply_patch / str_replace：只匹配不落盘）。 */
+  dryRun?: boolean;
+  /** GitHub API 基址覆盖（fetch_url；生产不注入，矩阵测试用）。 */
+  githubApiBase?: string;
+}
+
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -59,6 +93,8 @@ interface QueuedCall {
   callId: string;
   tool: string;
   args: Record<string, unknown>;
+  /** call 帧元数据（内部参数通道）；undefined = 无内部参数（帧不含 meta）。 */
+  meta?: NativeCallMeta;
   timeoutMs: number;
   signal?: AbortSignal;
   resolve: (value: unknown) => void;
@@ -133,11 +169,11 @@ export interface NativeFirstOptions {
   /** 调用内事件回调（如 weather_card）：event 帧按 callId 路由；只有 native 轨会触发。 */
   onEvent?: (event: HostToolEvent) => void;
   /**
-   * 可信内部参数（`__` 前缀，docs/pr-review-rules.md §2.3）：nativeFirst 先剥离
-   * 模型 args 中的 `__` 键，再合并本字段下发宿主。模型/渲染层注入的内部参数
-   * 一律丢弃——内部参数只能经此通道由主进程可信装配注入。
+   * 可信内部参数（call 帧 meta 通道，IKJLP4）：nativeFirst 先剥离模型 args 中的
+   * `__` 键，再把本字段作为 meta 随 call 帧下发宿主（不再混入 args）。
+   * 模型/渲染层注入的内部参数一律丢弃——内部参数只能经此通道由主进程可信装配注入。
    */
-  internalArgs?: Record<string, unknown>;
+  meta?: NativeCallMeta;
   /**
    * native 轨失败（超时/进程故障/错误帧）时是否回退 TS，默认 true。
    * 副作用类工具（send_email）置 false：失败可能发生在「已执行但未收到确认」之后，
@@ -373,7 +409,7 @@ export class NativeToolHost {
     if (!entry) return;
 
     this.busy = true;
-    const { callId, tool, args, timeoutMs, signal, onEvent } = entry;
+    const { callId, tool, args, meta, timeoutMs, signal, onEvent } = entry;
     if (entry.onAbort && signal) signal.removeEventListener("abort", entry.onAbort);
 
     let done = false;
@@ -421,7 +457,8 @@ export class NativeToolHost {
     });
 
     try {
-      child.stdin!.write(`${JSON.stringify({ op: "call", callId, tool, args })}\n`);
+      // meta 为 undefined 时 JSON.stringify 省略该键（无内部参数的调用帧形状不变）
+      child.stdin!.write(`${JSON.stringify({ op: "call", callId, tool, meta, args })}\n`);
     } catch (error) {
       finish(() => entry.reject(error instanceof Error ? error : new Error(String(error))));
     }
@@ -432,15 +469,19 @@ export class NativeToolHost {
    * 拒绝（超时/进程故障）同样由调用方捕获后回退 TS；signal 中止时以
    * AbortError 拒绝——调用方必须原样上抛，不得回退重跑。
    *
-   * 信任边界：args 必须是「模型参数已剥离 `__` 键 + 可信内部参数」的最终装配结果
-   * （用 nativeFirst / withNativeFirst，或调用方自行 stripInternalArgs）；
-   * 模型/渲染层原始 args 不得直接传入。
+   * 信任边界：args 必须是「模型参数已剥离 `__` 键」的最终装配结果，且不得再包含
+   * 任何内部参数——内部参数只经 meta 字段下发（IKJLP4）；模型/渲染层原始 args
+   * 不得直接传入（直连调用方自行 stripInternalArgs 并显式传 meta）。
+   *
+   * meta：call 帧元数据（内部参数通道）；undefined = 帧不含 meta。
+   * onEvent：调用内事件回调（event 帧按 callId 路由）。
    */
   async call(
     tool: string,
     args: Record<string, unknown>,
     timeoutMs = 5000,
     signal?: AbortSignal,
+    meta?: NativeCallMeta,
     onEvent?: (event: HostToolEvent) => void,
   ): Promise<unknown | null> {
     if (signal?.aborted) throw createAbortError();
@@ -448,7 +489,7 @@ export class NativeToolHost {
     if (this.exited || !this.proc) return null;
     return new Promise<unknown>((resolve, reject) => {
       const callId = `t${++this.callSeq}`;
-      const entry: QueuedCall = { callId, tool, args, timeoutMs, signal, resolve, reject, onEvent };
+      const entry: QueuedCall = { callId, tool, args, meta, timeoutMs, signal, resolve, reject, onEvent };
       // 排队期间取消：直接摘除，不触达 host
       if (signal) {
         entry.onAbort = () => {
@@ -479,7 +520,7 @@ export const nativeToolHost = new NativeToolHost();
  * fallback 参数即原 TS execute 函数——双轨语义对齐由测试保证。
  * options.timeoutMs：按件看门狗（缺省 5s），长任务必须覆盖。
  * options.signal：父运行取消信号（AbortError 原样上抛，不回退重跑）。
- * options.internalArgs：可信 `__` 内部参数（唯一注入通道）；模型 args 里的 `__` 键先被剥离，
+ * options.meta：可信内部参数（call 帧 meta 通道，IKJLP4）；模型 args 里的 `__` 键先被剥离，
  *   TS 回退同样只拿剥离后的参数。
  */
 export async function nativeFirst(
@@ -488,17 +529,17 @@ export async function nativeFirst(
   fallback: (args: Record<string, unknown>) => Promise<string> | string,
   options: NativeFirstOptions = {},
 ): Promise<string> {
-  // 信任边界：模型 args 的 `__` 键一律剥离；可信内部参数只经 internalArgs 注入。
-  // TS 回退（零触达/失败/确定未执行）也统一只拿剥离后的参数（P2-6④ 口径一致）。
+  // 信任边界：模型 args 的 `__` 键一律剥离；可信内部参数只经 options.meta 下发
+  // （IKJLP4：meta 为 call 帧独立字段，不混入 args）。TS 回退（零触达/失败/
+  // 确定未执行）同样只拿剥离后的参数（P2-6④ 口径一致）。
   const cleanArgs = stripInternalArgs(args);
   // CYRENE_TOOL_HOST=0：所有接线方式（含裸 nativeFirst 工具）统一零触达
   if (!resolveDotnetConfig().toolHost) return fallback(cleanArgs);
   if (options.signal?.aborted) throw createAbortError();
-  const nativeArgs = options.internalArgs
-    ? { ...cleanArgs, ...options.internalArgs }
-    : cleanArgs;
   try {
-    const result = await nativeToolHost.call(tool, nativeArgs, options.timeoutMs, options.signal, options.onEvent);
+    const result = await nativeToolHost.call(
+      tool, cleanArgs, options.timeoutMs, options.signal, options.meta, options.onEvent,
+    );
     if (result !== null) {
       return typeof result === "string" ? result : JSON.stringify(result);
     }
@@ -523,7 +564,7 @@ export async function nativeFirst(
     // 仅限确定未执行（排队未派发 / safeFallbackCodes 命中的前置失败）
     console.warn(LOG_PREFIX, `native 轨失败回退 TS（${tool}）:`, failure.message);
   }
-  return fallback(nativeArgs);
+  return fallback(cleanArgs);
 }
 
 /** 判定宿主输出是否为"成功载荷里的业务失败"（C# Err(...) JSON）——是则调用方回退 TS 拿原错误语义。 */
@@ -543,13 +584,18 @@ export function isNativeFailurePayload(text: string): boolean {
  * prepare 返回 native 调用参数；返回 null 表示"不触达 native"（校验不通过或 host 不可用），
  * 直接走 TS 原实现产出语义一致的错误/结果。prepare 内抛出的语义拒绝（如覆盖防骤降）
  * 原样上抛，不回退重跑副作用。模型 args 中的 `__` 键在进入 prepare 前统一剥离
- * （信任边界 §2.3），可信内部参数只能由 prepare 自行装配；TS 回退同样只拿
- * 剥离后的 args（不再向 TS 实现透传模型伪造的 `__` 键）。
+ * （信任边界 §2.3）；可信内部参数由 prepare 写入第三参 meta 对象（IKJLP4：随 call
+ * 帧独立字段下发、不混入 args）；TS 回退同样只拿剥离后的 args（不再向 TS 实现
+ * 透传模型伪造的 `__` 键）。prepare 未写入 meta 时调用帧不含 meta 键。
  */
 export function withNativeFirst(
   tool: ToolDefinition,
   nativeTool: string,
-  prepare: (args: Record<string, unknown>, ctx?: ToolContext) => Record<string, unknown> | null,
+  prepare: (
+    args: Record<string, unknown>,
+    ctx: ToolContext | undefined,
+    meta: NativeCallMeta,
+  ) => Record<string, unknown> | null,
   timeoutMs?: number,
 ): ToolDefinition {
   const tsExecute = tool.execute.bind(tool);
@@ -560,10 +606,13 @@ export function withNativeFirst(
       // native 失败）统一只拿剥离后的参数，口径与 nativeFirst 一致（P2-6④）
       const cleanArgs = stripInternalArgs(args);
       if (!resolveDotnetConfig().toolHost) return tsExecute(cleanArgs, ctx);
-      const nativeArgs = prepare(cleanArgs, ctx);
+      const meta: NativeCallMeta = {};
+      const nativeArgs = prepare(cleanArgs, ctx, meta);
       if (nativeArgs === null) return tsExecute(cleanArgs, ctx);
       try {
-        const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal);
+        // 空 meta（prepare 未装配内部参数）不下发，保持调用帧形状
+        const metaFrame = Object.keys(meta).length > 0 ? meta : undefined;
+        const result = await nativeToolHost.call(nativeTool, nativeArgs, timeoutMs, ctx?.signal, metaFrame);
         if (result !== null) {
           const text = typeof result === "string" ? result : JSON.stringify(result);
           if (!isNativeFailurePayload(text)) return text;

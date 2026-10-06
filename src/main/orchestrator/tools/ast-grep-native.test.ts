@@ -27,7 +27,7 @@ vi.mock("electron", () => ({
 }));
 
 const h = vi.hoisted(() => ({
-  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number }>,
+  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number; meta?: Record<string, unknown> }>,
   nativeResults: [] as Array<string | null>,
   nativeError: null as Error | null,
 }));
@@ -55,8 +55,8 @@ beforeEach(() => {
   h.nativeResults = [];
   h.nativeError = null;
   vi.spyOn(nativeToolHost, "call").mockImplementation(
-    async (tool: string, args: Record<string, unknown>, timeoutMs?: number) => {
-      h.nativeCalls.push({ tool, args, timeoutMs });
+    async (tool: string, args: Record<string, unknown>, timeoutMs?: number, _signal?: AbortSignal, meta?: Record<string, unknown>) => {
+      h.nativeCalls.push({ tool, args, timeoutMs, meta });
       if (h.nativeError) throw h.nativeError;
       return h.nativeResults.shift() ?? null;
     },
@@ -84,7 +84,7 @@ describe("resolveAstGrepCommand 打包态路径（P1-1）", () => {
 });
 
 describe("ast_grep native 轨", () => {
-  it("search：注入工作区根 + CLI 路径，看门狗 60s，结果透传", async () => {
+  it("search：meta 注入工作区根 + CLI 路径，看门狗 60s，结果透传", async () => {
     expect(CLI).not.toBeNull(); // 依赖已安装（CI pnpm install 含平台可选包）；null 说明解析链断了
     if (!CLI) return; // 平台包缺失环境跳过（走 TS）
     h.nativeResults = [JSON.stringify({ success: true, matchCount: 1, matches: [] })];
@@ -96,8 +96,8 @@ describe("ast_grep native 轨", () => {
     expect(h.nativeCalls).toHaveLength(1);
     expect(h.nativeCalls[0].tool).toBe("ast_grep_search");
     expect(h.nativeCalls[0].timeoutMs).toBe(60_000);
-    expect(h.nativeCalls[0].args.__cyreneWorkspaceRoot).toBe(tmpDir);
-    expect(h.nativeCalls[0].args.__astGrepCommand).toBe(CLI);
+    expect(h.nativeCalls[0].meta?.workspaceRoot).toBe(tmpDir);
+    expect(h.nativeCalls[0].meta?.astGrepCommand).toBe(CLI);
     expect(h.nativeCalls[0].args.pattern).toBe("console.log($$$A)");
   });
 
@@ -111,6 +111,7 @@ describe("ast_grep native 轨", () => {
     expect(JSON.parse(out).dryRun).toBe(true);
     expect(h.nativeCalls).toHaveLength(1);
     expect(h.nativeCalls[0].args.rewrite).toBe("logger.info($A)");
+    expect(h.nativeCalls[0].meta?.workspaceRoot).toBe(tmpDir);
   });
 
   it("replace 正式写入（runId 存在）：先预演拿变更清单，再正式调用", async () => {
@@ -146,8 +147,10 @@ describe("ast_grep native 轨", () => {
       { resolvedWorkspaceRoot: tmpDir },
     );
     expect(h.nativeCalls[0].args.__modelForgedInternal).toBeUndefined();
-    expect(h.nativeCalls[0].args.__astGrepCommand).toBe(CLI);
-    expect(h.nativeCalls[0].args.__cyreneWorkspaceRoot).toBe(tmpDir);
+    expect(h.nativeCalls[0].args).not.toHaveProperty("__astGrepCommand");
+    expect(h.nativeCalls[0].args).not.toHaveProperty("__cyreneWorkspaceRoot");
+    expect(h.nativeCalls[0].meta?.astGrepCommand).toBe(CLI);
+    expect(h.nativeCalls[0].meta?.workspaceRoot).toBe(tmpDir);
   });
 
   it("校验失败（空 pattern）：不触达 native，返回 TS 语义错误", async () => {
