@@ -2,7 +2,8 @@
  * 云端同步 · 状态（IKJK2I）。
  *
  * 契约（设计稿附录 A）：{schemaVersion:1, deviceId, lamport, seq, fetchCursor, pushedCount,
- * serverDeviceId, conversations, updatedAt}；load 对缺失 / 损坏做恢复，save 原子写（tmp+rename）。
+ * serverDeviceId, conversations, updatedAt}；load 对缺失（outbox 非空时按事件库恢复）/ 损坏
+ * 做恢复，save 原子写（tmp+rename）；load / save 入口清理崩溃遗留的陈旧 tmp。
  */
 
 import { randomBytes } from "node:crypto";
@@ -57,14 +58,16 @@ export function createSyncState(): SyncState {
 }
 
 /**
- * 读取状态：
- * - 缺失 → 新建（生成设备身份）并落盘，保证身份稳定；
- * - 损坏（JSON / 形状非法）→ 隔离重命名为 `state.json.corrupt-<ts>`，
- *   再按事件库恢复（deviceId 取 outbox 首个事件、lamport 取两库最大值、
- *   seq 取 outbox 最大值、会话水位清空由 eventId 去重兜底；标题修订 / 上次标题
- *   从 outbox 的 `screate:<cid>:r<n>` 推导，避免恢复后首次改名被去重吞并），并落盘。
+ * 读取状态（入口先清理崩溃遗留的陈旧 `state.json.*.tmp`，见 cleanupStaleTmpFiles）：
+ * - 缺失且 outbox 非空 → 按事件库恢复并落盘（P2-3）：state.json 被删 / 首写崩溃时若直接
+ *   新建，会重生成 deviceId（身份漂移）且 conversations 清零，使首个改名重算 r1 被
+ *   eventId 去重静默吞并；复用 recoverStateFromStore 推导身份 / 时钟 / 标题水位；
+ * - 缺失且 outbox 为空 → 新建（生成设备身份）并落盘，保证身份稳定（无本地事件可碰撞，
+ *   保持原行为不回归）；
+ * - 损坏（JSON / 形状非法）→ 隔离重命名为 `state.json.corrupt-<ts>`，再按事件库恢复。
  */
 export async function loadSyncState(syncDir: string): Promise<SyncState> {
+  await cleanupStaleTmpFiles(syncDir);
   const file = path.join(syncDir, STATE_FILE_NAME);
   let raw: string | undefined;
   try {
@@ -80,20 +83,60 @@ export async function loadSyncState(syncDir: string): Promise<SyncState> {
     await saveSyncState(syncDir, recovered);
     return recovered;
   }
+  // outbox 与恢复共用同一份事件（避免二次读取）；无有效事件视同全新开始。
+  const local = await readEventFile(path.join(syncDir, LOCAL_EVENTS_FILE_NAME));
+  if (local.length > 0) {
+    const recovered = await recoverStateFromStore(syncDir, local);
+    await saveSyncState(syncDir, recovered);
+    return recovered;
+  }
   const created = createSyncState();
   await saveSyncState(syncDir, created);
   return created;
 }
 
-/** 原子写：先写同目录临时文件再 rename，避免崩溃留下半写状态；updatedAt 刷新为写入时刻。 */
+/**
+ * 原子写：先写同目录临时文件再 rename，避免崩溃留下半写状态；updatedAt 刷新为写入时刻。
+ * 入口清理陈旧 tmp：崩溃孤儿 `state.json.<pid>.<hex>.tmp` 不会永久堆积。
+ */
 export async function saveSyncState(syncDir: string, state: SyncState): Promise<void> {
   state.updatedAt = new Date().toISOString();
   await fs.promises.mkdir(syncDir, { recursive: true });
+  await cleanupStaleTmpFiles(syncDir);
   const file = path.join(syncDir, STATE_FILE_NAME);
   // 临时名带 pid + 随机后缀：pair/unpair 与在途轮次并发保存时互不覆盖。
   const tmpFile = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   await fs.promises.writeFile(tmpFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   await fs.promises.rename(tmpFile, file);
+}
+
+/**
+ * 陈旧 tmp 判定阈值：保存的 write + rename 在毫秒级，1 小时窗口足以避开任何在途保存
+ * （含跨进程双实例并发），崩溃孤儿最迟在下一轮 load / save 被清掉。
+ */
+const STALE_TMP_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * 清理崩溃遗留的 `state.json.<pid>.<hex>.tmp`（load / save 入口调用）。
+ * 只删 mtime 超过阈值的文件：并发保存中的 tmp 必然新鲜，不会被误删；
+ * best-effort——目录不存在 / 文件刚被并发 rename 走均忽略，不阻塞状态读写。
+ */
+async function cleanupStaleTmpFiles(syncDir: string): Promise<void> {
+  const now = Date.now();
+  try {
+    for (const entry of await fs.promises.readdir(syncDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.startsWith(`${STATE_FILE_NAME}.`) || !entry.name.endsWith(".tmp")) continue;
+      const target = path.join(syncDir, entry.name);
+      try {
+        const stat = await fs.promises.stat(target);
+        if (now - stat.mtimeMs >= STALE_TMP_MAX_AGE_MS) await fs.promises.unlink(target);
+      } catch {
+        // 与并发保存竞争（刚被 rename / unlink）：忽略，后续入口再清理。
+      }
+    }
+  } catch {
+    // 目录不存在 / 不可读：交由后续读写路径按既有语义处理。
+  }
 }
 
 /** 形状校验：任何字段非法都视为损坏（fail-closed，走隔离恢复而不是带病使用）。 */
@@ -136,10 +179,20 @@ async function quarantineCorruptState(file: string): Promise<void> {
   await fs.promises.rename(file, `${file}.corrupt-${Date.now()}`);
 }
 
-/** 损坏恢复：从 outbox / inbox 事件推导协议身份与时钟水位，会话水位清空重扫。 */
-async function recoverStateFromStore(syncDir: string): Promise<SyncState> {
+/**
+ * 事件库恢复（损坏隔离 / state.json 缺失且 outbox 非空共用）：从 outbox / inbox 事件推导
+ * 协议身份与时钟水位，会话水位清空重扫。可推导字段：
+ * - deviceId：outbox 规范序首事件（保证重入后事件流身份连续，不重生成 desk-*）；
+ * - lamport：local + remote 最大值（后续分配不回退）；seq：outbox 最大值
+ *   （避免重置后与旧事件流撞车——服务端按 (session, device) 校验 seq 严格递增）；
+ * - conversations 的 titleRevision / lastTitle：outbox 的 `screate:<cid>:r<n>`。
+ * 不可推导字段取默认值（outbox 无服务器侧记录）：fetchCursor=null → 走初次 clone、
+ * pushedCount=0 → 全量重推，两者按 eventId 幂等去重不产生重复；serverDeviceId=null
+ * 仅影响面板展示，重新配对后恢复。
+ */
+async function recoverStateFromStore(syncDir: string, preloadedLocal?: SyncEventV0[]): Promise<SyncState> {
   const [local, remote] = await Promise.all([
-    readEventFile(path.join(syncDir, LOCAL_EVENTS_FILE_NAME)),
+    preloadedLocal ?? readEventFile(path.join(syncDir, LOCAL_EVENTS_FILE_NAME)),
     readEventFile(path.join(syncDir, REMOTE_EVENTS_FILE_NAME)),
   ]);
   const state = createSyncState();
