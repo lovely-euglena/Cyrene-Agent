@@ -129,8 +129,9 @@ export function createSyncExporter(deps: SyncExporterDeps): SyncExporter {
               if (entry.payload.visibility === "internal") break; // 内部消息不上云
               const text = contentToText(entry.payload.content);
               if (text.length === 0) break; // 空文本不产生空气泡
-              // presentation 目标 = UI 消息 id（turnId ?? entry.id，设计 §2.2）。
-              const presentation = presentations.get(entry.turnId ?? entry.id);
+              // presentation 按别名查找：UI 消息 id 为 turnId ?? entry.id（设计 §2.2），
+              // 但渠道等写入路径以 assistant entry id 键控补丁（dispatcher getLastAssistantEntryId）。
+              const presentation = lookupPresentation(presentations, entry.id, entry.turnId);
               const patch = presentation ? filterPresentationPatch(presentation.patch) : undefined;
               if (allocate(session.id, entry.id, "message.append", ts, {
                 role: "assistant",
@@ -216,6 +217,33 @@ function collectPresentations(entries: TranscriptEntry[]): Map<string, Presentat
     });
   }
   return presentations;
+}
+
+/**
+ * 按别名查找 presentation 快照：assistant 的 UI 消息 id 为 `turnId ?? entry.id`，
+ * 而渠道等写入路径以 entry id 键控补丁（dispatcher 的 getLastAssistantEntryId）。
+ * 对齐投影层别名语义（conversation-transcript-projection 的 byAlias：entryId 与
+ * turnId 指向同一 UI 消息）：两个别名都查；命中多处时按 (patchRevision, seq) 取新者
+ * 为基准、旧者并入，与逐键合并的语义一致。
+ */
+function lookupPresentation(
+  presentations: Map<string, PresentationSnapshot>,
+  entryId: string,
+  turnId: string | undefined,
+): PresentationSnapshot | undefined {
+  const byEntryId = presentations.get(entryId);
+  const byTurnId = turnId ? presentations.get(turnId) : undefined;
+  if (!byEntryId) return byTurnId;
+  if (!byTurnId || byEntryId === byTurnId) return byEntryId;
+  const entryIsNewer = byEntryId.patchRevision > byTurnId.patchRevision ||
+    (byEntryId.patchRevision === byTurnId.patchRevision && byEntryId.seq >= byTurnId.seq);
+  const newer = entryIsNewer ? byEntryId : byTurnId;
+  const older = entryIsNewer ? byTurnId : byEntryId;
+  return {
+    patchRevision: newer.patchRevision,
+    seq: newer.seq,
+    patch: mergePresentationPatch(older.patch, newer.patch),
+  };
 }
 
 /** 协议白名单过滤（设计 §2.2）：仅保留 SYNC_PRESENTATION_PATCH_KEYS 键；空则整体省略。 */

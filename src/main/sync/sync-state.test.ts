@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SyncEventV0 } from "./sync-protocol";
 import { createSyncState, loadSyncState, saveSyncState } from "./sync-state";
 
@@ -125,6 +125,51 @@ describe("sync-state", () => {
     expect(recovered.deviceId).toMatch(/^desk-[0-9a-f]{12}$/);
     expect(recovered.lamport).toBe(42);
     expect(recovered.seq).toBe(0);
+  });
+
+  it("损坏恢复：从 outbox 的 screate:<cid>:r<n> 推导标题修订与上次标题", async () => {
+    const dir = makeDir("cyrene-sync-state-");
+    const createdAt = "2026-10-06T00:00:00.000Z";
+    writeJsonl(path.join(dir, "events-local.jsonl"), [
+      event({ eventId: "screate:s1:r1", type: "session.create", lamport: 1, seq: 0, payload: { title: "旧名", createdAt } }),
+      event({ eventId: "screate:s1:r3", type: "session.create", lamport: 2, seq: 0, payload: { title: "新名", createdAt } }),
+      event({ eventId: "screate:s2:r2", type: "session.create", lamport: 3, seq: 0, sessionId: "s2", payload: { title: "二号", createdAt } }),
+      // 乱序的较低修订不覆盖最大值；信封 sessionId 与 eventId 不一致不采信。
+      event({ eventId: "screate:s1:r2", type: "session.create", lamport: 4, seq: 0, payload: { title: "中间名", createdAt } }),
+      event({ eventId: "screate:s9:r9", type: "session.create", lamport: 5, seq: 0, payload: { title: "幽灵", createdAt } }),
+    ]);
+    fs.writeFileSync(path.join(dir, "state.json"), "{ 这不是 JSON", "utf8");
+
+    const recovered = await loadSyncState(dir);
+    expect(recovered.conversations).toEqual({
+      s1: { exportedThroughSeq: 0, titleRevision: 3, lastTitle: "新名" },
+      s2: { exportedThroughSeq: 0, titleRevision: 2, lastTitle: "二号" },
+    });
+  });
+
+  it("并发保存：临时文件名含随机后缀互不覆盖，仅留最终 state.json", async () => {
+    const dir = makeDir("cyrene-sync-state-");
+    const sources: string[] = [];
+    const realRename = fs.promises.rename;
+    const spy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      sources.push(String(from));
+      return realRename(from, to);
+    });
+    try {
+      const first = createSyncState();
+      first.lamport = 1;
+      const second = createSyncState();
+      second.lamport = 2;
+      await Promise.all([saveSyncState(dir, first), saveSyncState(dir, second)]);
+    } finally {
+      spy.mockRestore();
+    }
+    // 两次保存的临时文件路径必须不同，避免 pair/unpair 与在途轮次互踩。
+    expect(sources).toHaveLength(2);
+    expect(sources[0]).not.toBe(sources[1]);
+    expect(fs.readdirSync(dir)).toEqual(["state.json"]);
+    const loaded = await loadSyncState(dir);
+    expect([1, 2]).toContain(loaded.lamport);
   });
 
   it("形状非法（schemaVersion / conversations 损坏）同样隔离恢复", async () => {
