@@ -846,3 +846,27 @@
   cancel 帧留待长任务迁移批次（#IKJK3V 前置）；若生产观测到排空窗口内频繁触发
   兜底 kill，再评估窗口调参 / 连续失败阈值。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJLP2。
+
+## 2026-10-07 增量：桌面端 ↔ cloud-server 真实直连冒烟——动态 import() 打包态修复
+
+- **背景（真连暴露）**：发行版 c2s 冒烟（打包应用 + 本地 cloud-server：配对 → 启用 →
+  syncNow）发现同步立即失败：`Cannot find module '...app.asar\dist\main\main\chats\chats-store'`。
+  根因：主进程 esbuild 产物保留动态 `import()`（`bundle:false`），而打包态（asar）内
+  Node ESM loader 不可用——相对无扩展名 → `ERR_MODULE_NOT_FOUND`；带扩展名 asar 路径
+  → `ERR_UNSUPPORTED_ESM_URL_SCHEME`（Electron 自身实验判定）。同批受影响：index.ts
+  keyring 初始化（被 try/catch 静默吞掉，仅 debug 日志可见）等 **~30 处运行时动态导入**
+  （sync 导出器 / 文档工具 exceljs·docx·pdfkit / RAG / sandbox / skills 等）。
+- **修复**：`scripts/build/desktop-typescript.mjs` 加
+  `supported: { "dynamic-import": false }` → 统一编译为
+  `Promise.resolve().then(() => __toESM(require(...)))`（CJS + asar 补丁路径，与静态导入一致）；
+  构建期加回归断言：编译产物残留动态 `import()` 直接构建失败。
+- **验证（2026-10-07，Windows 本机，打包应用 + 本地 cloud-server 真实直连）**：
+  配对 ok（`desk-*` ↔ `dev_*`）；**push**：客户端导出 2 事件（screate + migration
+  canonical）→ 服务端 fetch 一致（lamport/seq/deviceId 全对）；**fetch**：服务端注入
+  assistant 事件（deviceId=server）→ 客户端 `remoteEventCount=1`、`events-remote.jsonl`
+  落盘、state lamport/cursor 推进；**合并读模型**：`CHATS_GET` 返回本地消息 + 远端回执
+  （`role:"model"`）；keyring 初始化异常消失。
+- **冒烟方法（未入库，可复用）**：临时 userData 预置 v1 会话种子（index.json 必须为数组）
+  → `--user-data-dir` 启动打包应用（迁移防护生效，不碰真实数据）→ CDP 驱动
+  `window.settings.syncPair/syncSaveConfig/syncNow`。
+
