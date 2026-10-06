@@ -141,6 +141,8 @@ export interface NativeFirstOptions {
    * 「已放弃在途」等迟到结果帧排空后再派发后续调用，排队调用不因当次超时被
    * 连带拒绝；兜底窗口 max(timeoutMs, 5s) 到期仍无结果才杀 host 收敛（排队
    * 调用按 E_TOOL_NOT_DISPATCHED sentinel 安全回退，与默认语义一致）。
+   * 排空窗口取消语义：当次在超时即已结算，之后不再响应取消（abort 监听随结算
+   * 移除；被放弃的只读执行最多跑到排空兜底为止）；排队调用的取消仍即时生效。
    * 副作用类调用必须维持默认杀进程语义：native 完成与 TS 回退并发会重复副作用。
    */
   abandonOnTimeout?: boolean;

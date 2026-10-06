@@ -322,10 +322,12 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
       expect.stringContaining("[ToolHost]"),
       expect.stringContaining("结果帧到达（丢弃）"),
     );
+    expect(vi.getTimerCount()).toBe(1); // 兜底计时器已清除（仅剩 read_file 看门狗）
 
     child.stdout.write(`${JSON.stringify({ op: "result", callId: "t2", ok: true, data: "ok2" })}\n`);
     await expect(second).resolves.toBe("ok2");
     expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0); // 排空完成路径无计时器遗留
 
     warnSpy.mockRestore();
     vi.useRealTimers();
@@ -386,10 +388,41 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
     // host 崩溃退出：排空标记随之清除，排队调用确定性回退
     child.emit("exit", 1, null);
     await expect(secondErr).resolves.toBeInstanceOf(NativeCallNotDispatchedError);
+    expect(vi.getTimerCount()).toBe(0); // 兜底计时器已随退出清除（直接断言，不依赖兜底守卫）
 
     // 排空兜底计时器已清除：远超窗口也不会再触发 kill
     await vi.advanceTimersByTimeAsync(10_000);
     expect(child.kill).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("排空窗口内取消：当次已结算不再杀 host，排队调用按既有逻辑摘除", async () => {
+    vi.useFakeTimers();
+    const { host, child } = startHost();
+    const controller = new AbortController();
+
+    const first = host.call("search_text", { query: "x" }, 50, undefined, undefined, true);
+    const second = host.call("read_file", { path: "C:\\a.txt" }, undefined, controller.signal);
+    const firstErr = first.catch((error: Error) => error);
+    const secondErr = second.catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    ready(child);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(50); // 进入排空窗口（当次已结算）
+    await expect(firstErr).resolves.toBeInstanceOf(Error);
+
+    // 排队调用取消：摘除 + AbortError；不触达 host、不杀进程（父运行取消不影响已放弃的只读调用）
+    controller.abort();
+    await expect(secondErr).resolves.toMatchObject({ name: "AbortError" });
+    expect(child.kill).not.toHaveBeenCalled();
+
+    // 迟到结果到达、排空完成；队列已空 → 无新帧、无杀进程、无计时器遗留
+    child.stdout.write(`${JSON.stringify({ op: "result", callId: "t1", ok: true, data: "late" })}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
 
     vi.useRealTimers();
   });
