@@ -1,6 +1,6 @@
 # 桌面端云接线（IKJK2I）——CTA 导出器 · 存量迁移 · 重放物化视图 · 同步客户端
 
-> 状态：设计定稿（2026-10-06）· 里程碑「云端昔涟：不落」Phase 1 收尾 · 关联 issue IKJK2I
+> 状态：**已实施**（2026-10-06，IKJK2I；五簇并行交付 + 集成终验）· 里程碑「云端昔涟：不落」Phase 1 收尾 · 关联 issue IKJK2I
 > 关联：RFC `2026-10-03-cloud-cyrene-rfc.md`（§1 客户端 / §4 时序 / **Q4 本稿拍板**）·
 > 协议 `docs/specs/2026-10-04-sync-protocol-v0.md`（v0/v0.1）· PWA `2026-10-04-pwa-mobile-client-design.md` ·
 > 服务端契约 `dotnet/cloud-server/README.md` · 渠道 `2026-10-05-server-channel.md`（remote 复用约定）·
@@ -213,6 +213,7 @@
 
 - `CYRENE_SYNC_DRY_RUN=1 CYRENE_SYNC_DRY_RUN_USERDATA=<真实 userData> npx vitest run src/main/sync/export-dry-run.manual.test.ts`：默认 skip；输出会话 / 事件计数与样例，不写盘；
 - 真机（人工）：启用同步 → 手机打开桌面历史（收敛）→ 手机发送 → 桌面聊天页出现（合并读模型）→ 桌面回复 → 手机可见。
+- **未实测面**：真机冒烟待人工执行；本机真实 userData 为旧布局（无 `cyrene-chats/index.json`），dry-run 优雅跳过——已与实测口径一并登记于决策记录。
 
 **验收映射**
 
