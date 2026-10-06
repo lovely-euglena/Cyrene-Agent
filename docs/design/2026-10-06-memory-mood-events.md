@@ -1,6 +1,6 @@
 # 记忆与心情事件化（IKJK2O）——事件类型 · 重放规则 · 冲突演练
 
-> 状态：设计定稿（2026-10-06）· 里程碑「云端昔涟：不落」Phase 2 · 关联 issue IKJK2O
+> 状态：**已实施**（协议层，2026-10-06，IKJK2O；桌面接线 IKJK2I、L0/L1 不同步见 §0）· 里程碑「云端昔涟：不落」Phase 2 · 关联 issue IKJK2O
 > 契约扩展：同步协议 v0 → **v0.1**（`docs/specs/2026-10-04-sync-protocol-v0.md` 修订；本批 +`memory.write` / `mood.shift`）
 > 前置：IKJK2H（v0 四类事件双端契约）；接线：IKJK2I（桌面导出器 / 物化视图，本批不做）
 
