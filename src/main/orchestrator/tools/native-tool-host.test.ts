@@ -502,6 +502,155 @@ describe("超时轻量隔离（abandonOnTimeout）", () => {
   });
 });
 
+// ── 启动失败清理与失败缓存（IKJSNB）────────────────────────
+
+describe("启动失败清理与失败缓存（IKJSNB）", () => {
+  beforeEach(() => {
+    mocks.spawn.mockReset();
+    mocks.resolveNativeWindowsExe.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("ready 超时：kill 子进程 + 清理 waiter；迟到 ready 不误唤醒下一次启动", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, child } = startHost();
+
+    const first = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(first).resolves.toBe(false);
+    expect(child.kill).toHaveBeenCalledTimes(1); // 超时失败必须杀子进程（不留孤儿）
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("启动失败"),
+      expect.stringContaining("启动超时"),
+    );
+
+    // 失败缓存窗口内（30s）：不再 spawn，直接 false（call 静默回退 TS）
+    await expect(host.ensureStarted()).resolves.toBe(false);
+    await expect(host.call("search_text", { query: "x" })).resolves.toBeNull();
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+
+    // 窗口过后：允许重试 spawn（自愈）
+    await vi.advanceTimersByTimeAsync(30_000);
+    const second = new FakeChild();
+    mocks.spawn.mockReturnValue(second);
+    const retry = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+
+    // 旧实例迟到 ready：不得唤醒新实例的启动 waiter（否则新实例就绪前即返回 true）
+    child.stdout.write('{"op":"ready"}\n');
+    await vi.advanceTimersByTimeAsync(0);
+    let settled = false;
+    void retry.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+
+    ready(second);
+    await expect(retry).resolves.toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("启动即退出：失败缓存窗口内不重复 spawn，窗口后允许重试", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, child } = startHost();
+
+    const first = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    child.emit("exit", 1, null);
+    await expect(first).resolves.toBe(false);
+
+    await expect(host.ensureStarted()).resolves.toBe(false);
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    const second = new FakeChild();
+    mocks.spawn.mockReturnValue(second);
+    const retry = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    ready(second);
+    await expect(retry).resolves.toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("spawn 同步异常：返回 false 并进入失败缓存（不反复 spawn）", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.spawn.mockImplementation(() => { throw new Error("spawn EINVAL"); });
+    const host = new NativeToolHost();
+
+    await expect(host.ensureStarted()).resolves.toBe(false);
+    await expect(host.ensureStarted()).resolves.toBe(false);
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+
+    // 窗口过后允许重试（仍失败则重新计窗）
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(host.ensureStarted()).resolves.toBe(false);
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
+  });
+
+  it("spawn 异步错误：按启动失败收尾（kill + 失败缓存），不干等 3s 超时", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, child } = startHost();
+
+    const first = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    child.emit("error", new Error("spawn ENOENT"));
+
+    await expect(first).resolves.toBe(false);
+    expect(child.kill).toHaveBeenCalledTimes(1); // 失败收尾必须杀子进程
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[ToolHost]"),
+      expect.stringContaining("host 进程错误"),
+      "spawn ENOENT",
+    );
+
+    // 失败缓存生效：窗口内不重复 spawn
+    await expect(host.ensureStarted()).resolves.toBe(false);
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it("成功启动清缓存：运行期崩溃后立即允许监督重启（不被旧失败缓存拖住）", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host } = startHost();
+
+    // 首次启动超时失败
+    const first = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(first).resolves.toBe(false);
+
+    // 窗口后重试成功
+    await vi.advanceTimersByTimeAsync(30_000);
+    const second = new FakeChild();
+    mocks.spawn.mockReturnValue(second);
+    const retry = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    ready(second);
+    await expect(retry).resolves.toBe(true);
+
+    // 运行期崩溃：缓存已清，下次 ensureStarted 立即拉起（进程监督语义不退化）
+    second.emit("exit", 1, null);
+    const third = new FakeChild();
+    mocks.spawn.mockReturnValue(third);
+    const restart = host.ensureStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.spawn).toHaveBeenCalledTimes(3);
+    ready(third);
+    await expect(restart).resolves.toBe(true);
+    warnSpy.mockRestore();
+  });
+});
+
 // ── 信任边界（P0，docs/pr-review-rules.md §2.3）────────────
 
 describe("nativeFirst 信任边界（__ 内部参数）", () => {
