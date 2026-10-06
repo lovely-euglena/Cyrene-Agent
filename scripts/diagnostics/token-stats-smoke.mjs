@@ -12,6 +12,8 @@ const root = process.cwd();
 const exeName = process.platform === "win32" ? "cyrene-token.exe" : "cyrene-token";
 const exe = [
   process.env.CYRENE_TOKEN_EXE,
+  // 随包发布产物优先：非 RID 的 bin/Release 可能是陈旧构建
+  path.join(root, "dotnet", "token-stats", "bin", "Release", "net10.0", "win-x64", "publish", exeName),
   path.join(root, "dotnet", "token-stats", "bin", "Release", "net10.0", exeName),
   path.join(root, "dotnet", "token-stats", "bin", "Debug", "net10.0", exeName),
 ].find((candidate) => candidate && fs.existsSync(candidate));

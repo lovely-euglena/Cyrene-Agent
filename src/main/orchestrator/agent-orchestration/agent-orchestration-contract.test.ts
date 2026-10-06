@@ -18,7 +18,7 @@ import {
 } from "./protocol";
 
 const orchestratorCs = fs.readFileSync(
-  fileURLToPath(new URL("../../../../dotnet/native-windows/Agents/AgentOrchestrator.cs", import.meta.url)),
+  fileURLToPath(new URL("../../../../dotnet/cyrene-core/Agents/AgentOrchestrator.cs", import.meta.url)),
   "utf8",
 );
 const programCs = fs.readFileSync(

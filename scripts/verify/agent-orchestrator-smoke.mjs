@@ -23,8 +23,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const candidates = [
-  path.join(repoRoot, "dotnet/native-windows/bin/Debug/net10.0-windows/cyrene-native.exe"),
+  // 随包发布产物优先：非 RID 的 bin/Release 可能是陈旧构建
+  path.join(repoRoot, "dotnet/native-windows/bin/Release/net10.0-windows/win-x64/publish/cyrene-native.exe"),
   path.join(repoRoot, "dotnet/native-windows/bin/Release/net10.0-windows/cyrene-native.exe"),
+  path.join(repoRoot, "dotnet/native-windows/bin/Debug/net10.0-windows/cyrene-native.exe"),
 ];
 const exe = candidates.find((candidate) => fs.existsSync(candidate));
 if (!exe) {

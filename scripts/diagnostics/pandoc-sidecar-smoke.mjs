@@ -23,9 +23,10 @@ function firstExisting(candidates) {
 
 const sidecarExe = firstExisting([
   process.env.CYRENE_EMBED_EXE,
+  // 随包发布产物优先：非 RID 的 bin/Release 可能是陈旧构建（实测踩坑）
+  path.join(root, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", "win-x64", "publish", exeName),
   path.join(root, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", exeName),
   path.join(root, "dotnet", "embedding-sidecar", "bin", "Debug", "net10.0", exeName),
-  path.join(root, "dotnet", "embedding-sidecar", "bin", "Release", "net10.0", "win-x64", "publish", exeName),
 ]);
 if (!sidecarExe) {
   console.error("[FAIL] 找不到 cyrene-embed，可先 dotnet build -c Release dotnet/embedding-sidecar");

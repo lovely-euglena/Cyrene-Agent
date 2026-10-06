@@ -8,7 +8,7 @@
  *
  * 用法：node scripts/ensure-win-natives.mjs   （exit 1 = 有缺失）
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,19 +23,33 @@ const NATIVES = [
 const missing = [];
 for (const [main, variant] of NATIVES) {
   const variantDir = join(root, "node_modules", ...variant.split("/"));
-  if (!existsSync(variantDir)) {
-    let ver = "latest";
-    try {
-      const pj = JSON.parse(readFileSync(join(root, "node_modules", ...main.split("/"), "package.json"), "utf8"));
-      ver = pj.optionalDependencies?.[variant] ?? "latest";
-    } catch { /* 主包也缺：让上层 npm install 报 */ }
-    missing.push(`${variant}@${ver}`);
+  if (existsSync(variantDir)) continue;
+
+  // pnpm 隔离布局：变体装在 .pnpm 虚拟仓（node_modules/.pnpm/<scope>+<name>@<ver>/），
+  // 顶层 node_modules 只挂直接依赖——补一次虚拟仓检查，避免 pnpm 下误报。
+  let ver = null;
+  try {
+    const pj = JSON.parse(readFileSync(join(root, "node_modules", ...main.split("/"), "package.json"), "utf8"));
+    ver = pj.optionalDependencies?.[variant] ?? null;
+  } catch {
+    /* 主包也缺：让上层 npm install 报 */
   }
+  const pnpmDir = join(root, "node_modules", ".pnpm");
+  const entryPrefix = `${variant.replace("/", "+")}@`;
+  const inPnpm =
+    existsSync(pnpmDir) &&
+    readdirSync(pnpmDir).some((name) =>
+      ver ? name === `${entryPrefix}${ver}` || name.startsWith(`${entryPrefix}${ver}_`) : name.startsWith(entryPrefix),
+    );
+  if (inPnpm) continue;
+
+  missing.push(`${variant}@${ver ?? "latest"}`);
 }
 
 if (missing.length > 0) {
   console.error("[ensure-win-natives] 缺少 win32 变体，打包前先补装：");
   console.error(`  npm install --no-save --no-package-lock --force ${missing.join(" ")}`);
+  console.error("  （pnpm 工作区：确认 node_modules/.pnpm 虚拟仓内有对应变体）");
   process.exit(1);
 }
 console.log("[ensure-win-natives] win32 变体齐全 ✓");

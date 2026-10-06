@@ -16,6 +16,8 @@ const root = process.cwd();
 const exeName = process.platform === "win32" ? "cyrene-native.exe" : "cyrene-native";
 const nativeExe = [
   process.env.CYRENE_NATIVE_EXE,
+  // 随包发布产物优先：非 RID 的 bin/Release 可能是陈旧构建
+  path.join(root, "dotnet", "native-windows", "bin", "Release", "net10.0-windows", "win-x64", "publish", exeName),
   path.join(root, "dotnet", "native-windows", "bin", "Release", "net10.0-windows", exeName),
   path.join(root, "dotnet", "native-windows", "bin", "Debug", "net10.0-windows", exeName),
 ].find((candidate) => candidate && fs.existsSync(candidate));
