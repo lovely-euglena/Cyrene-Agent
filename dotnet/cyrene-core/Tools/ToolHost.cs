@@ -37,15 +37,18 @@ internal sealed class SafeDoubleJsonConverter : JsonConverter<double>
 ///
 /// 协议（宿主 Electron ↔ 本进程，stdio JSON 行）：
 ///   → {"op":"list"}                          ← {"op":"tools","tools":[{id,...}]}
-///   → {"op":"call","callId":"c1","tool":"calculator","args":{...},"timeoutMs":5000}
+///   → {"op":"call","callId":"c1","tool":"calculator","args":{...}}
 ///   → {"op":"shutdown"}
 ///   ← {"op":"ready"}
 ///   ← {"op":"result","callId":"c1","ok":true,"data":...}
 ///   ← {"op":"result","callId":"c1","ok":false,"error":"..."}
 ///   ← {"op":"log","level":"info","message":"..."}
 ///
-/// 容错：逐调用超时由宿主侧控制（超时即重启本进程——工具全部纯函数
-/// 化无状态，重启零成本）；stdout 协议独占，诊断走 log 帧/stderr。
+/// 容错：逐调用超时由 TS 客户端看门狗控制（NativeToolHost；本进程不判超时）——
+/// 默认超时即杀本进程重启（工具全部纯函数化无状态，重启零成本）；只读调用可经
+/// abandonOnTimeout 轻量隔离：超时仅放弃当次、等迟到结果帧排空后继续，兜底窗口
+/// 到期仍无结果才杀进程收敛（#IKJLP2；详见 native-tool-host.ts 头注释）。
+/// stdout 协议独占，诊断走 log 帧/stderr。
 /// </summary>
 /// <summary>B5 错误码契约：宿主可据此决定回退/重试语义。</summary>
 internal sealed class ToolHostException : Exception
