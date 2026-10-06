@@ -189,6 +189,23 @@ describe("sync/sync-ipc", () => {
     expect(aliveSend).toHaveBeenCalledWith(IPC.SYNC_CHANGED, PUBLIC_CONFIG);
   });
 
+  it("SYNC_PAIR：baseUrl 校验 scheme 与长度（非法被拒不发往 service，空值允许）", async () => {
+    const { service, handler } = register();
+
+    for (const baseUrl of ["ftp://cloud.example.com", "not-a-url", `https://x.com/${"a".repeat(2048)}`]) {
+      const result = await handler(IPC.SYNC_PAIR)({}, { baseUrl, code: "CODE-1" });
+      expect(result, baseUrl).toMatchObject({ ok: false, error: { code: "invalid_config" } });
+    }
+    expect(service.pair).not.toHaveBeenCalled();
+
+    // 空串允许（由 service 回退当前配置 / 报缺少地址）；合法输入 trim 后透传
+    await handler(IPC.SYNC_PAIR)({}, { baseUrl: "", code: "CODE-1" });
+    expect(service.pair).toHaveBeenNthCalledWith(1, { code: "CODE-1", baseUrl: "" });
+
+    await handler(IPC.SYNC_PAIR)({}, { baseUrl: "  https://cloud.example.com/  ", code: "CODE-2" });
+    expect(service.pair).toHaveBeenNthCalledWith(2, { code: "CODE-2", baseUrl: "https://cloud.example.com/" });
+  });
+
   it("SYNC_PAIR_CODE / SYNC_UNPAIR：动作类返回 SyncOpResult", async () => {
     const aliveSend = vi.fn();
     mocks.windows = [{ isDestroyed: () => false, webContents: { send: aliveSend } }];

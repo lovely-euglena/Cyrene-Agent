@@ -20,7 +20,16 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { SyncHttpError, type SyncCloneResult, type SyncFetchPage, type SyncHttpClient, type SyncHttpClientConfig, type SyncPushResult } from "./http-client";
+import {
+  createSyncHttpClient,
+  SyncHttpError,
+  type SyncCloneResult,
+  type SyncFetchLike,
+  type SyncFetchPage,
+  type SyncHttpClient,
+  type SyncHttpClientConfig,
+  type SyncPushResult,
+} from "./http-client";
 import { createSyncService, SYNC_INTERVAL_MS, type SyncService } from "./sync-service";
 import { loadSyncSettings, saveSyncSettings } from "./sync-settings";
 import type { SyncEventStore } from "./event-store";
@@ -145,6 +154,8 @@ function buildService(options: {
   exporterQueue?: SyncEventV0[];
   /** true 时不注入 loadState/saveState，走真实 sync-state（读路径零副作用用例）。 */
   realStateIO?: boolean;
+  /** 覆盖客户端工厂（如注入真实 http-client + 桩 fetchImpl，验证读体阶段中止归类）。 */
+  createClient?: (config: SyncHttpClientConfig) => SyncHttpClient;
 } = {}): BuiltService {
   const store = options.store ?? new FakeStore();
   const state = options.state ?? makeState();
@@ -169,7 +180,7 @@ function buildService(options: {
         }),
     createClient: (config) => {
       clientConfigs.push(config);
-      return client as unknown as SyncHttpClient;
+      return options.createClient ? options.createClient(config) : (client as unknown as SyncHttpClient);
     },
     now: () => 1_700_000_000_000,
     onRemoteEventsApplied: applied,
@@ -452,6 +463,18 @@ describe("sync/sync-service", () => {
     expect(built.logs.some((line) => line.includes("丢弃 2") && line.includes("10") && line.includes("20"))).toBe(true);
   });
 
+  it("clone 坏帧：dropped > 0 记录日志（数量 + 初始游标）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    const built = buildService({ state: makeState({ fetchCursor: null }) });
+    built.client.clone.mockResolvedValueOnce({ events: [], cursor: "42", dropped: 3 });
+
+    const result = await built.service.syncNow();
+
+    expect(result.ok).toBe(true);
+    expect(built.state.fetchCursor).toBe("42");
+    expect(built.logs.some((line) => line.includes("clone 丢弃 3") && line.includes("42"))).toBe(true);
+  });
+
   // ── P2-5：超限事件可观察 ─────────────────────────────────────────────────
 
   it("oversize_event：lastError 可见且 pushedCount 不推进", async () => {
@@ -490,6 +513,39 @@ describe("sync/sync-service", () => {
 
     await expect(running).resolves.toMatchObject({ ok: false, error: { code: "aborted" } });
     expect(signal?.aborted).toBe(true);
+    expect((await built.service.getStatus()).lastError).toBeNull();
+  });
+
+  it("stop：中止发生于响应体读取阶段（真实客户端流读取挂起）→ aborted 不入 lastError", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+    const fetchImpl = vi.fn<SyncFetchLike>(async (_url, init) => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: {
+        getReader: () => ({
+          read: () => new Promise<never>((_resolve, reject) => {
+            markReadStarted();
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+              { once: true },
+            );
+          }),
+        }),
+      },
+    }) as unknown as Response);
+    const built = buildService({
+      createClient: (config) => createSyncHttpClient({ ...config, fetchImpl }),
+    });
+
+    const running = built.service.syncNow();
+    await readStarted; // 响应头已到、clone 正在读体
+    await built.service.stop();
+
+    await expect(running).resolves.toMatchObject({ ok: false, error: { code: "aborted" } });
     expect((await built.service.getStatus()).lastError).toBeNull();
   });
 
@@ -532,5 +588,27 @@ describe("sync/sync-service", () => {
     const rotated = await built.service.saveConfig({ baseUrl: "https://other.example.com", token: "tok-2" });
     expect(rotated.hasToken).toBe(true);
     expect(loadSyncSettings().token).toBe("tok-2");
+  });
+
+  it("saveConfig：同 origin 仅路径/大小写差异不算换主机（保留 token）；换 scheme/host 清 token", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://cloud.example.com", token: "tok-1" });
+    const built = buildService();
+
+    const withPath = await built.service.saveConfig({ baseUrl: "https://cloud.example.com/api/v1" });
+    expect(withPath.hasToken).toBe(true);
+    expect(loadSyncSettings().token).toBe("tok-1");
+
+    const upperCase = await built.service.saveConfig({ baseUrl: "https://CLOUD.example.com" });
+    expect(upperCase.hasToken).toBe(true);
+    expect(loadSyncSettings().token).toBe("tok-1");
+
+    const schemeChanged = await built.service.saveConfig({ baseUrl: "http://cloud.example.com" });
+    expect(schemeChanged.hasToken).toBe(false);
+    expect(loadSyncSettings().token).toBe("");
+
+    await built.service.saveConfig({ baseUrl: "https://cloud.example.com", token: "tok-2" });
+    const hostChanged = await built.service.saveConfig({ baseUrl: "https://other.example.com" });
+    expect(hostChanged.hasToken).toBe(false);
+    expect(loadSyncSettings().token).toBe("");
   });
 });
