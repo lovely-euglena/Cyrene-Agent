@@ -65,7 +65,7 @@ function normalizeSaveInput(input: unknown): SyncSaveConfigInput {
   return out;
 }
 
-/** 配对输入同样走 baseUrl 校验（首次填地址主路径；空值允许，由 service 回退当前配置）。 */
+/** 配对输入同样走 baseUrl 校验（首次填地址主路径；字段缺省时由 service 回退当前配置，显式空串按缺少地址拒绝）。 */
 function normalizePairInput(input: unknown): SyncPairInput | null {
   const record = (input ?? {}) as Record<string, unknown>;
   const code = typeof record.code === "string" ? record.code : "";

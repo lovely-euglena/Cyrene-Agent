@@ -717,8 +717,8 @@
   回归；手动 dry-run（设 `CYRENE_SYNC_DRY_RUN=1` + `CYRENE_SYNC_DRY_RUN_USERDATA=<真实 userData>`
   跑 `npx vitest run src/main/sync/export-dry-run.manual.test.ts`，默认 skip、输出计数与样例不写盘）；
   真机冒烟（启用同步 → 手机打开桌面历史 → 手机发送桌面可见 → 桌面回复手机可见）。
-  **实测（2026-10-06，R2 复审修复后，Windows 本地）**：三端类型检查（tsc / check:preload / check:renderer）0；
-  `vitest`：sync+chats+pwa **354 passed**（+1 skip=手动 dry-run）、application+channels **446 passed**、
+  **实测（2026-10-06，R3 微调后，Windows 本地）**：三端类型检查（tsc / check:preload / check:renderer）0；
+  `vitest`：sync+chats+pwa **355 passed**（+1 skip=手动 dry-run）、application+channels **446 passed**、
   renderer（settings/routing/i18n）**83 passed**、orchestrator **1940 passed**（唯一失败
   `agent-orchestration-contract` 为既有——main 上同样失败，与本批无关）；
   `build:main` / `build:preload` / `build:renderer` 0；dry-run 对本机真实 userData（旧布局）

@@ -334,6 +334,17 @@ describe("sync/sync-service", () => {
     expect((await built.service.getStatus()).syncing).toBe(false);
   });
 
+  it("pair：显式空串 baseUrl 不回退当前配置，按缺少服务器地址拒绝（注释语义固定）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: BASE, token: "" });
+    const built = buildService();
+
+    await expect(built.service.pair({ baseUrl: "", code: "CODE-1" })).rejects.toMatchObject({
+      code: "invalid_config",
+      message: "缺少服务器地址",
+    });
+    expect(built.client.pair).not.toHaveBeenCalled();
+  });
+
   it("pair：POST 后 token 加密落盘 + serverDeviceId 入库 + 公开配置 hasToken", async () => {
     const built = buildService();
     const config = await built.service.pair({

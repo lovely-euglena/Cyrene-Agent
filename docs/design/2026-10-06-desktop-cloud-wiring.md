@@ -92,7 +92,8 @@
 
 - 快路径：state `conversations[cid].exportedThroughSeq`（从上次水位续扫）；
 - 正确性兜底：outbox 内存 eventId 集合——重复导出的事件不再 append（时钟不重分配）；
-- 迁移 + 导出任意时点中断：重启后从水位续扫 + 去重，最终收敛到同一事件集。
+- 迁移 + 导出任意时点中断：重启后从水位续扫 + 去重，最终收敛到同一事件集；
+- 状态恢复（R2 补登记）：state 缺失 / 损坏 → 按事件库恢复（deviceId / lamport / seq / 标题水位；fetchCursor / pushedCount / serverDeviceId 等不可推导字段取默认，靠服务端 eventId 幂等重推）；load / save 入口按 mtime 1h 阈值清理崩溃遗留的 `state.json.*.tmp`。
 
 ### 2.6 存量迁移驱动
 
