@@ -258,7 +258,14 @@ export function CloudSyncSettingsPanel() {
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.status.devices")}</strong><span>{status ? `${status.deviceId ?? "—"} / ${status.serverDeviceId ?? t("settingsPage.cloud.status.serverUnpaired")}` : "—"}</span></div></div>
           {lastError && (
             <div className="cy-settings-row">
-              <Alert className="cy-settings-alert" type="error" showIcon message={errorText(lastError, t)} />
+              {/* 单事件超限会阻塞整批推送：补一句可操作指引（删除/缩短源消息后重试） */}
+              <Alert
+                className="cy-settings-alert"
+                type="error"
+                showIcon
+                message={errorText(lastError, t)}
+                description={lastError.code === "oversize_event" ? t("settingsPage.cloud.status.oversizeEventHint") : undefined}
+              />
             </div>
           )}
         </Card>

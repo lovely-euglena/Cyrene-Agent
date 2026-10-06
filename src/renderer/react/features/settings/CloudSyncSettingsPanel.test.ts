@@ -145,6 +145,45 @@ describe("CloudSyncSettingsPanel", () => {
     expect(host.textContent).toContain(t("settingsPage.cloud.errorCode", { message: "连接服务器失败", code: "network" }));
   });
 
+  it("lastError 为 oversize_event 时展示超限指引文案", async () => {
+    const oversizeStatus: SyncStatus = {
+      ...baseStatus,
+      lastError: { code: "oversize_event", message: "事件 loc-1 超过单事件上限（10 MiB）" },
+    };
+    Object.assign(window, {
+      settings: {
+        syncGetConfig: async () => baseConfig,
+        syncGetStatus: async () => oversizeStatus,
+        onSyncChanged: () => () => {},
+      },
+    });
+    const host = await renderPanel();
+
+    expect(host.textContent).toContain("oversize_event");
+    // 字面量断言：key 漏翻时 t() 会回显 key，不能作为唯一依据
+    expect(host.textContent).toContain("超出服务端单事件上限");
+    expect(host.textContent).toContain(t("settingsPage.cloud.status.oversizeEventHint"));
+  });
+
+  it("其他 lastError 不展示超限指引文案", async () => {
+    const networkStatus: SyncStatus = {
+      ...baseStatus,
+      lastError: { code: "network", message: "连接服务器失败" },
+    };
+    Object.assign(window, {
+      settings: {
+        syncGetConfig: async () => baseConfig,
+        syncGetStatus: async () => networkStatus,
+        onSyncChanged: () => () => {},
+      },
+    });
+    const host = await renderPanel();
+
+    expect(host.textContent).toContain(t("settingsPage.cloud.errorCode", { message: "连接服务器失败", code: "network" }));
+    expect(host.textContent).not.toContain("超出服务端单事件上限");
+    expect(host.textContent).not.toContain(t("settingsPage.cloud.status.oversizeEventHint"));
+  });
+
   it("收到 onSyncChanged 广播后刷新配置与状态", async () => {
     let notify: (() => void) | null = null;
     const syncGetStatus = vi.fn().mockResolvedValue(baseStatus);
