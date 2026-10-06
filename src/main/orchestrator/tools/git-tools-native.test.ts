@@ -1,7 +1,7 @@
 /**
  * git 工具 native 轨接线测试（IKJLIL）：
  *  - 可信上下文注入：workspace / session / git 命令 / 来源 / 版本 / 身份 → 内部参数
- *  - bundled git：附带环境隔离标记（__gitIsolated）
+ *  - bundled git：附带环境隔离标记（meta.gitIsolated，C# 侧设 NOSYSTEM/NUL）
  *  - host 不可用：回退 GitService 原路径（模型参数原样）
  *  - 取消（AbortError）：原样上抛、不回退（不重复执行副作用）
  */
