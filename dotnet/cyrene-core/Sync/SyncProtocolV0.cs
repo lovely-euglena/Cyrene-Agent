@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace CyreneNative.Sync;
 
 /// <summary>
-/// 云端昔涟 · 同步协议 v0：事件读取器与校验器（C# 侧）。
+/// 云端昔涟 · 同步协议 v0（v0.1 扩展：+memory.write / mood.shift）：事件读取器与校验器（C# 侧）。
 ///
 /// 契约权威：docs/specs/2026-10-04-sync-protocol-v0.md + fixtures/sync-protocol/
 /// （双端共享测试向量；TS 对照实现 src/main/sync/sync-protocol.ts）。
@@ -27,7 +27,16 @@ public static class SyncProtocolV0
     public const int MaxIdLength = 200;
     public const long MaxSafeInteger = 9007199254740991;
 
-    public static readonly string[] EventTypes = ["session.create", "message.append", "turn_rewind", "tombstone"];
+    public static readonly string[] EventTypes =
+        ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift"];
+
+    /// <summary>记忆/心情事件的保留伪 sessionId（设计 §1.3；不匹配 → E_SYNC_PAYLOAD）。</summary>
+    public const string MemorySessionId = "__memory__";
+    public const string MoodSessionId = "__mood__";
+
+    /// <summary>mood.shift 九值枚举（对齐 RUNTIME_FEELINGS，设计 §1.2）。</summary>
+    private static readonly HashSet<string> MoodFeelingSet =
+        new(["平静", "开心", "温柔", "激动", "撒娇", "担心", "难过", "感动", "害羞"], StringComparer.Ordinal);
 
     /// <summary>CTA presentation patch 顶层键白名单（v0 仅校验键集合与 patchRevision）。</summary>
     public static readonly string[] PresentationPatchKeys =
@@ -110,7 +119,7 @@ public static class SyncProtocolV0
             if (!EnvelopeKeySet.Contains(property.Name)) return ErrorEnvelope;
         }
         if (!TryGetId(value, "eventId", out _)) return ErrorEnvelope;
-        if (!TryGetId(value, "sessionId", out _)) return ErrorEnvelope;
+        if (!TryGetId(value, "sessionId", out var sessionId)) return ErrorEnvelope;
         if (!TryGetId(value, "deviceId", out _)) return ErrorEnvelope;
         if (!TryGetSafeInt(value, "lamport", out _) || !TryGetSafeInt(value, "seq", out _)) return ErrorEnvelope;
         if (!value.TryGetProperty("ts", out var ts) || ts.ValueKind != JsonValueKind.String || !IsoUtcRegex.IsMatch(ts.GetString()!))
@@ -132,10 +141,10 @@ public static class SyncProtocolV0
         var type = typeElement.GetString()!;
         if (!EventTypeSet.Contains(type)) return ErrorType;
         if (!value.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object) return ErrorPayload;
-        return ValidatePayload(type, payload) ? null : ErrorPayload;
+        return ValidatePayload(type, sessionId, payload) ? null : ErrorPayload;
     }
 
-    private static bool ValidatePayload(string type, JsonElement payload) => type switch
+    private static bool ValidatePayload(string type, string sessionId, JsonElement payload) => type switch
     {
         "session.create" => HasOnlyKeys(payload, "title", "createdAt")
             && payload.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String
@@ -148,8 +157,42 @@ public static class SyncProtocolV0
             && TryGetId(payload, "targetUserTurnId", out _)
             && payload.TryGetProperty("reason", out var reason)
             && reason.ValueKind == JsonValueKind.String && reason.GetString() == "pending_withdrawn",
+        "memory.write" => sessionId == MemorySessionId && ValidateMemoryWrite(payload),
+        "mood.shift" => sessionId == MoodSessionId && ValidateMoodShift(payload),
         _ => false,
     };
+
+    /// <summary>memory.write 载荷（设计 §1.1）：upsert 必填 content/weight（pinned 可选 bool）；delete 三键必须缺省。</summary>
+    private static bool ValidateMemoryWrite(JsonElement payload)
+    {
+        if (!HasOnlyKeys(payload, "memoryId", "op", "content", "weight", "pinned")) return false;
+        if (!TryGetId(payload, "memoryId", out _)) return false;
+        if (!payload.TryGetProperty("op", out var op) || op.ValueKind != JsonValueKind.String) return false;
+        var opValue = op.GetString();
+        if (opValue == "upsert")
+        {
+            if (!payload.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.String) return false;
+            if (!payload.TryGetProperty("weight", out var weight) || !IsSafeIntegerElement(weight, 0)
+                || weight.GetDouble() > 100) return false;
+            return OptionalField(payload, "pinned", field => field.ValueKind is JsonValueKind.True or JsonValueKind.False);
+        }
+        if (opValue == "delete")
+        {
+            return !payload.TryGetProperty("content", out _)
+                && !payload.TryGetProperty("weight", out _)
+                && !payload.TryGetProperty("pinned", out _);
+        }
+        return false;
+    }
+
+    /// <summary>mood.shift 载荷（设计 §1.2）：闭合单键 feeling ∈ 九值枚举。</summary>
+    private static bool ValidateMoodShift(JsonElement payload)
+    {
+        if (!HasOnlyKeys(payload, "feeling")) return false;
+        return payload.TryGetProperty("feeling", out var feeling)
+            && feeling.ValueKind == JsonValueKind.String
+            && MoodFeelingSet.Contains(feeling.GetString()!);
+    }
 
     private static bool ValidateMessageAppend(JsonElement payload)
     {
