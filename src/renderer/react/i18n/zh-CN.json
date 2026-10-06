@@ -1226,6 +1226,7 @@
         "unknown": "未知",
         "syncing": "同步中…",
         "abnormal": "异常",
+        "oversizeEventHint": "该消息超出服务端单事件上限，同步已暂停推送；请在源会话中删除或缩短该消息后重试。",
         "ready": "就绪"
       }
     },

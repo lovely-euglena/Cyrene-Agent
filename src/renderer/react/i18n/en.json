@@ -1226,6 +1226,7 @@
         "unknown": "Unknown",
         "syncing": "Syncing…",
         "abnormal": "Error",
+        "oversizeEventHint": "This message exceeds the server's single-event size limit, so syncing is paused. Delete or shorten it in the source conversation, then try again.",
         "ready": "Ready"
       }
     },
