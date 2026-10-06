@@ -360,6 +360,12 @@ export function ChatComposer({
 
   // Sender 的 onKeyDown 声明在 Element 层级；函数体只用基类属性，参数随组件声明放宽
   const handleSenderKeyDown = (event: KeyboardEvent<Element>) => {
+    // Sender 是 Suggestion/Cascader 的自定义输入节点；阻止 Cascader 把文本编辑按键
+    // 当作 combobox 控制键处理（它会默认拦截 Space 和 Enter）。
+    // 上游 bd09be4a 的斜杠建议导航依赖 IKK0W0（斜杠技能补全，我方未实现），暂不移植。
+    if (event.key === " " || event.key === "Enter") {
+      event.stopPropagation();
+    }
     if (!modelBusy || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
     const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent;
     if (compositionActiveRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229) return;
