@@ -417,6 +417,39 @@ describe("chats IPC mode filtering", () => {
     expect(firstPage.nextBefore).toBeNull();
   });
 
+  it("CHATS_GET 在组合会话后调用 remoteMerge 合并远端消息", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const remoteMessage = { id: "remote-1", role: "model", content: "远端回答", at: 3 };
+    const remoteMerge = vi.fn(async (session: any) => ({
+      ...session,
+      messages: [...session.messages, remoteMessage],
+    }));
+    registerChatsIpc(undefined, { remoteMerge });
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const get = mocks.handlers.get(IPC.CHATS_GET);
+    if (!create || !get) throw new Error("chat IPC handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+    const transcript = (await import("../orchestrator/conversation-transcript-store")).getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(session.id, { id: "u1", kind: "user", turnId: "u1", revision: 1, at: 1, payload: { text: "hello" } });
+
+    const result = await get(event, session.id) as { messages: Array<{ id: string }> };
+    // provider 拿到的是组合后的本地会话（迁移 + projection）；合并结果再经上下文容量覆盖返回
+    expect(remoteMerge).toHaveBeenCalledTimes(1);
+    expect((remoteMerge.mock.calls[0][0] as { messages: Array<{ id: string }> }).messages.map((message) => message.id)).toEqual(["u1"]);
+    expect(result.messages.map((message) => message.id)).toEqual(["u1", "remote-1"]);
+  });
+
+  it("CHATS_GET 会话不存在时跳过 remoteMerge", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const remoteMerge = vi.fn(async (session: any) => session);
+    registerChatsIpc(undefined, { remoteMerge });
+    const get = mocks.handlers.get(IPC.CHATS_GET);
+    if (!get) throw new Error("chat IPC handlers were not registered");
+    await expect(get({ sender: {} }, "missing-session")).resolves.toBeNull();
+    expect(remoteMerge).not.toHaveBeenCalled();
+  });
+
   it("schedules first-message title generation for every conversation mode with visible text only", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
