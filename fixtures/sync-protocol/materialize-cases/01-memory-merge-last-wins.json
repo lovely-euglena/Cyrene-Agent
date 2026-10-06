@@ -1,0 +1,11 @@
+{
+  "name": "记忆合并：双端并发 upsert 同 id → 规范序后写覆盖",
+  "description": "输入序 [eb, ea]；规范序 [ea(L1,dev-a), eb(L2,dev-b)] → m1 最终取 B（后写覆盖）。",
+  "input": "{\"eventId\":\"eb\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-b\",\"seq\":0,\"ts\":\"2026-10-06T03:00:01.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"B\",\"weight\":60}}\n{\"eventId\":\"ea\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:00:00.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"A\",\"weight\":50}}",
+  "expect": {
+    "memories": {
+      "m1": { "content": "B", "weight": 60, "pinned": false }
+    },
+    "mood": null
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "记忆/心情载荷非法：E_SYNC_PAYLOAD",
+  "description": "12 条载荷边界：upsert 缺 content（0）/ delete 携带 content（1）/ 未知键（2）/ weight 越界（3）/ op 枚举外（4）/ 心情枚举外（5）/ 心情未知键（6）/ memory 命名空间不符（7）/ mood 命名空间不符（8）/ weight 非整数（9）/ pinned 非布尔（10）/ 缺 memoryId（11）。",
+  "input": "{\"eventId\":\"p1\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T02:00:00.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"weight\":60}}\n{\"eventId\":\"p2\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T02:00:00.100Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"delete\",\"content\":\"x\"}}\n{\"eventId\":\"p3\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T02:00:00.200Z\",\"payload\":{\"memoryId\":\"m3\",\"op\":\"upsert\",\"content\":\"x\",\"weight\":10,\"text\":\"extra\"}}\n{\"eventId\":\"p4\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":4,\"deviceId\":\"dev-a\",\"seq\":3,\"ts\":\"2026-10-06T02:00:00.300Z\",\"payload\":{\"memoryId\":\"m4\",\"op\":\"upsert\",\"content\":\"x\",\"weight\":101}}\n{\"eventId\":\"p5\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":5,\"deviceId\":\"dev-a\",\"seq\":4,\"ts\":\"2026-10-06T02:00:00.400Z\",\"payload\":{\"memoryId\":\"m5\",\"op\":\"update\",\"content\":\"x\",\"weight\":10}}\n{\"eventId\":\"p6\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":6,\"deviceId\":\"dev-a\",\"seq\":5,\"ts\":\"2026-10-06T02:00:00.500Z\",\"payload\":{\"feeling\":\"生气\"}}\n{\"eventId\":\"p7\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":7,\"deviceId\":\"dev-a\",\"seq\":6,\"ts\":\"2026-10-06T02:00:00.600Z\",\"payload\":{\"feeling\":\"开心\",\"status\":\"陪伴中\"}}\n{\"eventId\":\"p8\",\"sessionId\":\"s1\",\"type\":\"memory.write\",\"lamport\":8,\"deviceId\":\"dev-a\",\"seq\":7,\"ts\":\"2026-10-06T02:00:00.700Z\",\"payload\":{\"memoryId\":\"m6\",\"op\":\"upsert\",\"content\":\"x\",\"weight\":10}}\n{\"eventId\":\"p9\",\"sessionId\":\"__memory__\",\"type\":\"mood.shift\",\"lamport\":9,\"deviceId\":\"dev-a\",\"seq\":8,\"ts\":\"2026-10-06T02:00:00.800Z\",\"payload\":{\"feeling\":\"开心\"}}\n{\"eventId\":\"p10\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":10,\"deviceId\":\"dev-a\",\"seq\":9,\"ts\":\"2026-10-06T02:00:00.900Z\",\"payload\":{\"memoryId\":\"m7\",\"op\":\"upsert\",\"content\":\"x\",\"weight\":10.5}}\n{\"eventId\":\"p11\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":11,\"deviceId\":\"dev-a\",\"seq\":10,\"ts\":\"2026-10-06T02:00:01.000Z\",\"payload\":{\"memoryId\":\"m8\",\"op\":\"upsert\",\"content\":\"x\",\"weight\":10,\"pinned\":\"yes\"}}\n{\"eventId\":\"p12\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":12,\"deviceId\":\"dev-a\",\"seq\":11,\"ts\":\"2026-10-06T02:00:01.100Z\",\"payload\":{\"op\":\"upsert\",\"content\":\"x\",\"weight\":10}}",
+  "expect": {
+    "events": [],
+    "errors": [
+      { "index": 0, "code": "E_SYNC_PAYLOAD" },
+      { "index": 1, "code": "E_SYNC_PAYLOAD" },
+      { "index": 2, "code": "E_SYNC_PAYLOAD" },
+      { "index": 3, "code": "E_SYNC_PAYLOAD" },
+      { "index": 4, "code": "E_SYNC_PAYLOAD" },
+      { "index": 5, "code": "E_SYNC_PAYLOAD" },
+      { "index": 6, "code": "E_SYNC_PAYLOAD" },
+      { "index": 7, "code": "E_SYNC_PAYLOAD" },
+      { "index": 8, "code": "E_SYNC_PAYLOAD" },
+      { "index": 9, "code": "E_SYNC_PAYLOAD" },
+      { "index": 10, "code": "E_SYNC_PAYLOAD" },
+      { "index": 11, "code": "E_SYNC_PAYLOAD" }
+    ]
+  }
+}

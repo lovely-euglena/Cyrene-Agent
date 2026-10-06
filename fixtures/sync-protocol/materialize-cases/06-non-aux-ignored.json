@@ -1,0 +1,14 @@
+{
+  "name": "非目标事件 no-op；非法行记 errors 不影响物化",
+  "description": "会话类事件（session.create / message.append）不参与物化；第 5 行（index 4）为非法 memory.write（缺 weight）→ E_SYNC_PAYLOAD，其余合法事件照常物化。",
+  "input": "{\"eventId\":\"ea\",\"sessionId\":\"s1\",\"type\":\"session.create\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T03:05:00.000Z\",\"payload\":{\"title\":\"t\",\"createdAt\":\"2026-10-06T03:05:00.000Z\"}}\n{\"eventId\":\"eb\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T03:05:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"hi\",\"turnId\":\"turn-1\"}}\n{\"eventId\":\"ec\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T03:05:02.000Z\",\"payload\":{\"memoryId\":\"m1\",\"op\":\"upsert\",\"content\":\"M\",\"weight\":10}}\n{\"eventId\":\"ed\",\"sessionId\":\"__mood__\",\"type\":\"mood.shift\",\"lamport\":4,\"deviceId\":\"dev-a\",\"seq\":3,\"ts\":\"2026-10-06T03:05:03.000Z\",\"payload\":{\"feeling\":\"感动\"}}\n{\"eventId\":\"ee\",\"sessionId\":\"__memory__\",\"type\":\"memory.write\",\"lamport\":5,\"deviceId\":\"dev-a\",\"seq\":4,\"ts\":\"2026-10-06T03:05:04.000Z\",\"payload\":{\"memoryId\":\"m2\",\"op\":\"upsert\",\"content\":\"X\"}}",
+  "expect": {
+    "memories": {
+      "m1": { "content": "M", "weight": 10, "pinned": false }
+    },
+    "mood": { "feeling": "感动" },
+    "errors": [
+      { "index": 4, "code": "E_SYNC_PAYLOAD" }
+    ]
+  }
+}
