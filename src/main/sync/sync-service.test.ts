@@ -20,7 +20,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { SyncHttpError, type SyncCloneResult, type SyncFetchPage, type SyncHttpClient, type SyncPushResult } from "./http-client";
+import { SyncHttpError, type SyncCloneResult, type SyncFetchPage, type SyncHttpClient, type SyncHttpClientConfig, type SyncPushResult } from "./http-client";
 import { createSyncService, SYNC_INTERVAL_MS, type SyncService } from "./sync-service";
 import { loadSyncSettings, saveSyncSettings } from "./sync-settings";
 import type { SyncEventStore } from "./event-store";
@@ -132,6 +132,8 @@ interface BuiltService {
   exporter: SyncExporter;
   applied: ReturnType<typeof vi.fn>;
   saved: SyncState[];
+  logs: string[];
+  clientConfigs: SyncHttpClientConfig[];
   setIntervalImpl: ReturnType<typeof vi.fn>;
   clearIntervalImpl: ReturnType<typeof vi.fn>;
   intervalHandle: { unref: ReturnType<typeof vi.fn> };
@@ -141,6 +143,8 @@ function buildService(options: {
   store?: FakeStore;
   state?: SyncState;
   exporterQueue?: SyncEventV0[];
+  /** true 时不注入 loadState/saveState，走真实 sync-state（读路径零副作用用例）。 */
+  realStateIO?: boolean;
 } = {}): BuiltService {
   const store = options.store ?? new FakeStore();
   const state = options.state ?? makeState();
@@ -148,6 +152,8 @@ function buildService(options: {
   const client = makeClient();
   const applied = vi.fn();
   const saved: SyncState[] = [];
+  const logs: string[] = [];
+  const clientConfigs: SyncHttpClientConfig[] = [];
   const intervalHandle = { unref: vi.fn() };
   const setIntervalImpl = vi.fn(() => intervalHandle);
   const clearIntervalImpl = vi.fn();
@@ -155,16 +161,30 @@ function buildService(options: {
     userDataPath: mocks.userDataDir,
     store: store as unknown as SyncEventStore,
     exporter,
-    loadState: async () => state,
-    saveState: async (_syncDir, next) => { saved.push(next); },
-    createClient: () => client as unknown as SyncHttpClient,
+    ...(options.realStateIO
+      ? {}
+      : {
+          loadState: async () => state,
+          saveState: async (_syncDir: string, next: SyncState) => { saved.push(next); },
+        }),
+    createClient: (config) => {
+      clientConfigs.push(config);
+      return client as unknown as SyncHttpClient;
+    },
     now: () => 1_700_000_000_000,
     onRemoteEventsApplied: applied,
     setIntervalImpl: setIntervalImpl as unknown as typeof setInterval,
     clearIntervalImpl: clearIntervalImpl as unknown as typeof clearInterval,
-    log: () => undefined,
+    log: (message) => { logs.push(message); },
   });
-  return { service, state, store, client, exporter, applied, saved, setIntervalImpl, clearIntervalImpl, intervalHandle };
+  return { service, state, store, client, exporter, applied, saved, logs, clientConfigs, setIntervalImpl, clearIntervalImpl, intervalHandle };
+}
+
+/** 预置合法 state.json（读路径仅在文件存在时读取；内容由注入 loader 决定）。 */
+function materializeStateFile(state: SyncState = makeState()): void {
+  const syncDir = path.join(mocks.userDataDir, "sync");
+  fs.mkdirSync(syncDir, { recursive: true });
+  fs.writeFileSync(path.join(syncDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
 function settingsPath(): string {
@@ -367,6 +387,7 @@ describe("sync/sync-service", () => {
 
   it("getRemoteSessionEvents：按会话取 inbox 且过滤 deviceId = 本机；未启用返回空", async () => {
     saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    materializeStateFile(); // 读路径仅在 state.json 存在时读取（零副作用口径）
     const store = new FakeStore();
     store.remote.push(
       remoteEvent("own-1", 5, "desk-local"),
@@ -381,5 +402,135 @@ describe("sync/sync-service", () => {
     const disabled = buildService({ store });
     await disabled.service.saveConfig({ enabled: false });
     expect(await disabled.service.getRemoteSessionEvents("c1")).toEqual([]);
+  });
+
+  // ── P2-3：读路径零副作用（未启用/state 缺失不落盘）─────────────────────────
+
+  it("读路径零副作用：state 缺失时 getConfig/getStatus 不创建 sync 目录与 state.json（真实 loader）", async () => {
+    const built = buildService({ realStateIO: true });
+
+    const config = await built.service.getConfig();
+    const status = await built.service.getStatus();
+
+    expect(config.deviceId).toBeNull();
+    expect(config.serverDeviceId).toBeNull();
+    expect(status.deviceId).toBeNull();
+    expect(status.pendingCount).toBe(0);
+    expect(fs.existsSync(path.join(mocks.userDataDir, "sync"))).toBe(false);
+  });
+
+  it("读路径：已有 state.json 时正常读取且不改写文件", async () => {
+    materializeStateFile(makeState({ deviceId: "desk-existing", lamport: 7 }));
+    const statePath = path.join(mocks.userDataDir, "sync", "state.json");
+    const before = fs.readFileSync(statePath, "utf8");
+
+    const built = buildService({ realStateIO: true });
+    const config = await built.service.getConfig();
+    const status = await built.service.getStatus();
+
+    expect(config.deviceId).toBe("desk-existing");
+    expect(status.deviceId).toBe("desk-existing");
+    expect(fs.readFileSync(statePath, "utf8")).toBe(before);
+  });
+
+  // ── P2-2①：坏帧 dropped 计数可观察 ────────────────────────────────────────
+
+  it("fetch 坏帧：dropped > 0 记录日志（数量 + 游标页信息）且游标照常推进", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    const built = buildService({ state: makeState({ fetchCursor: "10" }) });
+    built.client.fetch.mockResolvedValueOnce({
+      events: [remoteEvent("rem-1", 2)],
+      cursor: "20",
+      hasMore: false,
+      dropped: 2,
+    });
+
+    const result = await built.service.syncNow();
+
+    expect(result.ok).toBe(true);
+    expect(built.state.fetchCursor).toBe("20");
+    expect(built.logs.some((line) => line.includes("丢弃 2") && line.includes("10") && line.includes("20"))).toBe(true);
+  });
+
+  // ── P2-5：超限事件可观察 ─────────────────────────────────────────────────
+
+  it("oversize_event：lastError 可见且 pushedCount 不推进", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    const built = buildService({ exporterQueue: [localEvent("loc-1", 1)] });
+    built.client.push.mockRejectedValueOnce(
+      new SyncHttpError("oversize_event", 0, undefined, "事件 loc-1 超过单事件上限（10 MiB）"),
+    );
+
+    const result = await built.service.syncNow();
+
+    expect(result).toMatchObject({ ok: false, error: { code: "oversize_event" } });
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.client.clone).not.toHaveBeenCalled();
+    expect((await built.service.getStatus()).lastError).toMatchObject({ code: "oversize_event" });
+  });
+
+  // ── P2-4：stop 中止路径 / timer 清理 / start 幂等 ────────────────────────
+
+  it("stop：中止在途请求（aborted 不入 lastError），signal 透传给客户端", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    const built = buildService({ exporterQueue: [localEvent("loc-1", 1)] });
+    let signal: AbortSignal | undefined;
+    built.client.push.mockImplementationOnce(() => new Promise<SyncPushResult>((_resolve, reject) => {
+      signal = built.clientConfigs.at(-1)?.signal;
+      signal?.addEventListener(
+        "abort",
+        () => reject(new SyncHttpError("aborted", 0, undefined, "请求已取消")),
+        { once: true },
+      );
+    }));
+
+    const running = built.service.syncNow();
+    await vi.waitFor(() => expect(built.client.push).toHaveBeenCalled());
+    await built.service.stop();
+
+    await expect(running).resolves.toMatchObject({ ok: false, error: { code: "aborted" } });
+    expect(signal?.aborted).toBe(true);
+    expect((await built.service.getStatus()).lastError).toBeNull();
+  });
+
+  it("start：重复调用幂等（只挂一次定时器）；stop：清定时器且幂等", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
+    const built = buildService();
+
+    await built.service.start();
+    await built.service.start();
+    expect(built.setIntervalImpl).toHaveBeenCalledTimes(1);
+    expect(built.intervalHandle.unref).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(built.client.clone).toHaveBeenCalled()); // 首轮完成
+
+    await built.service.stop();
+    expect(built.clearIntervalImpl).toHaveBeenCalledTimes(1);
+    await built.service.stop();
+    expect(built.clearIntervalImpl).toHaveBeenCalledTimes(1);
+  });
+
+  // ── P2-6：换 baseUrl 清 token ─────────────────────────────────────────────
+
+  it("saveConfig：换 baseUrl 未提供新 token → 清 token（hasToken=false）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: BASE, token: "tok-1" });
+    const built = buildService();
+
+    const config = await built.service.saveConfig({ baseUrl: "https://other.example.com" });
+
+    expect(config).toMatchObject({ baseUrl: "https://other.example.com", hasToken: false });
+    expect(loadSyncSettings().token).toBe("");
+  });
+
+  it("saveConfig：仅尾斜杠差异不算换主机；换 baseUrl 且提供新 token → 用新 token", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: BASE, token: "tok-1" });
+    const built = buildService();
+
+    const same = await built.service.saveConfig({ baseUrl: `${BASE}/`, deviceName: "桌面" });
+    expect(same.hasToken).toBe(true);
+    expect(loadSyncSettings().token).toBe("tok-1");
+
+    const rotated = await built.service.saveConfig({ baseUrl: "https://other.example.com", token: "tok-2" });
+    expect(rotated.hasToken).toBe(true);
+    expect(loadSyncSettings().token).toBe("tok-2");
   });
 });

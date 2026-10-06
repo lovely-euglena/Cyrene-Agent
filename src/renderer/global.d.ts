@@ -91,8 +91,8 @@ interface SettingsWindowApi {
     input: import("../shared/sync-types").SyncPairInput,
   ) => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncConfigPublic>>;
   syncPairCode?: () => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncPairCodeResult>>;
-  syncUnpair?: () => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncStatus>>;
-  /** main → 设置页：同步配置 / 状态变化广播（面板据此刷新） */
+  syncUnpair?: () => Promise<import("../shared/sync-types").SyncOpResult<import("../shared/sync-types").SyncConfigPublic>>;
+  /** main → 设置页：同步配置 / 状态变化广播（保存 / 配对 / 解除配对 / 手动同步终态；面板据此刷新） */
   onSyncChanged?: (callback: () => void) => (() => void) | void;
   setPetAlwaysOnTop: (value: boolean) => void;
   setPetVisible: (value: boolean) => void;

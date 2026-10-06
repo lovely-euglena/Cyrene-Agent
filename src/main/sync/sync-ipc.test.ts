@@ -140,15 +140,36 @@ describe("sync/sync-ipc", () => {
     expect(result).toEqual({ ok: false, error: { code: "invalid_config", message: "缺少服务器地址" } });
   });
 
-  it("SYNC_NOW：成功返回状态；同步失败返回 SyncOpResult.ok=false", async () => {
+  it("SYNC_SAVE_CONFIG：baseUrl 校验 scheme 与长度，非法输入不发往 service", async () => {
+    const { service, handler } = register();
+
+    for (const baseUrl of ["ftp://cloud.example.com", "not-a-url", "https://", `https://x.com/${"a".repeat(2048)}`]) {
+      const result = await handler(IPC.SYNC_SAVE_CONFIG)({}, { baseUrl });
+      expect(result, baseUrl).toMatchObject({ ok: false, error: { code: "invalid_config" } });
+    }
+    expect(service.saveConfig).not.toHaveBeenCalled();
+
+    // 空串允许（清除地址）；合法 http(s) 且 trim 后透传
+    await handler(IPC.SYNC_SAVE_CONFIG)({}, { baseUrl: "" });
+    await handler(IPC.SYNC_SAVE_CONFIG)({}, { baseUrl: "  https://cloud.example.com/  " });
+    expect(service.saveConfig).toHaveBeenNthCalledWith(1, { baseUrl: "" });
+    expect(service.saveConfig).toHaveBeenNthCalledWith(2, { baseUrl: "https://cloud.example.com/" });
+  });
+
+  it("SYNC_NOW：成功返回状态；失败返回 SyncOpResult.ok=false；终态均广播 SYNC_CHANGED", async () => {
+    const aliveSend = vi.fn();
+    mocks.windows = [{ isDestroyed: () => false, webContents: { send: aliveSend } }];
     const { service, handler } = register();
     await expect(handler(IPC.SYNC_NOW)({})).resolves.toEqual({ ok: true, data: STATUS });
+    expect(aliveSend).toHaveBeenCalledWith(IPC.SYNC_CHANGED, undefined);
 
+    aliveSend.mockClear();
     service.syncNow.mockResolvedValueOnce({ ok: false, error: { code: "network", message: "网络请求失败" } });
     await expect(handler(IPC.SYNC_NOW)({})).resolves.toEqual({
       ok: false,
       error: { code: "network", message: "网络请求失败" },
     });
+    expect(aliveSend).toHaveBeenCalledWith(IPC.SYNC_CHANGED, undefined);
   });
 
   it("SYNC_PAIR：缺配对码直接拒绝；成功广播", async () => {

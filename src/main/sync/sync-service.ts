@@ -39,6 +39,14 @@ import { loadSyncState, saveSyncState, type SyncState } from "./sync-state";
 /** 定时同步周期（启用时；timer unref，不阻塞退出）。 */
 export const SYNC_INTERVAL_MS = 60_000;
 
+/** state 文件名（与 sync-state.ts 的 STATE_FILE_NAME 一致；读路径存在性探测用）。 */
+const STATE_FILE_NAME = "state.json";
+
+/** baseUrl 比较键：去首尾空白与尾部斜杠（与 http-client 归一化口径一致）。 */
+function normalizeBaseUrlKey(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
 export interface SyncRunResult {
   ok: boolean;
   error: { code: string; message: string } | null;
@@ -121,6 +129,17 @@ class SyncServiceController implements SyncService {
       this.state = await (this.deps.loadState ?? loadSyncState)(this.syncDir);
     }
     return this.state;
+  }
+
+  /**
+   * 读路径专用状态读取：state 缺失（无 state.json）时返回 null，不创建目录/文件、不生成身份
+   * （与「默认关闭零副作用」口径一致）；已有文件时走完整加载（含损坏隔离恢复）。
+   * 写路径（syncNow / pair / unpair 等）仍用 ensureState 保证身份落盘。
+   */
+  private async peekState(): Promise<SyncState | null> {
+    if (this.state) return this.state;
+    if (!fs.existsSync(path.join(this.syncDir, STATE_FILE_NAME))) return null;
+    return await this.ensureState();
   }
 
   /** createIfMissing=false 且目录不存在时不建库（默认关闭零副作用）。 */
@@ -266,6 +285,9 @@ class SyncServiceController implements SyncService {
       const appliedSessions = new Set<string>();
       if (!state.fetchCursor) {
         const cloned = await client.clone();
+        if (cloned.dropped > 0) {
+          this.log(`[Sync] clone 丢弃 ${cloned.dropped} 条坏帧（初始游标 ${cloned.cursor ?? "null"}）`);
+        }
         const added = await this.appendRemoteEvents(store, state, cloned.events, known, appliedSessions);
         state.fetchCursor = cloned.cursor;
         if (added > 0 || cloned.cursor) await this.persistState();
@@ -273,6 +295,10 @@ class SyncServiceController implements SyncService {
         for (;;) {
           const previousCursor = state.fetchCursor;
           const page = await client.fetch(state.fetchCursor, { limit: SYNC_FETCH_DEFAULT_LIMIT });
+          // 坏帧（协议校验不通过）会被永久跳过且游标照常推进：必须留日志，否则不可观察
+          if (page.dropped > 0) {
+            this.log(`[Sync] fetch 丢弃 ${page.dropped} 条坏帧（游标 ${previousCursor} → ${page.cursor}）`);
+          }
           const added = await this.appendRemoteEvents(store, state, page.events, known, appliedSessions);
           state.fetchCursor = page.cursor;
           await this.persistState();
@@ -338,7 +364,7 @@ class SyncServiceController implements SyncService {
     const settings = this.loadSettings();
     let state: SyncState | null = null;
     try {
-      state = await this.ensureState();
+      state = await this.peekState();
     } catch (error) {
       this.log(`[Sync] 读取状态失败: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -370,7 +396,7 @@ class SyncServiceController implements SyncService {
     const settings = this.loadSettings();
     let state: SyncState | null = null;
     try {
-      state = await this.ensureState();
+      state = await this.peekState();
     } catch (error) {
       this.log(`[Sync] 读取状态失败: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -382,12 +408,19 @@ class SyncServiceController implements SyncService {
   }
 
   async saveConfig(input: SyncSaveConfigInput): Promise<SyncConfigPublic> {
+    const current = this.loadSettings();
     const patch: Partial<SyncSettings> = {};
     if (typeof input.enabled === "boolean") patch.enabled = input.enabled;
-    if (typeof input.baseUrl === "string") patch.baseUrl = input.baseUrl;
+    if (typeof input.baseUrl === "string") patch.baseUrl = input.baseUrl.trim();
     if (typeof input.deviceName === "string") patch.deviceName = input.deviceName;
     if (input.clearToken === true) patch.token = "";
     else if (typeof input.token === "string") patch.token = input.token;
+    // 换 baseUrl 且未同时提供新 token：清掉既有 token，避免把旧凭据发往新主机；
+    // 清后 hasToken=false，UI 提示重新配对（或重新填写令牌）。
+    const baseUrlChanged = typeof input.baseUrl === "string"
+      && normalizeBaseUrlKey(input.baseUrl) !== normalizeBaseUrlKey(current.baseUrl);
+    const hasNewToken = typeof input.token === "string" && input.token.trim().length > 0;
+    if (baseUrlChanged && input.clearToken !== true && !hasNewToken) patch.token = "";
     this.settings = saveSyncSettings(patch);
 
     if (this.settings.enabled) {
@@ -453,12 +486,13 @@ class SyncServiceController implements SyncService {
   async getRemoteSessionEvents(sessionId: string): Promise<SyncEventV0[]> {
     if (!this.isEnabled()) return [];
     try {
-      const state = await this.ensureState();
+      const state = await this.peekState();
       const store = await this.ensureStore(false);
       if (!store) return [];
+      // state 缺失时 deviceId 未知（null）：无身份可过滤，返回 inbox 内该会话全部事件
       return store
         .getRemoteEventsForSession(sessionId)
-        .filter((event) => event.deviceId !== state.deviceId);
+        .filter((event) => event.deviceId !== state?.deviceId);
     } catch (error) {
       this.log(`[Sync] 读取远端事件失败: ${error instanceof Error ? error.message : String(error)}`);
       return [];

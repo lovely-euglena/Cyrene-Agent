@@ -580,8 +580,8 @@ const settingsApi = {
   syncPair: (input: SyncPairInput) =>
     ipcRenderer.invoke(IPC.SYNC_PAIR, input) as Promise<SyncOpResult<SyncConfigPublic>>,
   syncPairCode: () => ipcRenderer.invoke(IPC.SYNC_PAIR_CODE) as Promise<SyncOpResult<SyncPairCodeResult>>,
-  syncUnpair: () => ipcRenderer.invoke(IPC.SYNC_UNPAIR) as Promise<SyncOpResult<SyncStatus>>,
-  // main → 设置页：同步配置 / 状态变化广播（保存 / 配对 / 同步结束 / 失败后刷新面板）
+  syncUnpair: () => ipcRenderer.invoke(IPC.SYNC_UNPAIR) as Promise<SyncOpResult<SyncConfigPublic>>,
+  // main → 设置页：同步配置 / 状态变化广播（保存 / 配对 / 解除配对 / 手动同步终态刷新面板；后台 60s 轮次不广播）
   onSyncChanged: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on(IPC.SYNC_CHANGED, listener);

@@ -5,7 +5,8 @@
  * - 读取类（SYNC_GET_CONFIG / SYNC_GET_STATUS）直接返回数据；
  * - 动作类（SYNC_SAVE_CONFIG / SYNC_NOW / SYNC_PAIR / SYNC_PAIR_CODE / SYNC_UNPAIR）统一返回
  *   SyncOpResult<T>（错误带稳定 code）；
- * - 配置 / 配对 / 解除配对成功后向所有窗口广播 SYNC_CHANGED（参照 channels broadcastChannelsStatus）。
+ * - 配置 / 配对 / 解除配对成功后、手动同步（SYNC_NOW）终态向所有窗口广播 SYNC_CHANGED
+ *   （参照 channels broadcastChannelsStatus；后台 60s 轮次不广播）。
  */
 
 import { BrowserWindow } from "electron";
@@ -28,11 +29,36 @@ function opError(error: unknown): SyncOpResult<never> {
   return { ok: false, error: { code: "internal", message: message.slice(0, 300) } };
 }
 
+/** baseUrl 长度上限（渲染层输入不可信，主进程校验）。 */
+const SYNC_BASE_URL_MAX_LENGTH = 2048;
+
+/**
+ * 校验渲染层传入的 baseUrl：空串允许（用于清除地址）；非空必须是 http(s) 且长度受限。
+ * 非法输入抛 invalid_config（handler 统一映射为 SyncOpResult）。
+ */
+function normalizeBaseUrlInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.length > SYNC_BASE_URL_MAX_LENGTH) {
+    throw new SyncHttpError("invalid_config", 0, undefined, "服务器地址过长");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new SyncHttpError("invalid_config", 0, undefined, "服务器地址不是合法的 URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new SyncHttpError("invalid_config", 0, undefined, "服务器地址必须以 http:// 或 https:// 开头");
+  }
+  return trimmed;
+}
+
 function normalizeSaveInput(input: unknown): SyncSaveConfigInput {
   const record = (input ?? {}) as Record<string, unknown>;
   const out: SyncSaveConfigInput = {};
   if (typeof record.enabled === "boolean") out.enabled = record.enabled;
-  if (typeof record.baseUrl === "string") out.baseUrl = record.baseUrl;
+  if (typeof record.baseUrl === "string") out.baseUrl = normalizeBaseUrlInput(record.baseUrl);
   if (typeof record.deviceName === "string") out.deviceName = record.deviceName;
   if (typeof record.token === "string") out.token = record.token;
   if (record.clearToken === true) out.clearToken = true;
@@ -91,6 +117,9 @@ export function registerSyncIpc(
       return { ok: true, data: await service.getStatus() };
     } catch (error) {
       return opError(error);
+    } finally {
+      // 手动同步终态（成功 / 失败 / 异常）广播一次，面板据此刷新状态与 lastError；后台轮次不广播
+      broadcastSyncChanged();
     }
   });
 
