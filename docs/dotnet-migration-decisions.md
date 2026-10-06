@@ -708,3 +708,46 @@
   PHP（便携 8.4）**51/0**。
 - **未实测面**：CF 测试本机未执行（依赖未安装；CF 复用共享 TS 校验器，契约由 TS 侧覆盖）。
 - **关联 Issue**：Ygwill/cyrene-agent#IKJK2O。
+
+## 2026-10-06 增量：ToolHost 超时轻量隔离——只读调用不杀 host（IKJLP2）
+
+- **评估（并发面盘点，#IKJLP2）**：单工具超时原语义 = `child.kill()` → exit 连带
+  拒绝全部在途/排队调用（PR #1 已补串行闸门 + 连带 `callId(tool)` 日志兜底）。
+  真实并发面：调度器安全并行清单仅纯读（`read_file` / `list_dir` / `Read` / `Glob` /
+  `Grep` / `search_text` / `ocr_image` + 内置 `read_tool_result` / 只读 `task`），
+  写类/副作用调用恒为 `exclusive` 串行屏障（分类 fail-closed）；native 轨经串行
+  闸门收敛为单在途 + TS 队列。慢/卡触发面集中在**默认 5s 看门狗**的长任务
+  （search_text 无 C# 侧内部超时、git 只读命令 C# 侧 120s、ast_grep 搜索看门狗
+  60s）与网络读（web_search / fetch_url / weather / plan_trip / exchange_rate /
+  email_list|read，25–65s）。仓库内无真实耗时分布采样（未发现统计产物），级联
+  频率无法量化——本轮以语义隔离收敛爆炸半径，kill 连带日志（既有）留作后续观察。
+- **决策（方案 a/b/c）**：落地**方案 b（host 优雅收敛）**——只读调用超时轻量隔离
+  （`NativeFirstOptions.abandonOnTimeout` / `NativeToolHost.call` 第 6 参）：超时只
+  拒绝当次、host 保留，标记「已放弃在途」等迟到结果帧排空后再派发后续调用；
+  兜底窗口 `max(timeoutMs, 5s)` 到期仍无结果才杀 host 收敛（排队调用按
+  `E_TOOL_NOT_DISPATCHED` sentinel 安全回退，与既有语义一致）。方案 a
+  （cancel 帧 / CTS 贯通）需 C# ToolHost 执行模型改造（读循环同步执行，需在途
+  注册表或工具级 CTS），且与 #IKJK3V「取消与进度帧」前置重叠——维持暂缓；
+  方案 c（调度隔离）现状已覆盖（写类 exclusive + 安全并行清单 fail-closed），
+  本轮仅文档化、无代码改动。
+- **安全边界（不改工具语义）**：轻量隔离**仅接只读调用**；副作用类（写文件 /
+  str_replace / apply_patch / 记账 / 发信 / 邮件标记 / git 写 / 文档生成 / 下载 /
+  `ast_grep_replace`）维持杀进程语义——允许 native 完成与 TS 回退并发会重复副作用。
+  接线点：fs 只读件（read_file/list_dir，含 zcode `Read` 别名）、`search_text`
+  （含 zcode `Grep` 别名）、`calculator`/`now`、`query_expense`/`exchange_rate`、
+  `email_list`/`email_read`（markSeen 为幂等服务端标记）、`web_search`/`weather`/
+  `plan_trip`/`fetch_url`、`git_status`/`git_diff`/`git_log`、`ast_grep_search`。
+- **实现**：`native-tool-host.ts` 新增 `abandoned` 状态 + 排空兜底计时器；派发闸门
+  含 `abandoned`（排空完成前不派发新帧——避免「新调用被旧调用看门狗误杀」，即
+  PR #1 复审保留项所述场景）；迟到结果帧丢弃并恢复派发；host 退出 / 兜底 kill /
+  排空完成三路径清理状态（排队调用仍走 sentinel 分流）。
+- **验证（2026-10-06，Windows 本机）**：`tsc` 三端（main/preload/renderer）0 错；
+  `vitest run src/main/orchestrator/tools` **508/508**（本批 +4：排空后正常派发无
+  连带 / 兜底到期杀 host + sentinel / 崩溃清计时器；git 读/写接线分类断言；
+  search_text / fs / ast_grep / email / weather 接线断言同步锁定）；`vitest run
+  src/main/sync src/pwa` **87/87**、`vitest run src/main/channels src/main/proactive`
+  **436/436**；工具矩阵 **146/146**（本机 ast-grep CLI 就绪）；dual-track **PASS**。
+- **未做/后续**：下载回退「重复下载」幂等短路仍为观察项（PR #1 挂靠，未纳入）；
+  cancel 帧留待长任务迁移批次（#IKJK3V 前置）；若生产观测到排空窗口内频繁触发
+  兜底 kill，再评估窗口调参 / 连续失败阈值。
+- **关联 Issue**：Ygwill/cyrene-agent#IKJLP2。

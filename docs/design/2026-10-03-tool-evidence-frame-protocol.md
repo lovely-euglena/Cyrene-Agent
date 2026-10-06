@@ -72,7 +72,7 @@ fs 三件下沉 ToolHost 时，若宿主只返回 `{path, bytes}`：
 
 ## 5. 未决与后续
 
-- **取消与进度帧**：长任务（download / shell_job / 邮件）迁移前需补 AbortSignal 对应帧（Issue 跨领域项，另行设计）；
+- **取消与进度帧**：长任务（download / shell_job / 邮件）迁移前需补 AbortSignal 对应帧（Issue 跨领域项，另行设计）；超时场景已由 #IKJLP2 轻量隔离覆盖（只读调用排空 + 兜底 kill，不依赖 cancel 帧），长任务取消仍需本前置；
 - **错误码透传**：当前 host 错误帧的 `errorCode` 在客户端被折叠为 message（回退 TS 兜底）；
   若后续写类工具需要「宿主态语义错误」不回退，需先补 `errorCode` 透传与分类；
 - **其他写类工具**：`str_replace` / `apply_patch` / 文档四件 / `ast_grep_replace` 迁移时直接复用本契约
