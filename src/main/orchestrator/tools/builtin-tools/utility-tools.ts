@@ -199,7 +199,7 @@ export const calculatorTool: ToolDefinition = {
     required: ["expression"],
   },
   execute: async (args: Record<string, unknown>, ctx) => {
-    return nativeFirst("calculator", args, calcExecute, { signal: ctx?.signal });
+    return nativeFirst("calculator", args, calcExecute, { signal: ctx?.signal, abandonOnTimeout: true });
   },
 };
 
@@ -240,7 +240,7 @@ export const nowTool: ToolDefinition = {
     // 时区实时注入（用户改设置后下次调用即生效；host 未起时存为启动配置）。
     // 曾漏接线：.NET now 永远按 Asia/Shanghai 返回，与 TS 轨非默认时区不一致。
     nativeToolHost.setTimezone(timezoneGetter?.() ?? null);
-    return nativeFirst("now", args, nowExecute, { signal: ctx?.signal });
+    return nativeFirst("now", args, nowExecute, { signal: ctx?.signal, abandonOnTimeout: true });
   },
 };
 

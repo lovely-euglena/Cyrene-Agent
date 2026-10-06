@@ -387,6 +387,7 @@ async function executeEmailList(args: Record<string, unknown>, ctx?: ToolContext
   return nativeFirst("email_list", args, () => executeEmailListTs(args), {
     timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
     signal: ctx?.signal,
+    abandonOnTimeout: true,
   });
 }
 
@@ -443,6 +444,7 @@ async function executeEmailRead(args: Record<string, unknown>, ctx?: ToolContext
   return nativeFirst("email_read", args, () => executeEmailReadTs(args), {
     timeoutMs: EMAIL_NATIVE_TIMEOUT_MS,
     signal: ctx?.signal,
+    abandonOnTimeout: true,
   });
 }
 

@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   sendMail: vi.fn(),
   requestUserChoice: vi.fn(),
-  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number; signal?: AbortSignal }>,
+  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number; signal?: AbortSignal; abandonOnTimeout?: boolean }>,
   nativeResult: null as string | null,
   nativeError: null as Error | null,
 }));
@@ -86,8 +86,8 @@ beforeEach(() => {
   h.sendMail.mockReset();
   h.requestUserChoice.mockReset();
   vi.spyOn(nativeToolHost, "call").mockImplementation(
-    async (tool: string, args: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal) => {
-      h.nativeCalls.push({ tool, args, timeoutMs, signal });
+    async (tool: string, args: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal, _onEvent?: (event: unknown) => void, abandonOnTimeout?: boolean) => {
+      h.nativeCalls.push({ tool, args, timeoutMs, signal, abandonOnTimeout });
       if (h.nativeError) throw h.nativeError;
       return h.nativeResult;
     },
@@ -113,6 +113,7 @@ describe("email 四件 native 轨", () => {
         args: { to: ["to@example.com"], cc: [], subject: "Hi", body: "Hello", attachments: [] },
         timeoutMs: 60_000,
         signal: undefined,
+        abandonOnTimeout: undefined,
       },
     ]);
     expect(nativeToolHost.getRuntimeSettings().email).toEqual({
@@ -195,7 +196,7 @@ describe("email 四件 native 轨", () => {
     const out = await getTool("email_list").execute({ limit: 5, unreadOnly: true }, {});
     expect(out).toBe(h.nativeResult);
     expect(h.nativeCalls).toEqual([
-      { tool: "email_list", args: { limit: 5, unreadOnly: true }, timeoutMs: 60_000, signal: undefined },
+      { tool: "email_list", args: { limit: 5, unreadOnly: true }, timeoutMs: 60_000, signal: undefined, abandonOnTimeout: true },
     ]);
     expect(nativeToolHost.getRuntimeSettings().email?.imapHost).toBe("imap.qq.com");
   });
@@ -209,6 +210,9 @@ describe("email 四件 native 轨", () => {
     expect(h.nativeCalls.map((c) => c.tool)).toEqual(["email_read", "email_mark"]);
     expect(h.nativeCalls[0].args).toEqual({ uid: 7, markSeen: false });
     expect(h.nativeCalls[1].args).toEqual({ uid: 7, seen: false });
+    // 只读轻量隔离（#IKJLP2）：email_read 接线、email_mark（写类）不透传
+    expect(h.nativeCalls[0].abandonOnTimeout).toBe(true);
+    expect(h.nativeCalls[1].abandonOnTimeout).toBeUndefined();
   });
 
   it("email_list：native 失败 → 回退 TS（未启用时返回未启用文案）", async () => {

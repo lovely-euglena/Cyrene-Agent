@@ -309,6 +309,7 @@ export function registerTravelTools(): void {
       return nativeFirst("plan_trip", args, (nativeArgs) => executePlanTrip(nativeArgs), {
         timeoutMs: TRAVEL_NATIVE_TIMEOUT_MS,
         signal: context?.signal,
+        abandonOnTimeout: true,
       });
     },
   });

@@ -423,7 +423,8 @@ export function registerSearchTextTool(): void {
         "search_text",
         args,
         (nativeArgs) => executeSearchText(nativeArgs, ctx),
-        { signal: ctx?.signal, internalArgs: { __cyreneWorkspaceRoot: workspaceRoot } },
+        // 只读工具轻量隔离（#IKJLP2）：超时只拒绝当次，不连带排队中的并行批调用
+        { signal: ctx?.signal, internalArgs: { __cyreneWorkspaceRoot: workspaceRoot }, abandonOnTimeout: true },
       );
     },
   });

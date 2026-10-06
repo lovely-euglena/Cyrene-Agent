@@ -651,7 +651,7 @@ export function registerAstGrepTools(): void {
       required: ["pattern"],
     },
     execute: executeAstGrepSearch,
-  }, "ast_grep_search", (args, ctx) => buildAstGrepNativeArgs(args, ctx), AST_GREP_NATIVE_TIMEOUT_MS));
+  }, "ast_grep_search", (args, ctx) => buildAstGrepNativeArgs(args, ctx), AST_GREP_NATIVE_TIMEOUT_MS, true));
 
   toolRegistry.register({
     id: "ast_grep_replace",

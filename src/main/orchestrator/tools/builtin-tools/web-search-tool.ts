@@ -316,6 +316,7 @@ export const webSearchTool: ToolDefinition = {
     return nativeFirst("web_search", args, (nativeArgs) => executeWebSearch(nativeArgs, ctx), {
       timeoutMs: WEB_SEARCH_NATIVE_TIMEOUT_MS,
       signal: ctx?.signal,
+      abandonOnTimeout: true,
     });
   },
 };

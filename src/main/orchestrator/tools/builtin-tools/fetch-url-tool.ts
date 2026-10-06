@@ -309,5 +309,6 @@ export const fetchUrlTool: ToolDefinition = {
     nativeFirst("fetch_url", args, (nativeArgs) => executeFetchUrl(nativeArgs, ctx), {
       timeoutMs: FETCH_URL_NATIVE_TIMEOUT_MS,
       signal: ctx?.signal,
+      abandonOnTimeout: true,
     }),
 };

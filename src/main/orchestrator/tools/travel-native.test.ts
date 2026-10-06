@@ -71,7 +71,7 @@ describe("plan_trip native 轨", () => {
       {
         tool: "plan_trip",
         args: { origin: "故宫", destination: "天安门" },
-        options: { timeoutMs: 50_000, signal: undefined },
+        options: { timeoutMs: 50_000, signal: undefined, abandonOnTimeout: true },
       },
     ]);
   });

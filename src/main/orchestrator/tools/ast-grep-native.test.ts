@@ -27,7 +27,7 @@ vi.mock("electron", () => ({
 }));
 
 const h = vi.hoisted(() => ({
-  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number }>,
+  nativeCalls: [] as Array<{ tool: string; args: Record<string, unknown>; timeoutMs?: number; abandonOnTimeout?: boolean }>,
   nativeResults: [] as Array<string | null>,
   nativeError: null as Error | null,
 }));
@@ -55,8 +55,8 @@ beforeEach(() => {
   h.nativeResults = [];
   h.nativeError = null;
   vi.spyOn(nativeToolHost, "call").mockImplementation(
-    async (tool: string, args: Record<string, unknown>, timeoutMs?: number) => {
-      h.nativeCalls.push({ tool, args, timeoutMs });
+    async (tool: string, args: Record<string, unknown>, timeoutMs?: number, _signal?: AbortSignal, _onEvent?: (event: unknown) => void, abandonOnTimeout?: boolean) => {
+      h.nativeCalls.push({ tool, args, timeoutMs, abandonOnTimeout });
       if (h.nativeError) throw h.nativeError;
       return h.nativeResults.shift() ?? null;
     },
@@ -96,6 +96,7 @@ describe("ast_grep native 轨", () => {
     expect(h.nativeCalls).toHaveLength(1);
     expect(h.nativeCalls[0].tool).toBe("ast_grep_search");
     expect(h.nativeCalls[0].timeoutMs).toBe(60_000);
+    expect(h.nativeCalls[0].abandonOnTimeout).toBe(true); // 只读轻量隔离（#IKJLP2）
     expect(h.nativeCalls[0].args.__cyreneWorkspaceRoot).toBe(tmpDir);
     expect(h.nativeCalls[0].args.__astGrepCommand).toBe(CLI);
     expect(h.nativeCalls[0].args.pattern).toBe("console.log($$$A)");

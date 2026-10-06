@@ -456,6 +456,7 @@ export const weatherTool: ToolDefinition = {
     return nativeFirst("weather", args, (nativeArgs) => executeWeather(nativeArgs, context, emitCard), {
       timeoutMs: WEATHER_NATIVE_TIMEOUT_MS,
       signal: context?.signal,
+      abandonOnTimeout: true,
       // 卡片经事件帧回传；与回退路径共享同一去重标记
       onEvent: (event) => {
         if (event.kind === "weather_card") emitCard(event.payload as WeatherCardData);

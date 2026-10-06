@@ -49,7 +49,7 @@ describe("fetch_url native 轨", () => {
       {
         tool: "fetch_url",
         args: { url: "https://example.com" },
-        options: { timeoutMs: 25_000, signal },
+        options: { timeoutMs: 25_000, signal, abandonOnTimeout: true },
       },
     ]);
   });

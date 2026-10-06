@@ -18,6 +18,8 @@ function nativeFirstGit(
   gitService: GitService,
   toolId: string,
   executeTs: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>,
+  /** 只读工具轻量隔离（#IKJLP2）：透传 NativeToolHost.abandonOnTimeout。 */
+  abandonOnTimeout = false,
 ): (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string> {
   return async (args, ctx) => {
     const fallback = (): Promise<string> => Promise.resolve(executeTs(args, ctx));
@@ -37,7 +39,7 @@ function nativeFirstGit(
         ...(identity ? { __gitIdentity: identity } : {}),
         ...(configGlobal ? { __gitConfigGlobal: configGlobal } : {}),
       };
-      return await nativeFirst(toolId, args, () => fallback(), { signal: ctx?.signal, internalArgs });
+      return await nativeFirst(toolId, args, () => fallback(), { signal: ctx?.signal, internalArgs, abandonOnTimeout });
     } catch (error) {
       if (isAbortError(error)) throw error;
       return fallback();
@@ -59,7 +61,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       needsContext: true,
       inputSchema: { type: "object", properties: {} },
       execute: nativeFirstGit(gitService, "git_status", async (_args, ctx) =>
-        JSON.stringify(await gitService.getStatusForSession(requireCodeContext(ctx).sessionId))),
+        JSON.stringify(await gitService.getStatusForSession(requireCodeContext(ctx).sessionId)), true),
     },
     {
       id: "git_init",
@@ -203,7 +205,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         }));
 
         return JSON.stringify({ ...result, changes: finalizeFileChanges(changes) });
-      }),
+      }, true),
     },
     {
       id: "git_log",
@@ -231,7 +233,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         if (args.path !== undefined) options.path = stringArg(args, "path");
         if (args.maxCount !== undefined) options.maxCount = Number(args.maxCount);
         return JSON.stringify(await gitService.log(requireCodeContext(ctx), options));
-      }),
+      }, true),
     },
   ];
 }
