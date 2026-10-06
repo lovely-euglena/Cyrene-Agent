@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CyreneNative.Sync;
 
@@ -30,7 +31,7 @@ public static class MemoryMoodMaterializer
                     if (syncEvent.Payload.TryGetProperty("feeling", out var feeling)
                         && feeling.ValueKind == JsonValueKind.String)
                     {
-                        result.Mood = feeling.GetString();
+                        result.Mood = new MoodState(feeling.GetString()!);
                     }
                     break;
             }
@@ -59,12 +60,25 @@ public static class MemoryMoodMaterializer
     }
 }
 
-/// <summary>物化结果：memories（memoryId → 快照；被删除 / 未出现的条目不出现）+ mood（无心情事件时 null）。</summary>
+/// <summary>
+/// 物化结果（形状与 TS / spec §5 对齐：{ memories, mood: { feeling } | null }；
+/// JsonPropertyName 锁定 wire 格式，不受宿主 SerializerOptions 影响）。
+/// memories = memoryId → 快照（被删除 / 未出现的条目不出现）；无心情事件时 mood 为 null。
+/// </summary>
 public sealed class MemoryMoodMaterializeResult
 {
+    [JsonPropertyName("memories")]
     public Dictionary<string, MemoryEntry> Memories { get; } = new(StringComparer.Ordinal);
-    public string? Mood { get; set; }
+
+    [JsonPropertyName("mood")]
+    public MoodState? Mood { get; set; }
 }
 
+/// <summary>心情快照（物化输出 { mood: { feeling } }；无心情事件时 Mood 为 null）。</summary>
+public sealed record MoodState([property: JsonPropertyName("feeling")] string Feeling);
+
 /// <summary>记忆快照（物化输出；weight 为整数快照）。</summary>
-public sealed record MemoryEntry(string Content, long Weight, bool Pinned);
+public sealed record MemoryEntry(
+    [property: JsonPropertyName("content")] string Content,
+    [property: JsonPropertyName("weight")] long Weight,
+    [property: JsonPropertyName("pinned")] bool Pinned);

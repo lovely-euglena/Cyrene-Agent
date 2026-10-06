@@ -31,7 +31,9 @@ export interface MaterializedMemoryMood {
 }
 
 export function materializeMemoryMood(events: SyncEventV0[]): MaterializedMemoryMood {
-  const memories: Record<string, MaterializedMemory> = {};
+  // 折叠态用无原型对象承载：普通对象遇 memoryId="__proto__" 会触发原型 setter，
+  // 条目丢失（C# Dictionary 正常 → 双端分歧；fixtures 07-proto-key 锁定）。
+  const memories: Record<string, MaterializedMemory> = Object.create(null) as Record<string, MaterializedMemory>;
   /** sticky 墓碑：memoryId 一经删除，后续 upsert 一律忽略。 */
   const tombstones = new Set<string>();
   let mood: { feeling: string } | null = null;
@@ -67,5 +69,7 @@ export function materializeMemoryMood(events: SyncEventV0[]): MaterializedMemory
         break;
     }
   }
-  return { memories, mood };
+  // 输出还原为普通对象：Object.fromEntries 以 CreateDataProperty 定义自有属性，
+  // "__proto__" 键不会触发 setter，与 C# Dictionary 形状一致。
+  return { memories: Object.fromEntries(Object.entries(memories)), mood };
 }

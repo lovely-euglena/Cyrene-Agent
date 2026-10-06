@@ -1,0 +1,28 @@
+{
+  "name": "信封非法：id / ts / prevHash 尾随换行（C0 控制字符）→ E_SYNC_ENVELOPE",
+  "description": "0：eventId 含尾随换行（C# 旧 $ 可匹配串尾换行前 → 误收；TS 拒绝，PHP 字节扫描拒绝）；1：sessionId 同；2/3：同类审计——ts / prevHash 尾随换行（.NET $ 与 PCRE $ 同问题，修复后三端一致拒绝）；4：合法行验证无误伤。input 内层 \\n 为真实换行字符（JSON 字符串转义）。",
+  "input": "{\"eventId\":\"bad-id\\n\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":0,\"deviceId\":\"dev-a\",\"seq\":0,\"ts\":\"2026-10-06T05:10:00.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"eventId 含尾随换行\"}}\n{\"eventId\":\"bad-session\",\"sessionId\":\"s1\\n\",\"type\":\"message.append\",\"lamport\":1,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-06T05:10:01.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"sessionId 含尾随换行\"}}\n{\"eventId\":\"bad-ts\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":2,\"ts\":\"2026-10-06T05:10:02.000Z\\n\",\"payload\":{\"role\":\"assistant\",\"text\":\"ts 含尾随换行\"}}\n{\"eventId\":\"bad-hash\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":3,\"deviceId\":\"dev-a\",\"seq\":3,\"ts\":\"2026-10-06T05:10:03.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"prevHash 含尾随换行\"},\"prevHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n\"}\n{\"eventId\":\"e-ok\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":4,\"deviceId\":\"dev-a\",\"seq\":4,\"ts\":\"2026-10-06T05:10:04.000Z\",\"payload\":{\"role\":\"assistant\",\"text\":\"正常行\"}}",
+  "expect": {
+    "events": [
+      "e-ok"
+    ],
+    "errors": [
+      {
+        "index": 0,
+        "code": "E_SYNC_ENVELOPE"
+      },
+      {
+        "index": 1,
+        "code": "E_SYNC_ENVELOPE"
+      },
+      {
+        "index": 2,
+        "code": "E_SYNC_ENVELOPE"
+      },
+      {
+        "index": 3,
+        "code": "E_SYNC_ENVELOPE"
+      }
+    ]
+  }
+}

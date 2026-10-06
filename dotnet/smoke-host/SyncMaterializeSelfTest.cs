@@ -132,16 +132,17 @@ internal static class SyncMaterializeSelfTest
         {
             if (actual.Mood is not null)
             {
-                detail = $"mood: got {actual.Mood} want null";
+                detail = $"mood: got {actual.Mood.Feeling} want null";
                 return false;
             }
         }
         else
         {
             var wantFeeling = moodElement.TryGetProperty("feeling", out var feelingElement) ? feelingElement.GetString() : null;
-            if (actual.Mood != wantFeeling)
+            var gotFeeling = actual.Mood?.Feeling;
+            if (gotFeeling != wantFeeling)
             {
-                detail = $"mood: got {actual.Mood ?? "null"} want {wantFeeling ?? "null"}";
+                detail = $"mood: got {gotFeeling ?? "null"} want {wantFeeling ?? "null"}";
                 return false;
             }
         }
