@@ -9,7 +9,7 @@
   "properties": {
     "eventId": { "$ref": "#/$defs/id" },
     "sessionId": { "$ref": "#/$defs/id" },
-    "type": { "enum": ["session.create", "message.append", "turn_rewind", "tombstone"] },
+    "type": { "enum": ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift"] },
     "lamport": { "$ref": "#/$defs/safeInt" },
     "deviceId": { "$ref": "#/$defs/id" },
     "seq": { "$ref": "#/$defs/safeInt" },
@@ -34,6 +34,24 @@
     {
       "if": { "properties": { "type": { "const": "tombstone" } }, "required": ["type"] },
       "then": { "properties": { "payload": { "$ref": "#/$defs/tombstonePayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "memory.write" } }, "required": ["type"] },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/memoryWritePayload" },
+          "sessionId": { "const": "__memory__" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "mood.shift" } }, "required": ["type"] },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/moodShiftPayload" },
+          "sessionId": { "const": "__mood__" }
+        }
+      }
     }
   ],
   "$defs": {
@@ -135,6 +153,36 @@
       "properties": {
         "targetUserTurnId": { "$ref": "#/$defs/id" },
         "reason": { "const": "pending_withdrawn" }
+      }
+    },
+    "memoryWritePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memoryId", "op"],
+      "properties": {
+        "memoryId": { "$ref": "#/$defs/id" },
+        "op": { "enum": ["upsert", "delete"] },
+        "content": { "type": "string" },
+        "weight": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "pinned": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "const": "upsert" } }, "required": ["op"] },
+          "then": { "required": ["content", "weight"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "delete" } }, "required": ["op"] },
+          "then": { "not": { "anyOf": [{ "required": ["content"] }, { "required": ["weight"] }, { "required": ["pinned"] }] } }
+        }
+      ]
+    },
+    "moodShiftPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feeling"],
+      "properties": {
+        "feeling": { "enum": ["平静", "开心", "温柔", "激动", "撒娇", "担心", "难过", "感动", "害羞"] }
       }
     }
   }
