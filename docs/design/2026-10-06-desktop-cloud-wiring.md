@@ -5,7 +5,7 @@
 > 协议 `docs/specs/2026-10-04-sync-protocol-v0.md`（v0/v0.1）· PWA `2026-10-04-pwa-mobile-client-design.md` ·
 > 服务端契约 `dotnet/cloud-server/README.md` · 渠道 `2026-10-05-server-channel.md`（remote 复用约定）·
 > CTA `2026-09-21-cta-conversation-transcript-architecture-design.md`
-> 前置：IKJK2G–IKJK2H / IKJK2J–IKJK2M 已交付；IKJK2O（v0.1 事件）PR #25 评审中（本批不依赖）
+> 前置：IKJK2G–IKJK2H / IKJK2J–IKJK2M 已交付；IKJK2O（v0.1 事件）PR #25 已合并（本批不依赖）
 
 ## 0. 结论与范围
 
@@ -119,8 +119,8 @@
 
 - 方法：`pair(code, deviceName)` / `createPairCode()` / `capabilities()` / `push(events)` / `fetch(cursor, {sessionId?, limit?})` / `clone({sessionId?})`；
 - 配置 `{baseUrl, token, timeoutMs?, signal?, fetchImpl?}`（fetchImpl 注入便于测试）；全局 fetch + `AbortSignal.timeout`（沿用 runtime-policy `external-http` 30s）；
-- 错误模型（token 安全，错误文本剥离 token / URL 变体）：`{code: invalid_config|unauthorized|forbidden|rate_limited|batch_invalid|batch_rejected|cursor|not_found|http|timeout|aborted|network}` + status + 服务器 code；
-- push 分块：按序列化字节 ≤5 MiB（低于服务端 10 MiB）；重试安全（eventId 幂等）；401 → 标记未授权（UI 提示重新配对）。
+- 错误模型（token 安全，错误文本剥离 token / URL 变体）：`{code: invalid_config|unauthorized|forbidden|rate_limited|batch_invalid|batch_rejected|oversize_event|cursor|not_found|http|timeout|aborted|network}` + status + 服务器 code；
+- push 分块：按序列化字节 ≤5 MiB（低于服务端 10 MiB）；单事件序列化 >10 MiB 预检拦截（抛 `oversize_event`，含 eventId、不发送）；重试安全（eventId 幂等）；401 → 标记未授权（UI 提示重新配对）。
 
 ### 4.2 同步流程（`sync-service.ts`，单飞互斥）
 

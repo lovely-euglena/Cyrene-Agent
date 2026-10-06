@@ -753,7 +753,7 @@ python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.
 | 8 | **飞书 webhook 公开面** | 伪造/重放 | Verification Token + 签名 + 时间戳 + 去重表；限流桶；Host 白名单 |
 | 9 | **媒体不进事件流** | 桌面看不到渠道图片本体 | 稳定占位文本 + 文档；后续 v0.x 附件扩展 |
 | 10 | **ffmpeg 镜像体积** | 部署包变大 | `CLOUD_CHANNEL_FEISHU_AUDIO=0` 可关；或后续改纯托管 Opus |
-| 11 | **桌面同步客户端（IKJK2I）尚未接线** | 渠道远程配置/令牌复用暂缺 | 本 PR 允许 `channels.remote` 显式填写 baseUrl/token；接线后自动复用；2026-10-06：已由 IKJK2I 落地（未显式配置时自动复用同步配置），风险关闭 |
+| 11 | **桌面同步客户端（IKJK2I）已接线（2026-10-06 关闭）** | 渠道远程配置/令牌复用暂缺 | 本 PR 允许 `channels.remote` 显式填写 baseUrl/token；2026-10-06：已由 IKJK2I 落地（未显式配置时自动复用同步配置），风险关闭 |
 | 12 | **凭据保护依赖 `CLOUD_TOKEN`** | 未设主控令牌时降级明文 0600 | 状态标注 + README 建议；后续接入 `Secrets`/DPAPI 等价物（Linux 静态保护 Q6 未决） |
 
 ---
