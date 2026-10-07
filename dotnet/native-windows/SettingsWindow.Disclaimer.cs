@@ -51,16 +51,26 @@ public sealed partial class SettingsWindow
 
         content.Children.Add(MakeDisclaimerSection("5. 版权方联络通道",
             DisclaimerParagraph(RunText("若米哈游 / HoYoverse 权利方认为本软件存在侵犯权益的情形，请通过以下方式联系，作者承诺在收到通知后 7 个工作日内积极配合处理或下架。")),
+            DisclaimerParagraph(new Bold(new Run("原作者（上游项目）"))),
             DisclaimerListItem(MailIcon(), RunText("电子邮箱：1357502569@qq.com（邮件标题请注明【版权事宜】）")),
             DisclaimerListItem(BilibiliIcon(),
                 RunLink("B站：Playa0 作者空间", "https://space.bilibili.com/260670644"),
                 RunText("（私信请注明【版权联络】）")),
             DisclaimerListItem(GithubIcon(),
                 RunText("GitHub："),
-                RunLink("Playa-0v0/Cyrene-Agent", "https://github.com/Playa-0v0/Cyrene-Agent"))));
+                RunLink("Playa-0v0/Cyrene-Agent", "https://github.com/Playa-0v0/Cyrene-Agent")),
+            DisclaimerParagraph(new Bold(new Run("本 fork 维护者（社区接力）"))),
+            DisclaimerListItem(MailIcon(), RunText("电子邮箱：Each13579@hotmail.com（邮件标题请注明【版权事宜】）")),
+            DisclaimerListItem(GithubIcon(),
+                RunText("GitHub："),
+                RunLink("lovely-euglena/Cyrene-Agent", "https://github.com/lovely-euglena/Cyrene-Agent")),
+            DisclaimerListItem(null,
+                RunText("Gitee："),
+                RunLink("ygwill/cyrene-agent", "https://gitee.com/ygwill/cyrene-agent"))));
 
         content.Children.Add(MakeDisclaimerSection("6. 用户反馈与 Bug 提交",
             DisclaimerParagraph(RunText("如您遇到问题、Bug 或有功能建议，欢迎通过以下渠道提交。")),
+            DisclaimerParagraph(new Bold(new Run("原作者（上游项目）"))),
             DisclaimerListItem(MailIcon(), RunText("发送邮件至 1357502569@qq.com（标题建议带【反馈】或【Bug】）")),
             DisclaimerListItem(BilibiliIcon(),
                 RunLink("B站私信 Playa0", "https://space.bilibili.com/260670644"),
@@ -68,6 +78,13 @@ public sealed partial class SettingsWindow
             DisclaimerListItem(GithubIcon(),
                 RunLink("GitHub Issues", "https://github.com/Playa-0v0/Cyrene-Agent/issues"),
                 RunText("（提交 Bug / 功能建议）")),
+            DisclaimerParagraph(new Bold(new Run("本 fork 维护者（社区接力）"))),
+            DisclaimerListItem(MailIcon(), RunText("发送邮件至 Each13579@hotmail.com（标题建议带【反馈】或【Bug】）")),
+            DisclaimerListItem(GithubIcon(),
+                RunLink("lovely-euglena/Cyrene-Agent Issues", "https://github.com/lovely-euglena/Cyrene-Agent/issues")),
+            DisclaimerListItem(null,
+                RunText("Gitee："),
+                RunLink("ygwill/cyrene-agent Issues", "https://gitee.com/ygwill/cyrene-agent/issues")),
             DisclaimerParagraph(RunText("普通用户反馈我会尽力查看，但不保证及时回复；版权事宜享有最高响应优先级。"))));
 
         content.Children.Add(MakeDisclaimerSection("7. AI 生成内容与使用心态提醒",

@@ -1269,20 +1269,34 @@
       "section6": {
         "title": "6. Contact Channel for Rights Holders",
         "p1": "If miHoYo / HoYoverse or other rights holders believe this software infringes their rights, please contact us through the channels below. The author undertakes to respond and cooperate, or take the software down, within 7 business days of receiving notice.",
+        "originalLabel": "Original author (upstream project)",
         "email": "Email: ky2569ly@gmail.com (please put [Copyright Matter] in the subject line)",
         "bilibiliLink": "Bilibili: Playa0's creator space",
         "bilibiliNote": " (please mention [Copyright Contact] in your direct message)",
         "githubLabel": "GitHub: ",
-        "githubLink": "Playa-0v0/Cyrene-Agent"
+        "githubLink": "Playa-0v0/Cyrene-Agent",
+        "forkLabel": "This fork's maintainer (community continuation)",
+        "forkEmail": "Email: Each13579@hotmail.com (please put [Copyright Matter] in the subject line)",
+        "forkGithubLabel": "GitHub: ",
+        "forkGithubLink": "lovely-euglena/Cyrene-Agent",
+        "forkGiteeLabel": "Gitee: ",
+        "forkGiteeLink": "ygwill/cyrene-agent"
       },
       "section7": {
         "title": "7. User Feedback and Bug Reports",
         "p1": "If you run into problems or bugs, or have feature suggestions, you are welcome to submit them through the channels below.",
+        "originalLabel": "Original author (upstream project)",
         "email": "Email ky2569ly@gmail.com (please include [Feedback] or [Bug] in the subject)",
         "bilibiliLink": "Direct message Playa0 on Bilibili",
         "bilibiliNote": " (start your message with [Feedback/Bug])",
         "githubLink": "GitHub Issues",
         "githubNote": " (report bugs / suggest features)",
+        "forkLabel": "This fork's maintainer (community continuation)",
+        "forkEmail": "Email Each13579@hotmail.com (please include [Feedback] or [Bug] in the subject)",
+        "forkGithubLabel": "GitHub: ",
+        "forkGithubLink": "lovely-euglena/Cyrene-Agent Issues",
+        "forkGiteeLabel": "Gitee: ",
+        "forkGiteeLink": "ygwill/cyrene-agent Issues",
         "outro": "I will do my best to read feedback from general users, but prompt replies are not guaranteed; copyright matters receive the highest response priority."
       },
       "section8": {

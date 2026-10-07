@@ -661,7 +661,18 @@ Special thanks to the original model creator for generously authorizing this pro
 
 ## 💌 Contact
 
-GitHub Issues and pull requests are welcome. Please keep discussions respectful and relevant to the project.
+**Original author (upstream project)**
+- Email: ky2569ly@gmail.com
+- Bilibili: [Playa0](https://space.bilibili.com/260670644)
+- GitHub: [Playa-0v0](https://github.com/Playa-0v0) ([Cyrene-Agent](https://github.com/Playa-0v0/Cyrene-Agent))
+- Gitee: [playa0](https://gitee.com/playa0)
+
+**This fork's maintainer (community continuation)**
+- Email: Each13579@hotmail.com
+- GitHub: [lovely-euglena/Cyrene-Agent](https://github.com/lovely-euglena/Cyrene-Agent)
+- Gitee: [ygwill/cyrene-agent](https://gitee.com/ygwill/cyrene-agent)
+
+GitHub / Gitee issues and pull requests are welcome. Please keep discussions respectful and relevant to the project.
 
 ---
 

@@ -1269,20 +1269,34 @@
       "section6": {
         "title": "6. 版权方联络通道",
         "p1": "若米哈游 / HoYoverse 权利方认为本软件存在侵犯权益的情形，请通过以下方式联系，作者承诺在收到通知后 7 个工作日内积极配合处理或下架。",
+        "originalLabel": "原作者（上游项目）",
         "email": "电子邮箱：ky2569ly@gmail.com（邮件标题请注明【版权事宜】）",
         "bilibiliLink": "B站：Playa0 作者空间",
         "bilibiliNote": "（私信请注明【版权联络】）",
         "githubLabel": "GitHub：",
-        "githubLink": "Playa-0v0/Cyrene-Agent"
+        "githubLink": "Playa-0v0/Cyrene-Agent",
+        "forkLabel": "本 fork 维护者（社区接力）",
+        "forkEmail": "电子邮箱：Each13579@hotmail.com（邮件标题请注明【版权事宜】）",
+        "forkGithubLabel": "GitHub：",
+        "forkGithubLink": "lovely-euglena/Cyrene-Agent",
+        "forkGiteeLabel": "Gitee：",
+        "forkGiteeLink": "ygwill/cyrene-agent"
       },
       "section7": {
         "title": "7. 用户反馈与 Bug 提交",
         "p1": "如您遇到问题、Bug 或有功能建议，欢迎通过以下渠道提交。",
+        "originalLabel": "原作者（上游项目）",
         "email": "发送邮件至 ky2569ly@gmail.com（标题建议带【反馈】或【Bug】）",
         "bilibiliLink": "B站私信 Playa0",
         "bilibiliNote": "（开头注明【反馈/Bug】）",
         "githubLink": "GitHub Issues",
         "githubNote": "（提交 Bug / 功能建议）",
+        "forkLabel": "本 fork 维护者（社区接力）",
+        "forkEmail": "发送邮件至 Each13579@hotmail.com（标题建议带【反馈】或【Bug】）",
+        "forkGithubLabel": "GitHub：",
+        "forkGithubLink": "lovely-euglena/Cyrene-Agent Issues",
+        "forkGiteeLabel": "Gitee：",
+        "forkGiteeLink": "ygwill/cyrene-agent Issues",
         "outro": "普通用户反馈我会尽力查看，但不保证及时回复；版权事宜享有最高响应优先级。"
       },
       "section8": {

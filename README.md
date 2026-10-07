@@ -695,7 +695,18 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 
 ## 💌 联系
 
-欢迎通过 GitHub / Gitee 的 Issues / PR 交流。请保持讨论的礼貌与主题相关性。
+**原作者（上游项目）**
+- 邮箱：ky2569ly@gmail.com
+- B 站：[Playa0](https://space.bilibili.com/260670644)
+- GitHub：[Playa-0v0](https://github.com/Playa-0v0)（[Cyrene-Agent](https://github.com/Playa-0v0/Cyrene-Agent)）
+- Gitee：[playa0](https://gitee.com/playa0)
+
+**本 fork 维护者（社区接力）**
+- 邮箱：Each13579@hotmail.com
+- GitHub：[lovely-euglena/Cyrene-Agent](https://github.com/lovely-euglena/Cyrene-Agent)
+- Gitee：[ygwill/cyrene-agent](https://gitee.com/ygwill/cyrene-agent)
+
+欢迎通过上述渠道或仓库 Issues / PR 交流。请保持讨论的礼貌与主题相关性。
 
 ---
 

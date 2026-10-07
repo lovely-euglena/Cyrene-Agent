@@ -38,6 +38,16 @@ function GithubIcon() {
   );
 }
 
+/** Gitee 行内图标（通用链接图形；与邮箱 / GitHub 行内图标风格一致）。 */
+function LinkLineIcon() {
+  return (
+    <svg className="cy-disclaimer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
 /** 免责声明面板：设置页和首次启动流程共用同一份条款。 */
 export function DisclaimerSettingsPanel() {
   const { t } = useTranslation();
@@ -85,6 +95,7 @@ export function DisclaimerSettingsPanel() {
         <Card as="article" className="cy-disclaimer-section">
           <h2>{p("section6.title")}</h2>
           <p>{p("section6.p1")}</p>
+          <p><strong>{p("section6.originalLabel")}</strong></p>
           <ul>
             <li><EmailLineIcon /> {p("section6.email")}</li>
             <li>
@@ -97,11 +108,24 @@ export function DisclaimerSettingsPanel() {
               <a href="https://github.com/Playa-0v0/Cyrene-Agent" target="_blank" rel="noopener noreferrer">{p("section6.githubLink")}</a>
             </li>
           </ul>
+          <p><strong>{p("section6.forkLabel")}</strong></p>
+          <ul>
+            <li><EmailLineIcon /> {p("section6.forkEmail")}</li>
+            <li>
+              <GithubIcon /> {p("section6.forkGithubLabel")}
+              <a href="https://github.com/lovely-euglena/Cyrene-Agent" target="_blank" rel="noopener noreferrer">{p("section6.forkGithubLink")}</a>
+            </li>
+            <li>
+              <LinkLineIcon /> {p("section6.forkGiteeLabel")}
+              <a href="https://gitee.com/ygwill/cyrene-agent" target="_blank" rel="noopener noreferrer">{p("section6.forkGiteeLink")}</a>
+            </li>
+          </ul>
         </Card>
 
         <Card as="article" className="cy-disclaimer-section">
           <h2>{p("section7.title")}</h2>
           <p>{p("section7.p1")}</p>
+          <p><strong>{p("section7.originalLabel")}</strong></p>
           <ul>
             <li><EmailLineIcon /> {p("section7.email")}</li>
             <li>
@@ -113,6 +137,18 @@ export function DisclaimerSettingsPanel() {
               <GithubIcon />{" "}
               <a href="https://github.com/Playa-0v0/Cyrene-Agent/issues" target="_blank" rel="noopener noreferrer">{p("section7.githubLink")}</a>
               {p("section7.githubNote")}
+            </li>
+          </ul>
+          <p><strong>{p("section7.forkLabel")}</strong></p>
+          <ul>
+            <li><EmailLineIcon /> {p("section7.forkEmail")}</li>
+            <li>
+              <GithubIcon /> {p("section7.forkGithubLabel")}
+              <a href="https://github.com/lovely-euglena/Cyrene-Agent/issues" target="_blank" rel="noopener noreferrer">{p("section7.forkGithubLink")}</a>
+            </li>
+            <li>
+              <LinkLineIcon /> {p("section7.forkGiteeLabel")}
+              <a href="https://gitee.com/ygwill/cyrene-agent/issues" target="_blank" rel="noopener noreferrer">{p("section7.forkGiteeLink")}</a>
             </li>
           </ul>
           <p>{p("section7.outro")}</p>

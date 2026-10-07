@@ -1293,20 +1293,34 @@
       "section6": {
         "title": "6. 権利者からの連絡窓口",
         "p1": "miHoYo / HoYoverse の権利者が、本ソフトウェアに権利侵害の可能性があると判断した場合は、以下の方法でご連絡ください。作者は通知を受領後 7 営業日以内に、対応または公開停止に向けて誠実に協力します。",
+        "originalLabel": "原作者（上流プロジェクト）",
         "email": "メール：ky2569ly@gmail.com（件名に【著作権関連】と明記してください）",
         "bilibiliLink": "bilibili：Playa0 作者ページ",
         "bilibiliNote": "（DM の冒頭に【著作権連絡】と明記してください）",
         "githubLabel": "GitHub：",
-        "githubLink": "Playa-0v0/Cyrene-Agent"
+        "githubLink": "Playa-0v0/Cyrene-Agent",
+        "forkLabel": "本フォークのメンテナ（コミュニティ継続）",
+        "forkEmail": "メール：Each13579@hotmail.com（件名に【著作権関連】と明記してください）",
+        "forkGithubLabel": "GitHub：",
+        "forkGithubLink": "lovely-euglena/Cyrene-Agent",
+        "forkGiteeLabel": "Gitee：",
+        "forkGiteeLink": "ygwill/cyrene-agent"
       },
       "section7": {
         "title": "7. ユーザーフィードバックと Bug 報告",
         "p1": "問題や Bug、機能に関する提案がありましたら、以下の窓口からお寄せください。",
+        "originalLabel": "原作者（上流プロジェクト）",
         "email": "ky2569ly@gmail.com へメール（件名に【フィードバック】または【Bug】を付けることを推奨します）",
         "bilibiliLink": "bilibili で Playa0 に DM",
         "bilibiliNote": "（冒頭に【フィードバック/Bug】と明記してください）",
         "githubLink": "GitHub Issues",
         "githubNote": "（Bug / 機能提案を投稿）",
+        "forkLabel": "本フォークのメンテナ（コミュニティ継続）",
+        "forkEmail": "Each13579@hotmail.com へメール（件名に【フィードバック】または【Bug】を付けることを推奨します）",
+        "forkGithubLabel": "GitHub：",
+        "forkGithubLink": "lovely-euglena/Cyrene-Agent Issues",
+        "forkGiteeLabel": "Gitee：",
+        "forkGiteeLink": "ygwill/cyrene-agent Issues",
         "outro": "一般的なユーザーフィードバックには可能な限り目を通しますが、迅速な返信を保証するものではありません。著作権関連の連絡を最優先で対応します。"
       },
       "section8": {
