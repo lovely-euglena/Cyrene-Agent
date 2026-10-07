@@ -9,7 +9,7 @@
 **This fork (community continuation)**: [Gitee](https://gitee.com/ygwill/cyrene-agent) ・
 **Upstream**: [Gitee](https://gitee.com/playa0/cyrene-agent) / [GitHub](https://github.com/Playa-0v0/Cyrene-Agent)
 
-> 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)** and **.NET desktop architecture** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. See **Fork Enhancements** below and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
+> 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)**, **.NET desktop architecture** and **Cloud Cyrene (desktop sync / mobile PWA / server-hosted channels)** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. See **Fork Enhancements** below and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
 
 > ⚠️ **Temporary notice (2026-09-13)**: The upstream GitHub account is temporarily suspended and under appeal; please clone from a Gitee mirror in the meantime.
 </div>
@@ -55,6 +55,9 @@
 - 🖼️ **Local OCR** — bundled `CyreneOcr` sidecar (Windows.Media.Ocr) recognizes image text offline with language tags and optional coordinates
 - 🧮 **Accurate token statistics** — bundled .NET tokenizer module counts tokens exactly for DeepSeek / GLM / MiniMax / Qwen (estimation fallback for others), powering the context-usage ring
 - 📤 **Chat export** — export conversations from the sidebar context menu (search / multi-select; HTML + Markdown)
+- ☁️ **Desktop cloud sync (Cloud Cyrene Phase 1)** — after pairing a self-hosted `cloud-server` in Settings → Cloud, conversation events (including channel messages and memory / mood events) sync automatically; offline retry, idempotent re-push and crash-resumable transfer; the read model merges the local projection with a remote overlay so desktop and phone share the same history
+- 📱 **Mobile PWA** — `cloud-server` hosts the mobile web app: sign in with a pair code → session list → view / continue chats; Service Worker app-shell caching plus a localStorage event snapshot for read-only offline browsing
+- 🤖 **Server-hosted channels** — Feishu / WeChat iLink / QQ adapters can run 24/7 on the server (`channels.remote`: the desktop can claim / release the lease, with automatic failback); channel messages enter the same event stream and receive server-side replies
 
 ## 📚 Documentation
 
@@ -205,6 +208,8 @@ After starting the application, **click the system tray icon → Open Settings**
 4. **📱 External Channels** (optional): Connect Feishu or WeChat iLink to chat with Cyrene from your phone.
 
 5. **🎵 Music** (optional): Add local music folders in the music window to build your library; the player and mpv are bundled — no online account or NetEase desktop client required.
+
+6. **☁️ Cloud Sync** (optional): enter your self-hosted `cloud-server` address in **Cloud** settings and complete pairing; once enabled, conversation events sync automatically and your phone can browse the same server to view / continue chats (deployment: [cloud-server README](./dotnet/cloud-server/README.md)).
 
 Configuration is stored in the application's `<userData>/` directory. Most changes do not require a restart.
 
@@ -598,10 +603,12 @@ src/
 │   ├── cita/          # CITA context-understanding and recommendation engine
 │   ├── relationship/ social-context/  # User relationship profile / social context
 │   ├── scheduler/     # Scheduled tasks (reminders / calendar)
+│   ├── sync/          # Cloud sync (event exporter / side event store / HTTP client / merged read model)
 │   ├── updater/       # Application auto-update
 │   └── ...            # prompts / protocols / services / settings / startup / windows, etc.
 ├── plugins/           # Plugin system core (manifest validation / loader / lifecycle)
 ├── preload/           # Electron Preload bridge
+├── pwa/               # Mobile PWA (Vite; build output goes to cloud-server wwwroot)
 ├── renderer/          # Vite renderer (React 19 component library + Live2D rendering + window entries)
 └── shared/            # Code shared between the main and renderer processes
 
