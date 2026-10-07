@@ -13,7 +13,7 @@
   <strong>上游</strong>：<a href="https://gitee.com/playa0/cyrene-agent">Gitee</a> / <a href="https://github.com/Playa-Cyrene/Cyrene-Agent">GitHub</a>
 </p>
 
-> 🔀 **Fork 说明**：本仓库基于上游 Cyrene-Agent 社区分叉开发，聚焦**性能优化（原生窗口 / 内存减负 / 流式节流 ）、 .NET 桌面架构探索 与 更多功能集成**，定期合并上游功能更新。测试版发布在 [Releases](https://gitee.com/ygwill/cyrene-agent/releases)（2.0.0 预览版进行中）。
+> 🔀 **Fork 说明**：本仓库基于上游 Cyrene-Agent 社区分叉开发，聚焦**性能优化（原生窗口 / 内存减负 / 流式节流）、.NET 桌面架构探索、云端昔涟（云同步 / 手机 PWA / 服务端渠道托管，🚧 测试中）与更多功能集成**，定期合并上游功能更新。测试版发布在 [Releases](https://gitee.com/ygwill/cyrene-agent/releases)（2.0.0 预览版进行中）。
 
 **Cyrene-Agent 是一个以《崩坏：星穹铁道》昔涟为核心角色的 Windows Live2D AI 桌面伴侣。**
 
@@ -54,6 +54,9 @@
 - 🧮 **精确 Token 统计** — 内置 .NET tokenizer 模块，对 DeepSeek / GLM / MiniMax / Qwen （后续会添加更多）等按官方分词精确计数（其余模型回退估算），驱动上下文用量环
 - 📤 **聊天导出** — 无需插件，侧栏会话右键导出（搜索 / 多选，HTML + Markdown）
 - 🧰 **便携模式** — 支持便携模式和自定义数据储存路径，切换自动迁移，可选覆盖
+- ☁️ **桌面云同步（云端昔涟 Phase 1 · 🚧 测试中）** — 设置页「云端」配对自建 `cloud-server` 后，会话事件（含渠道消息与记忆 / 心情事件）自动同步；断网重试、幂等重推、崩溃可重入；读模型「本地投影 + 远端叠加」，桌面与手机共享同一段历史
+- 📱 **手机 PWA（🚧 测试中）** — `cloud-server` 托管手机端网页：配对码登录 → 会话列表 → 查看 / 续聊；Service Worker 离线壳 + 本地事件快照只读浏览
+- 🤖 **服务端渠道托管（🚧 测试中）** — 飞书 / 微信 iLink / QQ 适配器可 24/7 托管在服务端（`channels.remote`：桌面可认领 / 交回租约、服务端恢复自动兜底）；渠道消息进入同一事件流，由服务端生成回复
 
 ### 📚 文档导航
 
@@ -207,6 +210,8 @@ Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 
 4. **📱 外部渠道**（可选）：根据需要连接飞书或微信 iLink，在手机端与 Cyrene 对话。
 
 5. **🎵 音乐**（可选）：在音乐窗口添加本地音乐文件夹即可建立曲库；播放器与 mpv 已内置，无需在线账号或网易云客户端。
+
+6. **☁️ 云端同步**（可选 · 🚧 测试中）：在「云端」设置填写自建 `cloud-server` 地址并完成配对，启用后会话事件自动同步；手机浏览器访问同一服务器即可查看 / 续聊（部署见 [cloud-server README](./dotnet/cloud-server/README.md)）。
 
 相关配置会保存在应用的 `<userData>/` 目录中，修改后通常无需重启应用。
 
@@ -481,7 +486,8 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | .NET 语音 Sidecar | `CyreneVoice`（TTS/ASR 音频 IO + Silero VAD ONNX + `System.Numerics.Tensors`；4 字节长度头二进制帧回传） |
 | .NET 进程间协议 | `src/main/dotnet-backend` `LineHostClient` — JSON 行协议（与 native-tool-host 同构），`spawn` 子进程 + readline 消费；各 host 由 `resolveDotnetConfig()` 0/1 开关切流 |
 | .NET 跨平台验证 | `smoke-host`（cyrene-smoke）引用 `cyrene-core`，在 Linux 跑协议冒烟（五套 96+ 项） |
-| .NET 云端服务端 | `cloud-server`（net10.0 Minimal API + SQLite WAL）— 事件库 + /v1/sync + 配对/设备令牌 + 服务端生成（IKJK2M）；**裸跑为主**（systemd 单元 + Caddy 反代），容器备选（云端昔涟 Phase 1） |
+| .NET 云端服务端 | `cloud-server`（net10.0 Minimal API + SQLite WAL）— 事件库 + /v1/sync + 配对/设备令牌 + 服务端生成 + 手机 PWA 静态托管 + 服务端渠道托管（24/7）；**裸跑为主**（systemd 单元 + Caddy 反代），容器备选（云端昔涟 Phase 1） |
+| 桌面云同步与手机端 | `src/main/sync`（事件导出器 / 旁路事件库 / HTTP 客户端 / 同步服务 / 合并读模型；token safeStorage 加密落盘）+ `src/pwa`（手机端 PWA，Vite，构建产物进 cloud-server wwwroot） |
 | 文档与邮件 | ExcelJS、docx、PDFKit、Nodemailer + imapflow / mailparser + Pandoc Sidecar |
 | 外部渠道 | 飞书 / 微信 iLink / QQ OneBot 11（`src/main/channels` 适配器） |
 | 国际化与分发 | i18next + electron-updater + `cyrene` CLI（`src/cli`）+ electron-builder（`package:win:dir`） |
@@ -523,15 +529,18 @@ src/
 │   ├── cita/          # CITA 上下文理解与建议引擎
 │   ├── relationship/ social-context/  # 用户关系画像 / 社交上下文
 │   ├── scheduler/     # 定时任务（提醒 / 日程）
+│   ├── sync/          # 云同步（事件导出器 / 旁路事件库 / HTTP 客户端 / 合并读模型）
 │   ├── updater/       # 应用自动更新
 │   └── ...            # prompts / protocols / services / settings / startup / windows 等
 ├── plugins/           # 插件系统核心（manifest 校验 / 加载器 / 生命周期）
 ├── preload/           # Electron preload 桥接
+├── pwa/               # 手机端 PWA（Vite；构建产物进 cloud-server wwwroot）
 ├── renderer/          # Vite 渲染层（React 19 组件库 + Live2D 渲染 + 各窗口入口）
 └── shared/            # 主进程与渲染进程共享代码
 
 examples/              # 插件开发示例（weather-tool / long-term-memory / system-status / ...）
 packages/plugin-sdk/   # @playa0v0/cyrene-plugin-sdk 源码
+dotnet/                # .NET 原生窗口 / 跨平台核心（cyrene-core）/ 各 sidecar（embed / ocr / token / voice）/ cloud-server
 ```
 
 > 静态资源源文件见 `src/renderer/public/`（音频 / 头像 / Cubism Core / 贴纸等），
