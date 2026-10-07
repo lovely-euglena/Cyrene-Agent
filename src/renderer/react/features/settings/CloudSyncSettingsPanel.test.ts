@@ -96,6 +96,28 @@ describe("CloudSyncSettingsPanel", () => {
     expect(host.textContent).toContain("desk-0123456789ab / dev_test");
   });
 
+  it("配置行布局：输入控件包在 __control 容器内（名称列宽度回归）", async () => {
+    Object.assign(window, {
+      settings: {
+        syncGetConfig: async () => baseConfig,
+        syncGetStatus: async () => baseStatus,
+        onSyncChanged: () => () => {},
+      },
+    });
+    const host = await renderPanel();
+
+    // 行内 flex：copy（flex:1）+ control（max-width:52%）是设置页统一布局；
+    // 输入框若直接作行子项（width:100%）会把名称列挤到 0 宽，必须包 __control。
+    for (const label of [
+      t("settingsPage.cloud.connection.baseUrl"),
+      t("settingsPage.cloud.connection.deviceName"),
+    ]) {
+      const input = host.querySelector<HTMLInputElement>(`input[aria-label='${label}']`);
+      expect(input).not.toBeNull();
+      expect(input!.closest(".cy-settings-row__control")).not.toBeNull();
+    }
+  });
+
   it("保存时仅在填写 token 时下发 token；留空保存保留原值", async () => {
     const syncSaveConfig = vi.fn().mockResolvedValue({ ok: true, data: baseConfig });
     Object.assign(window, {
