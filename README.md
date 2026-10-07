@@ -13,7 +13,7 @@
   <strong>上游</strong>：<a href="https://gitee.com/playa0/cyrene-agent">Gitee</a> / <a href="https://github.com/Playa-Cyrene/Cyrene-Agent">GitHub</a>
 </p>
 
-> 🔀 **Fork 说明**：本仓库基于上游 Cyrene-Agent 社区分叉开发，聚焦**性能优化（原生窗口 / 内存减负 / 流式节流）、.NET 桌面架构探索、云端昔涟（云同步 / 手机 PWA / 服务端渠道托管）与更多功能集成**，定期合并上游功能更新。测试版发布在 [Releases](https://gitee.com/ygwill/cyrene-agent/releases)（2.0.0 预览版进行中）。
+> 🔀 **Fork 说明**：本仓库基于上游 Cyrene-Agent 社区分叉开发，聚焦**性能优化（原生窗口 / 内存减负 / 流式节流）、.NET 桌面架构探索、云端昔涟（云同步 / 手机 PWA / 服务端渠道托管，🚧 测试中）与更多功能集成**，定期合并上游功能更新。测试版发布在 [Releases](https://gitee.com/ygwill/cyrene-agent/releases)（2.0.0 预览版进行中）。
 
 **Cyrene-Agent 是一个以《崩坏：星穹铁道》昔涟为核心角色的 Windows Live2D AI 桌面伴侣。**
 
@@ -54,9 +54,9 @@
 - 🧮 **精确 Token 统计** — 内置 .NET tokenizer 模块，对 DeepSeek / GLM / MiniMax / Qwen （后续会添加更多）等按官方分词精确计数（其余模型回退估算），驱动上下文用量环
 - 📤 **聊天导出** — 无需插件，侧栏会话右键导出（搜索 / 多选，HTML + Markdown）
 - 🧰 **便携模式** — 支持便携模式和自定义数据储存路径，切换自动迁移，可选覆盖
-- ☁️ **桌面云同步（云端昔涟 Phase 1）** — 设置页「云端」配对自建 `cloud-server` 后，会话事件（含渠道消息与记忆 / 心情事件）自动同步；断网重试、幂等重推、崩溃可重入；读模型「本地投影 + 远端叠加」，桌面与手机共享同一段历史
-- 📱 **手机 PWA** — `cloud-server` 托管手机端网页：配对码登录 → 会话列表 → 查看 / 续聊；Service Worker 离线壳 + 本地事件快照只读浏览
-- 🤖 **服务端渠道托管** — 飞书 / 微信 iLink / QQ 适配器可 24/7 托管在服务端（`channels.remote`：桌面可认领 / 交回租约、服务端恢复自动兜底）；渠道消息进入同一事件流，由服务端生成回复
+- ☁️ **桌面云同步（云端昔涟 Phase 1 · 🚧 测试中）** — 设置页「云端」配对自建 `cloud-server` 后，会话事件（含渠道消息与记忆 / 心情事件）自动同步；断网重试、幂等重推、崩溃可重入；读模型「本地投影 + 远端叠加」，桌面与手机共享同一段历史
+- 📱 **手机 PWA（🚧 测试中）** — `cloud-server` 托管手机端网页：配对码登录 → 会话列表 → 查看 / 续聊；Service Worker 离线壳 + 本地事件快照只读浏览
+- 🤖 **服务端渠道托管（🚧 测试中）** — 飞书 / 微信 iLink / QQ 适配器可 24/7 托管在服务端（`channels.remote`：桌面可认领 / 交回租约、服务端恢复自动兜底）；渠道消息进入同一事件流，由服务端生成回复
 
 ### 📚 文档导航
 
@@ -211,7 +211,7 @@ Cyrene 无需本地大语言模型即可正常聊天，但建议安装 **BGE-M3 
 
 5. **🎵 音乐**（可选）：在音乐窗口添加本地音乐文件夹即可建立曲库；播放器与 mpv 已内置，无需在线账号或网易云客户端。
 
-6. **☁️ 云端同步**（可选）：在「云端」设置填写自建 `cloud-server` 地址并完成配对，启用后会话事件自动同步；手机浏览器访问同一服务器即可查看 / 续聊（部署见 [cloud-server README](./dotnet/cloud-server/README.md)）。
+6. **☁️ 云端同步**（可选 · 🚧 测试中）：在「云端」设置填写自建 `cloud-server` 地址并完成配对，启用后会话事件自动同步；手机浏览器访问同一服务器即可查看 / 续聊（部署见 [cloud-server README](./dotnet/cloud-server/README.md)）。
 
 相关配置会保存在应用的 `<userData>/` 目录中，修改后通常无需重启应用。
 
