@@ -153,6 +153,36 @@ describe("LineHostClient 生命周期（IKJSNF）", () => {
     expect(child.kill).toHaveBeenCalledTimes(1); // 仅 SIGTERM，无 SIGKILL
   });
 
+  it("连续两次 killAndReset：上一 child 未 exit 时其补杀不被取消（复审二轮 P2-4）", async () => {
+    vi.useFakeTimers();
+    const child1 = new FakeChild();
+    const child2 = new FakeChild();
+    mocks.spawn.mockReturnValueOnce(child1).mockReturnValueOnce(child2);
+    const client = new LineHostClient("--tool-host", 1_000);
+    await boot(client, child1);
+
+    // t=1000：child1 调用超时 → killAndReset（SIGTERM；child1 未及 exit）
+    const first = client.call("slow_op", {}).catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(first).resolves.toBeInstanceOf(Error);
+    expect(child1.kill.mock.calls).toEqual([[]]);
+
+    // 旧 child 未 exit 即拉起新实例；新实例再次超时重置（单槽实现会连带取消 child1 的补杀）
+    await boot(client, child2);
+    const second = client.call("slow_op2", {}).catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(1_000); // t=2000
+    await expect(second).resolves.toBeInstanceOf(Error);
+    expect(child2.kill.mock.calls).toEqual([[]]);
+
+    // child1 的 5s 兜底按自己的时钟照常触发（t=6000）；child2 尚未到点
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(child1.kill.mock.calls[1]).toEqual(["SIGKILL"]);
+    expect(child2.kill).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_001); // t=7001：child2 兜底到点
+    expect(child2.kill.mock.calls[1]).toEqual(["SIGKILL"]);
+  });
+
   it("addEventListener/removeEventListener 成对：移除后不再收帧", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();

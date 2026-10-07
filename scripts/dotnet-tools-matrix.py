@@ -156,6 +156,8 @@ c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.
 c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf"}, {"workspaceRoot": ap_ws})
 # 路径穿越拒绝（联网前拒绝；#IKJSNI 复审 P1-3 对等证据）
 c_dl4 = req("download_file", {"url": "https://example.com/x.png", "filename": "../escape.png"}, {"workspaceRoot": ap_ws})
+# 偶数级前导 ..（复审二轮 P1-3）：C# 折叠不得抵消前导占位，须与 TS 一致拒绝
+c_dl5 = req("download_file", {"url": "https://example.com/x.png", "filename": "../../escape.png"}, {"workspaceRoot": ap_ws})
 
 # web_search：config 帧注入（引擎/key），覆盖确定性校验路径（不联网）
 frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
@@ -681,6 +683,8 @@ check("hta 扩展名拒绝", data_text(c_dl1) == "[错误] 禁止下载可执行
 check("js 扩展名拒绝", data_text(c_dl2) == "[错误] 禁止下载可执行/脚本文件: .js", data_text(c_dl2))
 check("wsf 扩展名拒绝", data_text(c_dl3) == "[错误] 禁止下载可执行/脚本文件: .wsf", data_text(c_dl3))
 check("路径穿越拒绝（联网前）", data_text(c_dl4) == "[错误] 路径不合法（禁止目录穿越或绝对路径）: ../escape.png", data_text(c_dl4))
+check("偶数级前导穿越拒绝（联网前，../../escape.png）",
+      data_text(c_dl5) == "[错误] 路径不合法（禁止目录穿越或绝对路径）: ../../escape.png", data_text(c_dl5))
 
 print("\n=== web_search（config 帧 + 校验路径）===")
 def ws_error(cid):

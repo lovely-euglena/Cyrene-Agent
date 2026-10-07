@@ -677,6 +677,7 @@ async function runDownloadDualTrack(): Promise<number> {
       { name: "脚本类后缀拒绝 .js", args: { url: `${base}/img.png`, filename: "evil.js" }, saved: null },
       { name: "连续点文件名接受并落盘（a..b.txt）", args: { url: `${base}/img.png`, filename: "a..b.txt" }, saved: "a..b.txt" },
       { name: "路径穿越拒绝（不走网络）", args: { url: `${base}/img.png`, filename: "../escape.png" }, saved: null },
+      { name: "偶数级前导穿越拒绝（../../escape.png）", args: { url: `${base}/img.png`, filename: "../../escape.png" }, saved: null },
       { name: "未知 Content-Type 且无扩展名", args: { url: `${base}/unknown` }, saved: null },
     ];
     for (const c of cases) {

@@ -513,6 +513,41 @@ describe("chats store", () => {
     ]);
   });
 
+  it("索引 mode 为旧别名 daily 且缺 workspaceRoot：按归一化 work 触发定点回读并回写（复审二轮 P2-1）", async () => {
+    const root = path.join(electronMock.userDataDir, "cyrene-chats");
+    const sessionsDir = path.join(root, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    // 别名组合态：索引 mode="daily"（归一为 work）+ pinned 布尔 → 格式判定为当前格式，
+    // 但 workspaceRoot 缺失（索引写失败窗口），绑定只存在于会话文件
+    fs.writeFileSync(path.join(root, "index.json"), JSON.stringify([
+      {
+        id: "alias-work", title: "别名 Work", identityId: null,
+        createdAt: 1, updatedAt: 2, messageCount: 1,
+        mode: "daily", pinned: false,
+      },
+    ]));
+    // 会话文件已是归一后的形态：迁移扫描不会写它（needsMigration=false），
+    // 只有 readIndexFromDisk 的定点例外能把绑定补进索引
+    fs.writeFileSync(path.join(sessionsDir, "alias-work.json"), JSON.stringify({
+      id: "alias-work", title: "别名 Work", identityId: null,
+      messages: [{ id: "m1", role: "user", content: "x", at: 1 }],
+      createdAt: 1, updatedAt: 2, schemaVersion: 1, mode: "work", pinned: false,
+      workspaceBinding: { workspaceRoot: "C:\\alias-project", displayName: "alias", boundAt: 1 },
+    }));
+
+    const store = await import("./chats-store");
+    store.initialize();
+
+    const expected = {
+      id: "alias-work", mode: "work",
+      workspaceRoot: "C:\\alias-project", workspaceDisplayName: "alias",
+    };
+    expect(store.listSessions()).toEqual([expect.objectContaining(expected)]);
+    expect(JSON.parse(fs.readFileSync(path.join(root, "index.json"), "utf8"))).toEqual([
+      expect.objectContaining(expected),
+    ]);
+  });
+
   it("旧格式索引仍回读会话文件迁移补全 mode/pinned/workspace", async () => {
     const root = path.join(electronMock.userDataDir, "cyrene-chats");
     const sessionsDir = path.join(root, "sessions");

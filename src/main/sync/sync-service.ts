@@ -7,8 +7,9 @@
  *   导出（exporter）→ 存 state → push（pushedCount 起，成功后推进）→
  *   clone（fetchCursor=null）或 fetch 循环（hasMore 至 false）→ 入库去重 → 存 state。
  * 失败保留游标 / 水位，记 lastError，下一轮重试；入库顺序：事件先 append → 后原子写 state。
- * 换址竞态（#IKJSNA 复审 P1-1）：saveConfig / pair / unpair 递增 generation 并中止在途轮次，
- * 旧轮在结算点校验代际，不一致即丢弃（不得用旧服务器游标 / 水位覆盖换址重置）；
+ * 换址竞态（#IKJSNA 复审 P1-1 / 复审二轮 P1-1）：saveConfig / pair / unpair 递增 generation 并中止在途轮次，
+ * 旧轮在结算点校验代际，不一致即丢弃（不得用旧服务器游标 / 水位覆盖换址重置）——
+ * 结算点覆盖网络返回后 **与入库落盘（appendRemoteEvents 的 fs + fsync 等待）之后** 的游标写回前；
  * 配置变更后的立即同步经 requestSync 排队，不被单飞互斥吞掉。
  *
  * 依赖全部可注入（store/exporter/state 读写/客户端工厂/时钟/定时器/onRemoteEventsApplied），
@@ -294,10 +295,19 @@ class SyncServiceController implements SyncService {
     // 换址代际（复审 P1-1）：轮次启动后配置可能被换址重置；所有结算点校验，
     // 不一致即丢弃（旧服务器游标 / 水位不得覆盖重置）。
     const generation = this.generation;
-    const stale = (): SyncRunResult => ({
-      ok: false,
-      error: { code: "stale", message: "同步轮次因服务器地址变更被丢弃" },
-    });
+    // 已入库的旧服务器事件（提交到事件库即为事实）：轮次被丢弃时仍要刷新读模型，
+    // 否则合并视图要等到下一次读取才看得到这批事件（复审 P2-3②）。
+    const appliedSessions = new Set<string>();
+    const stale = (): SyncRunResult => {
+      if (appliedSessions.size > 0) {
+        this.deps.onRemoteEventsApplied?.(Array.from(appliedSessions));
+        appliedSessions.clear();
+      }
+      return {
+        ok: false,
+        error: { code: "stale", message: "同步轮次因服务器地址变更被丢弃" },
+      };
+    };
     try {
       const state = await this.ensureState();
       const store = await this.ensureStore(true);
@@ -330,7 +340,6 @@ class SyncServiceController implements SyncService {
 
       // 3) clone（初次）或 fetch 循环（增量）；入库去重 + lamport 水位取 max
       const known = this.collectKnownEventIds(store);
-      const appliedSessions = new Set<string>();
       if (!state.fetchCursor) {
         const cloned = await client.clone();
         if (generation !== this.generation) return stale();
@@ -338,6 +347,10 @@ class SyncServiceController implements SyncService {
           this.log(`[Sync] clone 丢弃 ${cloned.dropped} 条坏帧（初始游标 ${cloned.cursor ?? "null"}）`);
         }
         const added = await this.appendRemoteEvents(store, state, cloned.events, known, appliedSessions);
+        // 复审 P1-1：appendRemoteEvents 内部是 fs + fsync 落库等待——换址重置可能发生在
+        // 这段入库等待期间（代际已变），此时写回游标 / persistState 会把旧服务器游标
+        // 留在磁盘上，补跑随即拿它向新服务器增量 fetch（静默漏拉）。校验失配即丢弃结算。
+        if (generation !== this.generation) return stale();
         state.fetchCursor = cloned.cursor;
         if (added > 0 || cloned.cursor) await this.persistState();
       } else {
@@ -351,6 +364,9 @@ class SyncServiceController implements SyncService {
             this.log(`[Sync] fetch 丢弃 ${page.dropped} 条坏帧（游标 ${previousCursor} → ${page.cursor}）`);
           }
           const added = await this.appendRemoteEvents(store, state, page.events, known, appliedSessions);
+          // 复审 P1-1：同 clone 分支——入库等待（磁盘 + fsync）在代际校验之后，
+          // 写回游标前必须再校验一次，否则旧服务器游标会覆盖换址重置。
+          if (generation !== this.generation) return stale();
           state.fetchCursor = page.cursor;
           await this.persistState();
           // 游标未推进仍声称 hasMore：防服务端异常导致死循环
@@ -369,8 +385,10 @@ class SyncServiceController implements SyncService {
       return { ok: true, error: null };
     } catch (error) {
       const mapped = toRunError(error);
-      // 主动中止（stop / 退出）不算失败，不污染 lastError
-      if (mapped.code !== "aborted") {
+      // 主动中止（stop / 退出）不算失败，不污染 lastError；
+      // 复审 P2-3①：换址后旧轮的非 aborted 错误（401/500、落盘失败）同样不写回——
+      // 换址重置刚清零 lastError，旧服务器错误不得再污染面板。
+      if (mapped.code !== "aborted" && generation === this.generation) {
         this.lastError = mapped;
         this.log(`[Sync] 同步失败（保留游标/水位，下轮重试）: ${mapped.code} ${mapped.message}`);
       }

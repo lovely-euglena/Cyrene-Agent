@@ -34,8 +34,9 @@ export class LineHostClient {
   private starting: Promise<boolean> | null = null;
   private pending = new Map<string, Pending>();
   private seq = 0;
-  /** killAndReset 的 SIGKILL 兜底计时器（exit 到达即取消，避免垂死进程拖住重启）。 */
-  private killEscalation: { child: ChildProcess; timer: NodeJS.Timeout } | null = null;
+  /** killAndReset 的 SIGKILL 兜底计时器：按 child 多槽（exit 到达即取消各自那条）。
+   *  单槽会在「上一 child 未 exit 时再次重置」时取消它的补杀（复审二轮 P2-4）。 */
+  private killEscalations = new Map<ChildProcess, NodeJS.Timeout>();
   private readonly mode: string | string[];
   private readonly timeoutMs: number;
 
@@ -87,8 +88,8 @@ export class LineHostClient {
         this.onLine(line);
       });
       child.on("exit", () => {
-        // 强杀兜底计时器：exit 到达即取消（此 child 可能已被 killAndReset 摘引用）
-        if (this.killEscalation?.child === child) this.cancelKillEscalation();
+        // 强杀兜底计时器：exit 到达即取消该 child 自己的补杀（此 child 可能已被 killAndReset 摘引用）
+        this.cancelKillEscalation(child);
         if (this.proc !== child) return;
         this.exited = true;
         this.proc = null;
@@ -214,7 +215,8 @@ export class LineHostClient {
    * 先摘引用再 kill：旧 child 的 exit/error 处理器带 `this.proc !== child`
    * 守卫，不会清掉窗口期内新 spawn 的引用（IKJSNF）。
    * 强杀兜底：SIGTERM 后 KILL_ESCALATE_MS 仍无 exit → SIGKILL（与 shutdown
-   * 的 5s 兜底对齐；exit 到达则取消计时器）。
+   * 的 5s 兜底对齐；exit 到达则取消该 child 的计时器；按 child 多槽——上一 child
+   * 尚未 exit 时再次重置，不影响它自己的补杀）。
    */
   private killAndReset(): void {
     const child = this.proc;
@@ -226,21 +228,21 @@ export class LineHostClient {
     for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error("host 已重置")); }
     this.pending.clear();
     if (!child) return;
-    // 上一轮兜底若还在（旧 child 尚未 exit），先取消再为本次重新计时
-    this.cancelKillEscalation();
+    // 每个 child 各自计时（多槽）：上一 child 若忽略 SIGTERM 且尚未 exit，它的补杀
+    // 不得被本次重置取消（复审二轮 P2-4；Windows 下 kill() 即强杀，仅 Linux 有该窗口）
     const timer = setTimeout(() => {
-      this.killEscalation = null;
+      this.killEscalations.delete(child);
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
     }, KILL_ESCALATE_MS);
-    this.killEscalation = { child, timer };
+    this.killEscalations.set(child, timer);
     try { child.kill(); } catch { /* ignore */ }
   }
 
-  private cancelKillEscalation(): void {
-    if (this.killEscalation) {
-      clearTimeout(this.killEscalation.timer);
-      this.killEscalation = null;
-    }
+  private cancelKillEscalation(child: ChildProcess): void {
+    const timer = this.killEscalations.get(child);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.killEscalations.delete(child);
   }
 
   async shutdown(): Promise<void> {

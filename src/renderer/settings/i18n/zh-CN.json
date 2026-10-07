@@ -631,7 +631,7 @@
         "toolPermissionOff": "关闭",
         "toolPermissionOffDesc": "使用 Chat，仅聊天，不调用任何工具。",
         "toolPermissionAll": "全部开启",
-        "toolPermissionAllDesc": "使用 CyreneHarness，所有手机端工具直接执行；不提供询问卡片或逐项审批。"
+        "toolPermissionAllDesc": "使用 CyreneHarness：执行桌面端权限档位允许的工具（默认只读），高危操作受沙箱约束；「审批」档位逐项发起审批。"
       },
       "plugins": {
         "heading": "工具配置",

@@ -143,7 +143,7 @@
 ### 4.4 换址语义（#IKJSNA；复审 P2-5 收敛）
 
 - **判定键**：`normalizeBaseUrlKey` 只取 protocol + host（大小写不敏感）；路径 / 尾斜杠差异**不算**换址——有意保留：同 origin 子路径调整（反代挂载点变化等）不触发清 token 重配对。代价：同 origin 多实例 / 同址更换服务端实例不会触发重置，旧游标可能越界——Phase 1 接受该风险（识别需实例身份握手；后续可用 clone 响应携带 serverDeviceId 加强）；
-- **换址动作**（saveConfig / pair）：重置 `fetchCursor` / `pushedCount` / `serverDeviceId` 与内存 `lastSyncAt` / `lastError`；递增 generation 并中止在途轮次，旧轮在结算点校验代际，不一致即丢弃（不得覆盖重置）；补跑经 `requestSync` 排队，旧轮结算后立即以新配置执行（不等 60s 定时）；
+- **换址动作**（saveConfig / pair）：重置 `fetchCursor` / `pushedCount` / `serverDeviceId` 与内存 `lastSyncAt` / `lastError`；递增 generation 并中止在途轮次，旧轮在结算点校验代际，不一致即丢弃（不得覆盖重置）——结算点覆盖网络返回后**与入库 `appendRemoteEvents`（fs + fsync 等待）之后的游标写回前**；旧轮的非 aborted 错误不回写 `lastError`，`stale` 丢弃前对已入库事件补发 `onRemoteEventsApplied`；补跑经 `requestSync` 排队，旧轮结算后立即以新配置执行（不等 60s 定时）；
 - **unpair**：同代际 + stop 中止语义；保留 outbox / state（重配对后幂等重推、重拉）；
 - **inbox 旧服务器事件**：保留并继续参与合并读模型（历史不丢；按 deviceId 过滤保证幂等），不做自动清理。
 

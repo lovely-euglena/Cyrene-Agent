@@ -907,3 +907,50 @@
   `dotnet-tools-matrix.py` **149/149**；`dual-track-diff.ts` **PASS**（download 段 9 例，
   含新增 `a..b.txt` 接受与 `../escape.png` 拒绝）。
 
+## 2026-10-07 增量（三）：PR #29 复审修复——sync 入库等待窗口 / 矩阵计数同步 / C# 前导 `..` 对偶 / 旧设置页文案 + P2 批次
+
+- **背景**：PR #29 二轮评审仍为「有条件合入」：4 个 P1 需修改项 + 4 个 P2 项，逐项修复如下。
+- **P1-1 sync 换址竞态残留「入库等待」窗口**（`src/main/sync/sync-service.ts`）：
+  `appendRemoteEvents` → `store.appendRemote` 是 fs + fsync 的真实磁盘等待，而代际校验原本只在
+  网络结算点——旧轮通过校验后挂在入库上，换址完成「generation++ + 游标/水位清零 + 持久化」，
+  旧轮恢复仍执行 `state.fetchCursor = page.cursor` + `persistState`（按入队序排在重置之后），
+  磁盘最终留下旧服务器游标，补跑随即拿它向新服务器增量 fetch（IKJSNA 要消除的静默漏拉）。
+  修复：clone 分支与 fetch 循环在 `await appendRemoteEvents(...)` 之后、写回游标之前各补一次
+  同步代际校验（失配 → `stale`，不写游标不落盘）。连带 P2-3：`catch` 按代际丢弃旧轮的非 aborted
+  错误（不再污染换址刚清零的 `lastError`）；`stale` 丢弃前对已入库事件补发
+  `onRemoteEventsApplied`（入库即事实，合并读模型即时刷新）。测试：`GatedAppendStore` 挂起
+  `appendRemote` 复现两种形态（fetch 轮 / clone 轮在入库等待期间换址），断言旧轮 `stale`、
+  游标不写回、补跑走新服务器初始 clone、广播照发。
+- **P1-2 矩阵计数残留**：`docs/dotnet-backend.md:34` 仍写「148 项矩阵实测」（同文件 :12/:15/:20
+  已为 149）——随 P1-3 加例统一为 **150**（:12 / :15 download 9→10 / :20 / :34），
+  CI 口径同步 135→136（本地与 CI 差值 = ast_grep 段 14 项）。
+- **P1-3 TS/C# 前导 `..` 偶数级不对等**（`dotnet/cyrene-core/Tools/DownloadFileTool.cs`）：
+  折叠时第二个 `..` 会把占位 `RemoveAt` 抵消，`../../escape.png` 折叠成 `escape.png` 被接受落盘，
+  而 TS（`path.normalize` 保留前导 `..`、逐段命中即拒）拒绝。修复：`parts.Count == 0 ||
+  parts[^1] == ".."` 时追加占位（前导占位不允许被抵消），与 TS 同规则拒绝；dual-track +1
+  （`../../escape.png` 双侧拒绝）、矩阵 +1（联网前拒绝）。
+- **P1-4 旧设置页「全部开启」文案**（`src/renderer/settings/index.html` +
+  `settings/i18n/zh-CN.json` 的 `toolPermissionAllDesc`）：原「所有手机端工具直接执行；不提供
+  询问卡片或逐项审批」与 #IKJSN9 实现矛盾——改为与 React `toolPermissionHint` 同口径
+  （桌面权限档位（默认只读）+ 沙箱 + 「审批」档位逐项审批）；回退面（settings-router /
+  Electron 专属窗）与 React 页不再互相矛盾。
+- **P2-1 chats-store 判据与 work 例外**（`src/main/chats/chats-store.ts`）：`readIndexFromDisk`
+  的 work 定点回读例外与 `migrateLegacySessions` 的 `workBindingMayNeedScan` 均改按
+  `normalizePersistedMode(mode, purpose)` 判定（旧别名 `daily` 归一为 `work`），并修正两处
+  「判据一致」注释口径；新增别名组合态用例（索引 `daily` + 缺 workspaceRoot + 文件已归一 →
+  定点回读并回写索引，recentProjects 依赖该字段）。
+- **P2-2 注释 / 文案残留**：`tool-context.ts` permissionMode 注释改为「allow_all 仅
+  scheduler / plugin 无人值守，渠道消息统一 normal（#IKJSN9）」；`ilink-bot-adapter.ts` 头注释
+  凭据路径改为实际的 `weixin/credentials.json`；zh `toolPermissionHint`「每次审批」→「审批」、
+  ja「毎回承認」→「承認」（对齐设置页档位标签）。
+- **P2-3 stale 轮收尾边角**：并入 P1-1（catch 按代际丢弃旧轮错误 + stale 前补发广播）。
+- **P2-4 SIGKILL 兜底单槽**（`src/main/dotnet-backend/host-clients.ts`）：`killEscalation` 单槽
+  → 按 child 的 `Map`（exit 只取消自己那条计时器；`killAndReset` 不再无条件取消上一 child 的
+  补杀——Linux 下上一 child 忽略 SIGTERM 的窗口；Windows `kill()` 即强杀影响≈0）。测试：
+  连续两次 `killAndReset`，两 child 各自的 SIGKILL 兜底均按自己的时钟触发。
+- **验证（2026-10-07，Windows 本机）**：三端 `tsc`（main / preload / renderer）0 错；
+  `cyrene-core` / `smoke-host` / `native-windows` Release 编译 0 错；`build:main` 739 文件 0 错；
+  全量 vitest **666 文件（665 通过 / 1 跳过）、6198 用例（6194 通过 / 4 跳过）全绿**
+  （本轮 +4 用例：sync 入库窗口 ×2、chats 别名组合 ×1、host-clients 多槽 ×1）；
+  `dotnet-tools-matrix.py` **150/150**；`dual-track-diff.ts` **PASS**（download 段 10 例，
+  含新增 `../../escape.png` 拒绝）。

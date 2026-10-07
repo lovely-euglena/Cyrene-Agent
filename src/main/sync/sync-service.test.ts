@@ -82,6 +82,25 @@ class FakeStore {
   getRemoteCount(): number { return this.remote.length; }
 }
 
+/** 可挂起的事件库：appendRemote（真实实现是 fs + fsync 落库）在 gate 上等待，
+ *  用于复现「换址发生在入库等待期间」的竞态窗口（复审二轮 P1-1）。 */
+class GatedAppendStore extends FakeStore {
+  gate: Promise<void> | null = null;
+  onAppendEntered: (() => void) | null = null;
+
+  async appendRemote(events: SyncEventV0[]): Promise<void> {
+    this.onAppendEntered?.();
+    if (this.gate) await this.gate;
+    await super.appendRemote(events);
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 function makeState(overrides: Partial<SyncState> = {}): SyncState {
   return {
     schemaVersion: 1,
@@ -461,6 +480,66 @@ describe("sync/sync-service", () => {
     expect(built.state.pushedCount).toBe(0);
     expect(built.state.fetchCursor).toBeNull();
     expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：换址发生在 fetch 入库等待期间——旧轮不写回游标，已入库事件照常广播（复审二轮 P1-1）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const store = new GatedAppendStore();
+    const built = buildService({ store, state: makeState({ fetchCursor: "10", serverDeviceId: "dev_a" }) });
+    const entered = deferred();
+    const gate = deferred();
+    store.onAppendEntered = entered.resolve;
+    store.gate = gate.promise;
+    built.client.fetch.mockResolvedValueOnce({
+      events: [remoteEvent("rem-1", 3)],
+      cursor: "11",
+      hasMore: false,
+      dropped: 0,
+    });
+
+    const first = built.service.syncNow();
+    await entered.promise; // 旧轮挂在入库等待（fs + fsync）上，换址此刻才发生
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b" });
+    expect(built.state.fetchCursor).toBeNull(); // 换址重置已生效
+
+    gate.resolve();
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    // 已入库的旧服务器事件是事实：stale 丢弃结算但补发广播，合并读模型即时刷新
+    expect(built.applied).toHaveBeenCalledWith(["c1"]);
+    // 旧服务器游标 "11" 不得写回：补跑走新服务器的初始 clone，而非拿旧游标增量 fetch
+    await vi.waitFor(() => expect(built.client.clone).toHaveBeenCalledTimes(1));
+    expect(built.client.fetch).toHaveBeenCalledTimes(1);
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：换址发生在 clone 入库等待期间——旧轮不写回初始游标，补跑重新 clone（复审二轮 P1-1）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const store = new GatedAppendStore();
+    const built = buildService({ store, state: makeState({ serverDeviceId: "dev_a" }) });
+    const entered = deferred();
+    const gate = deferred();
+    store.onAppendEntered = entered.resolve;
+    store.gate = gate.promise;
+    built.client.clone.mockResolvedValueOnce({ events: [remoteEvent("rem-1", 3)], cursor: "42", dropped: 0 });
+
+    const first = built.service.syncNow();
+    await entered.promise; // 初始 clone 已返回，挂在入库等待上
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b" });
+    expect(built.state.fetchCursor).toBeNull();
+
+    gate.resolve();
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    expect(built.applied).toHaveBeenCalledWith(["c1"]);
+    // 补跑重新走初始 clone（旧轮写回 "42" 的话会改成对新服务器增量 fetch）
+    await vi.waitFor(() => expect(built.client.clone).toHaveBeenCalledTimes(2));
+    expect(built.client.fetch).not.toHaveBeenCalled();
+    expect(built.state.fetchCursor).toBeNull();
   });
 
   it("unpair：清 token / serverDeviceId / fetchCursor，保留 outbox", async () => {

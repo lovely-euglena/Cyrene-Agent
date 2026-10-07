@@ -169,7 +169,9 @@ internal static class DownloadFileTool
             if (raw.Length == 0 || raw == ".") continue;
             if (raw == "..")
             {
-                if (parts.Count == 0) parts.Add(".."); // 保留前导 .. → 后续命中 ".." 检查被拒
+                // 前导 ".." 占位不允许被后续 ".." 抵消（否则 ../../escape.png 折叠成
+                // escape.png 而被接受）——对齐 TS（path.normalize 保留前导 ".."，逐段命中即拒）
+                if (parts.Count == 0 || parts[parts.Count - 1] == "..") parts.Add("..");
                 else parts.RemoveAt(parts.Count - 1);
                 continue;
             }
@@ -177,7 +179,7 @@ internal static class DownloadFileTool
         }
         var normalized = string.Join("/", parts);
         // #IKJSNI：逐段等值检查——整串 Contains("..") 会误杀 a..b.txt / report..final.pdf
-        // 等合法文件名；normalize 后 parts 只可能在前导处保留字面 ".." 段。
+        // 等合法文件名；normalize 后 parts 只可能在前导处保留字面 ".." 段（奇偶级均如此）。
         // （GetRelativePath 双检仍在兜底，穿越语义不受影响。）
         if (parts.Contains("..") || Path.IsPathRooted(normalized)) return null;
 

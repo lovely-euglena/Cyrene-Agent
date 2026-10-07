@@ -103,10 +103,15 @@ function readIndexFromDisk(): ChatSessionMeta[] {
       // 当前格式直接信任 meta——避免启动时为每个会话全量 JSON.parse sessions/<id>.json。
       // 不能用 workspaceRoot 存在性判断新旧：JSON.stringify 会丢弃 undefined 值，
       // 当前格式的 chat 会话本来就可能没有 workspaceRoot。
-      // 例外（复审 P2-4）：Work 且索引缺 workspaceRoot 时定点回读——file-first 可能已有
-      // workspaceBinding 而索引缺失（setWorkspaceBinding 落盘失败窗口），用于 recentProjects 回填。
+      // 例外（复审 P2-4 / 复审二轮 P2-1）：Work 且索引缺 workspaceRoot 时定点回读——
+      // file-first 可能已有 workspaceBinding 而索引缺失（setWorkspaceBinding 落盘失败窗口），
+      // 用于 recentProjects 回填。work 判定按归一化后的模式（旧别名 "daily" 同样归入 work，
+      // 与 migrateLegacySessions 的 workBindingMayNeedScan 同口径），否则别名组合态下
+      // 定点回读不触发、绑定永不回填。
+      const workMissingBinding = normalizePersistedMode(meta.mode, meta.purpose) === "work"
+        && typeof meta.workspaceRoot !== "string" && meta.purpose !== "proactive-chat";
       const needsSessionRead = typeof meta.mode !== "string" || typeof meta.pinned !== "boolean"
-        || (meta.mode === "work" && typeof meta.workspaceRoot !== "string" && meta.purpose !== "proactive-chat");
+        || workMissingBinding;
       const session = needsSessionRead ? readSessionRecordFile(meta.id!) : null;
       const indexedMode = meta.mode;
       const mode = normalizePersistedMode(indexedMode ?? session?.mode, meta.purpose ?? session?.purpose);
@@ -233,14 +238,16 @@ function migrateLegacySessions(): void {
       const meta = item as Partial<ChatSessionMeta>;
       if (typeof meta.id !== "string" || meta.purpose === "proactive-chat") continue;
       // #IKJSNC 复审 P1-2：当前格式条目跳过回读（mode 合法 + pinned 布尔，与
-      // readIndexFromDisk 的 needsSessionRead 判据一致）。此类条目在首次获得当前格式时
+      // readIndexFromDisk 的 needsSessionRead 首两段判据一致）。此类条目在首次获得当前格式时
       // 已被本迁移全量扫描过；此后 file 与 index 由同一写路径同步更新（metaFromSession
       // 从文件派生），不存在"file 需要迁移而 index 已当前格式"的分叉（codeSession 亦然：
       // 清理随该次扫描落盘，读取路径另在内存中兜底剔除）。
-      // 例外：Work 且索引缺 workspaceRoot 仍回读——file-first 可能有绑定而索引缺失
-      // （写入失败窗口），交 needsWorkspaceBinding / readIndexFromDisk 定点处理。
+      // 例外（复审二轮 P2-1）：Work 且索引缺 workspaceRoot 仍回读——file-first 可能有绑定
+      // 而索引缺失（写入失败窗口），交 needsWorkspaceBinding / readIndexFromDisk 定点处理；
+      // work 判定按归一化后的模式（旧别名 "daily" 同样归入 work，两处判据同口径）。
       const currentFormatMeta = isConversationMode(meta.mode) && typeof meta.pinned === "boolean";
-      const workBindingMayNeedScan = meta.mode === "work" && typeof meta.workspaceRoot !== "string";
+      const workBindingMayNeedScan = normalizePersistedMode(meta.mode, meta.purpose) === "work"
+        && typeof meta.workspaceRoot !== "string";
       if (currentFormatMeta && !workBindingMayNeedScan) continue;
       const filePath = sessionPath(meta.id);
       if (!fs.existsSync(filePath)) continue;
