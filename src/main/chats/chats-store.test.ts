@@ -432,7 +432,7 @@ describe("chats store", () => {
     );
   });
 
-  it("当前格式索引不回读会话文件：信任 meta，坏会话文件也不影响启动", async () => {
+  it("当前格式索引跳过迁移扫描：索引即真相，文件内容不触发重写、坏文件不影响启动（#IKJSNC 复审 P1-2）", async () => {
     const root = path.join(electronMock.userDataDir, "cyrene-chats");
     const sessionsDir = path.join(root, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
@@ -446,18 +446,19 @@ describe("chats store", () => {
       {
         id: "broken-session", title: "坏会话文件", identityId: null,
         createdAt: 1, updatedAt: 1, messageCount: 0,
-        mode: "work", pinned: false,
+        mode: "chat", pinned: true,
       },
     ]);
     fs.writeFileSync(path.join(root, "index.json"), indexRaw);
-    // 会话文件与索引冲突：若被回读，mode/pinned/workspace 会被改写并触发迁移重写
-    fs.writeFileSync(path.join(sessionsDir, "trusted-meta.json"), JSON.stringify({
+    // 磁盘文件故意写入「若被迁移回读必触发重写」的内容：daily 模式会归一为 work、
+    // codeSession 会被清理——文件原样保留即证明迁移扫描跳过了当前格式条目。
+    const conflictingRaw = JSON.stringify({
       id: "trusted-meta", title: "磁盘标题", identityId: null,
       messages: [], createdAt: 1, updatedAt: 2, schemaVersion: 1,
-      mode: "work", pinned: false,
-      workspaceBinding: { workspaceRoot: "C:\\disk-project", displayName: "disk", boundAt: 1 },
-    }));
-    // 坏会话文件：若被回读会走解析失败告警分支
+      mode: "daily", pinned: false, codeSession: { legacy: true },
+    });
+    fs.writeFileSync(path.join(sessionsDir, "trusted-meta.json"), conflictingRaw);
+    // 坏会话文件：若被 readSessionRecordFile 回读会走解析失败告警分支
     fs.writeFileSync(path.join(sessionsDir, "broken-session.json"), "{ not json");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -466,12 +467,50 @@ describe("chats store", () => {
 
     expect(store.listSessions()).toEqual([
       expect.objectContaining({ id: "trusted-meta", title: "索引标题", mode: "chat", pinned: true }),
-      expect.objectContaining({ id: "broken-session", mode: "work", pinned: false }),
+      expect.objectContaining({ id: "broken-session", mode: "chat", pinned: true }),
     ]);
-    // 没有任何一条会话文件被回读：index.json 原样保留，也没有解析失败告警
+    // 跳过回读的证据：冲突文件未被迁移重写、index.json 原样保留、无解析失败告警
+    expect(fs.readFileSync(path.join(sessionsDir, "trusted-meta.json"), "utf8")).toBe(conflictingRaw);
     expect(fs.readFileSync(path.join(root, "index.json"), "utf8")).toBe(indexRaw);
     expect(warn.mock.calls.some((call) => String(call[0]).includes("session 文件解析失败"))).toBe(false);
     warn.mockRestore();
+  });
+
+  it("Work 索引缺 workspaceRoot：定点回读会话文件补全并回写索引（#IKJSNC 复审 P2-4）", async () => {
+    const root = path.join(electronMock.userDataDir, "cyrene-chats");
+    const sessionsDir = path.join(root, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    // 场景：会话文件已写、索引写失败（setWorkspaceBinding → persistIndex 抛错窗口）
+    fs.writeFileSync(path.join(root, "index.json"), JSON.stringify([
+      {
+        id: "lost-binding", title: "丢失绑定", identityId: null,
+        createdAt: 1, updatedAt: 2, messageCount: 1,
+        mode: "work", pinned: false,
+      },
+    ]));
+    fs.writeFileSync(path.join(sessionsDir, "lost-binding.json"), JSON.stringify({
+      id: "lost-binding", title: "丢失绑定", identityId: null,
+      messages: [{ id: "m1", role: "user", content: "x", at: 1 }],
+      createdAt: 1, updatedAt: 2, schemaVersion: 1, mode: "work", pinned: false,
+      workspaceBinding: { workspaceRoot: "C:\\kept-project", displayName: "kept", boundAt: 1 },
+    }));
+
+    const store = await import("./chats-store");
+    store.initialize();
+
+    expect(store.listSessions()).toEqual([
+      expect.objectContaining({
+        id: "lost-binding", mode: "work",
+        workspaceRoot: "C:\\kept-project", workspaceDisplayName: "kept",
+      }),
+    ]);
+    // 差异 → 索引回写补全（recentProjects 回填 / 侧栏分组依赖该字段）
+    expect(JSON.parse(fs.readFileSync(path.join(root, "index.json"), "utf8"))).toEqual([
+      expect.objectContaining({
+        id: "lost-binding",
+        workspaceRoot: "C:\\kept-project", workspaceDisplayName: "kept",
+      }),
+    ]);
   });
 
   it("旧格式索引仍回读会话文件迁移补全 mode/pinned/workspace", async () => {

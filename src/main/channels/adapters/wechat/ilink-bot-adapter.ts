@@ -811,8 +811,15 @@ export async function loadCredentials(): Promise<Credentials | null> {
 
 export async function saveCredentials(creds: Credentials): Promise<void> {
   const p = credPath();
-  await fs.mkdir(path.dirname(p), { recursive: true });
-  await fs.writeFile(p, encryptCredentials(JSON.stringify(creds)), "utf8");
+  // 复审 P2-1：凭据文件 / 目录最小权限加固（obf: 回退场景下 key 可由 userData 路径推导）。
+  // Windows 忽略 POSIX mode；chmod 兜底失败静默（平台语义差异，不影响可用性）。
+  const dir = path.dirname(p);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(p, encryptCredentials(JSON.stringify(creds)), { encoding: "utf8", mode: 0o600 });
+  // writeFile 的 mode 仅创建时生效：文件 / 目录 chmod 兜底（weixin/ 为应用专有目录；
+  // Windows 忽略 mode，失败静默）。
+  await fs.chmod(dir, 0o700).catch(() => { /* Windows 或权限受限：忽略 */ });
+  await fs.chmod(p, 0o600).catch(() => { /* Windows 或权限受限：忽略 */ });
 }
 
 async function deleteCredentials(): Promise<void> {

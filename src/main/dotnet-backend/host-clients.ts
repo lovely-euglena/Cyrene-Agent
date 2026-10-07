@@ -60,7 +60,7 @@ export class LineHostClient {
       const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode]), ...this.extraArgs()];
       const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       // 启动不可用分支：子进程已 spawn，必须杀掉再返回——否则孤儿进程
-      // 存活到应用退出（trackChildProcess 只兜底退出路径，IKJSNF）
+      // 存活到应用退出（本模块子进程未登记 trackChildProcess，退出兜底不覆盖，IKJSNF）
       if (!child?.stdout?.readable || !child?.stdin) {
         try { child?.kill(); } catch { /* ignore */ }
         return false;
@@ -196,7 +196,7 @@ export class LineHostClient {
         this.pending.delete(callId);
         this.exited = true;          // 先标记，防新 call 拿到垂死 proc
         this.killAndReset();
-        reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重启）`));
+        reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重置）`));
       }, this.timeoutMs);
       this.pending.set(callId, { resolve, reject, timer });
       try {
@@ -220,6 +220,11 @@ export class LineHostClient {
     const child = this.proc;
     this.exited = true;
     this.proc = null;
+    // 复审 P2-2：旧 child 的 exit 会被代际守卫短路（this.proc !== child），不能指望
+    // 它清理在途调用——这里直接结算剩余 pending（调用方超时路径自己的 pending 已摘除），
+    // 否则其余调用各自干等超时（最长 30s）。
+    for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error("host 已重置")); }
+    this.pending.clear();
     if (!child) return;
     // 上一轮兜底若还在（旧 child 尚未 exit），先取消再为本次重新计时
     this.cancelKillEscalation();

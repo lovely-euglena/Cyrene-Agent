@@ -1081,7 +1081,7 @@
       "sendSticker": "Send stickers",
       "mirrorDesktop": "Mirror messages in desktop chat",
       "toolPermission": "Phone tool access",
-      "toolPermissionHint": "Tools allowed by your desktop permission level run directly for phone messages; the \"per-action\" level asks for approval, and high-risk operations stay sandboxed.",
+      "toolPermissionHint": "Tools allowed by your desktop permission level run directly for phone messages; the \"Ask each time\" level asks for approval, and high-risk operations stay sandboxed.",
       "toolsOff": "Tools off, chat only",
       "toolsAll": "Allow available tools",
       "logsTitle": "Recent messages",

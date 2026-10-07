@@ -100,6 +100,14 @@ describe("filename 校验报错（参数缺失时回传实际键名）", () => {
     expect(fs.existsSync(path.join(tmpDir, "a..b.txt"))).toBe(true);
   });
 
+  it("write_markdown 拒绝路径穿越（../、..\\ 均不落盘，#IKJSNI 负向补强）", async () => {
+    for (const filename of ["../cyrene-p2-escape.txt", "..\\cyrene-p2-escape.txt"]) {
+      const raw = await getTool("write_markdown").execute({ filename, content: "x" }, {});
+      expect(raw).toContain("路径不合法");
+    }
+    expect(fs.existsSync(path.join(tmpDir, "..", "cyrene-p2-escape.txt"))).toBe(false);
+  });
+
   it("write_excel / write_word / write_pdf 缺 filename 时同样回传键名（不生成文件）", async () => {
     for (const [id, args, ext] of [
       ["write_excel", { sheets: [{ name: "S1", headers: [], rows: [] }] }, ".xlsx"],

@@ -130,7 +130,8 @@ export interface CyreneRunOptions {
   capabilities?: RunCapabilities;
   /** Harness 是否公布需要桌面交互卡片的内置工具；默认开启。 */
   harnessInteractiveTools?: boolean;
-  /** 工具权限结算方式；手机端全部开启使用 allow_all 跳过逐项审批。 */
+  /** 工具权限结算方式；渠道（手机端）沿用桌面端权限档位（默认 read-only）+ 沙箱，
+   *  per-action 触发审批（#IKJSN9）；allow_all 仅 scheduler / plugin 无人值守使用。 */
   permissionMode?: "normal" | "allow_all";
   /** 直发图片被主模型接口拒绝时，懒加载 caption fallback 消息并重试。 */
   imageCaptionFallback?: () => Promise<ChatMessage[]>;

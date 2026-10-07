@@ -7,6 +7,9 @@
  *   导出（exporter）→ 存 state → push（pushedCount 起，成功后推进）→
  *   clone（fetchCursor=null）或 fetch 循环（hasMore 至 false）→ 入库去重 → 存 state。
  * 失败保留游标 / 水位，记 lastError，下一轮重试；入库顺序：事件先 append → 后原子写 state。
+ * 换址竞态（#IKJSNA 复审 P1-1）：saveConfig / pair / unpair 递增 generation 并中止在途轮次，
+ * 旧轮在结算点校验代际，不一致即丢弃（不得用旧服务器游标 / 水位覆盖换址重置）；
+ * 配置变更后的立即同步经 requestSync 排队，不被单飞互斥吞掉。
  *
  * 依赖全部可注入（store/exporter/state 读写/客户端工厂/时钟/定时器/onRemoteEventsApplied），
  * 默认取真实模块（A 簇签名）；测试注入假实现，不触达真实网络 / 磁盘事件库。
@@ -41,7 +44,9 @@ export const SYNC_INTERVAL_MS = 60_000;
 
 /**
  * baseUrl 比较键：按 URL origin（protocol + host，大小写不敏感）归一化——
- * 路径差异不算换主机（避免无谓清 token 重配对）；非法 / 空值退化为去空白与尾斜杠比较。
+ * 路径差异不算换主机（有意保留：同 origin 子路径调整不触发清 token 重配对；
+ * 语义与代价见 docs/design/2026-10-06-desktop-cloud-wiring.md §4.4）；
+ * 非法 / 空值退化为去空白与尾斜杠比较。
  */
 function normalizeBaseUrlKey(value: string): string {
   const trimmed = value.trim();
@@ -111,6 +116,12 @@ class SyncServiceController implements SyncService {
   private abortController: AbortController | null = null;
   private lastSyncAt: string | null = null;
   private lastError: { code: string; message: string } | null = null;
+  /** 换址代际（复审 P1-1）：换址 / 解除配对时自增；在途轮次据此丢弃旧服务器结算。 */
+  private generation = 0;
+  /** 在途轮次结束后的补跑标记（换址时旧轮未结束，syncNow 单飞会吞掉立即补跑）。 */
+  private rerunRequested = false;
+  /** state 落盘串行链：并发 persist（在途轮次 vs 换址重置）按调用序执行，避免快照交错。 */
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(deps: SyncServiceDeps) {
     this.deps = deps;
@@ -206,10 +217,16 @@ class SyncServiceController implements SyncService {
     return (this.deps.createClient ?? createSyncHttpClient)(config);
   }
 
-  private async persistState(): Promise<void> {
-    if (!this.state) return;
-    this.state.updatedAt = new Date(this.now()).toISOString();
-    await (this.deps.saveState ?? saveSyncState)(this.syncDir, this.state);
+  /** state 落盘（串行化）：快照在轮到本次执行时才序列化，换址重置不会被旧轮快照覆盖。 */
+  private persistState(): Promise<void> {
+    if (!this.state) return Promise.resolve();
+    const run = this.persistChain.then(async () => {
+      if (!this.state) return;
+      this.state.updatedAt = new Date(this.now()).toISOString();
+      await (this.deps.saveState ?? saveSyncState)(this.syncDir, this.state);
+    });
+    this.persistChain = run.catch(() => { /* 失败向本次调用方传播，链本身继续 */ });
+    return run;
   }
 
   // ── 生命周期 ─────────────────────────────────────────────────────────────
@@ -223,11 +240,12 @@ class SyncServiceController implements SyncService {
     }, SYNC_INTERVAL_MS);
     (this.timer as { unref?: () => void }).unref?.();
     // 启动即拉一轮（不阻塞调用方）；失败由 lastError 记录，下轮重试
-    void this.syncNow();
+    this.requestSync();
   }
 
   async stop(): Promise<void> {
     this.running = false;
+    this.rerunRequested = false; // 停止后不再补跑；重新启用由 start 触发首轮
     if (this.timer) {
       (this.deps.clearIntervalImpl ?? clearInterval)(this.timer);
       this.timer = null;
@@ -241,10 +259,25 @@ class SyncServiceController implements SyncService {
   syncNow(): Promise<SyncRunResult> {
     if (this.inFlight) return this.inFlight; // 并发共享同一 promise
     const tracked = this.runSync().finally(() => {
-      if (this.inFlight === tracked) this.inFlight = null;
+      if (this.inFlight !== tracked) return;
+      this.inFlight = null;
+      // 换址等配置变更在旧轮在途时请求过补跑：旧轮结算后立即以新配置跑一轮
+      if (this.rerunRequested) {
+        this.rerunRequested = false;
+        void this.syncNow();
+      }
     });
     this.inFlight = tracked;
     return tracked;
+  }
+
+  /** 配置变更后的立即同步：在途时排队补跑（保持 syncNow 对普通并发调用的单飞语义）。 */
+  private requestSync(): void {
+    if (this.inFlight) {
+      this.rerunRequested = true;
+      return;
+    }
+    void this.syncNow();
   }
 
   private async runSync(): Promise<SyncRunResult> {
@@ -258,6 +291,13 @@ class SyncServiceController implements SyncService {
 
     const controller = new AbortController();
     this.abortController = controller;
+    // 换址代际（复审 P1-1）：轮次启动后配置可能被换址重置；所有结算点校验，
+    // 不一致即丢弃（旧服务器游标 / 水位不得覆盖重置）。
+    const generation = this.generation;
+    const stale = (): SyncRunResult => ({
+      ok: false,
+      error: { code: "stale", message: "同步轮次因服务器地址变更被丢弃" },
+    });
     try {
       const state = await this.ensureState();
       const store = await this.ensureStore(true);
@@ -280,6 +320,7 @@ class SyncServiceController implements SyncService {
       const pending = store.getLocalEvents().slice(Math.max(0, state.pushedCount));
       if (pending.length > 0) {
         const pushed = await client.push(pending);
+        if (generation !== this.generation) return stale();
         const advanced = Math.min(pending.length, pushed.accepted + pushed.duplicates);
         if (advanced > 0) {
           state.pushedCount += advanced;
@@ -292,6 +333,7 @@ class SyncServiceController implements SyncService {
       const appliedSessions = new Set<string>();
       if (!state.fetchCursor) {
         const cloned = await client.clone();
+        if (generation !== this.generation) return stale();
         if (cloned.dropped > 0) {
           this.log(`[Sync] clone 丢弃 ${cloned.dropped} 条坏帧（初始游标 ${cloned.cursor ?? "null"}）`);
         }
@@ -300,8 +342,10 @@ class SyncServiceController implements SyncService {
         if (added > 0 || cloned.cursor) await this.persistState();
       } else {
         for (;;) {
+          if (generation !== this.generation) return stale();
           const previousCursor = state.fetchCursor;
           const page = await client.fetch(state.fetchCursor, { limit: SYNC_FETCH_DEFAULT_LIMIT });
+          if (generation !== this.generation) return stale();
           // 坏帧（协议校验不通过）会被永久跳过且游标照常推进：必须留日志，否则不可观察
           if (page.dropped > 0) {
             this.log(`[Sync] fetch 丢弃 ${page.dropped} 条坏帧（游标 ${previousCursor} → ${page.cursor}）`);
@@ -314,6 +358,7 @@ class SyncServiceController implements SyncService {
         }
       }
 
+      if (generation !== this.generation) return stale();
       this.lastSyncAt = new Date(this.now()).toISOString();
       this.lastError = null;
       await this.persistState();
@@ -432,7 +477,13 @@ class SyncServiceController implements SyncService {
 
     // #IKJSNA：换址即换服务器——state 中的游标/推送水位/服务器身份属于旧服务器，
     // 一并重置（peekState：state 不存在时不创建、零副作用；重配对时会重新 clone/重推）。
+    // 竞态（复审 P1-1）：先递增代际并中止在途轮次，旧轮的任何结算都会被丢弃，
+    // 不会用旧服务器游标 / 水位覆盖本次重置；面板内存状态同步清零。
     if (baseUrlChanged) {
+      this.generation++;
+      this.abortController?.abort();
+      this.lastSyncAt = null;
+      this.lastError = null;
       const state = await this.peekState();
       if (state) {
         state.fetchCursor = null;
@@ -443,7 +494,7 @@ class SyncServiceController implements SyncService {
     }
 
     if (this.settings.enabled) {
-      if (this.running) void this.syncNow(); // 配置保存后一次
+      if (this.running) this.requestSync(); // 配置保存后一次
       else await this.start(); // start 内含首轮
     } else {
       await this.stop();
@@ -470,6 +521,11 @@ class SyncServiceController implements SyncService {
     const baseUrlChanged = normalizeBaseUrlKey(baseUrl) !== normalizeBaseUrlKey(current.baseUrl);
     this.settings = saveSyncSettings({ baseUrl, deviceName, token: paired.token });
     if (baseUrlChanged) {
+      // 竞态（复审 P1-1）：同 saveConfig——代际 + 中止在途，旧轮结算不得覆盖重置
+      this.generation++;
+      this.abortController?.abort();
+      this.lastSyncAt = null;
+      this.lastError = null;
       state.fetchCursor = null;
       state.pushedCount = 0;
       state.serverDeviceId = paired.deviceId || null;
@@ -480,7 +536,7 @@ class SyncServiceController implements SyncService {
     await this.persistState();
 
     if (this.settings.enabled) {
-      if (this.running) void this.syncNow();
+      if (this.running) this.requestSync();
       else await this.start();
     }
     return this.getConfig();
@@ -499,10 +555,14 @@ class SyncServiceController implements SyncService {
 
   async unpair(): Promise<SyncConfigPublic> {
     const state = await this.ensureState();
-    // 保留 outbox / state（重新配对后幂等重推、重拉）；只清凭据与游标
+    // 保留 outbox / state（重新配对后幂等重推、重拉）；只清凭据与游标。
+    // 竞态（复审 P1-1）：同换址——代际 + stop 中止在途轮次，旧轮结算不得覆盖重置。
+    this.generation++;
     this.settings = saveSyncSettings({ token: "" });
     state.serverDeviceId = null;
     state.fetchCursor = null;
+    this.lastSyncAt = null;
+    this.lastError = null;
     await this.persistState();
     await this.stop();
     return this.getConfig();

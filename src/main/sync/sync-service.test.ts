@@ -424,6 +424,45 @@ describe("sync/sync-service", () => {
     expect(built.state.serverDeviceId).toBe("dev_a");
   });
 
+  it("saveConfig：换址发生在轮次在途——旧轮结算被丢弃、补跑用新配置（#IKJSNA 复审 P1-1）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    fs.mkdirSync(path.join(mocks.userDataDir, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(mocks.userDataDir, "sync", "state.json"), "{}");
+    const store = new FakeStore();
+    store.local.push(localEvent("loc-1", 1), localEvent("loc-2", 2));
+    const built = buildService({
+      store,
+      state: makeState({ fetchCursor: "42", pushedCount: 0, serverDeviceId: "dev_a" }),
+    });
+
+    // 旧轮在 push 网络等待中挂起；换址发生在在途期间
+    let resolvePush!: (value: SyncPushResult) => void;
+    built.client.push.mockImplementationOnce(() => new Promise<SyncPushResult>((resolve) => { resolvePush = resolve; }));
+    const first = built.service.syncNow();
+    await vi.waitFor(() => expect(built.client.push).toHaveBeenCalledTimes(1));
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b" });
+    expect(built.state.fetchCursor).toBeNull(); // 换址重置已生效
+    expect(built.clientConfigs[0]?.signal?.aborted).toBe(true); // 在途轮次已被中止
+
+    // 旧服务器 push 完成：代际失配 → 旧轮结算被丢弃（不得回写 pushedCount / 游标）
+    resolvePush({ accepted: 2, duplicates: 0, cursor: "" });
+    const firstResult = await first;
+    expect(firstResult.ok).toBe(false);
+    expect(["stale", "aborted"]).toContain(firstResult.error?.code);
+
+    // 旧轮结算后补跑立即启动（不等 60s 定时）：以新配置再跑一轮
+    await vi.waitFor(() => expect(built.client.push).toHaveBeenCalledTimes(2));
+    expect(built.clientConfigs.map((config) => config.baseUrl)).toEqual([
+      "https://a.example.com",
+      "https://b.example.com",
+    ]);
+    // 补跑 push 返回 accepted 0 → 水位保持换址重置后的 0（未被旧轮 2 条污染）
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
   it("unpair：清 token / serverDeviceId / fetchCursor，保留 outbox", async () => {
     saveSyncSettings({ enabled: true, baseUrl: BASE, token: "tok-1" });
     const store = new FakeStore();

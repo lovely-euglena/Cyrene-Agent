@@ -564,6 +564,8 @@ describe("启动失败清理与失败缓存（IKJSNB）", () => {
     await vi.advanceTimersByTimeAsync(0);
     child.emit("exit", 1, null);
     await expect(first).resolves.toBe(false);
+    // 启动失败收尾必须杀已 spawn 的子进程（不留孤儿；复审 P2-6 断言补强）
+    expect(child.kill).toHaveBeenCalledTimes(1);
 
     await expect(host.ensureStarted()).resolves.toBe(false);
     expect(mocks.spawn).toHaveBeenCalledTimes(1);

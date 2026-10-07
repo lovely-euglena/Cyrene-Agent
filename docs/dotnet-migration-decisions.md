@@ -870,3 +870,40 @@
   → `--user-data-dir` 启动打包应用（迁移防护生效，不碰真实数据）→ CDP 驱动
   `window.settings.syncPair/syncSaveConfig/syncNow`。
 
+## 2026-10-07 增量（二）：PR #29 评审修复——sync 换址竞态 / 迁移跳过条件 / .NET 对等证据 / 注释口径 + P2 批次
+
+- **背景**：PR #29（IKJSN9–IKJSNI 九项修复）评审结论「有条件合入」：4 个 P1 需修改项 +
+  7 个 P2 项，逐项修复如下。
+- **P1-1 sync 换址竞态**（`src/main/sync/sync-service.ts`）：saveConfig / pair / unpair
+  换址时先递增 generation 并 abort 在途轮次；runSync 在 push / clone / fetch 每个结算点
+  校验代际，失配返回 `stale` 丢弃（旧服务器游标 / 水位不再覆盖换址重置）；`requestSync`
+  补跑排队（旧轮结算后立即以新配置执行，不被单飞互斥吞掉）；persistState 串行化
+  （换址重置不会被旧轮快照交错覆盖）。测试：换址发生在轮次在途——旧轮结算丢弃、
+  补跑用新配置（`sync-service.test.ts`）。
+- **P1-2 chats-store 启动全量回读**（`src/main/chats/chats-store.ts`）：
+  `migrateLegacySessions` 对当前格式条目（mode 合法 + pinned 布尔）跳过逐文件
+  readFileSync+JSON.parse（此类条目首次获得当前格式时已被全量扫描；此后 file/index
+  由同一写路径同步更新）；Work 缺 workspaceRoot 例外保留定点扫描。测试口径修正：
+  以「冲突文件不被重写」证明跳过（原「无解析告警」断言不能证明未读）。
+- **P1-3 .NET 路径判定对等证据**：dual-track download 段 +2（`a..b.txt` 接受并落盘、
+  `../escape.png` 拒绝）；矩阵 +1（穿越拒绝，联网前）；`docs/dotnet-backend.md`
+  计数 download 7→9 / 矩阵 148→149。
+- **P1-4 注释口径**（#IKJSN9 行为变更）：`cyrene-agent.ts` permissionMode /
+  `channels/settings-store.ts` toolSandbox 注释改为「渠道沿用桌面端权限档位（默认
+  read-only）+ 沙箱，per-action 审批；allow_all 仅 scheduler/plugin」；
+  2026-09-11 Minecraft 设计稿现状盘点标注为历史快照。
+- **P2 批次**：① 凭据 / 渠道设置文件权限加固（ilink `weixin/` 0700 + credentials
+  0600；channels-settings.json 0600；Linux 权限断言）；② `killAndReset` 立即结算
+  剩余 pending（文案改「host 已重置」，不再各自干等超时）；③ 注释精度
+  （trackChildProcess / vectorstore blob）；④ Work 索引缺 workspaceRoot 定点补读
+  回写（recentProjects 回填）；⑤ 换址语义收敛（设计稿 §4.4：判定键 origin、路径差异
+  有意保留、内存状态清零、inbox 旧事件保留）；⑥ 测试补强（document-tools 穿越负向 /
+  native 启动失败 kill 断言 / host-clients 并发 pending）；⑦ i18n（en「Ask each time」、
+  ja「高リスク」）。
+- **验证（2026-10-07，Windows 本机）**：三端 `tsc`（main / preload / renderer）0 错；
+  `smoke-host` Release 编译 0 错；全量 vitest **666 文件（665 通过 / 1 跳过）、
+  6194 用例（6190 通过 / 4 跳过）全绿**（含新增竞态 / 跳过证明 / 定点补读 / 并发结算 /
+  负向 / 权限断言用例；首轮 1 例 VoiceCallPreviewDialog 时序 flaky，复跑全绿）；
+  `dotnet-tools-matrix.py` **149/149**；`dual-track-diff.ts` **PASS**（download 段 9 例，
+  含新增 `a..b.txt` 接受与 `../escape.png` 拒绝）。
+

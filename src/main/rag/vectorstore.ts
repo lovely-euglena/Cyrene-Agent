@@ -407,9 +407,10 @@ class SqliteStoreBackend implements VectorStoreBackend {
       const rows = this.db
         .prepare("SELECT id, text, source, embedding, weight, created_at, last_recalled_at, metadata FROM entries")
         .all() as SqliteRow[];
-      // 单行隔离（IKJSND）：坏行（metadata JSON 损坏 / blob 异常）只跳过自身并计数，
+      // 单行隔离（IKJSND）：坏行（metadata JSON 损坏等 rowToEntry 抛错）只跳过自身并计数，
       // 不能让一行毒化整库——否则 entries=[] + lastLoadFailed=true 会让 ensureFresh
       // 反复重试失败（CPU 空转），记忆/RAG 持续瘫痪且坏行永存。
+      // 注（复审 P2-3）：blob 非 Uint8Array 不抛错——按空嵌入正常加载，不进入 skip 计数。
       entries = [];
       let skipped = 0;
       let firstError: unknown = null;

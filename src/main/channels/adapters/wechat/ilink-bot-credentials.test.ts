@@ -101,4 +101,12 @@ describe("ilink bot credentials", () => {
     await expect(loadCredentials()).resolves.toBeNull();
     expect(fs.readFileSync(credentialsFile(), "utf8")).toBe(JSON.stringify({ botToken: "only-token" }));
   });
+
+  it.skipIf(process.platform === "win32")("凭据文件与目录权限加固（0600 / 0700，复审 P2-1）", async () => {
+    const { saveCredentials } = await loadModule();
+    await saveCredentials(CREDS);
+
+    expect(fs.statSync(credentialsFile()).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(credentialsFile())).mode & 0o777).toBe(0o700);
+  });
 });

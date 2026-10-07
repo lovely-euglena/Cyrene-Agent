@@ -97,6 +97,28 @@ describe("LineHostClient 生命周期（IKJSNF）", () => {
     await expect(second).resolves.toBe("ok2");
   });
 
+  it("killAndReset：其余在途调用立即结算，不等各自超时（复审 P2-2）", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const client = new LineHostClient("--tool-host", 1_000);
+    await boot(client, child);
+
+    const first = client.call("slow_op", {}).catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(500);
+    const second = client.call("other_op", {}).catch((e: Error) => e);
+
+    // t=1000：first 超时 → killAndReset；second（本应在 t=1500 才超时）必须立即结算
+    await vi.advanceTimersByTimeAsync(500);
+    expect(String((await first).message)).toContain("超时");
+    expect(String((await second).message)).toBe("host 已重置");
+    expect(child.kill).toHaveBeenCalledTimes(1);
+
+    // 无二次结算 / 无残留定时器：推进到 second 原超时点，不再有额外 kill 或未处理拒绝
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("SIGTERM 后 5s 无 exit：SIGKILL 强杀兜底（与 shutdown 对齐）", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();

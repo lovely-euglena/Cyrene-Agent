@@ -100,6 +100,12 @@ describe("channels/settings-store", () => {
     expect(loaded.feishu.appSecret).toBe("my-super-secret");
   });
 
+  it.skipIf(process.platform === "win32")("saveChannelsSettings: 设置文件权限加固（0600，复审 P2-1）", () => {
+    saveChannelsSettings({ feishu: { enabled: true, appSecret: "perm-secret" } });
+    const p = path.join(os.tmpdir(), "channels-settings.json");
+    expect(fs.statSync(p).mode & 0o777).toBe(0o600);
+  });
+
   it("saveChannelsSettings: 不传 secret 不覆盖已有值", () => {
     saveChannelsSettings({ feishu: { enabled: true, appSecret: "secret-1" } });
     // 第二次保存不传 secret
