@@ -191,11 +191,15 @@ export function CloudSyncSettingsPanel() {
           </div>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.connection.baseUrl")}</strong><span>{t("settingsPage.cloud.connection.baseUrlHint")}</span></div>
-            <SettingsInput value={baseUrlDraft} placeholder="http://..." aria-label={t("settingsPage.cloud.connection.baseUrl")} onChange={(event) => setBaseUrlDraft(event.target.value)} />
+            <div className="cy-settings-row__control">
+              <SettingsInput value={baseUrlDraft} placeholder="http://..." aria-label={t("settingsPage.cloud.connection.baseUrl")} onChange={(event) => setBaseUrlDraft(event.target.value)} />
+            </div>
           </div>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy"><strong>{t("settingsPage.cloud.connection.deviceName")}</strong><span>{t("settingsPage.cloud.connection.deviceNameHint")}</span></div>
-            <SettingsInput value={deviceNameDraft} placeholder={t("settingsPage.cloud.connection.deviceNamePlaceholder")} aria-label={t("settingsPage.cloud.connection.deviceName")} onChange={(event) => setDeviceNameDraft(event.target.value)} />
+            <div className="cy-settings-row__control">
+              <SettingsInput value={deviceNameDraft} placeholder={t("settingsPage.cloud.connection.deviceNamePlaceholder")} aria-label={t("settingsPage.cloud.connection.deviceName")} onChange={(event) => setDeviceNameDraft(event.target.value)} />
+            </div>
           </div>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
