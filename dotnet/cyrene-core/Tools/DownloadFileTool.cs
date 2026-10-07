@@ -159,7 +159,8 @@ internal static class DownloadFileTool
 
     private static bool HasDangerousChars(string filename) => Regex.IsMatch(filename, "[<>:\"|?*]");
 
-    /// <summary>与 TS resolveOutputPath 同规则：normalize 后禁含 ".."、禁绝对路径、必须落在 root 内。</summary>
+    /// <summary>与 TS resolveOutputPath 同规则：normalize 后禁含 ".."、禁绝对路径 / 前导分隔符、
+    /// 折叠后不得为空（目标为 root 本身）、必须落在 root 内。</summary>
     private static string? ResolveOutputPath(string filename, string root)
     {
         var slashed = filename.Replace('\\', '/');
@@ -169,14 +170,22 @@ internal static class DownloadFileTool
             if (raw.Length == 0 || raw == ".") continue;
             if (raw == "..")
             {
-                if (parts.Count == 0) parts.Add(".."); // 保留前导 .. → 后续命中 ".." 检查被拒
+                // 前导 ".." 占位不允许被后续 ".." 抵消（否则 ../../escape.png 折叠成
+                // escape.png 而被接受）——对齐 TS（path.normalize 保留前导 ".."，逐段命中即拒）
+                if (parts.Count == 0 || parts[parts.Count - 1] == "..") parts.Add("..");
                 else parts.RemoveAt(parts.Count - 1);
                 continue;
             }
             parts.Add(raw);
         }
         var normalized = string.Join("/", parts);
-        if (normalized.Contains("..") || Path.IsPathRooted(normalized)) return null;
+        // #IKJSNI：逐段等值检查——整串 Contains("..") 会误杀 a..b.txt / report..final.pdf
+        // 等合法文件名；normalize 后 parts 只可能在前导处保留字面 ".." 段（奇偶级均如此）。
+        // （GetRelativePath 双检仍在兜底，穿越语义不受影响。）
+        // 复审三轮 P2-4：① 折叠后为空（如 "images/.."）目标即 root 目录本身 → 拒绝；
+        // ② 前导分隔符（"/etc/x.png"）与 TS path.isAbsolute 同规则 → 拒绝（逐字对偶）。
+        if (slashed.StartsWith('/') || parts.Count == 0
+            || parts.Contains("..") || Path.IsPathRooted(normalized)) return null;
 
         var rootFull = Path.GetFullPath(root);
         var fullPath = Path.GetFullPath(Path.Combine(rootFull, normalized.Replace('/', Path.DirectorySeparatorChar)));

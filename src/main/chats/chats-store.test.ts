@@ -432,6 +432,152 @@ describe("chats store", () => {
     );
   });
 
+  it("当前格式索引跳过迁移扫描：索引即真相，文件内容不触发重写、坏文件不影响启动（#IKJSNC 复审 P1-2）", async () => {
+    const root = path.join(electronMock.userDataDir, "cyrene-chats");
+    const sessionsDir = path.join(root, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    // 当前格式：mode 与 pinned 均已落盘
+    const indexRaw = JSON.stringify([
+      {
+        id: "trusted-meta", title: "索引标题", identityId: null,
+        createdAt: 1, updatedAt: 2, messageCount: 3,
+        mode: "chat", pinned: true,
+      },
+      {
+        id: "broken-session", title: "坏会话文件", identityId: null,
+        createdAt: 1, updatedAt: 1, messageCount: 0,
+        mode: "chat", pinned: true,
+      },
+    ]);
+    fs.writeFileSync(path.join(root, "index.json"), indexRaw);
+    // 磁盘文件故意写入「若被迁移回读必触发重写」的内容：daily 模式会归一为 work、
+    // codeSession 会被清理——文件原样保留即证明迁移扫描跳过了当前格式条目。
+    const conflictingRaw = JSON.stringify({
+      id: "trusted-meta", title: "磁盘标题", identityId: null,
+      messages: [], createdAt: 1, updatedAt: 2, schemaVersion: 1,
+      mode: "daily", pinned: false, codeSession: { legacy: true },
+    });
+    fs.writeFileSync(path.join(sessionsDir, "trusted-meta.json"), conflictingRaw);
+    // 坏会话文件：若被 readSessionRecordFile 回读会走解析失败告警分支
+    fs.writeFileSync(path.join(sessionsDir, "broken-session.json"), "{ not json");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const store = await import("./chats-store");
+    store.initialize();
+
+    expect(store.listSessions()).toEqual([
+      expect.objectContaining({ id: "trusted-meta", title: "索引标题", mode: "chat", pinned: true }),
+      expect.objectContaining({ id: "broken-session", mode: "chat", pinned: true }),
+    ]);
+    // 跳过回读的证据：冲突文件未被迁移重写、index.json 原样保留、无解析失败告警
+    expect(fs.readFileSync(path.join(sessionsDir, "trusted-meta.json"), "utf8")).toBe(conflictingRaw);
+    expect(fs.readFileSync(path.join(root, "index.json"), "utf8")).toBe(indexRaw);
+    expect(warn.mock.calls.some((call) => String(call[0]).includes("session 文件解析失败"))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it("Work 索引缺 workspaceRoot：定点回读会话文件补全并回写索引（#IKJSNC 复审 P2-4）", async () => {
+    const root = path.join(electronMock.userDataDir, "cyrene-chats");
+    const sessionsDir = path.join(root, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    // 场景：会话文件已写、索引写失败（setWorkspaceBinding → persistIndex 抛错窗口）
+    fs.writeFileSync(path.join(root, "index.json"), JSON.stringify([
+      {
+        id: "lost-binding", title: "丢失绑定", identityId: null,
+        createdAt: 1, updatedAt: 2, messageCount: 1,
+        mode: "work", pinned: false,
+      },
+    ]));
+    fs.writeFileSync(path.join(sessionsDir, "lost-binding.json"), JSON.stringify({
+      id: "lost-binding", title: "丢失绑定", identityId: null,
+      messages: [{ id: "m1", role: "user", content: "x", at: 1 }],
+      createdAt: 1, updatedAt: 2, schemaVersion: 1, mode: "work", pinned: false,
+      workspaceBinding: { workspaceRoot: "C:\\kept-project", displayName: "kept", boundAt: 1 },
+    }));
+
+    const store = await import("./chats-store");
+    store.initialize();
+
+    expect(store.listSessions()).toEqual([
+      expect.objectContaining({
+        id: "lost-binding", mode: "work",
+        workspaceRoot: "C:\\kept-project", workspaceDisplayName: "kept",
+      }),
+    ]);
+    // 差异 → 索引回写补全（recentProjects 回填 / 侧栏分组依赖该字段）
+    expect(JSON.parse(fs.readFileSync(path.join(root, "index.json"), "utf8"))).toEqual([
+      expect.objectContaining({
+        id: "lost-binding",
+        workspaceRoot: "C:\\kept-project", workspaceDisplayName: "kept",
+      }),
+    ]);
+  });
+
+  it("索引 mode 为旧别名 daily 且缺 workspaceRoot：按归一化 work 触发定点回读并回写（复审二轮 P2-1）", async () => {
+    const root = path.join(electronMock.userDataDir, "cyrene-chats");
+    const sessionsDir = path.join(root, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    // 别名组合态：索引 mode="daily"（归一为 work）+ pinned 布尔 → 格式判定为当前格式，
+    // 但 workspaceRoot 缺失（索引写失败窗口），绑定只存在于会话文件
+    fs.writeFileSync(path.join(root, "index.json"), JSON.stringify([
+      {
+        id: "alias-work", title: "别名 Work", identityId: null,
+        createdAt: 1, updatedAt: 2, messageCount: 1,
+        mode: "daily", pinned: false,
+      },
+    ]));
+    // 会话文件已是归一后的形态：迁移扫描不会写它（needsMigration=false），
+    // 只有 readIndexFromDisk 的定点例外能把绑定补进索引
+    fs.writeFileSync(path.join(sessionsDir, "alias-work.json"), JSON.stringify({
+      id: "alias-work", title: "别名 Work", identityId: null,
+      messages: [{ id: "m1", role: "user", content: "x", at: 1 }],
+      createdAt: 1, updatedAt: 2, schemaVersion: 1, mode: "work", pinned: false,
+      workspaceBinding: { workspaceRoot: "C:\\alias-project", displayName: "alias", boundAt: 1 },
+    }));
+
+    const store = await import("./chats-store");
+    store.initialize();
+
+    const expected = {
+      id: "alias-work", mode: "work",
+      workspaceRoot: "C:\\alias-project", workspaceDisplayName: "alias",
+    };
+    expect(store.listSessions()).toEqual([expect.objectContaining(expected)]);
+    expect(JSON.parse(fs.readFileSync(path.join(root, "index.json"), "utf8"))).toEqual([
+      expect.objectContaining(expected),
+    ]);
+  });
+
+  it("旧格式索引仍回读会话文件迁移补全 mode/pinned/workspace", async () => {
+    const root = path.join(electronMock.userDataDir, "cyrene-chats");
+    const sessionsDir = path.join(root, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    // 旧格式条目：缺 mode 与 pinned（JSON.stringify 丢弃 undefined 的产物）
+    fs.writeFileSync(path.join(root, "index.json"), JSON.stringify([{
+      id: "legacy-meta", title: "旧索引", identityId: null,
+      createdAt: 1, updatedAt: 1, messageCount: 0,
+    }]));
+    fs.writeFileSync(path.join(sessionsDir, "legacy-meta.json"), JSON.stringify({
+      id: "legacy-meta", title: "旧索引", identityId: null,
+      messages: [], createdAt: 1, updatedAt: 1, schemaVersion: 1,
+      mode: "code", pinned: true,
+      workspaceBinding: { workspaceRoot: "C:\\legacy-project", displayName: "legacy", boundAt: 1 },
+    }));
+
+    const store = await import("./chats-store");
+    store.initialize();
+
+    const expected = {
+      id: "legacy-meta", mode: "code", pinned: true,
+      workspaceRoot: "C:\\legacy-project", workspaceDisplayName: "legacy",
+    };
+    expect(store.listSessions()).toEqual([expect.objectContaining(expected)]);
+    // 发现差异 → migrated=true → 重写 index.json 补全元数据
+    expect(JSON.parse(fs.readFileSync(path.join(root, "index.json"), "utf8"))).toEqual([
+      expect.objectContaining(expected),
+    ]);
+  });
+
   it("removes obsolete Cline metadata while retaining Code messages and workspace", async () => {
     const store = await import("./chats-store");
     store.initialize();

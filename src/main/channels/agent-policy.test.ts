@@ -12,12 +12,13 @@ describe("mobile channel agent policy", () => {
     });
   });
 
-  it("routes all through CyreneHarness without Ask or approval", () => {
+  it("routes all through CyreneHarness with desktop permission level (#IKJSN9)", () => {
     expect(resolveChannelAgentPolicy("all")).toEqual({
       executionMode: "work",
       exposeTools: true,
       includeInteractiveTools: false,
-      permissionMode: "allow_all",
+      // 外部输入不使用 allow_all：沿用桌面端档位（默认 read-only）与沙箱约束
+      permissionMode: "normal",
     });
   });
 

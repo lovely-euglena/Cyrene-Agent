@@ -40,7 +40,10 @@ export interface ToolContext {
   mode?: ConversationMode;
   /** 本次 Run 允许加载的 Skill ID；缺失时仅兼容旧的非 bridge 调用。 */
   allowedSkillIds?: ReadonlySet<string>;
-  /** 本轮工具执行权限策略；allow_all 仅用于用户显式开启的无审批渠道。 */
+  /**
+   * 本轮工具执行权限策略；allow_all 仅用于 scheduler / plugin 无人值守场景，
+   * 渠道消息统一走 normal（桌面端权限档位 + 沙箱 + per-action 审批，#IKJSN9）。
+   */
   permissionMode?: "normal" | "allow_all";
   /** 仅供前台 run_shell 观察输出；异常不得影响命令执行。 */
   onShellOutput?: (update: ShellOutputUpdate) => void;

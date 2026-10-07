@@ -82,6 +82,25 @@ class FakeStore {
   getRemoteCount(): number { return this.remote.length; }
 }
 
+/** 可挂起的事件库：appendRemote（真实实现是 fs + fsync 落库）在 gate 上等待，
+ *  用于复现「换址发生在入库等待期间」的竞态窗口（复审二轮 P1-1）。 */
+class GatedAppendStore extends FakeStore {
+  gate: Promise<void> | null = null;
+  onAppendEntered: (() => void) | null = null;
+
+  async appendRemote(events: SyncEventV0[]): Promise<void> {
+    this.onAppendEntered?.();
+    if (this.gate) await this.gate;
+    await super.appendRemote(events);
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 function makeState(overrides: Partial<SyncState> = {}): SyncState {
   return {
     schemaVersion: 1,
@@ -156,6 +175,8 @@ function buildService(options: {
   realStateIO?: boolean;
   /** 覆盖客户端工厂（如注入真实 http-client + 桩 fetchImpl，验证读体阶段中止归类）。 */
   createClient?: (config: SyncHttpClientConfig) => SyncHttpClient;
+  /** 覆盖 state 落盘（如挂起持久化以验证中止时机 / 抓取落盘快照）。 */
+  saveStateImpl?: (syncDir: string, state: SyncState) => Promise<void>;
 } = {}): BuiltService {
   const store = options.store ?? new FakeStore();
   const state = options.state ?? makeState();
@@ -176,7 +197,7 @@ function buildService(options: {
       ? {}
       : {
           loadState: async () => state,
-          saveState: async (_syncDir: string, next: SyncState) => { saved.push(next); },
+          saveState: options.saveStateImpl ?? (async (_syncDir: string, next: SyncState) => { saved.push(next); }),
         }),
     createClient: (config) => {
       clientConfigs.push(config);
@@ -365,6 +386,272 @@ describe("sync/sync-service", () => {
     expect(loadSyncSettings().token).toBe("tok-1");
     expect(fs.readFileSync(settingsPath(), "utf8")).not.toContain("tok-1");
     expect(built.state.serverDeviceId).toBe("dev_1");
+  });
+
+  it("pair：换服务器地址重置 fetchCursor/pushedCount/serverDeviceId（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.pair({ baseUrl: "https://b.example.com", code: "CODE-1" });
+
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.serverDeviceId).toBe("dev_1");
+  });
+
+  it("pair：同址重配对保留游标与推送水位，仅刷新服务器设备身份（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.pair({ code: "CODE-1" });
+
+    expect(built.state.fetchCursor).toBe("42");
+    expect(built.state.pushedCount).toBe(3);
+    expect(built.state.serverDeviceId).toBe("dev_1");
+  });
+
+  it("saveConfig：换 baseUrl 重置同步状态（游标/推送水位/服务器身份）（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    // 已有 state 文件（生产语义：A 服务器同步过）——peekState 按真实存在性判断
+    fs.mkdirSync(path.join(mocks.userDataDir, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(mocks.userDataDir, "sync", "state.json"), "{}");
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com" });
+
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：同址保存不动同步状态（#IKJSNA）", async () => {
+    saveSyncSettings({ enabled: false, baseUrl: "https://a.example.com", token: "tok-a" });
+    fs.mkdirSync(path.join(mocks.userDataDir, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(mocks.userDataDir, "sync", "state.json"), "{}");
+    const built = buildService({
+      state: makeState({ fetchCursor: "42", pushedCount: 3, serverDeviceId: "dev_a" }),
+    });
+
+    await built.service.saveConfig({ enabled: false });
+
+    expect(built.state.fetchCursor).toBe("42");
+    expect(built.state.pushedCount).toBe(3);
+    expect(built.state.serverDeviceId).toBe("dev_a");
+  });
+
+  it("saveConfig：换址发生在轮次在途——旧轮结算被丢弃、补跑用新配置（#IKJSNA 复审 P1-1）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    fs.mkdirSync(path.join(mocks.userDataDir, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(mocks.userDataDir, "sync", "state.json"), "{}");
+    const store = new FakeStore();
+    store.local.push(localEvent("loc-1", 1), localEvent("loc-2", 2));
+    const built = buildService({
+      store,
+      state: makeState({ fetchCursor: "42", pushedCount: 0, serverDeviceId: "dev_a" }),
+    });
+
+    // 旧轮在 push 网络等待中挂起；换址发生在在途期间
+    let resolvePush!: (value: SyncPushResult) => void;
+    built.client.push.mockImplementationOnce(() => new Promise<SyncPushResult>((resolve) => { resolvePush = resolve; }));
+    const first = built.service.syncNow();
+    await vi.waitFor(() => expect(built.client.push).toHaveBeenCalledTimes(1));
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b" });
+    expect(built.state.fetchCursor).toBeNull(); // 换址重置已生效
+    expect(built.clientConfigs[0]?.signal?.aborted).toBe(true); // 在途轮次已被中止
+
+    // 旧服务器 push 完成：代际失配 → 旧轮结算被丢弃（不得回写 pushedCount / 游标）
+    resolvePush({ accepted: 2, duplicates: 0, cursor: "" });
+    const firstResult = await first;
+    expect(firstResult.ok).toBe(false);
+    expect(["stale", "aborted"]).toContain(firstResult.error?.code);
+
+    // 旧轮结算后补跑立即启动（不等 60s 定时）：以新配置再跑一轮
+    await vi.waitFor(() => expect(built.client.push).toHaveBeenCalledTimes(2));
+    expect(built.clientConfigs.map((config) => config.baseUrl)).toEqual([
+      "https://a.example.com",
+      "https://b.example.com",
+    ]);
+    // 补跑 push 返回 accepted 0 → 水位保持换址重置后的 0（未被旧轮 2 条污染）
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：换址发生在 fetch 入库等待期间——旧轮不写回游标，已入库事件照常广播（复审二轮 P1-1）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const store = new GatedAppendStore();
+    const built = buildService({ store, state: makeState({ fetchCursor: "10", serverDeviceId: "dev_a" }) });
+    const entered = deferred();
+    const gate = deferred();
+    store.onAppendEntered = entered.resolve;
+    store.gate = gate.promise;
+    built.client.fetch.mockResolvedValueOnce({
+      events: [remoteEvent("rem-1", 3)],
+      cursor: "11",
+      hasMore: false,
+      dropped: 0,
+    });
+
+    const first = built.service.syncNow();
+    await entered.promise; // 旧轮挂在入库等待（fs + fsync）上，换址此刻才发生
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b" });
+    expect(built.state.fetchCursor).toBeNull(); // 换址重置已生效
+
+    gate.resolve();
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    // 已入库的旧服务器事件是事实：stale 丢弃结算但补发广播，合并读模型即时刷新
+    expect(built.applied).toHaveBeenCalledWith(["c1"]);
+    // 旧服务器游标 "11" 不得写回：补跑走新服务器的初始 clone，而非拿旧游标增量 fetch
+    await vi.waitFor(() => expect(built.client.clone).toHaveBeenCalledTimes(1));
+    expect(built.client.fetch).toHaveBeenCalledTimes(1);
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.pushedCount).toBe(0);
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：换址发生在 clone 入库等待期间——旧轮不写回初始游标，补跑重新 clone（复审二轮 P1-1）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const store = new GatedAppendStore();
+    const built = buildService({ store, state: makeState({ serverDeviceId: "dev_a" }) });
+    const entered = deferred();
+    const gate = deferred();
+    store.onAppendEntered = entered.resolve;
+    store.gate = gate.promise;
+    built.client.clone.mockResolvedValueOnce({ events: [remoteEvent("rem-1", 3)], cursor: "42", dropped: 0 });
+
+    const first = built.service.syncNow();
+    await entered.promise; // 初始 clone 已返回，挂在入库等待上
+
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b" });
+    expect(built.state.fetchCursor).toBeNull();
+
+    gate.resolve();
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    expect(built.applied).toHaveBeenCalledWith(["c1"]);
+    // 补跑重新走初始 clone（旧轮写回 "42" 的话会改成对新服务器增量 fetch）
+    await vi.waitFor(() => expect(built.client.clone).toHaveBeenCalledTimes(2));
+    expect(built.client.fetch).not.toHaveBeenCalled();
+    expect(built.state.fetchCursor).toBeNull();
+  });
+
+  it("saveConfig：换址后旧轮的非 aborted 错误不写回 lastError（复审三轮 P2-3①）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const built = buildService({ state: makeState({ fetchCursor: "10" }) });
+    let rejectFetch!: (error: unknown) => void;
+    built.client.fetch.mockImplementationOnce(() => new Promise<SyncFetchPage>((_resolve, reject) => { rejectFetch = reject; }));
+
+    const first = built.service.syncNow();
+    await vi.waitFor(() => expect(built.client.fetch).toHaveBeenCalledTimes(1));
+
+    // 换址（同时停用，避免补跑覆盖断言信号）：代际递增 + 中止 + lastError 清零
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b", enabled: false });
+    rejectFetch(new SyncHttpError("unauthorized", 401));
+    const firstResult = await first;
+
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "unauthorized" } });
+    // 旧服务器错误（恰好 401）不得污染换址刚清零的 lastError，也不得留下失败日志
+    expect((await built.service.getStatus()).lastError).toBeNull();
+    expect(built.logs.some((line) => line.includes("同步失败"))).toBe(false);
+  });
+
+  it("pair：换址发生在轮次在途——旧轮结算丢弃、补跑用新配置（复审三轮 P2-3②）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const built = buildService({ state: makeState({ fetchCursor: "10", serverDeviceId: "dev_a" }) });
+    let resolveFetch!: (page: SyncFetchPage) => void;
+    built.client.fetch.mockImplementationOnce(() => new Promise<SyncFetchPage>((resolve) => { resolveFetch = resolve; }));
+
+    const first = built.service.syncNow();
+    await vi.waitFor(() => expect(built.client.fetch).toHaveBeenCalledTimes(1));
+
+    await built.service.pair({ baseUrl: "https://b.example.com", code: "CODE-1" });
+    expect(built.state.fetchCursor).toBeNull(); // 换址重置已生效
+    expect(built.clientConfigs[0]?.signal?.aborted).toBe(true); // 在途轮次已被中止
+
+    resolveFetch({ events: [remoteEvent("rem-1", 3)], cursor: "11", hasMore: false, dropped: 0 });
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    // 旧服务器游标不写回；补跑（新配置）走初始 clone 而非拿旧游标增量 fetch
+    await vi.waitFor(() => expect(built.client.clone).toHaveBeenCalledTimes(1));
+    expect(built.client.fetch).toHaveBeenCalledTimes(1);
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.serverDeviceId).toBe("dev_1");
+  });
+
+  it("unpair：在途轮次立即中止（先于状态持久化）且旧轮结算丢弃（复审三轮 P2-2①/P2-3②）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const gate = deferred();
+    let saveCalls = 0;
+    const built = buildService({
+      state: makeState({ fetchCursor: "10", serverDeviceId: "dev_a" }),
+      saveStateImpl: async () => {
+        saveCalls++;
+        if (saveCalls >= 2) await gate.promise; // 换址重置的落盘挂起
+      },
+    });
+    let resolveFetch!: (page: SyncFetchPage) => void;
+    built.client.fetch.mockImplementationOnce(() => new Promise<SyncFetchPage>((resolve) => { resolveFetch = resolve; }));
+
+    const first = built.service.syncNow();
+    await vi.waitFor(() => expect(built.client.fetch).toHaveBeenCalledTimes(1));
+    expect(saveCalls).toBe(1); // 轮次启动冻结身份的落盘已完成
+
+    const unpairPromise = built.service.unpair();
+    await vi.waitFor(() => expect(saveCalls).toBeGreaterThanOrEqual(2)); // 重置落盘进入（被挂起）
+    // 修复前：abort 押后在 persistState 之后的 stop()，此刻仍为 false（旧轮可能再向旧服务器出网）
+    expect(built.clientConfigs[0]?.signal?.aborted).toBe(true);
+
+    gate.resolve();
+    await unpairPromise;
+    resolveFetch({ events: [], cursor: "11", hasMore: false, dropped: 0 });
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    expect(built.state.fetchCursor).toBeNull();
+    expect(built.state.serverDeviceId).toBeNull();
+  });
+
+  it("saveConfig：换址发生在入库等待期间——stale 丢弃前定向落盘已抬升的 lamport（复审三轮 P2-2②）", async () => {
+    saveSyncSettings({ enabled: true, baseUrl: "https://a.example.com", token: "tok-a" });
+    const store = new GatedAppendStore();
+    const snapshots: SyncState[] = [];
+    const built = buildService({
+      store,
+      state: makeState({ fetchCursor: "10", lamport: 2, serverDeviceId: "dev_a" }),
+      saveStateImpl: async (_syncDir, next) => { snapshots.push({ ...next, conversations: { ...next.conversations } }); },
+    });
+    const entered = deferred();
+    const gate = deferred();
+    store.onAppendEntered = entered.resolve;
+    store.gate = gate.promise;
+    built.client.fetch.mockResolvedValueOnce({
+      events: [remoteEvent("rem-1", 3)],
+      cursor: "11",
+      hasMore: false,
+      dropped: 0,
+    });
+
+    const first = built.service.syncNow();
+    await entered.promise; // 旧轮挂在入库等待上，换址此刻才发生
+
+    // 换址同时停用同步（评审场景：换址后停用 / 解配且不再同步即退出）
+    await built.service.saveConfig({ baseUrl: "https://b.example.com", token: "tok-b", enabled: false });
+    expect(built.state.fetchCursor).toBeNull();
+
+    gate.resolve();
+    const firstResult = await first;
+    expect(firstResult).toMatchObject({ ok: false, error: { code: "stale" } });
+    // 入库已把 lamport 抬到 3：stale 丢弃结算也要定向落盘，磁盘不得停留在换址重置时的 2
+    expect(snapshots.at(-1)?.lamport).toBe(3);
+    expect(snapshots.at(-1)?.fetchCursor).toBeNull();
   });
 
   it("unpair：清 token / serverDeviceId / fetchCursor，保留 outbox", async () => {

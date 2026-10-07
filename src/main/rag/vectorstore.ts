@@ -87,6 +87,24 @@ function kmeansPlusPlusInit(
   return centroids;
 }
 
+/** k-means 分配步：把每个向量归到最近的簇中心，返回各簇的条目下标。 */
+function assignToClusters(vectors: number[][], centroids: number[][]): number[][] {
+  const clusters: number[][] = Array.from({ length: centroids.length }, () => []);
+  for (let i = 0; i < vectors.length; i++) {
+    let bestIdx = 0;
+    let bestSim = -Infinity;
+    for (let c = 0; c < centroids.length; c++) {
+      const sim = cosineSimilarity(vectors[i], centroids[c]);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestIdx = c;
+      }
+    }
+    clusters[bestIdx].push(i);
+  }
+  return clusters;
+}
+
 function buildIvfIndex(
   entries: MemoryEntry[],
   K: number,
@@ -99,28 +117,14 @@ function buildIvfIndex(
   }
 
   const effectiveK = Math.min(K, vectors.length);
-  const clusters: number[][] = Array.from({ length: effectiveK }, () => []);
 
   // k-means++ 初始化
   let centroids = kmeansPlusPlusInit(vectors, effectiveK, dim);
+  let clusters: number[][] = [];
 
   for (let iter = 0; iter < maxIter; iter++) {
     // 分配
-    for (let i = 0; i < effectiveK; i++) clusters[i] = [];
-    let changed = false;
-
-    for (let i = 0; i < vectors.length; i++) {
-      let bestIdx = 0;
-      let bestSim = -Infinity;
-      for (let c = 0; c < effectiveK; c++) {
-        const sim = cosineSimilarity(vectors[i], centroids[c]);
-        if (sim > bestSim) {
-          bestSim = sim;
-          bestIdx = c;
-        }
-      }
-      clusters[bestIdx].push(i);
-    }
+    clusters = assignToClusters(vectors, centroids);
 
     // 更新中心
     const newCentroids: number[][] = [];
@@ -147,6 +151,7 @@ function buildIvfIndex(
     }
 
     // 检查收敛
+    let changed = false;
     for (let c = 0; c < effectiveK; c++) {
       const sim = cosineSimilarity(newCentroids[c], centroids[c]);
       if (sim < 0.999) { changed = true; break; }
@@ -154,6 +159,10 @@ function buildIvfIndex(
     centroids = newCentroids;
     if (!changed) break;
   }
+
+  // 收敛/maxIter 退出时 clusters 仍是按「更新前的中心」分配的（错位一代）；
+  // 用最终中心重新分配一次，保证簇成员与中心一致（IKJSNG）。
+  clusters = assignToClusters(vectors, centroids);
 
   return { centroids, clusters, entryCount: entries.length };
 }
@@ -398,8 +407,30 @@ class SqliteStoreBackend implements VectorStoreBackend {
       const rows = this.db
         .prepare("SELECT id, text, source, embedding, weight, created_at, last_recalled_at, metadata FROM entries")
         .all() as SqliteRow[];
-      entries = rows.map(rowToEntry);
+      // 单行隔离（IKJSND）：坏行（metadata JSON 损坏等 rowToEntry 抛错）只跳过自身并计数，
+      // 不能让一行毒化整库——否则 entries=[] + lastLoadFailed=true 会让 ensureFresh
+      // 反复重试失败（CPU 空转），记忆/RAG 持续瘫痪且坏行永存。
+      // 注（复审 P2-3）：blob 非 Uint8Array 不抛错——按空嵌入正常加载，不进入 skip 计数。
+      entries = [];
+      let skipped = 0;
+      let firstError: unknown = null;
+      for (const row of rows) {
+        try {
+          entries.push(rowToEntry(row));
+        } catch (err) {
+          skipped++;
+          if (firstError === null) firstError = err;
+        }
+      }
+      if (skipped > 0) {
+        // 每次 load 只告警一次（含数量与首个错误摘要），不按行刷屏
+        console.warn(
+          `[RAG] sqlite load skipped ${skipped}/${rows.length} corrupt row(s); first error:`,
+          firstError,
+        );
+      }
     } catch (err) {
+      // 仅整体查询失败（连接/表损坏等）才置位：revision 返回 null，调用方按需重试
       console.warn("[RAG] sqlite load failed:", err);
       this.lastLoadFailed = true;
       entries = [];

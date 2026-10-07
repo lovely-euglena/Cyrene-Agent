@@ -5,6 +5,12 @@
  * 二进制段（4B 长度头）——本客户端只发文本帧，音频回传走
  * onBinary 回调由调用方拼。各 host 开关来自 resolveDotnetConfig()
  * （B4：全部 0/1 直切）。
+ *
+ * 进程生命周期（IKJSNF）：启动不可用分支杀已 spawn 的子进程；exit/error
+ * 处理器按「当前实例」守卫（旧 child 的迟到事件不得清掉新 spawn 的引用）；
+ * 超时 kill 带 SIGKILL 强杀兜底（与 shutdown 的 5s 对齐，exit 到达即取消）；
+ * 事件订阅成对（addEventListener / removeEventListener，避免长驻单例上
+ * 订阅者累积泄漏）。
  */
 import { spawn, type ChildProcess } from "child_process";
 import * as readline from "readline";
@@ -12,6 +18,9 @@ import { resolveNativeWindowsExe } from "../windows/native-windows-host";
 import { resolveDotnetConfig } from "./config";
 
 const VOICE_EXE_NAME = "CyreneVoice.exe";
+
+/** 超时 kill 的 SIGKILL 强杀兜底窗口（与 shutdown 的 5s 对齐，IKJSNF）。 */
+const KILL_ESCALATE_MS = 5_000;
 
 interface Pending {
   resolve: (v: unknown) => void;
@@ -25,6 +34,9 @@ export class LineHostClient {
   private starting: Promise<boolean> | null = null;
   private pending = new Map<string, Pending>();
   private seq = 0;
+  /** killAndReset 的 SIGKILL 兜底计时器：按 child 多槽（exit 到达即取消各自那条）。
+   *  单槽会在「上一 child 未 exit 时再次重置」时取消它的补杀（复审二轮 P2-4）。 */
+  private killEscalations = new Map<ChildProcess, NodeJS.Timeout>();
   private readonly mode: string | string[];
   private readonly timeoutMs: number;
 
@@ -48,12 +60,21 @@ export class LineHostClient {
       // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）
       const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode]), ...this.extraArgs()];
       const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-      if (!child?.stdout?.readable || !child?.stdin) return false;
+      // 启动不可用分支：子进程已 spawn，必须杀掉再返回——否则孤儿进程
+      // 存活到应用退出（本模块子进程未登记 trackChildProcess，退出兜底不覆盖，IKJSNF）
+      if (!child?.stdout?.readable || !child?.stdin) {
+        try { child?.kill(); } catch { /* ignore */ }
+        return false;
+      }
       this.proc = child;
       this.exited = false;
+      // 实例代际守卫（IKJSNF）：killAndReset 先摘引用再 kill，旧 child 的
+      // exit/error 若在窗口内到达，不得清掉新 spawn 的引用或状态
+      //
       // spawn 失败（ENOENT 等）立即反馈：清 pending + 标记退出，
       // 调用方收到明确错误而非干等超时
       child.on("error", (err) => {
+        if (this.proc !== child) return;
         this.exited = true;
         this.proc = null;
         this.starting = null;
@@ -62,8 +83,14 @@ export class LineHostClient {
       });
       child.stdout.setEncoding("utf-8");
       const rl = readline.createInterface({ input: child.stdout });
-      rl.on("line", (line) => this.onLine(line));
+      rl.on("line", (line) => {
+        if (this.proc !== child) return; // 旧实例迟到帧忽略（幽灵结果不路由）
+        this.onLine(line);
+      });
       child.on("exit", () => {
+        // 强杀兜底计时器：exit 到达即取消该 child 自己的补杀（此 child 可能已被 killAndReset 摘引用）
+        this.cancelKillEscalation(child);
+        if (this.proc !== child) return;
         this.exited = true;
         this.proc = null;
         this.starting = null;
@@ -146,12 +173,20 @@ export class LineHostClient {
   private eventListeners: Array<(frame: Record<string, unknown>) => void> = [];
 
   protected onEvent(frame: Record<string, unknown>): void {
-    for (const l of this.eventListeners) l(frame);
+    // 快照派发：订阅者可在回调内 removeEventListener，不因数组位移漏发本轮其余订阅者
+    for (const l of [...this.eventListeners]) l(frame);
   }
 
   // 事件订阅：host 主动帧（vad_result/asr/tts_meta/log）观察者。
+  // 客户端是长驻单例：订阅方 dispose 时必须 removeEventListener，否则订阅者累积泄漏（IKJSNF）。
   addEventListener(listener: (frame: Record<string, unknown>) => void): void {
     this.eventListeners.push(listener);
+  }
+
+  /** 移除事件订阅（按引用；未订阅过则 no-op，可重复调用）。 */
+  removeEventListener(listener: (frame: Record<string, unknown>) => void): void {
+    const idx = this.eventListeners.indexOf(listener);
+    if (idx >= 0) this.eventListeners.splice(idx, 1);
   }
 
   call(op: string, args: Record<string, unknown>): Promise<unknown> {
@@ -162,7 +197,7 @@ export class LineHostClient {
         this.pending.delete(callId);
         this.exited = true;          // 先标记，防新 call 拿到垂死 proc
         this.killAndReset();
-        reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重启）`));
+        reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重置）`));
       }, this.timeoutMs);
       this.pending.set(callId, { resolve, reject, timer });
       try {
@@ -175,10 +210,39 @@ export class LineHostClient {
     });
   }
 
+  /**
+   * 杀掉当前子进程并复位（调用超时路径）。
+   * 先摘引用再 kill：旧 child 的 exit/error 处理器带 `this.proc !== child`
+   * 守卫，不会清掉窗口期内新 spawn 的引用（IKJSNF）。
+   * 强杀兜底：SIGTERM 后 KILL_ESCALATE_MS 仍无 exit → SIGKILL（与 shutdown
+   * 的 5s 兜底对齐；exit 到达则取消该 child 的计时器；按 child 多槽——上一 child
+   * 尚未 exit 时再次重置，不影响它自己的补杀）。
+   */
   private killAndReset(): void {
-    try { this.proc?.kill(); } catch { /* ignore */ }
+    const child = this.proc;
     this.exited = true;
     this.proc = null;
+    // 复审 P2-2：旧 child 的 exit 会被代际守卫短路（this.proc !== child），不能指望
+    // 它清理在途调用——这里直接结算剩余 pending（调用方超时路径自己的 pending 已摘除），
+    // 否则其余调用各自干等超时（最长 30s）。
+    for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error("host 已重置")); }
+    this.pending.clear();
+    if (!child) return;
+    // 每个 child 各自计时（多槽）：上一 child 若忽略 SIGTERM 且尚未 exit，它的补杀
+    // 不得被本次重置取消（复审二轮 P2-4；Windows 下 kill() 即强杀，仅 Linux 有该窗口）
+    const timer = setTimeout(() => {
+      this.killEscalations.delete(child);
+      try { child.kill("SIGKILL"); } catch { /* ignore */ }
+    }, KILL_ESCALATE_MS);
+    this.killEscalations.set(child, timer);
+    try { child.kill(); } catch { /* ignore */ }
+  }
+
+  private cancelKillEscalation(child: ChildProcess): void {
+    const timer = this.killEscalations.get(child);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.killEscalations.delete(child);
   }
 
   async shutdown(): Promise<void> {

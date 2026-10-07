@@ -6,11 +6,11 @@
 //           └─ adapter.onMessage() → dispatcher → buildAndRunAgent → OutgoingMessage
 //                 └─ ILinkClient.sendText() → POST /sendmessage → 微信
 //
-// 凭据存盘：<userData>/weixin/<botId>.json
+// 凭据存盘：<userData>/weixin/credentials.json（单文件单凭据，重登覆盖写；目录 0700 / 文件 0600）
 // （首次运行需在 UI 点"扫码登录"生成；之后自动续用）
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { app } from "electron";
+import { app, safeStorage } from "electron";
 import { decode, isSilk } from "silk-wasm";
 import {
   ILinkClient,
@@ -684,6 +684,107 @@ function buildStoredFileName(prefix: string, messageId: string, fileName: string
 // ─────────────────────────────────────────────────────────────────────────────
 // Credentials storage
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// 凭据加密落盘，照抄 sync/settings 与 channels/settings-store 的
+// safeStorage `enc:` → 机器指纹 XOR 混淆 `obf:` 回退模式：
+//   - safeStorage 可用（OS 钥匙串）→ `enc:<base64>`；
+//   - 不可用（headless / 沙盒 / libsecret 缺失）→ `obf:<base64>`（可 round-trip，不抗逆向）；
+//   - 无前缀 / `plain:` = 历史明文，读入后按新格式回写迁移。
+// 日志只打错误类型，绝不打印凭据内容。
+
+/** safeStorage 加密后的前缀。读取时遇到这个前缀就解密 */
+const ENC_PREFIX = "enc:";
+/** base64 混淆前缀（safeStorage 不可用时的兜底，可 round-trip 但不抗逆向） */
+const OBF_PREFIX = "obf:";
+/** 明文兜底标记（旧版数据迁移用） */
+const PLAIN_PREFIX = "plain:";
+
+/** 检测当前环境 safeStorage 是否可用。Linux 无 DISPLAY 时不可用。 */
+let safeStorageAvailable: boolean | null = null;
+function isSafeStorageAvailable(): boolean {
+  if (safeStorageAvailable !== null) return safeStorageAvailable;
+  // safeStorage 在 app ready 之前不可用（Windows：ready 后才返回 true）。
+  // ready 前直接返回 false 且【不写缓存】——否则模块加载期的早期调用会把
+  // false 永久缓存，导致之后 enc: 字段全部解密失败、加密全部降级为混淆。
+  if (!app.isReady()) return false;
+  try {
+    safeStorageAvailable = safeStorage.isEncryptionAvailable();
+  } catch {
+    safeStorageAvailable = false;
+  }
+  return safeStorageAvailable;
+}
+
+/** 机器指纹 XOR 混淆 key —— 不抗逆向但保证 round-trip。
+ *  用 userData 绝对路径 + 包名做 SHA256 → 16 字节（与 channels/settings-store 同构）。 */
+function getMachineKey(): Buffer {
+  const seed = `${app.getPath("userData")}::${app.getName()}::cyrene-weixin-secret`;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createHash } = require("crypto") as typeof import("crypto");
+  return createHash("sha256").update(seed).digest().subarray(0, 16);
+}
+
+/** XOR 混淆（不是真加密，仅挡 casual 偷窥）。 */
+function obfuscate(plain: string): string {
+  const key = getMachineKey();
+  const buf = Buffer.from(plain, "utf8");
+  const out = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) {
+    // eslint-disable-next-line no-bitwise
+    out[i] = buf[i] ^ key[i % key.length];
+  }
+  return OBF_PREFIX + out.toString("base64");
+}
+
+/** XOR 解混淆（必须和 obfuscate 用同一台机器 —— key 派生自 userData 路径）。 */
+function deobfuscate(stored: string): string {
+  const key = getMachineKey();
+  const b64 = stored.slice(OBF_PREFIX.length);
+  const buf = Buffer.from(b64, "base64");
+  const out = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) {
+    // eslint-disable-next-line no-bitwise
+    out[i] = buf[i] ^ key[i % key.length];
+  }
+  return out.toString("utf8");
+}
+
+/** 加密凭据 JSON 载荷。优先级: safeStorage > 机器指纹混淆。 */
+function encryptCredentials(payload: string): string {
+  if (isSafeStorageAvailable()) {
+    try {
+      return ENC_PREFIX + safeStorage.encryptString(payload).toString("base64");
+    } catch (err) {
+      console.warn(LOG_PREFIX, "safeStorage.encryptString 失败, 回退混淆:", err instanceof Error ? err.message : err);
+    }
+  }
+  return obfuscate(payload);
+}
+
+/** 解密凭据载荷；返回 null 表示无法还原（不抛、不打印内容）。 */
+function decryptCredentials(stored: string): string | null {
+  if (stored.startsWith(ENC_PREFIX)) {
+    if (!isSafeStorageAvailable()) {
+      console.warn(LOG_PREFIX, "safeStorage 不可用, 无法解密 enc: 凭据");
+      return null;
+    }
+    try {
+      return safeStorage.decryptString(Buffer.from(stored.slice(ENC_PREFIX.length), "base64"));
+    } catch {
+      return null;
+    }
+  }
+  if (stored.startsWith(OBF_PREFIX)) {
+    try {
+      return deobfuscate(stored);
+    } catch {
+      return null;
+    }
+  }
+  if (stored.startsWith(PLAIN_PREFIX)) return stored.slice(PLAIN_PREFIX.length);
+  // 旧数据：整个文件就是明文 JSON
+  return stored;
+}
 
 function credPath(): string {
   return path.join(app.getPath("userData"), "weixin", "credentials.json");
@@ -691,19 +792,34 @@ function credPath(): string {
 
 export async function loadCredentials(): Promise<Credentials | null> {
   try {
-    const raw = await fs.readFile(credPath(), "utf8");
-    const creds = JSON.parse(raw) as Credentials;
+    const raw = (await fs.readFile(credPath(), "utf8")).trim();
+    const payload = decryptCredentials(raw);
+    if (payload === null) return null;
+    const creds = JSON.parse(payload) as Credentials;
     if (!creds.botToken || !creds.ilinkBotId) return null;
+    // 历史明文：读入成功后按新格式回写迁移；回写失败仅告警，不影响本次登录
+    if (!raw.startsWith(ENC_PREFIX) && !raw.startsWith(OBF_PREFIX)) {
+      await saveCredentials(creds).catch((err) => {
+        console.warn(LOG_PREFIX, "凭据明文迁移回写失败:", err instanceof Error ? err.message : err);
+      });
+    }
     return creds;
   } catch {
     return null;
   }
 }
 
-async function saveCredentials(creds: Credentials): Promise<void> {
+export async function saveCredentials(creds: Credentials): Promise<void> {
   const p = credPath();
-  await fs.mkdir(path.dirname(p), { recursive: true });
-  await fs.writeFile(p, JSON.stringify(creds, null, 2), "utf8");
+  // 复审 P2-1：凭据文件 / 目录最小权限加固（obf: 回退场景下 key 可由 userData 路径推导）。
+  // Windows 忽略 POSIX mode；chmod 兜底失败静默（平台语义差异，不影响可用性）。
+  const dir = path.dirname(p);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(p, encryptCredentials(JSON.stringify(creds)), { encoding: "utf8", mode: 0o600 });
+  // writeFile 的 mode 仅创建时生效：文件 / 目录 chmod 兜底（weixin/ 为应用专有目录；
+  // Windows 忽略 mode，失败静默）。
+  await fs.chmod(dir, 0o700).catch(() => { /* Windows 或权限受限：忽略 */ });
+  await fs.chmod(p, 0o600).catch(() => { /* Windows 或权限受限：忽略 */ });
 }
 
 async function deleteCredentials(): Promise<void> {

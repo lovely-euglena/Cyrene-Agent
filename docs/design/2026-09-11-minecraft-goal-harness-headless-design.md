@@ -63,7 +63,7 @@ CyreneHarness（src/main/orchestrator/harness/）恰好逐项解决：原生 fun
 |---|---|---|
 | 子任务委托 | src/main/orchestrator/task-runtime.ts | **最贴身**：直接调 runCyreneHarness + 自定义 promptLayers + 检查点 + onEvent 投影成 trace（不进 AG-UI） |
 | 调度任务 | src/main/scheduler/scheduler-runner.ts | 完整 buildOptions 人设管线 + 无桌面会话（threadId 合成、事件发送可选） |
-| 频道聊天 | src/main/channels/bootstrap.ts + agent-policy.ts | buildOptions(channel) 全量人设 + permissionMode: allow_all + exposeTools 收紧（catalog 置空先例） |
+| 频道聊天 | src/main/channels/bootstrap.ts + agent-policy.ts | buildOptions(channel) 全量人设 + exposeTools 收紧（catalog 置空先例）〔历史快照：当时为 permissionMode: allow_all；#IKJSN9 后渠道改为 normal（沿用桌面权限档位 + 沙箱，per-action 审批），allow_all 仅 scheduler/plugin 使用〕 |
 
 关于插件工具的一个**修正认知**：插件工具确实注册在主 toolRegistry 里（registerTool 当前直接 cast 写入），聊天场景零改造可用；但**注册版工具是聊天语义**（goto 即发即返、goal 后台启动），不满足自主任务的"等待终态 + 状态回传"需求。因此 goal 工具集**不经 registerTool**，由插件单独定义并随 runGoal 传入。类型直接复用现成 `PluginTool`；宿主必须显式校验并转换为 `ToolDefinition`，不得用一次裸 cast 掩盖必填字段或副作用元数据缺失。
 

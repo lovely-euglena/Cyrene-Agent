@@ -1081,7 +1081,7 @@
       "sendSticker": "发送表情包",
       "mirrorDesktop": "同步显示到桌面聊天",
       "toolPermission": "手机端工具权限",
-      "toolPermissionHint": "手机端消息会直接执行已允许的工具，不提供逐项审批。",
+      "toolPermissionHint": "手机端消息会直接执行桌面端权限档位允许的工具；「审批」档位会发起审批，高危操作受沙箱约束。",
       "toolsOff": "关闭工具，仅聊天",
       "toolsAll": "允许可用工具",
       "logsTitle": "最近收发记录",

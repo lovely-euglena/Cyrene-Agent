@@ -870,3 +870,131 @@
   → `--user-data-dir` 启动打包应用（迁移防护生效，不碰真实数据）→ CDP 驱动
   `window.settings.syncPair/syncSaveConfig/syncNow`。
 
+## 2026-10-07 增量（二）：PR #29 评审修复——sync 换址竞态 / 迁移跳过条件 / .NET 对等证据 / 注释口径 + P2 批次
+
+- **背景**：PR #29（IKJSN9–IKJSNI 九项修复）评审结论「有条件合入」：4 个 P1 需修改项 +
+  7 个 P2 项，逐项修复如下。
+- **P1-1 sync 换址竞态**（`src/main/sync/sync-service.ts`）：saveConfig / pair / unpair
+  换址时先递增 generation 并 abort 在途轮次；runSync 在 push / clone / fetch 每个结算点
+  校验代际，失配返回 `stale` 丢弃（旧服务器游标 / 水位不再覆盖换址重置）；`requestSync`
+  补跑排队（旧轮结算后立即以新配置执行，不被单飞互斥吞掉）；persistState 串行化
+  （换址重置不会被旧轮快照交错覆盖）。测试：换址发生在轮次在途——旧轮结算丢弃、
+  补跑用新配置（`sync-service.test.ts`）。
+- **P1-2 chats-store 启动全量回读**（`src/main/chats/chats-store.ts`）：
+  `migrateLegacySessions` 对当前格式条目（mode 合法 + pinned 布尔）跳过逐文件
+  readFileSync+JSON.parse（此类条目首次获得当前格式时已被全量扫描；此后 file/index
+  由同一写路径同步更新）；Work 缺 workspaceRoot 例外保留定点扫描。测试口径修正：
+  以「冲突文件不被重写」证明跳过（原「无解析告警」断言不能证明未读）。
+- **P1-3 .NET 路径判定对等证据**：dual-track download 段 +2（`a..b.txt` 接受并落盘、
+  `../escape.png` 拒绝）；矩阵 +1（穿越拒绝，联网前）；`docs/dotnet-backend.md`
+  计数 download 7→9 / 矩阵 148→149。
+- **P1-4 注释口径**（#IKJSN9 行为变更）：`cyrene-agent.ts` permissionMode /
+  `channels/settings-store.ts` toolSandbox 注释改为「渠道沿用桌面端权限档位（默认
+  read-only）+ 沙箱，per-action 审批；allow_all 仅 scheduler/plugin」；
+  2026-09-11 Minecraft 设计稿现状盘点标注为历史快照。
+- **P2 批次**：① 凭据 / 渠道设置文件权限加固（ilink `weixin/` 0700 + credentials
+  0600；channels-settings.json 0600；Linux 权限断言）；② `killAndReset` 立即结算
+  剩余 pending（文案改「host 已重置」，不再各自干等超时）；③ 注释精度
+  （trackChildProcess / vectorstore blob）；④ Work 索引缺 workspaceRoot 定点补读
+  回写（recentProjects 回填）；⑤ 换址语义收敛（设计稿 §4.4：判定键 origin、路径差异
+  有意保留、内存状态清零、inbox 旧事件保留）；⑥ 测试补强（document-tools 穿越负向 /
+  native 启动失败 kill 断言 / host-clients 并发 pending）；⑦ i18n（en「Ask each time」、
+  ja「高リスク」）。
+- **验证（2026-10-07，Windows 本机）**：三端 `tsc`（main / preload / renderer）0 错；
+  `smoke-host` Release 编译 0 错；全量 vitest **666 文件（665 通过 / 1 跳过）、
+  6194 用例（6190 通过 / 4 跳过）全绿**（含新增竞态 / 跳过证明 / 定点补读 / 并发结算 /
+  负向 / 权限断言用例；首轮 1 例 VoiceCallPreviewDialog 时序 flaky，复跑全绿）；
+  `dotnet-tools-matrix.py` **149/149**；`dual-track-diff.ts` **PASS**（download 段 9 例，
+  含新增 `a..b.txt` 接受与 `../escape.png` 拒绝）。
+
+## 2026-10-07 增量（三）：PR #29 复审修复——sync 入库等待窗口 / 矩阵计数同步 / C# 前导 `..` 对偶 / 旧设置页文案 + P2 批次
+
+- **背景**：PR #29 二轮评审仍为「有条件合入」：4 个 P1 需修改项 + 4 个 P2 项，逐项修复如下。
+- **P1-1 sync 换址竞态残留「入库等待」窗口**（`src/main/sync/sync-service.ts`）：
+  `appendRemoteEvents` → `store.appendRemote` 是 fs + fsync 的真实磁盘等待，而代际校验原本只在
+  网络结算点——旧轮通过校验后挂在入库上，换址完成「generation++ + 游标/水位清零 + 持久化」，
+  旧轮恢复仍执行 `state.fetchCursor = page.cursor` + `persistState`（按入队序排在重置之后），
+  磁盘最终留下旧服务器游标，补跑随即拿它向新服务器增量 fetch（IKJSNA 要消除的静默漏拉）。
+  修复：clone 分支与 fetch 循环在 `await appendRemoteEvents(...)` 之后、写回游标之前各补一次
+  同步代际校验（失配 → `stale`，不写游标不落盘）。连带 P2-3：`catch` 按代际丢弃旧轮的非 aborted
+  错误（不再污染换址刚清零的 `lastError`）；`stale` 丢弃前对已入库事件补发
+  `onRemoteEventsApplied`（入库即事实，合并读模型即时刷新）。测试：`GatedAppendStore` 挂起
+  `appendRemote` 复现两种形态（fetch 轮 / clone 轮在入库等待期间换址），断言旧轮 `stale`、
+  游标不写回、补跑走新服务器初始 clone、广播照发。
+- **P1-2 矩阵计数残留**：`docs/dotnet-backend.md:34` 仍写「148 项矩阵实测」（同文件 :12/:15/:20
+  已为 149）——随 P1-3 加例统一为 **150**（:12 / :15 download 9→10 / :20 / :34），
+  CI 口径同步 135→136（本地与 CI 差值 = ast_grep 段 14 项）。
+- **P1-3 TS/C# 前导 `..` 偶数级不对等**（`dotnet/cyrene-core/Tools/DownloadFileTool.cs`）：
+  折叠时第二个 `..` 会把占位 `RemoveAt` 抵消，`../../escape.png` 折叠成 `escape.png` 被接受落盘，
+  而 TS（`path.normalize` 保留前导 `..`、逐段命中即拒）拒绝。修复：`parts.Count == 0 ||
+  parts[^1] == ".."` 时追加占位（前导占位不允许被抵消），与 TS 同规则拒绝；dual-track +1
+  （`../../escape.png` 双侧拒绝）、矩阵 +1（联网前拒绝）。
+- **P1-4 旧设置页「全部开启」文案**（`src/renderer/settings/index.html` +
+  `settings/i18n/zh-CN.json` 的 `toolPermissionAllDesc`）：原「所有手机端工具直接执行；不提供
+  询问卡片或逐项审批」与 #IKJSN9 实现矛盾——改为与 React `toolPermissionHint` 同口径
+  （桌面权限档位（默认只读）+ 沙箱 + 「审批」档位逐项审批）；回退面（settings-router /
+  Electron 专属窗）与 React 页不再互相矛盾。
+- **P2-1 chats-store 判据与 work 例外**（`src/main/chats/chats-store.ts`）：`readIndexFromDisk`
+  的 work 定点回读例外与 `migrateLegacySessions` 的 `workBindingMayNeedScan` 均改按
+  `normalizePersistedMode(mode, purpose)` 判定（旧别名 `daily` 归一为 `work`），并修正两处
+  「判据一致」注释口径；新增别名组合态用例（索引 `daily` + 缺 workspaceRoot + 文件已归一 →
+  定点回读并回写索引，recentProjects 依赖该字段）。
+- **P2-2 注释 / 文案残留**：`tool-context.ts` permissionMode 注释改为「allow_all 仅
+  scheduler / plugin 无人值守，渠道消息统一 normal（#IKJSN9）」；`ilink-bot-adapter.ts` 头注释
+  凭据路径改为实际的 `weixin/credentials.json`；zh `toolPermissionHint`「每次审批」→「审批」、
+  ja「毎回承認」→「承認」（对齐设置页档位标签）。
+- **P2-3 stale 轮收尾边角**：并入 P1-1（catch 按代际丢弃旧轮错误 + stale 前补发广播）。
+- **P2-4 SIGKILL 兜底单槽**（`src/main/dotnet-backend/host-clients.ts`）：`killEscalation` 单槽
+  → 按 child 的 `Map`（exit 只取消自己那条计时器；`killAndReset` 不再无条件取消上一 child 的
+  补杀——Linux 下上一 child 忽略 SIGTERM 的窗口；Windows `kill()` 即强杀影响≈0）。测试：
+  连续两次 `killAndReset`，两 child 各自的 SIGKILL 兜底均按自己的时钟触发。
+- **验证（2026-10-07，Windows 本机）**：三端 `tsc`（main / preload / renderer）0 错；
+  `cyrene-core` / `smoke-host` / `native-windows` Release 编译 0 错；`build:main` 739 文件 0 错；
+  全量 vitest **666 文件（665 通过 / 1 跳过）、6198 用例（6194 通过 / 4 跳过）全绿**
+  （本轮 +4 用例：sync 入库窗口 ×2、chats 别名组合 ×1、host-clients 多槽 ×1）；
+  `dotnet-tools-matrix.py` **150/150**；`dual-track-diff.ts` **PASS**（download 段 10 例，
+  含新增 `../../escape.png` 拒绝）。
+
+## 2026-10-07 增量（四）：PR #29 三轮评审修复——sync stale lamport / unpair 中止口径 / 下载路径预存边角 + 计数与注释同步
+
+- **背景**：PR #29 三轮评审仍为「有条件合入」：2 个 P1（docs CI 计数注记残留、PR 正文验证段为
+  初版快照）+ 4 个 P2（ilink 凭据注释、sync 两处边角、测试盲点、download 预存边角），逐项修复如下。
+- **P1-1 矩阵 CI 计数注记残留**（`docs/dotnet-backend.md`）：`:19` 仍写 135/0（上一轮 149 的残留，
+  与 `:12` 的 136/0 自相矛盾）——本轮随下载段 +2 统一为 **152**（本地）/ **138**（CI，差值 =
+  ast_grep 段 14 项）：`:12` / `:15` download 10→12 / `:19` / `:20` / `:34` 同步。
+- **P1-2 PR 正文验证段**：正文「665 文件 / 6185 用例」初版快照更新为三轮末轮实测
+  （666 文件（665 通过 / 1 跳过）、6204 用例（6200 通过 / 4 跳过））；计数与本节 /
+  评审评论同源。
+- **P2-1 ilink 凭据注释**（`src/main/channels/adapters/wechat/ilink-bot-adapter.ts:9`）：
+  「单文件多 bot」与实现不符（`credPath()` 固定路径、`Credentials` 单对象、登录整文件覆盖写、
+  登出整文件删除）→「单文件单凭据，重登覆盖写」。
+- **P2-2① unpair 中止时机**（`src/main/sync/sync-service.ts`）：`generation++` 后**立即 abort**
+  （与 saveConfig / pair 同口径），不再押后到 `persistState()` 之后的 `stop()`——该窗口内旧轮
+  仍可能向旧服务器再出网一次。测试：挂起 `saveState`（deferred gate），断言重置落盘进行中
+  信号已 abort，且旧轮结算 `stale` 丢弃。
+- **P2-2② stale 轮 lamport 定向落盘**（`src/main/sync/sync-service.ts`）：`appendRemoteEvents`
+  入库后（lamport 已在内存抬升）命中 `stale` 时，丢弃结算前 `persistState()` 一次——仅 lamport
+  语义（换址重置已持有游标 / 水位 / 身份；persistState 在执行时才序列化共享对象，不会覆盖重置）。
+  换址同时停用 / 解配且不再同步即退出的场景，磁盘 lamport 不再落后 inbox 已见事件。测试：
+  `GatedAppendStore` + 落盘快照断言 lamport 2→3（修复前实测失败）。
+- **P2-3 测试补强**（`src/main/sync/sync-service.test.ts`）：① 换址后旧轮非 aborted 错误（401）
+  不写 `lastError` / 无失败日志；② pair 在途换址窗口（旧轮 stale、补跑新配置走初始 clone）；
+  ③ unpair 在途窗口 + 立即中止（见 P2-2①）。本轮 +4 用例。
+- **P2-4 download_file 预存边角加固**（merge-base 既有行为；TS `download-file-tool.ts` +
+  C# `DownloadFileTool.cs`，两侧同规则）：
+  ① 归一来为空 / `.`（如 `images/..`）目标即 root 目录本身——此前放行，按 Content-Type
+  补扩展名会写到 root 同级（`Desktop.png`）；现两侧拒绝（TS `relative === ""`；
+  C# `parts.Count == 0`）。
+  ② 前导分隔符（`/etc/x.png`）TS `path.isAbsolute` 拒绝而 C# 接受（仍在 root 内）——C# 加
+  `slashed.StartsWith('/')` 同规则拒绝（逐字对偶）。dual-track download 10→12、矩阵 150→152
+  （新增 2 例联网前拒绝；CI 136→138）；TS 回退负向用例 ×2。
+- **P2 澄清单**（可维护性）：`chats-store.ts` 「与 needsSessionRead 首两段判据一致」改为精确口径
+  （readIndex 按 `typeof mode === "string"`，migrate 按 `isConversationMode`——非法 mode 字符串
+  形态正常写路径不产生，至多多回读一次，无行为分叉）。
+- **验证（2026-10-07，Windows 本机）**：三端 `tsc`（main / preload / renderer）0 错；
+  `cyrene-core` / `smoke-host` Release 编译 0 错；`native-windows` Release 发布 0 错；
+  `build:main` 739 文件 0 错；全量 vitest **666 文件（665 通过 / 1 跳过）、6204 用例
+  （6200 通过 / 4 跳过）全绿**（本轮 +6：sync ×4、download 回退负向 ×2）；
+  `dotnet-tools-matrix.py` **152/152**；`dual-track-diff.ts` **PASS**（download 段 12 例，
+  含 `images/..` 与 `/etc/x.png` 拒绝）；「修复前失败」回退验证：stale lamport 落盘 /
+  unpair 立即中止两用例在还原修复后各自失败。

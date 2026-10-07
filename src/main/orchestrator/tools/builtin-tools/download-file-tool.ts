@@ -74,7 +74,9 @@ function hasDangerousChars(filename: string): boolean {
  */
 function resolveOutputPath(filename: string, workspaceRoot?: string): string | null {
   const normalized = path.normalize(filename).replace(/\\/g, "/");
-  if (normalized.includes("..") || path.isAbsolute(normalized)) return null;
+  // #IKJSNI：逐段等值检查——整串 includes("..") 会误杀 a..b.txt 等合法文件名；
+  // normalize 后 ".." 只可能作为前导段出现（穿越语义），末段 GetRelativePath 仍兜底。
+  if (normalized.split("/").includes("..") || path.isAbsolute(normalized)) return null;
   let root: string;
   if (workspaceRoot) {
     root = path.resolve(workspaceRoot);
@@ -85,7 +87,12 @@ function resolveOutputPath(filename: string, workspaceRoot?: string): string | n
   }
   const fullPath = path.resolve(root, normalized);
   const relative = path.relative(root, fullPath);
-  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  // 复审三轮 P2-4①：归一来为空 / "."（如 "images/.."、"foo/.."）时目标即 root 目录本身
+  // （relative === ""），不拒绝会在按 Content-Type 补扩展名后把文件写到 root 同级，
+  // 越过沙箱根。拒绝后错误文案走统一的「路径不合法」。
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return null;
+  }
   return fullPath;
 }
 

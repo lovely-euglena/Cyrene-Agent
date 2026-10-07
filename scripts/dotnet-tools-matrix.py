@@ -154,6 +154,13 @@ c_ap9 = req("apply_patch", {"patch": "not a patch"}, {"workspaceRoot": ap_ws})
 c_dl1 = req("download_file", {"url": "https://example.com/x.hta", "filename": "x.hta"}, {"workspaceRoot": ap_ws})
 c_dl2 = req("download_file", {"url": "https://example.com/x.js", "filename": "x.js"}, {"workspaceRoot": ap_ws})
 c_dl3 = req("download_file", {"url": "https://example.com/x.wsf", "filename": "x.wsf"}, {"workspaceRoot": ap_ws})
+# 路径穿越拒绝（联网前拒绝；#IKJSNI 复审 P1-3 对等证据）
+c_dl4 = req("download_file", {"url": "https://example.com/x.png", "filename": "../escape.png"}, {"workspaceRoot": ap_ws})
+# 偶数级前导 ..（复审二轮 P1-3）：C# 折叠不得抵消前导占位，须与 TS 一致拒绝
+c_dl5 = req("download_file", {"url": "https://example.com/x.png", "filename": "../../escape.png"}, {"workspaceRoot": ap_ws})
+# 预存边角加固（复审三轮 P2-4）：折叠后为空（目标 = root 本身）/ 前导分隔符与 TS 同规则拒绝（联网前）
+c_dl6 = req("download_file", {"url": "https://example.com/x.png", "filename": "images/.."}, {"workspaceRoot": ap_ws})
+c_dl7 = req("download_file", {"url": "https://example.com/x.png", "filename": "/etc/x.png"}, {"workspaceRoot": ap_ws})
 
 # web_search：config 帧注入（引擎/key），覆盖确定性校验路径（不联网）
 frames.append(json.dumps({"op": "config", "timezone": "Asia/Shanghai", "dateLocale": "zh-CN",
@@ -678,6 +685,13 @@ print("\n=== download_file（黑名单扩展）===")
 check("hta 扩展名拒绝", data_text(c_dl1) == "[错误] 禁止下载可执行/脚本文件: .hta", data_text(c_dl1))
 check("js 扩展名拒绝", data_text(c_dl2) == "[错误] 禁止下载可执行/脚本文件: .js", data_text(c_dl2))
 check("wsf 扩展名拒绝", data_text(c_dl3) == "[错误] 禁止下载可执行/脚本文件: .wsf", data_text(c_dl3))
+check("路径穿越拒绝（联网前）", data_text(c_dl4) == "[错误] 路径不合法（禁止目录穿越或绝对路径）: ../escape.png", data_text(c_dl4))
+check("偶数级前导穿越拒绝（联网前，../../escape.png）",
+      data_text(c_dl5) == "[错误] 路径不合法（禁止目录穿越或绝对路径）: ../../escape.png", data_text(c_dl5))
+check("归一来为空拒绝（联网前，images/..）",
+      data_text(c_dl6) == "[错误] 路径不合法（禁止目录穿越或绝对路径）: images/..", data_text(c_dl6))
+check("前导分隔符拒绝（联网前，/etc/x.png）",
+      data_text(c_dl7) == "[错误] 路径不合法（禁止目录穿越或绝对路径）: /etc/x.png", data_text(c_dl7))
 
 print("\n=== web_search（config 帧 + 校验路径）===")
 def ws_error(cid):

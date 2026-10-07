@@ -222,7 +222,9 @@ export interface ChannelsSettings {
   stickerEnabled: boolean;
   /** 全局：是否把 bot 会话镜像到桌面端 chatWindow */
   mirrorToDesktop: boolean;
-  /** 全局：关闭时走 Chat；全部开启时走无交互审批的 Harness。 */
+  /** 全局：关闭时走 Chat；全部开启时走 Harness——渠道沿用桌面端权限档位
+   *  （默认 read-only）+ 沙箱，per-action 触发审批（#IKJSN9）；allow_all 仅
+   *  scheduler / plugin 无人值守使用。 */
   toolSandbox: ChannelToolSandbox;
 }
 
@@ -420,8 +422,15 @@ export function saveChannelsSettings(patch: Partial<ChannelsSettings>): Channels
   const final = normalize(merged);
   // 写盘时 final.appSecret / final.encryptKey 已经是密文形态（带 enc: 前缀）
   // load 时解密，运行时给上层看到明文。
-  fs.mkdirSync(path.dirname(filePath()), { recursive: true });
-  fs.writeFileSync(filePath(), JSON.stringify(final, null, 2), "utf8");
+  // 复审 P2-1（同构跟进）：含加密凭据的设置文件 / 目录最小权限加固（Windows 忽略 mode）。
+  const dir = path.dirname(filePath());
+  const dirExisted = fs.existsSync(dir);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(filePath(), JSON.stringify(final, null, 2), { encoding: "utf8", mode: 0o600 });
+  // writeFile 的 mode 仅创建时生效：文件 chmod 兜底；目录只在本次创建时兜底
+  // （已存在的目录可能是共享目录，不擅自改权限；Windows 忽略 mode，失败静默）。
+  if (!dirExisted) { try { fs.chmodSync(dir, 0o700); } catch { /* Windows 或权限受限：忽略 */ } }
+  try { fs.chmodSync(filePath(), 0o600); } catch { /* Windows 或权限受限：忽略 */ }
 
   // 返回给上层时再解密一次，让 API 用户拿到明文
   const out: ChannelsSettings = {

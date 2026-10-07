@@ -6,8 +6,17 @@
  * （utility-tools.ts 保持同语义，双轨测试对齐）。
  *
  * 容错策略：
- *   - ensureStarted 失败 → 本轮全部走 TS 实现（静默降级，不重试
- *     到下次调用，避免每工具调用付一次探测成本）
+ *   - ensureStarted 失败（启动超时 / 启动即退出 / spawn 异常）→ 本轮全部走
+ *     TS 实现（静默降级），并进入 START_FAILURE_CACHE_MS 失败缓存窗口：窗口内
+ *     后续调用直接返回 false、不再 spawn（避免每工具调用付一次「spawn + 3s
+ *     探测」成本），窗口过后允许重试（自愈）；启动成功清缓存
+ *   - 崩溃重启与缓存的交互：仅「启动阶段失败」计入缓存——已就绪后的运行期
+ *     崩溃（exit）仍走进程监督，下次 ensureStarted 立即尝试拉起；若拉起又在
+ *     启动阶段失败，才进入缓存窗口。崩溃→拉起→再崩溃的循环因此被窗口限速，
+ *     不会每次工具调用都触发一轮 spawn
+ *   - 启动失败收尾（IKJSNB）：摘子进程监听 / 关 readline / 清本次 readyWaiter /
+ *     kill 子进程——不杀会留孤儿（trackChildProcess 只兜底应用退出路径），
+ *     迟到帧/事件也不得影响下一次实例
  *   - 单次调用超时（默认 5s；长任务可经 NativeFirstOptions.timeoutMs 按件
  *     覆盖）→ 默认杀掉 host 重启（工具无状态，重启零成本），当次调用回退 TS；
  *     只读调用可经 NativeFirstOptions.abandonOnTimeout 走轻量隔离（#IKJLP2）：
@@ -42,6 +51,13 @@ const LOG_PREFIX = "[ToolHost]";
 
 /** 轻量隔离排空兜底的窗口下限（#IKJLP2）：max(当次 timeoutMs, 本值)。 */
 const ABANDON_DRAIN_MIN_MS = 5_000;
+
+/**
+ * 启动失败缓存窗口（IKJSNB）：启动超时 / 启动即退出 / spawn 异常后，窗口内
+ * ensureStarted 直接返回 false 走 TS 实现，不再重试 spawn——避免每次工具调用
+ * 都付一次「spawn + 3s 探测」成本；窗口过后允许重试（自愈），启动成功清缓存。
+ */
+const START_FAILURE_CACHE_MS = 30_000;
 
 /** 宿主事件帧（op:"event"）：天气卡片等调用内副作用，随 callId 路由给对应调用。 */
 export interface HostToolEvent {
@@ -246,6 +262,8 @@ export class NativeToolHost {
   private proc: ChildProcess | null = null;
   private exited = false;
   private starting: Promise<boolean> | null = null;
+  /** 启动失败缓存截止时刻（Date.now 基准；0 = 无缓存）。见 START_FAILURE_CACHE_MS。 */
+  private startFailureUntil = 0;
   private pending = new Map<string, PendingCall>();
   /** 串行闸门：等待派发的调用（busy 时暂存 TS 侧，不写入 stdin）。 */
   private queue: QueuedCall[] = [];
@@ -302,6 +320,9 @@ export class NativeToolHost {
     // 若先查 this.proc 快路径，第二个调用会比第一个更早恢复，后进先出）
     if (this.starting) return this.starting;
     if (this.proc) return true;
+    // 失败缓存窗口（IKJSNB）：窗口内不再 spawn，直接静默降级 TS；
+    // 运行期崩溃的重启同样受此闸门约束——拉起失败会重新计窗，避免崩溃循环
+    if (Date.now() < this.startFailureUntil) return false;
     this.starting = this.start().finally(() => { this.starting = null; });
     return this.starting;
   }
@@ -309,24 +330,27 @@ export class NativeToolHost {
   private async start(): Promise<boolean> {
     const exe = resolveNativeWindowsExe();
     if (!exe) return false;
+    let child: ChildProcess | null = null;
+    /** 启动失败收尾（摘监听 + 关 readline + kill）；成功路径不调用，幂等。 */
+    let disposeChild: (() => void) | null = null;
     try {
-      const child = spawn(exe, ["--tool-host"], {
+      child = spawn(exe, ["--tool-host"], {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
-      this.proc = child;
-      trackChildProcess(child, "cyrene-native --tool-host");
+      const spawned = child;
+      this.proc = spawned;
+      trackChildProcess(spawned, "cyrene-native --tool-host");
       this.exited = false;
       this.killing = false;
       this.busy = false;
-      child.on("exit", () => {
-        this.exited = true;
-        this.proc = null;
-        this.killing = false;
-        this.busy = false;
-        this.clearAbandoned();
+      // 实例代际守卫（IKJSNB）：旧实例的迟到 exit / error / 帧不得清掉新实例的
+      // 引用或误唤醒其 waiter（启动失败路径先摘监听再 kill，此处兜底竞态窗口）
+      const isCurrent = (): boolean => this.proc === spawned;
+      /** host 不可用（exit/error）：连带拒绝在途/排队调用。 */
+      const failOutstanding = (label: string): void => {
         const outstanding = this.describeOutstanding();
-        if (outstanding) console.warn(LOG_PREFIX, `host 退出：连带拒绝 ${outstanding}`);
+        if (outstanding) console.warn(LOG_PREFIX, `${label}：连带拒绝 ${outstanding}`);
         for (const call of [...this.pending.values()]) {
           clearTimeout(call.timer);
           if (call.onAbort && call.signal) call.signal.removeEventListener("abort", call.onAbort);
@@ -340,12 +364,38 @@ export class NativeToolHost {
           // 与在途失败（状态可能未知）分流（P2-2）
           entry.reject(entry.signal?.aborted ? createAbortError() : new NativeCallNotDispatchedError());
         }
-      });
-      child.stderr?.on("data", (d: Buffer) => {
+      };
+      const onHostExit = (): void => {
+        if (!isCurrent()) return;
+        this.exited = true;
+        this.proc = null;
+        this.killing = false;
+        this.busy = false;
+        this.clearAbandoned();
+        failOutstanding("host 退出");
+      };
+      const onHostError = (error: Error): void => {
+        if (!isCurrent()) return;
+        // spawn 失败（ENOENT/EACCES 等）或运行期进程错误：与 exit 同语义
+        // 收敛——'error' 之后 'exit' 可能不再触发，必须在这里清状态/在途调用
+        console.warn(LOG_PREFIX, "host 进程错误:", error.message);
+        this.exited = true;
+        this.proc = null;
+        this.killing = false;
+        this.busy = false;
+        this.clearAbandoned();
+        failOutstanding("host 错误");
+      };
+      spawned.on("exit", onHostExit);
+      spawned.on("error", onHostError);
+      const onStderr = (d: Buffer): void => {
         const line = d.toString().trim();
         if (line) console.warn(LOG_PREFIX, "[stderr]", line.slice(0, 200));
-      });
-      readline.createInterface({ input: child.stdout! }).on("line", (line) => {
+      };
+      spawned.stderr?.on("data", onStderr);
+      const rl = readline.createInterface({ input: spawned.stdout! });
+      rl.on("line", (line) => {
+        if (!isCurrent()) return; // 迟到帧（旧实例）忽略
         if (!line.trim()) return;
         try {
           const frame = JSON.parse(line) as Record<string, unknown>;
@@ -354,22 +404,42 @@ export class NativeToolHost {
           // 协议外输出：忽略
         }
       });
+      disposeChild = () => {
+        spawned.removeListener("exit", onHostExit);
+        spawned.removeListener("error", onHostError);
+        spawned.stderr?.removeListener("data", onStderr);
+        rl.close();
+        if (this.proc === spawned) this.proc = null;
+        try { spawned.kill(); } catch { /* ignore */ }
+      };
       // 就绪等待：ready 帧或 3s 超时
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("tool-host 启动超时")), 3000);
+        const timer = setTimeout(() => { cleanup(); reject(new Error("tool-host 启动超时")); }, 3000);
         const onReady = () => { clearTimeout(timer); cleanup(); resolve(); };
         const onExit = () => { clearTimeout(timer); cleanup(); reject(new Error("tool-host 启动即退出")); };
+        const onError = () => { clearTimeout(timer); cleanup(); reject(new Error("tool-host 启动失败")); };
         const cleanup = () => {
-          child.removeListener("ready" as never, onReady as never);
+          // 超时/退出/错误路径同样要摘 waiter（IKJSNB）：否则迟到 ready 帧会经
+          // readyWaiters 唤醒下一次启动的 waiter
+          const idx = this.readyWaiters.indexOf(onReady);
+          if (idx >= 0) this.readyWaiters.splice(idx, 1);
+          spawned.removeListener("exit", onExit);
+          spawned.removeListener("error", onError);
         };
         this.readyWaiters.push(onReady);
-        child.once("exit", onExit);
+        spawned.once("exit", onExit);
+        spawned.once("error", onError);
       });
+      this.startFailureUntil = 0; // 启动成功：清失败缓存
       this.send({ op: "config", ...this.settings });
       return true;
     } catch (error) {
       console.warn(LOG_PREFIX, "启动失败，工具走 TS 实现:", error instanceof Error ? error.message : error);
-      this.proc = null;
+      // 启动失败收尾：摘监听 + 关 readline + kill 子进程——不杀会留孤儿
+      // （trackChildProcess 只兜底应用退出路径），且迟到帧不得影响后续实例
+      disposeChild?.();
+      // 失败缓存（IKJSNB）：窗口内不再 spawn；窗口过后允许重试（自愈）
+      this.startFailureUntil = Date.now() + START_FAILURE_CACHE_MS;
       return false;
     }
   }
