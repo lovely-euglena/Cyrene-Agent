@@ -237,11 +237,12 @@ function migrateLegacySessions(): void {
       if (!item || typeof item !== "object") continue;
       const meta = item as Partial<ChatSessionMeta>;
       if (typeof meta.id !== "string" || meta.purpose === "proactive-chat") continue;
-      // #IKJSNC 复审 P1-2：当前格式条目跳过回读（mode 合法 + pinned 布尔，与
-      // readIndexFromDisk 的 needsSessionRead 首两段判据一致）。此类条目在首次获得当前格式时
-      // 已被本迁移全量扫描过；此后 file 与 index 由同一写路径同步更新（metaFromSession
-      // 从文件派生），不存在"file 需要迁移而 index 已当前格式"的分叉（codeSession 亦然：
-      // 清理随该次扫描落盘，读取路径另在内存中兜底剔除）。
+      // #IKJSNC 复审 P1-2：当前格式条目跳过回读（mode 合法 + pinned 布尔）。readIndexFromDisk 的
+      // needsSessionRead 首两段判据为「mode 为字符串 + pinned 布尔」——对非法 mode 字符串（正常写
+      // 路径不产生的形态）本迁移按 isConversationMode 更严，至多多回读一次，无行为分叉（复审三轮
+      // 澄清）。此类条目在首次获得当前格式时已被本迁移全量扫描过；此后 file 与 index 由同一写路径
+      // 同步更新（metaFromSession 从文件派生），不存在"file 需要迁移而 index 已当前格式"的分叉
+      // （codeSession 亦然：清理随该次扫描落盘，读取路径另在内存中兜底剔除）。
       // 例外（复审二轮 P2-1）：Work 且索引缺 workspaceRoot 仍回读——file-first 可能有绑定
       // 而索引缺失（写入失败窗口），交 needsWorkspaceBinding / readIndexFromDisk 定点处理；
       // work 判定按归一化后的模式（旧别名 "daily" 同样归入 work，两处判据同口径）。

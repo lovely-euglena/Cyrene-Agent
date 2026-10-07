@@ -6,7 +6,7 @@
 //           └─ adapter.onMessage() → dispatcher → buildAndRunAgent → OutgoingMessage
 //                 └─ ILinkClient.sendText() → POST /sendmessage → 微信
 //
-// 凭据存盘：<userData>/weixin/credentials.json（单文件多 bot；目录 0700 / 文件 0600）
+// 凭据存盘：<userData>/weixin/credentials.json（单文件单凭据，重登覆盖写；目录 0700 / 文件 0600）
 // （首次运行需在 UI 点"扫码登录"生成；之后自动续用）
 import { promises as fs } from "node:fs";
 import path from "node:path";

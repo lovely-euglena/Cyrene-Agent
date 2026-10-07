@@ -954,3 +954,47 @@
   （本轮 +4 用例：sync 入库窗口 ×2、chats 别名组合 ×1、host-clients 多槽 ×1）；
   `dotnet-tools-matrix.py` **150/150**；`dual-track-diff.ts` **PASS**（download 段 10 例，
   含新增 `../../escape.png` 拒绝）。
+
+## 2026-10-07 增量（四）：PR #29 三轮评审修复——sync stale lamport / unpair 中止口径 / 下载路径预存边角 + 计数与注释同步
+
+- **背景**：PR #29 三轮评审仍为「有条件合入」：2 个 P1（docs CI 计数注记残留、PR 正文验证段为
+  初版快照）+ 4 个 P2（ilink 凭据注释、sync 两处边角、测试盲点、download 预存边角），逐项修复如下。
+- **P1-1 矩阵 CI 计数注记残留**（`docs/dotnet-backend.md`）：`:19` 仍写 135/0（上一轮 149 的残留，
+  与 `:12` 的 136/0 自相矛盾）——本轮随下载段 +2 统一为 **152**（本地）/ **138**（CI，差值 =
+  ast_grep 段 14 项）：`:12` / `:15` download 10→12 / `:19` / `:20` / `:34` 同步。
+- **P1-2 PR 正文验证段**：正文「665 文件 / 6185 用例」初版快照更新为三轮末轮实测
+  （666 文件（665 通过 / 1 跳过）、6204 用例（6200 通过 / 4 跳过））；计数与本节 /
+  评审评论同源。
+- **P2-1 ilink 凭据注释**（`src/main/channels/adapters/wechat/ilink-bot-adapter.ts:9`）：
+  「单文件多 bot」与实现不符（`credPath()` 固定路径、`Credentials` 单对象、登录整文件覆盖写、
+  登出整文件删除）→「单文件单凭据，重登覆盖写」。
+- **P2-2① unpair 中止时机**（`src/main/sync/sync-service.ts`）：`generation++` 后**立即 abort**
+  （与 saveConfig / pair 同口径），不再押后到 `persistState()` 之后的 `stop()`——该窗口内旧轮
+  仍可能向旧服务器再出网一次。测试：挂起 `saveState`（deferred gate），断言重置落盘进行中
+  信号已 abort，且旧轮结算 `stale` 丢弃。
+- **P2-2② stale 轮 lamport 定向落盘**（`src/main/sync/sync-service.ts`）：`appendRemoteEvents`
+  入库后（lamport 已在内存抬升）命中 `stale` 时，丢弃结算前 `persistState()` 一次——仅 lamport
+  语义（换址重置已持有游标 / 水位 / 身份；persistState 在执行时才序列化共享对象，不会覆盖重置）。
+  换址同时停用 / 解配且不再同步即退出的场景，磁盘 lamport 不再落后 inbox 已见事件。测试：
+  `GatedAppendStore` + 落盘快照断言 lamport 2→3（修复前实测失败）。
+- **P2-3 测试补强**（`src/main/sync/sync-service.test.ts`）：① 换址后旧轮非 aborted 错误（401）
+  不写 `lastError` / 无失败日志；② pair 在途换址窗口（旧轮 stale、补跑新配置走初始 clone）；
+  ③ unpair 在途窗口 + 立即中止（见 P2-2①）。本轮 +4 用例。
+- **P2-4 download_file 预存边角加固**（merge-base 既有行为；TS `download-file-tool.ts` +
+  C# `DownloadFileTool.cs`，两侧同规则）：
+  ① 归一来为空 / `.`（如 `images/..`）目标即 root 目录本身——此前放行，按 Content-Type
+  补扩展名会写到 root 同级（`Desktop.png`）；现两侧拒绝（TS `relative === ""`；
+  C# `parts.Count == 0`）。
+  ② 前导分隔符（`/etc/x.png`）TS `path.isAbsolute` 拒绝而 C# 接受（仍在 root 内）——C# 加
+  `slashed.StartsWith('/')` 同规则拒绝（逐字对偶）。dual-track download 10→12、矩阵 150→152
+  （新增 2 例联网前拒绝；CI 136→138）；TS 回退负向用例 ×2。
+- **P2 澄清单**（可维护性）：`chats-store.ts` 「与 needsSessionRead 首两段判据一致」改为精确口径
+  （readIndex 按 `typeof mode === "string"`，migrate 按 `isConversationMode`——非法 mode 字符串
+  形态正常写路径不产生，至多多回读一次，无行为分叉）。
+- **验证（2026-10-07，Windows 本机）**：三端 `tsc`（main / preload / renderer）0 错；
+  `cyrene-core` / `smoke-host` Release 编译 0 错；`native-windows` Release 发布 0 错；
+  `build:main` 739 文件 0 错；全量 vitest **666 文件（665 通过 / 1 跳过）、6204 用例
+  （6200 通过 / 4 跳过）全绿**（本轮 +6：sync ×4、download 回退负向 ×2）；
+  `dotnet-tools-matrix.py` **152/152**；`dual-track-diff.ts` **PASS**（download 段 12 例，
+  含 `images/..` 与 `/etc/x.png` 拒绝）；「修复前失败」回退验证：stale lamport 落盘 /
+  unpair 立即中止两用例在还原修复后各自失败。

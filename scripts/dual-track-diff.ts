@@ -678,6 +678,9 @@ async function runDownloadDualTrack(): Promise<number> {
       { name: "连续点文件名接受并落盘（a..b.txt）", args: { url: `${base}/img.png`, filename: "a..b.txt" }, saved: "a..b.txt" },
       { name: "路径穿越拒绝（不走网络）", args: { url: `${base}/img.png`, filename: "../escape.png" }, saved: null },
       { name: "偶数级前导穿越拒绝（../../escape.png）", args: { url: `${base}/img.png`, filename: "../../escape.png" }, saved: null },
+      // 复审三轮 P2-4：折叠后为空（目标 = root 本身）与前导分隔符均与 TS 同规则拒绝
+      { name: "归一来为空拒绝（images/..，不走网络）", args: { url: `${base}/img.png`, filename: "images/.." }, saved: null },
+      { name: "前导分隔符拒绝（/etc/x.png，不走网络）", args: { url: `${base}/img.png`, filename: "/etc/x.png" }, saved: null },
       { name: "未知 Content-Type 且无扩展名", args: { url: `${base}/unknown` }, saved: null },
     ];
     for (const c of cases) {

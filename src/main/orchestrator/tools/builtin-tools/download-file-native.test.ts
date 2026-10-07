@@ -83,4 +83,14 @@ describe("download_file native 轨", () => {
     expect(out).not.toContain("路径不合法");
     expect(out).toContain("下载失败");
   });
+
+  it("host 不可用回退 TS：归一来为空（images/..）在联网前拒绝（复审三轮 P2-4①）", async () => {
+    const out = await execute({ url: "https://example.com/a.png", filename: "images/.." }, { resolvedWorkspaceRoot: "C:\\ws" });
+    expect(out).toContain("路径不合法");
+  });
+
+  it("host 不可用回退 TS：前导分隔符（/etc/x.png）在联网前拒绝（复审三轮 P2-4②）", async () => {
+    const out = await execute({ url: "https://example.com/a.png", filename: "/etc/x.png" }, { resolvedWorkspaceRoot: "C:\\ws" });
+    expect(out).toContain("路径不合法");
+  });
 });

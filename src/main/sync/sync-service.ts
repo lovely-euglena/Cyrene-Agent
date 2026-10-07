@@ -7,9 +7,10 @@
  *   导出（exporter）→ 存 state → push（pushedCount 起，成功后推进）→
  *   clone（fetchCursor=null）或 fetch 循环（hasMore 至 false）→ 入库去重 → 存 state。
  * 失败保留游标 / 水位，记 lastError，下一轮重试；入库顺序：事件先 append → 后原子写 state。
- * 换址竞态（#IKJSNA 复审 P1-1 / 复审二轮 P1-1）：saveConfig / pair / unpair 递增 generation 并中止在途轮次，
- * 旧轮在结算点校验代际，不一致即丢弃（不得用旧服务器游标 / 水位覆盖换址重置）——
+ * 换址竞态（#IKJSNA 复审 P1-1 / 复审二轮 P1-1 / 复审三轮 P2-2）：saveConfig / pair / unpair 递增 generation
+ * 并立即中止在途轮次，旧轮在结算点校验代际，不一致即丢弃（不得用旧服务器游标 / 水位覆盖换址重置）——
  * 结算点覆盖网络返回后 **与入库落盘（appendRemoteEvents 的 fs + fsync 等待）之后** 的游标写回前；
+ * stale 丢弃前对已入库事件补发广播，并将已抬升的 lamport 定向落盘（入库等待窗口）；
  * 配置变更后的立即同步经 requestSync 排队，不被单飞互斥吞掉。
  *
  * 依赖全部可注入（store/exporter/state 读写/客户端工厂/时钟/定时器/onRemoteEventsApplied），
@@ -298,10 +299,24 @@ class SyncServiceController implements SyncService {
     // 已入库的旧服务器事件（提交到事件库即为事实）：轮次被丢弃时仍要刷新读模型，
     // 否则合并视图要等到下一次读取才看得到这批事件（复审 P2-3②）。
     const appliedSessions = new Set<string>();
-    const stale = (): SyncRunResult => {
+    // 入库已发生（appendRemoteEvents 已抬升内存 lamport）后命中 stale：丢弃结算前需定向落盘。
+    // 否则换址同时停用同步 / 解配且进程未再同步即退出时，磁盘 state.lamport 会落后于
+    // inbox 已见事件（复审三轮 P2-2②；规范序偏移，非数据丢失）。
+    let appendedSinceLastPersist = false;
+    const stale = async (): Promise<SyncRunResult> => {
       if (appliedSessions.size > 0) {
         this.deps.onRemoteEventsApplied?.(Array.from(appliedSessions));
         appliedSessions.clear();
+      }
+      if (appendedSinceLastPersist) {
+        appendedSinceLastPersist = false;
+        try {
+          // 定向落盘：state 其余字段已由换址重置持有，persistState 在执行时才序列化共享对象，
+          // 不会把旧服务器的游标 / 水位写回（lamport 只取 max，只增不减）；落盘失败不改变 stale 判定。
+          await this.persistState();
+        } catch (error) {
+          this.log(`[Sync] stale 轮 lamport 落盘失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       return {
         ok: false,
@@ -347,12 +362,14 @@ class SyncServiceController implements SyncService {
           this.log(`[Sync] clone 丢弃 ${cloned.dropped} 条坏帧（初始游标 ${cloned.cursor ?? "null"}）`);
         }
         const added = await this.appendRemoteEvents(store, state, cloned.events, known, appliedSessions);
+        if (added > 0) appendedSinceLastPersist = true;
         // 复审 P1-1：appendRemoteEvents 内部是 fs + fsync 落库等待——换址重置可能发生在
         // 这段入库等待期间（代际已变），此时写回游标 / persistState 会把旧服务器游标
         // 留在磁盘上，补跑随即拿它向新服务器增量 fetch（静默漏拉）。校验失配即丢弃结算。
         if (generation !== this.generation) return stale();
         state.fetchCursor = cloned.cursor;
         if (added > 0 || cloned.cursor) await this.persistState();
+        appendedSinceLastPersist = false; // lamport 已随本次落盘
       } else {
         for (;;) {
           if (generation !== this.generation) return stale();
@@ -364,11 +381,13 @@ class SyncServiceController implements SyncService {
             this.log(`[Sync] fetch 丢弃 ${page.dropped} 条坏帧（游标 ${previousCursor} → ${page.cursor}）`);
           }
           const added = await this.appendRemoteEvents(store, state, page.events, known, appliedSessions);
+          if (added > 0) appendedSinceLastPersist = true;
           // 复审 P1-1：同 clone 分支——入库等待（磁盘 + fsync）在代际校验之后，
           // 写回游标前必须再校验一次，否则旧服务器游标会覆盖换址重置。
           if (generation !== this.generation) return stale();
           state.fetchCursor = page.cursor;
           await this.persistState();
+          appendedSinceLastPersist = false; // lamport 已随本次落盘
           // 游标未推进仍声称 hasMore：防服务端异常导致死循环
           if (!page.hasMore || page.cursor === previousCursor) break;
         }
@@ -574,8 +593,10 @@ class SyncServiceController implements SyncService {
   async unpair(): Promise<SyncConfigPublic> {
     const state = await this.ensureState();
     // 保留 outbox / state（重新配对后幂等重推、重拉）；只清凭据与游标。
-    // 竞态（复审 P1-1）：同换址——代际 + stop 中止在途轮次，旧轮结算不得覆盖重置。
+    // 竞态（复审 P1-1 / 复审三轮 P2-2①）：同换址——代际 + 立即 abort 在途轮次
+    // （与 saveConfig / pair 同口径；不押后到 stop()，否则持久化窗口内旧轮仍可能向旧服务器再出网一次）。
     this.generation++;
+    this.abortController?.abort();
     this.settings = saveSyncSettings({ token: "" });
     state.serverDeviceId = null;
     state.fetchCursor = null;
