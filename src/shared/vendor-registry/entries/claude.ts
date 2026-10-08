@@ -49,6 +49,18 @@ export const CLAUDE_REGISTRY = defineVendor({
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
     } },
+    // Claude Haiku 5.5（2026-10-07 发布，固定型号名无日期后缀）：只接受自适应思考，
+    // 五档 effort，默认 medium。官方允许 high 及以下关闭思考，xhigh/max 下关闭返回 400；
+    // 我方 anthropic-adaptive 的 off 路径不发 effort（服务端取默认 medium），supportsDisable 可为 true。
+    // 采样白名单不加：非默认 temperature/top_p/top_k 在该型号返回 400。
+    // 移植上游 306ef7b7（PR #183）；完整版声明体系（models/structuredOutputRules/evidence）待「厂商声明」大项。
+    { providerId: "claude", modelPattern: /^claude-haiku-5-5/i, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: true,
+    } },
     { providerId: "claude", modelPattern: /.*/, capability: UNKNOWN_REASONING_CAPABILITY },
   ],
 });

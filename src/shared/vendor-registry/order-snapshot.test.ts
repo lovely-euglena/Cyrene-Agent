@@ -258,6 +258,26 @@ const EXPECTED = [
   {
     "providerId": "claude",
     "pattern": {
+      "source": "^claude-haiku-5-5",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "toggle-effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "defaultEffort": "medium",
+      "requestStyle": "anthropic-adaptive",
+      "supportsDisable": true
+    }
+  },
+  {
+    "providerId": "claude",
+    "pattern": {
       "source": ".*",
       "flags": ""
     },
