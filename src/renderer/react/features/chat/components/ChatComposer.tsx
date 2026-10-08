@@ -58,9 +58,9 @@ interface ChatComposerProps {
   onChooseSticker: (id: string) => void;
   activeModelProfileId?: string;
   onSelectModelProfile?: (id: string) => void;
-  /** 当前会话的 raw model（子下拉据此解析 effective 当前项）。 */
+  /** 当前会话或欢迎页暂存的模型值（子下拉据此解析当前项）。 */
   activeSessionModel?: string;
-  /** 会话级切模型回调；未传 = 欢迎页（无会话可写）。 */
+  /** 切换当前模型；无会话时由父级暂存选择。 */
   onSelectSessionModel?: (model: string) => void;
   /** 上下文容量快照：运行中实时刷新，空闲时为最近一次终态快照；无快照不渲染圆环。 */
   contextUsage?: ContextUsageSnapshot;
@@ -521,7 +521,7 @@ export function ChatComposer({
           <PermissionControl />
         )}
         {supportsStyle && <StyleControl />}
-        {onSelectModelProfile && <ModelSelector activeProfileId={activeModelProfileId} sessionModel={activeSessionModel} onSelect={onSelectModelProfile} onSelectModel={onSelectSessionModel} />}
+        {onSelectModelProfile && <ModelSelector hasSession={Boolean(conversationId)} activeProfileId={activeModelProfileId} sessionModel={activeSessionModel} onSelect={onSelectModelProfile} onSelectModel={onSelectSessionModel} />}
         <span className="cy-composer__footer-spacer" />
         <ContextUsageRing usage={contextUsage} sessionId={conversationId} busy={modelBusy} onCompactPhaseChange={onCompactPhaseChange} />
         <ReasoningControl sessionId={conversationId} modelProfileId={activeModelProfileId} model={activeSessionModel} />
