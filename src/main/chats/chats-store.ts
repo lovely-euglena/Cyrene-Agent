@@ -1034,6 +1034,15 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   const claimedAt = Date.now();
   const userMessage = pendingUserMessage(head, claimedAt);
   const remaining = queue.slice(1);
+  // 仅首条有效用户消息初始化临时标题；后续认领不得覆盖已生成的标题
+  // （移植上游 a65f272f：v1 用首条有效用户消息判定；v2 正式历史不在 record 内，
+  //   用 messageCount 判定——认领前为 0 即首条。生成标题随后由标题服务写回。）
+  const userMessageIsFirst = record.schemaVersion === 2
+    ? (record.messageCount ?? 0) === 0
+    : !record.messages.some((message) => message.role === "user" && message.content.trim());
+  const initializeTitle = !record.titleIsCustom
+    && Boolean(userMessage.content.trim())
+    && userMessageIsFirst;
 
   if (record.schemaVersion === 2) {
     record.pendingMessages = remaining;
@@ -1053,8 +1062,8 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
     // 否则侧栏列表（排序/最近聊天时间/未读检测）在 v2 会话上永远停留在旧值
     record.messageCount = (record.messageCount ?? 0) + 1;
     record.updatedAt = claimedAt;
-    // 与 v1 分支一致：非自定义标题时先落首条消息推导的临时标题（生成标题 3 秒后覆盖）
-    if (!record.titleIsCustom) record.title = deriveTitle([userMessage]);
+    // 与 v1 分支一致：首条有效用户消息落推导的临时标题（生成标题 3 秒后覆盖）
+    if (initializeTitle) record.title = deriveTitle([userMessage]);
     try {
       writeSessionRecordFile(record);
     } catch (err) {
@@ -1082,7 +1091,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   session.pendingMessages = remaining;
   session.pendingDispatch = { messageId: head.id, claimedAt };
   session.updatedAt = claimedAt;
-  if (!session.titleIsCustom) session.title = deriveTitle(session.messages);
+  if (initializeTitle) session.title = deriveTitle(session.messages);
   try {
     writeSessionFile(session);
   } catch (err) {
