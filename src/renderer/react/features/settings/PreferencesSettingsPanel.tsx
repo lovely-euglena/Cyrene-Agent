@@ -141,6 +141,7 @@ export function PreferencesSettingsPanel() {
   const [pandocStatus, setPandocStatus] = useState("");
   const [wslExecutable, setWslExecutable] = useState<string | null>(null);
   const [wslDistros, setWslDistros] = useState<string[]>([]);
+  const [wslVersion, setWslVersion] = useState<"store" | "inbox-legacy" | "unknown">("unknown");
   const [wslDetecting, setWslDetecting] = useState(false);
   const [wslRestarting, setWslRestarting] = useState(false);
   const [wslRestartStatus, setWslRestartStatus] = useState("");
@@ -200,6 +201,7 @@ export function PreferencesSettingsPanel() {
       const result = await api.detectWsl();
       setWslExecutable(result.executable ?? null);
       setWslDistros(Array.isArray(result.distros) ? result.distros : []);
+      setWslVersion(result.version ?? "unknown");
     } catch {
       setWslExecutable(null);
       setWslDistros([]);
@@ -329,11 +331,16 @@ export function PreferencesSettingsPanel() {
     { label: t("settingsPage.preferences.wslUseDefault"), value: WSL_DEFAULT_DISTRO },
     ...wslDistros.map((distro) => ({ label: distro, value: distro })),
   ];
+  // IKKNG7：四档状态文案——未检测（含安装指引）/ 无发行版（含安装指引）/ 版本过低（升级
+  // 指引）/ 正常。版本过低档依据 `wsl --version` 退出码判定（旧内置版不认识该参数）。
+  const wslUnavailable = wslExecutable === null || wslDistros.length === 0 || wslVersion === "inbox-legacy";
   const wslStatus = wslExecutable === null
     ? t("settingsPage.preferences.wslNotDetected")
     : wslDistros.length === 0
       ? t("settingsPage.preferences.wslNoDistro")
-      : t("settingsPage.preferences.wslDistroDescription");
+      : wslVersion === "inbox-legacy"
+        ? t("settingsPage.preferences.wslOutdated")
+        : t("settingsPage.preferences.wslDistroDescription");
 
   return (
     <>
@@ -495,7 +502,7 @@ export function PreferencesSettingsPanel() {
                       options={wslOptions}
                       onChange={(value) => update("wslDistro", value === WSL_DEFAULT_DISTRO ? "" : value)}
                       ariaLabel={t("settingsPage.preferences.wslDistro")}
-                      disabled={wslDistros.length === 0}
+                      disabled={wslUnavailable}
                     />
                     <Button loading={wslDetecting} icon={<RefreshCw size={15} />} onClick={() => void runWslDetect()}>{t("settingsPage.preferences.wslDetect")}</Button>
                   </div>

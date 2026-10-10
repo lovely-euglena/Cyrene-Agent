@@ -183,7 +183,7 @@ describe("resolveWslExecutablePath / discoverWsl", () => {
     vi.stubEnv("windir", root);
     vi.stubEnv("PATH", "");
     expect(resolveWslExecutablePath()).toBeNull();
-    await expect(discoverWsl()).resolves.toEqual({ executable: null, distros: [] });
+    await expect(discoverWsl()).resolves.toEqual({ executable: null, distros: [], version: "unknown" });
   });
 
   it("找不到 wsl.exe 时 resolveWslExecutable 返回 null", async () => {

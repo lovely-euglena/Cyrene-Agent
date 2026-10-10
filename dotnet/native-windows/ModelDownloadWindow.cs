@@ -37,6 +37,8 @@ public sealed class ModelDownloadWindow : NativeWindow
         Foreground = NativeTheme.TextMutedBrush,
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 6, 0, 0),
+        // IKKNGB：预留两行高度——下载完成/失败文案出现时进度区不收缩、底部按钮不被挤出窗口
+        MinHeight = 40,
     };
     private readonly Border _progressTrack = new()
     {
@@ -83,7 +85,9 @@ public sealed class ModelDownloadWindow : NativeWindow
         {
             Title = "昔涟 · 模型下载",
             Width = 620,
-            Height = 700,
+            // IKKNGB：760 = 4 张模型卡（含状态行）+ 镜像行 + 进度区（预留两行文案）+ 操作行的
+            // 临界实测值；此前 700 在下载完成后结果文案把底部按钮挤出窗外。
+            Height = 760,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,
@@ -194,7 +198,12 @@ public sealed class ModelDownloadWindow : NativeWindow
         actions.Children.Add(_cancelButton);
         root.Children.Add(actions);
 
-        NativeTheme.ApplyDialogShell(_window, "模型下载", root, 12);
+        // IKKNGB：内容溢出兜底——低 DPI/大字体环境下内容超出窗高时可滚动，按钮始终可达
+        NativeTheme.ApplyDialogShell(_window, "模型下载", new ScrollViewer
+        {
+            Content = root,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        }, 12);
 
         _window.Closed += (_, _) =>
         {
