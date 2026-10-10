@@ -28,7 +28,10 @@ public static class SyncProtocolV0
     public const long MaxSafeInteger = 9007199254740991;
 
     public static readonly string[] EventTypes =
-        ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift"];
+        ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift", "webhook.received"];
+
+    /// <summary>webhook.received 载荷 body 上限（字符；服务端入流侧已按字节限幅并截断，协议层复核）。</summary>
+    public const int WebhookBodyMaxChars = 65_536;
 
     /// <summary>记忆/心情事件的保留伪 sessionId（设计 §1.3；不匹配 → E_SYNC_PAYLOAD）。</summary>
     public const string MemorySessionId = "__memory__";
@@ -164,8 +167,34 @@ public static class SyncProtocolV0
             && reason.ValueKind == JsonValueKind.String && reason.GetString() == "pending_withdrawn",
         "memory.write" => sessionId == MemorySessionId && ValidateMemoryWrite(payload),
         "mood.shift" => sessionId == MoodSessionId && ValidateMoodShift(payload),
+        "webhook.received" => ValidateWebhookReceived(payload),
         _ => false,
     };
+
+    /// <summary>
+    /// webhook.received 载荷（IKKIZR）：endpointId/body/receivedAt 必填，source/truncated 可选。
+    /// body 为 UTF-8 解码后的原始请求体（服务端按字节限幅后截断）；truncated=true 标记已截断。
+    /// </summary>
+    private static bool ValidateWebhookReceived(JsonElement payload)
+    {
+        if (!HasOnlyKeys(payload, "endpointId", "source", "receivedAt", "body", "truncated")) return false;
+        if (!TryGetId(payload, "endpointId", out _)) return false;
+        if (!payload.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.String) return false;
+        if (body.GetString()!.Length > WebhookBodyMaxChars) return false;
+        if (!payload.TryGetProperty("receivedAt", out var receivedAt)
+            || receivedAt.ValueKind != JsonValueKind.String
+            || !IsoUtcRegex.IsMatch(receivedAt.GetString()!))
+        {
+            return false;
+        }
+        if (payload.TryGetProperty("source", out var source)
+            && (source.ValueKind != JsonValueKind.String || source.GetString()!.Length > MaxIdLength))
+        {
+            return false;
+        }
+        return !payload.TryGetProperty("truncated", out var truncated)
+            || truncated.ValueKind == JsonValueKind.True || truncated.ValueKind == JsonValueKind.False;
+    }
 
     /// <summary>memory.write 载荷（设计 §1.1）：upsert 必填 content/weight（pinned 可选 bool）；delete 三键必须缺省。</summary>
     private static bool ValidateMemoryWrite(JsonElement payload)

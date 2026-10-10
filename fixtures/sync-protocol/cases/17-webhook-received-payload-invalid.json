@@ -1,0 +1,24 @@
+{
+ "name": "webhook.received：载荷非法 → E_SYNC_PAYLOAD",
+ "description": "第 1 行缺 body、第 2 行含未收录键 headers、第 3 行 truncated 非 bool；第 4 行合法兜底。",
+ "input": "{\"eventId\":\"wh-b1\",\"sessionId\":\"webhook-ci\",\"type\":\"webhook.received\",\"lamport\":1,\"deviceId\":\"server\",\"seq\":1,\"ts\":\"2026-10-10T03:00:00.000Z\",\"payload\":{\"endpointId\":\"ci\",\"receivedAt\":\"2026-10-10T03:00:00.000Z\"}}\n{\"eventId\":\"wh-b2\",\"sessionId\":\"webhook-ci\",\"type\":\"webhook.received\",\"lamport\":2,\"deviceId\":\"server\",\"seq\":2,\"ts\":\"2026-10-10T03:00:01.000Z\",\"payload\":{\"endpointId\":\"ci\",\"body\":\"x\",\"receivedAt\":\"2026-10-10T03:00:01.000Z\",\"headers\":{\"a\":\"b\"}}}\n{\"eventId\":\"wh-b3\",\"sessionId\":\"webhook-ci\",\"type\":\"webhook.received\",\"lamport\":3,\"deviceId\":\"server\",\"seq\":3,\"ts\":\"2026-10-10T03:00:02.000Z\",\"payload\":{\"endpointId\":\"ci\",\"body\":\"x\",\"receivedAt\":\"2026-10-10T03:00:02.000Z\",\"truncated\":\"yes\"}}\n{\"eventId\":\"wh-ok\",\"sessionId\":\"webhook-ci\",\"type\":\"webhook.received\",\"lamport\":4,\"deviceId\":\"server\",\"seq\":4,\"ts\":\"2026-10-10T03:00:03.000Z\",\"payload\":{\"endpointId\":\"ci\",\"body\":\"ok\",\"receivedAt\":\"2026-10-10T03:00:03.000Z\",\"truncated\":false}}",
+ "expect": {
+  "events": [
+   "wh-ok"
+  ],
+  "errors": [
+   {
+    "index": 0,
+    "code": "E_SYNC_PAYLOAD"
+   },
+   {
+    "index": 1,
+    "code": "E_SYNC_PAYLOAD"
+   },
+   {
+    "index": 2,
+    "code": "E_SYNC_PAYLOAD"
+   }
+  ]
+ }
+}

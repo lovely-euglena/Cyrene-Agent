@@ -1,0 +1,11 @@
+{
+ "name": "webhook.received：合法载荷通过（IKKIZR v0.1 扩展类型）",
+ "description": "第 1 行合法 webhook.received（endpointId/body/receivedAt 必填 + source/truncated 可选）；第 2 行 message.append 共存确认互不影响。",
+ "input": "{\"eventId\":\"wh1\",\"sessionId\":\"webhook-ci\",\"type\":\"webhook.received\",\"lamport\":1,\"deviceId\":\"server\",\"seq\":1,\"ts\":\"2026-10-10T03:00:00.000Z\",\"payload\":{\"endpointId\":\"ci\",\"body\":\"{\\\"build\\\":\\\"ok\\\"}\",\"receivedAt\":\"2026-10-10T03:00:00.000Z\",\"source\":\"github-actions\"}}\n{\"eventId\":\"m1\",\"sessionId\":\"s1\",\"type\":\"message.append\",\"lamport\":2,\"deviceId\":\"dev-a\",\"seq\":1,\"ts\":\"2026-10-10T03:00:01.000Z\",\"payload\":{\"role\":\"user\",\"text\":\"你好\",\"turnId\":\"turn-1\"}}",
+ "expect": {
+  "events": [
+   "wh1",
+   "m1"
+  ]
+ }
+}
