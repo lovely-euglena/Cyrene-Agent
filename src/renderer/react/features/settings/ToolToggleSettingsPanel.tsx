@@ -237,13 +237,10 @@ export function ToolToggleSettingsPanel() {
             t.description.toLowerCase().includes(kw),
         )
       : shown;
-    return [...searched].sort((a, b) => {
-      const aOn = isToolOn(a, tab, overrides);
-      const bOn = isToolOn(b, tab, overrides);
-      if (aOn !== bOn) return aOn ? -1 : 1;
-      return a.id.localeCompare(b.id);
-    });
-  }, [tools, overrides, filter, tab, isToolOn]);
+    // IKJUG8：固定按 id 字母序，开关状态不参与排序（开/关由置灰样式区分）——
+    // 否则切换开关时列表立即重排，用户点击位置跳变。
+    return [...searched].sort((a, b) => a.id.localeCompare(b.id));
+  }, [tools, filter, tab]);
 
   return (
     <>

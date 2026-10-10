@@ -925,7 +925,8 @@ export function ModelSettingsPanel() {
                             <code>{item}</code>
                           </Radio>
                           {item === model && <Tag className="cy-model-default-tag">{t("settingsPage.modelSettings.default")}</Tag>}
-                          {modelOptions[item]?.multimodal && (
+                          {/* IKKNGA：列表内全部模型都支持多模态时隐藏标记（无区分意义） */}
+                          {modelOptions[item]?.multimodal && !models.every((m) => modelOptions[m]?.multimodal ?? true) && (
                             <span className="cy-model-list-item__image is-enabled" title={t("settingsPage.modelSettings.multimodal")} aria-label={t("settingsPage.modelSettings.multimodal")}>
                               <ImageIcon size={14} />
                             </span>

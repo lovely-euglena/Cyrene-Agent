@@ -563,6 +563,8 @@
 .cy-model-selector__menu small { color: var(--rb-text-secondary); }
 /* 模型子下拉：档案下拉旁的会话级当前模型；单模型档案不渲染（外观零变化） */
 .cy-model-selector--model code { font-size: 12px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* IKKNG8：触发按钮上的模型名与相邻文字字体一致（code 默认等宽，改为继承 UI 字体栈）；下拉项内 code 保留等宽 */
+.cy-model-selector--model > code { font-family: var(--rb-font-sans, ui-sans-serif, system-ui, sans-serif); }
 .cy-model-selector__models { min-width: 180px; }
 .cy-model-selector__models button code { font-size: 12.5px; }
 .cy-model-selector__models button[data-current] { background: var(--rb-surface-active); font-weight: 600; }
