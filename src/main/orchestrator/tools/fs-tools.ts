@@ -629,15 +629,6 @@ toolRegistry.register({
 // 资源访问层：读图片→base64→交 vision-captioner 看图→返回文字。
 // 不懂视觉，看图的活外包给 captioner。
 
-// 懒加载图片转述视觉配置：动态 import，规避注册期副作用。
-// 路由判定收口在 image-router（全项目唯一），本文件不再自行判断。
-async function loadCaptionVisionConfigLazy(): Promise<import("../image-router").CaptionVisionConfig> {
-  const settingsMod = await import("../../settings/model-settings");
-  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
-  const router = await import("../image-router");
-  return router.resolveCaptionVisionConfig(settings);
-}
-
 async function executeReadImage(
   args: Record<string, unknown>,
   ctx?: ToolContext,
@@ -678,18 +669,41 @@ async function executeReadImage(
     return "[错误] 读取失败: " + msg;
   }
 
-  // 查图片转述路由（image-router 统一判定；Anthropic 主模型未配视觉模型时在此明确拒绝）
-  const captionVision = await loadCaptionVisionConfigLazy();
-  if (!captionVision.ok) {
-    return "[错误·配置] " + captionVision.error;
+  // 查图片投递路由（image-router 统一判定）
+  const settingsMod = await import("../../settings/model-settings");
+  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
+  const router = await import("../image-router");
+  const delivery = router.resolveToolImageDelivery(settings);
+
+  // 多模态直发（IKLRQH）：图片经 contextRef 侧信道挂到 tool 结果，不再二次调用视觉模型
+  if (delivery.mode === "direct") {
+    if (!ctx?.contextRefs) {
+      return "[错误] 已读取图片 " + filePath + "（" + humanBytes(stat.size) + "），但当前运行上下文不支持图片直发，请改用纯文本主模型或配置独立视觉模型。";
+    }
+    const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+    const ref = ctx.contextRefs.issue({
+      conversationId: ctx.conversationId ?? "unknown",
+      domain: "tool-image",
+      kind: "image",
+      expiresAt: Date.now() + 15 * 60_000,
+      value: { dataUrl },
+    });
+    console.log(LOG_PREFIX, "read_image: direct ->", ref);
+    return `[图片已读取直发主模型；${filePath}；${humanBytes(stat.size)}]\n` +
+      `[图片直发:${ref}]\n图片已随本条工具结果附带，请直接结合图片回答，不要为此再调用看图工具。` +
+      (ctx.userQuery ? `\n用户问题：${ctx.userQuery}` : "");
   }
 
-  // 调视觉模型看图，用户问题从 ToolContext 来
+  if (delivery.mode === "reject") {
+    return "[错误·配置] " + delivery.reason;
+  }
+
+  // 纯文本主模型：调独立视觉模型转述，用户问题从 ToolContext 来
   const userQuery = ctx?.userQuery ?? "";
   const result = await captionImage(
     { base64: buf.toString("base64"), mime },
     userQuery,
-    captionVision.config,
+    delivery.config,
   );
   return result;
 }

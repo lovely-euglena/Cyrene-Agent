@@ -338,7 +338,7 @@ describe("OpenAICompatAdapter", () => {
     // 第 3 条 tool 带 tool_call_id 与 name（OpenAI 多轮必须）
     expect(body.messages[2]).toEqual({
       role: "tool",
-      tool_call_id: "tc1",
+      _id: "tc1",
       content: "晴 25°C",
       name: "get_weather",
     });
