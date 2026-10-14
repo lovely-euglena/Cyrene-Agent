@@ -93,6 +93,8 @@ export interface HarnessRun {
   lastPersistedTodoItemsJson: string;
   /** 当前轮 assistant 的轨迹条目 ID（appendAssistant 返回；工具结果提交的锚点）。 */
   currentAssistantEntryId?: string;
+  /** 工具图片直发 400 降级（IKLRQH）是否已用过：一次 run 只降级一次，防循环。 */
+  toolImageCaptionFallbackUsed?: boolean;
 }
 
 // ═══ 主入口 ═══════════════════════════════════════════════
@@ -167,26 +169,33 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     emitCacheDiagnostic(run, promptLayers);
 
     // ── callLLM ──
-    let response: ChatResponse;
+    let response: ChatResponse | undefined;
     try {
       response = await callRoundLLM(run, promptLayers, roundId);
     } catch (err) {
       // signal abort 属于用户取消：按 cancelled 结算，不归类为 error。
       if (input.signal?.aborted) return cancelledResult(run);
-      // 失败摘要：模型名 / 请求地址 / 错误码置顶，堆栈跟在后面，定位不用翻设置。
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      const errCode = (err as { code?: string }).code ?? "无错误码";
-      console.error(
-        `${LOG_PREFIX} LLM call failed:`,
-        `\n  model id: ${input.vendorConfig.model}`,
-        `\n  baseUrl: ${input.vendorConfig.baseUrl}`,
-        `\n  error: ${errCode} ${errorMsg}`,
-        err,
-      );
-      const failed = finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
-      return err instanceof AgentRuntimeError && err.modelFailure
-        ? { ...failed, modelFailure: err.modelFailure }
-        : failed;
+      // 工具图片直发 400 → 剥图转独立视觉模型转述重试一次（对齐 attachment 的 imageCaptionFallback 哲学）；
+      // 降级未触发或重试仍失败 → rethrow，走下方错误结算。
+      const fallbackResponse = await maybeToolImageCaptionRetry(run, promptLayers, roundId, err)
+        .catch((retryErr: unknown) => { err = retryErr; return undefined; });
+      if (fallbackResponse === undefined) {
+        // 失败摘要：模型名 / 请求地址 / 错误码置顶，堆栈跟在后面，定位不用翻设置。
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errCode = (err as { code?: string }).code ?? "无错误码";
+        console.error(
+          `${LOG_PREFIX} LLM call failed:`,
+          `\n  model id: ${input.vendorConfig.model}`,
+          `\n  baseUrl: ${input.vendorConfig.baseUrl}`,
+          `\n  error: ${errCode} ${errorMsg}`,
+          err,
+        );
+        const failed = finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
+        return err instanceof AgentRuntimeError && err.modelFailure
+          ? { ...failed, modelFailure: err.modelFailure }
+          : failed;
+      }
+      response = fallbackResponse;
     }
 
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
@@ -586,6 +595,71 @@ async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers, roundId
       run.input.onEvent?.({ type: "reasoning_end", messageId: reasoningMessageId });
     }
   }
+}
+
+// ═══ 工具图片直发 400 降级（IKLRQH 后续） ═══════════════════════════════
+
+/**
+ * 工具图片直发被服务端拒绝（400 INVALID_REQUEST）时，剥图转独立视觉模型转述重试一次。
+ * 哲学与 attachment 的 imageCaptionFallback 对齐：能力对错交给服务端仲裁，失败有台阶。
+ * - 条件不满足（非 400 / 非无效请求 / 已降级过 / 消息里无 tool 图片块）→ rethrow 原错误
+ * - 无独立视觉模型可转述 → rethrow 原错误（错误文本由服务端 400 报文说明图片问题）
+ * - 转述后重试仍失败 → rethrow 二次错误（LogWarning 已留痕降级尝试）
+ */
+async function maybeToolImageCaptionRetry(
+  run: HarnessRun,
+  promptLayers: PromptLayers,
+  roundId: string,
+  firstErr: unknown,
+): Promise<ChatResponse> {
+  const failure = firstErr instanceof AgentRuntimeError ? firstErr.modelFailure : undefined;
+  if (failure?.status !== 400 || failure.category !== "INVALID_REQUEST" || run.toolImageCaptionFallbackUsed) {
+    throw firstErr;
+  }
+  const degraded = await stripToolImagesToCaption(run.messages);
+  if (!degraded) throw firstErr;
+  run.toolImageCaptionFallbackUsed = true;
+  console.warn(`${LOG_PREFIX} 工具图片直发被服务端拒绝（400 INVALID_REQUEST），已剥图转独立视觉模型转述后重试一次`);
+  try {
+    return await callRoundLLM(run, promptLayers, roundId);
+  } catch (retryErr) {
+    console.error(`${LOG_PREFIX} 图片转述降级重试仍失败：`, retryErr);
+    throw retryErr;
+  }
+}
+
+/**
+ * 就地把消息里 tool 消息的 image_url 块替换为独立视觉模型转述文本。
+ * 原地修改 run.messages（transcript 已按带图版落盘；run 内存版降级供本轮及后续请求使用）。
+ * @returns 是否发生了实际变换（消息里没有 tool 图片块 / 无 VLM 可用 → false）
+ */
+export async function stripToolImagesToCaption(messages: ChatMessage[]): Promise<boolean> {
+  const settingsMod = await import("../../settings/model-settings");
+  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
+  const router = await import("../image-router");
+  const delivery = router.resolveToolImageDelivery(settings);
+  if (delivery.mode !== "caption") return false; // 无 VLM 可转述（direct 会再撞 400；reject 无处可去）
+  const { captionImage } = await import("../vision-captioner");
+  let changed = false;
+  for (const m of messages) {
+    if (m.role !== "tool" || !Array.isArray(m.content)) continue;
+    const textBlocks = m.content.filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text");
+    const imageBlocks = m.content.filter((b): b is Extract<typeof b, { type: "image_url" }> => b.type === "image_url");
+    if (imageBlocks.length === 0) continue;
+    const parts: string[] = [textBlocks.map(b => b.text).join("\n"), "（图片直发不被当前端点支持，以下为独立视觉模型转述）"];
+    for (const block of imageBlocks) {
+      const url = block.image_url.url;
+      const dm = /^data:([^;]+);base64,(.*)$/.exec(url);
+      const image = dm ? { base64: dm[2], mime: dm[1] } : { url };
+      const question = `工具 ${m.name ?? ""} 返回的图片内容`;
+      // captionImage 失败返回 [错误·...] 字符串而非 throw；单图失败不拖垮整条消息
+      const caption = await captionImage(image, question, delivery.config);
+      parts.push(caption);
+    }
+    m.content = parts.filter(Boolean).join("\n");
+    changed = true;
+  }
+  return changed;
 }
 
 // ═══ 结算出口 ═════════════════════════════════════════════
