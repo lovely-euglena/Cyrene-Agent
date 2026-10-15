@@ -50,6 +50,12 @@ export function applyGeneralSettings(
     if (settings.petVisible) deps.windowManager?.showPetWindow();
     else deps.windowManager?.hidePetWindow();
   }
+  // IKM0TM：托盘「临时隐藏/显示桌宠」项显隐——启动时完整同步，保存时变化才推
+  // （分离托盘实现发帧，旧版 TrayHost 静默忽略；内置托盘为 no-op，右键时重建）。
+  if (!before || before.petTrayTempToggle !== settings.petTrayTempToggle) {
+    const tray = deps.tray;
+    if (tray && "setPetTempToggleEnabled" in tray) tray.setPetTempToggleEnabled?.(settings.petTrayTempToggle);
+  }
   const wasDisclaimerAccepted = !before
     || before.disclaimerAcceptedVersion === undefined
     || before.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;

@@ -349,6 +349,16 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     saveGeneralSettings({ ...getGeneralSettings(), petVisible: Boolean(value) });
   });
 
+  // 桌宠显隐持久化开关（IKM0TM）：只影响托盘/窗口侧操作是否回写；设置页路径始终权威。
+  // 托盘临时项显隐同步走 onGeneralSettingsChanged → lifecycle（既有管道，含启动同步）。
+  ipc.on(IPC.SETTINGS_SET_PET_VISIBILITY_PERSIST, (_event, value: boolean) => {
+    saveGeneralSettings({ ...getGeneralSettings(), petVisibilityPersist: Boolean(value) });
+  });
+
+  ipc.on(IPC.SETTINGS_SET_PET_TRAY_TEMP_TOGGLE, (_event, value: boolean) => {
+    saveGeneralSettings({ ...getGeneralSettings(), petTrayTempToggle: Boolean(value) });
+  });
+
   ipc.on(IPC.SETTINGS_SET_PET_ZOOM, (_event, value: number) => {
     const saved = saveGeneralSettings({ ...getGeneralSettings(), petZoom: Number(value) });
     deps.windowManager?.applyPetWindowZoom(saved.petZoom);

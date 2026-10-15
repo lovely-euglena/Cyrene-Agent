@@ -1623,8 +1623,10 @@ createTray: (input) => {
           const detached = connectDetachedTray({
             requestActivation: input.requestActivation,
             togglePetWindow: input.togglePetWindow,
+            togglePetWindowTemp: () => input.togglePetWindowTemp?.(),
             setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
             getPetDragMode: () => input.getPetDragMode?.() ?? false,
+            getPetTrayTempToggle: () => loadGeneralSettings().petTrayTempToggle,
             hideWindows: () => {
               for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) win.hide();
@@ -1636,6 +1638,8 @@ createTray: (input) => {
         }
         return createTray({
           togglePetWindow: input.togglePetWindow,
+          togglePetWindowTemp: () => input.togglePetWindowTemp?.(),
+          getPetTrayTempToggle: () => loadGeneralSettings().petTrayTempToggle,
           requestActivation: input.requestActivation,
           setPetDragMode: (enabled) => input.setPetDragMode?.(enabled) ?? false,
           hideWindows: () => {

@@ -67,6 +67,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   chatParaSpacing: 0.5,
   petAlwaysOnTop: true,
   petVisible: true,
+  petVisibilityPersist: true,
+  petTrayTempToggle: false,
   petZoom: 1,
   toastSoundEnabled: true,
   launchAtLogin: false,
@@ -294,6 +296,12 @@ export function normalizeGeneralSettings(
     petVisible: input?.petVisible === undefined
       ? DEFAULT_GENERAL_SETTINGS.petVisible
       : Boolean(input.petVisible),
+    petVisibilityPersist: input?.petVisibilityPersist === undefined
+      ? DEFAULT_GENERAL_SETTINGS.petVisibilityPersist
+      : Boolean(input.petVisibilityPersist),
+    petTrayTempToggle: input?.petTrayTempToggle === undefined
+      ? DEFAULT_GENERAL_SETTINGS.petTrayTempToggle
+      : Boolean(input.petTrayTempToggle),
     petZoom: typeof input?.petZoom === "number"
       ? Math.max(0.5, Math.min(2, input.petZoom))
       : DEFAULT_GENERAL_SETTINGS.petZoom,

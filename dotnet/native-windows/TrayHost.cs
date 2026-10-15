@@ -23,7 +23,7 @@ namespace CyreneNative;
 ///                    {"op":"tray.byefrom.electron"} /
 ///                    sched.*（见 TraySchedulerHost；带 id 必回 reply）
 ///   tray → Electron：{"op":"cmd","action":"chat|sidebar|settings|hide-windows|
-///                    toggle-pet|show-pet|drag-mode|quit"} / {"op":"event",name:"sched.*",data}
+///                    toggle-pet|toggle-pet-temp|show-pet|drag-mode|quit"} / {"op":"event",name:"sched.*",data}
 /// Electron 直启（未经过托盘 spawn）或 pipe 断开时走 Electron 内置 Tray 兜底，
 /// 两种模式对用户等价。
 /// </summary>
@@ -33,6 +33,9 @@ public sealed class TrayHost
     private WF.NotifyIcon? _notifyIcon;
     /// <summary>「桌宠拖动模式」菜单项（Electron 状态帧按实际结果对齐勾选）。</summary>
     private WF.ToolStripMenuItem? _dragModeItem;
+    // IKM0TM：托盘「临时隐藏/显示桌宠」项——默认不显示，由 Electron 的
+    // tray.pet-temp-toggle-state 帧控制显隐（旧版 Electron 不发该帧则永不出现）。
+    private WF.ToolStripMenuItem? _petTempToggleItem;
     private System.Diagnostics.Process? _electron;
     private NamedPipeServerStream? _pipe;
     private CancellationTokenSource? _pipeCts;
@@ -154,6 +157,13 @@ public sealed class TrayHost
             SendCmd("drag-mode", dragItem.Checked);
         };
         menu.Items.Add(dragItem);
+        // IKM0TM：「临时隐藏/显示桌宠」——临时路径，Electron 侧不回写设置；
+        // 默认 Visible=false，等 Electron 的 pet-temp-toggle-state enabled 帧再显示
+        // （旧版 Electron 不发该帧 → 项保持隐藏，向后兼容）。
+        var petTempToggleItem = new WF.ToolStripMenuItem("临时隐藏/显示桌宠") { Visible = false };
+        _petTempToggleItem = petTempToggleItem;
+        petTempToggleItem.Click += (_, _) => SendCmd("toggle-pet-temp");
+        menu.Items.Add(petTempToggleItem);
         menu.Items.Add(new WF.ToolStripSeparator());
         // 完全退出（§6）：停调度（engine.Stop()）→ 受控退出 Electron → 扫尾 → 托盘退出。
         menu.Items.Add("完全退出", null, (_, _) =>
@@ -477,6 +487,20 @@ public sealed class TrayHost
                         _dispatcher?.BeginInvoke(new Action(() =>
                         {
                             try { if (_dragModeItem is not null) _dragModeItem.Checked = dragChecked; }
+                            catch { /* 菜单更新失败不致命 */ }
+                        }));
+                    }
+                    break;
+                case "tray.pet-temp-toggle-state":
+                    // IKM0TM：「临时隐藏/显示桌宠」项显隐（连接握手 + 设置变化推送）。
+                    // enabled=false 时同时隐藏菜单项（旧版 Electron 不发本帧 → 恒隐藏）。
+                    if (doc.RootElement.TryGetProperty("enabled", out var petTempEl)
+                        && petTempEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    {
+                        var petTempEnabled = petTempEl.GetBoolean();
+                        _dispatcher?.BeginInvoke(new Action(() =>
+                        {
+                            try { if (_petTempToggleItem is not null) _petTempToggleItem.Visible = petTempEnabled; }
                             catch { /* 菜单更新失败不致命 */ }
                         }));
                     }
