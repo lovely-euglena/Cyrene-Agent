@@ -329,6 +329,20 @@
   padding: 10px 12px 0;
 }
 
+/* 附件导入失败（不支持的类型/caption 失败等）：红色边框提示，悬停可见原因 */
+.cy-composer__attachment.is-error {
+  border-color: var(--rb-danger, #e5484d);
+  background: color-mix(in srgb, var(--rb-danger, #e5484d) 10%, transparent);
+  color: var(--rb-danger, #e5484d);
+}
+
+.cy-composer__attachment-file {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
 .cy-composer__attachment {
   display: inline-flex;
   min-width: 0;
