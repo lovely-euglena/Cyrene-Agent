@@ -96,6 +96,8 @@ interface SettingsWindowApi {
   onSyncChanged?: (callback: () => void) => (() => void) | void;
   setPetAlwaysOnTop: (value: boolean) => void;
   setPetVisible: (value: boolean) => void;
+  setPetVisibilityPersist: (value: boolean) => void;
+  setPetTrayTempToggle: (value: boolean) => void;
   setPetZoom: (value: number) => void;
   // 便携模式 / 缓存目录（通用设置「数据与存储」）
   getPortableStatus?: () => Promise<import("../shared/portable-mode").PortableDataLocationStatus>;
