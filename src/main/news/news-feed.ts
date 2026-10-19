@@ -180,3 +180,20 @@ export function registerNewsIpc(ipc: IpcScope): void {
     service.get(typeof locale === "string" && locale ? locale : "zh-CN"),
   );
 }
+
+/** 注册屏蔽态公告 IPC（暂无稳定公告源）：
+ *
+ * 公告仓库地址指向上游 gitee.com/playa0/cyrene-announcement——fork 阶段
+ * 不应把上游公告灌给用户。装配层改用本函数：NEWS_GET 返回空 payload
+ * （渲染端空列表不弹窗），不创建 service、不装 6h 轮询。
+ * 恢复方式：装配处换回 registerNewsIpc，或公告仓 fork 后改 NEWS_RAW_BASE。
+ */
+export function registerDisabledNewsIpc(ipc: IpcScope): void {
+  ipc.handle(IPC.NEWS_GET, (_event, locale: unknown): NewsResult => ({
+    locale: typeof locale === "string" && locale ? locale : "zh-CN",
+    items: [],
+    version: "",
+    fetchedAt: 0,
+    ok: true,
+  }));
+}

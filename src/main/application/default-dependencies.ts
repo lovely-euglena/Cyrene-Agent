@@ -47,7 +47,7 @@ import { registerCloudStorageIpc } from "../cloud-storage/cloud-storage-ipc";
 import { resolveCacheDir, setCacheDirOverride } from "../cache-dir";
 import { getPortableDataLocationStatus } from "../portable/portable-runtime";
 import type { PortableApplyRequest } from "../../shared/portable-mode";
-import { registerNewsIpc } from "../news/news-feed";
+import { registerDisabledNewsIpc } from "../news/news-feed";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -107,7 +107,7 @@ import { addMcpServer } from "../orchestrator/mcp-manager";
 import { parseCommandLine } from "../../shared/parse-command-line";
 import { ACCESS_LEVEL_LABEL, applyLevel, getCurrentLevel } from "../permission";
 import { registerAppUpdateIpc } from "../updater/app-update-ipc";
-import { createGitHubAppUpdateService, scheduleStartupUpdateCheck } from "../updater/github-app-updater";
+import { createDisabledAppUpdateService } from "../updater/disabled-app-updater";
 import { registerWindowSystemIpc, openChromeGpuWindow } from "../windows/window-system-ipc";
 import { enqueueLLMTask } from "../llm-queue";
 import {
@@ -1839,8 +1839,12 @@ createTray: (input) => {
           ipc: shell.ipc,
         });
 
-        // 应用更新服务（检查/下载按需；安装必须先走受控退出）
-        const update = createGitHubAppUpdateService({
+        // 应用更新服务——当前**屏蔽**：publish 仍指上游 Playa-Cyrene 的 GitHub
+        // Releases，fork 无独立版本号，"更新"会被上游 release 覆盖全部改造。
+        // 暂无稳定更新源，装配 disabled 实现（UI 显示"已是最新"，check/download/
+        // install 全 no-op 零网络请求）。接稳定源（S3 generic provider）后换回
+        // createGitHubAppUpdateService 即可。
+        const update = createDisabledAppUpdateService({
           currentVersion: app.getVersion(),
           isPackaged: app.isPackaged,
         });
@@ -2158,8 +2162,9 @@ createTray: (input) => {
         ipc.handle(IPC.SETTINGS_CYRENE_MODEL_ACTION, (_event, verb: unknown) =>
           runCyreneModelAction(typeof verb === "string" ? verb : ""));
 
-        // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
-        registerNewsIpc(ipc);
+        // 项目公告——当前**屏蔽**（暂无稳定公告源）：NEWS_GET 返回空 payload，
+        // 不建 service、不装 6h 轮询；原因与恢复方式见 registerDisabledNewsIpc
+        registerDisabledNewsIpc(ipc);
 
         registerMemoryUserToolIpc({
           ipc,
@@ -2389,8 +2394,8 @@ createTray: (input) => {
         await core.services.screenshot.prewarm();
       },
       scheduleUpdateCheck: async () => {
-        const dispose = scheduleStartupUpdateCheck(core.services.update);
-        return { dispose };
+        // 更新检查已屏蔽（见上方 update 装配注释）：不装启动轮询。
+        return { dispose: () => undefined };
       },
       startProactiveTrigger: async () => {
         core.services.proactive.initializeProactiveTrigger();
