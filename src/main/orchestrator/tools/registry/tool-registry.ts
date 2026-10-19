@@ -8,16 +8,37 @@ import type { ConversationMode } from "../../../../shared/chat-types";
 import { isVectorMemoryEnabled, isWikiMemoryEnabled } from "../../../memory/memory-mode";
 import { canReadWikiMemory } from "../../../memory/wiki-memory-health";
 import { isKnowledgeBaseAvailable } from "../../../knowledge-base/knowledge-base-service";
+import { nativeSshHost } from "../../../ssh/native-ssh-host";
+import { nativeStorageHost } from "../../../cloud-storage/native-storage-host";
+import { getMusicFolders } from "../../../music/music-manager";
 
 const MEMORY_TOOL_IDS = new Set(["user_memory", "read_memory", "write_memory", "recall_history"]);
 const WIKI_TOOL_IDS = new Set(["wiki_search", "wiki_read_page"]);
 const KNOWLEDGE_TOOL_IDS = new Set(["knowledge_search", "knowledge_read"]);
+// 托管工具三组：未配置宿主/曲库时整组从 prompt 消失（#162 工具瘦身①）。
+// 判定全部走内存（host 进程句柄 / settings 缓存），禁止在 isToolAvailable 里做 IO。
+const SSH_TOOL_IDS = new Set(["ssh_profiles", "ssh_profile_save", "ssh_open", "ssh_exec", "ssh_close"]);
+const STORAGE_TOOL_IDS = new Set(["cloud_profiles", "cloud_profile_save", "cloud_read", "cloud_download", "cloud_upload", "cloud_manage"]);
+const MUSIC_TOOL_IDS = new Set(["music_library", "music_now_playing", "music_play", "music_manage"]);
+
+/** 测试注入（与 memory-mode 的 setMemoryMode 同模式）：覆盖三组托管工具的
+ * 可用性判定，null=回到真实内存态。仅测试使用。 */
+let availabilityOverride: { ssh?: boolean; storage?: boolean; music?: boolean } | null = null;
+export function setHostedToolAvailabilityForTest(
+  patch: { ssh?: boolean; storage?: boolean; music?: boolean } | null,
+): void {
+  availabilityOverride = patch;
+}
 
 function isToolAvailable(tool: ToolDefinition): boolean {
-  return tool.enabled && !tool.deprecated &&
-    (isVectorMemoryEnabled() || !MEMORY_TOOL_IDS.has(tool.id)) &&
-    ((isWikiMemoryEnabled() && canReadWikiMemory()) || !WIKI_TOOL_IDS.has(tool.id)) &&
-    (isKnowledgeBaseAvailable() || !KNOWLEDGE_TOOL_IDS.has(tool.id));
+  if (!tool.enabled || tool.deprecated) return false;
+  if (MEMORY_TOOL_IDS.has(tool.id) && !isVectorMemoryEnabled()) return false;
+  if (WIKI_TOOL_IDS.has(tool.id) && !(isWikiMemoryEnabled() && canReadWikiMemory())) return false;
+  if (KNOWLEDGE_TOOL_IDS.has(tool.id) && !isKnowledgeBaseAvailable()) return false;
+  if (SSH_TOOL_IDS.has(tool.id) && !(availabilityOverride?.ssh ?? nativeSshHost.isRunning())) return false;
+  if (STORAGE_TOOL_IDS.has(tool.id) && !(availabilityOverride?.storage ?? nativeStorageHost.isRunning())) return false;
+  if (MUSIC_TOOL_IDS.has(tool.id) && !(availabilityOverride?.music ?? getMusicFolders().length > 0)) return false;
+  return true;
 }
 
 /** 工具效果类型：决定工具对系统状态的影响分类。未配置默认 "unknown"。 */
