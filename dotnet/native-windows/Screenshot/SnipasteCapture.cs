@@ -130,10 +130,21 @@ internal static class SnipasteCapture
                 "SNIPASTE_NOT_FOUND",
                 "未检测到 Snipaste，请在设置中填写 Snipaste.exe 路径");
 
+        // 版本预检（#178）：`snip` CLI 是 Beta 版特性，稳定版收到参数会弹
+        // "命令行参数错误"。预检命中稳定版时给可读错误，不再触发弹窗。
+        var cliSupport = DetectCliSupport(exe);
+        if (cliSupport == CliSupport.Stable)
+        {
+            throw new SnipasteCaptureException(
+                "SNIPASTE_CLI_UNSUPPORTED",
+                "当前 Snipaste 是稳定版，不支持命令行截图（需要 Beta 版）。请升级 Snipaste Beta，或改用系统截图后粘贴。");
+        }
+
         EnsureResidentRunning(exe, options.ResidentTimeoutMs);
 
         var before = TryReadClipboardPng();
 
+        var sw = Stopwatch.StartNew();
         using var process = StartSnipCommand(exe);
         if (!process.WaitForExit(options.TimeoutMs))
         {
@@ -144,6 +155,16 @@ internal static class SnipasteCapture
         var after = TryReadClipboardPng();
         if (after is null || (before is not null && before.AsSpan().SequenceEqual(after)))
         {
+            // 行为探测兜底（#178）：版本读不出（Unknown）时，"CLI 进程秒退 +
+            // 剪贴板无变化"大概率是稳定版拒绝参数（弹窗后退出），报可读的
+            // CLI 不支持而非误导性的"已取消"。Beta 转发秒退属正常路径，
+            // 用户真取消时保持原 SCREENSHOT_CANCELLED 语义。
+            if (cliSupport == CliSupport.Unknown && sw.ElapsedMilliseconds < QuickExitMs)
+            {
+                throw new SnipasteCaptureException(
+                    "SNIPASTE_CLI_UNSUPPORTED",
+                    "Snipaste 未接受命令行截图参数（CLI 进程秒退且剪贴板无变化，疑似稳定版）。请升级 Snipaste Beta，或改用系统截图后粘贴。");
+            }
             throw new SnipasteCaptureException("SCREENSHOT_CANCELLED", "已取消截图");
         }
 
@@ -159,6 +180,36 @@ internal static class SnipasteCapture
         }
 
         return new CaptureResult(filePath, size.Width, size.Height);
+    }
+
+    private enum CliSupport
+    {
+        Beta,
+        Stable,
+        Unknown,
+    }
+
+    // 秒退阈值：正常截图选区交互远超该时长；CLI 参数被拒时 Snipaste 弹窗后
+    // 1.5s 内退出（SnipasteCaptureException 走可读指引，与 TS 侧阈值一致）。
+    private const long QuickExitMs = 1500;
+
+    /// <summary>读 exe 版本信息判 CLI 支持度：Beta 标记=beta；有版本但无标记=stable；
+    /// 读取失败/无版本=unknown（调用方转行为探测兜底）。</summary>
+    private static CliSupport DetectCliSupport(string exe)
+    {
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(exe);
+            var text = $"{info.ProductVersion} {info.FileVersion}".Trim();
+            if (text.Length == 0) return CliSupport.Unknown;
+            return text.Contains("beta", StringComparison.OrdinalIgnoreCase)
+                ? CliSupport.Beta
+                : CliSupport.Stable;
+        }
+        catch
+        {
+            return CliSupport.Unknown;
+        }
     }
 
     private static Process StartSnipCommand(string exe)

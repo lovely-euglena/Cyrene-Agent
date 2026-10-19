@@ -130,6 +130,7 @@
     "screenshotHelperNotReady": "スクリーンショットコンポーネントの準備ができていません。しばらくしてから再試行してください。",
     "screenshotSnipasteUnavailable": "使用可能な Snipaste が見つかりません。設定でパスを入力するか、内蔵スクリーンショットに切り戻してください。",
     "screenshotSnipasteTimeout": "Snipaste の応答がタイムアウトしたため、キャンセルしました。",
+    "screenshotSnipasteCliUnsupported": "インストール済みの Snipaste はコマンドライン取得に対応していません（Beta 版が必要）。Snipaste Beta に更新するか、システムのスクリーンショットから貼り付けてください。",
     "screenshotCancelled": "スクリーンショットをキャンセルしました。",
     "screenshotFileMissing": "スクリーンショットに失敗しました：スクリーンショットファイルが生成されませんでした。",
     "screenshotFailed": "スクリーンショットに失敗しました：{{reason}}",

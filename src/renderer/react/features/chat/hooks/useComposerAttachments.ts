@@ -207,6 +207,8 @@ export function useComposerAttachments(input: {
     let tone: "info" | "error" = "error";
     if (reason.startsWith("HELPER_")) {
       text = t("chatPage.screenshotHelperNotReady");
+    } else if (reason === "SNIPASTE_CLI_UNSUPPORTED") {
+      text = t("chatPage.screenshotSnipasteCliUnsupported");
     } else if (reason === "SNIPASTE_TIMEOUT") {
       text = t("chatPage.screenshotSnipasteTimeout");
     } else if (reason.startsWith("SNIPASTE_")) {

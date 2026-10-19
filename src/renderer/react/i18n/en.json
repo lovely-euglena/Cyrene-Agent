@@ -114,6 +114,7 @@
     "screenshotHelperNotReady": "The screenshot tool isn't ready yet — please try again in a moment.",
     "screenshotSnipasteUnavailable": "No usable Snipaste was found. Set its path in Settings, or switch back to the built-in screenshot tool.",
     "screenshotSnipasteTimeout": "Timed out waiting for Snipaste; the screenshot was canceled.",
+    "screenshotSnipasteCliUnsupported": "The installed Snipaste does not support command-line capture (Beta required). Please upgrade to Snipaste Beta, or paste from a system screenshot instead.",
     "screenshotCancelled": "Screenshot canceled.",
     "screenshotFileMissing": "Screenshot failed: no image file was created.",
     "screenshotFailed": "Screenshot failed: {{reason}}",

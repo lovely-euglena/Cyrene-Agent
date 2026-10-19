@@ -59,6 +59,8 @@ function createClient(
     screenshotDirectory: path.join("C:\\", "shots"),
     readClipboardPng: () => null,
     isProcessRunningImpl: async () => true,
+    // 默认 Beta 版本：既有用例保持原 CLI/取消语义；CLI 支持度专用用例单独注入
+    readVersionImpl: () => "2.8.8 Beta",
     createRequestId: () => REQUEST_ID,
     writeFileImpl: async (filePath, data) => {
       writes.push({ filePath, data });
@@ -121,6 +123,35 @@ describe("SnipasteScreenshotClient", () => {
   it("剪贴板无变化（用户取消）时抛 SCREENSHOT_CANCELLED", async () => {
     const same = pngBuffer(100, 100);
     const { client } = createClient({ readClipboardPng: () => same });
+    await expect(client.start("clipboard-and-file", "chat-button")).rejects.toThrow("SCREENSHOT_CANCELLED:user");
+  });
+
+  it("版本预检：稳定版（无 Beta 标记）不发 CLI 参数，直接抛 SNIPASTE_CLI_UNSUPPORTED", async () => {
+    const { client, calls } = createClient({ readVersionImpl: () => "2.8.8" });
+    await expect(client.start("clipboard-and-file", "chat-button")).rejects.toThrow("SNIPASTE_CLI_UNSUPPORTED");
+    expect(calls.join("\n")).not.toContain("snip");
+  });
+
+  it("行为探测兜底：unknown 版本 + CLI 进程秒退 + 剪贴板无变化 → SNIPASTE_CLI_UNSUPPORTED", async () => {
+    const { client } = createClient({
+      readVersionImpl: () => null, // 版本读不出（unknown），启用秒退探测
+      readClipboardPng: () => null, // 剪贴板始终无变化
+    });
+    // mock spawnImpl 秒退（工厂默认 setTimeout 0 退出）→ isQuickExit 命中
+    await expect(client.start("clipboard-and-file", "chat-button")).rejects.toThrow("SNIPASTE_CLI_UNSUPPORTED");
+  });
+
+  it("unknown 版本但非秒退（用户先选区再取消）保持 SCREENSHOT_CANCELLED 语义", async () => {
+    const { client } = createClient({
+      readVersionImpl: () => null,
+      readClipboardPng: () => null,
+      spawnImpl: (command, args) => {
+        void command; void args;
+        const child = createFakeChild();
+        setTimeout(() => child.emit("exit", 0), 1600);
+        return child;
+      },
+    });
     await expect(client.start("clipboard-and-file", "chat-button")).rejects.toThrow("SCREENSHOT_CANCELLED:user");
   });
 
