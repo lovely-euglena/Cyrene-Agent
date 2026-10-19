@@ -7,6 +7,7 @@ import { ChatComposer, parseComposerMessage } from "../components/ChatComposer";
 import { collectNewlyUnreadSessionIds } from "../components/session-unread";
 import { ComposerSlot } from "../components/ComposerSlot";
 import { TodoPanel } from "../components/TodoPanel";
+import { LearnExamListPanel } from "../components/LearnExamListPanel";
 import { CodeGitPanel } from "../components/CodeGitPanel";
 import type { PlanReviewPhase } from "../components/PlanReviewPanel";
 import { ChatPageInspector } from "../components/ChatPageInspector";
@@ -425,7 +426,11 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     if (!api) return;
     const onCreated = (event: { conversationId: string; examId: string }) => {
       if (event.conversationId !== activeSessionId) return;
-      void window.browserPanel?.openExam(event.examId, event.conversationId);
+      void window.browserPanel?.openExam(event.examId, event.conversationId)
+        ?.then((opened) => {
+          if (!opened) console.warn("[learn-exam] 自动开卷失败（openExam 返回 false），可通过「本会话试卷」列表手动打开", event.examId);
+        })
+        .catch((error) => console.warn("[learn-exam] 自动开卷异常", event.examId, error));
     };
     const onChanged = (event: { conversationId: string; examId: string; gradingRequested?: boolean }) => {
       if (event.conversationId !== activeSessionId) return;
@@ -1957,6 +1962,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             mode={mode}
             containerRef={workspaceRef}
           />
+        )}
+        {mode === "learn" && activeSessionId && (
+          <LearnExamListPanel sessionId={activeSessionId} />
         )}
         {mode === "code" && activeSessionId && (
           <CodeGitPanel
