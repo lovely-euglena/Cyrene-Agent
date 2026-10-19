@@ -60,6 +60,7 @@ import { runDocumentImportJobViaSidecar } from "../rag/document-import-sidecar";
 import { isSidecarEnabled } from "../rag/embedding-sidecar";
 import { registerWikiMemoryIpc } from "../memory/wiki-memory-ipc";
 import { registerKnowledgeBaseIpc } from "../knowledge-base/knowledge-base-ipc";
+import { initShellWakeService } from "../orchestrator/tools/shell-wake-service";
 import { initializeKnowledgeBase } from "../knowledge-base/knowledge-base-service";
 import { createLlmClient } from "../services/llm/llm-client";
 import { createTtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -368,6 +369,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   let lastPluginArgs: Parameters<CoreDependencies["startPlugins"]> | null = null;
   // ipc holder：startCore 装配时填充（shell.ipc 生命周期跟随应用）
   let shellIpc: IpcScope | null = null;
+  // 后台 Shell 终态通知服务（#182）：dispose 挂受控退出（先停派发再清理）
+  let shellWake: { dispose(): void } | null = null;
   // 未绑定即抛错。历史实现回退到 createIpcScope()，会让「插件列表回退」与
   // 「PluginManager 正式注册」落在不同 IpcScope 上：removeHandler 命不中残留的
   // plugins:list，二次 handle 时 Electron 抛 "Attempted to register a second
@@ -1679,6 +1682,12 @@ createTray: (input) => {
         phase: "stopExternalConsumers",
         dispose: async () => { await syncService.stop(); },
       });
+      // 后台 Shell 终态通知（#182）：退出时先停派发，再清理 Shell 与数据库
+      shutdown.register({
+        id: "shell-wake",
+        phase: "stopExternalConsumers",
+        dispose: async () => { shellWake?.dispose(); shellWake = null; },
+      });
       return startCore({
       shell,
       readiness,
@@ -2168,6 +2177,9 @@ createTray: (input) => {
         });
         registerWikiMemoryIpc(ipc);
         registerKnowledgeBaseIpc(ipc);
+
+        // 后台 Shell 终态通知（#182 第一刀）：广播到聊天窗口做轻提示
+        shellWake = initShellWakeService();
 
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });

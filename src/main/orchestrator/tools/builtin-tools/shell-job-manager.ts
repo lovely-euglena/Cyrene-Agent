@@ -92,6 +92,31 @@ const jobs = new Map<string, ShellJob>();
 let jobCounter = 0;
 let lifecycleInstalled = false;
 
+/** 后台任务终态事件（#182）：settleJob 唯一入口发出，一次一个任务。
+ * 订阅方（shell-wake-service）负责护栏与 renderer 通知；manager 只管事实。 */
+export interface ShellJobTerminalEvent {
+  jobId: string;
+  status: Exclude<ShellJobStatus, "running">;
+  exitCode: number | null;
+  reason: string | null;
+  command: string;
+  totalBytes: number;
+  logFile: string;
+}
+
+const terminalSubscribers = new Set<(evt: ShellJobTerminalEvent) => void>();
+
+/** 订阅后台任务终态；返回反注册函数。settleJob 先到先得语义下每任务至多一发。 */
+export function subscribeShellJobTerminal(cb: (evt: ShellJobTerminalEvent) => void): () => void {
+  terminalSubscribers.add(cb);
+  return () => terminalSubscribers.delete(cb);
+}
+
+/** 应用退出/测试隔离用：清空订阅（先停派发再清理的资源顺序约定）。 */
+export function clearShellJobTerminalSubscribers(): void {
+  terminalSubscribers.clear();
+}
+
 /** 可靠终止进程树。Windows 上 child.kill("SIGKILL") 只杀直接子进程，杀不掉孙进程。 */
 export function killTree(child: ChildProcess | undefined | null): void {
   if (!child || child.pid == null) return;
@@ -166,6 +191,21 @@ function settleJob(
   for (const wake of job.terminalWaiters) wake();
   job.terminalWaiters.clear();
   logger.info(LogTag.BuiltinTools, `[shell_job] ${job.jobId} → ${status}${job.reason ? ` (${job.reason})` : ""} bytes=${job.totalBytes}`);
+  // 终态事件派发（#182）：同步逐个调用，订阅方异常不影响其余订阅与既有流程
+  if (terminalSubscribers.size > 0) {
+    const evt: ShellJobTerminalEvent = {
+      jobId: job.jobId,
+      status,
+      exitCode: job.exitCode,
+      reason: job.reason,
+      command: job.command,
+      totalBytes: job.totalBytes,
+      logFile: job.logFile,
+    };
+    for (const cb of terminalSubscribers) {
+      try { cb(evt); } catch (err) { logger.warn(LogTag.BuiltinTools, "[shell_job] terminal subscriber error:", err); }
+    }
+  }
 }
 
 /** 输出追加：计数 → 写盘 → 超限检查。终止后到达的残留 chunk 直接丢弃。 */
