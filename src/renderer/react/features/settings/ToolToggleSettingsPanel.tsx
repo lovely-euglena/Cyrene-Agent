@@ -25,6 +25,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { siGit, type SimpleIcon } from "simple-icons";
+import { groupByToolGroup } from "../../../../shared/tool-groups";
 import { useTranslation } from "../../i18n";
 import "./ToolToggleSettingsPanel.css";
 
@@ -237,13 +238,36 @@ export function ToolToggleSettingsPanel() {
             t.description.toLowerCase().includes(kw),
         )
       : shown;
-    return [...searched].sort((a, b) => {
-      const aOn = isToolOn(a, tab, overrides);
-      const bOn = isToolOn(b, tab, overrides);
-      if (aOn !== bOn) return aOn ? -1 : 1;
-      return a.id.localeCompare(b.id);
+    return searched;
+  }, [tools, filter]);
+
+  // 分组视图（#98 顺手项）：组间/组内顺序均恒定，开关（overrides）变化不再
+  // 触发重排跳动——批量开关时其他条目位置不动，只有状态点变化。
+  const groupedTools = useMemo(
+    () => groupByToolGroup([...visibleTools].sort((a, b) => a.id.localeCompare(b.id))),
+    [visibleTools],
+  );
+
+  // 折叠状态：localStorage 持久化（跨会话记忆用户偏好）。
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try {
+      const raw = window.localStorage.getItem("toolPanel.collapsedGroups");
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const toggleGroupCollapsed = useCallback((key: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        window.localStorage.setItem("toolPanel.collapsedGroups", JSON.stringify([...next]));
+      } catch { /* 隐私模式等 localStorage 不可用：仅会话内生效 */ }
+      return next;
     });
-  }, [tools, overrides, filter, tab, isToolOn]);
+  }, []);
 
   return (
     <>
@@ -297,33 +321,54 @@ export function ToolToggleSettingsPanel() {
         {loading ? (
           <div className="tool-panel__loading">{t("common.loading")}</div>
         ) : (
-          <div className="tool-panel__grid">
-            {visibleTools.map((tool) => {
-              const isOn = isToolOn(tool, tab, overrides);
+          <>
+            {groupedTools.map((section) => {
+              const collapsed = collapsedGroups.has(section.key);
               return (
-                <div key={tool.id} className={"tool-card" + (isOn ? "" : " is-off")}>
-                  <ToolIcon toolId={tool.id} />
-                  <div className="tool-card__body">
-                    <div className="tool-card__name">
-                      {tool.name}
-                      {!tool.enabled && <span className="tool-card__badge">{t("toolPanel.disabledBadge")}</span>}
-                    </div>
-                    <div className="tool-card__desc">{tool.description.split("\n")[0] || t("toolPanel.noDescription")}</div>
-                  </div>
+                <div key={section.key} className="tool-panel__group">
                   <button
                     type="button"
-                    role="switch"
-                    aria-checked={isOn}
-                    className={"tool-card__pill" + (isOn ? " is-on" : "")}
-                    onClick={() => toggleMode(tool.id, tab, !isOn)}
+                    className="tool-panel__group-head"
+                    aria-expanded={!collapsed}
+                    onClick={() => toggleGroupCollapsed(section.key)}
                   >
-                    <span className="tool-card__pill-knob" />
+                    <span className={"tool-panel__group-chevron" + (collapsed ? " is-collapsed" : "")}>▸</span>
+                    <strong>{t(`toolPanel.group.${section.key}`)}</strong>
+                    <span className="tool-panel__group-count">{section.tools.length}</span>
                   </button>
+                  {!collapsed && (
+                    <div className="tool-panel__grid">
+                      {section.tools.map((tool) => {
+                        const isOn = isToolOn(tool, tab, overrides);
+                        return (
+                          <div key={tool.id} className={"tool-card" + (isOn ? "" : " is-off")}>
+                            <ToolIcon toolId={tool.id} />
+                            <div className="tool-card__body">
+                              <div className="tool-card__name">
+                                {tool.name}
+                                {!tool.enabled && <span className="tool-card__badge">{t("toolPanel.disabledBadge")}</span>}
+                              </div>
+                              <div className="tool-card__desc">{tool.description.split("\n")[0] || t("toolPanel.noDescription")}</div>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={isOn}
+                              className={"tool-card__pill" + (isOn ? " is-on" : "")}
+                              onClick={() => toggleMode(tool.id, tab, !isOn)}
+                            >
+                              <span className="tool-card__pill-knob" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
-            {visibleTools.length === 0 && <div className="tool-panel__empty">{t("toolPanel.noMatch")}</div>}
-          </div>
+            {groupedTools.length === 0 && <div className="tool-panel__empty">{t("toolPanel.noMatch")}</div>}
+          </>
         )}
       </Card>
     </>

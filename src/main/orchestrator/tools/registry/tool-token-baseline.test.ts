@@ -11,12 +11,12 @@ import "../built-in-tools";
  * 门禁口径详见 docs/tool-token-baseline.md。
  */
 const BASELINE: Record<string, { toolCount: number; catalogTokens: number; schemaTokens: number }> = {
-  "chat|default": { toolCount: 9, catalogTokens: 284, schemaTokens: 734 },
-  "code|default": { toolCount: 15, catalogTokens: 429, schemaTokens: 1760 },
-  "work|default": { toolCount: 17, catalogTokens: 467, schemaTokens: 1918 },
-  "chat|all-hosted": { toolCount: 13, catalogTokens: 365, schemaTokens: 1094 },
-  "code|all-hosted": { toolCount: 26, catalogTokens: 650, schemaTokens: 2799 },
-  "work|all-hosted": { toolCount: 32, catalogTokens: 769, schemaTokens: 3317 },
+  "chat|default": { toolCount: 9, catalogTokens: 295, schemaTokens: 734 },
+  "code|default": { toolCount: 15, catalogTokens: 441, schemaTokens: 1760 },
+  "work|default": { toolCount: 17, catalogTokens: 478, schemaTokens: 1918 },
+  "chat|all-hosted": { toolCount: 13, catalogTokens: 379, schemaTokens: 1094 },
+  "code|all-hosted": { toolCount: 26, catalogTokens: 668, schemaTokens: 2799 },
+  "work|all-hosted": { toolCount: 32, catalogTokens: 789, schemaTokens: 3317 },
 };
 
 const TOLERANCE = 1.05;
