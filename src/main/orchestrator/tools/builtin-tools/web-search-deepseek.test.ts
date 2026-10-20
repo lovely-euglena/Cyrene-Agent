@@ -70,6 +70,52 @@ describe("deepseekSearch（#173）", () => {
   });
 });
 
+describe("zhipuSearch（#186 扩展）", () => {
+  it("解析 search_result：title/link/content 首段 → WebSearchResult，media 作 source", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ search_result: [
+        { title: "智谱结果", content: "正文第一段\n正文第二段", link: "https://example.cn/1", media: "ExampleCN" },
+        { content: "无标题条目", link: "https://example.cn/2" },
+      ] }),
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchMock);
+    setSearchConfig(() => "zhipu", () => "", () => "", () => "", () => "", () => "zhipu-key");
+    const output = JSON.parse(await webSearchTool.execute!({ query: "经济事件" }, undefined) as string);
+    expect(output.success).toBe(true);
+    expect(output.resultCount).toBe(2);
+    expect(output.results[0]).toEqual({ title: "智谱结果", url: "https://example.cn/1", snippet: "正文第一段", source: "ExampleCN" });
+    expect(output.results[1].title).toBe("https://example.cn/2");
+    // 请求体断言：search-prime 引擎 + query 透传
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.search_engine).toBe("search-prime");
+    expect(body.search_query).toBe("经济事件");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer zhipu-key");
+  });
+
+  it("空态：search_result 缺失/空数组 → resultCount 0", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => makeDsResp({}) as unknown as Response));
+    setSearchConfig(() => "zhipu", () => "", () => "", () => "", () => "", () => "k");
+    const output = JSON.parse(await webSearchTool.execute!({ query: "q" }, undefined) as string);
+    expect(output.resultCount).toBe(0);
+  });
+
+  it("key 缺失（shared 渠道未配/单独为空）→ E_SEARCH_KEY_MISSING", async () => {
+    setSearchConfig(() => "zhipu", () => "", () => "", () => "", () => "", () => "");
+    await expect(webSearchTool.execute!({ query: "q" }, undefined)).rejects.toThrow("E_SEARCH_KEY_MISSING");
+  });
+
+  it("zhipu 后端：web_search 暴露；非搜索工具不受影响", () => {
+    expect(shouldExposeSearchTool("web_search", "zhipu")).toBe(true);
+    expect(shouldExposeSearchTool("minimax-web-search-1", "zhipu")).toBe(false);
+    expect(shouldExposeSearchTool("run_shell", "zhipu")).toBe(true);
+  });
+});
+
 describe("deepseek 后端互斥过滤（#173）", () => {
   it("deepseek 后端：web_search 暴露；minimax 专属不适用；非搜索工具不受影响", () => {
     expect(shouldExposeSearchTool("web_search", "deepseek")).toBe(true);

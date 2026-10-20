@@ -26,13 +26,14 @@ let searchBochaKeyGetter: (() => string) | null = null;
 let searchTavilyKeyGetter: (() => string) | null = null;
 let searchAnySearchKeyGetter: (() => string) | null = null;
 let searchDeepseekKeyGetter: (() => string) | null = null;
+let searchZhipuKeyGetter: (() => string) | null = null;
 
 /** DeepSeek 搜索的用户原始问题透传上限（官方规格 1-128 字符）。 */
 const DEEPSEEK_ORI_QUESTION_MAX_CHARS = 128;
 
 /**
  * index.ts 启动时调用，注入搜索引擎/各源key 的读取器。
- * engine: "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek"
+ * engine: "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek" | "zhipu"
  */
 export function setSearchConfig(
   engineGetter: () => string,
@@ -40,12 +41,14 @@ export function setSearchConfig(
   tavilyKeyGetter: () => string,
   anySearchKeyGetter: () => string,
   deepseekKeyGetter?: () => string,
+  zhipuKeyGetter?: () => string,
 ): void {
   searchEngineGetter = engineGetter;
   searchBochaKeyGetter = bochaKeyGetter;
   searchTavilyKeyGetter = tavilyKeyGetter;
   searchAnySearchKeyGetter = anySearchKeyGetter;
   searchDeepseekKeyGetter = deepseekKeyGetter ?? null;
+  searchZhipuKeyGetter = zhipuKeyGetter ?? null;
 }
 
 interface BochaResult {
@@ -200,6 +203,58 @@ async function deepseekSearch(
   }
 }
 
+/** 智谱 Web Search（#186 扩展）：POST /api/paas/v4/web_search，Bearer 与
+ * GLM 对话渠道同 key 体系（key 来源=设置选项：共用渠道/单独填写）。
+ * 响应 search_result: [{title, content, link, media, publish_date...}]。 */
+async function zhipuSearch(
+  query: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<WebSearchOutput> {
+  const url = "https://api.z.ai/api/paas/v4/web_search";
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), SEARCH_TIMEOUT_MS);
+  const combinedSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      signal: combinedSignal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        search_engine: "search-prime",
+        search_query: query,
+        count: 8,
+      }),
+    });
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    const data = await resp.json() as { search_result?: Array<{ title?: string; content?: string; link?: string; media?: string }> };
+    const raw = data.search_result ?? [];
+    const results: WebSearchResult[] = raw.map((r) => ({
+      title: r.title || r.link || "",
+      url: r.link || "",
+      snippet: truncateSnippet((r.content || "").split("\n")[0]),
+      ...(r.media ? { source: r.media } : {}),
+    }));
+    const output: WebSearchOutput = {
+      success: true,
+      query,
+      resultCount: results.length,
+      results,
+    };
+    return output;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`搜索失败：${msg}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Tavily 搜索：调 /search，返回结构化结果。 */
 async function tavilySearch(query: string, key: string, signal?: AbortSignal): Promise<WebSearchOutput> {
   const url = "https://api.tavily.com/search";
@@ -338,6 +393,12 @@ async function executeWebSearch(args: Record<string, unknown>, ctx?: ToolContext
       throw new Error("E_SEARCH_KEY_MISSING");
     }
     output = await deepseekSearch(query, key, ctx?.signal, ctx?.userQuery);
+  } else if (engine === "zhipu") {
+    const key = searchZhipuKeyGetter?.() ?? "";
+    if (!key) {
+      throw new Error("E_SEARCH_KEY_MISSING");
+    }
+    output = await zhipuSearch(query, key, ctx?.signal);
   } else {
     throw new Error(`E_SEARCH_ENGINE_NOT_SUPPORTED:${engine}`);
   }
@@ -381,6 +442,7 @@ export const webSearchTool: ToolDefinition = {
         tavilyKey: searchTavilyKeyGetter?.() ?? "",
         anySearchKey: searchAnySearchKeyGetter?.() ?? "",
         deepseekKey: searchDeepseekKeyGetter?.() ?? "",
+        zhipuKey: searchZhipuKeyGetter?.() ?? "",
       },
     });
     return nativeFirst("web_search", args, (nativeArgs) => executeWebSearch(nativeArgs, ctx), {

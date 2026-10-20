@@ -126,6 +126,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   searchTavilyKey: "",
   searchMinimaxKey: "",
   searchDeepseekKey: "",
+  searchZhipuKeySource: "shared",
+  searchZhipuKey: "",
   searchAnySearchKey: "",
   emailEnabled: false,
   emailSmtpHost: "",
@@ -376,6 +378,8 @@ export function normalizeGeneralSettings(
     searchMinimaxKey: typeof input?.searchMinimaxKey === "string" ? input.searchMinimaxKey : "",
     searchAnySearchKey: typeof input?.searchAnySearchKey === "string" ? input.searchAnySearchKey : "",
     searchDeepseekKey: typeof input?.searchDeepseekKey === "string" ? input.searchDeepseekKey : "",
+    searchZhipuKeySource: input?.searchZhipuKeySource === "custom" ? "custom" : "shared",
+    searchZhipuKey: typeof input?.searchZhipuKey === "string" ? input.searchZhipuKey : "",
     emailEnabled: Boolean(input?.emailEnabled),
     emailSmtpHost: typeof input?.emailSmtpHost === "string" ? input.emailSmtpHost : "",
     emailSmtpPort: clampPort(input?.emailSmtpPort, DEFAULT_GENERAL_SETTINGS.emailSmtpPort),
@@ -651,5 +655,26 @@ export function saveGeneralSettings(partial: Partial<GeneralSettings>): GeneralS
 export function refreshGeneralSettingsFromKeyring(): void {
   if (generalSettingsCache !== null) {
     applyKeyringToGeneralSettings(generalSettingsCache as unknown as Record<string, unknown>);
+  }
+}
+
+/** 智谱搜索 key 解析（#186 扩展）：searchZhipuKeySource =
+ * "shared" → 复用 GLM 对话渠道的 perProvider.glm.apiKey（同平台同 key）；
+ * "custom" → 用搜索设置里单独填写的 searchZhipuKey。返回空串=未配置，
+ * 调用方报 E_SEARCH_KEY_MISSING。 */
+export function resolveSearchZhipuKey(): string {
+  const settings = loadGeneralSettings();
+  if (settings.searchZhipuKeySource === "custom") return settings.searchZhipuKey.trim();
+  const provider = (loadModelSettingsSafe()?.perProvider ?? {})["glm"];
+  return (provider?.apiKey ?? "").trim();
+}
+
+function loadModelSettingsSafe(): { perProvider?: Record<string, { apiKey?: string }> } | null {
+  try {
+    // 懒加载避免 settings-facade ↔ model-settings 启动期循环依赖
+    const { loadModelSettings } = require("./model-settings") as typeof import("./model-settings");
+    return loadModelSettings();
+  } catch {
+    return null;
   }
 }

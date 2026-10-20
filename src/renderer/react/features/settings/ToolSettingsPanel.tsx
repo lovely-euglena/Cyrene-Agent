@@ -6,7 +6,7 @@ import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } 
 import { useTranslation } from "../../i18n";
 import { Card } from "../../components/ui/Card";
 
-type SearchEngine = "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek";
+type SearchEngine = "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek" | "zhipu";
 type PermissionLevel = "project-read-only" | "read-only" | "scoped" | "per-action" | "full";
 
 interface ToolValues {
@@ -20,6 +20,8 @@ interface ToolValues {
   searchMinimaxKey: string;
   searchAnySearchKey: string;
   searchDeepseekKey: string;
+  searchZhipuKeySource: "shared" | "custom";
+  searchZhipuKey: string;
   emailEnabled: boolean;
   emailSmtpHost: string;
   emailSmtpPort: number;
@@ -31,7 +33,7 @@ interface ToolValues {
 
 const defaults: ToolValues = {
   weatherEnabled: false, weatherSource: "open-meteo", amapKey: "", travelEnabled: false,
-  searchEngine: "off", searchBochaKey: "", searchTavilyKey: "", searchMinimaxKey: "", searchAnySearchKey: "", searchDeepseekKey: "",
+  searchEngine: "off", searchBochaKey: "", searchTavilyKey: "", searchMinimaxKey: "", searchAnySearchKey: "", searchDeepseekKey: "", searchZhipuKeySource: "shared", searchZhipuKey: "",
   emailEnabled: false, emailSmtpHost: "", emailSmtpPort: 465, emailSmtpSecure: true,
   emailSmtpUser: "", emailSmtpPass: "", emailFromName: "",
 };
@@ -295,8 +297,11 @@ export function ToolSettingsPanel() {
           onToggle={() => toggleCard("search")}
           toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.searchEnabled")} checked={values.searchEngine !== "off"} disabled={saving} onChange={(checked) => void setSearchEnabled(checked)} />}
         >
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={activeSearch} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch", "deepseek"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(values[searchKey])} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={activeSearch} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch", "deepseek", "zhipu"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div>
+          {activeSearch === "zhipu" && (
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchZhipuKeySource")}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchZhipuKeySource")} value={values.searchZhipuKeySource} disabled={saving} options={[{ value: "shared", label: t("settingsPage.tools.searchZhipuShared") }, { value: "custom", label: t("settingsPage.tools.searchZhipuCustom") }]} onChange={(value) => void savePatch({ searchZhipuKeySource: value as "shared" | "custom", searchZhipuKey: values.searchZhipuKey })} /></div></div>
+        )}
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(searchKey === "searchZhipuKey" ? (values.searchZhipuKeySource === "shared" ? "" : values.searchZhipuKey) : values[searchKey])} disabled={searchKey === "searchZhipuKey" && values.searchZhipuKeySource === "shared"} placeholder={searchKey === "searchZhipuKey" && values.searchZhipuKeySource === "shared" ? t("settingsPage.tools.searchZhipuSharedHint") : undefined} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving || (searchKey === "searchZhipuKey" && values.searchZhipuKeySource === "shared")} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div>
         </ToolConfigCard>
 
         <ToolConfigCard

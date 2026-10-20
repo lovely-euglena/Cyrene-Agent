@@ -22,6 +22,7 @@ import { nativeToolHost } from "../orchestrator/tools/native-tool-host";
 import { getDateLocale } from "../locale-context";
 import type { SceneIndex } from "../scene-embedder";
 import { reactChatWindow } from "../windows/window-state";
+import { resolveSearchZhipuKey } from "../settings/settings-facade";
 
 export interface BootstrapConfigContext {
   loadGeneralSettings: () => GeneralSettings;
@@ -116,6 +117,7 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
     () => loadGeneralSettings().searchTavilyKey,
     () => loadGeneralSettings().searchAnySearchKey,
     () => loadGeneralSettings().searchDeepseekKey,
+    () => resolveSearchZhipuKey(),
   );
 
   // 注入出行工具 amapKey 获取器（复用 GeneralSettings 中的 amapKey）
