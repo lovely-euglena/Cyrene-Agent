@@ -1013,6 +1013,11 @@
     "backToWorkspace": "Back to workspace",
     "basicSettings": "Basics",
     "browserControl": {
+      "adblockTitle": "Ad blocking",
+      "adblockDescription": "Block ads and tracking requests in the built-in browser (uBlock/EasyList rules)",
+      "adblockAllowlist": "Allowlist domains",
+      "adblockAllowlistDescription": "Comma-separated; matching domains are never blocked",
+      "adblockAllowlistPlaceholder": "e.g. example.com, news.example.org",
       "navLabel": "Browser control",
       "title": "Browser control",
       "description": "Manage session data for Cyrene's embedded browser.",

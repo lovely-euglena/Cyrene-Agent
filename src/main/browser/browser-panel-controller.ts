@@ -108,6 +108,8 @@ export class BrowserPanelController {
     getWindow: () => BrowserWindow | null,
     onStateChanged: (state: BrowserPanelState) => void,
     onElementSelected: (element: BrowserElementSelection) => void,
+    /** 会话首次创建回调（#143）：广告拦截等 session 级能力在此挂载 */
+    private readonly onBrowserSessionCreated?: (session: Session) => void,
   ) {
     this.getWindow = getWindow;
     this.onStateChanged = onStateChanged;
@@ -1051,6 +1053,8 @@ export class BrowserPanelController {
       browserSession.setPermissionCheckHandler(() => false);
       browserSession.on("will-download", (_event, item) => item.cancel());
       this.browserSession = browserSession;
+      // session 级能力挂载点（#143）：广告拦截引擎在此装配
+      this.onBrowserSessionCreated?.(browserSession);
     }
     return this.browserSession;
   }

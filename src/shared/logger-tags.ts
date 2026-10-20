@@ -7,6 +7,7 @@
 export const LogTag = {
   Runtime: "Runtime",
   Electron: "Electron",
+  Browser: "Browser",
   BuiltinTools: "BuiltinTools",
   FsTools: "FsTools",
   LifeTools: "LifeTools",

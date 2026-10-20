@@ -1013,6 +1013,11 @@
     "backToWorkspace": "返回工作区",
     "basicSettings": "基础设置",
     "browserControl": {
+      "adblockTitle": "广告拦截",
+      "adblockDescription": "内置浏览器拦截广告与跟踪请求（uBlock/EasyList 规则）",
+      "adblockAllowlist": "白名单域名",
+      "adblockAllowlistDescription": "逗号分隔，命中的域名不拦截",
+      "adblockAllowlistPlaceholder": "例如: example.com, news.example.org",
       "navLabel": "浏览器控制",
       "title": "浏览器控制",
       "description": "管理 Cyrene 内嵌浏览器的会话数据。",
