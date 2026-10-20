@@ -11,6 +11,12 @@
  *   → disable 旧引擎 → 装配新引擎 → enable），无需重启
  * - 回退：预编译拉取失败时回退磁盘旧缓存；全失败则无拦截继续（不阻塞浏览器）
  * - 纯函数（allowlist 解析/例外规则文本）单独导出供测试
+ *
+ * 许可合规（LICENSES/）：
+ * - 引擎代码 @ghostery/adblocker(-electron)：MPL-2.0（与主项目 MIT 兼容，
+ *   文件级 copyleft 只约束 MPL 文件自身；npm 包随 dist 附 LICENSE）
+ * - 内置规则快照：EasyList 家族（GPLv3 / CC BY-SA 3.0 双许可）——
+ *   署名与来源见 LICENSES/EasyList-attribution.txt
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
