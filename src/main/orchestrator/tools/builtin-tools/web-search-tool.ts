@@ -25,21 +25,27 @@ let searchEngineGetter: (() => string) | null = null;
 let searchBochaKeyGetter: (() => string) | null = null;
 let searchTavilyKeyGetter: (() => string) | null = null;
 let searchAnySearchKeyGetter: (() => string) | null = null;
+let searchDeepseekKeyGetter: (() => string) | null = null;
+
+/** DeepSeek 搜索的用户原始问题透传上限（官方规格 1-128 字符）。 */
+const DEEPSEEK_ORI_QUESTION_MAX_CHARS = 128;
 
 /**
  * index.ts 启动时调用，注入搜索引擎/各源key 的读取器。
- * engine: "off" | "bocha" | "tavily" | "volcano" | "minimax"
+ * engine: "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek"
  */
 export function setSearchConfig(
   engineGetter: () => string,
   bochaKeyGetter: () => string,
   tavilyKeyGetter: () => string,
   anySearchKeyGetter: () => string,
+  deepseekKeyGetter?: () => string,
 ): void {
   searchEngineGetter = engineGetter;
   searchBochaKeyGetter = bochaKeyGetter;
   searchTavilyKeyGetter = tavilyKeyGetter;
   searchAnySearchKeyGetter = anySearchKeyGetter;
+  searchDeepseekKeyGetter = deepseekKeyGetter ?? null;
 }
 
 interface BochaResult {
@@ -121,6 +127,63 @@ async function bochaSearch(query: string, key: string, signal?: AbortSignal): Pr
       url: r.url,
       snippet: truncateSnippet(r.summary || r.snippet || ""),
       ...(r.siteName ? { source: r.siteName } : {}),
+    }));
+    const output: WebSearchOutput = {
+      success: true,
+      query,
+      resultCount: results.length,
+      results,
+    };
+    return output;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`搜索失败：${msg}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** DeepSeek 搜索（#173）：POST /v1/tools/search，Bearer 与对话渠道同 key。
+ * 搜索语法（site:/-/"/lang:/after:/before:）原样透传给搜索服务；
+ * ori_question 透传用户原始问题（≤128 字符）帮助意图理解。 */
+async function deepseekSearch(
+  query: string,
+  key: string,
+  signal?: AbortSignal,
+  oriQuestion?: string,
+): Promise<WebSearchOutput> {
+  const url = "https://api.deepseek.com/v1/tools/search";
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), SEARCH_TIMEOUT_MS);
+  // 组合父 signal 和超时 signal（与 bocha/tavily 同款）
+  const combinedSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      signal: combinedSignal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        query,
+        count: 8,
+        need_content: false,
+        ...(oriQuestion?.trim()
+          ? { ori_question: oriQuestion.trim().slice(0, DEEPSEEK_ORI_QUESTION_MAX_CHARS) }
+          : {}),
+      }),
+    });
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    const data = await resp.json() as { results?: Array<{ title: string; url: string; summary?: string; content?: string }> };
+    const raw = data.results ?? [];
+    const results: WebSearchResult[] = raw.map((r) => ({
+      title: r.title,
+      url: r.url,
+      // need_content=false 时 content 恒空，summary 为摘要源
+      snippet: truncateSnippet(r.summary || r.content || ""),
     }));
     const output: WebSearchOutput = {
       success: true,
@@ -269,6 +332,12 @@ async function executeWebSearch(args: Record<string, unknown>, ctx?: ToolContext
   } else if (engine === "anySearch") {
     const key = searchAnySearchKeyGetter?.() ?? "";
     output = await anySearchSearch(query, key, ctx?.signal);
+  } else if (engine === "deepseek") {
+    const key = searchDeepseekKeyGetter?.() ?? "";
+    if (!key) {
+      throw new Error("E_SEARCH_KEY_MISSING");
+    }
+    output = await deepseekSearch(query, key, ctx?.signal, ctx?.userQuery);
   } else {
     throw new Error(`E_SEARCH_ENGINE_NOT_SUPPORTED:${engine}`);
   }
@@ -311,6 +380,7 @@ export const webSearchTool: ToolDefinition = {
         bochaKey: searchBochaKeyGetter?.() ?? "",
         tavilyKey: searchTavilyKeyGetter?.() ?? "",
         anySearchKey: searchAnySearchKeyGetter?.() ?? "",
+        deepseekKey: searchDeepseekKeyGetter?.() ?? "",
       },
     });
     return nativeFirst("web_search", args, (nativeArgs) => executeWebSearch(nativeArgs, ctx), {

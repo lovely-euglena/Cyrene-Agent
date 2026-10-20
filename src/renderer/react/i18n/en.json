@@ -1643,6 +1643,7 @@
       "searchtavily": "Tavily",
       "searchminimax": "MiniMax (uvx required)",
       "searchanySearch": "AnySearch",
+      "searchDeepseek": "DeepSeek (same key as chat API)",
       "searchKey": "{{provider}} key",
       "email": "Send email",
       "emailDescription": "Send email and attachments through SMTP. Use an app authorization code, not your login password.",

@@ -115,6 +115,7 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
     () => loadGeneralSettings().searchBochaKey,
     () => loadGeneralSettings().searchTavilyKey,
     () => loadGeneralSettings().searchAnySearchKey,
+    () => loadGeneralSettings().searchDeepseekKey,
   );
 
   // 注入出行工具 amapKey 获取器（复用 GeneralSettings 中的 amapKey）

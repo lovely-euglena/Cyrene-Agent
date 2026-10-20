@@ -1667,6 +1667,7 @@
       "searchtavily": "Tavily",
       "searchminimax": "MiniMax（uvx が必要）",
       "searchanySearch": "AnySearch",
+      "searchDeepseek": "DeepSeek（チャット API と同じキー）",
       "searchKey": "{{provider}} Key",
       "email": "メール送信",
       "emailDescription": "SMTP を通じてメールと添付ファイルを送信します。メールの認証コードを入力し、ログインパスワードは入力しないでください。",

@@ -125,6 +125,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   searchBochaKey: "",
   searchTavilyKey: "",
   searchMinimaxKey: "",
+  searchDeepseekKey: "",
   searchAnySearchKey: "",
   emailEnabled: false,
   emailSmtpHost: "",
@@ -367,13 +368,14 @@ export function normalizeGeneralSettings(
     travelEnabled: Boolean(input?.travelEnabled),
     playwrightMcpEnabled: Boolean(input?.playwrightMcpEnabled),
     filesystemMcpEnabled: Boolean(input?.filesystemMcpEnabled),
-    searchEngine: ["off", "bocha", "tavily", "minimax", "anySearch"].includes(String(input?.searchEngine))
-      ? (input!.searchEngine as "off" | "bocha" | "tavily" | "minimax" | "anySearch")
+    searchEngine: ["off", "bocha", "tavily", "minimax", "anySearch", "deepseek"].includes(String(input?.searchEngine))
+      ? (input!.searchEngine as "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek")
       : "off",
     searchBochaKey: typeof input?.searchBochaKey === "string" ? input.searchBochaKey : "",
     searchTavilyKey: typeof input?.searchTavilyKey === "string" ? input.searchTavilyKey : "",
     searchMinimaxKey: typeof input?.searchMinimaxKey === "string" ? input.searchMinimaxKey : "",
     searchAnySearchKey: typeof input?.searchAnySearchKey === "string" ? input.searchAnySearchKey : "",
+    searchDeepseekKey: typeof input?.searchDeepseekKey === "string" ? input.searchDeepseekKey : "",
     emailEnabled: Boolean(input?.emailEnabled),
     emailSmtpHost: typeof input?.emailSmtpHost === "string" ? input.emailSmtpHost : "",
     emailSmtpPort: clampPort(input?.emailSmtpPort, DEFAULT_GENERAL_SETTINGS.emailSmtpPort),

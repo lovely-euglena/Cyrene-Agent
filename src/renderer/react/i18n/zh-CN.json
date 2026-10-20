@@ -1643,6 +1643,7 @@
       "searchtavily": "Tavily",
       "searchminimax": "MiniMax（需 uvx）",
       "searchanySearch": "AnySearch",
+      "searchDeepseek": "DeepSeek（与对话 API 同 Key）",
       "searchKey": "{{provider}} Key",
       "email": "邮件发送",
       "emailDescription": "通过 SMTP 发送邮件和附件。请填写邮箱授权码，不要填写登录密码。",
