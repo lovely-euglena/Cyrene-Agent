@@ -155,6 +155,8 @@ export const IPC = {
   SETTINGS_TEST_VISION: "settings:test-vision",
   SETTINGS_GET_GENERAL: "settings:get-general",
   SETTINGS_SAVE_GENERAL: "settings:save-general",
+  /** GeneralSettings 任意字段保存后的全窗广播（载荷=脱敏后完整设置）：渲染端安全拦截等需要即时生效的场景订阅（#192） */
+  SETTINGS_GENERAL_CHANGED: "settings:general-changed",
   SETTINGS_GIT_CONFIG_COPY_GLOBAL: "settings:git-config-copy-global",
   SETTINGS_OPEN_SIDEBAR: "settings:open-sidebar",
   SETTINGS_CLOSE_SIDEBAR: "settings:close-sidebar",

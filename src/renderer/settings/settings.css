@@ -4847,3 +4847,56 @@ body {
 #ocr-local-config.is-hidden {
   display: none;
 }
+
+/* ===== 安全分区（#192）：远程资源白名单 ===== */
+.security-whitelist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.security-whitelist__add {
+  display: flex;
+  gap: 8px;
+}
+
+.security-whitelist__add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.security-whitelist__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.security-whitelist__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color, #d9d9e3);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.security-whitelist__remove {
+  border: none;
+  background: transparent;
+  color: var(--danger-color, #d4494f);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.settings-row__warn {
+  color: var(--danger-color, #d4494f);
+}

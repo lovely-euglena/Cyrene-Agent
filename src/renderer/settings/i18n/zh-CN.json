@@ -21,6 +21,7 @@
       "cloudStorage": "云存储",
       "tokens": "Token 用量",
       "disclaimer": "免责声明",
+      "security": "安全",
       "memoryHint": "管理长期记忆与画像",
       "chat": "聊天",
       "chatHint": "管理聊天窗口与会话",
@@ -698,6 +699,31 @@
           "title": "浏览器自动化（Playwright）",
           "desc": "让她能点网页、填表单、截图、跑 UI 流程。使用系统自带 Edge 浏览器，无需额外下载。",
           "descWarn": "默认关闭。"
+        }
+      },
+      "security": {
+        "heading": "外部资源安全",
+        "subheading": "聊天内容引用的外部资源默认拦截，可按需放行。",
+        "blockRemoteImage": {
+          "label": "拦截聊天中的远程图片",
+          "desc": "模型输出里的 http(s) 图片默认不加载，改为占位卡片并提供临时同意入口。"
+        },
+        "allowFileImage": {
+          "label": "允许 file:// 图片子资源",
+          "desc": "默认关闭。开启后模型输出可引用本地文件图片，存在本地路径探测风险（img 加载成败侧信道），仅建议离线资料场景临时开启。",
+          "descWarn": "风险自担。"
+        },
+        "whitelist": {
+          "label": "远程资源白名单",
+          "desc": "始终允许的域（与聊天占位卡「始终允许此域」同一存储）。输入域名后回车添加。",
+          "placeholder": "example.com",
+          "add": "添加",
+          "empty": "暂无白名单域",
+          "remove": "移除"
+        },
+        "status": {
+          "applied": "已应用",
+          "applying": "应用中…"
         }
       },
       "disclaimer": {

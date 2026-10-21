@@ -11,6 +11,7 @@ import {
   normalizeStyleId,
 } from "../../shared/style-sampling";
 import { normalizeUiThemeChoice } from "../../shared/ui-theme";
+import { DEFAULT_SECURITY_SETTINGS, normalizeSecuritySettings } from "../../shared/security-settings";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 import { DEFAULT_UI_ICON, normalizeUiIcon } from "../../shared/ui-icon";
 import { clampFiniteNumber, normalizeChatAppearance } from "../../shared/chat-appearance";
@@ -69,6 +70,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   petVisible: true,
   petZoom: 1,
   toastSoundEnabled: true,
+  ...DEFAULT_SECURITY_SETTINGS,
   launchAtLogin: false,
   language: "zh-CN",
   uiTheme: "pearl-white",
@@ -309,6 +311,8 @@ export function normalizeGeneralSettings(
     toastSoundEnabled: input?.toastSoundEnabled === undefined
       ? DEFAULT_GENERAL_SETTINGS.toastSoundEnabled
       : Boolean(input.toastSoundEnabled),
+    // 外部资源安全（#192）：布尔走 normalizeSecuritySettings 统一处理（含白名单域规范化）
+    ...normalizeSecuritySettings(input ?? undefined),
     launchAtLogin: Boolean(input?.launchAtLogin),
     // 界面语言只认已翻译完成的语种，非法值（含旧配置的 ja/ko）一律回落中文
     language: normalizeUiLanguage(input?.language),

@@ -37,6 +37,7 @@
         <button type="button" class="nav-item" data-section="cloud-storage"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>云存储</title><path d="M13 38C7.47715 38 3 33.5228 3 28C3 22.4772 7.47715 18 13 18C14.1974 18 15.3439 18.2104 16.4072 18.5939C18.2255 13.2653 23.2635 9.4 29.2 9.4C36.4865 9.4 42.4 15.3135 42.4 22.6C42.4 23.2283 42.3575 23.8466 42.2745 24.4519C44.8417 25.9998 46.6 28.8027 46.6 32C46.6 36.4183 43.0183 40 38.6 40H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 27V37" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M19.5 32.5L24 37L28.5 32.5" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.cloudStorage">云存储</span></button>
         <button type="button" class="nav-item" data-section="tokens"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>Token 用量</title><path d="M4 42H44" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><rect x="8" y="28" width="6" height="14" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="21" y="18" width="6" height="24" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="34" y="6" width="6" height="36" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/></svg></span><span data-i18n="nav.tokens">Token 用量</span></button>
         <hr class="nav-divider" />
+        <button type="button" class="nav-item" data-section="security"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>安全</title><path d="M24 4L7 11V23C7 34.5 13.9 43.2 24 44C34.1 43.2 41 34.5 41 23V11L24 4Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M16 23L22 29L33 17" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.security">安全</span></button>
         <button type="button" class="nav-item" data-section="disclaimer"><span><svg class="nav-item__icon" width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>免责声明</title><rect x="13" y="10" width="28" height="34" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M35 10V4H8C7.44772 4 7 4.44772 7 5V38H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 22H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 30H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n="nav.disclaimer">免责声明</span></button>
       </nav>
 
@@ -1582,6 +1583,38 @@
           </div>
           <!-- 插件设置面板（settingsSection: plugins，缺省分区）动态挂载点 -->
           <div class="plugin-panels" id="plugin-panels-plugins"></div>
+        </section>
+
+        <section class="settings-panel is-hidden" id="security-panel" data-panel="security">
+          <div class="panel-heading">
+            <div class="panel-heading__icon"><svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true"><title>安全</title><path d="M24 4L7 11V23C7 34.5 13.9 43.2 24 44C34.1 43.2 41 34.5 41 23V11L24 4Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M16 23L22 29L33 17" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div>
+              <h1><span data-i18n="panel.security.heading">外部资源安全</span></h1>
+              <p><span data-i18n="panel.security.subheading">聊天内容引用的外部资源默认拦截，可按需放行。</span></p>
+            </div>
+          </div>
+
+          <div class="settings-form">
+            <label class="settings-row">
+              <span class="settings-row__label"><span data-i18n="panel.security.blockRemoteImage.label">拦截聊天中的远程图片</span><small data-i18n="panel.security.blockRemoteImage.desc">模型输出里的 http(s) 图片默认不加载，改为占位卡片并提供临时同意入口。</small></span>
+              <span class="switch"><input id="security-block-remote-image" type="checkbox" /><span class="switch__track"><span class="switch__thumb"></span></span></span>
+            </label>
+            <label class="settings-row">
+              <span class="settings-row__label"><span data-i18n="panel.security.allowFileImage.label">允许 file:// 图片子资源</span><small data-i18n="panel.security.allowFileImage.desc">默认关闭。开启后模型输出可引用本地文件图片，存在本地路径探测风险（img 加载成败侧信道），仅建议离线资料场景临时开启。</small><small class="settings-row__warn" data-i18n="panel.security.allowFileImage.descWarn">风险自担。</small></span>
+              <span class="switch"><input id="security-allow-file-image" type="checkbox" /><span class="switch__track"><span class="switch__thumb"></span></span></span>
+            </label>
+
+            <div class="settings-row settings-row--stack">
+              <span class="settings-row__label"><span data-i18n="panel.security.whitelist.label">远程资源白名单</span><small data-i18n="panel.security.whitelist.desc">始终允许的域（与聊天占位卡「始终允许此域」同一存储）。输入域名后回车添加。</small></span>
+              <div class="security-whitelist" id="security-whitelist-box">
+                <div class="security-whitelist__add">
+                  <input id="security-whitelist-input" type="text" placeholder="example.com" data-i18n-placeholder="panel.security.whitelist.placeholder" spellcheck="false" />
+                  <button type="button" id="security-whitelist-add" data-i18n="panel.security.whitelist.add">添加</button>
+                </div>
+                <ul class="security-whitelist__list" id="security-whitelist-list"></ul>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="settings-panel is-hidden" id="disclaimer-panel" data-panel="disclaimer">

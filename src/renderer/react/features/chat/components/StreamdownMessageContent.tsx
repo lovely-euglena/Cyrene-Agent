@@ -2,11 +2,15 @@ import { CodeHighlighter } from "@ant-design/x";
 import { createMathPlugin } from "@streamdown/math";
 import {
   defaultRehypePlugins,
+  defaultUrlTransform,
   Streamdown,
   type Components,
   type ControlsConfig,
 } from "streamdown";
 import type { PluggableList } from "unified";
+import rehypeSanitize, { defaultSchema as defaultSanitizeSchema } from "rehype-sanitize";
+import type { Schema as SanitizeSchema } from "hast-util-sanitize";
+import type { Pluggable } from "unified";
 import React, { isValidElement, useCallback, useContext, useState, type ReactNode } from "react";
 import { useTranslation } from "../../../i18n";
 import { MessageStreamingContext } from "./ChatMessageList";
@@ -17,6 +21,7 @@ import { FileLinkContext } from "./FileLinkContext";
 import { FileIcon, hasFileIconMapping } from "./file-icon";
 import { DEMO_FILE_PREVIEW_REL_PATH } from "./demoFilePreview";
 import { MermaidBlock } from "./MermaidBlock";
+import { RemoteImageGuard } from "./RemoteImageGuard";
 import { SvgCardBlock } from "./SvgCardBlock";
 import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";
 import {
@@ -354,16 +359,44 @@ const messagePlugins = { math: mathPlugin };
 const chatControls: ControlsConfig = { table: false };
 const messageComponents: Components = {
   a: (props) => <StreamdownAnchor {...props} />,
+  // 远程图片安全守卫（#192）：白名单/已同意原样渲染，被拦渲染占位卡（三档同意），不产 <img> 标签零外呼
+  img: (props) => <RemoteImageGuard {...props} src={typeof props.src === "string" ? props.src : undefined} alt={typeof props.alt === "string" ? props.alt : undefined} />,
   code: (props) => <StreamdownInlineCode {...props} />,
   li: (props) => <DemoFileNameListItem {...props} />,
   pre: (props) => <StreamdownPre {...props} />,
   td: (props) => <DemoFileNameTableCell {...props} />,
   th: (props) => <DemoFileNameTableHeader {...props} />,
 };
+/**
+ * URL 变换（#192）：在默认安全变换（剥危险协议）基础上，放行主进程白名单映射协议与
+ * data:image/ 内联数据——这些 src 到达 RemoteImageGuard 后再做拦截判定；否则 img 的
+ * src 会在管线层被剥空，占位卡拿不到来源域名。
+ */
+const LOCAL_URL_PREFIXES = ["local-sticker://", "moment-media://", "local-font://", "data:image/"];
+function messageUrlTransform(url: string, key: string, node: Readonly<Parameters<typeof defaultUrlTransform>[2]>): string | null {
+  if (LOCAL_URL_PREFIXES.some((prefix) => url.startsWith(prefix))) return url;
+  return defaultUrlTransform(url, key, node) ?? null;
+}
+
+/**
+ * 自定义 sanitize（#192）：streamdown 内置 schema 的 protocols.src 只放行 http/https
+ * （实测 local-sticker:// 等在 sanitize 层被剥，urlTransform 拿不到），故基于默认 schema
+ * 扩展 src 协议白名单后自管 sanitize。harden（anti-XSS 加固）保留在后。
+ * 协议扩展仅作用于 src 属性（img/audio/video）；href 的默认白名单不变，js:/data: href 仍被剥。
+ */
+const messageSanitizeSchema: SanitizeSchema = {
+  ...defaultSanitizeSchema,
+  protocols: {
+    ...defaultSanitizeSchema.protocols,
+    src: [...(defaultSanitizeSchema.protocols?.src ?? ["http", "https"]), "local-sticker", "moment-media", "local-font", "data"],
+  },
+};
+const sanitizeWithMessageSchema: Pluggable = [rehypeSanitize, messageSanitizeSchema];
+
 const rehypePlugins: PluggableList = [
   defaultRehypePlugins.raw,
   encodeStreamdownFileLinksInHast,
-  defaultRehypePlugins.sanitize,
+  sanitizeWithMessageSchema,
   defaultRehypePlugins.harden,
 ];
 
@@ -415,6 +448,7 @@ export function StreamdownMessageContent({ content, streaming }: StreamdownMessa
       plugins={messagePlugins}
       components={messageComponents}
       rehypePlugins={rehypePlugins}
+      urlTransform={messageUrlTransform}
       controls={chatControls}
       className="cy-message-markdown cy-streamdown-message"
     >

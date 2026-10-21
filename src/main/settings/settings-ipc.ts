@@ -256,6 +256,8 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     if ("proactiveChatMode" in settings || "proactiveDeliveryTarget" in settings) {
       proactiveLifecycle.getProactiveChatService()?.invalidate();
     }
+    // 全窗广播（含聊天窗）：安全拦截白名单等设置需要即时生效，渲染端订阅 SETTINGS_GENERAL_CHANGED（#192）
+    broadcastToAuxWindows(IPC.SETTINGS_GENERAL_CHANGED, saved);
     return maskGeneralSettingsForUi(saved); // 复审 P1-2 出站掩码
   });
 

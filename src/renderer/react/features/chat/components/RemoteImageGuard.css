@@ -1,0 +1,67 @@
+/* 远程图片拦截占位（#192）：与消息流内联卡片同风格，不引入外部资源 */
+
+.cy-remote-image-guard {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 2px 0;
+  border: 1px dashed var(--cy-border-color, #c9c9d4);
+  border-radius: 8px;
+  background: var(--cy-subtle-bg, #f6f6f8);
+  font-size: 12px;
+  color: var(--cy-text-secondary, #6b6b76);
+}
+
+.cy-remote-image-guard__icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cy-remote-image-guard__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cy-remote-image-guard__domain {
+  font-weight: 600;
+  color: var(--cy-text-primary, #33333c);
+  overflow-wrap: anywhere;
+}
+
+.cy-remote-image-guard__btns {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cy-remote-image-guard__btn {
+  border: 1px solid var(--cy-border-color, #c9c9d4);
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cy-remote-image-guard__btn:hover {
+  background: var(--cy-hover-bg, #ececf1);
+}
+
+.cy-remote-image-guard__btn--primary {
+  border-color: var(--cy-primary-color, #ff7fa4);
+  color: var(--cy-primary-color, #ff7fa4);
+}
+
+.cy-remote-image-guard--failed {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--cy-subtle-bg, #f6f6f8);
+  font-size: 12px;
+  color: var(--cy-text-secondary, #6b6b76);
+}

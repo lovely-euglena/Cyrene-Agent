@@ -97,6 +97,14 @@
       }
     }
   },
+  "security": {
+    "remoteImageBlockedLabel": "リモート画像をブロックしました",
+    "remoteImageFrom": "送信元",
+    "allowOnce": "今回のみ許可",
+    "allowSession": "このセッションで許可",
+    "allowPersistent": "このドメインを常に許可",
+    "imageFailed": "画像の読み込みに失敗しました"
+  },
   "chatPage": {
     "scrollToBottom": "一番下までスクロール",
     "screenshotAttachmentName": "スクリーンショット_{{ts}}.png",
