@@ -18,6 +18,27 @@ export function conversationSortTimeKey(
   return mode === "last-opened" ? (meta.lastOpenedAt ?? meta.updatedAt) : meta.updatedAt;
 }
 
+/** #196：「全部」视图时间分桶。 */
+export type ConversationTimeBucket = "today" | "yesterday" | "last7" | "older";
+
+/**
+ * #196：按本地自然日分桶（今天/昨天/最近 7 天/更早）。
+ * 边界：now-at < 24h 但跨自然日的归 yesterday 之前的 today 判断在前——即以自然日为准，
+ * 「最近 7 天」= 距今不足 7 个自然日（不含今天/昨天）。
+ */
+export function conversationTimeBucket(at: number, now: number = Date.now()): ConversationTimeBucket {
+  const startOfDay = (ts: number): number => {
+    const d = new Date(ts);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const today = startOfDay(now);
+  if (at >= today) return "today";
+  if (at >= today - 86_400_000) return "yesterday";
+  if (at >= today - 7 * 86_400_000) return "last7";
+  return "older";
+}
+
 /** #194：非法口径回落「打开就算」。 */
 export function normalizeConversationSortMode(value: unknown): ConversationSortMode {
   return value === "last-message" ? "last-message" : "last-opened";

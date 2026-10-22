@@ -469,3 +469,25 @@
   color: #ff7875;
   background: #fff1f0;
 }
+
+/* #196：「全部」视图时间分桶 */
+.cy-sidebar-all-bucket__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px 8px;
+  text-align: left;
+  color: inherit;
+}
+.cy-sidebar-all-bucket__header:hover { background: var(--cy-hover, rgba(127, 127, 127, 0.12)); }
+.cy-sidebar-all-bucket__count {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.cy-sidebar-all-bucket__chevron { font-size: 10px; opacity: 0.6; }
