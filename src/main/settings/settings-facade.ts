@@ -67,6 +67,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   chatParaSpacing: 0.5,
   petAlwaysOnTop: true,
   petVisible: true,
+  petRenderHighDpi: true,
   petZoom: 1,
   toastSoundEnabled: true,
   launchAtLogin: false,
@@ -294,6 +295,10 @@ export function normalizeGeneralSettings(
     petVisible: input?.petVisible === undefined
       ? DEFAULT_GENERAL_SETTINGS.petVisible
       : Boolean(input.petVisible),
+    // 桌宠高 DPI 渲染（#195）：默认开（4K 屏清晰）；关闭=省显存模式（DPR 1）
+    petRenderHighDpi: input?.petRenderHighDpi === undefined
+      ? DEFAULT_GENERAL_SETTINGS.petRenderHighDpi
+      : Boolean(input.petRenderHighDpi),
     petZoom: typeof input?.petZoom === "number"
       ? Math.max(0.5, Math.min(2, input.petZoom))
       : DEFAULT_GENERAL_SETTINGS.petZoom,

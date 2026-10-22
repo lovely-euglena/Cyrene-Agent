@@ -183,7 +183,16 @@ const manager = new Live2DManager({
   },
 });
 
-manager.init();
+// #195：init 前（PIXI Application 尚未创建）按设置项覆写渲染 DPR 上限。
+// petRenderHighDpi=false（省内存模式）→ 回到 DPR 1；读取失败按默认高 DPI 走。
+void window.settings?.getGeneral().then((cfg) => {
+  if (cfg && cfg.petRenderHighDpi === false) {
+    manager.renderMaxDpr = 1;
+    console.log("[Cyrene] petRenderHighDpi=false, rendering at DPR 1");
+  }
+}).catch(() => { /* 设置读取失败不影响加载 */ }).finally(() => {
+  manager.init();
+});
 
 addTrackedEventListener(window, "window:resize", "resize", () => {
   manager.resize(window.innerWidth, window.innerHeight);

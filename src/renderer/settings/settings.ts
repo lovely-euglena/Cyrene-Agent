@@ -66,7 +66,7 @@ import { parsePositiveIntOrThrow, parseCommandLine } from "./shared/parse";
 import { apiState, type SavedProfileLite } from "./api/state";
 import { apiForm, apiRuntimeForm, presetCards, profileList, profileListCount, profileEditorTitle, deleteProfileBtn, presetWebsiteLink, displayNameInput, baseUrlInput, baseUrlResetBtn, modelInput, modelInputSuggestions, contextWindowInput, apiKeyInput, apiKeyLabel, apiKeyHint, testConnectionBtn, transportSelect, transportHint, endpointPreview, customEndpointControls, customEndpointOverrides, customEndpointSummary, customEndpointGuideBtn, workFlowAdaptBtn, apiNoteText, multimodalToggle, embeddingDimensionsInput, toggleEnableThinking, toggleDisableThinking, toggleDisableMaxToken } from "./api/dom";
 import { visionBaseUrlInput, visionApiKeyInput, visionModelInput, visionFieldsWrap, testVisionBtn, visionTestStatus } from "./vision/dom";
-import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, assistantBubbleEnabledInput, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, snipastePathInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput, toastSoundEnabledInput } from "./appearance/dom";
+import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petRenderHighDpiInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, assistantBubbleEnabledInput, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, snipastePathInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput, toastSoundEnabledInput } from "./appearance/dom";
 import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, momentsEnabledInput, cyreneMomentsPostingEnabledInput, cyreneMomentsReactionsEnabledInput, momentsCharacterReactionsEnabledInput, momentsLivelinessSelect, momentsPostingRow, momentsReactionsRow, momentsCharacterRow, momentsLivelinessRow, citaEnabledInput, citaEngineSelect, customStyleSamplingBtn, customStylePromptBtn, gitCommitAuthorNameInput, gitCommitAuthorEmailInput } from "./general/dom";
 import { minBtn, closeBtn, preferencesForm, sectionTitle, sectionHint, placeholderPanel, cyrenePanel, disclaimerPanel, pluginsPanel, placeholderIcon, placeholderTitle, placeholderCopy, saveStatus, runtimeSaveStatus, preferencesSaveStatus, cyreneSaveStatus, openStickerManagerBtn, addStickerBtn } from "./shared/shell";
 import { pluginAddBtn, permissionBlocksWrap, permissionNote } from "./plugins/dom";
@@ -189,6 +189,7 @@ if (!window.settings) {
       citaSemanticEngine: "remote",
       petAlwaysOnTop: true,
       petVisible: true,
+      petRenderHighDpi: true,
       petZoom: 1,
       chatLineHeight: 1.75,
       assistantBubbleEnabled: false,
@@ -1054,6 +1055,7 @@ async function loadGeneralSettings(): Promise<void> {
     applyWindowCornerRadius(windowCornerRadius);
     petAlwaysOnTopInput.checked = cfg.petAlwaysOnTop;
     petVisibleInput.checked = cfg.petVisible;
+    petRenderHighDpiInput.checked = cfg.petRenderHighDpi !== false;
     petZoomInput.value = String(cfg.petZoom ?? 1);
     petZoomVal.textContent = Math.round((cfg.petZoom ?? 1) * 100) + "%";
     chatLineHeightInput.value = String(cfg.chatLineHeight ?? 1.75);
@@ -1223,6 +1225,10 @@ uiIconSelect.querySelectorAll<HTMLButtonElement>(".appearance-icon-option").forE
   });
 });
 
+petRenderHighDpiInput.addEventListener("change", () => {
+  window.settings?.setPetRenderHighDpi(petRenderHighDpiInput.checked);
+  setAppearanceSaveStatus(t("settings.status.appliedOk"), "is-ok");
+});
 petVisibleInput.addEventListener("change", () => {
   window.settings?.setPetVisible(petVisibleInput.checked);
   setAppearanceSaveStatus(t("settings.status.appliedOk"), "is-ok");

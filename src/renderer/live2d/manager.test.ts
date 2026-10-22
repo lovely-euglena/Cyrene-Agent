@@ -105,10 +105,9 @@ describe("Live2DManager.playAction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("caps pet render resolution at PET_RENDER_MAX_DPR（高 DPI 省纹理内存）", async () => {
+  it("caps pet render resolution at PET_RENDER_MAX_DPR（#195：默认 2，DPR 3 屏钳到 2）", async () => {
     vi.clearAllMocks();
-    // 2× DPR：钳制后 resolution 必须是 1（缓冲不再按 2× / 1.25× 放大）
-    vi.stubGlobal("window", { devicePixelRatio: 2, innerWidth: 100, innerHeight: 100 });
+    vi.stubGlobal("window", { devicePixelRatio: 3, innerWidth: 100, innerHeight: 100 });
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
     const { Live2DModel } = await import("pixi-live2d-display/cubism4");
     const model = {
@@ -117,13 +116,54 @@ describe("Live2DManager.playAction", () => {
     };
     vi.mocked(Live2DModel.from).mockResolvedValue(model as never);
     const { Live2DManager, PET_RENDER_MAX_DPR } = await import("./manager");
-    expect(PET_RENDER_MAX_DPR).toBe(1);
+    expect(PET_RENDER_MAX_DPR).toBe(2);
     const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
 
     await mgr.init();
 
-    expect(pixiState.lastOptions?.resolution).toBe(1);
+    expect(pixiState.lastOptions?.resolution).toBe(2);
     expect(pixiState.lastOptions?.preserveDrawingBuffer).toBe(true);
+    mgr.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("uses devicePixelRatio directly when within cap（#195：4K DPR 1.5 全清晰）", async () => {
+    vi.clearAllMocks();
+    vi.stubGlobal("window", { devicePixelRatio: 1.5, innerWidth: 100, innerHeight: 100 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
+    const { Live2DModel } = await import("pixi-live2d-display/cubism4");
+    const model = {
+      anchor: { set: vi.fn() }, scale: { set: vi.fn() }, width: 100, height: 100,
+      destroy: vi.fn(), motion: vi.fn(), expression: vi.fn(), internalModel: { motionManager: { definitions: {} } },
+    };
+    vi.mocked(Live2DModel.from).mockResolvedValue(model as never);
+    const { Live2DManager } = await import("./manager");
+    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
+
+    await mgr.init();
+
+    expect(pixiState.lastOptions?.resolution).toBe(1.5);
+    mgr.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("renderMaxDpr override=1 restores legacy low-memory mode（#195：设置项关闭=DPR 1）", async () => {
+    vi.clearAllMocks();
+    vi.stubGlobal("window", { devicePixelRatio: 2, innerWidth: 100, innerHeight: 100 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
+    const { Live2DModel } = await import("pixi-live2d-display/cubism4");
+    const model = {
+      anchor: { set: vi.fn() }, scale: { set: vi.fn() }, width: 100, height: 100,
+      destroy: vi.fn(), motion: vi.fn(), expression: vi.fn(), internalModel: { motionManager: { definitions: {} } },
+    };
+    vi.mocked(Live2DModel.from).mockResolvedValue(model as never);
+    const { Live2DManager } = await import("./manager");
+    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
+    mgr.renderMaxDpr = 1;
+
+    await mgr.init();
+
+    expect(pixiState.lastOptions?.resolution).toBe(1);
     mgr.dispose();
     vi.unstubAllGlobals();
   });

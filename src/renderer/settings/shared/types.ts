@@ -100,6 +100,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   petAlwaysOnTop: boolean;
   rememberWindowState: boolean;
   petVisible: boolean;
+  /** 桌宠高 DPI 渲染（#195）：关闭后桌宠回到 DPR 1（省显存）。 */
+  petRenderHighDpi: boolean;
   petZoom: number;
   disableGpuElectron?: boolean;
   sidebarVisible: boolean;

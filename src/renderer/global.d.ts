@@ -97,6 +97,7 @@ interface SettingsWindowApi {
   setPetAlwaysOnTop: (value: boolean) => void;
   setPetVisible: (value: boolean) => void;
   setPetZoom: (value: number) => void;
+  setPetRenderHighDpi: (value: boolean) => void;
   // 便携模式 / 缓存目录（通用设置「数据与存储」）
   getPortableStatus?: () => Promise<import("../shared/portable-mode").PortableDataLocationStatus>;
   pickPortableDir?: () => Promise<string | null>;

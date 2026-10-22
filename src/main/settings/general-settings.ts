@@ -73,6 +73,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   chatParaSpacing: number;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
+  /** 桌宠高 DPI 渲染（#195）：关闭后桌宠回到 DPR 1（省显存，4K 屏会模糊）。 */
+  petRenderHighDpi: boolean;
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */
   petZoom: number;
   /** 桌宠窗口 X 坐标，未保存时为 undefined */

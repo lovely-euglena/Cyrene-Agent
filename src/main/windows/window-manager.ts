@@ -63,6 +63,8 @@ export interface WindowManager {
   movePetWindowRelative(dx: number, dy: number): void;
   movePetWindowTo(x: number, y: number): void;
   applyPetWindowZoom(zoom: number): void;
+  /** #195：桌宠高 DPI 设置切换后 reload 桌宠窗（PIXI resolution 不能热改，重建最稳）。 */
+  reloadPetWindow(): void;
   capturePetWindowFrame(): Promise<string | null>;
   capturePetWindow(): Promise<Electron.NativeImage | null>;
   getCursorScreenPosition(): { x: number; y: number };
@@ -385,6 +387,11 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     },
     movePetWindowTo(x: number, y: number): void {
       petWindowMoveController.queueAbsolute(x, y);
+    },
+    reloadPetWindow(): void {
+      const win = getUsablePetWindow();
+      if (!win || win.isDestroyed()) return;
+      win.webContents.reload();
     },
     applyPetWindowZoom(zoom: number): void {
       const win = getUsablePetWindow();
