@@ -912,6 +912,13 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_PENDING_ADJUST, { sessionId: id, messageId }),
   setPinned: (id: string, pinned: boolean) =>
     ipcRenderer.invoke(IPC.CHATS_SET_PINNED, { id, pinned }),
+  // #194：打开/切换会话时刷新 lastOpenedAt（排序口径「打开就算」）
+  touchOpened: (id: string) => ipcRenderer.invoke(IPC.CHATS_TOUCH_OPENED, { id }),
+  onConversationSortModeChanged: (callback: (mode: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, mode: string) => callback(mode);
+    ipcRenderer.on(IPC.CHAT_CONVERSATION_SORT_MODE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.CHAT_CONVERSATION_SORT_MODE_CHANGED, listener);
+  },
   setModelProfile: (id: string, modelProfileId?: string) =>
     ipcRenderer.invoke(IPC.CHATS_SET_MODEL_PROFILE, { id, modelProfileId }),
   // 会话级当前模型窄 IPC：主进程校验 + 原子写入，失败返回机器可读错误（UI 据此回滚）

@@ -483,6 +483,14 @@ export function registerChatsIpc(
     return session;
   });
 
+  // #194：打开/切换会话时刷新 lastOpenedAt（排序口径「打开就算」）。广播让侧栏立即重排。
+  ipc.handle(IPC.CHATS_TOUCH_OPENED, (event, payload: { id: string }) => {
+    if (!payload || typeof payload.id !== "string") return null;
+    const meta = chatsStore.touchSessionOpened(payload.id);
+    if (meta) broadcastChanged(event.sender);
+    return meta;
+  });
+
   // ── 会话级待发队列：入队 / 读取 / 删除 ──────────────────
   // 入队成功才返回 ok:true 和权威队列；失败原因机器可读，渲染层据此保留草稿并提示。
   // 幂等命中（enqueued=false，同标识同内容重试）不广播：磁盘与队列均未变化。

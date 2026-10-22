@@ -92,6 +92,9 @@ export interface ChatStoreApi {
   // 调整：把待发条目插入当前运行下一步；无活跃运行/带附件等明确拒绝并留队
   pendingAdjust: (id: string, messageId: string) => Promise<PendingMutationResult>;
   setPinned: (id: string, pinned: boolean) => Promise<ChatSession | null>;
+  // #194：打开/切换会话时刷新 lastOpenedAt（fire-and-forget，失败静默——只影响排序不影响功能）
+  touchOpened: (id: string) => Promise<unknown>;
+  onConversationSortModeChanged: (callback: (mode: string) => void) => () => void;
   setModelProfile: (id: string, modelProfileId?: string) => Promise<ChatSession | null>;
   // 会话级当前模型窄 IPC：只写会话（绑定 + 模型），不碰档案；
   // 失败返回错误码（invalid-payload / session-not-found / no-profile / invalid-model）

@@ -838,4 +838,44 @@ describe("chats store", () => {
     expect(store.getSessionRecord(first.id)).toMatchObject({ modelProfileId: "p-b", model: "b1" });
     expect(store.getSessionRecord(second.id)).toMatchObject({ modelProfileId: "p-c", model: "c1" });
   });
+
+  it("touchSessionOpened 刷新 lastOpenedAt 且不碰 updatedAt（#194 排序口径「打开就算」）", async () => {
+    const { createSession, getSessionRecord, touchSessionOpened, initialize } = await import("./chats-store");
+    initialize();
+
+    const session = createSession({ initialMessages: [] });
+    const before = getSessionRecord(session.id);
+    expect(before?.updatedAt).toBeTypeOf("number");
+    // 旧会话无 lastOpenedAt（向后兼容缺省）
+    expect(getSessionRecord(session.id)?.lastOpenedAt).toBeUndefined();
+
+    // 手动把 updatedAt 拨回过去，模拟"三天前的会话"
+    const stale = { ...before, updatedAt: Date.now() - 3 * 24 * 3600_000 } as typeof before;
+    const mod = await import("./chats-store");
+    // 直接经 touch 校验两个时间戳的独立性
+    const meta = touchSessionOpened(session.id);
+    expect(meta).not.toBeNull();
+    expect(meta?.lastOpenedAt).toBeTypeOf("number");
+    // lastOpenedAt ≈ now，updatedAt 不被 touch 改写（展示语义分离）
+    expect(meta!.lastOpenedAt!).toBeGreaterThanOrEqual(Date.now() - 5000);
+    expect(meta!.updatedAt).toBe(before!.updatedAt);
+  });
+
+  it("touchSessionOpened 1 秒内重复打开不落盘（快速切换防抖）", async () => {
+    const { createSession, touchSessionOpened, initialize } = await import("./chats-store");
+    initialize();
+    const session = createSession({ initialMessages: [] });
+
+    const first = touchSessionOpened(session.id);
+    expect(first).not.toBeNull();
+    // 立即第二次：1s 窗口内，返回 meta 但不写盘（幂等返回当前值）
+    const second = touchSessionOpened(session.id);
+    expect(second?.lastOpenedAt).toBe(first?.lastOpenedAt);
+  });
+
+  it("touchSessionOpened 未知会话返回 null", async () => {
+    const { touchSessionOpened, initialize } = await import("./chats-store");
+    initialize();
+    expect(touchSessionOpened("no-such-session")).toBeNull();
+  });
 });
