@@ -24,3 +24,16 @@ export function escapeHtml(text: string): string {
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+/**
+ * #202：路径显示归一化——去除 JSON 转义双反斜杠、分隔符统一为系统原生形态。
+ * 仅用于显示/输入框回填，存储真值由主进程 path.normalize 负责，不做二次归一。
+ */
+export function normalizePathDisplay(raw: string): string {
+  if (!raw) return raw;
+  // JSON 转义残留：\\ → \；同时容忍正斜杠混排
+  const unescaped = raw.replace(/\\\\/g, "\\");
+  // Windows 原生分隔符归一（非 win 平台 path separator 为 /，归一后不变）
+  const isWin = typeof navigator !== "undefined" && navigator.platform?.startsWith("Win");
+  return isWin ? unescaped.replace(/\//g, "\\") : unescaped;
+}

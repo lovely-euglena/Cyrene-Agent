@@ -25,6 +25,7 @@ export const screenshotHotkeyInput = document.getElementById("screenshot-hotkey-
 export const screenshotBackendSelect = document.getElementById("screenshot-backend-select") as HTMLElement | null;
 export const snipastePathRow = document.getElementById("snipaste-path-row") as HTMLElement | null;
 export const snipastePathInput = document.getElementById("snipaste-path-input") as HTMLInputElement | null;
+export const snipastePathBrowseBtn = document.getElementById("snipaste-path-browse") as HTMLButtonElement | null;
 export const openChromeGpu = document.getElementById("open-chrome-gpu") as HTMLElement;
 export const disableGpuInput = document.getElementById("disable-gpu-electron") as HTMLInputElement;
 export const sidebarVisibleInput = document.getElementById("sidebar-visible") as HTMLInputElement;

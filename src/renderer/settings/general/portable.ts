@@ -13,6 +13,7 @@ import {
   portableModeEnabledInput,
 } from "./dom";
 import type { PortableDataLocationStatus } from "../../../shared/portable-mode";
+import { normalizePathDisplay } from "../shared/format";
 
 let currentStatus: PortableDataLocationStatus | null = null;
 
@@ -37,7 +38,7 @@ export async function loadPortableStatus(): Promise<void> {
     currentStatus = status;
     portableModeEnabledInput.checked = status.enabled;
     // 相对路径原样回显（displayDir，如 "data"）；无配置时给默认便携目录
-    portableDirInput.value = status.displayDir ?? status.dataDir ?? status.suggestedDir;
+    portableDirInput.value = normalizePathDisplay(status.displayDir ?? status.dataDir ?? status.suggestedDir);
     renderPortableDirRow();
     renderCurrentHint();
   } catch {
@@ -52,7 +53,7 @@ portableModeEnabledInput.addEventListener("change", () => {
 portableDirBrowseBtn.addEventListener("click", async () => {
   try {
     const picked = await window.settings?.pickPortableDir?.();
-    if (picked) portableDirInput.value = picked;
+    if (picked) portableDirInput.value = normalizePathDisplay(picked);
   } catch {
     setHint(t("panel.general.portable.pickFailed"), true);
   }
