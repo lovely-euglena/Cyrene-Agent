@@ -29,9 +29,12 @@ export function resolveRunCapabilities(input: ResolveRunCapabilitiesInput): RunC
     // 防止 fs/git 等未声明 modes 的工具意外漏进闲聊会话。Skill 恒不暴露。
     // 例外：chatBuiltin 内置人格工具（朋友圈三件套）默认放行，
     // 不依赖总开关与 opt-in 勾选；override.chat === false 仍可显式关闭。
+    // #167：显式关闭过滤此前只在 build-options 的 fallback 路径存在，权威路径
+    // 缺失导致注释与实现不符——收敛后两路径共用本实现（fallback 路径已删除）。
     const builtinTools = input.toolRegistry
       .getEnabledToolsForMode("chat", input.toolModeOverrides)
-      .filter((tool) => tool.chatBuiltin === true);
+      .filter((tool) => tool.chatBuiltin === true
+        && input.toolModeOverrides?.[tool.id]?.chat !== false);
     if (!input.chatToolsEnabled) {
       const tools = filterToolsBySearchBackend(builtinTools, input.activeSearchBackend);
       return { mode: input.mode, tools, toolIds: new Set(tools.map((tool) => tool.id)), skills: [], skillIds: new Set() };

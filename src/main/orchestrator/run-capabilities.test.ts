@@ -83,4 +83,22 @@ describe("resolveRunCapabilities", () => {
     // chat 内置工具只声明 chat 模式，不漏进其他模式
     expect(resolveRunCapabilities(input("work")).toolIds).not.toContain("moments_view");
   });
+
+  // #167：fallback 路径收敛进本实现——显式关闭 override.chat === false 语义锁定
+  it("hides chat builtin when override.chat === false（#167 收敛：原权威路径漏过滤的 bug 修复）", () => {
+    const result = resolveRunCapabilities({
+      ...input("chat"),
+      toolModeOverrides: { moments_view: { chat: false } },
+    });
+    expect([...result.toolIds]).toEqual(["moments_post"]);
+  });
+
+  it("explicitly disabled builtin also hidden when enhancement off（#167：两开关组合一致）", () => {
+    const result = resolveRunCapabilities({
+      ...input("chat"),
+      chatToolsEnabled: false,
+      toolModeOverrides: { moments_view: { chat: false } },
+    });
+    expect([...result.toolIds]).toEqual(["moments_post"]);
+  });
 });
