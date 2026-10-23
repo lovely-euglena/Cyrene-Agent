@@ -199,17 +199,21 @@ describe("write_file truthful contract", () => {
     return registeredTools.get("write_file");
   }
 
-  it("相对文件名落到桌面根目录（learn 模式笔记场景，收编自 write_markdown）", async () => {
+  // #152：未绑定项目时输出根 = userData/workspace（不再落桌面）
+  it("相对文件名落到 userData/workspace 输出目录（#152，未绑定项目不再落桌面）", async () => {
     const result = JSON.parse(await writeTool()!.execute({ path: "笔记.md", content: "# 标题" }));
     expect(result.success).toBe(true);
-    expect(result.path).toBe(path.join(tmpDir, "笔记.md"));
-    expect(fs.readFileSync(path.join(tmpDir, "笔记.md"), "utf8")).toBe("# 标题");
+    const outRoot = path.join(tmpDir, "workspace"); // mock 里 userData 与 desktop 同指 tmpDir
+    expect(result.path).toBe(path.join(outRoot, "笔记.md"));
+    expect(fs.readFileSync(path.join(outRoot, "笔记.md"), "utf8")).toBe("# 标题");
+    // 首用自动创建输出根
+    expect(fs.existsSync(outRoot)).toBe(true);
   });
 
-  it("相对文件名带子目录时自动创建父目录", async () => {
+  it("相对文件名带子目录时在输出根下自动创建父目录", async () => {
     const result = JSON.parse(await writeTool()!.execute({ path: "test/report.md", content: "x" }));
     expect(result.success).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, "test", "report.md"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "workspace", "test", "report.md"))).toBe(true);
   });
 
   it("绑定工作区时相对文件名落到工作区根目录", async () => {

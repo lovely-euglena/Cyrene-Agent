@@ -54,6 +54,8 @@ const nativeMocks = {
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "doc-tools-native-"));
+  // #152：未绑定项目输出根 = userData/workspace（mock 里 userData 指向 tmpDir）
+  fs.mkdirSync(path.join(tmpDir, "workspace"), { recursive: true });
   nativeMocks.calls = [];
   nativeMocks.result = null;
   nativeMocks.error = null;
@@ -78,7 +80,7 @@ const DEFAULT_EXCEL_THEME = {
 
 describe("文档四件 native 轨", () => {
   it("write_excel：注入路径 + 默认主题，看门狗 30s，结果透传", async () => {
-    nativeMocks.result = `[write_excel] 已生成：${path.join(tmpDir, "报表.xlsx")}`;
+    nativeMocks.result = `[write_excel] 已生成：${path.join(tmpDir, "workspace", "报表.xlsx")}`;
     const out = await getTool("write_excel").execute(
       { filename: "报表.xlsx", sheets: [{ name: "S1", headers: ["a"], rows: [[1]] }] },
       {},
@@ -88,7 +90,7 @@ describe("文档四件 native 轨", () => {
     const call = nativeMocks.calls[0];
     expect(call.tool).toBe("write_excel");
     expect(call.timeoutMs).toBe(30_000);
-    expect(call.args.path).toBe(path.join(tmpDir, "报表.xlsx"));
+    expect(call.args.path).toBe(path.join(tmpDir, "workspace", "报表.xlsx"));
     expect(call.args.sheets).toEqual([{ name: "S1", headers: ["a"], rows: [[1]] }]);
     expect(call.args.theme).toEqual(DEFAULT_EXCEL_THEME);
   });
@@ -102,7 +104,7 @@ describe("文档四件 native 轨", () => {
     const call = nativeMocks.calls[0];
     expect(call.tool).toBe("write_word");
     expect(call.timeoutMs).toBe(30_000);
-    expect(call.args.path).toBe(path.join(tmpDir, "报告.docx"));
+    expect(call.args.path).toBe(path.join(tmpDir, "workspace", "报告.docx"));
     expect(call.args.title).toBe("标题");
     expect(call.args.paragraphs).toEqual(["段落一"]);
     expect(call.args.theme).toEqual({
@@ -122,7 +124,7 @@ describe("文档四件 native 轨", () => {
     expect(call.tool).toBe("write_pdf");
     expect(call.timeoutMs).toBe(30_000);
     expect(call.args).toEqual({
-      path: path.join(tmpDir, "合同.pdf"),
+      path: path.join(tmpDir, "workspace", "合同.pdf"),
       title: "合同",
       paragraphs: ["条款"],
     });
@@ -135,14 +137,14 @@ describe("文档四件 native 轨", () => {
     const call = nativeMocks.calls[0];
     expect(call.tool).toBe("write_markdown");
     expect(call.timeoutMs).toBe(15_000);
-    expect(call.args).toEqual({ path: path.join(tmpDir, "笔记.md"), content: "# 标题", append: false });
+    expect(call.args).toEqual({ path: path.join(tmpDir, "workspace", "笔记.md"), content: "# 标题", append: false });
   });
 
   it("native 故障：回退 TS 实现并真实落盘", async () => {
     nativeMocks.error = new Error("host down");
     const out = await getTool("write_markdown").execute({ filename: "回退.md", content: "回退内容" }, {});
     expect(JSON.parse(out).success).toBe(true);
-    expect(fs.readFileSync(path.join(tmpDir, "回退.md"), "utf8")).toBe("回退内容");
+    expect(fs.readFileSync(path.join(tmpDir, "workspace", "回退.md"), "utf8")).toBe("回退内容");
   });
 
   it("业务失败载荷（success:false）：回退 TS 实现", async () => {
@@ -152,11 +154,11 @@ describe("文档四件 native 轨", () => {
       {},
     );
     expect(out).toContain("[write_excel] 已生成：");
-    expect(fs.existsSync(path.join(tmpDir, "回退.xlsx"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "workspace", "回退.xlsx"))).toBe(true);
   });
 
   it("write_markdown 覆盖防骤降：拒绝抛错，不触达 native、文件原样", async () => {
-    const target = path.join(tmpDir, "大文件.md");
+    const target = path.join(tmpDir, "workspace", "大文件.md");
     fs.writeFileSync(target, Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\n"), "utf8");
     await expect(
       getTool("write_markdown").execute({ filename: "大文件.md", content: "短" }, {}),

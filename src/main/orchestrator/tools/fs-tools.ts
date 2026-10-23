@@ -1,6 +1,7 @@
 // 文件系统工具组 — 给 agent 装上"读文件 / 列目录 / 写文件 / 读图片"四件武器
 // 不绕 run_shell，直接用 fs API。每个工具都有 risk 字段交给权限网关判定。
 
+import { fallbackOutputRoot } from "./output-root";
 import * as fs from "fs";
 import * as path from "path";
 import { toolRegistry } from "./registry/tool-registry";
@@ -352,7 +353,7 @@ toolRegistry.register(wrapFsForNativeHost({
 
 /**
  * 解析写入路径：绝对路径照旧；相对路径收编自原 write_markdown——
- * 根目录固定为可信工作区（未绑定时回退桌面），禁止 .. 穿越和前缀碰撞绕过。
+ * 根目录固定为可信工作区（未绑定时回退 userData/workspace，#152），禁止 .. 穿越和前缀碰撞绕过。
  * 返回绝对路径，或 null 表示校验失败。
  */
 function resolveWritePath(rawPath: string, workspaceRoot?: string): string | null {
@@ -360,7 +361,7 @@ function resolveWritePath(rawPath: string, workspaceRoot?: string): string | nul
   const normalized = path.normalize(rawPath).replace(/\\/g, "/");
   // 相对路径禁止目录穿越
   if (normalized.includes("..")) return null;
-  const outputRoot = path.resolve(workspaceRoot || app.getPath("desktop"));
+  const outputRoot = path.resolve(workspaceRoot || fallbackOutputRoot());
   const fullPath = path.resolve(outputRoot, normalized);
   const relative = path.relative(outputRoot, fullPath);
   // 最终校验：必须仍在根目录下，不能靠前缀碰撞绕过
@@ -388,7 +389,7 @@ function preflightWriteFile(args: Record<string, unknown>, ctx?: ToolContext): W
   if (!filePath) {
     throw new ToolExecutionError(
       "E_PATH_NOT_ABSOLUTE",
-      "path 必须是绝对路径，或不含 .. 的相对文件名（相对路径以工作区/桌面为根）",
+      "path 必须是绝对路径，或不含 .. 的相对文件名（相对路径以工作区为根；未绑定时以 userData/workspace 输出目录为根）",
       "invalid_arguments",
     );
   }
@@ -605,7 +606,7 @@ toolRegistry.register({
     "- 生成 Excel/Word/PDF 文档（用对应专用工具）\n" +
     "- 写入危险系统路径\n\n" +
     "path 两种给法：绝对路径；或相对文件名（可含子目录，如 '笔记.md'、'test/report.md'）——" +
-    "绑定项目时落到项目根目录，未绑定时落到桌面。\n" +
+    "绑定项目时落到项目根目录，未绑定时落到应用数据下的 workspace 输出目录（不落桌面）。\n" +
     "参数：path，content (要写的字符串)，append (可选，true=追加，默认 false=覆盖)，createDirs (可选，默认 true)。",
   enabled: true,
   risk: "fs-write",
@@ -615,7 +616,7 @@ toolRegistry.register({
   inputSchema: {
     type: "object",
     properties: {
-      path: { type: "string", description: "目标文件绝对路径，或相对文件名（可含子目录，如 '笔记.md'；绑定项目时落到项目根目录，未绑定时落到桌面）" },
+      path: { type: "string", description: "目标文件绝对路径，或相对文件名（可含子目录，如 '笔记.md'；绑定项目时落到项目根目录，未绑定时落到 userData/workspace 输出目录）" },
       content: { type: "string", description: "要写入的文本内容（UTF-8）" },
       append: { type: "boolean", description: "true=追加，false=覆盖（默认）" },
       createDirs: { type: "boolean", description: "是否自动创建父目录，默认 true" },

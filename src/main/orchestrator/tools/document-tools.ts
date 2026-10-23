@@ -1,8 +1,8 @@
 // 文档生成工具 —— 让昔涟能产出可交付物（Excel/Word/PDF/Markdown）。
 //
 // 设计要点：
-// - 绑定项目时文档存到该项目根目录；未绑定时才回退到桌面
-// - 支持桌面子目录（如 "test/report.xlsx"），自动创建父目录
+// - 绑定项目时文档存到该项目根目录；未绑定时回退 userData/workspace 输出目录（#152，不再落桌面）
+// - 支持子目录（如 "test/report.xlsx"），自动创建父目录
 // - 文件名由模型给，强制校验扩展名（防 .exe 等危险后缀）
 // - 返回完整路径给模型，模型可以转述给用户
 // - PDF 中文字体走系统微软雅黑（Windows），找不到就降级
@@ -13,6 +13,7 @@ import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
 import { ToolExecutionError } from "./registry/tool-execution-error";
+import { fallbackOutputRoot } from "./output-root";
 import { buildFullFileDiff, buildReplacedDiff, countLines, finalizeFileChanges } from "./registry/tool-evidence";
 import { checkOverwriteDrop, overwriteDropMessage } from "./overwrite-guard";
 import type { ToolFileChange } from "../../../shared/chat-types";
@@ -68,8 +69,8 @@ function captureBaseline(context: ToolContext | undefined, outputPath: string): 
 
 /**
  * 解析输出路径：filename 可含子目录（如 "test/report.xlsx"）。
- * 有可信工作区绑定时根目录固定为工作区；否则兼容旧行为写入桌面。
- * 安全校验：禁止 .. 穿越、禁止绝对路径（不能写到桌面之外）。
+ * 有可信工作区绑定时根目录固定为工作区；否则回退 userData/workspace 输出目录（#152）。
+ * 安全校验：禁止 .. 穿越、禁止绝对路径。
  * 返回绝对路径，或 null 表示校验失败。
  */
 function resolveOutputPath(filename: string, workspaceRoot?: string): string | null {
@@ -77,15 +78,15 @@ function resolveOutputPath(filename: string, workspaceRoot?: string): string | n
   // #IKJSNI：逐段等值检查（与 download-file-tool 同规则）——整串 includes("..")
   // 会误杀 a..b.txt 等合法文件名；normalize 后 ".." 只可能作为前导段出现。
   if (normalized.split("/").includes("..") || path.isAbsolute(normalized)) return null;
-  const outputRoot = path.resolve(workspaceRoot || app.getPath("desktop"));
+  const outputRoot = path.resolve(workspaceRoot || fallbackOutputRoot());
   const fullPath = path.resolve(outputRoot, normalized);
   const relative = path.relative(outputRoot, fullPath);
-  // 最终校验：必须仍在可信工作区/桌面根目录下，不能靠前缀碰撞绕过。
+  // 最终校验：必须仍在可信工作区/输出目录根下，不能靠前缀碰撞绕过。
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
   return fullPath;
 }
 
-/** 桌面路径（旧接口，保持兼容）。 */
+/** 桌面路径（旧接口，保持兼容）。#152 后默认不再落桌面；仓库内无调用方，保留给旧配置/外部引用。 */
 function desktopPath(filename: string): string {
   return path.join(app.getPath("desktop"), filename);
 }

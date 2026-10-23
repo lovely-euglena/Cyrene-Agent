@@ -54,6 +54,8 @@ function listBaselines(runId: string): string[] {
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "doc-tools-test-"));
+  // #152：未绑定项目输出根 = userData/workspace；mock 里 userData 指向 tmpDir
+  fs.mkdirSync(path.join(tmpDir, "workspace"), { recursive: true });
 });
 
 afterEach(() => {
@@ -87,7 +89,7 @@ describe("filename 校验报错（参数缺失时回传实际键名）", () => {
     );
     const result = JSON.parse(raw);
     expect(result.success).toBe(true);
-    expect(fs.readFileSync(path.join(tmpDir, "todo.txt"), "utf8")).toBe("第一行\n第二行");
+    expect(fs.readFileSync(path.join(tmpDir, "workspace", "todo.txt"), "utf8")).toBe("第一行\n第二行");
   });
 
   it("write_markdown 接受含连续点的合法文件名（a..b.txt 不再误杀，#IKJSNI）", async () => {
@@ -97,7 +99,7 @@ describe("filename 校验报错（参数缺失时回传实际键名）", () => {
     );
     const result = JSON.parse(raw);
     expect(result.success).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, "a..b.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "workspace", "a..b.txt"))).toBe(true);
   });
 
   it("write_markdown 拒绝路径穿越（../、..\\ 均不落盘，#IKJSNI 负向补强）", async () => {
@@ -129,7 +131,7 @@ describe("filename 校验报错（参数缺失时回传实际键名）", () => {
 
 describe("Review 基线捕获（写盘前）", () => {
   it("write_markdown 覆盖已有文件时保存 text 基线", async () => {
-    const file = path.join(tmpDir, "note.md");
+    const file = path.join(tmpDir, "workspace", "note.md");
     fs.writeFileSync(file, "旧内容\n第二行\n");
 
     const raw = await getTool("write_markdown").execute(
@@ -174,7 +176,7 @@ describe("Review 基线捕获（写盘前）", () => {
 
   describe("append 模式", () => {
     it("append=true 时追加到已有文件末尾", async () => {
-      const file = path.join(tmpDir, "note.md");
+      const file = path.join(tmpDir, "workspace", "note.md");
       fs.writeFileSync(file, "# 标题\n\n第一段。");
 
       const raw = await getTool("write_markdown").execute(
@@ -189,7 +191,7 @@ describe("Review 基线捕获（写盘前）", () => {
     });
 
     it("原文件以换行结尾时追加不重复换行", async () => {
-      const file = path.join(tmpDir, "note.md");
+      const file = path.join(tmpDir, "workspace", "note.md");
       fs.writeFileSync(file, "第一段\n");
 
       await getTool("write_markdown").execute(
@@ -200,7 +202,7 @@ describe("Review 基线捕获（写盘前）", () => {
     });
 
     it("append=true 但文件不存在时新建", async () => {
-      const file = path.join(tmpDir, "fresh.md");
+      const file = path.join(tmpDir, "workspace", "fresh.md");
 
       const raw = await getTool("write_markdown").execute(
         { filename: "fresh.md", content: "初始内容", append: true },
@@ -215,7 +217,7 @@ describe("Review 基线捕获（写盘前）", () => {
     });
 
     it("分两次写长笔记：覆盖写前半 + append 续写后半", async () => {
-      const file = path.join(tmpDir, "long-note.md");
+      const file = path.join(tmpDir, "workspace", "long-note.md");
 
       await getTool("write_markdown").execute(
         { filename: "long-note.md", content: "# 长笔记\n\n前半部分。\n" },
@@ -229,7 +231,7 @@ describe("Review 基线捕获（写盘前）", () => {
     });
 
     it("不传 append（默认覆盖）不追加", async () => {
-      const file = path.join(tmpDir, "note.md");
+      const file = path.join(tmpDir, "workspace", "note.md");
       fs.writeFileSync(file, "旧内容");
 
       await getTool("write_markdown").execute(
@@ -255,7 +257,7 @@ describe("Review 基线捕获（写盘前）", () => {
 
   it("write_excel 覆盖已有文件时保存 binary 基线（metadata）", async () => {
     // 预置旧二进制（tracker 按前 8KB 是否含 null byte 判定，与扩展名无关）
-    fs.writeFileSync(path.join(tmpDir, "report.xlsx"), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 1]));
+    fs.writeFileSync(path.join(tmpDir, "workspace", "report.xlsx"), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 1]));
 
     const raw = await getTool("write_excel").execute(
       { filename: "report.xlsx", sheets: [{ name: "S1", headers: ["列A"], rows: [[1, 2]] }] },
@@ -269,7 +271,7 @@ describe("Review 基线捕获（写盘前）", () => {
   });
 
   it("write_word 覆盖已有文件时保存 binary 基线", async () => {
-    fs.writeFileSync(path.join(tmpDir, "report.docx"), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 1]));
+    fs.writeFileSync(path.join(tmpDir, "workspace", "report.docx"), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 1]));
 
     const raw = await getTool("write_word").execute(
       { filename: "report.docx", title: "标题", paragraphs: ["段落一"] },
@@ -283,7 +285,7 @@ describe("Review 基线捕获（写盘前）", () => {
   });
 
   it("write_pdf 基线捕获先于生成（生成失败也不影响基线）", async () => {
-    fs.writeFileSync(path.join(tmpDir, "report.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46, 0, 0, 1]));
+    fs.writeFileSync(path.join(tmpDir, "workspace", "report.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46, 0, 0, 1]));
 
     // 本机 msyh.ttc 与 pdfkit 的 subset 不兼容，doc.text() 会抛错——
     // 恰好验证 write-ahead 语义：基线在任何写盘/生成动作之前已保存
@@ -310,7 +312,7 @@ describe("Review 基线捕获（写盘前）", () => {
 
 describe("write_markdown 覆盖写防护与 JSON 返回体", () => {
   it("返回 JSON 带 changes：覆盖已有文件 → modified + 行级 diff", async () => {
-    const file = path.join(tmpDir, "note.md");
+    const file = path.join(tmpDir, "workspace", "note.md");
     fs.writeFileSync(file, "旧一\n旧二");
 
     const raw = await getTool("write_markdown").execute(
@@ -346,7 +348,7 @@ describe("write_markdown 覆盖写防护与 JSON 返回体", () => {
   });
 
   it("大文件骤降过半被拒绝且文件保持原样", async () => {
-    const file = path.join(tmpDir, "big.md");
+    const file = path.join(tmpDir, "workspace", "big.md");
     const original = Array.from({ length: 80 }, (_, i) => `第 ${i + 1} 行`).join("\n");
     fs.writeFileSync(file, original);
 
@@ -363,7 +365,7 @@ describe("write_markdown 覆盖写防护与 JSON 返回体", () => {
   });
 
   it("小文件合法缩水不拦截", async () => {
-    const file = path.join(tmpDir, "small.md");
+    const file = path.join(tmpDir, "workspace", "small.md");
     fs.writeFileSync(file, Array.from({ length: 8 }, (_, i) => `行 ${i + 1}`).join("\n"));
 
     const raw = await getTool("write_markdown").execute(
@@ -376,7 +378,7 @@ describe("write_markdown 覆盖写防护与 JSON 返回体", () => {
   });
 
   it("append 到大文件不做骤降检查", async () => {
-    const file = path.join(tmpDir, "big-append.md");
+    const file = path.join(tmpDir, "workspace", "big-append.md");
     const original = Array.from({ length: 60 }, (_, i) => `行 ${i + 1}`).join("\n");
     fs.writeFileSync(file, original);
 
