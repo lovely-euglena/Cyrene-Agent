@@ -26,6 +26,7 @@ import {
 } from "../../shared/preferences";
 import { normalizeCitaSettings } from "../cita/settings";
 import { getGeneralSettingsPath } from "../settings-store";
+import { normalizeDayTypeOverrides } from "../pricing/holidays";
 import { syncDedicatedGitConfig } from "../code-git/dedicated-git-config";
 import { normalizeWindowVisibilitySettings } from "../window-visibility-settings";
 import type { GeneralSettings } from "./general-settings";
@@ -173,6 +174,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   gitCommitAuthorEmail: "",
   gitUseDedicatedConfig: true,
   recentProjects: [],
+  holidayDayTypeOverrides: {},
   disclaimerAcceptedVersion: "",
 };
 
@@ -470,6 +472,7 @@ export function normalizeGeneralSettings(
     disclaimerAcceptedVersion: typeof input?.disclaimerAcceptedVersion === "string"
       ? input.disclaimerAcceptedVersion.trim().slice(0, 64)
       : "",
+    holidayDayTypeOverrides: normalizeDayTypeOverrides(input?.holidayDayTypeOverrides),
   };
 }
 
