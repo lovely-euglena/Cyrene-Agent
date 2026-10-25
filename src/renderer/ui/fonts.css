@@ -1,3 +1,18 @@
-/* Noto Sans SC (思源黑体) for UI text, JetBrains Mono for tech accents.
-   Both come from Google Fonts; we preconnect for faster first paint. */
-@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+/* 界面保留系统无衬线字体栈；代码字体随应用打包，避免依赖在线字体服务。
+   CJK 正文（Noto Sans SC）体积 20MB+ 不打包，保留远程 @import（仅 UI 观感，加载失败降级系统字体）。 */
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}

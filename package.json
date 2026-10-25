@@ -22,7 +22,7 @@
     "check:preload": "tsc -p tsconfig.preload.json --noEmit",
     "check:renderer": "tsc -p tsconfig.renderer.json",
     "sync:file-icons": "node scripts/sync-file-icons.mjs",
-    "build:renderer": "vite build",
+    "build:renderer": "vite build && node scripts/verify/bundled-fonts.mjs",
     "build:pwa": "cd src/pwa && npm run build",
     "check:pwa": "cd src/pwa && npm run check",
     "dev:pwa": "cd src/pwa && npm run dev",
@@ -41,12 +41,17 @@
     "prepare:skills": "node scripts/packaging/build-skills-snapshot.mjs",
     "verify:mpv": "node scripts/verify/mpv-helper.mjs resources/bin/mpv/mpv.exe",
     "verify:installer": "node scripts/verify/installer-artifacts.mjs",
+<<<<<<< HEAD
     "verify:agent-orchestrator": "node scripts/verify/agent-orchestrator-smoke.mjs",
     "verify:task-orchestrator-loop": "vitest run src/main/orchestrator/agent-orchestration/task-orchestrator-loop.integration.test.ts",
     "verify:pandoc-sidecar": "node scripts/diagnostics/pandoc-sidecar-smoke.mjs",
     "verify:music-native": "node scripts/diagnostics/music-native-smoke.mjs",
     "verify:token-stats": "node scripts/diagnostics/token-stats-smoke.mjs",
     "verify:wsl": "node scripts/diagnostics/wsl-smoke.mjs",
+=======
+    "verify:fonts": "node scripts/verify/bundled-fonts.mjs",
+    "verify:fonts:offline": "node scripts/verify/fonts-offline.mjs",
+>>>>>>> cdbf24e3 (fix(字体): 打包本地 JetBrains Mono 字体)
     "seed:usage": "node scripts/seed-usage-stats.mjs",
     "package:win:dir": "pnpm run build && pnpm run build:screenshot-helper && pnpm run build:embed-sidecar && pnpm run build:token-stats && pnpm run build:ocr-sidecar && pnpm run build:voice && pnpm run build:native-windows && pnpm run prepare:mingit && pnpm run prepare:mpv && electron-builder --win --dir",
     "dev": "pnpm run build:main && pnpm run build:preload && pnpm run build:cli && concurrently \"vite --strictPort\" \"cross-env VITE_DEV=1 electron .\"",
