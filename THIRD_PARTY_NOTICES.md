@@ -1,5 +1,11 @@
 # Third-party notices
 
+## Bundled UI code fonts
+
+JetBrains Mono 2.304 (normal weights 400 and 500) is bundled from the [official JetBrains repository](https://github.com/JetBrains/JetBrainsMono/tree/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9), Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono), under the SIL Open Font License 1.1. The upstream WOFF2 files are unmodified.
+
+The full license and copyright notice are included in `src/renderer/public/fonts/JetBrainsMono-OFL.txt`; pinned source URLs, sizes and SHA-256 checksums are in the adjacent `manifest.json`. Vite copies the entire directory to `dist/renderer/fonts/`, included by electron-builder's `dist/**/*` rule. These fonts remain under OFL-1.1 when distributed with the application.
+
 ## ZCode / Vercel ai-elements terminal design
 
 The chat command output panel is adapted from `E:\ZCode\packages\ui\src\components\ai-elements\terminal.tsx`. That component is derived from Vercel ai-elements, Copyright 2023 Vercel, Inc., licensed under Apache-2.0. ZCode's repository is also licensed under Apache-2.0. The adapted panel retains the source attribution; the full Apache-2.0 license text is included in `LICENSES/Apache-2.0.txt` and available at [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).

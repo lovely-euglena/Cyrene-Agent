@@ -1,0 +1,4 @@
+# 字体、许可及来源清单按原始字节保存，避免换行转换影响哈希验证。
+src/renderer/public/fonts/* -text
+# 上游许可保留原文，包括其原有行尾空格。
+src/renderer/public/fonts/JetBrainsMono-OFL.txt -whitespace

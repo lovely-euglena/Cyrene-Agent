@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "license": "OFL-1.1",
+  "fonts": [
+    {
+      "file": "JetBrainsMono-Regular.woff2",
+      "bytes": 92164,
+      "sha256": "A9CB1CD82332B23A47E3A1239D25D13C86D16C4220695E34B243EFFA999F45F2",
+      "family": "JetBrains Mono",
+      "subfamily": "Regular",
+      "version": "Version 2.304; ttfautohint (v1.8.4.7-5d5b)",
+      "copyright": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)",
+      "glyphs": 1743,
+      "codepoints": 1363,
+      "weight": 400,
+      "axes": [],
+      "cssFamily": "JetBrains Mono",
+      "cssWeights": [
+        400
+      ],
+      "source": {
+        "repository": "https://github.com/JetBrains/JetBrainsMono",
+        "version": "2.304",
+        "commit": "cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9",
+        "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/fonts/webfonts/JetBrainsMono-Regular.woff2",
+        "conversion": "Unmodified upstream WOFF2"
+      },
+      "legacyFamily": "JetBrains Mono",
+      "legacySubfamily": "Regular",
+      "postscriptName": "JetBrainsMono-Regular"
+    },
+    {
+      "file": "JetBrainsMono-Medium.woff2",
+      "bytes": 93824,
+      "sha256": "086C48DFBEA9DDAFF1320F7E09399B8E2924E88CE67453721255DB3BDBB5A353",
+      "family": "JetBrains Mono",
+      "subfamily": "Medium",
+      "version": "Version 2.304; ttfautohint (v1.8.4.7-5d5b)",
+      "copyright": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)",
+      "glyphs": 1743,
+      "codepoints": 1363,
+      "weight": 500,
+      "axes": [],
+      "cssFamily": "JetBrains Mono",
+      "cssWeights": [
+        500
+      ],
+      "source": {
+        "repository": "https://github.com/JetBrains/JetBrainsMono",
+        "version": "2.304",
+        "commit": "cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9",
+        "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/fonts/webfonts/JetBrainsMono-Medium.woff2",
+        "conversion": "Unmodified upstream WOFF2"
+      },
+      "legacyFamily": "JetBrains Mono Medium",
+      "legacySubfamily": "Regular",
+      "postscriptName": "JetBrainsMono-Medium"
+    }
+  ],
+  "files": [
+    {
+      "file": "JetBrainsMono-Regular.woff2",
+      "bytes": 92164,
+      "sha256": "A9CB1CD82332B23A47E3A1239D25D13C86D16C4220695E34B243EFFA999F45F2"
+    },
+    {
+      "file": "JetBrainsMono-Medium.woff2",
+      "bytes": 93824,
+      "sha256": "086C48DFBEA9DDAFF1320F7E09399B8E2924E88CE67453721255DB3BDBB5A353"
+    },
+    {
+      "file": "JetBrainsMono-OFL.txt",
+      "bytes": 4399,
+      "sha256": "30F0C136E3C88E422D0791ACD97238870F9054A9729BC34CF2FF0D4ED8CAC4AD"
+    }
+  ],
+  "licenseSources": {
+    "JetBrainsMono-OFL.txt": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/OFL.txt"
+  },
+  "packaging": "Vite publicDir copies fonts and the full OFL copyright/license to dist/renderer/fonts; electron-builder includes dist/**/*."
+}
