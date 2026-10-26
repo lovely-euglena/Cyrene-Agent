@@ -36,9 +36,8 @@ function appVersionPlugin(): Plugin {
 /**
  * 生成 React 渲染页的 Content-Security-Policy。
  * - script-src 只允许 'self'，明确不含 'unsafe-eval'
- * - style-src 保留 'unsafe-inline'，兼容 Ant Design 的 CSS-in-JS 运行时样式；
- *   放行 fonts.googleapis.com（ui/fonts.css 的 Google Fonts 样式表）
- * - font-src 放行 fonts.gstatic.com（Google Fonts 字体文件本体）
+ * - style-src 保留 'unsafe-inline'，兼容 Ant Design 的 CSS-in-JS 运行时样式
+ * - 字体随包加载，style-src 和 font-src 不再放行远程字体服务
  * - frame-ancestors 只在 HTTP 响应头中生效，经 <meta> 传递会被浏览器忽略，故不写入
  * - 开发环境额外放行 Vite 热更新所需的 localhost 连接源
  */
@@ -49,9 +48,11 @@ function reactRendererCsp(isDev: boolean): string {
   return [
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "img-src 'self' data: blob: https:",
-    "font-src 'self' data: local-font: https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    // local-sticker / moment-media 是贴图与动态配图的本地自定义协议，
+    // 必须显式放行，否则动态里 user_attachment 图片和贴图都会被 CSP 拦截
+    "img-src 'self' data: blob: https: local-sticker: moment-media:",
+    "font-src 'self' data: local-font:",
     `connect-src ${connectSrc}`,
     "media-src 'self' data: blob: https:",
     "worker-src 'self' blob:",
