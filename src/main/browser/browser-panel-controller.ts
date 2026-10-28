@@ -9,6 +9,8 @@ import {
   type BrowserPanelTabState,
 } from "../../shared/browser-panel-types";
 import { getLocaleContext } from "../locale-context";
+import { buildSearchUrl, type BrowserSearchEngine } from "../../shared/browser-search-engine";
+import { loadGeneralSettings } from "../settings/settings-facade";
 import { allowInternalNavigation } from "../windows/external-link";
 import { BrowserSessionPersistence } from "./browser-session-persistence";
 import { getLearnExamPageSession } from "../protocols/bootstrap";
@@ -58,6 +60,38 @@ function parseHttpUrl(input: string): URL | null {
   try {
     const url = new URL(input.trim());
     return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 地址栏输入规范化（issue #142）：
+ * - 完整 http(s) URL 直接通过；
+ * - 无协议输入（example.com / 1.2.3.4）按 https:// 前缀重试一次；
+ * - 像搜索词（含空格或不含 "."）回退到 Bing 搜索结果页——面板内没有独立搜索基础设施，
+ *   走站点导航是对"输入天气→能到达结果"的最小实现（google 国内不可达，bing 可达性最好）；
+ * - 带其他协议头（ftp: 等）原样报 unsupported_protocol（仍拒绝导航）。
+ */
+export function normalizeAddressInput(input: string, engine: BrowserSearchEngine = "bing"): URL | null {
+  const trimmed = input.trim();
+  const direct = parseHttpUrl(trimmed);
+  if (direct) return direct;
+
+  const hasProtocol = /^[a-z][a-z\d+.-]*:/i.test(trimmed);
+  if (hasProtocol) return null; // 显式协议但不支持——交给调用方报 unsupported_protocol
+
+  const looksLikeHost = !/\s/.test(trimmed) && trimmed.includes(".") && !trimmed.startsWith(".") && !trimmed.endsWith(".");
+  if (looksLikeHost) {
+    const retried = parseHttpUrl(`https://${trimmed}`);
+    if (retried) return retried;
+  }
+
+  // 搜索词回退（含空格或无点）
+  const query = trimmed.replace(/\s+/g, " ").trim();
+  if (!query) return null;
+  try {
+    return new URL(buildSearchUrl(engine, query));
   } catch {
     return null;
   }
@@ -855,7 +889,7 @@ export class BrowserPanelController {
   async openInNewTab(input: string): Promise<BrowserPanelResult> {
     await this.readyPromise;
     if (this.disposed) return { ok: false, error: "unavailable" };
-    const url = parseHttpUrl(input);
+    const url = normalizeAddressInput(input, loadGeneralSettings().browserSearchEngine);
     if (!url) {
       const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
       return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
@@ -1006,7 +1040,7 @@ export class BrowserPanelController {
 
   private async navigateTab(tab: BrowserTab, input: string): Promise<BrowserPanelResult> {
     if (this.disposed || !this.tabs.includes(tab)) return { ok: false, error: "unavailable" };
-    const url = parseHttpUrl(input);
+    const url = normalizeAddressInput(input, loadGeneralSettings().browserSearchEngine);
     if (!url) {
       const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
       return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
