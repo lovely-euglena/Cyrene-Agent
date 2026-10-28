@@ -15,6 +15,7 @@ import type { CustomStyleConfig, StyleId } from "../../shared/style-sampling";
 import type { ToolModeOverrides } from "../orchestrator/tools/registry/tool-registry";
 import type { SkillModeOverrides } from "../skills/types";
 import type { LspServerOverride } from "../lsp/types";
+import type { BrowserSearchEngine } from "../../shared/browser-search-engine";
 
 /**
  * 通用设置（GeneralSettings）：与模型配置无关的 UI、TTS、工具开关、快捷键等。
@@ -282,7 +283,12 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * 全局配置副本（一键复制） → 实时 include 用户全局配置 → 身份/初始化覆盖（见 dedicated-git-config.ts）。
    */
   gitUseDedicatedConfig: boolean;
-  /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
+  /**
+   * 浏览器面板地址栏的搜索回退引擎（issue #142）：输入不像 URL 时回退到该引擎的搜索结果页。
+   * 与 Agent 联网搜索源 searchEngine（bocha/tavily 等 API 类）相互独立。
+   */
+  browserSearchEngine: BrowserSearchEngine;
+    /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
   recentProjects: string[];
   /** 用户明确接受的免责声明版本；空字符串表示尚未接受当前条款。 */
   disclaimerAcceptedVersion?: string;

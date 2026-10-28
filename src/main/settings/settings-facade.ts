@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { normalizeBrowserSearchEngine } from "../../shared/browser-search-engine";
 import * as path from "path";
 import {
   DEFAULT_WINDOW_CORNER_RADIUS,
@@ -126,6 +127,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   searchTavilyKey: "",
   searchMinimaxKey: "",
   searchAnySearchKey: "",
+  /** 浏览器面板地址栏的搜索回退引擎（issue #142）；与 Agent 联网搜索源 searchEngine 相互独立。 */
+  browserSearchEngine: "bing",
   emailEnabled: false,
   emailSmtpHost: "",
   emailSmtpPort: 465,
@@ -374,6 +377,7 @@ export function normalizeGeneralSettings(
     searchTavilyKey: typeof input?.searchTavilyKey === "string" ? input.searchTavilyKey : "",
     searchMinimaxKey: typeof input?.searchMinimaxKey === "string" ? input.searchMinimaxKey : "",
     searchAnySearchKey: typeof input?.searchAnySearchKey === "string" ? input.searchAnySearchKey : "",
+    browserSearchEngine: normalizeBrowserSearchEngine(input?.browserSearchEngine),
     emailEnabled: Boolean(input?.emailEnabled),
     emailSmtpHost: typeof input?.emailSmtpHost === "string" ? input.emailSmtpHost : "",
     emailSmtpPort: clampPort(input?.emailSmtpPort, DEFAULT_GENERAL_SETTINGS.emailSmtpPort),
