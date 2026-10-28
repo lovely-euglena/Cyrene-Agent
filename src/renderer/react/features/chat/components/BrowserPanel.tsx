@@ -206,6 +206,7 @@ export function BrowserPanel({ active }: { active: boolean }) {
               placeholder={t("browserPanel.addressPlaceholder")}
               spellCheck={false}
               autoComplete="off"
+              title={address || undefined}
             />
             <button className="cy-browser-panel__go" type="submit">{t("browserPanel.go")}</button>
           </form>
