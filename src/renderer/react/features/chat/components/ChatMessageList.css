@@ -709,6 +709,8 @@
   margin: 7px 0 2px;
   padding: 0;
   list-style: none;
+  max-height: 280px; /* issue #151：问答配对回显超长时内部滚动 */
+  overflow-y: auto;
 }
 
 .cy-ask-user-qa__row {
