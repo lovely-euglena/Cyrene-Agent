@@ -43,8 +43,11 @@ export async function buildContextUsageSnapshotWithCounter(
 
   const byText = new Map<string, (typeof counts)[number]>();
   unique.forEach((text, index) => byText.set(text, counts![index]));
-  return buildContextUsageSnapshot({
-    ...input,
-    tokenCounter: (text) => byText.get(text) ?? estimateTokens(text),
-  });
+  return {
+    ...buildContextUsageSnapshot({
+      ...input,
+      tokenCounter: (text) => byText.get(text) ?? estimateTokens(text),
+    }),
+    tokenCounting: "exact" as const,
+  };
 }

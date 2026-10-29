@@ -37,6 +37,8 @@ export interface ContextUsageSnapshot {
   categories: ContextUsageCategory[];
   /** 消息条数（含 internal/tool），便于排查膨胀来源。 */
   messageCount: number;
+  /** issue #150-A2：计数方式——exact（sidecar 词表精确）/ heuristic（回退估算）。静默降级可见化。 */
+  tokenCounting?: "exact" | "heuristic";
   updatedAt: number;
 }
 

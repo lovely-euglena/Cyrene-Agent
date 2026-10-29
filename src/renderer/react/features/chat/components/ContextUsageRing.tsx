@@ -130,7 +130,13 @@ export function ContextUsageRing({ usage, sessionId, busy, onCompactPhaseChange 
   const summaryText = showRatio
     ? `${formatTokenCount(usage.totalTokens)} / ${formatTokenCount(usage.contextWindowTokens)} tokens (${percentText})`
     : `${formatTokenCount(usage.totalTokens)} tokens`;
-  const title = t("contextRing.title", { summary: summaryText.replace(" tokens ", " ") });
+  // issue #150-A2：计数方式标注（exact 精确 / heuristic 估算回退）——静默降级可见化
+  const countingSuffix = usage.tokenCounting === "exact"
+    ? ` · ${t("contextRing.countingExact")}`
+    : usage.tokenCounting === "heuristic"
+      ? ` · ${t("contextRing.countingHeuristic")}`
+      : "";
+  const title = t("contextRing.title", { summary: summaryText.replace(" tokens ", " ") + countingSuffix });
 
   // 主动压缩：无 sessionId（如 demo 会话）或运行中不可点。
   const canCompact = Boolean(sessionId) && !busy;
