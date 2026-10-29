@@ -118,6 +118,15 @@ export function registerBrowserPanelIpc(input: {
   });
   input.ipc.handle(IPC.BROWSER_PANEL_CLEAR_COOKIES, async (event) => {
     if (!authorized(event)) return { ok: false, error: "unavailable" };
+
+    input.ipc.handle(IPC.BROWSER_PANEL_DETACH, (event) => {
+      if (!authorized(event)) return { ok: false, error: "unauthorized" } as const;
+      return { ok: controller.detachToWindow() } as const;
+    });
+    input.ipc.handle(IPC.BROWSER_PANEL_REATTACH, (event) => {
+      if (!authorized(event)) return { ok: false, error: "unauthorized" } as const;
+      return { ok: controller.reattachToMain() } as const;
+    });
     try {
       await controller.clearCookies();
       return { ok: true };

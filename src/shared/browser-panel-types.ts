@@ -22,6 +22,8 @@ export interface BrowserPanelState {
   activeTabId: string;
   tabs: BrowserPanelTabState[];
   elementPickerActive?: boolean;
+  /** issue #146：浏览器已 detach 到独立窗口（主窗面板显示占位，UI 仍在主窗工具栏操作或直接操作独立窗）。 */
+  detached?: boolean;
   /** The run currently controlling the browser, if any. */
   controlTabId?: string;
   controlAction?: "starting" | "opening" | "switching" | "clicking" | "filling" | "pressing" | "scrolling" | "screenshot" | "active";

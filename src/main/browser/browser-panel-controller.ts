@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { app, Menu, session, WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
+import { app, BrowserWindow, Menu, session, WebContentsView, type Session, type WebContents } from "electron";
 import * as path from "node:path";
 import {
   type BrowserPanelBounds,
@@ -80,6 +80,8 @@ export class BrowserPanelController {
   private activationSequence = 0;
   private browserSession: Session | null = null;
   private parentWindow: BrowserWindow | null = null;
+  /** issue #146：detach 独立窗口（null = 未 detach）。view 平移不重载，会话保留。 */
+  private detachedWindow: BrowserWindow | null = null;
   private bounds: BrowserPanelBounds | null = null;
   private disposed = false;
   private initialized = false;
@@ -127,6 +129,7 @@ export class BrowserPanelController {
   getState(): BrowserPanelState {
     return {
       activeTabId: this.activeTabId,
+      detached: !!this.detachedWindow,
       elementPickerActive: this.elementPickerTabId === this.activeTabId,
       ...(this.controlLease ? { controlTabId: this.controlLease.tabId } : {}),
       ...(this.controlAction ? { controlAction: this.controlAction } : {}),
@@ -779,6 +782,75 @@ export class BrowserPanelController {
       inherited,
       truncated: rules.length > matchedRules.length,
     };
+  }
+
+  /**
+   * issue #146：浏览器面板 detach 到独立窗口。
+   * view 平移（removeChildView→addChildView 同一实例）不重载——会话/登录态/控制权租约全保留。
+   * bounds 感知自动适配：独立窗全窗铺满（0,0,content）。
+   */
+  detachToWindow(): boolean {
+    if (this.detachedWindow) return true;
+    const win = this.getWindow();
+    if (!win || win.isDestroyed()) return false;
+    const [w, h] = win.getContentSize();
+    const detached = new BrowserWindow({
+      width: Math.max(480, Math.min(1280, Math.round(w * 0.9))),
+      height: Math.max(400, Math.min(960, Math.round(h * 0.9))),
+      title: "Cyrene 浏览器",
+      show: false,
+      autoHideMenuBar: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+    this.detachedWindow = detached;
+    // view 平移：宿主窗切换不销毁不重载
+    for (const tab of this.tabs) {
+      if (tab.view && this.parentWindow && !this.parentWindow.isDestroyed()) {
+        this.parentWindow.contentView.removeChildView(tab.view);
+        detached.contentView.addChildView(tab.view);
+      }
+    }
+    this.parentWindow = detached;
+    this.observedWindows.add(detached);
+    detached.once("closed", () => {
+      // 独立窗关闭 → 自动回主窗形态（view 再平移回来）
+      if (this.detachedWindow === detached) this.reattachToMain(false);
+    });
+    detached.once("ready-to-show", () => detached.show());
+    // 全窗 bounds
+    const [dw, dh] = detached.getContentSize();
+    this.bounds = { x: 0, y: 0, width: dw, height: dh };
+    this.applyBounds();
+    // 独立窗尺寸变化跟随（applyBounds 按 parentWindow content size 收敛）
+    detached.on("resize", () => this.applyBounds());
+    this.publish();
+    return true;
+  }
+
+  /** issue #146：收回主窗（detach 的逆操作；destroyWindow=true 时由 closed 事件调用，窗口已自毁）。 */
+  reattachToMain(destroyWindow = true): boolean {
+    const detached = this.detachedWindow;
+    if (!detached) return false;
+    this.detachedWindow = null;
+    const win = this.getWindow();
+    if (win && !win.isDestroyed()) {
+      for (const tab of this.tabs) {
+        if (tab.view && !detached.isDestroyed()) {
+          detached.contentView.removeChildView(tab.view);
+          win.contentView.addChildView(tab.view);
+        }
+      }
+      this.parentWindow = win;
+      // 主窗形态：恢复上次面板 bounds 由 renderer SET_BOUNDS 重设
+      this.applyBounds();
+    } else {
+      // 主窗没了（退出中）：视图随独立窗一起销毁
+      this.destroyViews();
+      this.parentWindow = null;
+    }
+    if (destroyWindow && !detached.isDestroyed()) detached.close();
+    this.publish();
+    return true;
   }
 
   setBounds(bounds: BrowserPanelBounds | null): void {
