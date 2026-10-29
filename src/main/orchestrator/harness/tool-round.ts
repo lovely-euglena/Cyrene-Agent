@@ -358,6 +358,8 @@ async function commitToolResult(
     preview: (result.preview ?? result.message).slice(0, 200),
     // Diff Review 卡片证据走独立字段，不受 preview 截断影响
     changes: extractFileChangesFromOutput(result.output),
+    // issue #139 用户面：可行动指引（ToolDispatchResult 从 rawResult 取）
+    actionHint: result.outcome === "success" ? undefined : result.rawResult?.actionHint,
   });
   const message = toolResultMessage(call, result);
   await commitToolResultMessage(run, {

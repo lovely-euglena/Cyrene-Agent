@@ -1118,6 +1118,8 @@ export class AgentRunController {
         status: event.status === "failed" ? "error" : "success",
         result: (event.content ?? "").slice(0, 4000),
         changes: event.changes,
+        // issue #139 用户面：失败时的可行动指引（配置错误类 → 设置页）
+        ...(event.status === "failed" ? { actionHint: (event as { actionHint?: string }).actionHint } : {}),
       });
       void this.checkpointRun("running", true);
     } else if (event.type === "TOOL_CALL_END" && event.toolCallId) {

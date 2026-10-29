@@ -91,3 +91,12 @@
 @keyframes cy-command-terminal-cursor {
   50% { opacity: 0; }
 }
+
+/* issue #139：工具失败卡片的可行动指引行 */
+.cy-command-terminal__action-hint {
+  padding: 6px 12px;
+  border-top: 1px solid var(--rb-border-default, #e7e2e5);
+  background: var(--rb-surface-hover, #fff7f2);
+  color: var(--rb-text-primary, #2f2d31);
+  font: 500 12px/1.5 var(--rb-font-sans, sans-serif);
+}

@@ -375,6 +375,8 @@ export async function dispatchToolCall(
       preview: preview.slice(0, 200),
       // Diff Review 卡片证据走独立字段，不受 preview 截断影响
       changes: extractFileChangesFromOutput(result.output),
+      // issue #139 用户面：可行动指引（配置错误类 → 设置页指引）
+      actionHint: result.status === "succeeded" ? undefined : result.actionHint,
     });
   }
 
