@@ -257,6 +257,12 @@ declare global {
       startMouth: (durationMs: number) => void;
       stopMouth: () => void;
     };
+    /** issue #147：桌宠气泡（pet 窗消费） */
+    cyrenePetBubble?: {
+      onBubbleText: (callback: (data: { delta: string }) => void) => () => void;
+      onBubbleEnd: (callback: (data: { status: string }) => void) => () => void;
+      focusChat: () => void;
+    };
     cyreneScheduler?: import("./settings/scheduler/types").SchedulerApi;
   }
 }

@@ -133,6 +133,24 @@ const chatApi = {
 };
 
 contextBridge.exposeInMainWorld("cyrene", cyreneApi);
+
+// issue #147：桌宠气泡桥（pet 窗消费；chat 窗加载同一 preload，无副作用）
+const cyrenePetBubbleApi = {
+  onBubbleText: (callback: (data: { delta: string }) => void): (() => void) => {
+    const listener = (_e: unknown, data: { delta: string }) => callback(data);
+    ipcRenderer.on(IPC.PET_BUBBLE_TEXT, listener);
+    return () => ipcRenderer.removeListener(IPC.PET_BUBBLE_TEXT, listener);
+  },
+  onBubbleEnd: (callback: (data: { status: string }) => void): (() => void) => {
+    const listener = (_e: unknown, data: { status: string }) => callback(data);
+    ipcRenderer.on(IPC.PET_BUBBLE_END, listener);
+    return () => ipcRenderer.removeListener(IPC.PET_BUBBLE_END, listener);
+  },
+  focusChat: (): void => {
+    ipcRenderer.send(IPC.PET_BUBBLE_FOCUS_CHAT);
+  },
+};
+contextBridge.exposeInMainWorld("cyrenePetBubble", cyrenePetBubbleApi);
 contextBridge.exposeInMainWorld("appUpdate", appUpdateApi);
 contextBridge.exposeInMainWorld("chat", chatApi);
 
