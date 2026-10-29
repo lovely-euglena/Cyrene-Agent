@@ -15,6 +15,56 @@
       display: block;
       width: 100%; height: 100%;
     }
+    /* issue #147：桌宠气泡 */
+    .pet-bubble {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 10%;
+      max-height: 46%;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 12px 8px;
+      border-radius: 14px;
+      background: var(--rb-card-bg, #ffffff);
+      border: 1px solid var(--rb-border-default, #f0ebee);
+      box-shadow: 0 6px 18px rgb(0 0 0 / 14%);
+      color: var(--rb-text-primary, #1d1d1f);
+      font: 400 13px/1.55 var(--rb-font-sans, sans-serif);
+      z-index: 10;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    .pet-bubble[hidden] { display: none; }
+    .pet-bubble__text {
+      flex: 1;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .pet-bubble__close {
+      position: absolute;
+      top: 4px;
+      right: 8px;
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      color: var(--rb-text-secondary, #8a8287);
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .pet-bubble__close:hover { background: var(--rb-surface-hover, #fff1f6); color: var(--rb-text-primary, #2f2d31); }
+    .pet-bubble__footer {
+      margin-top: 6px;
+      padding-top: 5px;
+      border-top: 1px solid var(--rb-border-default, #f0ebee);
+      color: var(--rb-text-secondary, #8a8287);
+      font-size: 11px;
+      text-align: center;
+    }
+    .pet-bubble.is-fading { opacity: 0; transition: opacity .6s ease; }
   </style>
   <link rel="stylesheet" href="./ui/tokens.css" />
   <link rel="stylesheet" href="./ui/fonts.css" />
@@ -25,6 +75,12 @@
 </head>
 <body>
   <canvas id="live2d-canvas"></canvas>
+  <!-- issue #147：桌宠气泡 overlay（默认隐藏；跟随回复 delta 流式渲染） -->
+  <div id="pet-bubble" class="pet-bubble" hidden>
+    <div class="pet-bubble__close" role="button" aria-label="关闭气泡">×</div>
+    <div class="pet-bubble__text"></div>
+    <div class="pet-bubble__footer">点击气泡打开对话</div>
+  </div>
   <script type="module" src="./main.ts"></script>
 </body>
 </html>

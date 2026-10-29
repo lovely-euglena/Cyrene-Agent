@@ -44,6 +44,7 @@ export class ClickThroughController {
   private currentState: boolean | null = null;
   private paused = false;
   private disposed = false;
+  private forced: true | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -61,6 +62,23 @@ export class ClickThroughController {
   pause(): void {
     this.paused = true;
     this.cancelPending();
+  }
+
+  /**
+   * issue #147：气泡等 DOM 覆盖层的强制交互开关。
+   * true = 直接进入捕获态（不受模型像素 alpha 采样约束）；null = 恢复按像素采样。
+   */
+  forceInteractive(interactive: true | null): void {
+    if (this.disposed) return;
+    this.forced = interactive;
+    if (interactive === true) {
+      if (this.currentState !== true) {
+        this.currentState = true;
+        this.onInteractive?.(true);
+      }
+    } else {
+      this.currentState = null; // 下次 move 重新采样
+    }
   }
 
   resume(): void {
@@ -93,6 +111,7 @@ export class ClickThroughController {
     this.pendingPoint = null;
     if (!point) return;
 
+    if (this.forced === true) return; // issue #147：气泡强制交互期，保持捕获态
     const interactive = this.hitTestAlpha(point.x, point.y);
     // 诊断日志（拖不动排查用）：interactive 状态翻转时输出。
     // 持续翻转抖动 = alpha 阈值/坐标换算问题；永不翻转 = forward 断流

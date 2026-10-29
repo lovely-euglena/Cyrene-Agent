@@ -8,6 +8,7 @@ import { MouthSyncController } from "./live2d/mouth-sync";
 import { SpeakingMotionController } from "./live2d/speaking-motion";
 // OpenerBubbleController 已被移除（主动开口子系统整体删除）。
 import { ClickThroughController } from "./live2d/click-through";
+import { PetBubbleController } from "./live2d/pet-bubble";
 import { Live2DRendererLifecycleTracker } from "./live2d/lifecycle-diagnostics";
 import { resolveDragCalibration } from "./pet-drag-calibration";
 import { resolveAsset } from "../shared/renderer-base";
@@ -51,6 +52,7 @@ let mouthSync: MouthSyncController | null = null;
 let blink: BlinkController | null = null;
 let speakingMotion: SpeakingMotionController | null = null;
 let clickThrough: ClickThroughController | null = null;
+let petBubble: PetBubbleController | null = null;
 let petZoomOff: (() => void) | null = null;
 let petVisibilityOff: (() => void) | null = null;
 let petVisible = true;
@@ -128,6 +130,23 @@ const manager = new Live2DManager({
       },
     });
 
+    // issue #147：桌宠气泡——回复流式 overlay；hover 时强制窗口捕获（协调 click-through）
+    const bubbleRoot = document.getElementById("pet-bubble");
+    if (bubbleRoot) {
+      petBubble = new PetBubbleController({
+        root: bubbleRoot,
+        setInteractive: (interactive) => {
+          if (interactive) clickThrough?.forceInteractive(true);
+          else clickThrough?.forceInteractive(null);
+        },
+      });
+      const bubbleApi = window.cyrenePetBubble;
+      if (bubbleApi) {
+        trackSubscription("petBubble:onText", bubbleApi.onBubbleText((data) => petBubble?.append(data.delta)));
+        trackSubscription("petBubble:onEnd", bubbleApi.onBubbleEnd(() => petBubble?.finish()));
+      }
+    }
+
     // Apply the persisted zoom on load and track future changes. The main
     // process has already resized the window to base × zoom; this rescales
     // the model to match.
@@ -204,6 +223,8 @@ window.addEventListener("beforeunload", () => {
   focus?.dispose();
   focus = null;
   clickThrough?.dispose();
+  petBubble?.dispose();
+  petBubble = null;
   clickThrough = null;
   petZoomOff?.();
   petZoomOff = null;
