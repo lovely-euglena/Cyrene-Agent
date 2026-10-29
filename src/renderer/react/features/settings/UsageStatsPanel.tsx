@@ -124,6 +124,19 @@ export function UsageStatsPanel() {
     },
     { label: t("settingsPage.usage.summaryCurrentStreak"), value: `${summary.currentStreakDays} ${t("settingsPage.usage.unitDays")}` },
     { label: t("settingsPage.usage.summaryLongestStreak"), value: `${summary.longestStreakDays} ${t("settingsPage.usage.unitDays")}` },
+    // issue #212：成本汇总（按币种分卡；只有填过单价的模型计入）
+    ...Object.entries(
+      (report?.models ?? []).reduce<Record<string, number>>((acc, model) => {
+        for (const [currency, amount] of Object.entries(model.costs ?? {})) {
+          if (Number.isFinite(amount) && amount > 0) acc[currency] = (acc[currency] ?? 0) + amount;
+        }
+        return acc;
+      }, {}),
+    ).map(([currency, amount]) => ({
+      label: t("settingsPage.usage.summaryCost", { currency }),
+      value: amount.toLocaleString(locale, { maximumFractionDigits: 4 }),
+      hint: t("settingsPage.usage.costHint"),
+    })),
   ];
 
   // 周/累计模式下重算列色阶：一列自底向上填充 filledRows 行。
@@ -515,7 +528,14 @@ function ModelDonut({ models, locale, t }: { models: UsageReport["models"]; loca
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (item) => `${item.label}: ${formatTokenCompact(Number(item.raw))} Token (${formatPercent(locale, slices[item.dataIndex]?.share ?? 0)})`,
+              label: (item) => {
+                // issue #212：模型成本行（有账才显示；"—" 不出现）
+                const costs = slices[item.dataIndex]?.costs;
+                const costText = costs && Object.keys(costs).length > 0
+                  ? " · " + Object.entries(costs).map(([c, v]) => `${c} ${v.toLocaleString(locale, { maximumFractionDigits: 4 })}`).join(" / ")
+                  : "";
+                return `${item.label}: ${formatTokenCompact(Number(item.raw))} Token (${formatPercent(locale, slices[item.dataIndex]?.share ?? 0)})${costText}`;
+              },
             },
           },
         },

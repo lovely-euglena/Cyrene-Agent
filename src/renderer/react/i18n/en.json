@@ -184,6 +184,8 @@
     }
   },
   "contextRing": {
+  "countingExact": "exact counting",
+  "countingHeuristic": "estimated (tokenizer unavailable)",
     "categorySystemPrompt": "System prompt",
     "categoryTools": "Tools",
     "categorySkills": "Skills",
@@ -1590,6 +1592,8 @@
       "emptyTitle": "No usage data yet",
       "emptyDescription": "Start a conversation and token usage with request stats will show up here.",
       "summaryTotalTokens": "Total tokens",
+      "summaryCost": "Cost ({currency})",
+      "costHint": "Computed at request time with peak/valley rules; models without pricing are excluded.",
       "summaryPeakDay": "Peak day",
       "summaryRequests": "Model requests",
       "summaryCacheHitRate": "Cache hit rate",

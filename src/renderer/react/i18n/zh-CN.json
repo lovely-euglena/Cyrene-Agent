@@ -184,6 +184,8 @@
     }
   },
   "contextRing": {
+  "countingExact": "精确计数",
+  "countingHeuristic": "估算（词表未就绪）",
     "categorySystemPrompt": "系统提示词",
     "categoryTools": "工具",
     "categorySkills": "技能",
@@ -1590,6 +1592,8 @@
       "emptyTitle": "暂无用量数据",
       "emptyDescription": "发起对话后，这里会展示 Token 用量与请求统计。",
       "summaryTotalTokens": "累计 Token",
+      "summaryCost": "成本 ({currency})",
+      "costHint": "按请求时刻单价与峰谷规则计算；未配置单价的模型不计入。",
       "summaryPeakDay": "单日峰值",
       "summaryRequests": "模型请求",
       "summaryCacheHitRate": "缓存命中率",

@@ -200,6 +200,8 @@
     }
   },
   "contextRing": {
+  "countingExact": "精密カウント",
+  "countingHeuristic": "推定（語彙未準備）",
     "categorySystemPrompt": "システムプロンプト",
     "categoryTools": "ツール",
     "categorySkills": "スキル",
@@ -1614,6 +1616,8 @@
       "emptyTitle": "使用量データはまだありません",
       "emptyDescription": "会話を始めると、ここに Token 使用量とリクエスト統計が表示されます。",
       "summaryTotalTokens": "累計 Token",
+      "summaryCost": "コスト ({currency})",
+      "costHint": "リクエスト時点の単価とピーク/オフピーク規則で計算。単価未設定のモデルは含みません。",
       "summaryPeakDay": "1 日のピーク",
       "summaryRequests": "モデルリクエスト",
       "summaryCacheHitRate": "キャッシュヒット率",
