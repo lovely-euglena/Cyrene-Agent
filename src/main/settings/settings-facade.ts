@@ -126,6 +126,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   searchTavilyKey: "",
   searchMinimaxKey: "",
   searchAnySearchKey: "",
+  /** 系统通知总开关（issue #153）：任务终态/等待输入时发系统通知；前台聚焦时始终静默。 */
+  notificationsEnabled: true,
   emailEnabled: false,
   emailSmtpHost: "",
   emailSmtpPort: 465,
@@ -374,6 +376,7 @@ export function normalizeGeneralSettings(
     searchTavilyKey: typeof input?.searchTavilyKey === "string" ? input.searchTavilyKey : "",
     searchMinimaxKey: typeof input?.searchMinimaxKey === "string" ? input.searchMinimaxKey : "",
     searchAnySearchKey: typeof input?.searchAnySearchKey === "string" ? input.searchAnySearchKey : "",
+    notificationsEnabled: input?.notificationsEnabled === undefined ? true : Boolean(input.notificationsEnabled),
     emailEnabled: Boolean(input?.emailEnabled),
     emailSmtpHost: typeof input?.emailSmtpHost === "string" ? input.emailSmtpHost : "",
     emailSmtpPort: clampPort(input?.emailSmtpPort, DEFAULT_GENERAL_SETTINGS.emailSmtpPort),

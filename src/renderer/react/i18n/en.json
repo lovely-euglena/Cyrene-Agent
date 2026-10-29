@@ -1534,6 +1534,8 @@
       "systemDescription": "Configure notifications, startup, and graphics rendering.",
       "toastSound": "Notification sound",
       "toastSoundDescription": "Play a sound when an item needs attention or a task finishes.",
+      "notifications": "System notifications",
+      "notificationsDescription": "Send system notifications when a task finishes or Cyrene is waiting for your input; stays quiet while the window is in the foreground.",
       "launchAtLogin": "Launch at login",
       "launchAtLoginDescription": "Open Cyrene automatically when the system starts.",
       "language": "Interface language",
