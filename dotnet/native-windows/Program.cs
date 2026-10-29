@@ -84,6 +84,8 @@ public static class Program
         if (args.Length > 1 && args[0] == "--selftest")
         {
             if (args[1] == "agents") return Agents.OrchestratorSelfTest.Run();
+            // issue #153：通知映射自测（纯逻辑，无需桌面会话）
+            if (args[1] == "notifications") return CyreneNative.Notifications.NotificationSelfTest.Run();
             if (args[1] == "music") return Music.MusicSelfTest.Run();
             if (args[1] == "model-download") return ModelDownload.ModelDownloadSelfTest.Run();
             // 复审 P1-6：托盘调度宿主自测（WPF 初始化前分流，无需桌面会话）。
