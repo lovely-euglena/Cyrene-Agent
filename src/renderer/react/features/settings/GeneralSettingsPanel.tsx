@@ -13,6 +13,7 @@ import { DataStorageSettings } from "./DataStorageSettings";
 interface GeneralValues {
   rememberWindowState: boolean;
   toastSoundEnabled: boolean;
+  petBubbleEnabled: boolean;
   launchAtLogin: boolean;
   disableGpuElectron: boolean;
   sidebarVisible: boolean;
@@ -26,6 +27,7 @@ interface GeneralValues {
 const defaults: GeneralValues = {
   rememberWindowState: true,
   toastSoundEnabled: true,
+  petBubbleEnabled: true,
   launchAtLogin: false,
   disableGpuElectron: false,
   sidebarVisible: true,
@@ -41,6 +43,8 @@ function readGeneral(value: unknown): GeneralValues {
   return {
     rememberWindowState: typeof input.rememberWindowState === "boolean" ? input.rememberWindowState : defaults.rememberWindowState,
     toastSoundEnabled: typeof input.toastSoundEnabled === "boolean" ? input.toastSoundEnabled : defaults.toastSoundEnabled,
+    // issue #147：桌宠气泡开关
+    petBubbleEnabled: typeof input.petBubbleEnabled === "boolean" ? input.petBubbleEnabled : defaults.petBubbleEnabled,
     launchAtLogin: typeof input.launchAtLogin === "boolean" ? input.launchAtLogin : defaults.launchAtLogin,
     disableGpuElectron: typeof input.disableGpuElectron === "boolean" ? input.disableGpuElectron : defaults.disableGpuElectron,
     // 状态栏/日程栏开关：旧 WPF/Electron 通用页同键；宿主持久化后立即显隐窗口
@@ -220,6 +224,7 @@ export function GeneralSettingsPanel() {
           <div className="cy-settings-section__heading"><h2><Monitor size={18} />{t("settingsPage.general.system")}</h2><p>{t("settingsPage.general.systemDescription")}</p></div>
           <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.toastSound")}</strong><span>{t("settingsPage.general.toastSoundDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.toastSound")} checked={values.toastSoundEnabled} onChange={(checked) => { setValues((current) => ({ ...current, toastSoundEnabled: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.petBubble")}</strong><span>{t("settingsPage.general.petBubbleDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.petBubble")} checked={values.petBubbleEnabled} onChange={(checked) => void saveImmediate("petBubbleEnabled", checked)} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.launchAtLogin")}</strong><span>{t("settingsPage.general.launchAtLoginDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.launchAtLogin")} checked={values.launchAtLogin} onChange={(checked) => { setValues((current) => ({ ...current, launchAtLogin: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value={values.language} onChange={(next) => void changeLanguage(next as UiLanguage)} options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en" }, { label: t("settingsPage.general.japanese"), value: "ja-JP" }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.disableGpu")}</strong><span>{t("settingsPage.general.disableGpuDescription")}</span><span className="cy-settings-general__notice">{t("settingsPage.general.restartNotice")}</span></div><div className="cy-settings-row__control cy-settings-button-group"><SettingsSwitch ariaLabel={t("settingsPage.general.disableGpu")} checked={values.disableGpuElectron} onChange={(checked) => void saveImmediate("disableGpuElectron", checked)} /><Button onClick={() => window.settings?.openChromeGpu()}>{t("settingsPage.general.gpuInternals")}</Button></div></div>

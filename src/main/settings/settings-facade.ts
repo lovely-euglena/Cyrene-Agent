@@ -126,6 +126,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   searchTavilyKey: "",
   searchMinimaxKey: "",
   searchAnySearchKey: "",
+  /** issue #147：桌宠气泡——回复在桌宠头顶气泡流式显示；关闭后桌宠不打扰。 */
+  petBubbleEnabled: true,
   emailEnabled: false,
   emailSmtpHost: "",
   emailSmtpPort: 465,
@@ -374,6 +376,7 @@ export function normalizeGeneralSettings(
     searchTavilyKey: typeof input?.searchTavilyKey === "string" ? input.searchTavilyKey : "",
     searchMinimaxKey: typeof input?.searchMinimaxKey === "string" ? input.searchMinimaxKey : "",
     searchAnySearchKey: typeof input?.searchAnySearchKey === "string" ? input.searchAnySearchKey : "",
+    petBubbleEnabled: input?.petBubbleEnabled === undefined ? true : Boolean(input.petBubbleEnabled),
     emailEnabled: Boolean(input?.emailEnabled),
     emailSmtpHost: typeof input?.emailSmtpHost === "string" ? input.emailSmtpHost : "",
     emailSmtpPort: clampPort(input?.emailSmtpPort, DEFAULT_GENERAL_SETTINGS.emailSmtpPort),

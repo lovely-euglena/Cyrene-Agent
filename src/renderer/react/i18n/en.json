@@ -1534,6 +1534,8 @@
       "systemDescription": "Configure notifications, startup, and graphics rendering.",
       "toastSound": "Notification sound",
       "toastSoundDescription": "Play a sound when an item needs attention or a task finishes.",
+      "petBubble": "Pet bubble chat",
+      "petBubbleDescription": "Stream replies in a bubble above the desk pet; click it to open the full chat.",
       "launchAtLogin": "Launch at login",
       "launchAtLoginDescription": "Open Cyrene automatically when the system starts.",
       "language": "Interface language",
