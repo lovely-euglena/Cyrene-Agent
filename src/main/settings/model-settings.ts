@@ -6,6 +6,7 @@ import { foldReasoning, normalizeReasoningPreference, type ReasoningPreference }
 import { normalizeManualReasoningConfig, type ManualReasoningConfig } from "../../shared/manual-reasoning";
 import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
+import { normalizeModelPricing, type ModelPricing } from "../../shared/pricing/model-pricing";
 import {
   applyKeyringToModelSettings,
   getSecret,
@@ -73,6 +74,8 @@ export interface ProviderProfile {
     multimodal?: boolean;
     contextWindowTokens?: number;
     manualReasoning?: ManualReasoningConfig;
+    /** 模型单价（issue #209，成本统计 #212 消费）。手动编辑层 = 三层叠加最高优先。 */
+    pricing?: ModelPricing;
   }>;
   apiKey: string;
   displayName?: string;
@@ -291,14 +294,16 @@ function normalizeProviderProfile(
     for (const name of selectableModels) {
       const rawOption = (rawModelOptions as Record<string, unknown>)[name];
       if (!rawOption || typeof rawOption !== "object" || Array.isArray(rawOption)) continue;
-      const option = rawOption as { multimodal?: unknown; contextWindowTokens?: unknown; manualReasoning?: unknown };
+      const option = rawOption as { multimodal?: unknown; contextWindowTokens?: unknown; manualReasoning?: unknown; pricing?: unknown };
       const manualReasoning = normalizeManualReasoningConfig(option.manualReasoning);
+      const pricing = normalizeModelPricing(option.pricing);
       const normalized = {
         ...(typeof option.multimodal === "boolean" ? { multimodal: option.multimodal } : {}),
         ...(typeof option.contextWindowTokens === "number" && Number.isFinite(option.contextWindowTokens) && option.contextWindowTokens >= 4096
           ? { contextWindowTokens: Math.round(option.contextWindowTokens) }
           : {}),
         ...(manualReasoning ? { manualReasoning } : {}),
+        ...(pricing ? { pricing } : {}),
       };
       if (Object.keys(normalized).length > 0) modelOptions[name] = normalized;
     }

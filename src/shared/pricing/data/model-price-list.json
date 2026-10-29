@@ -1,0 +1,23 @@
+{
+  "updatedAt": "2026-10-24",
+  "sourceUrl": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "note": "价格以各厂商官方页面为准，本表为随版本更新的预填快照（标准/高峰价）。错峰价不在此表，由峰谷规则（#211）以倍率或直价表达。未收录的模型留空由用户自填。",
+  "models": {
+    "deepseek-flash": {
+      "currency": "CNY",
+      "unit": "per1M",
+      "inputPrice": 2,
+      "outputPrice": 8,
+      "cacheHitInputPrice": 0.04,
+      "source": "DeepSeek-V4.1-Flash-1017（旧名 deepseek-v4-flash / deepseek-v4-flash-vision-exp 已下线，同价承接）"
+    },
+    "deepseek-v4-pro": {
+      "currency": "CNY",
+      "unit": "per1M",
+      "inputPrice": 9,
+      "outputPrice": 27,
+      "cacheHitInputPrice": 0.3,
+      "source": "DeepSeek-V4-Pro-0813"
+    }
+  }
+}
