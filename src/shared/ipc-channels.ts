@@ -343,6 +343,10 @@ export const IPC = {
   LIVE2D_MOUTH_STOP: "live2d:mouth-stop",
   LIVE2D_PLAY_ACTION: "live2d:play-action",        // 主进程 → 桌宠窗口：执行动作（motion 或 expression）
   LIVE2D_GET_MAIN_DIAGNOSTICS: "live2d:get-main-diagnostics",
+  // issue #147 桌宠气泡：主进程 → 桌宠窗（回复 delta 流式 + 终态收尾）；点击气泡 → 聚焦主窗
+  PET_BUBBLE_TEXT: "pet-bubble:text",
+  PET_BUBBLE_END: "pet-bubble:end",
+  PET_BUBBLE_FOCUS_CHAT: "pet-bubble:focus-chat",
   // embedding model status
   EMBEDDING_SET_MODEL: "embedding:set-model",
   RERANKER_SET_MODE: "reranker:set-mode",
