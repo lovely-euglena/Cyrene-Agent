@@ -2,6 +2,7 @@ import { stripLeakedChatTimeContext } from "../chat-time-context";
 import { ChatTimeStreamPrefixFilter } from "../chat-time-stream-filter";
 import { recordUsage, recordRequest } from "../token-usage-store";
 import { AgentRuntimeError } from "./agent-runtime-error";
+import { computeUsageCost } from "../pricing/cost-engine";
 import type {
   AgentLoopSettings,
   AgentLoopEvent,
@@ -40,7 +41,7 @@ export interface ChatLoopOptions {
   timeoutMs: number;
   imageCaptionFallback?: () => Promise<ChatMessage[]>;
   onEvent?: (event: AgentLoopEvent) => void;
-  recordUsage?: (input: number, output: number, calls: number, cachedInput?: number, cacheCreation?: number) => void;
+  recordUsage?: (input: number, output: number, calls: number, cachedInput?: number, cacheCreation?: number, cost?: { currency: string; amount: number }) => void;
   signal?: AbortSignal;
   /** 非流式降级时的展示节奏；测试可设为 0，生产默认 20ms。 */
   fallbackRevealIntervalMs?: number;
@@ -107,7 +108,11 @@ function stripToolProtocol(text: string): string {
 
 export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopResult> {
   const startedAt = Date.now();
-  const usageRecorder = options.recordUsage ?? ((input, output, calls, cachedInput, cacheCreation) => recordUsage(input, output, calls, cachedInput, options.settings.model, cacheCreation));
+  const usageRecorder = options.recordUsage ?? ((input, output, calls, cachedInput, cacheCreation) => recordUsage(
+    input, output, calls, cachedInput, options.settings.model, cacheCreation,
+    // issue #212：请求时刻成本（峰谷有效价已套用；未配单价 undefined → 统计页"—"）
+    computeUsageCost({ model: options.settings.model, input, output, cachedInput, cacheCreation }),
+  ));
   let usedImageCaptionFallback = false;
 
   const messages = options.messages;

@@ -15,6 +15,8 @@ export interface TokenUsageDay {
   output: number;
   /** 厂商明确上报的缓存读取 token。 */
   hit: number;
+  /** issue #212：按币种聚合成本（跨模型合并同币种）。 */
+  costs?: Record<string, number>;
   /** 同一批已上报缓存明细的输入中，未命中缓存的 token。 */
   miss: number;
   /** 厂商明确上报的缓存创建 token（cache_creation_input_tokens）。 */
@@ -35,6 +37,8 @@ export interface TokenUsageModel {
   miss: number;
   /** 厂商明确上报的缓存创建 token（cache_creation_input_tokens）。 */
   cacheCreation: number;
+  /** issue #212：按币种聚合的请求时刻成本（元/美元…，峰谷有效价已套用）。 */
+  costs?: Record<string, number>;
   /** 厂商实际返回缓存统计的请求数；缺失代表历史数据或暂无可用数据。 */
   cacheUsageRequests?: number;
   requests: number;
@@ -134,7 +138,15 @@ export function applyUsageToDay(
   cachedInput?: number,
   model?: string,
   cacheCreation?: number,
+  cost?: { currency: string; amount: number },
 ): void {
+  const addCost = (bucket: { costs?: Record<string, number> }): void => {
+    if (!cost || !Number.isFinite(cost.amount) || cost.amount <= 0) return;
+    const key = cost.currency.trim().toUpperCase() || "XXX";
+    bucket.costs = bucket.costs ?? {};
+    bucket.costs[key] = (bucket.costs[key] ?? 0) + cost.amount;
+  };
+  addCost(day);
   day.input += Math.max(0, Math.round(input || 0));
   day.output += Math.max(0, Math.round(output || 0));
   day.requests += Math.max(0, requests);
@@ -169,11 +181,20 @@ export function applyUsageToDay(
 }
 
 /** 记录一次 API 调用的 token 用量（异步累加到当天）。 */
-export function recordUsage(input: number, output: number, requests = 1, cachedInput?: number, model?: string, cacheCreation?: number): void {
+export function recordUsage(
+  input: number,
+  output: number,
+  requests = 1,
+  cachedInput?: number,
+  model?: string,
+  cacheCreation?: number,
+  /** issue #212：请求时刻成本（computeUsageCost 产出；未配单价 undefined）。 */
+  cost?: { currency: string; amount: number },
+): void {
   const store = ensureLoaded();
   const key = todayKey();
   const day = store.days[key] ?? { input: 0, output: 0, hit: 0, miss: 0, cacheCreation: 0, requests: 0 };
-  applyUsageToDay(day, input, output, requests, cachedInput, model, cacheCreation);
+  applyUsageToDay(day, input, output, requests, cachedInput, model, cacheCreation, cost);
   store.days[key] = day;
   scheduleFlush();
 }
@@ -221,6 +242,8 @@ export interface TokenUsageDayReport {
   miss: number;
   cacheCreation: number;
   requests: number;
+  /** issue #212：按币种聚合成本。 */
+  costs?: Record<string, number>;
   attemptedRequests: number;
   cacheUsageRequests: number;
   /** 当天按真实模型名聚合的明细（v2 起记录）；趋势图按模型拆线用。 */
@@ -252,6 +275,7 @@ export function getUsage(days: number): TokenUsageDayReport[] {
       requests: day?.requests ?? 0,
       attemptedRequests: day?.attemptedRequests ?? 0,
       cacheUsageRequests: day?.cacheUsageRequests ?? 0,
+      costs: day?.costs,
       models: day?.models,
     });
   }
@@ -287,6 +311,13 @@ export function getUsageReport(days: number): TokenUsageReport {
       target.cacheCreation += value.cacheCreation ?? 0;
       target.requests += value.requests ?? 0;
       target.attemptedRequests = (target.attemptedRequests ?? 0) + (value.attemptedRequests ?? 0);
+      if (value.costs) {
+        for (const [currency, amount] of Object.entries(value.costs)) {
+          if (!Number.isFinite(amount) || amount <= 0) continue;
+          target.costs = target.costs ?? {};
+          target.costs[currency] = (target.costs[currency] ?? 0) + amount;
+        }
+      }
       models.set(model, target);
     }
   }
