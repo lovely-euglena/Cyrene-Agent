@@ -136,6 +136,16 @@ async function timedStep<T>(name: string, fn: () => T | Promise<T>): Promise<T> 
 export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const { shell, readiness, activation, shutdown } = deps;
 
+  // 系统通知（issue #153）：AUMID 归属 + 点击通知走激活代理聚焦聊天窗
+  try {
+    const { initDesktopNotifications } = await import("../notifications/desktop-notifications");
+    initDesktopNotifications({
+      onFocusMainWindow: () => activation.request({ kind: "chat" }),
+    });
+  } catch (error) {
+    console.warn("[Core] initDesktopNotifications failed:", error);
+  }
+
   // 升级迁移：必须在任何 prompts/skills 读取之前
   deps.migrateStagedExternalContent();
 
