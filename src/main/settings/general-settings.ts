@@ -293,4 +293,9 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * 用于兜底次年安排公布滞后的窗口与特殊安排。峰谷判定（#211）消费。
    */
   holidayDayTypeOverrides?: Record<string, DayType>;
+  /**
+   * 峰谷计价规则集（issue #211 定义结构；#212 接线持久化）。enabled=false 停用峰谷，
+   * 成本按基准价直算。规则结构见 pricing/peak-valley.ts。
+   */
+  peakValleyConfig?: import("../pricing/peak-valley").PeakValleyConfig;
 }

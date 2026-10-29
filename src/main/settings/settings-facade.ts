@@ -27,6 +27,7 @@ import {
 import { normalizeCitaSettings } from "../cita/settings";
 import { getGeneralSettingsPath } from "../settings-store";
 import { normalizeDayTypeOverrides } from "../pricing/holidays";
+import { normalizePeakValleyConfig } from "../pricing/peak-valley";
 import { syncDedicatedGitConfig } from "../code-git/dedicated-git-config";
 import { normalizeWindowVisibilitySettings } from "../window-visibility-settings";
 import type { GeneralSettings } from "./general-settings";
@@ -175,6 +176,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   gitUseDedicatedConfig: true,
   recentProjects: [],
   holidayDayTypeOverrides: {},
+  peakValleyConfig: { enabled: false, rules: [] },
   disclaimerAcceptedVersion: "",
 };
 
@@ -473,6 +475,7 @@ export function normalizeGeneralSettings(
       ? input.disclaimerAcceptedVersion.trim().slice(0, 64)
       : "",
     holidayDayTypeOverrides: normalizeDayTypeOverrides(input?.holidayDayTypeOverrides),
+    peakValleyConfig: normalizePeakValleyConfig(input?.peakValleyConfig),
   };
 }
 
