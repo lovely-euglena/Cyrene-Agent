@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Globe, LoaderCircle, MousePointerClick, Plus, RotateCw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Globe, LoaderCircle, MousePointerClick, Plus, RotateCw, Square, X, ExternalLink, PanelRight} from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import type { BrowserPanelState, BrowserPanelTabState } from "../../../../../shared/browser-panel-types";
@@ -198,6 +198,16 @@ export function BrowserPanel({ active }: { active: boolean }) {
                 ? window.browserPanel?.cancelElementPicker()
                 : window.browserPanel?.startElementPicker())}
             ><MousePointerClick size={15} /></button>
+            <button
+              type="button"
+              className="cy-browser-panel__icon"
+              aria-label={state.detached ? t("browserPanel.reattach") : t("browserPanel.detach")}
+              title={state.detached ? t("browserPanel.reattach") : t("browserPanel.detach")}
+              aria-pressed={state.detached === true}
+              onClick={() => void (state.detached
+                ? window.browserPanel?.reattach()
+                : window.browserPanel?.detach())}
+            >{state.detached ? <PanelRight size={15} /> : <ExternalLink size={15} />}</button>
             <input
               className="cy-browser-panel__address"
               aria-label={t("browserPanel.address")}
@@ -220,6 +230,7 @@ export function BrowserPanel({ active }: { active: boolean }) {
           {commandError && <div className="cy-browser-panel__error" role="alert">{commandError}<button type="button" aria-label={t("common.close")} onClick={() => setCommandError("")}><X size={13} /></button></div>}
           <div className="cy-browser-panel__webview" ref={hostRef}>
             {!activeTab.url && <div className="cy-browser-panel__empty">{t("browserPanel.emptyHint")}</div>}
+            {state.detached && <div className="cy-browser-panel__detached-hint">{t("browserPanel.detachedHint")}</div>}
           </div>
         </div>
       </Tabs>
