@@ -142,7 +142,7 @@ const manager = new Live2DManager({
       });
       const bubbleApi = window.cyrenePetBubble;
       if (bubbleApi) {
-        trackSubscription("petBubble:onText", bubbleApi.onBubbleText((data) => petBubble?.append(data.delta)));
+        trackSubscription("petBubble:onText", bubbleApi.onBubbleText((data) => petBubble?.appendDelta(data.delta)));
         trackSubscription("petBubble:onEnd", bubbleApi.onBubbleEnd(() => petBubble?.finish()));
       }
     }
