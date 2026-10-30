@@ -12,6 +12,8 @@ describe("normalizeAddressInput（issue #142 地址栏输入规范化）", () =>
     expect(normalizeAddressInput("example.com").href).toBe("https://example.com/");
     expect(normalizeAddressInput("sub.example.co.jp/path").href).toBe("https://sub.example.co.jp/path");
     expect(normalizeAddressInput("8.137.20.111:443").href).toBe("https://8.137.20.111/"); // 443=https 默认端口，URL 序列化省略
+    expect(normalizeAddressInput("localhost:3000").href).toBe("https://localhost:3000/"); // 自查：无点主机名不当搜索词
+    expect(normalizeAddressInput("LOCALHOST").href).toBe("https://localhost/");
   });
 
   it("搜索词回退 Bing（含空格或不含点）", () => {

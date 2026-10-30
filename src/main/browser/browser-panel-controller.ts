@@ -78,6 +78,11 @@ export function normalizeAddressInput(input: string, engine: BrowserSearchEngine
   const direct = parseHttpUrl(trimmed);
   if (direct) return direct;
 
+  // 自查补齐（issue #142）：localhost[:port] 是合法主机名（浏览器惯例）——
+  // 必须在协议判定之前：否则 "localhost:" 会被通用协议正则误捕成显式协议头。
+  const isLocalhost = /^localhost(?::\d+)?$/i.test(trimmed);
+  if (isLocalhost) return parseHttpUrl(`https://${trimmed}`);
+
   const hasProtocol = /^[a-z][a-z\d+.-]*:/i.test(trimmed);
   if (hasProtocol) return null; // 显式协议但不支持——交给调用方报 unsupported_protocol
 
