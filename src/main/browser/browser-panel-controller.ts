@@ -82,6 +82,8 @@ export class BrowserPanelController {
   private parentWindow: BrowserWindow | null = null;
   /** issue #146：detach 独立窗口（null = 未 detach）。view 平移不重载，会话保留。 */
   private detachedWindow: BrowserWindow | null = null;
+  /** issue #146 自查修复：detach 前的主窗面板 bounds（reattach 恢复用；null=面板隐藏态）。 */
+  private boundsBeforeDetach: { x: number; y: number; width: number; height: number } | null | undefined;
   private bounds: BrowserPanelBounds | null = null;
   private disposed = false;
   private initialized = false;
@@ -803,6 +805,7 @@ export class BrowserPanelController {
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     });
     this.detachedWindow = detached;
+    this.boundsBeforeDetach = this.bounds;
     // view 平移：宿主窗切换不销毁不重载
     for (const tab of this.tabs) {
       if (tab.view && this.parentWindow && !this.parentWindow.isDestroyed()) {
@@ -813,6 +816,7 @@ export class BrowserPanelController {
     this.parentWindow = detached;
     this.observedWindows.add(detached);
     detached.once("closed", () => {
+      this.observedWindows.delete(detached);
       // 独立窗关闭 → 自动回主窗形态（view 再平移回来）
       if (this.detachedWindow === detached) this.reattachToMain(false);
     });
@@ -841,7 +845,10 @@ export class BrowserPanelController {
         }
       }
       this.parentWindow = win;
-      // 主窗形态：恢复上次面板 bounds 由 renderer SET_BOUNDS 重设
+      // issue #146 自查修复：恢复 detach 前的面板 bounds——原实现残留独立窗全窗尺寸，
+      // reattach 后 renderer 不会自动重发 SET_BOUNDS（ResizeObserver 只盯 host 元素，尺寸没变），
+      // view 会以独立窗大尺寸溢出主窗面板区。
+      this.bounds = this.boundsBeforeDetach ?? this.bounds;
       this.applyBounds();
     } else {
       // 主窗没了（退出中）：视图随独立窗一起销毁
@@ -1208,7 +1215,9 @@ export class BrowserPanelController {
   }
 
   private ensureView(tab: BrowserTab, restore = true): WebContentsView | null {
-    const win = this.getWindow();
+    // issue #146 自查修复：detach 期间宿主是独立窗——原判定硬取主窗（getWindow()），
+    // 独立窗内开新标签/切 tab 会走 destroyViews() 把平移过来的 view 全销毁（丢会话）。
+    const win = this.detachedWindow ?? this.getWindow();
     if (!win || win.isDestroyed()) return null;
     if (tab.view && !tab.view.webContents.isDestroyed() && this.parentWindow === win) return tab.view;
     if (tab.view) this.destroyTabView(tab);
