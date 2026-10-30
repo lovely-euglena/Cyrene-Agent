@@ -11,6 +11,7 @@
 
 import { getAdapterForConfig, streamChatWithSdk, resolveTransport } from "../vendors";
 import { recordUsage, recordRequest } from "../../token-usage-store";
+import { computeUsageCost } from "../../pricing/cost-engine";
 import type {
   ChatMessage,
   ChatRequest,
@@ -93,6 +94,15 @@ export async function callLLM(
       response.usage.cachedInput,
       vendorConfig.model,
       response.usage.cacheCreation,
+      // issue #212 自查补齐：harness 路径（工具密集模式）此前漏计成本——
+      // 只有 chat-loop 记账，统计页对 harness 会话全显"—"。
+      computeUsageCost({
+        model: vendorConfig.model,
+        input: response.usage.input,
+        output: response.usage.output,
+        cachedInput: response.usage.cachedInput,
+        cacheCreation: response.usage.cacheCreation,
+      }),
     );
     return response;
   };
