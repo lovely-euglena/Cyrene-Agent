@@ -76,7 +76,7 @@ function ExtensionToolPanels() {
   }, []);
 
   return <section className="cy-settings-section" style={{ display: hasPanels || error ? undefined : "none" }}>
-    <div className="cy-settings-section__heading"><h2><Puzzle size={18} />{t("settingsPage.tools.extensionPanels")}</h2><p>{t("settingsPage.tools.extensionPanelsDescription")}</p></div>
+    <div className="cy-settings-section__heading"><h2 data-settings-search-id="settingsPage.tools.extensionPanels"><Puzzle size={18} />{t("settingsPage.tools.extensionPanels")}</h2><p>{t("settingsPage.tools.extensionPanelsDescription")}</p></div>
     {error && <Alert type="error" showIcon message={t("settingsPage.tools.extensionPanelsFailed")} />}
     <div ref={containerRef} className="plugin-panels cy-settings-tools__plugins" />
   </section>;
@@ -269,7 +269,7 @@ export function ToolSettingsPanel() {
           onToggle={() => toggleCard("weather")}
           toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.weather")} checked={values.weatherEnabled} disabled={saving} onChange={(checked) => void setBoolean("weatherEnabled", checked)} />}
         >
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.weatherSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.weatherSource")} value={values.weatherSource} disabled={saving} options={[{ value: "open-meteo", label: t("settingsPage.tools.openMeteo") }, { value: "amap", label: t("settingsPage.tools.amapWeather") }]} onChange={(weatherSource) => void savePatch({ weatherSource })} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.weatherSource">{t("settingsPage.tools.weatherSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.weatherSource")} value={values.weatherSource} disabled={saving} options={[{ value: "open-meteo", label: t("settingsPage.tools.openMeteo") }, { value: "amap", label: t("settingsPage.tools.amapWeather") }]} onChange={(weatherSource) => void savePatch({ weatherSource })} /></div>
           {values.weatherSource === "amap" && amapKeyRow}
         </ToolConfigCard>
 
@@ -294,7 +294,7 @@ export function ToolSettingsPanel() {
           onToggle={() => toggleCard("search")}
           toggle={<SettingsSwitch ariaLabel={t("settingsPage.tools.searchEnabled")} checked={values.searchEngine !== "off"} disabled={saving} onChange={(checked) => void setSearchEnabled(checked)} />}
         >
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={activeSearch} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.searchSource">{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={activeSearch} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(values[searchKey])} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div>
         </ToolConfigCard>
 
@@ -324,10 +324,9 @@ export function ToolSettingsPanel() {
           collapsed={collapsedCards.files === true}
           onToggle={() => toggleCard("files")}
         >
-          <div className="cy-settings-row cy-settings-tools__permission"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.permission")}</strong><span>{t(`settingsPage.tools.permissionDescription.${permission}`)}</span></div><div className="cy-settings-tools__levels" role="group" aria-label={t("settingsPage.tools.permission")}>{(["project-read-only", "read-only", "per-action", "full"] as const).map((level) => <Button key={level} className={permissionDisplay === level ? "is-active" : ""} aria-pressed={permissionDisplay === level} disabled={saving} onClick={() => void setPermissionLevel(level)}>{t(`settingsPage.tools.permissionLevel.${level}`)}</Button>)}</div></div>
+          <div className="cy-settings-row cy-settings-tools__permission"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.permission">{t("settingsPage.tools.permission")}</strong><span>{t(`settingsPage.tools.permissionDescription.${permission}`)}</span></div><div className="cy-settings-tools__levels" role="group" aria-label={t("settingsPage.tools.permission")}>{(["project-read-only", "read-only", "per-action", "full"] as const).map((level) => <Button key={level} className={permissionDisplay === level ? "is-active" : ""} aria-pressed={permissionDisplay === level} disabled={saving} onClick={() => void setPermissionLevel(level)}>{t(`settingsPage.tools.permissionLevel.${level}`)}</Button>)}</div></div>
         </ToolConfigCard>
       </div>
-
       <ExtensionToolPanels />
       <div className="cy-settings-status" role="status" aria-live="polite">{status}</div>
     </>}

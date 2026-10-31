@@ -30,14 +30,13 @@ export function BrowserControlSettingsPanel() {
       <p className="cy-settings-intro">{t("settingsPage.browserControl.description")}</p>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
-          <h2><Globe size={18} />{t("settingsPage.browserControl.sectionTitle")}</h2>
+          <h2 data-settings-search-id="settingsPage.browserControl.sectionTitle"><Globe size={18} />{t("settingsPage.browserControl.sectionTitle")}</h2>
           <p>{t("settingsPage.browserControl.sectionDescription")}</p>
         </div>
         <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong><Cookie size={16} />{t("settingsPage.browserControl.clearCookies")}</strong>
-              <span>{t("settingsPage.browserControl.clearCookiesDescription")}</span>
+              <strong data-settings-search-id="settingsPage.browserControl.clearCookies"><Cookie size={16} />{t("settingsPage.browserControl.clearCookies")}</strong>              <span>{t("settingsPage.browserControl.clearCookiesDescription")}</span>
             </div>
             <Popconfirm
               title={t("settingsPage.browserControl.confirmTitle")}
