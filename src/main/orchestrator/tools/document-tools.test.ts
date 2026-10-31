@@ -282,24 +282,18 @@ describe("Review 基线捕获（写盘前）", () => {
     expect(baselines[0]).toMatch(/\.binary$/);
   });
 
-  it("write_pdf 基线捕获先于生成（生成失败也不影响基线）", async () => {
+  it("write_pdf 成功覆盖已有文件前保存 binary 基线", async () => {
     fs.writeFileSync(path.join(tmpDir, "report.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46, 0, 0, 1]));
-
-    // 本机 msyh.ttc 与 pdfkit 的 subset 不兼容，doc.text() 会抛错——
-    // 恰好验证 write-ahead 语义：基线在任何写盘/生成动作之前已保存
-    let threw = false;
-    try {
-      await getTool("write_pdf").execute(
-        { filename: "report.pdf", title: "标题", paragraphs: ["段落一"] },
-        { runId: "run-pdf-1" },
-      );
-    } catch {
-      threw = true;
-    }
-
+    const raw = await getTool("write_pdf").execute(
+      { filename: "report.pdf", title: "标题", paragraphs: ["段落一"] },
+      { runId: "run-pdf-1" },
+    );
+    expect(raw).toContain("已生成");
     const baselines = listBaselines("run-pdf-1");
     expect(baselines).toHaveLength(1);
     expect(baselines[0]).toMatch(/\.binary$/);
+    expect(fs.readFileSync(path.join(tmpDir, "report.pdf")).subarray(0, 5).toString()).toBe("%PDF-");
+  }, 15_000);
     if (threw) {
       // 生成失败时原二进制不应被截断破坏（createWriteStream 未成功写入）
       // 等待 pdfkit 内部流动作结束，避免延迟 open 撞上目录清理
@@ -389,5 +383,4 @@ describe("write_markdown 覆盖写防护与 JSON 返回体", () => {
     // 追加不删行：changes 记为 added（与 write_file 口径一致）
     expect(result.changes[0].kind).toBe("added");
     expect(fs.readFileSync(file, "utf8")).toBe(original + "\n追加的一小段");
-  });
-});
+  });});
