@@ -137,6 +137,8 @@ export class NativeWindowsClient {
   private async launch(): Promise<void> {
     const child = spawn(this.exePath, ["serve"], {
       stdio: ["pipe", "pipe", "pipe"],
+      // issue #225：同 embedding-sidecar，内部宿主进程不弹控制台窗。
+      windowsHide: true,
       env: {
         ...process.env,
         // WPF/Forms 进程无需 Electron 变量；保留 PATH 以便美术字体等

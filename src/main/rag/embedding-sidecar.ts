@@ -522,6 +522,9 @@ export class EmbeddingSidecarClient {
       const child = spawn(this.exePath, ["serve", this.modelDirArg(modelKey), modelKey], {
         stdio: ["pipe", "pipe", "inherit"],
         env: this.buildEnv(),
+        // issue #225：控制台子程序在 Windows 上默认弹黑窗（stdio 含 inherit 时必弹），
+        // 与 native-tool-host/shell-job-manager 的 sidecar 惯例对齐。
+        windowsHide: true,
       });
       this.child = child;
       trackChildProcess(child, "embedding-sidecar");
