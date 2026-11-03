@@ -159,6 +159,20 @@ let discoveryCache: { executable: string; distros: string[]; version: WslVersion
  * （inbox legacy）不认识该参数（非零退出）。判定只看进程退出码，不解析输出文案
  * （本地化输出不稳定）。失败/超时归 unknown（宁可不提示版本问题，不误报）。
  */
+/**
+ * 审查 !131 P1-1：退出码与输出 → 版本态判定（纯函数，可测）。
+ * 非零退出 ≠ inbox-legacy——服务未启动/权限/安装损坏/瞬时错误同样非零，
+ * 一律归 unknown（宁可不提示版本问题，不误报"版本过低"并禁用发行版选择）；
+ * 仅当退出码为 0，或输出中确有 WSL 版本号（某些构建非零退出但输出正常）时判 store。
+ */
+export function classifyVersionProbe(code: number | null, stdout: string): WslVersionKind {
+  if (code === 0) return "store";
+  return WSL_VERSION_OUTPUT_PATTERN.test(stdout) ? "store" : "unknown";
+}
+
+/** store 版 `wsl --version` 输出形如 "WSL 版本: 2.2.4.0"（本地化文案 + 三/四段版本号）。 */
+const WSL_VERSION_OUTPUT_PATTERN = /WSL[^\n]{0,24}\d+\.\d+\.\d+(\.\d+)?/;
+
 export function probeWslVersionKind(
   executable: string,
   timeoutMs: number = WSL_PROBE_TIMEOUT_MS,
@@ -178,14 +192,16 @@ export function probeWslVersionKind(
       child = spawn(executable, ["--version"], {
         windowsHide: true,
         shell: false,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
     } catch {
       finish("unknown");
       return;
     }
+    let stdoutText = "";
+    child.stdout?.on("data", (chunk: Buffer | string) => { stdoutText += chunk.toString(); });
     child.on("error", () => finish("unknown"));
-    child.on("close", (code) => finish(code === 0 ? "store" : "inbox-legacy"));
+    child.on("close", (code) => finish(classifyVersionProbe(code, stdoutText)));
     timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch { /* 已退出则忽略 */ }
       finish("unknown");

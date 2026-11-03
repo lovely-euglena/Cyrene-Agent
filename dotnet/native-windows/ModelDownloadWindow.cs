@@ -87,7 +87,9 @@ public sealed class ModelDownloadWindow : NativeWindow
             Width = 620,
             // IKKNGB：760 = 4 张模型卡（含状态行）+ 镜像行 + 进度区（预留两行文案）+ 操作行的
             // 临界实测值；此前 700 在下载完成后结果文案把底部按钮挤出窗外。
-            Height = 760,
+            // 审查 !131 P1-4：760 超过小屏（768 高笔记本 - 任务栏）工作区会截断底部操作行——
+            // 收敛到工作区高度内（有 ResizeMode.NoResize 更不能溢出屏幕）。
+            Height = Math.Min(760, SystemParameters.WorkArea.Height - 8),
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None,

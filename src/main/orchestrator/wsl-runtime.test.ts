@@ -15,8 +15,7 @@ import {
   resolveWslExecutable,
   resolveWslExecutablePath,
   restartWsl,
-  windowsPathToWslPath,
-} from "./wsl-runtime";
+  windowsPathToWslPath, classifyVersionProbe } from "./wsl-runtime";
 
 const VALIDATED = { kind: "wsl" as const, executable: "C:\\Windows\\System32\\wsl.exe" };
 
@@ -26,6 +25,25 @@ function decodeScript(args: string[]): string {
   if (!match) throw new Error(`unexpected payload: ${payload}`);
   return Buffer.from(match[1], "base64").toString("utf8");
 }
+
+// 审查 !131 P1-1/P1-2：失败语义分类（非零退出 ≠ inbox-legacy）
+describe("classifyVersionProbe", () => {
+  it("退出码 0 → store", () => {
+    expect(classifyVersionProbe(0, "")).toBe("store");
+  });
+
+  it("非零 + 输出含 WSL 版本号 → store（某些构建非零退出但输出正常）", () => {
+    expect(classifyVersionProbe(1, "WSL 版本: 2.2.4.0\n内核版本: 5.15.146.1-2")).toBe("store");
+    expect(classifyVersionProbe(-1, "WSL version: 2.1.3")).toBe("store");
+  });
+
+  it("非零 + 无版本号输出 → unknown（服务未启动/权限/损坏，不误报版本过低）", () => {
+    expect(classifyVersionProbe(1, "")).toBe("unknown");
+    expect(classifyVersionProbe(1, "无法启动 WSL 服务")).toBe("unknown");
+    expect(classifyVersionProbe(1, "无效的命令行选项")).toBe("unknown");
+    expect(classifyVersionProbe(null, "")).toBe("unknown");
+  });
+});
 
 describe("decodeWslText", () => {
   it("解码带 BOM 的 UTF-16LE", () => {
