@@ -54,7 +54,16 @@ export function resolveToolImageDelivery(settings: ImageRouteSettings): ToolImag
   }
   const route = resolveImageRoute("tool", settings);
   if (route.mode === "caption") return { mode: "caption", config: route.config };
-  return { mode: "reject", reason: route.reason };
+  if (route.mode === "reject") return { mode: "reject", reason: route.reason };
+  // 穷尽守卫（审查 !149 P1）：多模态 + DIRECT_UNSUPPORTED transport（responses）会走到这里——
+  // resolveImageRoute 不感知 transport 约束仍返回 direct，但 responses 的 tool output 是纯文本
+  // 字段、图片直发必 400（此前该场景直发漏出且降级链不可达）。按人话拒绝并指路。
+  return {
+    mode: "reject",
+    reason:
+      "当前 transport 的工具结果不支持携带图片，且未配置独立视觉模型。" +
+      "请在「设置 → API 设置 → 视觉模型」中配置，或改用支持多模态工具结果的 transport。",
+  };
 }
 
 /**

@@ -27,7 +27,7 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
       if (Array.isArray(content)) {
         const text = content.filter(b => b.type === "text").map(b => b.text).join("\n");
         const images = content.filter(b => b.type === "image_url");
-        const out: Array<Record<string, unknown>> = [{ role: "tool", _id: m.toolCallId, content: text }];
+        const out: Array<Record<string, unknown>> = [{ role: "tool", tool_call_id: m.toolCallId, content: text }];
         if (images.length > 0) {
           out.push({
             role: "user",
@@ -41,7 +41,7 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
       }
       const wire: Record<string, unknown> = {
         role: "tool",
-        _id: m.toolCallId,
+        tool_call_id: m.toolCallId,
         content: content ?? "",
       };
       if (m.name) wire.name = m.name;
