@@ -162,7 +162,7 @@ export function applyUsageToDay(
   }
   const modelName = model?.trim() || "未归类";
   const byModel = day.models ?? {};
-  const modelDay = byModel[modelName] ?? { input: 0, output: 0, hit: 0, miss: 0, cacheCreation: 0, requests: 0 };
+  const modelDay = byModel[modelName] ?? { input: 0, output: 0, hit: 0, miss: 0, cacheCreation: 0, requests: 0, costs: undefined as Record<string, number> | undefined };
   modelDay.input += Math.max(0, Math.round(input || 0));
   modelDay.output += Math.max(0, Math.round(output || 0));
   modelDay.requests += Math.max(0, requests);
@@ -176,6 +176,7 @@ export function applyUsageToDay(
   if (typeof cacheCreation === "number" && Number.isFinite(cacheCreation)) {
     modelDay.cacheCreation = (modelDay.cacheCreation ?? 0) + Math.max(0, Math.round(cacheCreation));
   }
+  addCost(modelDay);
   byModel[modelName] = modelDay;
   day.models = byModel;
 }
@@ -207,7 +208,7 @@ export function recordRequest(model?: string): void {
   day.attemptedRequests = (day.attemptedRequests ?? 0) + 1;
   const modelName = model?.trim() || "未归类";
   const byModel = day.models ?? {};
-  const modelDay = byModel[modelName] ?? { input: 0, output: 0, hit: 0, miss: 0, cacheCreation: 0, requests: 0 };
+  const modelDay = byModel[modelName] ?? { input: 0, output: 0, hit: 0, miss: 0, cacheCreation: 0, requests: 0, costs: undefined as Record<string, number> | undefined };
   modelDay.attemptedRequests = (modelDay.attemptedRequests ?? 0) + 1;
   byModel[modelName] = modelDay;
   day.models = byModel;

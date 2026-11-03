@@ -61,6 +61,8 @@ export interface PricingBase {
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** 区间终点特例：24:00 = 当日终了（DS 官方模板口径；HHMM 不含 24，判定层 hhmmIn 已支持）。 */
+const END_EOD = /^24:00$/;
 const LEGAL_DAY_TYPES = new Set<PeakValleyDayType>(["workday", "weekend", "holiday", "adjustedWorkday", "everyday"]);
 const LEGAL_CURRENCY = /^[A-Za-z]{3}$/;
 
@@ -80,7 +82,9 @@ function legalIntervals(input: unknown): PeakValleyInterval[] | undefined {
   for (const item of input) {
     if (!item || typeof item !== "object") continue;
     const { start, end } = item as Record<string, unknown>;
-    if (typeof start === "string" && HHMM.test(start) && typeof end === "string" && HHMM.test(end) && start < end) {
+    // 审查 !221 P1：终点放行 24:00（此前校验拒绝 → DS 官方模板的 00:30-24:00 等区间被
+    // 静默丢弃，周末/夜间半价整条失效，而 hhmmIn 判定层明明支持——校验与判定脱节）
+    if (typeof start === "string" && HHMM.test(start) && typeof end === "string" && (HHMM.test(end) || END_EOD.test(end)) && start < end) {
       out.push({ start, end });
     }
   }

@@ -19,8 +19,17 @@ describe("peak-valley 判定器（#211）", () => {
 
   it("normalize：模板配置合法（enabled=false 起步）", () => {
     const n = normalizePeakValleyConfig(config);
-    expect(n.rules).toHaveLength(2);
+    // 审查 !221 P1 修复：DS 官方模板第三条谷规则含 00:30-24:00 终点段，
+    // 此前 legalIntervals 拒绝 24:00 致整条静默丢弃（错误地断言 2 条固化了 bug）
+    expect(n.rules).toHaveLength(3);
     expect(n.enabled).toBe(false); // 模板默认关闭，用户套用后自行开启
+  });
+
+  it("24:00 终点区间合法且判定层可命中（DS 官方模板谷段）", () => {
+    // 北京时间 00:45（UTC 前一天 16:45）应命中 00:30-24:00 谷段
+    const r = resolvePeakValley(at("2026-10-28T16:45:00Z"), { ...config, enabled: true });
+    expect(r.matched).toBe(true);
+    if (r.matched && r.pricing.mode === "multiplier") expect(r.pricing.multiplier).toBeLessThan(1);
   });
 
   it("周三上午 10:00 北京时间 = 高峰（×1.0 = 基准原样）", () => {
