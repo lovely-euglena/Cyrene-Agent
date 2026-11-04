@@ -406,8 +406,8 @@ export async function capturePlaywrightPageSnapshot(contents: WebContents): Prom
 /** Validate the original node kept in the same isolated world as Playwright's aria-ref map. */
 export async function validatePlaywrightSnapshotTarget(
   contents: WebContents,
-  input: { observationId: string; ref: string; description: string; x: number; y: number },
-): Promise<{ ok: true; x: number; y: number } | { ok: false }> {
+  input: { observationId: string; ref: string; description: string; bounds: [number, number, number, number] },
+): Promise<{ ok: true; x: number; y: number } | { ok: false; blocker?: string }> {
   const serialized = JSON.stringify(input);
   const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [{
     code: `(() => {
@@ -425,11 +425,44 @@ export async function validatePlaywrightSnapshotTarget(
       const style = getComputedStyle(node);
       if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") return { ok: false };
       if (rect.width <= 0 || rect.height <= 0 || style.visibility === "hidden" || style.display === "none" || style.pointerEvents === "none") return { ok: false };
-      let hit = document.elementFromPoint(expected.x, expected.y);
-      for (let depth = 0; hit && depth < 8; depth += 1, hit = hit.parentElement) {
-        if (hit === node) return { ok: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+
+      // issue #144：命中判定升级——
+      // 1) 多点采样：中心 + 四角(20% inset) + 四边中点，人工能点到的非中心区域 AI 也能点到；
+      // 2) 爬升穿透 shadow DOM（parentElement 换成含 ShadowRoot.host 的祖先链）；
+      // 3) 全部失配时报告最上层遮挡元素（角色/标签/类摘要），让模型自行决策。
+            const describe = (el) => {
+        try {
+          const cls = typeof el.className === "string" && el.className ? "." + el.className.trim().split(/\\s+/).slice(0, 2).join(".") : "";
+          const role = el.getAttribute && el.getAttribute("role");
+          return "<" + el.tagName.toLowerCase() + (role ? " role=" + role : "") + cls.slice(0, 60) + ">";
+        } catch { return String(el && el.tagName || "unknown"); }
+      };
+      const hitAt = (px, py) => {
+        let hit = document.elementFromPoint(px, py);
+        let top = hit;
+        for (let depth = 0; hit && depth < 8; depth += 1) {
+          if (hit === node) return true;
+          // 祖先链：light DOM 父级，或 shadow 边界跳到 host
+          const step = hit.parentElement || (hit.getRootNode && hit.getRootNode() instanceof ShadowRoot ? hit.getRootNode().host : null);
+          if (!step || step === hit) break;
+          hit = step;
+        }
+        return false;
+      };
+      const bx = expected.bounds[0], by = expected.bounds[1], bw = expected.bounds[2], bh = expected.bounds[3];
+      const ix = bw * 0.2, iy = bh * 0.2, cx = bx + bw / 2, cy = by + bh / 2;
+      const probes = [
+        [cx, cy],
+        [bx + ix, by + iy], [bx + bw - ix, by + iy], [bx + ix, by + bh - iy], [bx + bw - ix, by + bh - iy],
+        [cx, by + iy], [cx, by + bh - iy], [bx + ix, cy], [bx + bw - ix, cy],
+      ];
+      let landed = null;
+      for (const [px, py] of probes) {
+        if (hitAt(px, py)) { landed = [Math.round(px), Math.round(py)]; break; }
       }
-      return { ok: false };
+      if (landed) return { ok: true, x: landed[0], y: landed[1] };
+      const blocker = document.elementFromPoint(cx, cy);
+      return { ok: false, blocker: blocker ? describe(blocker) : undefined };
     })()`,
   }]);
   return result && typeof result === "object" && (result as { ok?: boolean }).ok === true
