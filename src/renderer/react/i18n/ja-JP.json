@@ -961,6 +961,10 @@
     "noReadableContent": "このメッセージには読み上げ可能な内容がありません"
   },
   "settingsPage": {
+      "unsavedGuard": {
+        "title": "未保存の設定があります", "content": "このページには未保存の変更があります。離れると失われます。離れますか？",
+        "leave": "離れる", "stay": "編集を続ける"
+      },
       "knowledgeBase": {
         "title": "ナレッジベース",
         "description": "ローカル資料を管理し、元のファイルから検索・参照します。",
@@ -1550,6 +1554,8 @@
       "windowsDescription": "ワークスペースや音楽などのウィンドウ位置とサイズを記憶し、再起動後に復元します。",
       "rememberWindowState": "ウィンドウ位置を記憶",
       "rememberWindowStateDescription": "ワークスペースと音楽ウィンドウの位置とサイズを記憶し、再起動後に復元します。",
+      "unsavedGuard": "未保存変更の警告",
+      "unsavedGuardDescription": "設定ページを離れる際、未保存の変更があれば確認ダイアログを表示（デフォルト有効）。",
       "sidebarVisible": "ステータスバー",
       "sidebarVisibleDescription": "デスクトップのステータスバーを表示/非表示にします（トレイから再表示できます）。",
       "tasksVisible": "スケジュールバー",
