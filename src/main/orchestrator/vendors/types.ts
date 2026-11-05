@@ -205,6 +205,12 @@ export interface TestConnectionResult {
 
 /** 调度层只看到这一层接口。 */
 export interface ChatVendorAdapter {
+  /**
+   * issue #205/#207：请求前置异步处理（可选）——buildRequest 之前调用。
+   * DS 适配器用它把超阈值 data URL 图片上传 Files API 换 file_id；
+   * 未实现或不适用的适配器不提供该方法，chat-loop 原样使用请求。
+   */
+  prepareRequest?(request: ChatRequest, cfg: VendorConfig): Promise<ChatRequest>;
   readonly id: string;
   readonly transport: Transport;
   capability: ProviderCapability;

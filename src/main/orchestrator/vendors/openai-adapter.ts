@@ -6,6 +6,7 @@ import {
   TestConnectionResult, ToolCall, ToolExecutionResult, VendorConfig,
 } from "./types";
 import { authHeaderFor } from "./auth";
+import { prepareDeepSeekFileImages } from "./deepseek-files";
 import { applyManualReasoningBody, normalizeManualReasoningConfig, resolveConfiguredReasoningCapability } from "../../../shared/manual-reasoning";
 import { applyReasoningPreference } from "./reasoning";
 import { getTimeoutSettings } from "../../timeout-manager";
@@ -52,6 +53,20 @@ function toWireTools(tools?: ChatRequest["tools"]): unknown[] | undefined {
 export class OpenAICompatAdapter implements ChatVendorAdapter {
   readonly transport = "openai" as const;
   constructor(public readonly id: string, public capability: ProviderCapability) {}
+
+  /**
+   * issue #205/#207：请求前置异步处理——DS 通道超阈值 data URL 图片上传 Files API
+   * 换 file_id 引用（64 MiB 上限不受 32 MiB 内联限制；失败逐块回退 base64 并留痕）。
+   * 非 DS 通道原样返回；chat-loop 在 buildRequest 前调用。
+   */
+  async prepareRequest(request: ChatRequest, cfg: VendorConfig): Promise<ChatRequest> {
+    const result = await prepareDeepSeekFileImages(
+      request as unknown as { messages?: Array<Record<string, unknown>> },
+      cfg.baseUrl,
+      cfg.apiKey,
+    );
+    return (result.request as unknown as ChatRequest) ?? request;
+  }
 
   buildRequest(req: ChatRequest, cfg: VendorConfig): HttpRequest {
     const body: Record<string, unknown> = {
