@@ -278,7 +278,32 @@ export async function summarizeHistory(
       });
     }
 
-    return adapter.parseResponse(await response.json()).text;
+    const payload = (await response.json()) as { usage?: ChatResponse["usage"] };
+    // !221 审查 P1：压缩/摘要请求同口径落账（含成本）——此前 usage 直接丢弃。
+    // 统计旁路 try/catch：落账失败不打断压缩链路。
+    try {
+      recordRequest(vendorConfig.model);
+      if (payload.usage) {
+        recordUsage(
+          payload.usage.input,
+          payload.usage.output,
+          1,
+          payload.usage.cachedInput,
+          vendorConfig.model,
+          payload.usage.cacheCreation,
+          computeUsageCost({
+            model: vendorConfig.model,
+            input: payload.usage.input,
+            output: payload.usage.output,
+            cachedInput: payload.usage.cachedInput,
+            cacheCreation: payload.usage.cacheCreation,
+          }),
+        );
+      }
+    } catch (error) {
+      console.warn("[harness-llm] summary usage 记账失败（不影响压缩）:", error instanceof Error ? error.message : String(error));
+    }
+    return adapter.parseResponse(payload).text;
   }, {
     provider: adapter.id,
     model: vendorConfig.model,
