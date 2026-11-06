@@ -257,6 +257,33 @@ export function ModelSettingsPanel() {
   const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState<{ kind: "success" | "error" | "info"; text: string }>();
   const [visionStatus, setVisionStatus] = useState("");
+  // issue #207：DS 官方渠道 Files 用量水位展示 + 手动清理
+  const isDsOfficial = /deepseek\.com/.test(baseUrl.trim());
+  const [dsQuota, setDsQuota] = useState<{ count: number; totalBytes: number; quotaBytes: number; quotaCount: number; byteUsage: number; countUsage: number }>();
+  const [dsBusy, setDsBusy] = useState<"quota" | "cleanup">();
+  const [dsStatus, setDsStatus] = useState("");
+  const refreshDsQuota = async () => {
+    setDsBusy("quota");
+    setDsStatus("");
+    try {
+      const r = await window.settings?.dsFilesQuota({ baseUrl: baseUrl.trim().replace(/\/$/, ""), apiKey: apiKey.trim() });
+      if (!r) { setDsStatus("Settings API unavailable"); return; }
+      if (r.ok && r.quota) { setDsQuota(r.quota); } else { setDsStatus(r.error ?? "查询失败"); }
+    } catch (error) { setDsStatus(error instanceof Error ? error.message : String(error)); }
+    finally { setDsBusy(undefined); }
+  };
+  const runDsCleanup = async () => {
+    setDsBusy("cleanup");
+    try {
+      const r = await window.settings?.dsFilesCleanup({ baseUrl: baseUrl.trim().replace(/\/$/, ""), apiKey: apiKey.trim() });
+      if (!r) { setDsStatus("Settings API unavailable"); return; }
+      if (r.ok && r.result) {
+        setDsStatus(t("settingsPage.modelSettings.dsCleanupDone", { n: r.result.deleted, mb: (r.result.freedBytes / 1024 / 1024).toFixed(1) }));
+        await refreshDsQuota();
+      } else { setDsStatus(r.error ?? "清理失败"); }
+    } catch (error) { setDsStatus(error instanceof Error ? error.message : String(error)); }
+    finally { setDsBusy(undefined); }
+  };
 
   const preset = useMemo(() => findPreset(provider), [provider]);
   const customMode = getCustomEndpointMode(provider);
@@ -992,6 +1019,19 @@ export function ModelSettingsPanel() {
                 <label className="cy-model-field"><span>{t("settingsPage.modelSettings.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={vision.apiKey} onChange={(event) => setVision((current) => ({ ...current, apiKey: event.target.value }))} autoComplete="new-password" /></label>
                 <label className="cy-model-field"><span>{t("settingsPage.modelSettings.visionModel")}</span><SettingsInput value={vision.model} onChange={(event) => setVision((current) => ({ ...current, model: event.target.value }))} placeholder="gpt-4o / qwen-vl-max" /></label>
                 <div className="cy-model-field cy-model-vision-action"><span>{t("settingsPage.modelSettings.visionTestLabel")}</span><Button loading={testingVision} onClick={() => void testVision()} icon={<Eye size={15} />}>{t("settingsPage.modelSettings.testVision")}</Button>{visionStatus && <small>{visionStatus}</small>}</div>
+                {isDsOfficial && (
+                  <div className="cy-model-field cy-model-vision-action"><span>{t("settingsPage.modelSettings.dsFilesQuota")}</span>
+                    <span className="cy-model-ds-quota">
+                      {dsQuota
+                        ? t("settingsPage.modelSettings.dsQuotaText", { count: dsQuota.count, quotaCount: dsQuota.quotaCount, gib: (dsQuota.totalBytes / 1024 / 1024 / 1024).toFixed(2), quotaGib: (dsQuota.quotaBytes / 1024 / 1024 / 1024).toFixed(0) })
+                        : t("settingsPage.modelSettings.dsQuotaIdle")}
+                      <Button size="small" loading={dsBusy === "quota"} onClick={() => void refreshDsQuota()}>{t("settingsPage.modelSettings.dsQuotaRefresh")}</Button>
+                      <Button size="small" loading={dsBusy === "cleanup"} disabled={!dsQuota || (dsQuota.byteUsage < 0.8 && dsQuota.countUsage < 0.8)} onClick={() => void runDsCleanup()}>{t("settingsPage.modelSettings.dsCleanup")}</Button>
+                    </span>
+                    {(dsQuota && (dsQuota.byteUsage >= 0.8 || dsQuota.countUsage >= 0.8)) && <small>{t("settingsPage.modelSettings.dsQuotaWarning")}</small>}
+                    {dsStatus && <small>{dsStatus}</small>}
+                  </div>
+                )}
               </div>
               <Collapse className="cy-model-advanced" items={[{
                 key: "advanced",

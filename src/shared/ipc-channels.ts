@@ -153,6 +153,8 @@ export const IPC = {
   SETTINGS_TEST_CONNECTION: "settings:test-connection",
   SETTINGS_PREVIEW_REASONING: "settings:preview-reasoning",
   SETTINGS_TEST_VISION: "settings:test-vision",
+  SETTINGS_DS_FILES_QUOTA: "settings:ds-files-quota",
+  SETTINGS_DS_FILES_CLEANUP: "settings:ds-files-cleanup",
   SETTINGS_GET_GENERAL: "settings:get-general",
   SETTINGS_SAVE_GENERAL: "settings:save-general",
   SETTINGS_GIT_CONFIG_COPY_GLOBAL: "settings:git-config-copy-global",

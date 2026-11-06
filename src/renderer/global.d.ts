@@ -185,6 +185,8 @@ interface SettingsWindowApi {
     manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig;
   }) => Promise<Record<string, unknown>>;
   testVision: (config: { baseUrl: string; apiKey: string; model: string }) => Promise<{ ok: boolean; latency?: number; sample?: string; error?: string }>;
+  dsFilesQuota: (config: { baseUrl: string; apiKey: string }) => Promise<{ ok: boolean; quota?: { count: number; totalBytes: number; quotaBytes: number; quotaCount: number; byteUsage: number; countUsage: number }; error?: string }>;
+  dsFilesCleanup: (config: { baseUrl: string; apiKey: string; protectedIds?: string[] }) => Promise<{ ok: boolean; result?: { deleted: number; freedBytes: number; byteUsage: number; countUsage: number }; error?: string }>;
   getTimeoutSettings: () => Promise<import("../shared/timeout-types").TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
 }

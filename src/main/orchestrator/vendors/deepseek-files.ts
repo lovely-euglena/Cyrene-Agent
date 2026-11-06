@@ -34,6 +34,7 @@ export interface DsFileEntry {
   id: string;
   filename: string;
   bytes: number;
+  created_at?: number; // Unix 秒（#207 LRU 排序用）
 }
 
 export interface DsQuotaUsage {
@@ -120,7 +121,11 @@ export async function listDeepSeekFiles(
     const items = Array.isArray(data.data) ? data.data : [];
     for (const it of items) {
       if (typeof it.id === "string" && typeof it.filename === "string") {
-        out.push({ id: it.id, filename: it.filename, bytes: typeof it.bytes === "number" ? it.bytes : 0 });
+        out.push({
+          id: it.id, filename: it.filename,
+          bytes: typeof it.bytes === "number" ? it.bytes : 0,
+          created_at: typeof it.created_at === "number" ? it.created_at : undefined,
+        });
       }
     }
     if (!data.has_more || items.length === 0) break;
@@ -142,6 +147,69 @@ export async function deleteDeepSeekFile(
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   return res.ok;
+}
+
+export interface DsFileEntryWithTime extends DsFileEntry {
+  created_at?: number;
+}
+
+/**
+ * #207 自动删除（LRU）：水位超阈值时按 created_at 升序删最老文件，直到
+ * byte/count 水位降到 targetUsage 以下或无可删（protectedIds 白名单——
+ * 会话正在引用的 file_id 不删）。删除逐条留痕（file_id/filename/bytes/原因）。
+ */
+export async function cleanupDeepSeekFiles(
+  baseUrl: string,
+  apiKey: string,
+  opts: {
+    protectedIds?: ReadonlySet<string>;
+    targetUsage?: number; // 默认 0.85
+    triggerUsage?: number; // 默认 0.9
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<{ deleted: number; freedBytes: number; byteUsage: number; countUsage: number }> {
+  const { protectedIds = new Set(), targetUsage = 0.85, triggerUsage = 0.9, fetchImpl = fetch } = opts;
+  let files = (await listDeepSeekFiles(baseUrl, apiKey, fetchImpl)) as DsFileEntryWithTime[];
+  let quota = aggregateQuota(files);
+  if (quota.byteUsage < triggerUsage && quota.countUsage < triggerUsage) {
+    return { deleted: 0, freedBytes: 0, byteUsage: quota.byteUsage, countUsage: quota.countUsage };
+  }
+  log(`cleanup start: ${(quota.byteUsage * 100).toFixed(1)}% bytes / ${(quota.countUsage * 100).toFixed(1)}% count → target ${(targetUsage * 100).toFixed(0)}%`);
+  let deleted = 0;
+  let freedBytes = 0;
+  const deletable = () => files
+    .filter((f) => !protectedIds.has(f.id))
+    .sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
+  while ((quota.byteUsage > targetUsage || quota.countUsage > targetUsage) && deletable().length > 0) {
+    const victim = deletable()[0];
+    const ok = await deleteDeepSeekFile(baseUrl, apiKey, victim.id, fetchImpl);
+    if (!ok) {
+      log(`delete failed, skip: ${victim.id} ${victim.filename}`);
+      files = files.filter((f) => f.id !== victim.id);
+      continue;
+    }
+    files = files.filter((f) => f.id !== victim.id);
+    quota = aggregateQuota(files);
+    deleted += 1;
+    freedBytes += victim.bytes;
+    log(`auto-deleted: ${victim.id} ${victim.filename} (${(victim.bytes / 1024).toFixed(0)} KiB) — LRU 水位清理`);
+  }
+  log(`cleanup done: deleted=${deleted} freed=${(freedBytes / 1024 / 1024).toFixed(1)} MiB → ${(quota.byteUsage * 100).toFixed(1)}% / ${(quota.countUsage * 100).toFixed(1)}%`);
+  return { deleted, freedBytes, byteUsage: quota.byteUsage, countUsage: quota.countUsage };
+}
+
+/** 从 messages 提取 file_id 引用集合（#207 引用白名单）。 */
+export function collectFileIds(messages?: Array<Record<string, unknown>>): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages ?? []) {
+    const content = (msg as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      const fileId = (block as { file_id?: unknown })?.file_id;
+      if (typeof fileId === "string") ids.add(fileId);
+    }
+  }
+  return ids;
 }
 
 /** 配额水位聚合（#207：已用/25 GiB、x/10000）。 */
@@ -183,6 +251,7 @@ export async function prepareDeepSeekFileImages(
   if (!Array.isArray(messages)) return { uploaded: 0, reused: 0, fallback: 0 };
 
   const result: PreparedFilesResult = { uploaded: 0, reused: 0, fallback: 0 };
+  const uploadedIds = new Set<string>();
   let touched = false;
   const nextMessages = await Promise.all(messages.map(async (msg) => {
     const content = msg.content;
@@ -216,6 +285,7 @@ export async function prepareDeepSeekFileImages(
         }
         if (!fileId) {
           fileId = await createDeepSeekFile(baseUrl, apiKey, parsed.bytes, filename, expiresSeconds, fetchImpl);
+          uploadedIds.add(fileId);
           result.uploaded += 1;
           log(`uploaded: ${filename} (${(parsed.bytes.byteLength / 1024 / 1024).toFixed(1)} MiB) → ${fileId}`);
         }
@@ -236,7 +306,13 @@ export async function prepareDeepSeekFileImages(
       const quota = aggregateQuota(files);
       log(`quota: ${quota.count}/${quota.quotaCount} files, ${(quota.totalBytes / 1024 / 1024 / 1024).toFixed(2)}/${(quota.quotaBytes / 1024 / 1024 / 1024).toFixed(0)} GiB (${(quota.byteUsage * 100).toFixed(1)}%)`);
       if (quota.byteUsage >= 0.8 || quota.countUsage >= 0.8) {
-        log(`WARNING: DS files quota >= 80% — 建议清理（自动删除策略留下批）`);
+        log(`WARNING: DS files quota >= 80%`);
+      }
+      // #207 自动清理：>=90% 触发 LRU 删除（白名单 = 当前请求引用 + 本次上传/复用）
+      if (quota.byteUsage >= 0.9 || quota.countUsage >= 0.9) {
+        const protectedIds = collectFileIds(nextMessages);
+        for (const id of uploadedIds) protectedIds.add(id);
+        await cleanupDeepSeekFiles(baseUrl, apiKey, { protectedIds, fetchImpl });
       }
     } catch { /* 水位查询失败不影响请求 */ }
   }
