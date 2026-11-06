@@ -268,7 +268,26 @@ export async function summarizeHistory(
       });
     }
 
-    return adapter.parseResponse(await response.json()).text;
+    const payload = (await response.json()) as { usage?: ChatResponse["usage"] };
+    // !221 审查 P1：压缩/摘要请求与对话链同口径落账——此前 usage 直接丢弃，
+    // compaction 的 token 消耗完全不进统计（长会话高频路径，漏账可观）。
+    // 统计旁路 try/catch：落账失败不打断压缩链路。
+    try {
+      recordRequest(vendorConfig.model);
+      if (payload.usage) {
+        recordUsage(
+          payload.usage.input,
+          payload.usage.output,
+          1,
+          payload.usage.cachedInput,
+          vendorConfig.model,
+          payload.usage.cacheCreation,
+        );
+      }
+    } catch (error) {
+      console.warn("[harness-llm] summary usage 记账失败（不影响压缩）:", error instanceof Error ? error.message : String(error));
+    }
+    return adapter.parseResponse(payload).text;
   }, {
     provider: adapter.id,
     model: vendorConfig.model,
