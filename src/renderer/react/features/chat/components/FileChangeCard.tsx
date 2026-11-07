@@ -16,6 +16,18 @@ import { FileLinkContext } from "./FileLinkContext";
 import "./RunExperience.css";
 import { getSyntaxHighlighter, syntaxLanguageForFile, syntaxThemeForUi } from "./syntaxHighlight";
 
+// issue #174（学习 OpenCode fileDiffCache）：高亮结果 LRU 缓存（16 条上限，
+// key = 文件+主题+diff 指纹）——重复展开/切回不再重算 shiki。
+const HIGHLIGHT_CACHE_LIMIT = 16;
+const highlightCache = new Map<string, ThemedToken[][]>();
+function cacheHighlightKey(file: string, theme: string, lines: ToolDiffLine[]): string {
+  const fingerprint = lines.length + "\0" + (lines[0]?.text ?? "") + "\0" + (lines[lines.length - 1]?.text ?? "") + "\0" + lines.filter((l) => l.type !== "hunk").length;
+  return `${file}\0${theme}\0${fingerprint}`;
+}
+
+/** 大 diff 懒高亮阈值：超过则只高亮前 N 行（其余原样着色）。 */
+const DIFF_HIGHLIGHT_LIMIT = 400;
+
 // 只存 i18n key（t() 不能出现在模块顶层常量里），展示文案在组件内求值。
 const KIND_LABEL_KEYS: Record<ToolFileChange["kind"], string> = {
   added: "fileChange.kindAdded",
@@ -167,12 +179,30 @@ function FileChangeRow({
       return;
     }
     let cancelled = false;
+    const cacheKey = cacheHighlightKey(change.file, uiTheme, diffLines);
+    const cached = highlightCache.get(cacheKey);
+    if (cached) {
+      setHighlightedLines(cached);
+      return () => {};
+    }
     setHighlightedLines(null);
+    // issue #174（学习 OpenCode）：大 diff 懒高亮——超过阈值的展开只高亮前
+    // HIGHLIGHT_LIMIT 行（其余原样等宽着色），避免大文件展开卡死渲染线程。
     const code = diffLines.map((line) => line.type === "hunk" ? "" : line.text).join("\n");
+    const limit = code.split("\n").length > DIFF_HIGHLIGHT_LIMIT;
+    const clipped = limit ? diffLines.slice(0, DIFF_HIGHLIGHT_LIMIT).map((line) => line.type === "hunk" ? "" : line.text).join("\n") : code;
     getSyntaxHighlighter()
-      .then((highlighter) => highlighter.codeToTokens(code, { lang: language, theme: syntaxThemeForUi(uiTheme) }))
+      .then((highlighter) => highlighter.codeToTokens(clipped, { lang: language, theme: syntaxThemeForUi(uiTheme) }))
       .then((highlight) => {
-        if (!cancelled) setHighlightedLines(highlight.tokens);
+        if (cancelled) return;
+        const tokens = limit
+          ? [...highlight.tokens, ...Array.from({ length: code.split("\n").length - DIFF_HIGHLIGHT_LIMIT }, () => [] as ThemedToken[])]
+          : highlight.tokens;
+        highlightCache.set(cacheKey, tokens);
+        if (highlightCache.size > HIGHLIGHT_CACHE_LIMIT) {
+          highlightCache.delete(highlightCache.keys().next().value as string);
+        }
+        setHighlightedLines(tokens);
       })
       .catch(() => {
         // 高亮失败时继续显示原始 diff 文本。

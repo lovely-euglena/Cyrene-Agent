@@ -346,6 +346,7 @@
   },
   "rightInspector": {
     "panelAria": "右侧检查面板",
+      "summary": "本轮改动 {{count}} 个文件",
     "toggle": "展开/收起右侧面板"
   },
   "browserPanel": {

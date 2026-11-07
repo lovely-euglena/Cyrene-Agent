@@ -1,4 +1,4 @@
-import { Bubble, Think, ThoughtChain, type BubbleItemType } from "@ant-design/x";
+import { Bubble, Think, ThoughtChain, type BubbleItemType, type ThoughtChainItemType } from "@ant-design/x";
 import { Component, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
 import { t, useTranslation } from "../../../i18n";
 import { normalizeModelMarkdown } from "./markdown-normalize";
@@ -781,33 +781,68 @@ function RunActivityContent({
 
 function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   const { t } = useTranslation();
+  // issue #174（学习 OpenCode turn-diffs）：一个回合内多次文件编辑聚合为
+  // 一张变更卡——同文件取最后一次（最终态），不再每工具一张卡散落时间线。
+  const changeTools = tools.filter((tool) => {
+    if (tool.changes?.length) return true;
+    return tool.result ? extractFileChanges(tool.result) !== null : false;
+  });
+  const mergedChanges = new Map<string, ToolFileChange>();
+  for (const tool of changeTools) {
+    const parsed = tool.changes?.length ? tool.changes : (tool.result ? extractFileChanges(tool.result) : null) ?? [];
+    for (const change of parsed) mergedChanges.set(`${change.kind}:${change.file}`, change);
+  }
+  const roundChanges = [...mergedChanges.values()];
+  const singleToolChanges = changeTools.length === 1 ? roundChanges : [];
   return (
     <section className="cy-tool-executions" aria-label={t("messageList.toolExecutionsAria")}>
       {/* 工具卡一律默认折叠：只露标题和状态，输出细节由用户点开查看 */}
       <ThoughtChain
         rootClassName="cy-tool-executions__chain"
         line="dashed"
-        items={tools.map((tool) => {
-          const presentation = describeToolExecution(tool);
-          return {
-            key: tool.id,
-            title: presentation.label,
+        items={[
+          // 聚合卡置于回合顶部（OpenCode 同款：turn 级"已改文件"块）；单工具场景
+          // 工具卡自身保留完整卡，不重复渲染
+          ...(roundChanges.length > 1 ? [{
+            key: "__round-changes__",
+            title: t("fileChange.summary", { count: roundChanges.length }),
             description: (
               <span className="cy-tool-executions__description">
-                <span className="cy-tool-executions__status">{presentation.statusText}</span>
-                {presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
+                <span className="cy-file-change-card__stat is-add">+{roundChanges.reduce((sum, c) => sum + c.insertions, 0)}</span>
+                <span className="cy-file-change-card__stat is-remove">−{roundChanges.reduce((sum, c) => sum + c.deletions, 0)}</span>
               </span>
             ),
-            status: tool.status === "running" ? "loading" : tool.status === "error" ? "error" : "success",
-            blink: tool.status === "running",
-            collapsible: tool.name === "run_shell" || Boolean(tool.result || tool.changes),
-            content: tool.name === "run_shell"
-              ? <CommandTerminal tool={tool} />
-              : (tool.result || tool.changes)
-                ? <ToolResultContent tool={tool} result={tool.result} changes={tool.changes} />
-                : undefined,
-          };
-        })}
+            status: "success" as const,
+            collapsible: true,
+            content: <FileChangeCard changes={roundChanges} />,
+          }] as ThoughtChainItemType[] : []),
+          ...(tools.map((tool): ThoughtChainItemType => {
+            const presentation = describeToolExecution(tool);
+            const parsed = tool.changes?.length ? tool.changes : tool.result ? extractFileChanges(tool.result) : null;
+            const absorbIntoRound = roundChanges.length > 1 && parsed !== null;
+            return {
+              key: tool.id,
+              title: presentation.label,
+              description: (
+                <span className="cy-tool-executions__description">
+                  <span className="cy-tool-executions__status">{presentation.statusText}</span>
+                  {presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
+                </span>
+              ),
+              status: tool.status === "running" ? "loading" : tool.status === "error" ? "error" : "success",
+              blink: tool.status === "running",
+              collapsible: tool.name === "run_shell" || Boolean(tool.result || tool.changes),
+              content: tool.name === "run_shell"
+                ? <CommandTerminal tool={tool} />
+                : absorbIntoRound
+                  // 已并入回合聚合卡：不再重复渲染逐工具 diff 卡
+                  ? undefined
+                  : (tool.result || tool.changes)
+                    ? <ToolResultContent tool={tool} result={tool.result} changes={singleToolChanges.length === 1 ? singleToolChanges : tool.changes} />
+                    : undefined,
+            };
+          })),
+        ]}
       />
     </section>
   );
