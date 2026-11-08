@@ -179,6 +179,26 @@ const EXPECTED = [
   {
     "providerId": "claude",
     "pattern": {
+      "source": "^claude-(?:fable-5-1|opus-5(?:-5)?|sonnet-5-5)$",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "toggle-effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "defaultEffort": "high",
+      "requestStyle": "anthropic-adaptive",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "claude",
+    "pattern": {
       "source": "^claude-fable-5",
       "flags": "i"
     },
