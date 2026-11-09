@@ -131,7 +131,9 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "把当前分支推送到用户指定的远端；不会强制推送。",
       enabled: true,
       modes: ["code"],
-      risk: "shell",
+      // v1.3.5 吸收（506fa86c）：Git 及其钩子不经过 executeRunShell 沙箱，
+      // 不能复用 Shell 的只读放行规则——risk 升级后 read-only 档自动 deny。
+      risk: "input-control",
       effectKind: "external_side_effect",
       verificationPolicy: "none",
       needsContext: true,
