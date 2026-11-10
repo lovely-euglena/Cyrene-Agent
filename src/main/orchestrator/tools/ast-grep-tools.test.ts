@@ -121,8 +121,10 @@ describe("ast_grep_search", () => {
   it("rejects path traversal outside workspace", async () => {
     const result = await runSearch({ pattern: "console.log($$$A)", paths: ["../../outside"] });
 
-    expect(result.success).toBe(true);
-    expect(result.matchCount).toBe(0);
+    // v1.3.5 吸收（3b662ee5）：越界/权限拒绝不是正常零匹配——静默 success+0
+    // 会误导模型"没有匹配"，改为可识别失败（E_AST_PERMISSION_DENIED）。
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("E_AST_PERMISSION_DENIED");
     expect(result.skipped).toContain("../../outside");
   });
 
