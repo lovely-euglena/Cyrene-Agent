@@ -14,6 +14,7 @@ import type { WindowActivationBroker } from "./window-activation";
 import type { PreReadyResult } from "./pre-ready";
 import type { ShellResult } from "./shell-bootstrap";
 import type { CoreResult } from "./core-bootstrap";
+import { StartupCancelledError } from "./startup-cancellation";
 import type { BackgroundHandle } from "./background";
 import { headlessScheduledArgs } from "../scheduler/headless-args";
 
@@ -60,7 +61,20 @@ export function createApplication(deps: ApplicationDependencies): Application {
 
     async start(): Promise<void> {
       shell = await deps.startShell();
-      const core = await deps.startCore(shell);
+      let core: CoreResult;
+      try {
+        // v1.3.5 吸收（dd43465a，#243/#289）：退出请求落在启动中途时，core 各
+        // 检查点抛 StartupCancelledError——中止推进、不创建窗口/托盘等迟到
+        // 资源，按退出状态干净收尾（readiness 迁移不受影响）。
+        core = await deps.startCore(shell);
+      } catch (error) {
+        if (error instanceof StartupCancelledError) {
+          console.log("[Application] startup cancelled by shutdown, exiting cleanly");
+          deps.app.quit();
+          return;
+        }
+        throw error;
+      }
       // IKJK51：headless 定时任务——core 就绪即执行，跳过 background（不建窗口/托盘）
       if (headlessScheduledArgs() && deps.runHeadlessScheduledTask) {
         try {
