@@ -294,12 +294,6 @@ describe("Review 基线捕获（写盘前）", () => {
     expect(baselines[0]).toMatch(/\.binary$/);
     expect(fs.readFileSync(path.join(tmpDir, "report.pdf")).subarray(0, 5).toString()).toBe("%PDF-");
   }, 15_000);
-    if (threw) {
-      // 生成失败时原二进制不应被截断破坏（createWriteStream 未成功写入）
-      // 等待 pdfkit 内部流动作结束，避免延迟 open 撞上目录清理
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  });
 });
 
 describe("write_markdown 覆盖写防护与 JSON 返回体", () => {
