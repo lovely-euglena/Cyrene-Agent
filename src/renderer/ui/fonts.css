@@ -1,6 +1,5 @@
-/* 界面保留系统无衬线字体栈；代码字体随应用打包，避免依赖在线字体服务。
-   CJK 正文（Noto Sans SC）体积 20MB+ 不打包，保留远程 @import（仅 UI 观感，加载失败降级系统字体）。 */
-@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
+/* 界面与正文走系统无衬线字体栈（微软雅黑/苹方，CJK 体积 20MB+ 不打包）；
+   代码字体随应用打包，避免依赖在线字体服务（离线/墙内稳定性）。 */
 @font-face {
   font-family: "JetBrains Mono";
   src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
