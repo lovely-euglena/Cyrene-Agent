@@ -5,6 +5,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { randomUUID } from "crypto";
 import { app } from "electron";
 import { BUILT_IN_STICKER_FILES, BUILT_IN_STICKER_DESCRIPTIONS } from "./sticker-descriptions";
 import { BUILT_IN_STICKER_IDS } from "../shared/sticker-types";
@@ -44,7 +45,11 @@ function saveUserStickerManifest(stickers: Record<string, UserStickerMeta>): voi
   const filePath = getManifestPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const data: ManifestFile = { schemaVersion: 1, stickers };
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+  // v1.3.5 吸收（ddacb1af，#294）：原子写——写入失败时保留原清单，
+  // 避免删除/新增一项时把其余表情包记录破坏掉。
+  const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx" });
+  fs.renameSync(tempPath, filePath);
 }
 
 // ── 增删查 ──
