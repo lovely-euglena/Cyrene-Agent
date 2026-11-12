@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Spin } from "antd";
-import { ArrowLeft, AudioLines, BarChart3, BookOpen, Bot, Boxes, Brain, Cloud, FileText, Globe, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";import { MCP } from "@lobehub/icons";
+import { ArrowLeft, AudioLines, BarChart3, BookOpen, Bot, Boxes, Brain, Cloud, FileText, Globe, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Search, Type, Wrench } from "lucide-react";import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
 import { normalizeUiThemeChoice, type UiThemeChoice } from "../../../../shared/ui-theme";
 import { DEFAULT_UI_ICON, normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
@@ -41,12 +41,9 @@ import { ChannelsSettingsPanel } from "./ChannelsSettingsPanel";
 import { CloudSyncSettingsPanel } from "./CloudSyncSettingsPanel";
 import { SubagentSettingsPanel } from "./SubagentSettingsPanel";
 import { BrowserControlSettingsPanel } from "./BrowserControlSettingsPanel";
-=======
-import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import { locateSettingsSearchTarget } from "./settings-search-navigation";
 import { SettingsSearchDialog } from "./SettingsSearchDialog";
 import type { SettingsSearchItem } from "./settings-search-index";
->>>>>>> 905ec04a (feat(设置): 添加分层搜索与定位提示)
 import settingsLogoUrl from "../../../settings/100.png";
 import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
