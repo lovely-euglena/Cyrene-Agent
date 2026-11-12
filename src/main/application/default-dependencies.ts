@@ -6,7 +6,7 @@
  * 本文件内的闭包只做构造与委托；任何长期任务都必须由对应启动阶段显式启动。
  */
 
-import { app, BrowserWindow, dialog, screen, shell as electronShell } from "electron";
+import { app, BrowserWindow, dialog, screen, shell as electronShell , session } from "electron";
 import * as fs from "node:fs";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
@@ -252,6 +252,8 @@ import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
 import { prepareBeforeReady } from "./pre-ready";
 import { startShell } from "./shell-bootstrap";
+import http from "node:http";
+import { applyNodeRequestProxy } from "../network/node-request-proxy";
 import { startCore, type CoreServices, type CoreDependencies } from "./core-bootstrap";
 import { startBackground } from "./background";
 import { installUpdateShutdownFallback, type UpdateLifecycleLike } from "./electron-lifecycle";
@@ -347,6 +349,25 @@ function recoverInterruptedPlanSessions(plansRoot: string): void {
     } catch (err) {
       console.warn(`[PlanMode] 读取快照失败 ${stateFile}:`, err);
     }
+  }
+}
+
+
+/** Node 自带 fetch/http(s) 也走代理（见 network/node-request-proxy.ts）；失败只记日志不阻断启动。 */
+async function configureNodeRequestProxy(): Promise<void> {
+  try {
+    const result = await applyNodeRequestProxy({
+      env: process.env,
+      resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+      setGlobalProxyFromEnv: (env) => http.setGlobalProxyFromEnv(env),
+    });
+    if (result.source === "env" || result.source === "system") {
+      console.log(`[Network] proxy (${result.source}): ${result.proxy}`);
+    } else if (result.source === "unsupported") {
+      console.warn(`[Network] system proxy not applied to Node requests (only HTTP/HTTPS supported): ${result.rules}`);
+    }
+  } catch (error) {
+    console.warn("[Network] failed to configure proxy:", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -1663,6 +1684,11 @@ createTray: (input) => {
       }
     },
     startCore: (shell) => {
+      // v1.3.5 吸收（a733af89+7901d822+18201552，#270）：Node fetch（undici）
+      // 默认不读系统/环境代理，境外模型接口会连不上——启动时按
+      // env → Chromium 系统代理顺序配置，本机地址始终直连。
+      // 失败只记日志，不阻断启动。
+      configureNodeRequestProxy();
       // 插件管理壳/运行时与核心 IPC 共用应用级 scope：运行期动态启用时
       // removeHandler / 二次 handle 才能命中同一注册表（否则 plugins:list
       // 回退残留，PluginManager.start() 注册正式实现时抛 second handler）。
