@@ -1258,7 +1258,10 @@
       "title": "スタンプ管理",
       "empty": "スタンプはまだありません。",
       "builtin": "組み込み",
-      "toggleLabel": "{{id}} を切り替え"
+      "toggleLabel": "{{id}} を切り替え",
+      "deleteLabel": "スタンプ {{id}} を削除",
+      "deleteConfirm": "スタンプ {{id}} を削除しますか？元に戻せません。",
+      "deleteFailed": "削除に失敗しました"
     },
     "disclaimer": {
       "navLabel": "免責事項",

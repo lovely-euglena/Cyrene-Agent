@@ -127,3 +127,30 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* 删除按钮（v1.3.5 吸收 ddacb1af）：卡片右上角 × */
+.cy-sticker-modal__delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.cy-sticker-modal__card:hover .cy-sticker-modal__delete,
+.cy-sticker-modal__delete:focus-visible {
+  opacity: 1;
+}
+.cy-sticker-modal__delete:hover {
+  background: #cf1322;
+}
+.cy-sticker-modal__error {
+  margin-bottom: 12px;
+}

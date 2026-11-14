@@ -1234,7 +1234,10 @@
       "title": "表情包管理",
       "empty": "还没有表情包。",
       "builtin": "内置",
-      "toggleLabel": "切换 {{id}}"
+      "toggleLabel": "切换 {{id}}",
+      "deleteLabel": "删除 {{id}}",
+      "deleteConfirm": "确定删除表情包 {{id}} 吗？删除后不可恢复。",
+      "deleteFailed": "删除失败"
     },
     "disclaimer": {
       "navLabel": "免责声明",
