@@ -346,3 +346,55 @@ describe("OpenAICompatAdapter", () => {
     expect(body.messages[3]).toEqual({ role: "user", content: "那上海呢" });
   });
 });
+
+describe("OpenAICompatAdapter serverTools", () => {
+  const cfg = { provider: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-flash", apiKey: "k" };
+  const serverTool = { type: "deepseek_web_search" };
+
+  test("appends server tools to FC tools without overriding them", () => {
+    const adapter = new OpenAICompatAdapter("deepseek", capability);
+    const req = adapter.buildRequest({
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "read_file", description: "read", parameters: { type: "object" } }],
+      serverTools: [serverTool],
+    }, cfg);
+    const body = JSON.parse(req.body);
+    expect(body.tools).toHaveLength(2);
+    expect(body.tools[0]).toEqual({ type: "function", function: { name: "read_file", description: "read", parameters: { type: "object" } } });
+    expect(body.tools[1]).toEqual(serverTool);
+  });
+
+  test("server tools alone produce a tools array (no FC tools present)", () => {
+    const adapter = new OpenAICompatAdapter("deepseek", capability);
+    const req = adapter.buildRequest({
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hi" }],
+      serverTools: [serverTool],
+    }, cfg);
+    const body = JSON.parse(req.body);
+    expect(body.tools).toEqual([serverTool]);
+  });
+
+  test("no serverTools keeps wire untouched (back-compat)", () => {
+    const adapter = new OpenAICompatAdapter("deepseek", capability);
+    const req = adapter.buildRequest({
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hi" }],
+    }, cfg);
+    const body = JSON.parse(req.body);
+    expect(body.tools).toBeUndefined();
+  });
+
+  test("extraBody.tools still overrides merged array (existing semantics preserved)", () => {
+    const adapter = new OpenAICompatAdapter("deepseek", capability);
+    const req = adapter.buildRequest({
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hi" }],
+      serverTools: [serverTool],
+      extraBody: { tools: [{ type: "custom_override" }] },
+    }, cfg);
+    const body = JSON.parse(req.body);
+    expect(body.tools).toEqual([{ type: "custom_override" }]);
+  });
+});

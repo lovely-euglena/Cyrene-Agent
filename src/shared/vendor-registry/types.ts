@@ -110,6 +110,12 @@ export interface ProviderCapability {
    */
   supportedTransports?: readonly Transport[];
   /**
+   * 服务端托管工具能力（厂商侧执行，无 FC 循环）。DeepSeek 全家桶 API（2026-11-13）。
+   * webSearch：可注入 {type:"deepseek_web_search"}；readUrl：需 read_link+signature
+   * 回传链，未开放前恒 false。
+   */
+  serverTools?: { webSearch?: boolean; readUrl?: boolean };
+  /**
    * Responses transport：端点是否按 OpenAI 官方语义支持
    * `include: ["reasoning.encrypted_content"]`（store:false 下多轮回放加密 reasoning）。
    * capability 标记只是必要条件；运行时还需 baseUrl 为 OpenAI 官方域名（api.openai.com）

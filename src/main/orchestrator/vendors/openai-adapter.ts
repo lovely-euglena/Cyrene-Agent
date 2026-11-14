@@ -100,6 +100,12 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
         body.tool_choice = "auto";
       }
     }
+    // 服务端托管工具 append（不覆盖 FC tools）：DeepSeek 全家桶 API（2026-11-13）
+    // 等厂商在服务端执行这些工具（无 FC 循环）；引用/搜索结果块由流解析层处理。
+    // 注意顺序：在 FC tools 赋值之后、extraBody 之前——extraBody.tools 仍可整体覆盖（既有语义）。
+    if (req.serverTools?.length) {
+      body.tools = [...(Array.isArray(body.tools) ? body.tools as unknown[] : []), ...req.serverTools];
+    }
     if (req.extraBody) Object.assign(body, req.extraBody);
     if (req.structuredOutput?.mode === "json_schema") {
       body.response_format = {

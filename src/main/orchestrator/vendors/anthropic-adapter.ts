@@ -203,6 +203,10 @@ export class AnthropicAdapter implements ChatVendorAdapter {
         body.system = system;
       }
     }
+    // 服务端托管工具 append（DeepSeek 全家桶 API）：anthropic wire 同形态 {type:...}
+    if (req.serverTools?.length) {
+      body.tools = [...(Array.isArray(body.tools) ? body.tools as unknown[] : []), ...req.serverTools];
+    }
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools.map(t => ({
         name: t.name,
