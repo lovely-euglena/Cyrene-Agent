@@ -2,6 +2,7 @@ import type { AsrConfig } from "./asr-config";
 import { MosslandAsrStream } from "./mossland-asr-engine";
 import { MiniMaxAsrStream } from "./minimax-asr-engine";
 import { AliyunAsrStream } from "./aliyun-asr-engine";
+import { DeepSeekAsrBufferedSession } from "./deepseek-voice-engine";
 
 export interface AsrStreamSession {
   start(): Promise<void>;
@@ -158,6 +159,15 @@ export function createAsrStream(
   }
   if (config.engine === "minimax") {
     return withVadGate(new MiniMaxAsrStream(config.apiKey, onFinal));
+  }
+  if (config.engine === "deepseek") {
+    // 一次性整段接口的缓冲式适配：无部分结果（onPartial no-op），stop 时整段上传。
+    const session = new DeepSeekAsrBufferedSession({ apiKey: config.apiKey }, onFinal);
+    return withVadGate({
+      start: async () => undefined,
+      sendAudio: (frame) => session.sendAudio(frame),
+      stop: () => session.stop(),
+    });
   }
 
   // 阿里云流式会话的 start 需要 4 个凭据参数，这里适配成统一的无参 start

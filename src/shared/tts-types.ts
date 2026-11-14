@@ -1,6 +1,6 @@
 // TTS 引擎共享类型（main / renderer 共用）。
 
-export type TtsEngine = "off" | "minimax" | "gptsovits" | "custom-cloud" | "mimo" | "mossland";
+export type TtsEngine = "off" | "minimax" | "gptsovits" | "custom-cloud" | "mimo" | "mossland" | "deepseek";
 
 export const DEFAULT_MOSSLAND_TTS_MODEL = "moss-tts-1.5-flash";
 export type MosslandSyncFormat = "mp3" | "wav";

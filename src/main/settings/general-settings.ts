@@ -116,7 +116,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 主动消息最终投递到本地、微信或飞书。 */
   proactiveDeliveryTarget: ProactiveDeliveryTarget;
   // TTS 配置
-  ttsEngine: "off" | "minimax" | "gptsovits" | "custom-cloud" | "mimo" | "mossland";
+  ttsEngine: "off" | "minimax" | "gptsovits" | "custom-cloud" | "mimo" | "mossland" | "deepseek";
   ttsAutoRead: boolean;
   ttsSpeed: number;
   ttsVolume: number;
@@ -126,7 +126,9 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   ttsEarlyReadSplitMode: "sentence" | "paragraph";
   // MiniMax
   ttsMinimaxKey: string;
+  ttsDeepseekKey: string;
   ttsMinimaxVoiceId: string;
+  ttsDeepseekVoiceId: string;
   /** MiniMax 合成模型：speech-2.8-hd(高保真¥3.5/万字符) | speech-2.8-turbo(极速¥2.0/万字符) */
   ttsMinimaxModel: "speech-2.8-hd" | "speech-2.8-turbo";
   /** MiniMax 流式播放（边合成边播，首字延迟低）；false=完整合成收完再播 */
@@ -196,7 +198,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** IMAP 使用 SSL/TLS（993 通常 true，143 通常 false） */
   emailImapSecure: boolean;
   /** 🎧ASR 服务商：off(关闭) | aliyun(阿里云) | mossland(MOSI) | minimax | local(本地,占位) */
-  asrEngine: "off" | "aliyun" | "mossland" | "minimax" | "local";
+  asrEngine: "off" | "aliyun" | "mossland" | "minimax" | "local" | "deepseek";
   /** 阿里云智能语音交互 AppKey */
   asrAliyunAppKey: string;
   /** 阿里云 RAM AccessKey ID */
@@ -205,6 +207,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   asrAliyunAccessKeySecret: string;
   /** MiniMax 语音识别 API Key */
   asrMinimaxKey: string;
+  asrDeepseekKey: string;
   /** ASR 识别语言：zh(中文) | en(英文) | auto(自动) */
   asrLanguage: "zh" | "en" | "auto";
   /** VAD 静默检测阈值（毫秒），500~2000，默认 1000 */

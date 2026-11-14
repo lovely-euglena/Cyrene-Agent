@@ -93,6 +93,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   ttsEarlyReadSplitEnabled: true,
   ttsEarlyReadSplitMode: "sentence",
   ttsMinimaxKey: "",
+  ttsDeepseekKey: "",
+  ttsDeepseekVoiceId: "stella",
   ttsMinimaxVoiceId: "",
   ttsMinimaxModel: "speech-2.8-turbo",
   ttsStreaming: true,
@@ -141,6 +143,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   asrAliyunAccessKeyId: "",
   asrAliyunAccessKeySecret: "",
   asrMinimaxKey: "",
+  asrDeepseekKey: "",
   asrLanguage: "zh",
   asrVadSilenceMs: 1000,
   asrVadThreshold: 0.01,
@@ -350,6 +353,8 @@ export function normalizeGeneralSettings(
       ? (input!.ttsEarlyReadSplitMode as "sentence" | "paragraph")
       : DEFAULT_GENERAL_SETTINGS.ttsEarlyReadSplitMode,
     ttsMinimaxKey: typeof input?.ttsMinimaxKey === "string" ? input.ttsMinimaxKey : "",
+    ttsDeepseekKey: typeof input?.ttsDeepseekKey === "string" ? input.ttsDeepseekKey : "",
+    ttsDeepseekVoiceId: input?.ttsDeepseekVoiceId === "tide" ? "tide" : "stella",
     ttsMinimaxVoiceId: typeof input?.ttsMinimaxVoiceId === "string" ? input.ttsMinimaxVoiceId : "",
     ttsMinimaxModel: input?.ttsMinimaxModel === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo",
     ttsStreaming: input?.ttsStreaming === undefined ? true : Boolean(input.ttsStreaming),
@@ -395,6 +400,7 @@ export function normalizeGeneralSettings(
     asrAliyunAccessKeyId: typeof input?.asrAliyunAccessKeyId === "string" ? input.asrAliyunAccessKeyId : "",
     asrAliyunAccessKeySecret: typeof input?.asrAliyunAccessKeySecret === "string" ? input.asrAliyunAccessKeySecret : "",
     asrMinimaxKey: typeof input?.asrMinimaxKey === "string" ? input.asrMinimaxKey : "",
+    asrDeepseekKey: typeof input?.asrDeepseekKey === "string" ? input.asrDeepseekKey : "",
     asrLanguage: ["zh", "en", "auto"].includes(String(input?.asrLanguage))
       ? (input!.asrLanguage as "zh" | "en" | "auto")
       : "zh",
