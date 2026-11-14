@@ -1,9 +1,9 @@
 // 表情包管理弹窗：从旧 sticker-manager 窗口迁移而来。
 // 旧版开独立 BrowserWindow（带标题栏/最小化/关闭），现在改成内嵌 Modal 弹窗。
-// 复用现有 IPC 通道：window.stickerManager.{getConfig, setEnabled}，与旧版同源。
+// 复用现有 IPC 通道：window.stickerManager.{getConfig, setEnabled, deleteSticker}，与旧版同源。
 
 import { useEffect, useState } from "react";
-import { Modal, Spin } from "antd";
+import { Alert, Button, Modal, Spin } from "antd";
 import { resolveAsset } from "../../../../shared/renderer-base";
 import { useTranslation } from "../../i18n";
 import "./StickerManagerModal.css";
@@ -19,6 +19,7 @@ interface StickerItem {
 interface StickerManagerApi {
   getConfig: () => Promise<StickerItem[]>;
   setEnabled: (id: string, enabled: boolean) => Promise<StickerItem[] | undefined>;
+  deleteSticker: (id: string) => Promise<StickerItem[] | undefined>;
 }
 
 declare global {
@@ -32,6 +33,8 @@ export function StickerManagerModal({ open, onClose }: { open: boolean; onClose:
   const [items, setItems] = useState<StickerItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StickerItem | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -55,6 +58,21 @@ export function StickerManagerModal({ open, onClose }: { open: boolean; onClose:
     }
   }
 
+  async function remove(item: StickerItem) {
+    if (item.builtIn) return;
+    setDeleteTarget(null);
+    setUpdatingId(item.id);
+    setError(null);
+    try {
+      const updated = await window.stickerManager?.deleteSticker(item.id);
+      if (updated) setItems(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("settingsPage.stickerManager.deleteFailed"));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   return (
     <Modal
       rootClassName="cy-settings-theme-modal"
@@ -65,6 +83,7 @@ export function StickerManagerModal({ open, onClose }: { open: boolean; onClose:
       width={720}
       destroyOnHidden
     >
+      {error && <Alert className="cy-sticker-modal__error" type="error" showIcon message={error} />}
       {loading ? (
         <div className="cy-sticker-modal__loading"><Spin /></div>
       ) : items.length === 0 ? (
@@ -91,13 +110,35 @@ export function StickerManagerModal({ open, onClose }: { open: boolean; onClose:
                 >
                   <span className="cy-sticker-modal__pill-knob" />
                 </button>
-                {item.builtIn && <span className="cy-sticker-modal__badge">{t("settingsPage.stickerManager.builtin")}</span>}
+                {item.builtIn
+                  ? <span className="cy-sticker-modal__badge">{t("settingsPage.stickerManager.builtin")}</span>
+                  : <button
+                      type="button"
+                      aria-label={t("settingsPage.stickerManager.deleteLabel", { id: item.id })}
+                      disabled={updatingId !== null || deleteTarget !== null}
+                      className="cy-sticker-modal__delete"
+                      onClick={() => setDeleteTarget(item)}
+                    >×</button>}
                 <span className="cy-sticker-modal__id">{item.description || item.id}</span>
               </div>
             );
           })}
         </div>
       )}
+      <Modal
+        rootClassName="cy-settings-theme-modal"
+        title={t("settingsPage.stickerManager.deleteLabel", { id: deleteTarget?.id ?? "" })}
+        open={deleteTarget !== null}
+        onCancel={() => setDeleteTarget(null)}
+        onOk={() => { if (deleteTarget) void remove(deleteTarget); }}
+        okButtonProps={{ danger: true }}
+        okText={t("common.confirm")}
+        cancelText={t("common.cancel")}
+        confirmLoading={updatingId !== null}
+        width={360}
+      >
+        <p>{t("settingsPage.stickerManager.deleteConfirm", { id: deleteTarget?.id })}</p>
+      </Modal>
     </Modal>
   );
 }

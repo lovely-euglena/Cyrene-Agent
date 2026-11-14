@@ -1234,7 +1234,10 @@
       "title": "Sticker management",
       "empty": "No stickers yet.",
       "builtin": "Built-in",
-      "toggleLabel": "Toggle {{id}}"
+      "toggleLabel": "Toggle {{id}}",
+      "deleteLabel": "Delete {{id}}",
+      "deleteConfirm": "Delete sticker {{id}}? This cannot be undone.",
+      "deleteFailed": "Delete failed"
     },
     "disclaimer": {
       "navLabel": "Disclaimer",
