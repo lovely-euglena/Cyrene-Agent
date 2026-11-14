@@ -526,6 +526,8 @@ export function buildCyreneSectionSnapshot(
 
 export interface NativeTtsSnapshot {
   engine: GeneralSettings["ttsEngine"];
+  deepseekKey: string;
+  deepseekVoiceId: "stella" | "tide";
   autoRead: boolean;
   earlyReadSplitEnabled: boolean;
   earlyReadSplitMode: "sentence" | "paragraph";
@@ -584,6 +586,8 @@ export type TtsSettingsView = Pick<
   | "ttsMimoVoiceAudioPath"
   | "ttsMimoStylePrompt"
   | "ttsMosslandKey"
+  | "ttsDeepseekKey"
+  | "ttsDeepseekVoiceId"
   | "ttsMosslandVoiceId"
   | "ttsMosslandModel"
   | "ttsMosslandTestText"
@@ -595,13 +599,15 @@ export function buildTtsSectionSnapshot(settingsView: TtsSettingsView): NativeTt
   // 复审 P1-3 + PR19 P1-1：vault 事实源下 WPF 快照 TTS/ASR 去明文（mask 内部按 vaultAuthoritative 门控）
   const settings = maskGeneralSettingsForUi(settingsView);
   return {
-    engine: (["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland"] as const)
+    engine: (["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland", "deepseek"] as const)
       .find((engine) => engine === settings.ttsEngine) ?? "off",
     autoRead: settings.ttsAutoRead === true,
     earlyReadSplitEnabled: settings.ttsEarlyReadSplitEnabled !== false,
     earlyReadSplitMode: settings.ttsEarlyReadSplitMode === "paragraph" ? "paragraph" : "sentence",
     speed: clampNumber(settings.ttsSpeed, 0.5, 2) ?? 1,
     volume: clampNumber(settings.ttsVolume, 0, 1) ?? 1,
+    deepseekKey: str(settings.ttsDeepseekKey),
+    deepseekVoiceId: settings.ttsDeepseekVoiceId === "tide" ? "tide" : "stella",
     minimaxKey: str(settings.ttsMinimaxKey),
     minimaxVoiceId: str(settings.ttsMinimaxVoiceId),
     minimaxModel: settings.ttsMinimaxModel === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo",
@@ -634,6 +640,8 @@ export interface NativeAsrSnapshot {
   aliyunAccessKeyId: string;
   aliyunAccessKeySecret: string;
   mosslandKey: string;
+  minimaxKey: string;
+  deepseekKey: string;
   language: "zh" | "en" | "auto";
   vadSilenceMs: number;
   vadThreshold: number;
@@ -650,6 +658,8 @@ export type AsrSettingsView = Pick<
   | "asrAliyunAccessKeyId"
   | "asrAliyunAccessKeySecret"
   | "ttsMosslandKey"
+  | "asrMinimaxKey"
+  | "asrDeepseekKey"
   | "asrLanguage"
   | "asrVadSilenceMs"
   | "asrVadThreshold"
@@ -664,12 +674,14 @@ export function buildAsrSectionSnapshot(
   // 复审 P1-3 + PR19 P1-1：同 TTS——vault 事实源下 ASR 快照去明文
   const settings = maskGeneralSettingsForUi(settingsView);
   return {
-    engine: (["off", "aliyun", "mossland", "local"] as const)
+    engine: (["off", "aliyun", "mossland", "local", "deepseek"] as const)
       .find((engine) => engine === settings.asrEngine) ?? "off",
     aliyunAppKey: str(settings.asrAliyunAppKey),
     aliyunAccessKeyId: str(settings.asrAliyunAccessKeyId),
     aliyunAccessKeySecret: str(settings.asrAliyunAccessKeySecret),
     mosslandKey: str(settings.ttsMosslandKey),
+    minimaxKey: str(settings.asrMinimaxKey),
+    deepseekKey: str(settings.asrDeepseekKey),
     language: settings.asrLanguage === "en" || settings.asrLanguage === "auto" ? settings.asrLanguage : "zh",
     vadSilenceMs: clampNumber(settings.asrVadSilenceMs, 100, 60_000) ?? 1000,
     vadThreshold: clampNumber(settings.asrVadThreshold, 0.001, 0.5) ?? 0.01,

@@ -453,8 +453,8 @@ export function sanitizeNativeStickerAdd(raw: Record<string, unknown> | null | u
 
 const VOICE_TEXT_MAX = 500;
 const TTS_TEST_TEXT_MAX = 2000;
-const TTS_ENGINES = ["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland"] as const;
-const ASR_ENGINES = ["off", "aliyun", "mossland", "local"] as const;
+const TTS_ENGINES = ["off", "minimax", "gptsovits", "custom-cloud", "mimo", "mossland", "deepseek"] as const;
+const ASR_ENGINES = ["off", "aliyun", "mossland", "local", "deepseek"] as const;
 
 /**
  * tts save payload 校验（旧页同款字段）：
@@ -524,6 +524,8 @@ export function sanitizeNativeTtsSave(
     "ttsMosslandKey",
     "ttsMosslandVoiceId",
     "ttsMosslandModel",
+    "ttsDeepseekKey",
+    "ttsDeepseekVoiceId",
   ]) {
     takeText(key);
   }
@@ -561,7 +563,7 @@ export function sanitizeNativeAsrSave(
   const takeText = (key: string): void => {
     if (typeof raw[key] === "string") patch[key] = raw[key].trim().slice(0, VOICE_TEXT_MAX);
   };
-  for (const key of ["asrAliyunAppKey", "asrAliyunAccessKeyId", "asrAliyunAccessKeySecret", "ttsMosslandKey"]) {
+  for (const key of ["asrAliyunAppKey", "asrAliyunAccessKeyId", "asrAliyunAccessKeySecret", "ttsMosslandKey", "asrMinimaxKey", "asrDeepseekKey"]) {
     takeText(key);
   }
 

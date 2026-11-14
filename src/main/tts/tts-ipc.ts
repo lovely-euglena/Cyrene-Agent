@@ -10,6 +10,7 @@ import { synthesize as gptsovitsSynthesize } from "./gptsovits-engine";
 import { synthesize as mimoSynthesize } from "./mimo-engine";
 import { cloneVoice as minimaxCloneVoice, synthesize as minimaxSynthesize, uploadFile as minimaxUploadFile } from "./minimax-engine";
 import { cloneVoice as mosslandCloneVoice, listVoices as mosslandListVoices, synthesize as mosslandSynthesize } from "./mossland-engine";
+import { encodePcm24MonoWav, synthesizeDeepSeekTts } from "../asr/deepseek-voice-engine";
 import { TtsSessionService } from "./tts-session-service";
 import {
   appendCustomCloudTtsLog,
@@ -515,6 +516,22 @@ export function registerTtsIpc(deps: RegisterTtsIpcDeps): void {
   // ── Mossland (api.mosi.cn) ──────────────────────────────────────
 
   // Mossland 合成（Settings「测试发音」用，无缓存）
+  // DeepSeek TTS（全家桶 API /v1/tools/tts）→ PCM → 24kHz WAV → base64（试听用）
+  ipc.handle(IPC.TTS_SYNTHESIZE_DEEPSEEK, async (_event, payload: {
+    apiKey: string; voiceId: string; text: string;
+  }) => {
+    if (!payload?.apiKey || !payload?.text) {
+      throw new Error("缺少必要参数（apiKey/text）");
+    }
+    const result = await synthesizeDeepSeekTts({
+      apiKey: payload.apiKey,
+      text: payload.text,
+      voice: payload.voiceId === "tide" ? "tide" : "stella",
+    });
+    const wav = encodePcm24MonoWav(result.audio);
+    return { base64: wav.toString("base64"), format: "wav" as const };
+  });
+
   ipc.handle(IPC.TTS_SYNTHESIZE_MOSSLAND, async (_event, payload: {
     apiKey: string; voiceId: string; text: string;
     model?: string; format?: "mp3" | "wav";

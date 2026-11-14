@@ -24,7 +24,16 @@ export interface MiniMaxAsrConfig {
   apiKey: string;
 }
 
-export type AsrConfig = AliyunAsrConfig | MosslandAsrConfig | LocalAsrConfig | MiniMaxAsrConfig;
+/**
+ * DeepSeek ASR（全家桶 API）：官方为一次性整段接口（≤120s/≤8MiB），
+ * 引擎层做缓冲式会话适配（见 deepseek-voice-engine.ts）；VAD 门控照常生效。
+ */
+export interface DeepSeekAsrConfig {
+  engine: "deepseek";
+  apiKey: string;
+}
+
+export type AsrConfig = AliyunAsrConfig | MosslandAsrConfig | LocalAsrConfig | MiniMaxAsrConfig | DeepSeekAsrConfig;
 
 let asrConfigGetter: (() => AsrConfig | null) | null = null;
 

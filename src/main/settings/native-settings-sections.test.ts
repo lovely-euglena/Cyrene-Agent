@@ -434,6 +434,8 @@ describe("buildAsrSectionSnapshot", () => {
     expect(snapshot).toEqual({
       engine: "aliyun",
       aliyunAppKey: "app",
+      deepseekKey: "",
+      minimaxKey: "",
       aliyunAccessKeyId: "id",
       aliyunAccessKeySecret: "secret",
       mosslandKey: "moss-key",

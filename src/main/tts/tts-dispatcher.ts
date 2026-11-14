@@ -6,6 +6,7 @@ import { synthesize as gptsovitsSynthesize } from "./gptsovits-engine";
 import { synthesize as customCloudSynthesize } from "./custom-cloud-engine";
 import { synthesize as mimoSynthesize } from "./mimo-engine";
 import { synthesize as mosslandSynthesize } from "./mossland-engine";
+import { synthesizeDeepSeekTts } from "../asr/deepseek-voice-engine";
 import { DEFAULT_MOSSLAND_TTS_MODEL, type TtsEngine } from "../../shared/tts-types";
 import type { MiniMaxVocalEnhanceOptions } from "./minimax-vocal-enhancer";
 
@@ -60,6 +61,16 @@ export async function synthesizeByEngine(
     }
   } catch (error) {
     console.warn("[TTS] voice-host 轨失败，回退 TS 引擎:", error instanceof Error ? error.message : error);
+  }
+  if (engine === "deepseek") {
+    if (!payload.apiKey) throw new Error("DeepSeek TTS 未配置 apiKey");
+    const r = await synthesizeDeepSeekTts({
+      apiKey: payload.apiKey,
+      text: payload.text,
+      voice: (payload.voiceId as "stella" | "tide") || "stella",
+      filterMarkdown: true,
+    });
+    return { audio: r.audio, format: "pcm" };
   }
   if (engine === "minimax") {
     if (!payload.apiKey || !payload.voiceId) {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Input } from "antd";
 import { AudioLines, Cloud, FileAudio, Headphones, Laptop, ListMusic, Mic2, Volume2, WandSparkles } from "lucide-react";
-import { siMinimax, siXiaomi } from "simple-icons";
+import { siDeepseek, siMinimax, siXiaomi } from "simple-icons";
 import { createUniqueMiniMaxVoiceId, validateMiniMaxVoiceId } from "../../../../shared/minimax-voice";
 import { DEFAULT_MOSSLAND_TTS_MODEL, type MosslandSyncFormat } from "../../../../shared/tts-types";
 import { BrandIcon } from "../../components/ui/BrandIcon";
@@ -10,7 +10,7 @@ import { useTranslation } from "../../i18n";
 import "./TtsSettingsPanel.css";
 import { Card } from "../../components/ui/Card";
 
-type TtsEngine = "off" | "minimax" | "mimo" | "mossland" | "gptsovits" | "custom-cloud";
+type TtsEngine = "off" | "minimax" | "mimo" | "mossland" | "gptsovits" | "custom-cloud" | "deepseek";
 type Provider = Exclude<TtsEngine, "off">;
 type SplitMode = "sentence" | "paragraph";
 type TtsValues = {
@@ -43,6 +43,8 @@ type TtsValues = {
   ttsMosslandModel: string;
   ttsMosslandTestText: string;
   ttsMosslandFormat: MosslandSyncFormat;
+  ttsDeepseekKey: string;
+  ttsDeepseekVoiceId: "stella" | "tide";
 };
 
 type TtsApi = {
@@ -55,6 +57,7 @@ type TtsApi = {
   synthesizeCustomCloud: (payload: { endpointUrl: string; apiKey?: string; voiceId?: string; text: string; speed?: number; volume?: number; format?: "wav" | "mp3"; timeoutMs?: number }) => Promise<{ base64: string; format: "wav" | "mp3" }>;
   synthesizeMimo: (payload: { apiKey: string; voiceAudioPath?: string; text: string; stylePrompt?: string }) => Promise<{ base64: string; format: "wav" }>;
   synthesizeMossland: (payload: { apiKey: string; voiceId: string; text: string; model?: string; format?: MosslandSyncFormat }) => Promise<{ base64: string; format: MosslandSyncFormat }>;
+  synthesizeDeepseek: (payload: { apiKey: string; voiceId: "stella" | "tide"; text: string }) => Promise<{ base64: string; format: "wav" }>;
   upload: (apiKey: string, filePath: string, purpose: "voice_clone" | "prompt_audio") => Promise<{ file_id: string }>;
   clone: (payload: { apiKey: string; fileId: string; voiceId: string; promptAudioId?: string; promptText?: string; text: string }) => Promise<{ voiceId: string; audioDemo?: string }>;
   cloneMossland: (payload: { apiKey: string; filePath: string; name?: string; description?: string }) => Promise<{ voiceId: string; name?: string; createdAt?: number }>;
@@ -91,6 +94,8 @@ const defaults: TtsValues = {
   ttsMosslandModel: DEFAULT_MOSSLAND_TTS_MODEL,
   ttsMosslandTestText: "你好，我是昔涟，很高兴见到你。",
   ttsMosslandFormat: "mp3",
+  ttsDeepseekKey: "",
+  ttsDeepseekVoiceId: "stella",
 };
 
 const providerFields: Record<Provider, Array<keyof TtsValues>> = {
@@ -99,6 +104,7 @@ const providerFields: Record<Provider, Array<keyof TtsValues>> = {
   "custom-cloud": ["ttsCustomCloudEndpointUrl", "ttsCustomCloudApiKey", "ttsCustomCloudVoiceId", "ttsCustomCloudTimeoutMs"],
   mimo: ["ttsMimoKey", "ttsMimoVoiceAudioPath", "ttsMimoStylePrompt"],
   mossland: ["ttsMosslandKey", "ttsMosslandVoiceId", "ttsMosslandModel", "ttsMosslandTestText", "ttsMosslandFormat"],
+  deepseek: ["ttsDeepseekKey", "ttsDeepseekVoiceId"],
 };
 
 const testText = "你好，我是昔涟，很高兴见到你。";
@@ -154,7 +160,7 @@ export function TtsSettingsPanel() {
   const [values, setValues] = useState<TtsValues>(defaults);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [dirty, setDirty] = useState<Record<Provider, boolean>>({ minimax: false, gptsovits: false, "custom-cloud": false, mimo: false, mossland: false });
+  const [dirty, setDirty] = useState<Record<Provider, boolean>>({ minimax: false, gptsovits: false, "custom-cloud": false, mimo: false, mossland: false, deepseek: false });
   const [saveStatus, setSaveStatus] = useState<Partial<Record<Provider, string>>>({});
   const [busy, setBusy] = useState("");
   const [cloneState, setCloneState] = useState({ file: "", promptFile: "", promptText: "", text: testText, voiceId: createUniqueMiniMaxVoiceId(), status: "" });
@@ -281,6 +287,10 @@ export function TtsSettingsPanel() {
       } else if (provider === "mimo") {
         if (!value.ttsMimoKey.trim() || !value.ttsMimoVoiceAudioPath.trim()) throw new Error(t("settingsPage.tts.missingMimo"));
         const result = await api.synthesizeMimo({ apiKey: value.ttsMimoKey.trim(), voiceAudioPath: value.ttsMimoVoiceAudioPath.trim(), text: testText, stylePrompt: value.ttsMimoStylePrompt.trim() });
+        playAudio(result.base64, result.format);
+      } else if (provider === "deepseek") {
+        if (!value.ttsDeepseekKey.trim()) throw new Error(t("settingsPage.tts.missingDeepseek"));
+        const result = await api.synthesizeDeepseek({ apiKey: value.ttsDeepseekKey.trim(), voiceId: value.ttsDeepseekVoiceId, text: testText });
         playAudio(result.base64, result.format);
       } else {
         if (!value.ttsMosslandKey.trim() || !value.ttsMosslandVoiceId.trim() || !value.ttsMosslandTestText.trim()) throw new Error(t("settingsPage.tts.missingMossland"));
@@ -411,6 +421,7 @@ export function TtsSettingsPanel() {
             { value: "minimax", label: t("settingsPage.tts.engineMiniMax"), icon: <BrandIcon icon={siMinimax} size={20} label="MiniMax" /> },
             { value: "mimo", label: t("settingsPage.tts.engineMimo"), icon: <BrandIcon icon={siXiaomi} size={20} label="Xiaomi" /> },
             { value: "mossland", label: t("settingsPage.tts.engineMossland"), icon: <Cloud size={19} /> },
+            { value: "deepseek", label: t("settingsPage.tts.engineDeepseek"), icon: <BrandIcon icon={siDeepseek} size={20} label="DeepSeek" /> },
             { value: "gptsovits", label: t("settingsPage.tts.engineGptSovits"), icon: <Laptop size={19} /> },
             { value: "custom-cloud", label: t("settingsPage.tts.engineCustomCloud"), icon: <AudioLines size={19} /> },
           ] as const).map((engine) => <button key={engine.value} type="button" aria-pressed={values.ttsEngine === engine.value} className={`cy-tts-engine ${values.ttsEngine === engine.value ? "is-active" : ""}`} onClick={() => updateImmediate("ttsEngine", engine.value)}>
@@ -475,6 +486,15 @@ export function TtsSettingsPanel() {
           <label className="cy-tts-field-wide"><span>{t("settingsPage.tts.stylePrompt")}</span><TextArea rows={3} value={values.ttsMimoStylePrompt} onChange={(event) => updateProvider("mimo", "ttsMimoStylePrompt", event.target.value)} /></label>
           <div className="cy-tts-form-actions">{saveButton("mimo")}{testButton("mimo")}</div>
         </Card>
+      </section>}
+
+      {values.ttsEngine === "deepseek" && <section className="cy-settings-section">
+        <div className="cy-settings-section__heading"><h2><Cloud size={18} />{t("settingsPage.tts.deepseekConfig")}</h2><p>{t("settingsPage.tts.deepseekHint")}</p></div>
+        <Card className="cy-tts-fields">
+          <label><span>{t("settingsPage.tts.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.tts.showSecret")} hideLabel={t("settingsPage.tts.hideSecret")} value={values.ttsDeepseekKey} onChange={(event) => updateProvider("deepseek", "ttsDeepseekKey", event.target.value)} autoComplete="off" /></label>
+          <label><span>{t("settingsPage.tts.voiceId")}</span><SettingsSelect ariaLabel={t("settingsPage.tts.voiceId")} value={values.ttsDeepseekVoiceId} options={[{ value: "stella", label: "Stella" }, { value: "tide", label: "Tide" }]} onChange={(value) => updateProvider("deepseek", "ttsDeepseekVoiceId", value)} /></label>
+        </Card>
+        <div className="cy-tts-form-actions">{saveButton("deepseek")}{testButton("deepseek")}</div>
       </section>}
 
       {values.ttsEngine === "mossland" && <section className="cy-settings-section">

@@ -298,6 +298,9 @@ export function createTtsSynthesisService(
     if (cfg.ttsEngine === "mossland" && (!cfg.ttsMosslandKey || !cfg.ttsMosslandVoiceId)) {
       return null;
     }
+    if (cfg.ttsEngine === "deepseek" && !cfg.ttsDeepseekKey) {
+      return null;
+    }
 
     const ttsText = text.length > 1000 ? text.slice(0, 1000) + "…" : text;
     try {
@@ -307,7 +310,9 @@ export function createTtsSynthesisService(
         speed: cfg.ttsSpeed,
         volume: cfg.ttsVolume,
         apiKey:
-          cfg.ttsEngine === "mimo"
+          cfg.ttsEngine === "deepseek"
+            ? cfg.ttsDeepseekKey
+            : cfg.ttsEngine === "mimo"
             ? cfg.ttsMimoKey
             : cfg.ttsEngine === "mossland"
               ? cfg.ttsMosslandKey
@@ -315,7 +320,9 @@ export function createTtsSynthesisService(
               ? cfg.ttsCustomCloudApiKey
               : cfg.ttsMinimaxKey,
         voiceId:
-          cfg.ttsEngine === "mimo"
+          cfg.ttsEngine === "deepseek"
+            ? cfg.ttsDeepseekVoiceId
+            : cfg.ttsEngine === "mimo"
             ? ""
             : cfg.ttsEngine === "mossland"
               ? cfg.ttsMosslandVoiceId

@@ -85,6 +85,7 @@ let ttsSettingsGetter: (() => {
   ttsCustomCloudEndpointUrl: string; ttsCustomCloudApiKey: string; ttsCustomCloudVoiceId: string;
   ttsCustomCloudFormat: "wav" | "mp3"; ttsCustomCloudTimeoutMs: number;
   ttsMimoKey: string; ttsMimoVoiceAudioPath: string; ttsMimoStylePrompt: string;
+  ttsDeepseekKey: string; ttsDeepseekVoiceId: string;
 }) | null = null;
 
 /** index.ts 启动时注入模型配置、TTS 配置和 system prompt 构建器。 */
@@ -105,6 +106,7 @@ export function setCallSettings(
     ttsCustomCloudEndpointUrl: string; ttsCustomCloudApiKey: string; ttsCustomCloudVoiceId: string;
     ttsCustomCloudFormat: "wav" | "mp3"; ttsCustomCloudTimeoutMs: number;
     ttsMimoKey: string; ttsMimoVoiceAudioPath: string; ttsMimoStylePrompt: string;
+    ttsDeepseekKey: string; ttsDeepseekVoiceId: string;
   },
   systemPromptFn: (userText: string) => Promise<string>,
   weatherFn: (userText: string) => Promise<string | null>,
@@ -291,6 +293,10 @@ async function processFinalTranscript(text: string, generation: number): Promise
     }
 
     // 引擎配置完整性检查
+    if (tts.ttsEngine === "deepseek" && !tts.ttsDeepseekKey) {
+      // deepseek 缺 key 时跳过该引擎语音（与 minimax 校验同款早退语义）
+      return;
+    }
     if (tts.ttsEngine === "minimax" && (!tts.ttsMinimaxKey || !tts.ttsMinimaxVoiceId)) {
       sendError("TTS 未配置：请在设置中配置 MiniMax API Key 和音色 ID");
       recoverToListening(generation);
