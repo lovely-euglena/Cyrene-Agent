@@ -203,10 +203,6 @@ export class AnthropicAdapter implements ChatVendorAdapter {
         body.system = system;
       }
     }
-    // 服务端托管工具 append（DeepSeek 全家桶 API）：anthropic wire 同形态 {type:...}
-    if (req.serverTools?.length) {
-      body.tools = [...(Array.isArray(body.tools) ? body.tools as unknown[] : []), ...req.serverTools];
-    }
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools.map(t => ({
         name: t.name,
@@ -236,6 +232,11 @@ export class AnthropicAdapter implements ChatVendorAdapter {
       }) === "auto") {
         body.tool_choice = { type: "auto" };
       }
+    }
+    // 服务端托管工具 append（DeepSeek 全家桶 API）：anthropic wire 同形态 {type:...}。
+    // 顺序：FC tools 赋值之后——否则被 body.tools = req.tools.map(...) 直接覆盖（自查 P0 修正）。
+    if (req.serverTools?.length) {
+      body.tools = [...(Array.isArray(body.tools) ? body.tools as unknown[] : []), ...req.serverTools];
     }
     if (req.extraBody) Object.assign(body, req.extraBody);
     if (req.structuredOutput?.mode === "json_schema") {
