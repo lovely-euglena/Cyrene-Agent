@@ -30,6 +30,15 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
     }
     // assistant：回传 content + tool_calls（OpenAI 多轮要求 assistant 消息带 tool_calls）
     const wire: Record<string, unknown> = { role: "assistant", content: m.content || null };
+    // 服务端托管工具往返块原样回传（signature 是服务端续接凭证，不做任何加工——issue #253）
+    if (m.serverToolTrace && m.serverToolTrace.length > 0) {
+      wire.server_tool_use = m.serverToolTrace.map((t) => ({
+        type: t.tool,
+        ...(t.callId !== undefined ? { id: t.callId } : {}),
+        ...(t.input !== undefined ? { input: t.input } : {}),
+        ...(t.signature !== undefined ? { signature: t.signature } : {}),
+      }));
+    }
     if (m.toolCalls && m.toolCalls.length > 0) {
       wire.tool_calls = m.toolCalls.map(tc => ({
         id: tc.id,

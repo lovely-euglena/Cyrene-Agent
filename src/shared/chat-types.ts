@@ -165,6 +165,12 @@ export interface ChatMessage {
   sticker?: string | null;
   /** 工具调用过程；与模型推理 reasoning 分开保存和展示。 */
   toolExecutions?: ToolExecutionRecord[];
+  /**
+   * 服务端托管工具往返块（DeepSeek 全家桶 API；issue #253）。
+   * 服务端 read_link 等调用+signature（续接凭证）——多轮回放**原样回传**，
+   * 任何重组/重命名都会破坏 signature 校验。向后兼容：缺省=无服务端工具往返。
+   */
+  serverToolTrace?: Array<{ callId?: string; tool: string; input?: unknown; signature?: string }>;
   /** 本轮处理与公开推理的展示指标。 */
   runActivity?: RunActivityRecord;
   /** 活跃 Agent run 的可恢复检查点；非终态快照在重启后只能恢复为 interrupted。 */

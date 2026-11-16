@@ -74,6 +74,12 @@ export interface ChatMessage {
   thinking?: string;
   /** Anthropic 多轮必须原样回传 assistant.content block 数组；OpenAI transport 不读。 */
   rawAssistant?: unknown;
+  /**
+   * 服务端托管工具往返块（DeepSeek 全家桶；issue #253）——多轮回放
+   * **原样回传**（signature 是服务端续接凭证，Adapter 不得重组/重命名）。
+   * Anthropic transport 走 rawAssistant 通道，OpenAI transport 读本字段。
+   */
+  serverToolTrace?: Array<{ callId?: string; tool: string; input?: unknown; signature?: string }>;
   /** 仅供本地 transcript / UI 使用；Adapter 序列化时不得发送。 */
   visibility?: "user" | "internal";
   /** 仅供本地持久化和去重使用；Adapter 序列化时不得发送。 */
@@ -118,12 +124,15 @@ export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
   tools?: ToolSpec[];
+<<<<<<< HEAD
   /**
    * 服务端托管工具条目（wire 原样形态，如 {type:"deepseek_web_search"}）。
    * adapter 会把它们 append 进请求 tools 数组；extraBody.tools 会整体覆盖
    * 合并结果（既有语义保留），故服务端工具不经过 extraBody。
    */
   serverTools?: unknown[];
+=======
+>>>>>>> 57ce1bba (feat(stream): read_url 回传链——server_tool_use 块解析/持久化/多轮原样回传（issue #253 P1）)
   /** Runtime semantic intent; the active Adapter maps it to named/required/any/auto/omitted wire syntax. */
   toolChoiceIntent?: { mode: "must_call"; toolName: string };
   temperature?: number;
