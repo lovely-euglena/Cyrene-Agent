@@ -44,6 +44,7 @@ internal sealed class TtsDispatcher
                     "mossland" => await PostJson(engine, payload, "/api/tts"),
                     "mimo" => await PostJson(engine, payload, "/v1/tts"),
                     "custom-cloud" => await PostJson(engine, payload, null),
+                    "deepseek" => await DeepSeekTts(payload),
                     "gptsovits" => await GptSoVits(payload),
                     "minimax" => await MinimaxSkeleton(payload),
                     _ => throw new EngineException("E_ENGINE_UNKNOWN", $"未知 TTS 引擎: {engine}"),
@@ -92,6 +93,29 @@ internal sealed class TtsDispatcher
         {
             throw new EngineException("E_TTS_TIMEOUT", "请求超时（15s）");
         }
+    }
+
+    /// <summary>
+    /// DeepSeek 官方 TTS（/v1/tools/tts）：stella/tide，24kHz PCM 流。
+    /// payload: apiKey 必填；voiceId 缺省 stella；baseUrl 可选（真源 TS deepseek-voice-engine.ts）。
+    /// </summary>
+    private async Task<(byte[] audio, string format)> DeepSeekTts(JsonElement? payload)
+    {
+        var p = payload ?? throw new EngineException("E_TTS_AUTH", "payload 缺失");
+        var apiKey = p.TryGetProperty("apiKey", out var ak) && ak.ValueKind == JsonValueKind.String
+            ? ak.GetString() ?? throw new EngineException("E_TTS_AUTH", "DeepSeek TTS 缺 apiKey")
+            : throw new EngineException("E_TTS_AUTH", "DeepSeek TTS 缺 apiKey");
+        var text = p.TryGetProperty("text", out var t) ? t.GetString() ?? ""
+            : throw new EngineException("E_TTS_AUTH", "DeepSeek TTS 缺 text");
+        var voiceId = p.TryGetProperty("voiceId", out var v) && v.GetString() == "tide" ? "tide" : "stella";
+        var baseUrl = p.TryGetProperty("baseUrl", out var b) ? b.GetString() : null;
+        try
+        {
+            return await DeepSeekVoice.SynthesizeTts(apiKey, text, voiceId, baseUrl);
+        }
+        catch (EngineException) { throw; }
+        catch (HttpRequestException ex) { throw new EngineException("E_TTS_TIMEOUT", ex.Message); }
+        catch (TaskCanceledException) { throw new EngineException("E_TTS_TIMEOUT", "DeepSeek TTS 请求超时（15s）"); }
     }
 
     /// <summary>A14：refAudioPath 在本侧读文件，TS 只传路径。</summary>
