@@ -86,6 +86,10 @@ export interface ModelSettings {
 export type { ModelPreset } from "../../../shared/model-presets";
 
 export interface GeneralSettings extends ChatAppearanceSettings {
+  /** Git 提交作者名（内置 git 禁用全局配置，提交身份由这里提供） */
+  gitCommitAuthorName: string;
+  /** Git 提交作者邮箱（必填）：未填写时 git_commit 拒绝提交 */
+  gitCommitAuthorEmail: string;
   maxParallelToolCalls: number;
   citaEnabled: boolean;
   citaSemanticEngine: "remote" | "local";
@@ -231,6 +235,15 @@ export interface SettingsApi {
   saveModelProfile?: (profile: { id?: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
   deleteModelProfile?: (id: string) => Promise<unknown>;
   setDefaultModelProfile?: (id: string) => Promise<unknown>;
+  /** OCR 本地引擎状态（查询；写入走 saveGeneral） */
+  getOcrStatus?: () => Promise<import("../../../shared/ocr").OcrStatus>;
+  /** 云存储档案管理（连接/凭据在 cyrene-native --storage-host） */
+  cloudStorageProfiles?: () => Promise<import("../../../shared/cloud-storage").CloudStorageProfileView[]>;
+  cloudStorageSaveProfile?: (profile: Record<string, unknown>) => Promise<import("../../../shared/cloud-storage").CloudStorageProfileView>;
+  cloudStorageRemoveProfile?: (id: string) => Promise<boolean>;
+  cloudStorageTestProfile?: (id: string) => Promise<{ ok: boolean; latencyMs?: number }>;
+  /** RAG embedding 模型删除（cyreneModelAction "delete-embedding" 的快捷面） */
+  deleteEmbeddingModel?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   getGeneral: () => Promise<GeneralSettings>;
   saveGeneral: (config: Partial<GeneralSettings>) => Promise<GeneralSettings>;
   // 便携模式（数据目录）

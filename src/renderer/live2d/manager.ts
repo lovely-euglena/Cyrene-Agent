@@ -127,7 +127,7 @@ export class Live2DManager {
       view: canvas,
       width,
       height,
-      transparent: true,
+      // 透明由 backgroundAlpha:0 实现（pixi v7 类型已移除 transparent 项，行为等价）
       backgroundAlpha: 0,
       antialias: true,
       // Preserve the drawing buffer so callers can read pixels back out of

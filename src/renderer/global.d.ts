@@ -212,9 +212,8 @@ interface BrowserPanelApi {
 
 declare global {
   interface Window {
-    cyrene?: {
-      quit: () => void;
-    };
+    /** pet 窗桥（CyreneBridge；主窗无 pet preload 时为 undefined） */
+    cyrene?: import("./types/cyrene").CyreneBridge;
     cyreneAvatar?: {
       get: () => Promise<string | null>;
       upload: () => Promise<boolean>;
@@ -244,6 +243,8 @@ declare global {
     call?: {
       start: () => void;
       sendAudioFrame: (frame: ArrayBuffer) => void;
+      /** VAD 上报（ASR 静默门控用）；旧版 preload 缺失时优雅降级 */
+      sendVadState?: (speech: boolean) => void;
       turnEnd: () => void;
       ttsDone: () => void;
       stop: () => void;
@@ -258,6 +259,18 @@ declare global {
       stopMouth: () => void;
     };
     cyreneScheduler?: import("./settings/scheduler/types").SchedulerApi;
+    /** tasks 独立设置窗的窗口控制与调度事件（tasks 页） */
+    tasks?: {
+      minimize: () => void;
+      close: () => void;
+      onSchedulerChanged?: (callback: () => void) => () => void;
+    };
+    tokenUsage?: {
+      /** 实际 IPC 返回 {days, models} 报表对象（与 token-usage-store 的 getUsageReport 对齐） */
+      get: (days: number) => Promise<{ days: import("./tasks/tasks").TokenDayData[]; models?: Record<string, unknown> }>;
+    };
+    schedulerEvents?: { onEvent: (cb: (event: unknown) => void) => () => void };
+    sidebar?: { openSettings: (section?: string) => void };
   }
 }
 

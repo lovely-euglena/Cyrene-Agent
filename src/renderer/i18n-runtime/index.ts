@@ -109,7 +109,12 @@ export function applyTranslations(rootEl: ParentNode = document): () => void {
  */
 export function useTranslation() {
   const locale = useSyncExternalStore(
-    (onChange) => i18next.on("languageChanged", () => onChange()),
+    // on() 返回 i18next 自身（链式）——不能直接当 unsubscribe 用（会泄漏监听器）。
+    (onChange) => {
+      const handler = () => onChange();
+      i18next.on("languageChanged", handler);
+      return () => i18next.off("languageChanged", handler);
+    },
     () => i18next.language,
     () => i18next.language,
   );

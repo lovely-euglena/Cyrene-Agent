@@ -22,18 +22,11 @@ import {
 import { showConfirm, showNotice } from "../shared/modal";
 
 /** 插件列表最小视图：只取运行状态，供任务卡片判断"等待插件启用"。 */
-interface PluginListLike {
+interface PluginStatusLike {
   id: string;
   status: string;
 }
 
-declare global {
-  interface Window {
-    plugins?: {
-      list(): Promise<{ plugins?: PluginListLike[] } | PluginListLike[]>;
-    };
-  }
-}
 
 export function setSchedulerStatus(text: string, className = ""): void {
   if (!schedulerSaveStatus) return;

@@ -31,6 +31,7 @@ interface TtsApi {
     apiKey: string; voiceId: string; text: string;
     speed?: number; volume?: number; pitch?: number;
     model?: string; format?: "mp3" | "wav" | "pcm";
+    vocalEnhance?: { enabled: boolean };
   }) => Promise<string>; // base64 音频
   // GPT-SoVITS（返回 base64 + cacheKey + cached + format）
   synthesizeGptsovits: (payload: {
@@ -157,7 +158,7 @@ async function loadTtsConfig(): Promise<void> {
   // MiniMax
   ttsEl("tts-minimax-key").value = String(ttsState.config.ttsMinimaxKey ?? "");
   ttsEl("tts-minimax-voice").value = String(ttsState.config.ttsMinimaxVoiceId ?? "");
-  (ttsEl("tts-minimax-model") as HTMLSelectElement).value =
+  (ttsEl("tts-minimax-model") as unknown as HTMLSelectElement).value =
     ttsState.config.ttsMinimaxModel === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo";
   ttsEl("tts-streaming").checked = ttsState.config.ttsStreaming !== false;
   ttsEl("tts-minimax-vocal-enhance").checked = ttsState.config.ttsMinimaxVocalEnhance !== false;
@@ -166,7 +167,7 @@ async function loadTtsConfig(): Promise<void> {
   ttsEl("tts-gptsovits-url").value = String(ttsState.config.ttsGptsovitsBaseUrl ?? "http://localhost:9880");
   ttsEl("tts-gptsovits-ref-audio").value = String(ttsState.config.ttsGptsovitsRefAudioPath ?? "");
   ttsEl("tts-gptsovits-prompt-text").value = String(ttsState.config.ttsGptsovitsPromptText ?? "");
-  (ttsEl("tts-gptsovits-format") as HTMLSelectElement).value =
+  (ttsEl("tts-gptsovits-format") as unknown as HTMLSelectElement).value =
     ttsState.config.ttsGptsovitsFormat === "mp3" ? "mp3" : "wav";
   ttsEl("tts-gptsovits-timeout").value = String(ttsState.config.ttsGptsovitsTimeoutMs ?? 180000);
 
@@ -174,7 +175,7 @@ async function loadTtsConfig(): Promise<void> {
   ttsEl("tts-custom-cloud-url").value = String(ttsState.config.ttsCustomCloudEndpointUrl ?? "");
   ttsEl("tts-custom-cloud-key").value = String(ttsState.config.ttsCustomCloudApiKey ?? "");
   ttsEl("tts-custom-cloud-voice").value = String(ttsState.config.ttsCustomCloudVoiceId ?? "");
-  (ttsEl("tts-custom-cloud-format") as HTMLSelectElement).value =
+  (ttsEl("tts-custom-cloud-format") as unknown as HTMLSelectElement).value =
     ttsState.config.ttsCustomCloudFormat === "wav" ? "wav" : "mp3";
   ttsEl("tts-custom-cloud-timeout").value = String(ttsState.config.ttsCustomCloudTimeoutMs ?? 30000);
 
@@ -186,7 +187,7 @@ async function loadTtsConfig(): Promise<void> {
   // Mossland（UI 骨架已就位，IPC 第二步接通；字段值已写入 ttsState.config 以便保存）
   ttsEl("tts-mossland-key").value = String(ttsState.config.ttsMosslandKey ?? "");
   ttsEl("tts-mossland-voice").value = String(ttsState.config.ttsMosslandVoiceId ?? "");
-  const mosslandModelSelect = ttsEl("tts-mossland-model") as HTMLSelectElement;
+  const mosslandModelSelect = ttsEl("tts-mossland-model") as unknown as HTMLSelectElement;
   const rawMosslandModel = String(ttsState.config.ttsMosslandModel ?? "").trim();
   const savedMosslandModel = rawMosslandModel && rawMosslandModel !== "moss-tts"
     ? rawMosslandModel
@@ -199,13 +200,13 @@ async function loadTtsConfig(): Promise<void> {
   }
   mosslandModelSelect.value = savedMosslandModel;
   ttsEl("tts-mossland-text").value = String(ttsState.config.ttsMosslandTestText ?? TTS_TEST_TEXT);
-  (ttsEl("tts-mossland-format") as HTMLSelectElement).value =
+  (ttsEl("tts-mossland-format") as unknown as HTMLSelectElement).value =
     ttsState.config.ttsMosslandFormat === "wav" ? "wav" : "mp3";
   ttsState.config.ttsMosslandKey       = String(ttsEl("tts-mossland-key").value);
   ttsState.config.ttsMosslandVoiceId   = String(ttsEl("tts-mossland-voice").value);
-  ttsState.config.ttsMosslandModel     = (ttsEl("tts-mossland-model") as HTMLSelectElement).value;
+  ttsState.config.ttsMosslandModel     = (ttsEl("tts-mossland-model") as unknown as HTMLSelectElement).value;
   ttsState.config.ttsMosslandTestText  = String(ttsEl("tts-mossland-text").value);
-  ttsState.config.ttsMosslandFormat    = (ttsEl("tts-mossland-format") as HTMLSelectElement).value;
+  ttsState.config.ttsMosslandFormat    = (ttsEl("tts-mossland-format") as unknown as HTMLSelectElement).value;
 
   // 加载完成后清掉所有 Provider 的脏态（按钮隐藏，status 清空）
   for (const provider of Object.keys(TTS_PROVIDER_FIELDS)) {
@@ -319,19 +320,19 @@ ttsEl("tts-gptsovits-timeout").addEventListener("change", () => {
 // 用 ttsEl() 安全获取：拿不到时返回 null，不让整个 settings.ts 初始化崩。
 const ttsProviderUi: Record<string, { btn: HTMLButtonElement; status: HTMLElement } | null> = {
   minimax:        ttsEl("tts-minimax-save-btn") && safeGet("tts-minimax-save-status")
-                    ? { btn: ttsEl("tts-minimax-save-btn"), status: safeGet("tts-minimax-save-status") as HTMLElement }
+                    ? { btn: ttsEl("tts-minimax-save-btn") as unknown as HTMLButtonElement, status: safeGet("tts-minimax-save-status") as HTMLElement }
                     : null,
   gptsovits:      ttsEl("tts-gptsovits-save-btn") && safeGet("tts-gptsovits-save-status")
-                    ? { btn: ttsEl("tts-gptsovits-save-btn"), status: safeGet("tts-gptsovits-save-status") as HTMLElement }
+                    ? { btn: ttsEl("tts-gptsovits-save-btn") as unknown as HTMLButtonElement, status: safeGet("tts-gptsovits-save-status") as HTMLElement }
                     : null,
   "custom-cloud": ttsEl("tts-custom-cloud-save-btn") && safeGet("tts-custom-cloud-save-status")
-                    ? { btn: ttsEl("tts-custom-cloud-save-btn"), status: safeGet("tts-custom-cloud-save-status") as HTMLElement }
+                    ? { btn: ttsEl("tts-custom-cloud-save-btn") as unknown as HTMLButtonElement, status: safeGet("tts-custom-cloud-save-status") as HTMLElement }
                     : null,
   mimo:           ttsEl("tts-mimo-save-btn") && safeGet("tts-mimo-save-status")
-                    ? { btn: ttsEl("tts-mimo-save-btn"), status: safeGet("tts-mimo-save-status") as HTMLElement }
+                    ? { btn: ttsEl("tts-mimo-save-btn") as unknown as HTMLButtonElement, status: safeGet("tts-mimo-save-status") as HTMLElement }
                     : null,
   mossland:       ttsEl("tts-mossland-save-btn") && safeGet("tts-mossland-save-status")
-                    ? { btn: ttsEl("tts-mossland-save-btn"), status: safeGet("tts-mossland-save-status") as HTMLElement }
+                    ? { btn: ttsEl("tts-mossland-save-btn") as unknown as HTMLButtonElement, status: safeGet("tts-mossland-save-status") as HTMLElement }
                     : null,
 };
 
@@ -399,18 +400,18 @@ for (const [provider, ui] of Object.entries(ttsProviderUi)) {
 }
 
 // GPT-SoVITS 格式选择（select，change 时直接保存）
-(ttsEl("tts-gptsovits-format") as HTMLSelectElement).addEventListener("change", () => {
-  void saveTtsField("ttsGptsovitsFormat", (ttsEl("tts-gptsovits-format") as HTMLSelectElement).value as "wav" | "mp3");
+(ttsEl("tts-gptsovits-format") as unknown as HTMLSelectElement).addEventListener("change", () => {
+  void saveTtsField("ttsGptsovitsFormat", (ttsEl("tts-gptsovits-format") as unknown as HTMLSelectElement).value as "wav" | "mp3");
 });
 
 // 自定义云端格式选择
-(ttsEl("tts-custom-cloud-format") as HTMLSelectElement).addEventListener("change", () => {
-  void saveTtsField("ttsCustomCloudFormat", (ttsEl("tts-custom-cloud-format") as HTMLSelectElement).value as "wav" | "mp3");
+(ttsEl("tts-custom-cloud-format") as unknown as HTMLSelectElement).addEventListener("change", () => {
+  void saveTtsField("ttsCustomCloudFormat", (ttsEl("tts-custom-cloud-format") as unknown as HTMLSelectElement).value as "wav" | "mp3");
 });
 
 // MiniMax 合成模型属于 select：切换即保存，不依赖 Provider 文本字段的“保存配置”按钮。
-(ttsEl("tts-minimax-model") as HTMLSelectElement).addEventListener("change", () => {
-  const value = (ttsEl("tts-minimax-model") as HTMLSelectElement).value;
+(ttsEl("tts-minimax-model") as unknown as HTMLSelectElement).addEventListener("change", () => {
+  const value = (ttsEl("tts-minimax-model") as unknown as HTMLSelectElement).value;
   void saveTtsField("ttsMinimaxModel", value === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo");
 });
 
@@ -440,7 +441,7 @@ document.getElementById("tts-gptsovits-test")?.addEventListener("click", async (
   const baseUrl = ttsEl("tts-gptsovits-url").value.trim();
   const refAudioPath = ttsEl("tts-gptsovits-ref-audio").value.trim();
   const promptText = ttsEl("tts-gptsovits-prompt-text").value.trim();
-  const format = (ttsEl("tts-gptsovits-format") as HTMLSelectElement).value as "wav" | "mp3";
+  const format = (ttsEl("tts-gptsovits-format") as unknown as HTMLSelectElement).value as "wav" | "mp3";
   // 字段校验用非阻塞轻提示；文件路径为只读回填，焦点交给相邻选择按钮
   if (!baseUrl) { showNotice({ tone: "warning", message: "请先填写 GPT-SoVITS API 地址", focusTarget: ttsEl("tts-gptsovits-url") }); return; }
   if (!refAudioPath) { showNotice({ tone: "warning", message: "请先选择参考音频文件" }); return; }
@@ -484,7 +485,7 @@ document.getElementById("tts-custom-cloud-test")?.addEventListener("click", asyn
   const endpointUrl = ttsEl("tts-custom-cloud-url").value.trim();
   const apiKey = ttsEl("tts-custom-cloud-key").value.trim();
   const voiceId = ttsEl("tts-custom-cloud-voice").value.trim();
-  const format = (ttsEl("tts-custom-cloud-format") as HTMLSelectElement).value as "wav" | "mp3";
+  const format = (ttsEl("tts-custom-cloud-format") as unknown as HTMLSelectElement).value as "wav" | "mp3";
   const timeoutMs = Number(ttsEl("tts-custom-cloud-timeout").value) || 30000;
   if (!endpointUrl) { showNotice({ tone: "warning", message: "请先填写自定义云端 Endpoint URL", focusTarget: ttsEl("tts-custom-cloud-url") }); return; }
 
@@ -595,8 +596,8 @@ document.getElementById("tts-mossland-test")?.addEventListener("click", async ()
   const apiKey = ttsEl("tts-mossland-key").value.trim();
   const voiceId = ttsEl("tts-mossland-voice").value.trim();
   const text = ttsEl("tts-mossland-text").value.trim();
-  const model = (ttsEl("tts-mossland-model") as HTMLSelectElement).value;
-  const format = (ttsEl("tts-mossland-format") as HTMLSelectElement).value as MosslandSyncFormat;
+  const model = (ttsEl("tts-mossland-model") as unknown as HTMLSelectElement).value;
+  const format = (ttsEl("tts-mossland-format") as unknown as HTMLSelectElement).value as MosslandSyncFormat;
   if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 Mossland API Key", focusTarget: ttsEl("tts-mossland-key") }); return; }
   if (!voiceId) { showNotice({ tone: "warning", message: "请先填写音色 ID（可从下方拉取列表）", focusTarget: ttsEl("tts-mossland-voice") }); return; }
   if (!text) { showNotice({ tone: "warning", message: "请先填写试听文本", focusTarget: ttsEl("tts-mossland-text") }); return; }
@@ -725,7 +726,7 @@ document.getElementById("tts-minimax-test")?.addEventListener("click", async () 
   if (!window.tts) return;
   const apiKey = ttsEl("tts-minimax-key").value.trim();
   const voiceId = ttsEl("tts-minimax-voice").value.trim();
-  const modelSelect = ttsEl("tts-minimax-model") as HTMLSelectElement;
+  const modelSelect = ttsEl("tts-minimax-model") as unknown as HTMLSelectElement;
   const model = modelSelect.value === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo";
   if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 MiniMax API Key", focusTarget: ttsEl("tts-minimax-key") }); return; }
   if (!voiceId) { showNotice({ tone: "warning", message: "请先填写音色 ID（或下方复刻训练）", focusTarget: ttsEl("tts-minimax-voice") }); return; }

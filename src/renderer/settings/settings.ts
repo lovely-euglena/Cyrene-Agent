@@ -181,6 +181,9 @@ if (!window.settings) {
         chatRequestTimeoutSec: 300,
         citaRepairBudgetSec: 8,
         multimodal: true,
+        memoryMode: "vector",
+        modelRequestMaxRetries: 3,
+        channelsQqResolveAuthRequirement: () => Promise.reject(new Error("preload 未注入，无法解析 QQ 收听鉴权要求")),
       }),
     saveConfig: (c) => Promise.resolve(c as ModelSettings),
     getGeneral: () => Promise.resolve({
@@ -190,6 +193,10 @@ if (!window.settings) {
       petAlwaysOnTop: true,
       petVisible: true,
       petZoom: 1,
+      rememberWindowState: true,
+      toastSoundEnabled: true,
+      gitCommitAuthorName: "",
+      gitCommitAuthorEmail: "",
       chatLineHeight: 1.75,
       assistantBubbleEnabled: false,
       chatParaSpacing: 0.5,
@@ -269,6 +276,7 @@ if (!window.settings) {
     listMcpServers: async () => [],
     getTimeoutSettings: async () => DEFAULT_TIMEOUT_SETTINGS,
     saveTimeoutSettings: async c => (c as TimeoutSettings),
+    channelsQqResolveAuthRequirement: () => Promise.reject(new Error("preload 未注入，无法解析 QQ 收听鉴权要求")),
   };
 }
 

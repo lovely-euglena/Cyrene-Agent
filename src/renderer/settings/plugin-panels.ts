@@ -127,6 +127,17 @@ function mountPanel(
 }
 
 /** 设置页入口：按分区挂载所有已启用且声明了面板的插件 */
+/** window.plugins?.list() 元素的真实形状（设置页挂载所需字段） */
+interface PluginListEntry {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  status?: string;
+  settingsPanel?: string;
+  settingsSection?: "channels" | "plugins";
+}
+
 export async function mountPluginPanels(options?: {
   containers?: Partial<Record<"channels" | "plugins", HTMLElement | null>>;
   signal?: AbortSignal;
@@ -134,8 +145,13 @@ export async function mountPluginPanels(options?: {
   // list() 历史返回数组、新版返回 overview 对象，两种都要接
   const overview = await window.plugins?.list();
   if (!overview || options?.signal?.aborted) return () => {};
-  const entries = Array.isArray(overview) ? overview : overview.plugins;
-  if (!Array.isArray(entries)) return () => {};
+  // 历史窄视图（{id,status}）缺面板字段——逐条收窄，缺字段项自然跳过挂载
+  const rawEntries: unknown[] = Array.isArray(overview) ? overview : overview.plugins ?? [];
+  const entries = rawEntries.filter(
+    (e): e is PluginListEntry =>
+      typeof e === "object" && e !== null && "id" in e && "name" in e && "enabled" in e,
+  );
+  if (entries.length === 0) return () => {};
   const containers = options?.containers ?? {
     channels: document.getElementById("plugin-panels-channels"),
     plugins: document.getElementById("plugin-panels-plugins"),

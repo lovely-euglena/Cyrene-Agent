@@ -91,7 +91,9 @@ export function useCallSession() {
       const context = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = context;
       await context.audioWorklet.addModule(new URL("../call/pcm-processor.js", import.meta.url));
-      if (stateRef.current === "ENDED") {
+      // await 期间状态可并发变更（ref 全部意义所在）——快照恢复宽类型，阻断 TS 控制流窄化误报
+      const stateAfterWorklet = stateRef.current as CallUiState;
+      if (stateAfterWorklet === "ENDED") {
         stream.getTracks().forEach((track) => track.stop());
         void context.close();
         return;

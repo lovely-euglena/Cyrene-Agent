@@ -238,7 +238,7 @@ function initWaveformCanvas(): void {
   }
 }
 
-let analyserData: Uint8Array | null = null;
+let analyserData: Uint8Array<ArrayBuffer> | null = null;
 
 function drawWaveform(): void {
   if (!waveformCtx || !waveformCanvas) { requestAnimationFrame(drawWaveform); return; }
@@ -325,7 +325,7 @@ async function startMicrophone(): Promise<void> {
     // AnalyserNode 用于 VAD + 波形显示
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
-    analyserData = new Uint8Array(analyser.frequencyBinCount);
+    analyserData = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
     source.connect(analyser);
 
     // AudioWorkletNode 用于 PCM 采集
@@ -591,29 +591,3 @@ async function init(): Promise<void> {
 
 void init();
 
-// 窗口类型声明
-declare global {
-  interface Window {
-    call?: {
-      start: () => void;
-      sendAudioFrame: (frame: ArrayBuffer) => void;
-      /** VAD 上报（ASR 静默门控用）；旧版 preload 缺失时优雅降级 */
-      sendVadState?: (speech: boolean) => void;
-      turnEnd: () => void;
-      ttsDone: () => void;
-      stop: () => void;
-      onState: (callback: (state: string) => void) => () => void;
-      onAsrResult: (callback: (data: { partial?: string; final?: string }) => void) => () => void;
-      onTtsAudio: (callback: (data: { base64: string }) => void) => () => void;
-      onError: (callback: (data: { message: string }) => void) => () => void;
-    };
-    tts?: {
-      loadSettings: () => Promise<Record<string, unknown>>;
-    };
-    live2dSpeech?: {
-      prepare: () => void;
-      startMouth: (durationMs: number) => void;
-      stopMouth: () => void;
-    };
-  }
-}
