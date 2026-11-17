@@ -127,8 +127,9 @@ public static class RenderTest
 
     private static string? ProbeModelDir()
     {
+        // 与 SelfTestRunner 同策：publish 输出比构建输出深两层，深度留足余量
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        for (var i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+        for (var i = 0; i < 12 && dir != null; i++, dir = dir.Parent)
         {
             var candidate = Path.Combine(dir.FullName, "src", "renderer", "public", "models", "cyrene");
             if (Directory.Exists(candidate)) return candidate;
