@@ -32,24 +32,14 @@ export interface CreatePetWindowOptions {
 }
 
 /**
- * 创建主桌宠窗口。
- * 只负责机械构造：恢复上次坐标、创建 BrowserWindow、加载 URL/文件、
- * 绑定 show/hide 可见性广播。不含业务 getter 注入。
+ * 桌宠初始落位：保存坐标离屏判定（交集 ≥1/3 才用）→ 否则主屏工作区居中。
+ * web 轨建窗与 dotnet 轨 sidecar 落位共用（#257 T5，语义同源）。
  */
-export function createPetWindow(
-  ctx: CreatePetWindowContext,
-  options: CreatePetWindowOptions = {},
-): BrowserWindow {
-  const { showOnReady = true } = options;
-  const settings = ctx.loadGeneralSettings();
-  const transparent = true;
-  // 窗口实际尺寸随 petZoom 等比缩放；创建尺寸与离屏判定保持一致。
-  const zoom = typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1;
-  const petWidth = Math.round(PET_WINDOW_BASE_WIDTH * zoom);
-  const petHeight = Math.round(PET_WINDOW_BASE_HEIGHT * zoom);
-  let restoreX: number | undefined;
-  let restoreY: number | undefined;
-
+export function resolvePetWindowPosition(
+  settings: PetWindowSettingsSlice,
+  petWidth: number,
+  petHeight: number,
+): { x: number; y: number } {
   if (settings.petWindowX !== undefined && settings.petWindowY !== undefined) {
     const targetBounds = {
       x: settings.petWindowX,
@@ -69,22 +59,39 @@ export function createPetWindow(
       Math.max(targetBounds.y, wa.y);
 
     if (interW >= petWidth / 3 && interH >= petHeight / 3) {
-      restoreX = settings.petWindowX;
-      restoreY = settings.petWindowY;
-    } else {
-      console.log(
-        "[Cyrene] 桌宠保存位置已离屏（仅 " +
-          interW + "x" + interH + " 可见），回退到屏幕中央",
-      );
+      return { x: settings.petWindowX, y: settings.petWindowY };
     }
+    console.log(
+      "[Cyrene] 桌宠保存位置已离屏（仅 " +
+        interW + "x" + interH + " 可见），回退到屏幕中央",
+    );
   }
 
-  if (restoreX === undefined || restoreY === undefined) {
-    // 无保存坐标或已离屏：居中到主屏工作区，避免落在不可见区域
-    const wa = screen.getPrimaryDisplay().workArea;
-    restoreX = Math.round(wa.x + (wa.width - petWidth) / 2);
-    restoreY = Math.round(wa.y + (wa.height - petHeight) / 2);
-  }
+  // 无保存坐标或已离屏：居中到主屏工作区，避免落在不可见区域
+  const wa = screen.getPrimaryDisplay().workArea;
+  return {
+    x: Math.round(wa.x + (wa.width - petWidth) / 2),
+    y: Math.round(wa.y + (wa.height - petHeight) / 2),
+  };
+}
+
+/**
+ * 创建主桌宠窗口。
+ * 只负责机械构造：恢复上次坐标、创建 BrowserWindow、加载 URL/文件、
+ * 绑定 show/hide 可见性广播。不含业务 getter 注入。
+ */
+export function createPetWindow(
+  ctx: CreatePetWindowContext,
+  options: CreatePetWindowOptions = {},
+): BrowserWindow {
+  const { showOnReady = true } = options;
+  const settings = ctx.loadGeneralSettings();
+  const transparent = true;
+  // 窗口实际尺寸随 petZoom 等比缩放；创建尺寸与离屏判定保持一致。
+  const zoom = typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1;
+  const petWidth = Math.round(PET_WINDOW_BASE_WIDTH * zoom);
+  const petHeight = Math.round(PET_WINDOW_BASE_HEIGHT * zoom);
+  const { x: restoreX, y: restoreY } = resolvePetWindowPosition(settings, petWidth, petHeight);
 
   const win = new BrowserWindow({
     x: restoreX,

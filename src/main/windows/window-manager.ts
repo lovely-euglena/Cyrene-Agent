@@ -1,6 +1,9 @@
-import { app, BrowserWindow, screen, type NativeImage } from "electron";
+import { app, BrowserWindow, nativeImage, screen, type NativeImage } from "electron";
 import { IPC } from "../../shared/ipc-channels";
-import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, type PetWindowSettingsSlice } from "../startup/create-pet-window";
+import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, resolvePetWindowPosition, type PetWindowSettingsSlice } from "../startup/create-pet-window";
+import { resolveDotnetConfig } from "../dotnet-backend/config";
+import { activeLive2DClient } from "../live2d/live2d-host-client";
+import { PetSidecarBackend, resolveLive2DModelPath } from "../live2d/pet-sidecar-backend";
 import {
   createCallWindow,
   createReactChatWindowShell,
@@ -36,7 +39,8 @@ export interface WindowManager {
   createOnboardingWindow?(): Promise<BrowserWindow>;
   showOnboardingWindow?(): void;
   closeOnboardingWindow?(): void;
-  createPetWindow(showOnReady?: boolean): BrowserWindow;
+  /** dotnet 轨（LIVE2D_ENGINE=dotnet）返回 null——桌宠窗由侧车自管，无 BrowserWindow。 */
+  createPetWindow(showOnReady?: boolean): BrowserWindow | null;
   /** 创建（或复用）未加载页面的聊天窗口壳；页面加载由显式 load() 驱动。 */
   createReactChatWindowShell(): ReactChatWindowHandle;
   /** 打开聊天窗口：必要时创建壳并加载页面，然后显示并分发会话。 */
@@ -98,6 +102,44 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       options.persistPetWindowPosition(position);
     },
   );
+
+  // ── #257 T5 双轨：LIVE2D_ENGINE=dotnet 时桌宠窗由 sidecar 自管 ──
+  // web 轨代码路径原样保留；sidecar 加载失败一次性回退 web（同进程不反复重试）。
+  const live2dDotnet = resolveDotnetConfig().live2dEngine === "dotnet";
+  let petSidecar: PetSidecarBackend | null = null;
+  let sidecarFailed = false;
+
+  function sidecarActive(): PetSidecarBackend | null {
+    return petSidecar && petSidecar.isReady() ? petSidecar : null;
+  }
+
+  function ensurePetSidecar(showOnReady: boolean): void {
+    if (!live2dDotnet || sidecarFailed) return;
+    if (!petSidecar) {
+      petSidecar = new PetSidecarBackend({
+        client: activeLive2DClient(),
+        resolveModelPath: resolveLive2DModelPath,
+        loadSettings: options.loadPetWindowSettingsSlice,
+        persistPosition: options.persistPetWindowPosition,
+        resolveInitialPosition: resolvePetWindowPosition,
+        getDisplayScaleFactor: (bounds) => screen.getDisplayMatching(bounds).scaleFactor,
+        onMoved: (position) => {
+          for (const handler of movedHandlers) {
+            try { handler(position); } catch (err) { console.error("[WindowManager] moved handler failed:", err); }
+          }
+        },
+      });
+    }
+    void petSidecar.ensureReady(showOnReady).then((ok) => {
+      if (ok) return;
+      // 回退 web 轨：清理门面（关停侧车进程）后按原逻辑建 BrowserWindow
+      const failed = petSidecar;
+      petSidecar = null;
+      sidecarFailed = true;
+      void failed?.dispose();
+      ensurePetWindow(showOnReady);
+    });
+  }
 
   function getUsablePetWindow(): BrowserWindow | null {
     if (!petWindow || petWindow.isDestroyed()) return null;
@@ -233,8 +275,13 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     closeOnboardingWindow(): void {
       onboardingWindow?.close();
     },
-    createPetWindow(showOnReady = true): BrowserWindow {
-      return ensurePetWindow(showOnReady && hasCurrentDisclaimerConsent());
+    createPetWindow(showOnReady = true): BrowserWindow | null {
+      const show = showOnReady && hasCurrentDisclaimerConsent();
+      if (live2dDotnet && !sidecarFailed) {
+        ensurePetSidecar(show);
+        return null;
+      }
+      return ensurePetWindow(show);
     },
 
     createReactChatWindowShell(): ReactChatWindowHandle {
@@ -310,6 +357,15 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         this.hidePetWindow();
         return;
       }
+      const sc = sidecarActive();
+      if (sc) {
+        sc.show();
+        return;
+      }
+      if (live2dDotnet && !sidecarFailed) {
+        ensurePetSidecar(true);
+        return;
+      }
       const win = getUsablePetWindow();
       if (win) {
         win.show();
@@ -319,6 +375,11 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       ensurePetWindow(true);
     },
     hidePetWindow(): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.hide();
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) return;
       // hide 触发 setPetWindow 的延迟回收：30s 内再次显示则取消，否则销毁窗口
@@ -330,6 +391,16 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         this.hidePetWindow();
         return;
       }
+      const sc = sidecarActive();
+      if (sc) {
+        if (sc.isVisible()) sc.hide();
+        else sc.show();
+        return;
+      }
+      if (live2dDotnet && !sidecarFailed) {
+        ensurePetSidecar(true);
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) {
         ensurePetWindow(true);
@@ -339,19 +410,41 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       else win.show();
     },
     minimizePetWindow(): void {
+      const sc = sidecarActive();
+      if (sc) {
+        // 分层窗口无最小化语义：等价隐藏（web 轨 minimize 同为收起桌宠）
+        sc.hide();
+        return;
+      }
       getUsablePetWindow()?.minimize();
     },
     setPetWindowAlwaysOnTop(alwaysOnTop: boolean): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.setAlwaysOnTop(alwaysOnTop);
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) return;
       win.setAlwaysOnTop(alwaysOnTop, alwaysOnTop ? "screen-saver" : "normal");
     },
     setPetWindowInteractive(interactive: boolean): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.setInteractive(interactive);
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) return;
       win.setIgnoreMouseEvents(!interactive, { forward: true });
     },
     setPetWindowDragging(isDragging: boolean): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.setDragging(isDragging);
+        if (!isDragging) sc.finishDragging();
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) return;
       if (!isDragging) petWindowMoveController.finishDragging();
@@ -362,6 +455,12 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       }
     },
     setPetDragMode(enabled: boolean): boolean {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.setInteractive(enabled);
+        petDragMode = enabled;
+        return enabled;
+      }
       const win = getUsablePetWindow();
       if (!win) return false;
       try {
@@ -381,12 +480,27 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       return petDragMode;
     },
     movePetWindowRelative(dx: number, dy: number): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.moveRelative(dx, dy);
+        return;
+      }
       petWindowMoveController.moveRelative(dx, dy);
     },
     movePetWindowTo(x: number, y: number): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.moveTo(x, y);
+        return;
+      }
       petWindowMoveController.queueAbsolute(x, y);
     },
     applyPetWindowZoom(zoom: number): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.setZoom(zoom);
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) return;
       const width = Math.round(PET_WINDOW_BASE_WIDTH * zoom);
@@ -397,10 +511,18 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       }
     },
     async capturePetWindowFrame(): Promise<string | null> {
+      const sc = sidecarActive();
+      if (sc) return sc.captureFrame();
       const image = await this.capturePetWindow();
       return image ? image.toDataURL() : null;
     },
     async capturePetWindow(): Promise<Electron.NativeImage | null> {
+      const sc = sidecarActive();
+      if (sc) {
+        // 侧车 PNG dataURL → NativeImage（截图合成等消费方语义不变）
+        const dataUrl = await sc.captureFrame();
+        return dataUrl ? nativeImage.createFromDataURL(dataUrl) : null;
+      }
       const win = getUsablePetWindow();
       if (!win) return null;
       try {
@@ -419,6 +541,11 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       }
     },
     sendToPetWindow(channel: string, payload?: unknown): void {
+      const sc = sidecarActive();
+      if (sc) {
+        sc.sendChannel(channel, payload);
+        return;
+      }
       const win = getUsablePetWindow();
       if (!win) return;
       if (payload === undefined) win.webContents.send(channel);
@@ -444,6 +571,9 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     dispose(): void {
       cancelPetWindowResourceRelease();
       petWindowMoveController.dispose();
+      const sc = petSidecar;
+      petSidecar = null;
+      void sc?.dispose();
     },
   };
 }
