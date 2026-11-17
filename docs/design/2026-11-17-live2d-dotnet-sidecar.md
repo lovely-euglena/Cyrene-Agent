@@ -1,7 +1,8 @@
 # Live2D 渲染引擎 .NET sidecar 化（#257）
 
-> 状态：T0–T5 已落地；T6 验收工具链已落地，**dotnet 渲染管线已在沙箱真渲染验证**
-> （修复三个渲染 bug 后角色完整呈现）；双轨逐像素对照待 GPU 真机回传 web 基准帧。
+> 状态：T0–T5 已落地；T6 静态基准帧逐像素对照**已在沙箱达成 diff_pct=0.0065%**
+> （web 软件 GL 基准 vs dotnet WARP，远低于 2% 阈值）；动作/口型时序、多 DPI、
+> 内存/帧率/启动时延等真机对照项待 GPU 机器。
 > 分支：`issue/257-live2d`。双轨开关：`LIVE2D_ENGINE=dotnet|web`（默认 `web`）。
 
 ## 1. 目标与裁决
@@ -154,8 +155,10 @@ Live2D Proprietary：开发免费；个人/小规模企业发布豁免 Publicati
 **Core/Framework 二进制不随仓再分发**：
 
 - 运行时下载器（`CoreDownloader`）：官方源
-  `https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.5.zip`，
-  SHA256 pin `7FF3A4BB…8BB12`，断点续传，落 `{dataDir}/live2d-core/Live2DCubismCore.dll`。
+  `https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.zip`，
+  SHA256 pin `BC39C444…2A906`，断点续传，落 `{dataDir}/live2d-core/Live2DCubismCore.dll`。
+  **版本锁定 5-r.4 = Core 5.1.0**：与 web 轨内置 JS Core 同版本，保证两轨顶点求值
+  逐像素一致（5-r.5=Core 6.0.1 引入非刚性形变差，且 pld 不兼容 Core 6）。
 - 探测序（`CoreLibrary`）：env `CYRENE_CUBISM_CORE_DLL` → dataDir/live2d-core →
   模型目录(+core/) → exe 目录(+live2d-core/) → PATH。用户可自备 DLL。
 - load 时 Core 缺失且指定 dataDir → 自动下载后重试；否则 E_CORE_MISSING /
@@ -185,10 +188,10 @@ pnpm run package:win:dir  # 已含 build:live2d
   开关（config.test.ts）。
 - **T6 像素对照**：同模型同参数驱动 web/dotnet 各渲一帧，
   脚本逐像素 diff（容差 <2%，diff_pct 必须脚本产出）。工具链已落地
-  （`scripts/live2d/`，见 §10）。**dotnet 侧渲染已在沙箱验证通过**——
-  早期 `CreateInputLayout` E_INVALIDARG 并非环境缺陷，而是三个代码 bug
-  （见 §10「渲染管线修复」），修复后沙箱 WARP 渲染出完整角色。
-  逐像素对照仍需 GPU 真机回传 web 基准帧。
+  （`scripts/live2d/`，见 §10）。**静态基准帧对照已在沙箱达成 0.0065%**——
+  web 基准帧用软件 WebGL（`--disable-gpu --enable-unsafe-swiftshader`）采集，
+  dotnet 用 WARP，无需 GPU 真机。渲染管线修复见 §10「渲染管线修复」与
+  「逐像素对齐」。动作/口型时序、多 DPI、内存/帧率等仍需 GPU 真机。
 
 ## 9. 已知差异与后续
 
@@ -200,7 +203,7 @@ pnpm run package:win:dir  # 已含 build:live2d
   主进程计算时长 + mouthStart 语义（与 web 轨一致）。
 - 物理 stabilization 已实现未接线（web 轨未启用，保真优先）。
 
-## 10. T6 验收（dotnet 渲染沙箱已验证，逐像素对照待真机）
+## 10. T6 验收（沙箱逐像素对照已达成 diff_pct=0.0065%）
 
 ### 渲染管线修复（沙箱真渲染验证，2026-11-17）
 
@@ -222,6 +225,42 @@ pnpm run package:win:dir  # 已含 build:live2d
    纹理顶行序上传（v=0=顶行）需在 VS 内 `uv.y = 1 - uv.y`。不翻转时部件采样到
    图集透明 padding → 画面碎片；翻转后角色完整。
 
+### 逐像素对齐（沙箱达成，2026-11-17，diff_pct 0.55% → 0.0065%）
+
+角色完整后仍有 ~12% 差异，逐层定位并修复以下根因（web 基准帧亦在沙箱用
+软件 WebGL 采集，无需 GPU 真机即可对照）：
+
+1. **Core 版本对齐**：web 轨内置 JS Core = 5.1.0（0x05010000），侧车原用
+   5-r.5 = Core 6.0.1，顶点求值存在非刚性形变差（参数完全一致仍 ±3px）。
+   升级 web Core 到 6 不可行（pld `doDrawModel` 抛 TypeError）。故侧车降级
+   固定 **5-r.4 = Core 5.1.0**。`csmGetRenderOrders` 为 Core 6 新名，Core 5
+   名 `csmGetDrawableRenderOrders`——`CoreLibrary` 函数指针探测兼容两名。
+2. **图集 mip 链**：pixi 默认 `mipmap=POW2`（图集 8192² 为 2 的幂）→ web 缩小
+   时用三线性 mip 滤波。侧车原 MipLevels=1 → 发丝/翅膀内部色差。改为 CPU
+   生成完整 mip 链（2×2 box，+2 舍入）逐层 `UpdateSubresource` 上传——不依赖
+   `GenerateMips`（沙箱 D3D11 其为 no-op），也避开「初始数据+多层 mip」创建
+   限制（沙箱拒绝该组合，E_INVALIDARG）。
+3. **主 RT 4× MSAA**：web `antialias:true`。侧车主缓冲改 4× MSAA，读回前
+   `ResolveSubresource` 到非 MSAA 纹理（沙箱探针实证 MSAA+Resolve 可用）。
+4. **蒙版图集低精度路径完整移植**：原侧车每组建全尺寸 RT；web 用单张
+   256×256 RGBA 图集（pld `maskBufferCount=1`）+ `setupLayoutBounds` 网格
+   布局 + RGBA 通道打包 + `matrixForMask`/`matrixForDraw` 矩阵链 + 单元格
+   `isInside` 裁剪。已逐项对齐。另复现 pld `calcClippedDrawTotalBounds` 的
+   `Number.MIN_VALUE` 语义（全负坐标组上界撑到 ≈0）。D3D 行序适配：masked
+   PS 采样 `maskUv.y = 1 - clipPos.y/w`。
+5. **HLSL 矩阵必须 `row_major`**（关键）：CPU 按行主序上传（`mul(行向量,M)`，
+   平移在 [12]/[13]）。HLSL 默认列主序打包把 `maskMatrix` 读错 → `clipPos`
+   退化为模型坐标 → 蒙版 `isInside` 全 0 → 虹膜被裁（眼睛闭合）。身体因用
+   反转蒙版掩盖了错误。加 `row_major` 后 diff 0.55% → **0.0065%**（13px AA 噪声）。
+6. **web 取帧冻结污染修复**（`web-capture.cjs`）：`Live2DModel._render` 在
+   `deltaTime≠0` 时调 `internalModel.update`，行为层写参数→`csmUpdateModel`→
+   `loadParameters` 恢复参数值，造成「参数=默认、顶点=行为态」隐蔽污染；
+   冻结时清零 `model.deltaTime`。又 `cm.update()` 内部 `resetDynamicFlags`
+   使 pld 跳过蒙版重绘、沿用陈旧蒙版 FBO；改用裸 `cm._model.update()` 保留
+   脏标志强制重绘。软件 GL（`--disable-gpu`）下 `capturePage` 不合成 WebGL
+   层，改 `--extract` 同任务 render+readPixels 读回（预乘 RGBA，与侧车
+   PngCodec 语义一致）。
+
 ### 口径
 
 - **静态基准帧**：双方都不跑行为层（呼吸/眨眼/物理/注视），默认参数各渲一帧。
@@ -240,7 +279,7 @@ pnpm run package:win:dir  # 已含 build:live2d
 | --- | --- |
 | `pixel-diff.mjs` | PNG 逐像素 diff（内置 8-bit PNG 解码器，全 5 种 filter）；`--selftest` 6 项自验证 |
 | `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/setBounds/setZoom/setParameter/play/tick/captureFrame）；`--diag-only` 无 GPU 可跑协议链路 |
-| `web-capture.cjs` | web 侧取帧：`npx electron` 起同规格透明桌宠窗，冻结 ticker + 参数回默认 + coreModel.update + 单帧渲染 → capturePage |
+| `web-capture.cjs` | web 侧取帧：`npx electron` 起同规格透明桌宠窗，冻结 ticker（清零 deltaTime）+ 参数回默认 + 裸 core update（保留脏标志）+ 单帧渲染；`--extract` 软件 GL 下 readPixels 读回 |
 | `eval-log.mjs` | 测评 JSONL 落盘 `docs/eval/257-live2d.jsonl`（ts/task/action/target/result/diff_pct/note） |
 
 侧车免 Node 取帧：`cyrene-live2d.exe --render-test --out dotnet.png [--params k=v,...]`。
@@ -254,6 +293,6 @@ GPU 机器完整流程见 `scripts/live2d/README.md`。
 | 协议链路（load→setParam→tick×120→diagnostics→shutdown） | ✅ nowMs=2000 精确（沙箱） |
 | C# 自测矩阵（含 Core） | ✅ PASS=302 FAIL=0 SKIP=2（GPU 渲染项已跑通） |
 | T5 TS 单测（7 文件） | ✅ 61/61 |
-| dotnet 静态基准帧渲染（沙箱 WARP） | ✅ 角色完整，43669 不透明像素 |
-| 静态基准帧逐像素对照（diff_pct < 2%） | ⏳ 待 GPU 真机回传 web 基准帧 |
+| dotnet 静态基准帧渲染（沙箱 WARP） | ✅ 角色完整，47770 不透明像素 |
+| 静态基准帧逐像素对照（diff_pct < 2%） | ✅ **0.0065%**（13/200000 px，沙箱 web 软件 GL 基准） |
 | 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（真机） |

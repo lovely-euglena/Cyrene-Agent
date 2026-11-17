@@ -10,7 +10,7 @@
 | --- | --- |
 | `pixel-diff.mjs` | PNG 逐像素 diff（内置 8-bit PNG 解码器，零依赖）；`--selftest` 自验证 |
 | `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/tick/setParameter/captureFrame）；`--diag-only` 无 GPU 可跑 |
-| `web-capture.cjs` | web 侧取帧：`npx electron` 起 400×500 透明桌宠窗，冻结 ticker + 参数回默认 + 单帧渲染 |
+| `web-capture.cjs` | web 侧取帧：`npx electron` 起 400×500 透明桌宠窗，冻结 ticker（清零 deltaTime）+ 参数回默认 + 裸 core update + 单帧渲染；`--extract` 软件 GL 下 readPixels 读回 |
 | `eval-log.mjs` | 测评 JSONL 落盘（`docs/eval/257-live2d.jsonl`）：`--run` 取退出码、`--diff` 取脚本 diff_pct |
 
 侧车另有免 Node 的取帧形态：`cyrene-live2d.exe --render-test --model-dir <dir> --out dotnet.png [--params k=v,...]`。
@@ -29,7 +29,9 @@ node scripts/live2d/sidecar-capture.mjs --out dotnet.png
 #    或免 Node：cyrene-live2d.exe --render-test --out dotnet.png
 
 # 2. web 侧帧（先 pnpm run build:renderer）
-npx electron scripts/live2d/web-capture.cjs --out web.png
+npx electron scripts/live2d/web-capture.cjs --extract --out web.png
+#    软件 GL（无 GPU/沙箱）加：--no-sandbox --enable-unsafe-swiftshader --disable-gpu
+#    --force-device-scale-factor=1（强制 DPR=1 → 400×500 物理像素）
 
 # 3. 逐像素对照（diff_pct 脚本产出；exit 0 = pass < 2%）
 node scripts/live2d/pixel-diff.mjs web.png dotnet.png --out diff.json
@@ -42,14 +44,31 @@ node scripts/live2d/eval-log.mjs --task T6 --action diff --note "静态基准对
 动作序列用 `sidecar-capture.mjs --play expression:墨镜 --ticks 60`，web 侧
 `--no-freeze --wait <ms>` 近似（行为层时序对照属 T6 后续项，静态帧先行）。
 
-## 沙箱验证状态
+## 沙箱验证状态（静态基准帧逐像素对照已达成）
 
-dotnet 渲染管线已在开发沙箱（WARP 软件渲染）真渲染验证：`--render-test`
-输出完整角色，`--selftest` 302 PASS/0 FAIL/2 SKIP。早期 `CreateInputLayout`
-E_INVALIDARG 是三个代码 bug（输入布局语义名 TEXCOORD、蒙版组成员、UV 的 V
-翻转），非环境缺陷，已修复（详见设计文档 §10）。沙箱可跑：`pixel-diff --selftest`、
-`sidecar-capture --diag-only`（协议链路）、C# `--selftest`/`--render-test`、TS 单测。
-逐像素对照仍需 GPU 真机回传 web 基准帧（web 侧截帧需仓库 + `dist/renderer` + Electron）。
+开发沙箱（WARP 软件渲染 + 软件 WebGL）**已完成静态基准帧逐像素对照：
+diff_pct=0.0065%**（13/200000 px，远低于 2% 阈值），无需 GPU 真机。
+`--selftest` 302 PASS/0 FAIL/2 SKIP。
+
+达成要点（详见设计文档 §10「逐像素对齐」）：
+- **Core 版本锁定 5-r.4 = Core 5.1.0**，与 web 轨内置 JS Core 同版本（顶点求值
+  一致）。`CoreDownloader` 已 pin r.4 URL/SHA256；`csmGetRenderOrders` 经
+  `CoreLibrary` 函数指针兼容 Core 5 旧名 `csmGetDrawableRenderOrders`。
+- 图集 CPU mip 链、主 RT 4× MSAA、256 蒙版图集低精度路径完整移植。
+- **HLSL 矩阵 `row_major`**（缺则蒙版 clipPos 读错、虹膜被裁）。
+- web 取帧冻结修复（清零 deltaTime + 裸 core update 保留脏标志）+ `--extract`
+  软件 GL readPixels。
+
+沙箱 web 基准帧采集命令（仓库根，需 `dist/renderer` + 基线 Electron）：
+
+```bash
+electron.exe --no-sandbox --enable-unsafe-swiftshader --disable-gpu \
+  --force-device-scale-factor=1 scripts/live2d/web-capture.cjs --extract --out web.png
+```
+
+沙箱可跑：`pixel-diff --selftest`、`sidecar-capture --diag-only`（协议链路）、
+C# `--selftest`/`--render-test`、TS 单测、上述 web 截帧 + 逐像素对照。
+动作/口型时序、多 DPI、内存/帧率/启动时延等仍需 GPU 真机。
 
 ## 真机手动验收清单（T6 其余项）
 
