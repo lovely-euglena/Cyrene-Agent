@@ -11,6 +11,7 @@ import { describe, expect, test } from "vitest";
 import { OpenAICompatAdapter } from "./openai-adapter";
 import { AnthropicAdapter } from "./anthropic-adapter";
 import { ResponsesAdapter } from "./responses-adapter";
+import { getCapabilityOrOpenAI } from "./capabilities";
 import type { ProviderCapability, VendorConfig } from "./types";
 import type { ReasoningPreference } from "../../../shared/reasoning";
 import type { ManualReasoningConfig } from "../../../shared/manual-reasoning";
@@ -44,6 +45,20 @@ const claudeCap: ProviderCapability = {
   disabled: true,
 };
 
+const geminiCap: ProviderCapability = {
+  id: "gemini",
+  displayName: "Gemini（Google）",
+  transport: "openai",
+  baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+  authStyle: "bearer",
+  defaultModel: "gemini-3.8-flash",
+  supportsTools: true,
+  supportsThinking: true,
+  thinkingField: "reasoning_content",
+  cacheStrategy: "auto",
+  testStrategy: "text",
+};
+
 const mimoCap: ProviderCapability = {
   id: "mimo",
   displayName: "MiMo（小米）",
@@ -58,6 +73,20 @@ const mimoCap: ProviderCapability = {
   testStrategy: "text",
   visionBaseUrl: "https://api.xiaomimimo.com/v1",
 };
+
+test("豆包托管 glm-5.3 的实际请求保留强制思考与 high 档位", () => {
+  const cap = getCapabilityOrOpenAI("豆包（火山方舟）");
+  const adapter = new OpenAICompatAdapter("doubao", cap);
+  const model = "glm-5.3";
+  const http = adapter.buildRequest(
+    { model, messages: [{ role: "user", content: "hi" }] },
+    cfgOf(cap, { model, reasoning: { mode: "off" } }),
+  );
+  const body = JSON.parse(http.body);
+  expect(body.thinking).toEqual({ type: "enabled" });
+  expect(body.reasoning_effort).toBe("high");
+  expect(body.enable_thinking).toBeUndefined();
+});
 
 function cfgOf(
   cap: ProviderCapability,
@@ -134,6 +163,50 @@ describe("G1 OpenAI chatgpt + reasoning 透传", () => {
     expect(body.reasoning_effort).toBe("medium");
   });
 
+  // 官方：Terra 支持 none；Sol 只列 low/medium/high/xhigh/max，不支持 none。
+  test("gpt-6.1-terra + off → reasoning_effort=none", () => {
+    const http = adapter.buildRequest(
+      { model: "gpt-6.1-terra", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.1-terra", reasoning: { mode: "off" } }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe("none");
+  });
+
+  test("gpt-6.1-terra 经 Responses + {mode:'on', effort:'xhigh'} → reasoning.effort=xhigh", () => {
+    const responses = new ResponsesAdapter("chatgpt", chatgptCap);
+    const http = responses.buildRequest(
+      { model: "gpt-6.1-terra", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.1-terra", reasoning: { mode: "on", effort: "xhigh" } }),
+    );
+    expect(JSON.parse(http.body).reasoning).toEqual({ effort: "xhigh" });
+  });
+
+  test("gpt-6.1-sol + off → 不发送 none，回到默认 medium", () => {
+    const http = adapter.buildRequest(
+      { model: "gpt-6.1-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.1-sol", reasoning: { mode: "off" } }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
+  });
+
+  // 官方推理指南：GPT-6.2 Astra / Sol 收到 effort=none 会拒绝请求。
+  test.each(["gpt-6.2-astra", "gpt-6.2-sol"])("%s + off → 不发送 none，回到默认 medium", (model) => {
+    const http = adapter.buildRequest(
+      { model, messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model, reasoning: { mode: "off" } }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
+  });
+
+  test("gpt-6.2-sol 经 Responses + pro mode → reasoning:{effort, mode:'pro'}", () => {
+    const responses = new ResponsesAdapter("chatgpt", chatgptCap);
+    const http = responses.buildRequest(
+      { model: "gpt-6.2-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.2-sol", reasoning: { mode: "on", effort: "high", proMode: true } }),
+    );
+    expect(JSON.parse(http.body).reasoning).toEqual({ effort: "high", mode: "pro" });
+  });
+
   test("gpt-4o + reasoning=auto → body 中无 reasoning_effort（非推理模型）", () => {
     const http = adapter.buildRequest(
       { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] },
@@ -155,6 +228,177 @@ describe("G2 Claude + reasoning 透传", () => {
     const body = JSON.parse(http.body) as Record<string, unknown>;
     expect((body.output_config as Record<string, unknown>).effort).toBe("xhigh");
     expect((body.thinking as Record<string, unknown>).type).toBe("adaptive");
+  });
+
+  // Claude Haiku 5.5 官方约束（核验 2026-10-08）：只接受自适应思考；关闭思考仅在 high 及以下合法，
+  // xhigh/max 下关闭返回 400。下面验证实际请求体满足这些约束。
+  const haikuBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model: "claude-haiku-5-5", messages: [{ role: "user", content: "hi" }], maxTokens: 100 },
+      cfgOf(claudeCap, { model: "claude-haiku-5-5", ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("claude-haiku-5-5 + {mode:'on', effort:'max'} → 自适应思考且发送所选档位", () => {
+    const body = haikuBody({ mode: "on", effort: "max" });
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect((body.output_config as Record<string, unknown>).effort).toBe("max");
+  });
+
+  test("claude-haiku-5-5 未设置档位 → 自适应思考 + 默认 medium，不发 budget_tokens", () => {
+    const body = haikuBody();
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect((body.output_config as Record<string, unknown>).effort).toBe("medium");
+  });
+
+  test("claude-haiku-5-5 + off → thinking.disabled 且不带 effort（避免 xhigh/max 下关闭的 400）", () => {
+    const body = haikuBody({ mode: "off" });
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect((body.output_config as Record<string, unknown> | undefined)?.effort).toBeUndefined();
+  });
+
+  // 官方 effort / 思考文档（核验 2026-11-01）：Fable 5.1 / Fable 5 / Opus 5.5 / Sonnet 5.5 发送
+  // thinking:{type:"disabled"} 返回 400；Opus 5 只在 high 及以下接受关闭；Opus 5.5 默认 medium。
+  const claudeBody = (model: string, reasoning?: ReasoningPreference) => JSON.parse(adapter.buildRequest(
+    { model, messages: [{ role: "user", content: "hi" }], maxTokens: 100 },
+    cfgOf(claudeCap, { model, ...(reasoning ? { reasoning } : {}) }),
+  ).body) as Record<string, unknown>;
+
+  test.each(["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5"])("%s + off → 仍发送自适应思考，不发 disabled", (model) => {
+    const body = claudeBody(model, { mode: "off" });
+    expect(body.thinking).toEqual({ type: "adaptive" });
+  });
+
+  // Fable 5.2 对所有账户校验思考块前缀，自适应思考还要带上 drop_block，见 anthropic-adapter。
+  test("claude-fable-5-2 + off → 仍发送自适应思考，并让服务端丢弃失效的思考块", () => {
+    const body = claudeBody("claude-fable-5-2", { mode: "off" });
+    expect(body.thinking).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+  });
+
+  test("claude-opus-5-5 未设置档位 → 默认 medium；所选 xhigh 照常发送", () => {
+    expect((claudeBody("claude-opus-5-5").output_config as Record<string, unknown>).effort).toBe("medium");
+    expect((claudeBody("claude-opus-5-5", { mode: "on", effort: "xhigh" }).output_config as Record<string, unknown>).effort).toBe("xhigh");
+  });
+
+  test.each(["claude-fable-5-2", "claude-fable-5-1", "claude-sonnet-5-5"])("%s 未设置档位 → 默认 high", (model) => {
+    expect((claudeBody(model).output_config as Record<string, unknown>).effort).toBe("high");
+  });
+
+  test("claude-opus-5 + off → thinking.disabled 且不带 effort（服务端取默认 high，避开 xhigh/max 下关闭的 400）", () => {
+    const body = claudeBody("claude-opus-5", { mode: "off" });
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect((body.output_config as Record<string, unknown> | undefined)?.effort).toBeUndefined();
+  });
+
+  test.each(["claude-opus-4-6", "claude-sonnet-4-6"])("%s 不支持 xhigh：所选 xhigh 收敛到默认 high，max 照常发送", (model) => {
+    expect((claudeBody(model, { mode: "on", effort: "xhigh" }).output_config as Record<string, unknown>).effort).toBe("high");
+    expect((claudeBody(model, { mode: "on", effort: "max" }).output_config as Record<string, unknown>).effort).toBe("max");
+  });
+});
+
+describe("kimi-k3.1-pro 请求体", () => {
+  const kimiCap: ProviderCapability = {
+    id: "kimi",
+    displayName: "Kimi（月之暗面）",
+    transport: "openai",
+    baseUrl: "https://api.moonshot.cn/v1",
+    authStyle: "bearer",
+    defaultModel: "kimi-k2.7-code",
+    supportsTools: true,
+    supportsThinking: true,
+    thinkingField: "thinking",
+    cacheStrategy: "prompt_cache_key",
+    testStrategy: "text",
+  };
+  const adapter = new OpenAICompatAdapter("kimi", kimiCap);
+  // 官方：始终开启思考、无法关闭；reasoning_effort 仅 low/high/max；temperature/top_p 为固定值不应传入。
+  const bodyOf = (model: string, reasoning?: ReasoningPreference) => JSON.parse(adapter.buildRequest(
+    { model, messages: [{ role: "user", content: "hi" }] },
+    cfgOf(kimiCap, { model, ...(reasoning ? { reasoning } : {}) }),
+  ).body) as Record<string, unknown>;
+
+  test.each(["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"])("%s 未设置档位 → reasoning_effort=high，且不发 temperature / top_p", (model) => {
+    const body = bodyOf(model);
+    expect(body.reasoning_effort).toBe("high");
+    expect("temperature" in body).toBe(false);
+    expect("top_p" in body).toBe(false);
+  });
+
+  test("kimi-k3.1-pro + {mode:'on', effort:'max'} → reasoning_effort=max", () => {
+    expect(bodyOf("kimi-k3.1-pro", { mode: "on", effort: "max" }).reasoning_effort).toBe("max");
+  });
+
+  test("kimi-k3.1-pro + off → 不发送关闭思考，回到默认 high", () => {
+    const body = bodyOf("kimi-k3.1-pro", { mode: "off" });
+    expect(body.reasoning_effort).toBe("high");
+    expect("thinking" in body).toBe(false);
+  });
+
+  test("kimi-k3.1-pro + 不支持的 medium → 收敛到默认 high", () => {
+    expect(bodyOf("kimi-k3.1-pro", { mode: "on", effort: "medium" }).reasoning_effort).toBe("high");
+  });
+});
+
+describe.each(["gemini-4-argon", "gemini-4-carbon"])("%s 请求体", (model) => {
+  const adapter = new OpenAICompatAdapter("gemini", geminiCap);
+  // 官方：thinking_level 仅 low/medium/high，默认 medium；兼容层 reasoning_effort 映射 thinking_level，
+  // "none" 关闭思考只写明适用于 2.5 系。下面验证实际请求体不越出这些档位、也不发送采样参数。
+  const argonBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model, messages: [{ role: "user", content: "hi" }] },
+      cfgOf(geminiCap, { model, ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("+ {mode:'on', effort:'high'} → reasoning_effort=high", () => {
+    expect(argonBody({ mode: "on", effort: "high" }).reasoning_effort).toBe("high");
+  });
+
+  test("未设置档位 → reasoning_effort=medium，且不发 temperature", () => {
+    const body = argonBody();
+    expect(body.reasoning_effort).toBe("medium");
+    expect("temperature" in body).toBe(false);
+  });
+
+  test("+ off → 不发送 none（Gemini 4 未写明可关闭），回到默认 medium", () => {
+    expect(argonBody({ mode: "off" }).reasoning_effort).toBe("medium");
+  });
+
+  test("+ 不支持的 max → 收敛到默认 medium", () => {
+    expect(argonBody({ mode: "on", effort: "max" }).reasoning_effort).toBe("medium");
+  });
+});
+
+describe("gemini-4-hydrogen 请求体", () => {
+  const adapter = new OpenAICompatAdapter("gemini", geminiCap);
+  // 官方：thinking_level 为 low/medium/high/xhigh，默认 high；兼容层 reasoning_effort 的 xhigh 只映射到 Hydrogen，
+  // Gemini 4 的思考不能关闭。验证实际请求体按这些档位发送，且不发采样参数。
+  const hydrogenBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model: "gemini-4-hydrogen", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(geminiCap, { model: "gemini-4-hydrogen", ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("未设置档位 → reasoning_effort=high，且不发 temperature", () => {
+    const body = hydrogenBody();
+    expect(body.reasoning_effort).toBe("high");
+    expect("temperature" in body).toBe(false);
+  });
+
+  test("所选 xhigh 照常发送", () => {
+    expect(hydrogenBody({ mode: "on", effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+  });
+
+  test("+ off → 不发送 none，回到默认 high", () => {
+    expect(hydrogenBody({ mode: "off" }).reasoning_effort).toBe("high");
+  });
+
+  test("+ 不支持的 max → 收敛到默认 high", () => {
+    expect(hydrogenBody({ mode: "on", effort: "max" }).reasoning_effort).toBe("high");
   });
 });
 
@@ -261,6 +505,35 @@ describe("G4 cfg.reasoning 改动 → JSON body 改动（契约：adapter 必须
     expect((bodyOn.thinking as Record<string, unknown>).type).toBe("adaptive");
     // off 发 disabled
     expect((bodyOff.thinking as Record<string, unknown>).type).toBe("disabled");
+  });
+
+  test("MiniMax-M3.1-Flash 思考不可关闭：off 也不发 disabled，档位按选择发送", () => {
+    const miniMaxCap: ProviderCapability = {
+      id: "minimax",
+      displayName: "MiniMax（稀宇科技）",
+      transport: "anthropic",
+      baseUrl: "https://api.minimaxi.com/anthropic",
+      authStyle: "x-api-key",
+      defaultModel: "MiniMax-M3",
+      supportsTools: true,
+      supportsThinking: true,
+      thinkingField: "thinking",
+      cacheStrategy: "cache_control",
+      testStrategy: "text",
+      visionBaseUrl: "https://api.minimaxi.com/v1",
+    };
+    const adapter = new AnthropicAdapter("minimax", miniMaxCap);
+    const model = "MiniMax-M3.1-Flash";
+    // 官方：发送 thinking disabled 或 effort none 返回 400
+    const bodyOf = (reasoning: ReasoningPreference) => JSON.parse(adapter.buildRequest(
+      { model, messages: [{ role: "user" as const, content: "hi" }], maxTokens: 100 },
+      cfgOf(miniMaxCap, { model, reasoning }),
+    ).body) as Record<string, unknown>;
+
+    const bodyOff = bodyOf({ mode: "off" });
+    expect((bodyOff.thinking as Record<string, unknown> | undefined)?.type).not.toBe("disabled");
+    expect(JSON.stringify(bodyOff)).not.toContain("\"none\"");
+    expect(JSON.stringify(bodyOf({ mode: "on", effort: "xhigh" }))).toContain("\"xhigh\"");
   });
 
   test("DeepSeek v4 toggle + on vs off → body.thinking.type 不同", () => {

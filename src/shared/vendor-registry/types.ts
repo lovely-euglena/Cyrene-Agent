@@ -72,6 +72,12 @@ export interface ModelReasoningRule {
   providerId: string;
   modelPattern: RegExp;
   capability: ReasoningCapability;
+  /**
+   * 用户显式选了关闭（但不支持关闭）或 minimal（但不支持该档）时改用的档位。
+   * 未声明时两者都回到默认档位。GPT-6.2：官方迁移指南要求把 none / minimal 改为 low。
+   * 没有保存偏好的用户不受影响，仍用默认档位。
+   */
+  lowEffortFallback?: ReasoningEffort;
 }
 
 // ── 厂商能力系类型（自 main/orchestrator/vendors/types.ts 原样迁入）──

@@ -25,6 +25,18 @@ export const CHATGPT_REGISTRY = defineVendor({
   // 状态栏短名，与 presets 的 shortName "GPT" 对齐（一致性测试校验两侧相等）
   shortName: "GPT",
   reasoningRules: [
+    // ── GPT-6.2 Astra / Sol（v1.3.6 吸收 5f72f284+92886de2，核验 2026-11-18）：
+    // 推理指南写明两者都拒绝 effort=none → 不可关闭；迁移指南把 none/minimal 改为 low。
+    // 档位 low/medium/high/xhigh/max；支持 pro mode。
+    { providerId: "chatgpt", modelPattern: /^gpt-6\.2-(?:astra|sol)$/i, capability: {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "openai-effort",
+      supportsDisable: false,
+      supportsProMode: true,
+      lowEffortFallback: "low",
+    } },
     // ── chatgpt（OpenAI）──
     // 按具体型号拆分。
     // GPT-6.1 Sol（2026-09-29 发布）：GPT-6 Sol 的升级款，定位在旗舰 Astra 之下，
