@@ -35,6 +35,7 @@
 | [cloud-storage.md](./cloud-storage.md) | 设计 | 云存储工具设计文档 |
 | [bug-report-20260926.md](./bug-report-20260926.md) | 记录 | 2026-09-26 问题报告 |
 | [CONTRIBUTORS.md](./CONTRIBUTORS.md) | 现行 | 贡献者名单 |
+| [MAINTAINERS.md](./MAINTAINERS.md) | 现行 | 组织成员与维护者 |
 
 ## 目录导航
 

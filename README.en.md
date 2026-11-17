@@ -6,7 +6,7 @@
 
 **English** | [中文](./README.md)
 
-**This fork (community continuation)**: [Gitee](https://gitee.com/ygwill/cyrene-agent) ・
+**This fork (community fork)**: [Self-hosted Gitea](https://git.ygwill.top/lovely-euglena/cyrene-agent) ・ [Gitee mirror](https://gitee.com/ygwill/cyrene-agent) ・
 **Upstream**: [Gitee](https://gitee.com/playa0/cyrene-agent) / [GitHub](https://github.com/Playa-0v0/Cyrene-Agent)
 
 > 🔀 **About this fork**: Community-driven continuation focused on **performance (native windows / memory governance / stream batching)**, **.NET desktop architecture** and **Cloud Cyrene (desktop sync / mobile PWA / server-hosted channels, 🚧 in testing)** — a seven-host .NET backend (tools / RAG / memory / agent sessions / loop / MCP / voice), plugin risk-gating, and a 96+ case Linux-side test matrix. See **Fork Enhancements** below and [docs/dotnet-backend.md](./docs/dotnet-backend.md).
@@ -657,6 +657,8 @@ Character IP, the Cyrene Live2D model (`models/cyrene/`), and artwork assets are
 
 Special thanks to the original model creator for generously authorizing this project to use, modify, and redistribute the work.
 
+Also thanks to the [organization members and maintainers](./docs/MAINTAINERS.md) and every single [contributor](./docs/CONTRIBUTORS.md) — thank you for taking on triage, review, adaptation and Q&A in your spare time, unpaid, which saved this project a huge amount of small but necessary work. **Please note there is no ranking here** — every bit of effort counts.
+
 ---
 
 ## 💌 Contact
@@ -669,11 +671,25 @@ Special thanks to the original model creator for generously authorizing this pro
 
 **This fork's maintainer (community continuation)**
 - Email: Each13579@hotmail.com
-- GitHub: [lovely-euglena/Cyrene-Agent](https://github.com/lovely-euglena/Cyrene-Agent)
-- Gitee: [ygwill/cyrene-agent](https://gitee.com/ygwill/cyrene-agent)
+- GitHub (mirror): [lovely-euglena/Cyrene-Agent](https://github.com/lovely-euglena/Cyrene-Agent)
+- Gitee (mirror): [ygwill/cyrene-agent](https://gitee.com/ygwill/cyrene-agent)
+- Self-hosted Gitea: [lovely-euglena/cyrene-agent](https://git.ygwill.top/lovely-euglena/cyrene-agent)
 
-GitHub / Gitee issues and pull requests are welcome. Please keep discussions respectful and relevant to the project.
+Issues and pull requests on the channels above are welcome. Please keep discussions respectful and relevant to the project.
 
 ---
 
-⭐ If you like this project, consider giving it a Star. It helps more Cyrene fans discover it.
+## <img src="./docs/image/icons/star.svg" width="20" height="20" alt=""> Star History & Ranking
+
+<a href="https://www.star-history.com/?repos=playa-cyrene%2Fcyrene-agent&type=date&legend=bottom-right">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=playa-cyrene/cyrene-agent&type=date&theme=dark&legend=bottom-right" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=playa-cyrene/cyrene-agent&type=date&legend=bottom-right" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=playa-cyrene/cyrene-agent&type=date&legend=bottom-right" />
+  </picture>
+</a>
+
+
+[![olud.ai](https://olud.ai/badge.php?tool=playa-cyrene-cyrene-agent)](https://olud.ai/project/playa-cyrene-cyrene-agent.html)
+
+<img src="./docs/image/icons/star.svg" width="18" height="18" alt=""> If you like this project, consider giving it a Star. It helps more Cyrene fans discover it.
