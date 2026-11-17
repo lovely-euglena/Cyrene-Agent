@@ -31,6 +31,19 @@ public sealed class ExpressionManager
     public int DefinitionCount => _definitions.Count;
     public bool IsFinished() => _queue.IsFinished();
 
+    /// <summary>当前表情名（DefaultExpression 时为 null；诊断用）。</summary>
+    public string? CurrentExpressionName
+    {
+        get
+        {
+            for (int i = 0; i < _expressions.Length; i++)
+            {
+                if (ReferenceEquals(_expressions[i], CurrentExpression)) return _definitions[i].Name;
+            }
+            return null;
+        }
+    }
+
     public int GetExpressionIndex(string name) => _definitions.FindIndex(d => d.Name == name);
 
     private Expression3? LoadExpression(int index)

@@ -19,6 +19,7 @@
 //   getDiagnostics                                       资源/帧率/控制器状态
 //   setParameter    {id,value}                           诊断/测试：直写参数
 //   renderOnce                                           诊断/测试：立即渲一帧
+//   tick            {dtMs}                               诊断/测试：确定性推进一帧（T6 对照）
 //   shutdown
 //
 // 事件（侧车 → Electron）：
@@ -52,6 +53,7 @@ public static class Live2DOps
     public const string GetDiagnostics = "getDiagnostics";
     public const string SetParameter = "setParameter";
     public const string RenderOnce = "renderOnce";
+    public const string Tick = "tick";
     public const string Shutdown = "shutdown";
 
     // 事件
