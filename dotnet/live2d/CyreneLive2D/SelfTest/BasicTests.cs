@@ -92,17 +92,7 @@ public static unsafe class CoreTests
     }
 }
 
-// 以下测试类随各层落地逐项填充（T3/T4/T2）。
-public static class MotionTests
-{
-    public static void Run(string? modelDir) { }
-}
-
-public static class ExpressionTests
-{
-    public static void Run(string? modelDir) { }
-}
-
+// T4 占位（物理/姿态/呼吸 + 行为状态机随后落地）。
 public static class PhysicsTests
 {
     public static void Run(string? modelDir) { }

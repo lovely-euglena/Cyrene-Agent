@@ -407,7 +407,7 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _constantData[4] = 0; _constantData[5] = _mvpD; _constantData[6] = 0; _constantData[7] = 0;
         _constantData[8] = 0; _constantData[9] = 0; _constantData[10] = 1; _constantData[11] = 0;
         _constantData[12] = 0; _constantData[13] = 0; _constantData[14] = 0; _constantData[15] = 1;
-        _constantData[16] = 1; _constantData[17] = 1; _constantData[18] = 1; _constantData[19] = _model.DrawableOpacities[d];
+        _constantData[16] = 1; _constantData[17] = 1; _constantData[18] = 1; _constantData[19] = _model.DrawableOpacities[d] * _model.ModelOpacity;
         _constantData[20] = multiply.X; _constantData[21] = multiply.Y; _constantData[22] = multiply.Z; _constantData[23] = 1;
         _constantData[24] = screen.X; _constantData[25] = screen.Y; _constantData[26] = screen.Z; _constantData[27] = 1;
         _constantData[28] = 1; _constantData[29] = 0; _constantData[30] = 0; _constantData[31] = 0;
