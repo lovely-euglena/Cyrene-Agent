@@ -260,7 +260,14 @@ function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--selftest")) process.exit(selftest());
 
-  const positional = argv.filter((a) => !a.startsWith("--"));
+  // 位置参数 = 两个 PNG 路径；选项值随选项名一起跳过
+  // （否则 --out 的路径值会被误计为位置参数）。
+  const VALUE_FLAGS = new Set(["--threshold", "--channel-tol", "--out"]);
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (VALUE_FLAGS.has(argv[i])) { i++; continue; }
+    if (!argv[i].startsWith("--")) positional.push(argv[i]);
+  }
   const get = (name, dflt) => {
     const i = argv.indexOf(name);
     return i >= 0 && i + 1 < argv.length ? argv[i + 1] : dflt;

@@ -50,6 +50,10 @@ function freezeAndRenderScript(paramsSpec, freeze) {
     let paramsReset = 0;
     if (${freeze ? "true" : "false"}) {
       m.pause();
+      // Live2DModel._render 在 deltaTime≠0 时会调 internalModel.update——
+      // 行为层（注视/呼吸/物理）写参数→csmUpdateModel→loadParameters 恢复参数值，
+      // 造成「参数=默认、顶点=行为态」的隐蔽污染。清零残留 deltaTime 杜绝之。
+      model.deltaTime = 0;
       const n = cm.getParameterCount();
       for (let i = 0; i < n; i++) {
         const d = typeof cm.getParameterDefaultValue === "function" ? cm.getParameterDefaultValue(i) : undefined;
@@ -68,9 +72,23 @@ function freezeAndRenderScript(paramsSpec, freeze) {
         applied.push(id);
       }
     }
-    cm.update();
+    // 裸 core update（保留 VertexPositionsDidChange 脏标志）——cm.update() 会
+    // resetDynamicFlags，使 pld 跳过蒙版重绘、终帧沿用冻结前的陈旧蒙版 FBO。
+    cm._model.update();
     m.app.renderer.render(m.app.stage);
-    return { frozen: ${freeze ? "true" : "false"}, paramsReset, applied };
+    const cv = document.getElementById("live2d-canvas");
+    const r = m.app && m.app.renderer;
+    return {
+      frozen: ${freeze ? "true" : "false"}, paramsReset, applied,
+      renderer: r ? String(r.type ?? r.constructor.name) : null,
+      gl: Boolean(r && r.gl),
+      canvas: cv ? [cv.width, cv.height, cv.clientWidth, cv.clientHeight] : null,
+      stageChildren: m.app && m.app.stage ? m.app.stage.children.length : -1,
+      model: { visible: model.visible, alpha: model.worldAlpha, x: model.x, y: model.y, scale: model.scale.x, w: model.width, h: model.height },
+      bodyBg: getComputedStyle(document.body).backgroundColor,
+      coreVer: (() => { try { const C = window.Live2DCubismCore; return C.Version.csmGetVersion(); } catch (e) { return String(e); } })(),
+      params: (() => { const n = cm.getParameterCount(); const ids = cm._model.parameters.ids; const arr = []; for (let i = 0; i < n; i++) arr.push(ids[i] + "=" + cm.getParameterValueByIndex(i)); return arr; })(),
+    };
   })()`;
 }
 
@@ -86,8 +104,12 @@ app.whenReady().then(async () => {
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false },
   });
+  win.webContents.on("console-message", (_e, _level, message) => console.error("[page]", message));
   try {
     await win.loadFile(rendererIndex);
+    await win.webContents.executeJavaScript(
+      "window.addEventListener('error', (e) => console.error('[pageerr]', e.message, e.error && e.error.stack ? e.error.stack.split('\\n').slice(0, 6).join(' | ') : '')); true",
+    );
     // 等模型就绪（onLoad 挂 window.__cyrene）
     const deadline = Date.now() + 60_000;
     let ready = false;
@@ -106,13 +128,44 @@ app.whenReady().then(async () => {
     if (freeze) {
       // 冻结后再渲一帧，确保呈现的是冻结态
       await win.webContents.executeJavaScript(
-        "(() => { const m = window.__cyrene.manager; m.app.renderer.render(m.app.stage); return true; })()",
+        "(() => { const m = window.__cyrene.manager; m.getModel().deltaTime = 0; m.app.renderer.render(m.app.stage); return true; })()",
       );
     }
-    const image = await win.webContents.capturePage();
-    const size = image.getSize();
-    fs.writeFileSync(out, image.toPNG());
-    console.log(JSON.stringify({ out: path.resolve(out), width: size.width, height: size.height, ...diag }));
+    let pngBuf, width, height;
+    if (process.argv.includes("--extract")) {
+      // 软件 GL（--disable-gpu）下 capturePage 不合成 WebGL 层（得全透明帧）。
+      // 改读回 GL framebuffer：render+readPixels 同任务，drawing buffer 有效。
+      // pixi context 为 premultipliedAlpha，readPixels 得预乘 RGBA——与侧车
+      // 「预乘 BGRA 原样落 PNG」（PngCodec）语义一致，无需 un-premultiply。
+      const raw = await win.webContents.executeJavaScript(`(() => {
+        const m = window.__cyrene.manager;
+        m.getModel().deltaTime = 0;
+        const r = m.app.renderer;
+        r.render(m.app.stage);
+        const gl = r.gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+        const px = new Uint8Array(w * h * 4);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        let bin = "";
+        for (let i = 0; i < px.length; i += 0x8000) bin += String.fromCharCode.apply(null, px.subarray(i, i + 0x8000));
+        return { w, h, b64: btoa(bin) };
+      })()`);
+      const src = Buffer.from(raw.b64, "base64");
+      const rgba = new Uint8Array(raw.w * raw.h * 4);
+      // GL 原点左下 → 顶行序翻转
+      for (let y = 0; y < raw.h; y++) src.copy(rgba, y * raw.w * 4, (raw.h - 1 - y) * raw.w * 4, (raw.h - y) * raw.w * 4);
+      const { encodePng } = await import("./pixel-diff.mjs");
+      pngBuf = encodePng(raw.w, raw.h, rgba);
+      width = raw.w; height = raw.h;
+    } else {
+      const image = await win.webContents.capturePage();
+      const size = image.getSize();
+      pngBuf = image.toPNG();
+      width = size.width; height = size.height;
+    }
+    fs.writeFileSync(out, pngBuf);
+    console.log(JSON.stringify({ out: path.resolve(out), width, height, ...diag }));
     console.error("WEB_CAPTURE_OK");
     app.exit(0);
   } catch (err) {
