@@ -161,6 +161,13 @@ internal static class Win32
     public static extern IntPtr GetDC(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr SetCapture(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
     public static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -213,6 +220,29 @@ internal static class Win32
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr GetModuleHandleW(string? moduleName);
+
+    [DllImport("winmm.dll")]
+    public static extern uint timeBeginPeriod(uint period);
+
+    [DllImport("winmm.dll")]
+    public static extern uint timeEndPeriod(uint period);
+
+    // stdout 句柄复制（Core DLL 加载会关闭/替换原始 stdout 句柄，
+    // 复制一份保证协议输出不受影响——见 Live2DHost.OpenRobustStdout）。
+    public const int STD_OUTPUT_HANDLE = -11;
+    public const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle,
+        IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess,
+        [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwOptions);
 
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
     public const int HTCLIENT = 1;

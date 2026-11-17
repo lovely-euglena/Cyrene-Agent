@@ -34,6 +34,7 @@ public static class SelfTestRunner
         BehaviorTests.Run(modelDir);
         EngineTests.Run(modelDir);
         WindowTests.Run();
+        WindowHostTests.Run();
         CoreTests.Run(modelDir, dataDir);
         CoreDownloaderTests.Run();
         RendererTests.Run(modelDir, dataDir);

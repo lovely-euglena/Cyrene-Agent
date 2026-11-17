@@ -61,6 +61,16 @@ public sealed class PetEngine : IDisposable
     public double NowMs => _nowMs;
     public bool IsPaused => _hiddenPaused || _dragging;
 
+    // 窗口宿主读取的几何/状态（DIP 坐标空间，与 web 轨一致）
+    public float Zoom => _zoom;
+    public int WinW => _winW;
+    public int WinH => _winH;
+    public int CurrentFps => _idleFps?.CurrentFps ?? 60;
+    public bool InteractiveOverride => _interactiveOverride;
+
+    /// <summary>窗口控制面（T2a）；无头自测为 null，窗口 op 退化为无操作。</summary>
+    public Window.IWindowControl? WindowControl { get; set; }
+
     public void Handle(string op, string callId, JsonElement frame)
     {
         switch (op)
@@ -127,21 +137,16 @@ public sealed class PetEngine : IDisposable
             case Live2DOps.SetDragging:
             {
                 var value = frame.TryGetProperty("value", out var vEl) && vEl.GetBoolean();
-                _dragging = value;
-                if (value)
-                {
-                    // web pointerdown：focus.pause(true) → 平滑回中（atan2 怪癖目标 (1,0)）
-                    FocusCenter(instant: false);
-                }
+                SetDragging(value);
                 _io.SendResult(callId);
                 break;
             }
 
             case Live2DOps.SetInteractive:
             {
-                // 手动覆盖（托盘拖拽模式）；窗口层 T2a 落地 WS_EX_TRANSPARENT 切换
+                // 手动覆盖（托盘拖拽模式）；窗口壳据此强制可交互
                 _interactiveOverride = frame.TryGetProperty("value", out var vEl) && vEl.GetBoolean();
-                _io.SendResult(callId);
+                WindowOp(callId, () => WindowControl?.SetInteractiveOverride(_interactiveOverride));
                 break;
             }
 
@@ -155,10 +160,12 @@ public sealed class PetEngine : IDisposable
 
             case Live2DOps.SetBounds:
             {
-                // 窗口几何状态（窗口层 T2a 应用实际 Win32 落位）
+                // DIP 几何状态（hitTest/focus 映射用）+ 窗口壳实际落位
+                var x = frame.TryGetProperty("x", out var xEl) ? xEl.GetInt32() : 0;
+                var y = frame.TryGetProperty("y", out var yEl) ? yEl.GetInt32() : 0;
                 if (frame.TryGetProperty("width", out var wEl)) _winW = Math.Max(1, wEl.GetInt32());
                 if (frame.TryGetProperty("height", out var hEl)) _winH = Math.Max(1, hEl.GetInt32());
-                _io.SendResult(callId);
+                WindowOp(callId, () => WindowControl?.SetBoundsDip(x, y, _winW, _winH));
                 break;
             }
 
@@ -186,11 +193,19 @@ public sealed class PetEngine : IDisposable
                 break;
 
             case Live2DOps.Show:
-            case Live2DOps.Hide:
-            case Live2DOps.SetAlwaysOnTop:
-                // 窗口层（T2a）接线后落地
-                _io.SendError(callId, $"op {op} 尚未接线", Live2DErrors.Internal);
+                WindowOp(callId, () => WindowControl?.Show());
                 break;
+
+            case Live2DOps.Hide:
+                WindowOp(callId, () => WindowControl?.Hide());
+                break;
+
+            case Live2DOps.SetAlwaysOnTop:
+            {
+                var value = frame.TryGetProperty("value", out var vEl) && vEl.GetBoolean();
+                WindowOp(callId, () => WindowControl?.SetAlwaysOnTop(value));
+                break;
+            }
 
             default:
                 _io.SendError(callId, $"未知 op: {op}", Live2DErrors.BadArgs);
@@ -475,6 +490,53 @@ public sealed class PetEngine : IDisposable
             _winW / 2f, _winH / 2f, _winW, _winH,
             _model.CanvasWidth, _model.CanvasHeight, ComputeBaseScale() * _zoom);
         _focus.Focus(tx, ty, instant);
+    }
+
+    /// <summary>拖拽状态（窗口壳鼠标按下/抬起调用；op setDragging 同入口）。</summary>
+    public void SetDragging(bool value)
+    {
+        _dragging = value;
+        if (value)
+        {
+            // web pointerdown：focus.pause(true) → 平滑回中（atan2 怪癖目标 (1,0)）
+            FocusCenter(instant: false);
+        }
+    }
+
+    /// <summary>光标注视（窗口壳 50ms 轮询调用）：窗口局部 DIP → 单位圆方向目标。</summary>
+    public void FocusAtWindowPoint(float xDip, float yDip)
+    {
+        if (_model == null || _focus == null) return;
+        var (tx, ty) = FocusBehavior.MapWindowPoint(
+            xDip, yDip, _winW, _winH,
+            _model.CanvasWidth, _model.CanvasHeight, ComputeBaseScale() * _zoom);
+        _focus.Focus(tx, ty);
+    }
+
+    /// <summary>
+    /// 渲染一帧并返回预乘 BGRA（顶行在前）。窗口壳呈现 / 离屏诊断共用。
+    /// width/height 物理像素；zoom 已含 DPI 缩放（窗口壳传入 zoom×dpiScale）。
+    /// GPU 失败抛 D3D11Exception；未加载抛 InvalidOperationException。
+    /// </summary>
+    public byte[] RenderFrame(int width, int height, float zoom)
+    {
+        RequireLoaded();
+        _renderer ??= new CubismRenderer(_model!, _manifest!, _modelDir!);
+        return _renderer.Render(width, height, zoom);
+    }
+
+    /// <summary>窗口 op 统一包裹：创建/落位失败 → E_WINDOW（无头时 WindowControl=null 直接成功）。</summary>
+    private void WindowOp(string callId, Action action)
+    {
+        try
+        {
+            action();
+            _io.SendResult(callId);
+        }
+        catch (Exception ex)
+        {
+            _io.SendError(callId, ex.Message, Live2DErrors.Window);
+        }
     }
 
     private void RequireLoaded()
