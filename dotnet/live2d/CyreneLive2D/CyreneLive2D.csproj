@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- System.Drawing（GDI+）解 PNG 图集；Win32/D3D11 全部手写 P/Invoke，零 NuGet 依赖 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>CyreneLive2D</RootNamespace>
+    <AssemblyName>cyrene-live2d</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- 侧车进程：崩溃由宿主重启，不弹 WER 对话框 -->
+    <DisableWinExeOutputInDebug>true</DisableWinExeOutputInDebug>
+    <!-- Linux CI 上做编译验证（与 CyreneNative 同例） -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms SDK 的全局 using 会污染类型解析（Color/Button 等二义性），
+         与 CyreneNative.csproj 同策：移除全局引入，需要的文件显式 using。 -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+</Project>
