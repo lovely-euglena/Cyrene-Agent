@@ -6,6 +6,8 @@ using System.Text.Json;
 using CyreneLive2D.Core;
 using CyreneLive2D.Host;
 using CyreneLive2D.Model;
+using CyreneLive2D.Rendering;
+using CyreneLive2D.Rendering.D3D11;
 
 namespace CyreneLive2D;
 
@@ -16,6 +18,7 @@ public sealed class PetEngine : IDisposable
     private CubismModel? _model;
     private string? _modelDir;
     private Model3Json? _manifest;
+    private CubismRenderer? _renderer;
 
     public PetEngine(HostIo io, string? dataDir)
     {
@@ -48,9 +51,12 @@ public sealed class PetEngine : IDisposable
                 break;
             }
 
-            case Live2DOps.HitTest:
-            case Live2DOps.CaptureFrame:
             case Live2DOps.RenderOnce:
+            case Live2DOps.CaptureFrame:
+                HandleRender(callId, op, frame);
+                break;
+
+            case Live2DOps.HitTest:
             case Live2DOps.Show:
             case Live2DOps.Hide:
             case Live2DOps.SetBounds:
@@ -92,6 +98,8 @@ public sealed class PetEngine : IDisposable
 
         // T1：manifest + moc3
         _manifest = Model3Json.Load(modelPath);
+        _renderer?.Dispose();
+        _renderer = null;
         _model?.Dispose();
         _model = CubismModel.FromMoc3(Path.Combine(_modelDir!, _manifest.Moc));
 
@@ -118,6 +126,44 @@ public sealed class PetEngine : IDisposable
         if (_model == null) throw new InvalidOperationException("模型未加载（先 load）。");
     }
 
+    /// <summary>
+    /// 离屏渲染（无窗口）：renderOnce 返回帧统计，captureFrame 返回 base64 PNG。
+    /// T5 窗口壳落地前供 TS 侧验证渲染管线；窗口呈现后 captureFrame 语义不变。
+    /// </summary>
+    private void HandleRender(string callId, string op, JsonElement frame)
+    {
+        RequireLoaded();
+        var width = frame.TryGetProperty("width", out var wEl) ? wEl.GetInt32() : 400;
+        var height = frame.TryGetProperty("height", out var hEl) ? hEl.GetInt32() : 500;
+        var zoom = frame.TryGetProperty("zoom", out var zEl) ? (float)zEl.GetDouble() : 1f;
+        if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
+        {
+            _io.SendError(callId, "width/height 越界（1..8192）", Live2DErrors.BadArgs);
+            return;
+        }
+
+        try
+        {
+            _renderer ??= new CubismRenderer(_model!, _manifest!, _modelDir!);
+            var pixels = _renderer.Render(width, height, zoom);
+            if (op == Live2DOps.CaptureFrame)
+            {
+                var png = PngCodec.Encode(pixels, width, height);
+                _io.SendResult(callId, new { width, height, png = Convert.ToBase64String(png) });
+            }
+            else
+            {
+                var opaque = 0;
+                for (var i = 3; i < pixels.Length; i += 4) if (pixels[i] != 0) opaque++;
+                _io.SendResult(callId, new { width, height, opaquePixels = opaque, maskGroups = _renderer.MaskGroupCount });
+            }
+        }
+        catch (D3D11Exception ex)
+        {
+            _io.SendError(callId, ex.Message, Live2DErrors.Render);
+        }
+    }
+
     private object GetDiagnostics() => new
     {
         loaded = IsLoaded,
@@ -130,6 +176,8 @@ public sealed class PetEngine : IDisposable
 
     public void Dispose()
     {
+        _renderer?.Dispose();
+        _renderer = null;
         _model?.Dispose();
         _model = null;
     }

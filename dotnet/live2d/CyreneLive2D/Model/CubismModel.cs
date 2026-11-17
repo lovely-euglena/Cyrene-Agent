@@ -232,6 +232,8 @@ public sealed unsafe class CubismModel : IDisposable
 
     public CsmConstantFlags* DrawableConstantFlags => CoreNative.csmGetDrawableConstantFlags(_model);
     public CsmDynamicFlags* DrawableDynamicFlags => CoreNative.csmGetDrawableDynamicFlags(_model);
+    /// <summary>渲染秩数组：sorted[order[i]]=i 即绘制序（Core 4.2+；Framework 同式）。</summary>
+    public int* DrawableRenderOrders => CoreNative.csmGetRenderOrders(_model);
     public int* DrawableTextureIndices => CoreNative.csmGetDrawableTextureIndices(_model);
     public int* DrawableDrawOrders => CoreNative.csmGetDrawableDrawOrders(_model);
     public float* DrawableOpacities => CoreNative.csmGetDrawableOpacities(_model);

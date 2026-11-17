@@ -1,12 +1,14 @@
 // D3D11 COM interop（手写 P/Invoke，零 NuGet 依赖——任务书「部署纯净」）。
 //
-// 只声明渲染器用到的接口子集；vtable 槽位按 d3d11.h 的接口继承序：
+// 只声明渲染器用到的接口子集；vtable 槽位按 mingw-w64 d3d11.h 逐条核对
+// （与 Windows SDK 运行时 ABI 一致）。注意一个反直觉的 ABI 事实：
+//   ID3D11Device 的 vtable 没有 DeviceChild 前缀（CreateBuffer 紧接 IUnknown），
+//   而 ID3D11DeviceContext 有（3=GetDevice / 4-6 PrivateData）。
 //   IUnknown: 0 QI / 1 AddRef / 2 Release
-//   ID3D11DeviceChild: 3 GetDevice / 4-6 PrivateData
 //   ID3D11Device: 3 CreateBuffer / 5 CreateTexture2D / 7 CreateSRV /
 //                 9 CreateRTV / 11 CreateInputLayout / 12 CreateVS /
 //                 15 CreatePS / 20 CreateBlendState / 22 CreateRasterizerState /
-//                 23 CreateSamplerState / 40 GetImmediateContext
+//                 23 CreateSamplerState / 40或41 GetImmediateContext（Win8+=41）
 //   ID3D11DeviceContext: 7 VSSetConstantBuffers / 8 PSSetShaderResources /
 //                 9 PSSetShader / 10 PSSetSamplers / 11 VSSetShader /
 //                 12 DrawIndexed / 14 Map / 15 Unmap / 16 PSSetConstantBuffers /
@@ -26,7 +28,10 @@ namespace CyreneLive2D.Rendering.D3D11;
 
 internal static unsafe class Com
 {
-    public static void* Slot(IntPtr obj, int index) => ((void***)obj)[index];
+    // obj 首 8 字节 = vtable 指针；必须先解引用取 vtable 再按槽位索引。
+    // 易错点：((void***)obj)[i] 读的是对象自身第 i 个字段（少一层 *），
+    // 会把数据当函数指针调用 → 0xC0000005。
+    public static void* Slot(IntPtr obj, int index) => (*(void***)obj)[index];
 
     public static void Release(IntPtr obj)
     {

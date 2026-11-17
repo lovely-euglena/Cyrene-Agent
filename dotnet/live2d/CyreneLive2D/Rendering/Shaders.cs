@@ -196,4 +196,39 @@ internal static class Shaders
             return color * (1.0f - maskVal);
         }
         """;
+
+    /// <summary>
+    /// 嵌套蒙版：蒙版 drawable 自身也被蒙版时的 setup 变体
+    /// （channelFlag * alpha * maskVal）。混合态仍为 ZERO/ONE_MINUS_SRC_COLOR。
+    /// </summary>
+    public const string PixelSetupMaskMaskedSource = """
+        cbuffer Constants : register(b0)
+        {
+            float4x4 mvp;
+            float4 baseColor;
+            float4 multiplyColor;
+            float4 screenColor;
+            float4 channelFlag;
+        };
+
+        Texture2D mainTexture : register(t0);
+        Texture2D maskTexture : register(t1);
+        SamplerState mainSampler : register(s0);
+
+        struct VS_OUT
+        {
+            float4 pos      : SV_Position;
+            float2 uv       : TEXCOORD0;
+            float4 clipPos  : TEXCOORD1;
+        };
+
+        float4 PSMain(VS_OUT In) : SV_Target
+        {
+            float2 ndc = In.clipPos.xy / In.clipPos.w;
+            float2 maskUv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+            float4 clipMask = (1.0f - maskTexture.Sample(mainSampler, maskUv)) * channelFlag;
+            float maskVal = clipMask.r + clipMask.g + clipMask.b + clipMask.a;
+            return channelFlag * mainTexture.Sample(mainSampler, In.uv).a * maskVal;
+        }
+        """;
 }
