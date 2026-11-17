@@ -21,6 +21,7 @@
 //                 57 ResolveSubresource
 //   ID3D11Resource: 7 GetType；ID3D11Texture2D: 10 GetDesc
 //   ID3D11View: 7 GetResource；ID3DBlob: 3 GetBufferPointer / 4 GetBufferSize
+//   IDXGIFactory1: 12 EnumAdapters1；IDXGIAdapter: 8 GetDesc（DXGI_ADAPTER_DESC）
 //
 // 所有 HRESULT 失败即抛（渲染错误必须显式暴露，不静默花屏）。
 
@@ -147,6 +148,17 @@ internal unsafe struct MappedSubresource
     public uint RowPitch, DepthPitch;
 }
 
+// DXGI_ADAPTER_DESC（dxgi.h，x64）。Description 用 fixed char 保持 blittable
+// （delegate* unmanaged 函数指针不做MarshalAs 编组）；WCHAR[128] 保证 null 终结。
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct DxgiAdapterDesc
+{
+    public fixed char Description[128];
+    public uint VendorId, DeviceId, SubSysId, Revision;
+    public nuint DedicatedVideoMemory, DedicatedSystemMemory, SharedSystemMemory;
+    public long AdapterLuid;
+}
+
 internal static class DxgiFormat
 {
     public const uint R32G32_FLOAT = 16;
@@ -193,17 +205,64 @@ internal sealed unsafe class D3D11Device : IDisposable
     {
         IntPtr device = IntPtr.Zero, context = IntPtr.Zero;
         uint featureLevel = 0;
-        // D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20；硬件优先，失败回退 WARP（软件）
-        var hr = D3D11Native.D3D11CreateDevice(IntPtr.Zero, 1 /*HARDWARE*/, IntPtr.Zero, 0x20,
-            null, 0, 7, &device, &featureLevel, &context);
+        // D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20。
+        // 多适配器机器（云桌面/无头独显）默认适配器可能是虚拟显示的
+        // Microsoft Basic Render Driver（软件）——NULL+HARDWARE 会静默落在它上面
+        // （GPU 真机实证：adapter[0]=Basic Render Driver，独显在 [1]）。
+        // 故先枚举 DXGI 显式选首个有专用显存的适配器；指定适配器时 driverType 必须 UNKNOWN(0)。
+        var adapter = PickHardwareAdapter(out var adapterName);
+        var hr = -1;
+        if (adapter != IntPtr.Zero)
+        {
+            hr = D3D11Native.D3D11CreateDevice(adapter, 0 /*UNKNOWN*/, IntPtr.Zero, 0x20,
+                null, 0, 7, &device, &featureLevel, &context);
+            Com.Release(adapter);
+            if (hr >= 0) Console.Error.WriteLine($"[d3d11] adapter={adapterName}");
+        }
         if (hr < 0)
         {
-            hr = D3D11Native.D3D11CreateDevice(IntPtr.Zero, 5 /*WARP*/, IntPtr.Zero, 0x20,
+            // 无独显适配器/创建失败：默认适配器硬件 → WARP（软件）
+            hr = D3D11Native.D3D11CreateDevice(IntPtr.Zero, 1 /*HARDWARE*/, IntPtr.Zero, 0x20,
                 null, 0, 7, &device, &featureLevel, &context);
+            if (hr < 0)
+            {
+                hr = D3D11Native.D3D11CreateDevice(IntPtr.Zero, 5 /*WARP*/, IntPtr.Zero, 0x20,
+                    null, 0, 7, &device, &featureLevel, &context);
+                if (hr >= 0) Console.Error.WriteLine("[d3d11] adapter=WARP（软件回退）");
+            }
+            else Console.Error.WriteLine("[d3d11] adapter=默认（未找到专用显存适配器）");
         }
         Com.Check(hr, "D3D11CreateDevice");
         var d = new D3D11Device { Handle = device, ImmediateContext = new D3D11Context { Handle = context } };
         return d;
+    }
+
+    /// <summary>枚举 DXGI 适配器，返回首个 DedicatedVideoMemory&gt;0 者（调用方 Release）；无则 IntPtr.Zero。</summary>
+    private static unsafe IntPtr PickHardwareAdapter(out string name)
+    {
+        name = "";
+        var iid = new Guid("770aae78-f26f-4dba-a829-253c83d1b387"); // IDXGIFactory1
+        IntPtr factory;
+        if (D3D11Native.CreateDXGIFactory1(&iid, &factory) < 0) return IntPtr.Zero;
+        try
+        {
+            var enumFn = (delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, int>)Com.Slot(factory, 12);
+            for (uint i = 0; ; i++)
+            {
+                IntPtr ad;
+                if (enumFn(factory, i, &ad) < 0) break; // DXGI_ERROR_NOT_FOUND 终结
+                var descFn = (delegate* unmanaged[Stdcall]<IntPtr, DxgiAdapterDesc*, int>)Com.Slot(ad, 8);
+                DxgiAdapterDesc desc;
+                if (descFn(ad, &desc) >= 0 && desc.DedicatedVideoMemory > 0)
+                {
+                    name = new string(desc.Description);
+                    return ad;
+                }
+                Com.Release(ad);
+            }
+        }
+        finally { Com.Release(factory); }
+        return IntPtr.Zero;
     }
 
     public D3D11Texture2D CreateTexture2D(ref Texture2DDesc desc, SubresourceData* initial = null)
@@ -471,6 +530,9 @@ internal static unsafe class D3D11Native
     [DllImport("d3d11.dll")]
     public static extern int D3D11CreateDevice(IntPtr adapter, uint driverType, IntPtr software, uint flags,
         uint* featureLevels, uint featureLevelsCount, uint sdkVersion, IntPtr* device, uint* featureLevel, IntPtr* context);
+
+    [DllImport("dxgi.dll")]
+    public static extern int CreateDXGIFactory1(Guid* riid, IntPtr* ppFactory);
 
     [DllImport("d3dcompiler_47.dll")]
     public static extern int D3DCompile(void* srcData, nuint srcDataSize, byte* sourceName, void* defines, void* include,

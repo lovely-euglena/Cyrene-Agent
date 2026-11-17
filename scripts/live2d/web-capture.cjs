@@ -82,6 +82,7 @@ function freezeAndRenderScript(paramsSpec, freeze) {
       frozen: ${freeze ? "true" : "false"}, paramsReset, applied,
       renderer: r ? String(r.type ?? r.constructor.name) : null,
       gl: Boolean(r && r.gl),
+      glRenderer: (() => { try { const gl = r.gl; const ext = gl.getExtension("WEBGL_debug_renderer_info"); return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); } catch (e) { return String(e); } })(),
       canvas: cv ? [cv.width, cv.height, cv.clientWidth, cv.clientHeight] : null,
       stageChildren: m.app && m.app.stage ? m.app.stage.children.length : -1,
       model: { visible: model.visible, alpha: model.worldAlpha, x: model.x, y: model.y, scale: model.scale.x, w: model.width, h: model.height },
