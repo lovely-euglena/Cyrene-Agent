@@ -1,15 +1,14 @@
 // Cubism 渲染器（T2 主体）：D3D11 离屏渲染 → BGRA 回读。
 //
-// 逐帧流程（对照 Framework CubismRenderer 与 pixi-live2d-display WebGL 路径）：
-//   1. 按 csmGetRenderOrders 逆排列排序 drawable（sorted[order[i]]=i，
-//      与 Framework Vulkan DrawObjectLoop 同式）；
-//   2. 蒙版 pass：每个唯一蒙版组一张全尺寸 RT，清 (1,1,1,1)，
-//      ZERO/INV_SRC_COLOR 混合写入 channelFlag*alpha（组内按渲染序叠加）；
-//      组序=创建序，蒙版 drawable 按无蒙版绘制——与 web 轨低精度蒙版路径
-//      一致（pld 默认 _useHighPrecisionMask=false，不处理嵌套蒙版）；
-//   3. 主 pass：清 (0,0,0,0)，按序绘制；Normal/Add/Multiply 三混合态，
-//      multiply/screen 色 + 不透明度在 PS 内合成（预乘约定）；
-//   4. 回读主 RT（BGRA 顶行序，与 DIB/PNG 一致）。
+// 逐帧流程（对照 pixi-live2d-display WebGL 路径，cubism4.es.js）：
+//   1. 按 csmGetRenderOrders 逆排列排序 drawable（sorted[order[i]]=i）；
+//   2. 蒙版 pass：256×256 RGBA 图集（pld 默认 maskBufferCount=1、低精度路径），
+//      组按 setupLayoutBounds 网格布局 + RGBA 通道打包；清 (1,1,1,1)，
+//      ZERO/INV_SRC_COLOR 混合写入 channelFlag*alpha*isInside；
+//      组序=创建序，蒙版 drawable 按无蒙版绘制（不处理嵌套蒙版）；
+//   3. 主 pass：4x MSAA（pixi antialias:true），清 (0,0,0,0)，按序绘制；
+//      Normal/Add/Multiply 三混合态，multiply/screen 色 + 不透明度在 PS 内合成；
+//   4. resolve + 回读主 RT（BGRA 顶行序，与 DIB/PNG 一致）。
 //
 // 变换（与 web 轨逐像素对齐的关键，推导见 docs/design/2026-11-17-live2d-dotnet-sidecar.md）：
 //   pld: centering = scale(ppu) + translate(W/2,H/2)，anchor(0.5,0.5) 居中，
@@ -18,6 +17,11 @@
 //   本实现直接构造 NDC（y 向上）：MVP = scale(2*ppu*s/winW, 2*ppu*s/winH)。
 //   s = baseScale*zoom，baseScale = min(400/W, 500/H, 1)（manager.ts 同值）。
 //   与 pld 一致忽略 CanvasOrigin（pld 恒按 W/2,H/2 居中；Cyrene 模型 origin 即中心）。
+//
+// 蒙版布局矩阵链（pld setupClippingContext 低精度分支同式）：
+//   bounds = 被蒙版 drawable 顶点并集，外扩 5%；scale = layoutBounds/bounds；
+//   matrixForDraw = T(layout)·S(scale)·T(-bounds)（模型坐标→图集 [0,1]）；
+//   matrixForMask = T(-1,-1)·S(2,2)·matrixForDraw（→单元格 clip [-1,1]）。
 
 using CyreneLive2D.Core;
 using CyreneLive2D.Model;
@@ -30,6 +34,28 @@ internal sealed unsafe class CubismRenderer : IDisposable
     /// <summary>基础窗口尺寸（src/renderer/live2d/manager.ts PET_WINDOW_BASE_*）。</summary>
     public const float BaseWindowWidth = 400f;
     public const float BaseWindowHeight = 500f;
+
+    /// <summary>蒙版图集尺寸（pld CubismClippingManager_WebGL._clippingMaskBufferSize）。</summary>
+    private const int MaskBufferSize = 256;
+    /// <summary>单图集蒙版组上限（pld ClippingMaskMaxCountOnDefault）。</summary>
+    private const int MaxGroupsPerAtlas = 36;
+    private const float MaskMargin = 0.05f;
+
+    private static readonly float[][] ChannelColors =
+    {
+        new[] { 1f, 0f, 0f, 0f }, // R
+        new[] { 0f, 1f, 0f, 0f }, // G
+        new[] { 0f, 0f, 1f, 0f }, // B
+        new[] { 0f, 0f, 0f, 1f }, // A
+    };
+
+    private static readonly float[] Identity =
+    {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    };
 
     private readonly CubismModel _model;
     private readonly D3D11Device _device;
@@ -49,13 +75,13 @@ internal sealed unsafe class CubismRenderer : IDisposable
     private int _vertexCapacity, _indexCapacity;
 
     private readonly RenderTarget _mainTarget;
-    private readonly MaskGroup[] _maskGroups;      // 拓扑序（渲染顺序）
-    private readonly MaskGroup[] _groupsByIndex;   // 原始组索引 → 组（_drawableGroup 用）
+    private readonly RenderTarget _maskAtlas;
+    private readonly MaskGroup[] _maskGroups;      // 创建序（= web 渲染序）
     private readonly int[] _sortedDrawables;
     private readonly int[] _drawableGroup;   // drawable → 蒙版组索引（-1 = 无蒙版）
 
     private readonly float[] _constantData = new float[Shaders.ConstantBufferSize / 4];
-    private float _mvpA, _mvpD;              // 当前帧 MVP 缩放分量（纯缩放，无平移）
+    private readonly float[] _mainMvp = new float[16];
 
     public int MaskGroupCount => _maskGroups.Length;
     public int DrawableCount => _model.DrawableCount;
@@ -86,7 +112,7 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _psMasked = CompilePixel(Shaders.PixelMaskedSource);
         _psMaskedInverted = CompilePixel(Shaders.PixelMaskedInvertedSource);
 
-        // ── 状态对象（混合态表逐条对照 Framework CubismRenderState_D3D11.cpp） ──
+        // ── 状态对象（混合态表逐条对照 pld setupShaderProgram） ──
         _blendNormal = MakeBlend(D3D11Blend.One, D3D11Blend.InvSrcAlpha, D3D11Blend.One, D3D11Blend.InvSrcAlpha);
         _blendAdd = MakeBlend(D3D11Blend.One, D3D11Blend.One, D3D11Blend.Zero, D3D11Blend.One);
         _blendMultiply = MakeBlend(D3D11Blend.DstColor, D3D11Blend.InvSrcAlpha, D3D11Blend.Zero, D3D11Blend.One);
@@ -128,9 +154,10 @@ internal sealed unsafe class CubismRenderer : IDisposable
 
         _drawableGroup = new int[n];
         Array.Fill(_drawableGroup, -1);
-        (_maskGroups, _groupsByIndex) = DiscoverMaskGroups();
+        _maskGroups = DiscoverMaskGroups();
 
-        _mainTarget = new RenderTarget(_device, 1, 1);
+        _mainTarget = new RenderTarget(_device, 1, 1, samples: 4); // pixi antialias:true
+        _maskAtlas = new RenderTarget(_device, MaskBufferSize, MaskBufferSize);
         EnsureGeometryCapacity();
     }
 
@@ -159,19 +186,22 @@ internal sealed unsafe class CubismRenderer : IDisposable
 
     private sealed class MaskGroup
     {
-        public int[] Members = Array.Empty<int>();     // 蒙版 drawable（渲染序）
-        public RenderTarget Target = null!;
+        public int[] Members = Array.Empty<int>();          // 蒙版形状（_clippingIdList，原序）
+        public readonly List<int> Clipped = new();          // 被蒙版 drawable（_clippedDrawableIndexList）
+        public int Channel;                                 // 布局通道（0-3）
+        public float LayoutX, LayoutY, LayoutW, LayoutH;    // 图集单元格 [0,1]
+        public bool IsUsing;
+        public readonly float[] MatMask = new float[16];    // 模型坐标 → 单元格 clip
+        public readonly float[] MatDraw = new float[16];    // 模型坐标 → 图集 [0,1]
     }
 
     /// <summary>
-    /// 相同蒙版集合（无序）的 drawable 共享一张蒙版 RT——分组语义与 web 轨
-    /// CubismClippingManager.initialize（findSameClip）一致。渲染顺序 = 创建顺序
-    /// （drawable 索引扫描的首现序），与 web 轨 setupClippingContext 的遍历顺序一致。
-    /// web 轨低精度蒙版路径不处理嵌套蒙版（蒙版 drawable 自身按无蒙版绘制，
-    /// 见 cubism4.es.js setupClippingContext 低精度分支），故此处不做依赖分析——
-    /// Cyrene 模型唯一蒙版组的成员被自身组蒙版（自依赖），拓扑排序会误报环。
+    /// 相同蒙版集合（无序）的 drawable 共享一个蒙版组——分组语义与 web 轨
+    /// CubismClippingManager.initialize（findSameClip）一致。组序 = 创建顺序
+    /// （drawable 索引扫描的首现序），与 web 轨 setupClippingContext 遍历顺序一致。
+    /// web 轨低精度蒙版路径不处理嵌套蒙版（蒙版 drawable 自身按无蒙版绘制）。
     /// </summary>
-    private (MaskGroup[] renderOrder, MaskGroup[] byIndex) DiscoverMaskGroups()
+    private MaskGroup[] DiscoverMaskGroups()
     {
         var n = _model.DrawableCount;
         var maskCounts = _model.DrawableMaskCounts;
@@ -184,9 +214,6 @@ internal sealed unsafe class CubismRenderer : IDisposable
         {
             if (maskCounts[i] <= 0) continue;
             var cnt = maskCounts[i];
-            // 分组键 = 蒙版集合（无序）；组成员 = 蒙版形状本身（masks[i]，保持原序）。
-            // 与 web 轨 CubismClippingContext 一致：_clippingIdList=蒙版形状，
-            // _clippedDrawableIndexList=被蒙版 drawable（此处用 _drawableGroup 反查）。
             var keyArr = new int[cnt];
             new Span<int>(masks[i], cnt).CopyTo(keyArr);
             Array.Sort(keyArr);
@@ -199,11 +226,102 @@ internal sealed unsafe class CubismRenderer : IDisposable
                 new Span<int>(masks[i], cnt).CopyTo(members);
                 groups.Add(new MaskGroup { Members = members });
             }
+            groups[gi].Clipped.Add(i);
             _drawableGroup[i] = gi;
         }
 
-        var arr = groups.ToArray();
-        return (arr, arr);
+        if (groups.Count > MaxGroupsPerAtlas)
+            throw new NotSupportedException($"蒙版组数 {groups.Count} 超单图集上限 {MaxGroupsPerAtlas}（pld 多图集路径未移植）。");
+        return groups.ToArray();
+    }
+
+    /// <summary>
+    /// pld setupLayoutBounds 同式（renderTextureCount=1）：≤4 组每通道一格，
+    /// 5-6 组按 2,2,1,1 分配；单元格网格 1/2/4/9 宫格。
+    /// </summary>
+    private void SetupLayoutBounds(int usingCount)
+    {
+        if (usingCount <= 0 || usingCount > MaxGroupsPerAtlas)
+        {
+            foreach (var g in _maskGroups)
+            {
+                g.Channel = 0;
+                g.LayoutX = 0; g.LayoutY = 0; g.LayoutW = 1; g.LayoutH = 1;
+            }
+            return;
+        }
+        var div = usingCount / 4;
+        var mod = usingCount % 4;
+        var cur = 0;
+        for (var ch = 0; ch < 4; ch++)
+        {
+            var layoutCount = div + (ch < mod ? 1 : 0);
+            for (var i = 0; i < layoutCount; i++)
+            {
+                var g = _maskGroups[cur++];
+                g.Channel = ch;
+                if (layoutCount == 1)
+                {
+                    g.LayoutX = 0; g.LayoutY = 0; g.LayoutW = 1; g.LayoutH = 1;
+                }
+                else if (layoutCount == 2)
+                {
+                    g.LayoutX = (i % 2) * 0.5f; g.LayoutY = 0; g.LayoutW = 0.5f; g.LayoutH = 1;
+                }
+                else if (layoutCount <= 4)
+                {
+                    g.LayoutX = (i % 2) * 0.5f; g.LayoutY = (i / 2) * 0.5f; g.LayoutW = 0.5f; g.LayoutH = 0.5f;
+                }
+                else
+                {
+                    g.LayoutX = (i % 3) / 3f; g.LayoutY = (i / 3) / 3f; g.LayoutW = 1f / 3; g.LayoutH = 1f / 3;
+                }
+            }
+        }
+    }
+
+    /// <summary>被蒙版 drawable 顶点并集（模型坐标）+ 5% 外扩 + 布局矩阵链。</summary>
+    private void UpdateMaskMatrices(MaskGroup g)
+    {
+        // pld calcClippedDrawTotalBounds 的外层 maxX/maxY 初始为 Number.MIN_VALUE
+        // （≈+5e-324，非负无穷）：全负坐标的组上界被撑到 ≈0。逐像素对齐须复现
+        // 该语义（float 下 5e-324 即 0）；有正顶点时真实最大值照常生效。
+        float minX = float.MaxValue, minY = float.MaxValue, maxX = 0f, maxY = 0f;
+        var positions = _model.DrawableVertexPositions;
+        var counts = _model.DrawableVertexCounts;
+        foreach (var d in g.Clipped)
+        {
+            for (var v = 0; v < counts[d]; v++)
+            {
+                var p = positions[d][v];
+                if (p.X < minX) minX = p.X;
+                if (p.X > maxX) maxX = p.X;
+                if (p.Y < minY) minY = p.Y;
+                if (p.Y > maxY) maxY = p.Y;
+            }
+        }
+        if (minX == float.MaxValue)
+        {
+            g.IsUsing = false;
+            return;
+        }
+        g.IsUsing = true;
+        var w = maxX - minX;
+        var h = maxY - minY;
+        var bx = minX - w * MaskMargin;
+        var by = minY - h * MaskMargin;
+        var bw = w * (1 + 2 * MaskMargin);
+        var bh = h * (1 + 2 * MaskMargin);
+        var sx = g.LayoutW / bw;
+        var sy = g.LayoutH / bh;
+        var tx = g.LayoutX - bx * sx;
+        var ty = g.LayoutY - by * sy;
+
+        // 行主序（HLSL mul(行向量, 矩阵)）：平移在第 4 行。
+        g.MatDraw[0] = sx; g.MatDraw[5] = sy; g.MatDraw[10] = 1; g.MatDraw[15] = 1;
+        g.MatDraw[12] = tx; g.MatDraw[13] = ty;
+        g.MatMask[0] = 2 * sx; g.MatMask[5] = 2 * sy; g.MatMask[10] = 1; g.MatMask[15] = 1;
+        g.MatMask[12] = 2 * tx - 1; g.MatMask[13] = 2 * ty - 1;
     }
 
     // ── 几何缓冲 ────────────────────────────────────────────
@@ -265,18 +383,14 @@ internal sealed unsafe class CubismRenderer : IDisposable
 
         var baseScale = ComputeBaseScale();
         var s = baseScale * zoom;
-        _mvpA = 2f * _model.PixelsPerUnit * s / width;
-        _mvpD = 2f * _model.PixelsPerUnit * s / height;
+        var mvpA = 2f * _model.PixelsPerUnit * s / width;
+        var mvpD = 2f * _model.PixelsPerUnit * s / height;
+        Array.Copy(Identity, _mainMvp, 16);
+        _mainMvp[0] = mvpA;
+        _mainMvp[5] = mvpD;
 
         _mainTarget.Resize(width, height);
-        foreach (var g in _maskGroups)
-        {
-            g.Target ??= new RenderTarget(_device, 1, 1);
-            g.Target.Resize(width, height);
-        }
 
-        var vp = new Viewport { TopLeftX = 0, TopLeftY = 0, Width = width, Height = height, MinDepth = 0, MaxDepth = 1 };
-        _ctx.RSSetViewports(&vp);
         _ctx.RSSetState(_rasterizer.Handle);
         _ctx.IASetInputLayout(_layout.Handle);
         _ctx.IASetPrimitiveTopology(4); // TRIANGLELIST
@@ -285,20 +399,45 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _ctx.VSSetConstantBuffers(0, _constants.Handle);
         _ctx.PSSetConstantBuffers(0, _constants.Handle);
 
-        // ── 蒙版 pass（创建序） ──
+        // ── 蒙版 pass（创建序；256 图集，清 1，通道打包） ──
+        var usingCount = 0;
         foreach (var g in _maskGroups)
         {
-            _ctx.OMSetRenderTargets(g.Target.Rtv.Handle);
-            _ctx.ClearRenderTargetView(g.Target.Rtv.Handle, 1, 1, 1, 1);
+            UpdateMaskMatrices(g);
+            if (g.IsUsing) usingCount++;
+        }
+        SetupLayoutBounds(usingCount);
+        // 布局变化后矩阵需按新单元格重算（pld 同帧内先布局后矩阵）
+        foreach (var g in _maskGroups) if (g.IsUsing) UpdateMaskMatrices(g);
+
+        if (usingCount > 0)
+        {
+            var mvp = new Viewport { TopLeftX = 0, TopLeftY = 0, Width = MaskBufferSize, Height = MaskBufferSize, MinDepth = 0, MaxDepth = 1 };
+            _ctx.RSSetViewports(&mvp);
+            _ctx.OMSetRenderTargets(_maskAtlas.Rtv.Handle);
+            _ctx.ClearRenderTargetView(_maskAtlas.Rtv.Handle, 1, 1, 1, 1);
             _ctx.OMSetBlendState(_blendMaskSetup.Handle, 0, 0, 0, 0, 0xFFFFFFFF);
-            foreach (var d in g.Members)
+            foreach (var g in _maskGroups)
             {
-                // web 轨低精度路径：蒙版 drawable 按无蒙版绘制（不处理嵌套）
-                DrawDrawable(d, _psSetupMask, _atlases, IntPtr.Zero);
+                if (!g.IsUsing) continue;
+                var ch = ChannelColors[g.Channel];
+                _constantData[16] = 2 * g.LayoutX - 1;
+                _constantData[17] = 2 * g.LayoutY - 1;
+                _constantData[18] = 2 * (g.LayoutX + g.LayoutW) - 1;
+                _constantData[19] = 2 * (g.LayoutY + g.LayoutH) - 1;
+                _constantData[28] = ch[0]; _constantData[29] = ch[1]; _constantData[30] = ch[2]; _constantData[31] = ch[3];
+                Array.Copy(g.MatMask, 0, _constantData, 32, 16);
+                foreach (var d in g.Members)
+                {
+                    // web 轨低精度路径：蒙版 drawable 按无蒙版绘制（不处理嵌套）
+                    DrawDrawable(d, _psSetupMask, IntPtr.Zero, g.MatMask);
+                }
             }
         }
 
         // ── 主 pass ──
+        var vp = new Viewport { TopLeftX = 0, TopLeftY = 0, Width = width, Height = height, MinDepth = 0, MaxDepth = 1 };
+        _ctx.RSSetViewports(&vp);
         _ctx.OMSetRenderTargets(_mainTarget.Rtv.Handle);
         _ctx.ClearRenderTargetView(_mainTarget.Rtv.Handle, 0, 0, 0, 0);
 
@@ -315,15 +454,22 @@ internal sealed unsafe class CubismRenderer : IDisposable
                 : _blendNormal;
             _ctx.OMSetBlendState(blend.Handle, 0, 0, 0, 0, 0xFFFFFFFF);
 
+            _constantData[16] = 1; _constantData[17] = 1; _constantData[18] = 1;
             var gi = _drawableGroup[d];
             if (gi >= 0)
             {
+                var g = _maskGroups[gi];
+                var ch = ChannelColors[g.Channel];
+                _constantData[28] = ch[0]; _constantData[29] = ch[1]; _constantData[30] = ch[2]; _constantData[31] = ch[3];
+                Array.Copy(g.MatDraw, 0, _constantData, 32, 16);
                 var ps = (flags[d] & CsmConstantFlags.IsInvertedMask) != 0 ? _psMaskedInverted : _psMasked;
-                DrawDrawable(d, ps, _atlases, GroupSrv(gi));
+                DrawDrawable(d, ps, _maskAtlas.Srv.Handle, _mainMvp);
             }
             else
             {
-                DrawDrawable(d, _psNormal, _atlases, IntPtr.Zero);
+                _constantData[28] = 1; _constantData[29] = 0; _constantData[30] = 0; _constantData[31] = 0;
+                Array.Copy(Identity, 0, _constantData, 32, 16);
+                DrawDrawable(d, _psNormal, IntPtr.Zero, _mainMvp);
             }
         }
 
@@ -335,10 +481,12 @@ internal sealed unsafe class CubismRenderer : IDisposable
     public float ComputeBaseScale()
         => Math.Min(BaseWindowWidth / _model.CanvasWidth, Math.Min(BaseWindowHeight / _model.CanvasHeight, 1f));
 
-    private IntPtr GroupSrv(int groupIndex) => _groupsByIndex[groupIndex].Target.Srv.Handle;
-
-    /// <summary>上传单个 drawable 的几何 + 常量并绘制。maskSrv=0 表示不绑 t1。</summary>
-    private void DrawDrawable(int d, D3D11PixelShader ps, TextureAtlas[] atlases, IntPtr maskSrv)
+    /// <summary>
+    /// 上传单个 drawable 的几何并绘制。mvp 行主序 16 float；maskSrv=0 表示不绑 t1。
+    /// baseColor.rgb/channelFlag/maskMatrix 由调用方预置 _constantData[16..47]；
+    /// 本方法写 mvp、baseColor.a（不透明度）、multiply/screen。
+    /// </summary>
+    private void DrawDrawable(int d, D3D11PixelShader ps, IntPtr maskSrv, float[] mvp)
     {
         var vertexCount = _model.DrawableVertexCounts[d];
         var indexCount = _model.DrawableIndexCounts[d];
@@ -347,7 +495,7 @@ internal sealed unsafe class CubismRenderer : IDisposable
         GrowVertex(vertexCount);
         GrowIndex(indexCount);
 
-        // 顶点：float2 pos（模型单位）+ float2 uv（原样，顶行原点）
+        // 顶点：float2 pos（模型单位）+ float2 uv（原样，VS 内翻 V）
         var positions = _model.DrawableVertexPositions[d];
         var uvs = _model.DrawableVertexUvs[d];
         var mapped = _ctx.Map(_vertexBuffer.Handle, 0, D3D11Map.WriteDiscard);
@@ -366,17 +514,14 @@ internal sealed unsafe class CubismRenderer : IDisposable
         new Span<ushort>(indices, indexCount).CopyTo(new Span<ushort>(mappedIdx.Data, indexCount));
         _ctx.Unmap(_indexBuffer.Handle, 0);
 
-        // 常量：mvp + baseColor(1,1,1,opacity) + multiply + screen + channelFlag(1,0,0,0)
+        Array.Copy(mvp, 0, _constantData, 0, 16);
+        // setup pass 的 baseColor 整体是单元格 clip 边界（含 .w），不被不透明度覆盖
+        if (ps != _psSetupMask)
+            _constantData[19] = _model.DrawableOpacities[d] * _model.ModelOpacity;
         var multiply = _model.DrawableMultiplyColors[d];
         var screen = _model.DrawableScreenColors[d];
-        _constantData[0] = _mvpA; _constantData[1] = 0; _constantData[2] = 0; _constantData[3] = 0;
-        _constantData[4] = 0; _constantData[5] = _mvpD; _constantData[6] = 0; _constantData[7] = 0;
-        _constantData[8] = 0; _constantData[9] = 0; _constantData[10] = 1; _constantData[11] = 0;
-        _constantData[12] = 0; _constantData[13] = 0; _constantData[14] = 0; _constantData[15] = 1;
-        _constantData[16] = 1; _constantData[17] = 1; _constantData[18] = 1; _constantData[19] = _model.DrawableOpacities[d] * _model.ModelOpacity;
         _constantData[20] = multiply.X; _constantData[21] = multiply.Y; _constantData[22] = multiply.Z; _constantData[23] = 1;
         _constantData[24] = screen.X; _constantData[25] = screen.Y; _constantData[26] = screen.Z; _constantData[27] = 1;
-        _constantData[28] = 1; _constantData[29] = 0; _constantData[30] = 0; _constantData[31] = 0;
 
         var mappedCb = _ctx.Map(_constants.Handle, 0, D3D11Map.WriteDiscard);
         fixed (float* src = _constantData)
@@ -386,7 +531,7 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _ctx.Unmap(_constants.Handle, 0);
 
         var texIndex = _model.DrawableTextureIndices[d];
-        _ctx.PSSetShaderResources(0, atlases[texIndex].Srv.Handle);
+        _ctx.PSSetShaderResources(0, AtlasSrv(texIndex));
         _ctx.PSSetShaderResources(1, maskSrv);
         _ctx.PSSetShader(ps.Handle);
         _ctx.IASetVertexBuffers(0, _vertexBuffer.Handle, 16, 0);
@@ -394,10 +539,12 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _ctx.DrawIndexed((uint)indexCount, 0, 0);
     }
 
+    private IntPtr AtlasSrv(int texIndex) => _atlases[texIndex].Srv.Handle;
+
     public void Dispose()
     {
         _mainTarget.Dispose();
-        foreach (var g in _maskGroups) g.Target?.Dispose();
+        _maskAtlas.Dispose();
         _vertexBuffer?.Dispose();
         _indexBuffer?.Dispose();
         _constants.Dispose();

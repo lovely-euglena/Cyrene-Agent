@@ -17,7 +17,8 @@
 //                 17 IASetInputLayout / 18 IASetVertexBuffers / 19 IASetIndexBuffer /
 //                 24 IASetPrimitiveTopology / 33 OMSetRenderTargets /
 //                 35 OMSetBlendState / 43 RSSetState / 44 RSSetViewports /
-//                 47 CopyResource / 50 ClearRenderTargetView
+//                 47 CopyResource / 48 UpdateSubresource / 50 ClearRenderTargetView /
+//                 57 ResolveSubresource
 //   ID3D11Resource: 7 GetType；ID3D11Texture2D: 10 GetDesc
 //   ID3D11View: 7 GetResource；ID3DBlob: 3 GetBufferPointer / 4 GetBufferSize
 //
@@ -373,6 +374,14 @@ internal sealed unsafe class D3D11Context : IDisposable
 
     public void CopyResource(IntPtr dst, IntPtr src)
         => ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, void>)Com.Slot(Handle, 47))(Handle, dst, src);
+
+    /// <summary>UpdateSubresource（vtable 48）：CPU 数据写入默认用法纹理（box=null 全资源）。</summary>
+    public void UpdateSubresource(IntPtr resource, uint subresource, IntPtr srcBox, IntPtr mem, uint pitch, uint slicePitch)
+        => ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, IntPtr, IntPtr, uint, uint, void>)Com.Slot(Handle, 48))(Handle, resource, subresource, srcBox, mem, pitch, slicePitch);
+
+    /// <summary>ResolveSubresource（vtable 57）：MSAA 纹理 → 非 MSAA 纹理（读回前必须 resolve）。</summary>
+    public void ResolveSubresource(IntPtr dst, uint dstSub, IntPtr src, uint srcSub, uint format)
+        => ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, IntPtr, uint, uint, void>)Com.Slot(Handle, 57))(Handle, dst, dstSub, src, srcSub, format);
 
     public MappedSubresource Map(IntPtr resource, uint subresource, uint mapType)
     {

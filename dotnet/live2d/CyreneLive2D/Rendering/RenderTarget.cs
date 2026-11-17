@@ -1,5 +1,7 @@
 // 离屏渲染目标：颜色纹理 + RTV + SRV + 读回 staging。
 // 主缓冲与蒙版缓冲共用；读回用于 UpdateLayeredWindow（DIB）与 T6 逐像素对照。
+// samples>1 时主纹理为 MSAA（web 轨 pixi antialias:true → 4x），读回前
+// ResolveSubresource 到非 MSAA 纹理（SRV/读回都用 resolve 后的）。
 
 using CyreneLive2D.Rendering.D3D11;
 
@@ -8,16 +10,19 @@ namespace CyreneLive2D.Rendering;
 internal sealed unsafe class RenderTarget : IDisposable
 {
     private readonly D3D11Device _device;
-    public D3D11Texture2D Texture { get; private set; } = null!;
-    public D3D11RenderTargetView Rtv { get; private set; } = null!;
+    private readonly uint _samples;
+    public D3D11Texture2D Texture { get; private set; } = null!;   // resolve 后（或非 MSAA）
+    public D3D11RenderTargetView Rtv { get; private set; } = null!; // MSAA 时挂在 MSAA 纹理上
     public D3D11ShaderResourceView Srv { get; private set; } = null!;
+    private D3D11Texture2D _msaa = null!;
     private D3D11Texture2D _staging = null!;
     public int Width { get; private set; }
     public int Height { get; private set; }
 
-    public RenderTarget(D3D11Device device, int width, int height)
+    public RenderTarget(D3D11Device device, int width, int height, uint samples = 1)
     {
         _device = device;
+        _samples = samples;
         Resize(width, height);
     }
 
@@ -40,8 +45,20 @@ internal sealed unsafe class RenderTarget : IDisposable
             BindFlags = D3D11Bind.RenderTarget | D3D11Bind.ShaderResource,
         };
         Texture = _device.CreateTexture2D(ref desc);
-        Rtv = _device.CreateRenderTargetView(Texture.Handle);
         Srv = _device.CreateShaderResourceView(Texture.Handle);
+
+        if (_samples > 1)
+        {
+            var msaaDesc = desc;
+            msaaDesc.SampleCount = _samples;
+            msaaDesc.BindFlags = D3D11Bind.RenderTarget;
+            _msaa = _device.CreateTexture2D(ref msaaDesc);
+            Rtv = _device.CreateRenderTargetView(_msaa.Handle);
+        }
+        else
+        {
+            Rtv = _device.CreateRenderTargetView(Texture.Handle);
+        }
 
         var stagingDesc = new Texture2DDesc
         {
@@ -64,6 +81,8 @@ internal sealed unsafe class RenderTarget : IDisposable
     public byte[] Readback()
     {
         var ctx = _device.ImmediateContext;
+        if (_samples > 1)
+            ctx.ResolveSubresource(Texture.Handle, 0, _msaa.Handle, 0, DxgiFormat.B8G8R8A8_UNORM);
         ctx.CopyResource(_staging.Handle, Texture.Handle);
         var mapped = ctx.Map(_staging.Handle, 0, D3D11Map.Read);
         try
@@ -88,6 +107,7 @@ internal sealed unsafe class RenderTarget : IDisposable
         Texture?.Dispose();
         Rtv?.Dispose();
         Srv?.Dispose();
+        _msaa?.Dispose();
         _staging?.Dispose();
     }
 
