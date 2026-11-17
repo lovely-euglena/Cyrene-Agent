@@ -33,6 +33,7 @@ public static class SelfTestRunner
         BreathTests.Run(modelDir);
         BehaviorTests.Run(modelDir);
         EngineTests.Run(modelDir);
+        WindowTests.Run();
         CoreTests.Run(modelDir, dataDir);
         CoreDownloaderTests.Run();
         RendererTests.Run(modelDir, dataDir);
