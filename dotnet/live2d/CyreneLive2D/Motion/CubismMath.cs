@@ -2,6 +2,8 @@
 // 全部 float 精度（与 C++ csmFloat32 一致），保证贝塞尔求值/淡入淡出与 web 轨数值对齐。
 // 参考：Live2D-CubismNativeFramework src/Math/CubismMath.cpp。
 
+using System.Numerics;
+
 namespace CyreneLive2D.Motion;
 
 public static class CubismMath
@@ -14,6 +16,21 @@ public static class CubismMath
 
     public static float DegreesToRadian(float degrees) => degrees / 180.0f * Pi;
     public static float RadianToDegrees(float radian) => radian * 180.0f / Pi;
+
+    /// <summary>两向量夹角（弧度，[-π,π]）：atan2(to)-atan2(from)，逐式移植 DirectionToRadian。</summary>
+    public static float DirectionToRadian(Vector2 from, Vector2 to)
+    {
+        float q1 = MathF.Atan2(to.Y, to.X);
+        float q2 = MathF.Atan2(from.Y, from.X);
+        float ret = q1 - q2;
+        while (ret < -Pi) ret += Pi * 2.0f;
+        while (ret > Pi) ret -= Pi * 2.0f;
+        return ret;
+    }
+
+    /// <summary>弧度 → 方向向量（sin,cos）——注意不是 (cos,sin)，物理摆锤重力方向用。</summary>
+    public static Vector2 RadianToDirection(float totalAngle)
+        => new(MathF.Sin(totalAngle), MathF.Cos(totalAngle));
 
     /// <summary>正弦缓动（淡入淡出用）：value&lt;0→0，&gt;1→1，否则 0.5-0.5*cos(value*π)。</summary>
     public static float GetEasingSine(float value)

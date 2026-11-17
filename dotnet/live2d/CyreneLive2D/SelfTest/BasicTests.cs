@@ -92,12 +92,7 @@ public static unsafe class CoreTests
     }
 }
 
-// T4 占位（物理/姿态/呼吸 + 行为状态机随后落地）。
-public static class PhysicsTests
-{
-    public static void Run(string? modelDir) { }
-}
-
+// T4 占位（行为状态机随后落地；物理/姿态/呼吸见 PhysicsTests.cs）。
 public static class BehaviorTests
 {
     public static void Run() { }
