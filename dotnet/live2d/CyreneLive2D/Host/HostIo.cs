@@ -54,10 +54,10 @@ public sealed class HostIo : IDisposable
     }
 
     public void SendResult(string callId, object? data = null)
-        => Send(new { op = "result", callId, ok = true, data });
+        => Send(new { op = Live2DOps.Result, callId, ok = true, data });
 
     public void SendError(string callId, string error, string errorCode)
-        => Send(new { op = "result", callId, ok = false, error, errorCode });
+        => Send(new { op = Live2DOps.Result, callId, ok = false, error, errorCode });
 
     public void SendEvent(string name, object? payload = null)
         => Send(new { op = "event", name, payload });

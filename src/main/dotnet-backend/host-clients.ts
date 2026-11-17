@@ -57,8 +57,9 @@ export class LineHostClient {
       const exe = this.resolveExe();
       if (!exe) return false;
       // mode 支持数组（["dotnet", dll, "--tool-host"] 形态——argv[0] 是
-      // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）
-      const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode]), ...this.extraArgs()];
+      // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）；
+      // 空字符串 = 无 mode 参数（sidecar 默认形态即宿主，如 live2d-host）
+      const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : this.mode ? [this.mode] : []), ...this.extraArgs()];
       const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       // 启动不可用分支：子进程已 spawn，必须杀掉再返回——否则孤儿进程
       // 存活到应用退出（本模块子进程未登记 trackChildProcess，退出兜底不覆盖，IKJSNF）
@@ -165,7 +166,8 @@ export class LineHostClient {
       } else {
         p.resolve(frame.data ?? frame);
       }
-    } else if (op === "ready" || op === "log" || op === "vad_result" || op === "asr_partial" || op === "asr_final" || op === "tts_meta") {
+    } else if (op === "ready" || op === "log" || op === "event" || op === "vad_result" || op === "asr_partial" || op === "asr_final" || op === "tts_meta") {
+      // "event"：live2d-host 事件信封 {op:"event",name,payload}（#257 T5）
       this.onEvent(frame);
     }
   }
@@ -189,16 +191,18 @@ export class LineHostClient {
     if (idx >= 0) this.eventListeners.splice(idx, 1);
   }
 
-  call(op: string, args: Record<string, unknown>): Promise<unknown> {
+  /** timeoutMs 覆盖：长耗时 op 单独放宽（如 live2d load 含 Core 自动下载）。 */
+  call(op: string, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     const callId = `h${++this.seq}-${Math.random().toString(36).slice(2, 7)}`;
+    const effectiveTimeout = timeoutMs ?? this.timeoutMs;
     return new Promise((resolve, reject) => {
       if (!this.proc || this.exited) { reject(new Error("host 未运行")); return; }
       const timer = setTimeout(() => {
         this.pending.delete(callId);
         this.exited = true;          // 先标记，防新 call 拿到垂死 proc
         this.killAndReset();
-        reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重置）`));
-      }, this.timeoutMs);
+        reject(new Error(`${op} 超时（${effectiveTimeout}ms，host 已重置）`));
+      }, effectiveTimeout);
       this.pending.set(callId, { resolve, reject, timer });
       try {
         this.proc.stdin!.write(`${JSON.stringify({ op, callId, ...args })}\n`);

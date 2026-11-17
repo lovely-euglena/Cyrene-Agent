@@ -58,6 +58,8 @@ public static class Live2DOps
 
     // 事件
     public const string Ready = "ready";
+    /// <summary>响应帧 op（result 信封；HostIo.SendResult/SendError 使用）。</summary>
+    public const string Result = "result";
     public const string Loaded = "loaded";
     public const string LoadFailed = "loadFailed";
     public const string Hit = "hit";
