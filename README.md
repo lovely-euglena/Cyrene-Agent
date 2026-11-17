@@ -9,7 +9,8 @@
 </p>
 
 <p align="center">
-  <strong>本仓库（社区接力 fork）</strong>：<a href="https://gitee.com/ygwill/cyrene-agent">Gitee</a> ・
+  <strong>本仓库（社区 fork）</strong>：<a href="https://git.ygwill.top/lovely-euglena/cyrene-agent">自建Gitea</a> ・
+    <a href="https://gitee.com/ygwill/cyrene-agent">Gitee 镜像</a> ・
   <strong>上游</strong>：<a href="https://gitee.com/playa0/cyrene-agent">Gitee</a> / <a href="https://github.com/Playa-Cyrene/Cyrene-Agent">GitHub</a>
 </p>
 
@@ -162,6 +163,7 @@ npm start
 > **Windows 用户**也可以直接双击项目根目录的 `setup.bat` 完成依赖安装、构建和 `npm link`，之后双击 `start.bat` 即可启动。
 > 
 > fork版本提醒
+> 
 > 若不想编译原生截图助手，可以在设置中设置并接入 Snipaste 代替截图助手
 
 开发模式：
@@ -593,7 +595,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 > 
 > 原项目的贡献者名单仅会在合并上游更新时同步更新，名单仅对应最新合并的版本，更新可能不及时，请见谅
 
-<!-- 贡献者头像列表：自动更新已停用；请勿手动修改这对标记之间的内容 -->
+<!-- 贡献者头像列表：本 fork 随上游合并人工同步，请勿手动修改这对标记之间的内容 -->
 <!-- readme: contributors -start -->
 <table>
 	<tbody>
@@ -606,10 +608,10 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/lll69">
-                    <img src="https://avatars.githubusercontent.com/u/60803753?v=4" width="48;" alt="lll69"/>
+                <a href="https://github.com/LZhWi">
+                    <img src="https://avatars.githubusercontent.com/u/306725149?v=4" width="48;" alt="LZhWi"/>
                     <br />
-                    <sub><b>lll69</b></sub>
+                    <sub><b>LZhWi</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -620,17 +622,31 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/ahwhshen">
+                    <img src="https://avatars.githubusercontent.com/u/317654555?v=4" width="48;" alt="ahwhshen"/>
+                    <br />
+                    <sub><b>ahwhshen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/lll69">
+                    <img src="https://avatars.githubusercontent.com/u/60803753?v=4" width="48;" alt="lll69"/>
+                    <br />
+                    <sub><b>lll69</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/ActorF">
+                    <img src="https://avatars.githubusercontent.com/u/155789159?v=4" width="48;" alt="ActorF"/>
+                    <br />
+                    <sub><b>Ying Fang</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/yuxingyuzhong">
                     <img src="https://avatars.githubusercontent.com/u/240125557?v=4" width="48;" alt="yuxingyuzhong"/>
                     <br />
                     <sub><b>雨行雨中</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/LZhWi">
-                    <img src="https://avatars.githubusercontent.com/u/306725149?v=4" width="48;" alt="LZhWi"/>
-                    <br />
-                    <sub><b>LZhWi</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -654,6 +670,15 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                     <sub><b>Modusensus</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/codex">
+                    <img src="https://avatars.githubusercontent.com/u/267193182?v=4" width="48;" alt="codex"/>
+                    <br />
+                    <sub><b>Codex</b></sub>
+                </a>
+            </td>
             <td align="center">
                 <a href="https://github.com/boring9720">
                     <img src="https://avatars.githubusercontent.com/u/20534568?v=4" width="48;" alt="boring9720"/>
@@ -668,20 +693,11 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                     <sub><b>Tobi1chi</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/proobker">
                     <img src="https://avatars.githubusercontent.com/u/89506631?v=4" width="48;" alt="proobker"/>
                     <br />
                     <sub><b>proobker</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/ahwhshen">
-                    <img src="https://avatars.githubusercontent.com/u/317654555?v=4" width="48;" alt="ahwhshen"/>
-                    <br />
-                    <sub><b>ahwhshen</b></sub>
                 </a>
             </td>
 		</tr>
@@ -690,6 +706,9 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 <!-- readme: contributors -end -->
 
 特别感谢模型原作者慷慨授权本项目使用、修改并再分发其作品。
+
+
+同样感谢[组织成员与维护者](./docs/MAINTAINERS.md)与每一位[贡献者](./docs/CONTRIBUTORS.md)——谢谢你们在业余时间无偿承担分诊、审查、适配与答疑，为这个项目省下了大量琐碎而必要的工作。**排名不分先后**，每一份投入都算数。
 
 ---
 
@@ -703,8 +722,9 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 
 **本 fork 维护者（社区接力）**
 - 邮箱：Each13579@hotmail.com
-- GitHub：[lovely-euglena/Cyrene-Agent](https://github.com/lovely-euglena/Cyrene-Agent)
-- Gitee：[ygwill/cyrene-agent](https://gitee.com/ygwill/cyrene-agent)
+- GitHub（镜像）：[lovely-euglena/Cyrene-Agent](https://github.com/lovely-euglena/Cyrene-Agent)
+- Gitee（镜像）：[ygwill/cyrene-agent](https://gitee.com/ygwill/cyrene-agent)
+- 自建 Gitea：[lovely-euglena/cyrene-agent](https://git.ygwill.top/lovely-euglena/cyrene-agent)
 
 欢迎通过上述渠道或仓库 Issues / PR 交流。请保持讨论的礼貌与主题相关性。
 
@@ -718,11 +738,11 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 
 你的支持会帮助我承担项目开发和维护中的一些开销（模型 API、测试、社群维护等），让 Cyrene 能够持续迭代。
 
-不方便扫码也没关系 —— 随手点一个 Star ⭐，或者把 Cyrene 分享给同样喜欢的朋友，就已经是很好的支持了。
+不方便扫码也没关系 —— 随手点一个 Star ⭐（[原项目](https://github.com/Playa-Cyrene/Cyrene-Agent)），或者把 Cyrene 分享给同样喜欢的朋友，就已经是很好的支持了。
 
 > [!IMPORTANT]
 > 
-> 这是原作者的捐赠二维码，本fork项目志愿维护，暂时不接受捐赠
+> 这是原作者的捐赠二维码
 
 <table>
   <tr>
@@ -733,4 +753,18 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 
 ---
 
-⭐ 如果你喜欢这个项目，欢迎点一个 Star。这会帮助更多喜欢昔涟的人发现它。
+## <img src="./docs/image/icons/star.svg" width="20" height="20" alt=""> Star History & Ranking
+
+<a href="https://www.star-history.com/?repos=playa-cyrene%2Fcyrene-agent&type=date&legend=bottom-right">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=playa-cyrene/cyrene-agent&type=date&theme=dark&legend=bottom-right" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=playa-cyrene/cyrene-agent&type=date&legend=bottom-right" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=playa-cyrene/cyrene-agent&type=date&legend=bottom-right" />
+  </picture>
+</a>
+
+
+[![olud.ai](https://olud.ai/badge.php?tool=playa-cyrene-cyrene-agent)](https://olud.ai/project/playa-cyrene-cyrene-agent.html)
+
+<img src="./docs/image/icons/star.svg" width="18" height="18" alt=""> 如果你喜欢这个项目，欢迎点一个 Star。这会帮助更多喜欢昔涟的人发现它。
+
