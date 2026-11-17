@@ -595,7 +595,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
 > 
 > 原项目的贡献者名单仅会在合并上游更新时同步更新，名单仅对应最新合并的版本，更新可能不及时，请见谅
 
-<!-- 贡献者头像列表由 .github/workflows/contributors.yml 自动维护，请勿手动修改这对标记之间的内容 -->
+<!-- 贡献者头像列表：本 fork 随上游合并人工同步，请勿手动修改这对标记之间的内容 -->
 <!-- readme: contributors -start -->
 <table>
 	<tbody>
@@ -701,7 +701,7 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                 </a>
             </td>
 		</tr>
-	<tbody>
+	</tbody>
 </table>
 <!-- readme: contributors -end -->
 
