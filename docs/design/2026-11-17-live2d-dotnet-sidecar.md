@@ -1,8 +1,9 @@
 # Live2D 渲染引擎 .NET sidecar 化（#257）
 
-> 状态：T0–T5 已落地；T6 静态基准帧逐像素对照**已在沙箱达成 diff_pct=0.0065%**
-> （web 软件 GL 基准 vs dotnet WARP，远低于 2% 阈值）；动作/口型时序、多 DPI、
-> 内存/帧率/启动时延等真机对照项待 GPU 机器。
+> 状态：T0–T5 已落地；T6 静态基准帧逐像素对照**沙箱 0.0065% / GPU 真机同卡 0.004%**
+> （RTX 2080 Ti：web ANGLE/NVIDIA GL vs dotnet NVIDIA D3D11，远低于 2% 阈值）；
+> 真机 selftest 302/0/2。动作/口型时序、多 DPI、内存/帧率/启动时延等
+> 完整应用手动清单待后续。
 > 分支：`issue/257-live2d`。双轨开关：`LIVE2D_ENGINE=dotnet|web`（默认 `web`）。
 
 ## 1. 目标与裁决
@@ -188,10 +189,10 @@ pnpm run package:win:dir  # 已含 build:live2d
   开关（config.test.ts）。
 - **T6 像素对照**：同模型同参数驱动 web/dotnet 各渲一帧，
   脚本逐像素 diff（容差 <2%，diff_pct 必须脚本产出）。工具链已落地
-  （`scripts/live2d/`，见 §10）。**静态基准帧对照已在沙箱达成 0.0065%**——
-  web 基准帧用软件 WebGL（`--disable-gpu --enable-unsafe-swiftshader`）采集，
-  dotnet 用 WARP，无需 GPU 真机。渲染管线修复见 §10「渲染管线修复」与
-  「逐像素对齐」。动作/口型时序、多 DPI、内存/帧率等仍需 GPU 真机。
+  （`scripts/live2d/`，见 §10）。**沙箱 0.0065%**（web 软件 WebGL vs dotnet WARP）；
+  **GPU 真机同卡 0.004%**（RTX 2080 Ti，web ANGLE/NVIDIA GL vs dotnet NVIDIA D3D11）。
+  渲染管线修复见 §10「渲染管线修复」「逐像素对齐」「真机验证」。
+  动作/口型时序、多 DPI、内存/帧率等完整应用手动清单待后续。
 
 ## 9. 已知差异与后续
 
@@ -203,7 +204,7 @@ pnpm run package:win:dir  # 已含 build:live2d
   主进程计算时长 + mouthStart 语义（与 web 轨一致）。
 - 物理 stabilization 已实现未接线（web 轨未启用，保真优先）。
 
-## 10. T6 验收（沙箱逐像素对照已达成 diff_pct=0.0065%）
+## 10. T6 验收（沙箱 0.0065% / GPU 真机同卡 0.004%）
 
 ### 渲染管线修复（沙箱真渲染验证，2026-11-17）
 
@@ -285,6 +286,43 @@ pnpm run package:win:dir  # 已含 build:live2d
 侧车免 Node 取帧：`cyrene-live2d.exe --render-test --out dotnet.png [--params k=v,...]`。
 GPU 机器完整流程见 `scripts/live2d/README.md`。
 
+### 真机验证（云 GPU RTX 2080 Ti，2026-11-17）
+
+沙箱无 GPU 暴露不出的两个真机问题，本轮修复：
+
+7. **多适配器默认适配器是软件**（根因 7，决定性）：云桌面/无头独显机器
+   DXGI `adapter[0]` = Microsoft Basic Render Driver（虚拟显示，专用显存 0），
+   独显在 `[1]`。`D3D11CreateDevice(NULL, HARDWARE)` 静默落在软件适配器——
+   Chromium/ANGLE 同样默认选它（`glRenderer` 诊断实证）。修复：
+   `D3D11Device.Create` 先 `CreateDXGIFactory1` + `EnumAdapters1`（vtable 12）
+   + `GetDesc`（vtable 8），显式选首个 `DedicatedVideoMemory > 0` 适配器
+   （指定适配器时 driverType 必须 `UNKNOWN(0)`），保留原「默认硬件 → WARP」
+   回退链；stderr 输出 `[d3d11] adapter=<name>` 作证据。修复后侧车落在
+   RTX 2080 Ti（featureLevel 11_0）。
+8. **assets 模型清单陈旧副本**：`assets/models/cyrene/Cyrene.model3.json`
+   `Groups: []`（e5b43d4b 眨眼/口型重构只改了 public 规范副本），致
+   `--selftest --model-dir assets/...` 两项 FAIL（`model3.groups.eyeBlink/lipSync`）。
+   生产侧车与 web 轨同源 public/dist（含 Groups），不受影响；assets 副本
+   无任何代码引用，同步规范副本消除陷阱（两副本唯一差异即 Groups）。
+
+web 侧同卡强制：Chromium 的 `--gpu-vendor-id/--gpu-device-id` 在本 Electron
+无效；改用 OS 级 GPU 偏好（`HKCU\Software\Microsoft\DirectX\UserGpuPreferences`
+`GpuPreference=2;`，等价 Windows 图形设置「高性能」）→ DXGI 按进程重排
+适配器序，ANGLE 落 NVIDIA（验证后已清理注册表项）。`web-capture.cjs` diag
+新增 `glRenderer`（`WEBGL_debug_renderer_info`）记录实际 GPU。
+
+**真机对照矩阵**（400×500，容差 8/255，阈值 2%，均脚本产出）：
+
+| 口径 | web 设备 | dotnet 设备 | diff_pct |
+| --- | --- | --- | --- |
+| 同卡严格 | NVIDIA GL（ANGLE D3D11） | NVIDIA D3D11 | **0.004%**（8px） |
+| 同软件适配器 | Basic Render Driver | Basic Render Driver | 0.0045%（9px） |
+| 跨设备 | Basic Render Driver | NVIDIA D3D11 | 0.008%（16px） |
+| 沙箱（前轮） | SwiftShader 软件 GL | WARP | 0.0065%（13px） |
+
+真机 selftest（NVIDIA）：PASS=302 FAIL=0 SKIP=2（SKIP 为 pose.fade/
+interaction.motionFire 条件项，与 GPU 无关）。差异像素均为 AA 边缘噪声。
+
 ### 当前状态
 
 | 项 | 状态 |
@@ -294,5 +332,7 @@ GPU 机器完整流程见 `scripts/live2d/README.md`。
 | C# 自测矩阵（含 Core） | ✅ PASS=302 FAIL=0 SKIP=2（GPU 渲染项已跑通） |
 | T5 TS 单测（7 文件） | ✅ 61/61 |
 | dotnet 静态基准帧渲染（沙箱 WARP） | ✅ 角色完整，47770 不透明像素 |
-| 静态基准帧逐像素对照（diff_pct < 2%） | ✅ **0.0065%**（13/200000 px，沙箱 web 软件 GL 基准） |
-| 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（真机） |
+| dotnet 静态基准帧渲染（真机 NVIDIA） | ✅ adapter=RTX 2080 Ti，RENDER_TEST_OK |
+| 静态基准帧逐像素对照（diff_pct < 2%） | ✅ 沙箱 **0.0065%** / 真机同卡 **0.004%**（四口径全 pass，见上表） |
+| 真机 selftest（NVIDIA） | ✅ PASS=302 FAIL=0 SKIP=2 |
+| 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（完整应用手动清单） |
