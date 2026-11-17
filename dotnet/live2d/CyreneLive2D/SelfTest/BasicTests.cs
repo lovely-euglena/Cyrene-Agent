@@ -92,12 +92,6 @@ public static unsafe class CoreTests
     }
 }
 
-// T4 占位（行为状态机随后落地；物理/姿态/呼吸见 PhysicsTests.cs）。
-public static class BehaviorTests
-{
-    public static void Run() { }
-}
-
 // T2 自测：矩阵纯逻辑（无 GPU 依赖）+ 离屏渲染冒烟（缺 Core/GPU 时 SKIP）。
 public static unsafe class RendererTests
 {

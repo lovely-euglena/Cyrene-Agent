@@ -31,7 +31,7 @@ public static class SelfTestRunner
         PhysicsTests.Run(modelDir);
         PoseTests.Run(modelDir);
         BreathTests.Run(modelDir);
-        BehaviorTests.Run();
+        BehaviorTests.Run(modelDir);
         CoreTests.Run(modelDir, dataDir);
         CoreDownloaderTests.Run();
         RendererTests.Run(modelDir, dataDir);
