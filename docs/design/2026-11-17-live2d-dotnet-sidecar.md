@@ -1,6 +1,7 @@
 # Live2D 渲染引擎 .NET sidecar 化（#257）
 
-> 状态：T0–T5 已落地；T6 验收工具链已落地（像素对照待 GPU 真机）。
+> 状态：T0–T5 已落地；T6 验收工具链已落地，**dotnet 渲染管线已在沙箱真渲染验证**
+> （修复三个渲染 bug 后角色完整呈现）；双轨逐像素对照待 GPU 真机回传 web 基准帧。
 > 分支：`issue/257-live2d`。双轨开关：`LIVE2D_ENGINE=dotnet|web`（默认 `web`）。
 
 ## 1. 目标与裁决
@@ -184,9 +185,10 @@ pnpm run package:win:dir  # 已含 build:live2d
   开关（config.test.ts）。
 - **T6 像素对照**：同模型同参数驱动 web/dotnet 各渲一帧，
   脚本逐像素 diff（容差 <2%，diff_pct 必须脚本产出）。工具链已落地
-  （`scripts/live2d/`，见 §10）；沙箱 D3D11 `CreateInputLayout` 环境缺陷
-  （E_INVALIDARG，HARDWARE/WARP 皆然）阻塞 GPU 验证——真机探针
-  gpu-probe.exe 已交付，等待回传日志。
+  （`scripts/live2d/`，见 §10）。**dotnet 侧渲染已在沙箱验证通过**——
+  早期 `CreateInputLayout` E_INVALIDARG 并非环境缺陷，而是三个代码 bug
+  （见 §10「渲染管线修复」），修复后沙箱 WARP 渲染出完整角色。
+  逐像素对照仍需 GPU 真机回传 web 基准帧。
 
 ## 9. 已知差异与后续
 
@@ -198,7 +200,27 @@ pnpm run package:win:dir  # 已含 build:live2d
   主进程计算时长 + mouthStart 语义（与 web 轨一致）。
 - 物理 stabilization 已实现未接线（web 轨未启用，保真优先）。
 
-## 10. T6 验收（工具链已落地，像素对照待真机）
+## 10. T6 验收（dotnet 渲染沙箱已验证，逐像素对照待真机）
+
+### 渲染管线修复（沙箱真渲染验证，2026-11-17）
+
+早期 `CreateInputLayout` 返回 E_INVALIDARG（HARDWARE/WARP 皆然）曾被误判为
+沙箱环境缺陷。GPU 真机探针复现同样错误后，对照 Wine `d3d11.idl` 与 pld
+`cubism4.es.js` 逐条排查，确认是三个代码 bug，修复后沙箱 WARP 渲染出完整角色
+（`--render-test` 43669 不透明像素，`--selftest` 302 PASS/0 FAIL/2 SKIP）：
+
+1. **输入布局语义名**：HLSL `: TEXCOORD0` 编译后的输入签名是 `"TEXCOORD"` +
+   索引 0；布局误写 `"TEXCOORD0"` 导致签名匹配失败 → E_INVALIDARG。
+   改为 `"TEXCOORD"`（`SemanticIndex=0`）。vtable 槽位本身经核对全部正确
+   （`ID3D11Device : IUnknown`，无 DeviceChild 前缀；PrivateData 在尾部 34-36）。
+2. **蒙版分组语义**：原实现把「被蒙版的 drawable」当作蒙版组成员，且做依赖
+   拓扑排序（Cyrene 模型自依赖 → 误报环）。web 轨低精度路径（pld 默认
+   `_useHighPrecisionMask=false`）的 `_clippingIdList` 是**蒙版形状本身**
+   （`drawableMasks[i]`），按创建序绘制、不处理嵌套蒙版。已对齐：组成员=
+   蒙版形状，创建序，无嵌套。
+3. **UV 的 V 翻转**：Cubism Core 的 drawable UV 原点在左下（GL 约定），D3D11
+   纹理顶行序上传（v=0=顶行）需在 VS 内 `uv.y = 1 - uv.y`。不翻转时部件采样到
+   图集透明 padding → 画面碎片；翻转后角色完整。
 
 ### 口径
 
@@ -230,7 +252,8 @@ GPU 机器完整流程见 `scripts/live2d/README.md`。
 | --- | --- |
 | 工具链自验证（编解码往返/0%/1%/5%/容差/尺寸守卫） | ✅ 6/6（沙箱） |
 | 协议链路（load→setParam→tick×120→diagnostics→shutdown） | ✅ nowMs=2000 精确（沙箱） |
-| C# 自测矩阵（含 Core） | ✅ PASS=294 FAIL=0 SKIP=3 |
+| C# 自测矩阵（含 Core） | ✅ PASS=302 FAIL=0 SKIP=2（GPU 渲染项已跑通） |
 | T5 TS 单测（7 文件） | ✅ 61/61 |
-| 静态基准帧像素对照（diff_pct < 2%） | ⏳ 待 GPU 真机（沙箱 D3D11 缺陷） |
+| dotnet 静态基准帧渲染（沙箱 WARP） | ✅ 角色完整，43669 不透明像素 |
+| 静态基准帧逐像素对照（diff_pct < 2%） | ⏳ 待 GPU 真机回传 web 基准帧 |
 | 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（真机） |

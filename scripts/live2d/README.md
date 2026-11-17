@@ -42,11 +42,14 @@ node scripts/live2d/eval-log.mjs --task T6 --action diff --note "静态基准对
 动作序列用 `sidecar-capture.mjs --play expression:墨镜 --ticks 60`，web 侧
 `--no-freeze --wait <ms>` 近似（行为层时序对照属 T6 后续项，静态帧先行）。
 
-## 沙箱限制说明
+## 沙箱验证状态
 
-开发沙箱 D3D11 `CreateInputLayout` 返回 E_INVALIDARG（HARDWARE/WARP 皆然），
-渲染类用例只能在真机跑。沙箱可跑：`pixel-diff --selftest`、
-`sidecar-capture --diag-only`（协议链路）、C# `--selftest`（渲染项 SKIP）、TS 单测。
+dotnet 渲染管线已在开发沙箱（WARP 软件渲染）真渲染验证：`--render-test`
+输出完整角色，`--selftest` 302 PASS/0 FAIL/2 SKIP。早期 `CreateInputLayout`
+E_INVALIDARG 是三个代码 bug（输入布局语义名 TEXCOORD、蒙版组成员、UV 的 V
+翻转），非环境缺陷，已修复（详见设计文档 §10）。沙箱可跑：`pixel-diff --selftest`、
+`sidecar-capture --diag-only`（协议链路）、C# `--selftest`/`--render-test`、TS 单测。
+逐像素对照仍需 GPU 真机回传 web 基准帧（web 侧截帧需仓库 + `dist/renderer` + Electron）。
 
 ## 真机手动验收清单（T6 其余项）
 
