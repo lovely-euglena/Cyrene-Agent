@@ -47,3 +47,23 @@ node scripts/live2d/eval-log.mjs --task T6 --action diff --note "静态基准对
 开发沙箱 D3D11 `CreateInputLayout` 返回 E_INVALIDARG（HARDWARE/WARP 皆然），
 渲染类用例只能在真机跑。沙箱可跑：`pixel-diff --selftest`、
 `sidecar-capture --diag-only`（协议链路）、C# `--selftest`（渲染项 SKIP）、TS 单测。
+
+## 真机手动验收清单（T6 其余项）
+
+以 `LIVE2D_ENGINE=dotnet` 启动应用（env 或 `config/cyrene.conf`），对照 web 轨逐项过：
+
+| 项 | 操作 | 期望 |
+| --- | --- | --- |
+| 首帧 | 启动到桌宠可见 | 模型 upright/居中，无花屏黑边（TTFF 记录） |
+| 点击穿透 | 鼠标扫过模型透明区/不透明区 | 透明区穿透到桌面，不透明区可交互（alpha≥10 语义） |
+| 命中表情 | 点击 9 个命中区 | 触发对应表情伪动作；重复点同一区不重播 |
+| 拖拽 | 按住模型拖动 | 跟手无抖动，松手落位持久化（重启恢复） |
+| 缩放 | 设置 0.5×/1×/2× | 窗口与模型同步缩放，clamp 生效 |
+| 置顶 | 开关置顶 | 与非全屏应用层级正确（HWND_TOPMOST） |
+| 多 DPI | 跨 100%/150% 显示器拖动 | 尺寸恒定（DIP 语义），无模糊/跳变 |
+| 显隐 | 托盘隐藏/显示 | 隐藏停帧（CPU 回落），显示恢复 |
+| 口型 | 触发聊天 TTS | mouthStart 时长语义与 web 轨一致 |
+| 回退 | 移走 exe 或 Core 后启动 | 一次性回退 web 轨，无孤儿进程 |
+| 内存/帧率 | 任务管理器 + getDiagnostics | 记录对照表（sidecar vs web 渲染进程） |
+
+失败项按 issue 评论 4 落 JSONL（`eval-log.mjs --run` 或手工 `--result fail` + note 标注失败模式）。
