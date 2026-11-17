@@ -1,0 +1,236 @@
+# Live2D 渲染引擎 .NET sidecar 化（#257）
+
+> 状态：T0–T5 已落地；T6 验收工具链已落地（像素对照待 GPU 真机）。
+> 分支：`issue/257-live2d`。双轨开关：`LIVE2D_ENGINE=dotnet|web`（默认 `web`）。
+
+## 1. 目标与裁决
+
+把桌宠 Live2D 渲染与行为引擎从 Electron renderer（pixi.js + pixi-live2d-display）
+迁到 .NET 10 sidecar 独立进程，与 tool/mcp/rag/memory/voice 七 host 架构并轨：
+
+- **内存**：桌宠渲染生命周期归 sidecar，Electron 只留控制面（web 轨隐藏延迟
+  销毁渲染进程的止血方案在 dotnet 轨不再需要——sidecar 隐藏即停帧）。
+- **抗崩**：渲染进程崩溃不连带 renderer；宿主超时重置 + 代际守卫复用
+  LineHostClient（IKJSNF）。
+- **类型红利**：行为/渲染逻辑进 C# 强类型 + 自测矩阵；TS 面只剩薄协议层
+  （live2d-host-protocol.ts 契约镜像 + 契约扫描测试）。
+
+**路线 A（纯托管）**：Cubism Core P/Invoke + 手写 D3D11 COM vtable interop +
+JSON 格式自解析。零 NuGet、零 C++ 编译链。不链接官方 Framework（只读参考）。
+
+## 2. 进程与分层
+
+```
+Electron 主进程                          cyrene-live2d.exe（.NET 10，WinExe）
+┌─────────────────────────┐   stdin    ┌──────────────────────────────────┐
+│ Live2DHostClient        │ ────────▶  │ Live2DHost（单线程消息泵）        │
+│ （LineHostClient 子类）  │   stdout   │  ├ PetEngine（编排/协议 op）      │
+│ PetSidecarBackend（门面）│ ◀────────  │  │  ├ Model/   CubismModel+清单   │
+│ window-manager 双轨分支  │  JSON 行   │  │  ├ Motion/  motion3/exp3       │
+└─────────────────────────┘            │  │  ├ Behavior/ 8 控制器          │
+                                       │  │  ├ Rendering/ D3D11 渲染器     │
+                                       │  │  └ Window/ 分层窗口+帧泵       │
+                                       │  └ Core/ P/Invoke+下载器          │
+                                       └──────────────────────────────────┘
+```
+
+侧车分层（`dotnet/live2d/CyreneLive2D/`）：
+
+| 层 | 内容 | 可无头自测 |
+| --- | --- | --- |
+| `Core/` | ~40 个 csmXxx P/Invoke、对齐内存管理、CoreLibrary 探测、CoreDownloader（SHA256 pin） | 需 Core DLL |
+| `Model/` | model3.json 清单、moc3 封装（参数/部件/drawable 枚举） | 需 Core DLL |
+| `Motion/` | motion3 贝塞尔求值、淡入淡出、队列/优先级状态机、exp3 混合 | 部分纯逻辑 |
+| `Behavior/` | focus/blink/mouth/speaking-motion/expression-reset/idle-fps/interaction/click-through | 纯逻辑（注入时钟/RNG） |
+| `Rendering/` | 手写 D3D11 interop、HLSL、图集预乘、蒙版双 pass、混色、离屏回读 | 需 GPU |
+| `Window/` | WS_EX_LAYERED + UpdateLayeredWindow、点击穿透、DIP↔物理、拖拽 | 需桌面会话 |
+| `Host/` | JSON 行协议、契约常量、stdout 句柄复制 | ✓ |
+
+### 关键工程事实
+
+- **stdout 句柄复制**：Live2D Core DLL 加载（静态 CRT 初始化）会关闭/替换
+  原始 stdout 句柄——`Console.OpenStandardOutput()` 在 load 之后写帧静默失败。
+  宿主启动时 `DuplicateHandle` 复制一份独立句柄构建协议流（`Live2DHost.OpenRobustStdout`）。
+- **单线程消息泵**：stdin 读取线程 → ConcurrentQueue；主线程排空 op → 窗口帧泵
+  （消息分发/光标轮询/tick/render/present）→ Sleep(1ms 渲染态 / 10ms 空闲)。
+  `timeBeginPeriod(1)` 保证帧节拍。stdin EOF → 退出（防孤儿）。
+- **坐标空间**：引擎内部全 DIP（与 web 轨一致）；窗口壳按 PerMonitorV2 换算
+  物理像素。渲染分辨率 = 物理像素，zoom×dpiScale 保持模型 DIP 尺寸恒定
+  （DPR=1 时与 web 轨逐像素一致）。
+- **像素管线**：渲染回读预乘 BGRA（顶行在前）= 32bpp BI_RGB 顶向下 DIB 字节序
+  → 直接 memcpy → `UpdateLayeredWindow(ULW_ALPHA, AC_SRC_ALPHA)`。无转换无翻转。
+
+## 3. 协议（与七 host 同构）
+
+C# 事实源：`Host/Live2DContracts.cs`；TS 镜像：`src/main/live2d/live2d-host-protocol.ts`；
+双向契约扫描：`live2d-contract.test.ts`（任一侧漂移即 CI 红）。
+
+帧形态：
+
+```
+→ {"op":"load","callId":"c1","modelPath":"..."}
+← {"op":"ready"}
+← {"op":"result","callId":"c1","ok":true,"data":{...}}
+← {"op":"result","callId":"c1","ok":false,"error":"...","errorCode":"E_..."}
+← {"op":"event","name":"hit","payload":{...}}
+```
+
+请求 op：`load / show / hide / setBounds / setZoom / setAlwaysOnTop / play /
+speechPrepare / mouthStart / mouthStop / setDragging / setInteractive /
+pause / resume / hitTest / captureFrame / getDiagnostics / setParameter /
+renderOnce / tick / shutdown`。
+
+事件：`loaded / loadFailed(预留) / hit / miss / interactive / dragStart /
+dragMove / dragEnd / frameStats`。
+
+错误码：`E_CORE_MISSING / E_CORE_DOWNLOAD / E_MODEL_LOAD / E_NOT_LOADED /
+E_BAD_ARGS / E_RENDER / E_WINDOW / E_INTERNAL`。
+
+诊断 op（`tick {dtMs}` 确定性推进、`setParameter`、`renderOnce`、`captureFrame`）
+供 T6 像素对照与自测使用。NaN/±Infinity 序列化为 null（对齐 JSON.stringify）。
+可空字段 null 时省略（WhenWritingNull）——TS 镜像对应字段为可选。
+
+## 4. 双轨开关与回退
+
+`LIVE2D_ENGINE=dotnet|web`（env > ./config/cyrene.conf > 默认 web；
+解析入口 `resolveDotnetConfig().live2dEngine`，任务书指定开关名不带 CYRENE_ 前缀）。
+
+- **web 轨**：代码路径原样保留（BrowserWindow + pixi.js + pld）。铁律：
+  内置化是增量不是替代。
+- **dotnet 轨**：window-manager 桌宠控制面路由到 `PetSidecarBackend` 门面；
+  桌宠窗是侧车自管的 Win32 分层窗口（无 BrowserWindow、无渲染进程）。
+- **回退**：exe 缺失 / 开关关闭 / Core 不可用 / 模型加载失败 →
+  `ensureReady` 返回 false → 一次性回退 web 轨（同进程不反复重试），
+  已 spawn 的侧车进程关停不留孤儿。
+
+门面语义对齐（`src/main/live2d/pet-sidecar-backend.ts`）：
+
+| web 轨 | dotnet 轨 |
+| --- | --- |
+| BrowserWindow show/hide + PET_VISIBILITY_CHANGED 停帧 | show/hide + resume/pause |
+| setSize(round(基准×zoom)) + PET_ZOOM | setBounds + setZoom（0.5–2 clamp） |
+| setAlwaysOnTop("screen-saver") | HWND_TOPMOST（Win32 等价） |
+| setIgnoreMouseEvents | setInteractive（WS_EX_TRANSPARENT 覆盖） |
+| renderer 拖拽 → WINDOW_MOVE_TO → PetWindowMoveController | 侧车 dragStart/dragMove/dragEnd（物理 px）→ DIP 换算 → 同一 PetWindowMoveController（16ms 节流+持久化） |
+| sendToPetWindow(live2d:*) → renderer | sendChannel → speechPrepare/mouthStart/mouthStop/play |
+| capturePage → dataURL | captureFrame → PNG base64 → dataURL / NativeImage |
+
+口型时长仍由主进程 TS 计算（聊天 max(500,剩余)/max(2000,字数×180)，
+通话 −800ms 提前量），侧车只收 `mouthStart {durationMs}`——与 web 轨同语义。
+
+## 5. 行为移植保真（T4，不重调参）
+
+逐文件对照 `src/renderer/live2d/*` 与 pld 源码移植，隐含语义全部保留：
+
+- **帧序**（pld Cubism4InternalModel.update 逐帧对齐）：idleFps → focus 插值 →
+  motions → SaveParameters → expressions → focus 写入 → breath → physics →
+  pose → 钩子（口型/眨眼/秋千恢复/表情回正）→ model.Update → LoadParameters。
+- **focus**：窗口点→单位圆（cos atan2, −sin atan2）怪癖保留；中心→(1,0)；
+  EPSILON=0.01 / MAX_SPEED=40÷7.5 / ACCEL=1÷150（dt ms）。
+- **blink**：自定义控制器帧末覆盖眼参数（pld 原装 CubismEyeBlink 净效果等价，
+  不重复实现）；哨兵 −1。
+- **mouth-sync**：180ms _toggle 0.15–0.85±rand×0.18，τ=70ms，dt clamp 100ms，
+  关闭 <0.02 脱离，5min 上限。
+- **speaking-motion**：Tick3「荡秋千（待机）」fallback idx3；stop → StopAllMotions +
+  350ms easeOutCubic 恢复 Param32/13/14（全 |v|<0.001 跳过）。
+- **physics**：逐式对照 native CubismPhysics.cpp 与 CubismWebFramework
+  cubismphysics.ts（两者一致）；6 处怪癖保留（direction.Y 用新 X、X→Y 原地旋转、
+  NormalizeParameterValue 符号翻转除非 isInverted、TranslationScale 未解析、
+  Create 清零 Gravity.Y、DestinationParameterIndex 懒解析）。
+  AirResistance=5 / MaximumWeight=100 / MovementThreshold=0.001 / MaxDeltaTime=5；
+  固定步长 1/Fps + 剩余时间插值。
+- **expression-reset**：3min「表情回正」；expressions 持久（fade 1.0s）。
+- **idle-fps**：60 → 24@60s → 12@300s，5s 活动看门狗。
+- **interaction**：5px 阈值 touch×4；Cyrene 9 个命中区全为表情伪动作；
+  重复设置同一表情返回 false。
+- **click-through**：alpha≥10 命中，50ms 光标轮询，幂等翻转 + interactive 事件。
+- **baseScale**：恒对基准 400×500 计算（zoom 不变性）；Cyrene 4200×3500 →
+  baseScale≈0.095238。
+
+## 6. License 与 Core 分发
+
+Live2D Proprietary：开发免费；个人/小规模企业发布豁免 Publication License。
+**Core/Framework 二进制不随仓再分发**：
+
+- 运行时下载器（`CoreDownloader`）：官方源
+  `https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.5.zip`，
+  SHA256 pin `7FF3A4BB…8BB12`，断点续传，落 `{dataDir}/live2d-core/Live2DCubismCore.dll`。
+- 探测序（`CoreLibrary`）：env `CYRENE_CUBISM_CORE_DLL` → dataDir/live2d-core →
+  模型目录(+core/) → exe 目录(+live2d-core/) → PATH。用户可自备 DLL。
+- load 时 Core 缺失且指定 dataDir → 自动下载后重试；否则 E_CORE_MISSING /
+  E_CORE_DOWNLOAD（Electron 回退 web 轨）。
+
+## 7. 构建与打包
+
+```bash
+pnpm run build:live2d   # dotnet publish -c Release -r win-x64 /p:SelfContained=false
+pnpm run package:win:dir  # 已含 build:live2d
+```
+
+- framework-dependent：用户需 .NET 10 Desktop Runtime（与 native-windows/voice 同）。
+- electron-builder extraResources：publish → `resources/live2d/`
+  （目录名锁定：live2d-host-client.ts 打包态按此找 exe）。
+- 开发态 exe 解析：`dotnet/live2d/CyreneLive2D/bin/Release/net10.0-windows/`
+  下 publish 优先，其次普通构建输出。
+- 模型不打进安装包之外的独立流程：vite public 拷贝（dist/renderer/models/cyrene/），
+  与 web 轨同源。
+
+## 8. 测试矩阵
+
+- **C# 自测**：`cyrene-live2d.exe --selftest`（294 项；无 Core 174 项；
+  GPU/桌面缺失优雅 SKIP）。`--core-smoke / --gpu-smoke / --render-test` 诊断模式。
+- **TS 单测**：契约扫描（live2d-contract.test.ts）、客户端（live2d-host-client.test.ts）、
+  门面（pet-sidecar-backend.test.ts）、双轨接线（window-manager-sidecar.test.ts）、
+  开关（config.test.ts）。
+- **T6 像素对照**：同模型同参数驱动 web/dotnet 各渲一帧，
+  脚本逐像素 diff（容差 <2%，diff_pct 必须脚本产出）。工具链已落地
+  （`scripts/live2d/`，见 §10）；沙箱 D3D11 `CreateInputLayout` 环境缺陷
+  （E_INVALIDARG，HARDWARE/WARP 皆然）阻塞 GPU 验证——真机探针
+  gpu-probe.exe 已交付，等待回传日志。
+
+## 9. 已知差异与后续
+
+- 置顶级别：Electron "screen-saver" vs Win32 HWND_TOPMOST（语义近似，
+  全屏应用之上的行为略有差异）。
+- dotnet 轨无桌宠 BrowserWindow → `onPetWindowReady` 不触发，
+  live2dWindowLifecycle 诊断为空（侧车诊断走 getDiagnostics op）。
+- mouth-sync 直读 CyreneVoice PCM（同域化）为后续优化项；当前沿用
+  主进程计算时长 + mouthStart 语义（与 web 轨一致）。
+- 物理 stabilization 已实现未接线（web 轨未启用，保真优先）。
+
+## 10. T6 验收（工具链已落地，像素对照待真机）
+
+### 口径
+
+- **静态基准帧**：双方都不跑行为层（呼吸/眨眼/物理/注视），默认参数各渲一帧。
+  web 轨 `PET_RENDER_MAX_DPR=1` → 400×500 CSS 像素即物理像素，与侧车
+  render-test 默认尺寸逐像素可比。
+- **diff_pct** = 差异像素 / 总像素 × 100。差异像素定义：R/G/B/A 四通道
+  绝对差最大值 > 8/255（容忍 AA/浮点舍入/纹理滤波噪声）；双透明像素
+  （A 均为 0）跳过颜色比较。**阈值 diff_pct < 2%**。
+- **采集原则**（issue 评论 4）：diff_pct 必须由脚本产出；result 以测试
+  退出码为准。`eval-log.mjs` 机械执行：`--run` 取子进程退出码，
+  `--diff` 解析 pixel-diff.mjs 的 stdout JSON。
+
+### 工具链（`scripts/live2d/`，零依赖）
+
+| 脚本 | 作用 |
+| --- | --- |
+| `pixel-diff.mjs` | PNG 逐像素 diff（内置 8-bit PNG 解码器，全 5 种 filter）；`--selftest` 6 项自验证 |
+| `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/setBounds/setZoom/setParameter/play/tick/captureFrame）；`--diag-only` 无 GPU 可跑协议链路 |
+| `web-capture.cjs` | web 侧取帧：`npx electron` 起同规格透明桌宠窗，冻结 ticker + 参数回默认 + coreModel.update + 单帧渲染 → capturePage |
+| `eval-log.mjs` | 测评 JSONL 落盘 `docs/eval/257-live2d.jsonl`（ts/task/action/target/result/diff_pct/note） |
+
+侧车免 Node 取帧：`cyrene-live2d.exe --render-test --out dotnet.png [--params k=v,...]`。
+GPU 机器完整流程见 `scripts/live2d/README.md`。
+
+### 当前状态
+
+| 项 | 状态 |
+| --- | --- |
+| 工具链自验证（编解码往返/0%/1%/5%/容差/尺寸守卫） | ✅ 6/6（沙箱） |
+| 协议链路（load→setParam→tick×120→diagnostics→shutdown） | ✅ nowMs=2000 精确（沙箱） |
+| C# 自测矩阵（含 Core） | ✅ PASS=294 FAIL=0 SKIP=3 |
+| T5 TS 单测（7 文件） | ✅ 61/61 |
+| 静态基准帧像素对照（diff_pct < 2%） | ⏳ 待 GPU 真机（沙箱 D3D11 缺陷） |
+| 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（真机） |
