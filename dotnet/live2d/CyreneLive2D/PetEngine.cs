@@ -93,8 +93,33 @@ public sealed class PetEngine : IDisposable
         var dataDir = frame.TryGetProperty("dataDir", out var dEl) ? dEl.GetString() : null;
         var effectiveDataDir = dataDir ?? _dataDir;
 
-        // T0：Core 解析（缺失 → E_CORE_MISSING，Electron 回退 web 轨）
-        CoreLibrary.Load(effectiveDataDir, _modelDir);
+        // T0：Core 解析。缺失且有 dataDir → 官方源自动下载（SHA256 校验）后重试；
+        // 无 dataDir 或下载失败 → E_CORE_MISSING / E_CORE_DOWNLOAD（Electron 回退 web 轨）。
+        try
+        {
+            CoreLibrary.Load(effectiveDataDir, _modelDir);
+        }
+        catch (CoreNotAvailableException)
+        {
+            if (string.IsNullOrWhiteSpace(effectiveDataDir))
+            {
+                _io.SendError(callId, "Core 缺失且未指定 dataDir，无法自动下载", Live2DErrors.CoreMissing);
+                return;
+            }
+            try
+            {
+                // 协议循环内同步等待（加载期无帧循环，阻塞可接受；进度经 stderr 日志）
+                CoreDownloader.DownloadAsync(effectiveDataDir,
+                    p => Console.Error.WriteLine($"[core-download] {p.Phase} {p.ReceivedBytes}/{p.TotalBytes?.ToString() ?? "?"} {p.Percent?.ToString() ?? "-"}%"))
+                    .GetAwaiter().GetResult();
+                CoreLibrary.Load(effectiveDataDir, _modelDir);
+            }
+            catch (CoreDownloadException ex)
+            {
+                _io.SendError(callId, ex.Message, Live2DErrors.CoreDownload);
+                return;
+            }
+        }
 
         // T1：manifest + moc3
         _manifest = Model3Json.Load(modelPath);

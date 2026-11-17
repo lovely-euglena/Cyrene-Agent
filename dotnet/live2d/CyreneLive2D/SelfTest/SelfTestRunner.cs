@@ -31,6 +31,7 @@ public static class SelfTestRunner
         PhysicsTests.Run(modelDir);
         BehaviorTests.Run();
         CoreTests.Run(modelDir, dataDir);
+        CoreDownloaderTests.Run();
         RendererTests.Run(modelDir, dataDir);
 
         Console.WriteLine($"[selftest] PASS={_pass} FAIL={_fail} SKIP={_skip}");

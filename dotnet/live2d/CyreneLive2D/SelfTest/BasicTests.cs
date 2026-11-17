@@ -1,5 +1,6 @@
 // T1 自测：model3.json 解析 + Core 加载冒烟。
 
+using System.Net.Http;
 using CyreneLive2D.Core;
 using CyreneLive2D.Model;
 
@@ -218,5 +219,94 @@ public static unsafe class RendererTests
             var png = Rendering.PngCodec.Encode(pixels, 400, 500);
             SelfTestRunner.Check(png.Length > 8 && png[0] == 0x89 && png[1] == 0x50, "renderer.png.header");
         }
+    }
+}
+
+// T0 下载器离线自测：路径约定 / zip 提取 / SHA256 / 校验失败清理。
+// 网络成功路径不在此测（SHA256 pin 为官方 zip 常量）——提取与校验机制已覆盖。
+public static class CoreDownloaderTests
+{
+    public static void Run()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "cyrene-live2d-selftest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            // 路径约定（CoreLibrary 解析位 2）
+            var dataDir = Path.Combine(tmp, "data");
+            SelfTestRunner.Check(
+                CoreDownloader.InstallPath(dataDir) == Path.Combine(dataDir, "live2d-core", "Live2DCubismCore.dll"),
+                "coreDownload.installPath");
+            SelfTestRunner.Check(!CoreDownloader.IsInstalled(dataDir), "coreDownload.notInstalled");
+
+            // 构造假 zip（条目名与官方一致，内容任意）
+            var payload = new byte[] { 0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00 }; // MZ 头假 DLL
+            var zipPath = Path.Combine(tmp, "fake.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                var entry = zip.CreateEntry(CoreDownloader.DllZipEntry);
+                using var s = entry.Open();
+                s.Write(payload, 0, payload.Length);
+            }
+
+            // 提取：内容一致 + 无 .part 残留
+            var dest = CoreDownloader.InstallPath(dataDir);
+            CoreDownloader.ExtractCoreDll(zipPath, dest);
+            SelfTestRunner.Check(File.Exists(dest) && File.ReadAllBytes(dest).SequenceEqual(payload), "coreDownload.extract");
+            SelfTestRunner.Check(!File.Exists(dest + ".part"), "coreDownload.extract.noPart");
+            SelfTestRunner.Check(CoreDownloader.IsInstalled(dataDir), "coreDownload.isInstalled");
+
+            // 已安装短路：DownloadAsync 直接返回（不触网）
+            var shortCircuit = CoreDownloader.DownloadAsync(dataDir).GetAwaiter().GetResult();
+            SelfTestRunner.Check(shortCircuit == dest, "coreDownload.shortCircuit");
+
+            // 缺条目 zip → CoreDownloadException
+            var badZip = Path.Combine(tmp, "bad.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(badZip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                zip.CreateEntry("some/other/file.txt");
+            }
+            var missingEntry = false;
+            try { CoreDownloader.ExtractCoreDll(badZip, Path.Combine(tmp, "out.dll")); }
+            catch (Core.CoreDownloadException) { missingEntry = true; }
+            SelfTestRunner.Check(missingEntry, "coreDownload.extract.missingEntry");
+
+            // SHA256 已知向量（"abc"）
+            var abcPath = Path.Combine(tmp, "abc.txt");
+            File.WriteAllText(abcPath, "abc");
+            var hash = Core.CoreDownloader.Sha256FileAsync(abcPath, CancellationToken.None).GetAwaiter().GetResult();
+            SelfTestRunner.Check(
+                hash == "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
+                "coreDownload.sha256", hash);
+
+            // 校验失败路径：假 handler 供假 zip → SHA256 不匹配 → 异常 + 残片清理
+            var dataDir2 = Path.Combine(tmp, "data2");
+            var fakeZipBytes = File.ReadAllBytes(zipPath);
+            var mismatch = false;
+            try
+            {
+                Core.CoreDownloader.DownloadAsync(dataDir2, handler: new FakeHandler(fakeZipBytes))
+                    .GetAwaiter().GetResult();
+            }
+            catch (Core.CoreDownloadException) { mismatch = true; }
+            SelfTestRunner.Check(mismatch, "coreDownload.shaMismatch");
+            SelfTestRunner.Check(!CoreDownloader.IsInstalled(dataDir2), "coreDownload.shaMismatch.notInstalled");
+            var partLeft = Directory.Exists(CoreDownloader.InstallDir(dataDir2))
+                && Directory.GetFiles(CoreDownloader.InstallDir(dataDir2), "*.part").Length > 0;
+            SelfTestRunner.Check(!partLeft, "coreDownload.shaMismatch.partCleaned");
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, recursive: true); } catch { /* 自测清理尽力 */ }
+        }
+    }
+
+    private sealed class FakeHandler(byte[] body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(body),
+            });
     }
 }
