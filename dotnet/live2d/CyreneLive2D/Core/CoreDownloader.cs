@@ -24,9 +24,12 @@ public sealed class CoreDownloadException(string message) : Exception(message);
 
 public static class CoreDownloader
 {
-    public const string SdkUrl = "https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.5.zip";
-    public const string SdkSha256 = "7FF3A4BBC19C0A8728965AA522AB77EB11B252916453E68A8A78D3B71188BB12";
-    public const string DllZipEntry = "CubismSdkForNative-5-r.5/Core/dll/windows/x86_64/Live2DCubismCore.dll";
+    // 版本 pin：5-r.4 = Core 5.1.0（0x05010000），与 web 轨内置 JS Core 同版本。
+    // 逐像素对齐（T6）要求两轨 Core 顶点求值一致：5-r.5=Core 6.0.1 会引入非刚性
+    // 形变差（且 pld 不兼容 Core 6），故固定 r.4。升级须两轨同步并重新验收。
+    public const string SdkUrl = "https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.zip";
+    public const string SdkSha256 = "BC39C4448FD0AA8C35E74BCC8FFA403914AC88739781ECCA4106DD1D1162A906";
+    public const string DllZipEntry = "CubismSdkForNative-5-r.4/Core/dll/windows/x86_64/Live2DCubismCore.dll";
 
     private const int BufferSize = 81920;
     private const int ProgressIntervalMs = 250;
@@ -50,7 +53,7 @@ public static class CoreDownloader
 
         var dir = InstallDir(dataDir);
         Directory.CreateDirectory(dir);
-        var zipPath = Path.Combine(dir, "CubismSdkForNative-5-r.5.zip");
+        var zipPath = Path.Combine(dir, "CubismSdkForNative-5-r.4.zip");
         var part = zipPath + ".part";
 
         using var http = new HttpClient(handler ?? new HttpClientHandler())

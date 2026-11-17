@@ -33,6 +33,9 @@ public static unsafe class CoreLibrary
     /// <summary>revive 入口（兼容 _30 旧导出名）。</summary>
     public static delegate* unmanaged[Cdecl]<void*, uint, void*> ReviveMocInPlace { get; private set; }
 
+    /// <summary>渲染序入口（Core 6 名 csmGetRenderOrders；Core 5 名 csmGetDrawableRenderOrders）。</summary>
+    public static delegate* unmanaged[Cdecl]<void*, int*> GetRenderOrders { get; private set; }
+
     public static bool IsLoaded => _handle != IntPtr.Zero;
 
     /// <summary>格式化版本号：0x04020004 → "4.2.4"。</summary>
@@ -115,6 +118,20 @@ public static unsafe class CoreLibrary
         else if (NativeLibrary.TryGetExport(_handle, "csmReviveMocInPlace_30", out revivePtr))
         {
             ReviveMocInPlace = (delegate* unmanaged[Cdecl]<void*, uint, void*>)revivePtr;
+        }
+        else
+        {
+            return false;
+        }
+
+        // 渲染序入口版本探测：Core 6（csmGetRenderOrders）优先，Core 5 旧名兜底
+        if (NativeLibrary.TryGetExport(_handle, "csmGetRenderOrders", out var ordersPtr))
+        {
+            GetRenderOrders = (delegate* unmanaged[Cdecl]<void*, int*>)ordersPtr;
+        }
+        else if (NativeLibrary.TryGetExport(_handle, "csmGetDrawableRenderOrders", out ordersPtr))
+        {
+            GetRenderOrders = (delegate* unmanaged[Cdecl]<void*, int*>)ordersPtr;
         }
         else
         {

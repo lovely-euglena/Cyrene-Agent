@@ -1,6 +1,8 @@
 // Cubism Core C API 的 P/Invoke 封装（T0/T1）。
 //
-// 签名权威来源：Cubism SDK for Native 5-r.5 的 Core/include/Live2DCubismCore.h
+// 签名权威来源：Cubism SDK for Native 5-r.4 的 Core/include/Live2DCubismCore.h
+// （Core 5.1.0，与 web 轨对齐；csmGetRenderOrders 在 Core 6 改名，经 CoreLibrary
+// 函数指针兼容 csmGetDrawableRenderOrders 旧名）。
 // （Core 版本 06.00.0001）。要点：
 //   - Core 不分配内存：moc 缓冲按 csmAlignofMoc=64 对齐、model 缓冲按
 //     csmAlignofModel=16 对齐，由调用方提供（NativeMemory.AlignedAlloc）。
@@ -112,8 +114,8 @@ public static unsafe class CoreNative
     [DllImport(CoreLibrary.DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void csmUpdateModel(void* model);
 
-    [DllImport(CoreLibrary.DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int* csmGetRenderOrders(void* model);
+    // csmGetRenderOrders / csmGetDrawableRenderOrders 经 CoreLibrary.GetRenderOrders
+    // 函数指针调用（Core 5/6 导出名不同，DllImport 无法兼容）。
 
     // ── 画布 ────────────────────────────────────────────────
     [DllImport(CoreLibrary.DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -169,9 +171,6 @@ public static unsafe class CoreNative
 
     [DllImport(CoreLibrary.DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern CsmDynamicFlags* csmGetDrawableDynamicFlags(void* model);
-
-    [DllImport(CoreLibrary.DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int* csmGetDrawableBlendModes(void* model);
 
     [DllImport(CoreLibrary.DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int* csmGetDrawableTextureIndices(void* model);
