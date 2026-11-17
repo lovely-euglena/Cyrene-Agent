@@ -1,14 +1,16 @@
 // D3D11 COM interop（手写 P/Invoke，零 NuGet 依赖——任务书「部署纯净」）。
 //
-// 只声明渲染器用到的接口子集；vtable 槽位按 mingw-w64 d3d11.h 逐条核对
-// （与 Windows SDK 运行时 ABI 一致）。注意一个反直觉的 ABI 事实：
-//   ID3D11Device 的 vtable 没有 DeviceChild 前缀（CreateBuffer 紧接 IUnknown），
-//   而 ID3D11DeviceContext 有（3=GetDevice / 4-6 PrivateData）。
+// 只声明渲染器用到的接口子集；vtable 槽位按 Wine d3d11.idl 逐条核对，
+// 并经沙箱 + GPU 真机双探针实证（与 Windows SDK 运行时 ABI 一致）。
+// 注意一个反直觉的 ABI 事实：
+//   ID3D11Device 直接继承 IUnknown（无 DeviceChild 前缀，CreateBuffer 紧接 IUnknown；
+//   PrivateData 三方法在尾部 34-36），而 ID3D11DeviceContext 有前缀（3=GetDevice）。
 //   IUnknown: 0 QI / 1 AddRef / 2 Release
 //   ID3D11Device: 3 CreateBuffer / 5 CreateTexture2D / 7 CreateSRV /
 //                 9 CreateRTV / 11 CreateInputLayout / 12 CreateVS /
 //                 15 CreatePS / 20 CreateBlendState / 22 CreateRasterizerState /
-//                 23 CreateSamplerState / 40或41 GetImmediateContext（Win8+=41）
+//                 23 CreateSamplerState / 37 GetFeatureLevel / 38 GetCreationFlags /
+//                 39 GetDeviceRemovedReason / 40 GetImmediateContext（恒定）
 //   ID3D11DeviceContext: 7 VSSetConstantBuffers / 8 PSSetShaderResources /
 //                 9 PSSetShader / 10 PSSetSamplers / 11 VSSetShader /
 //                 12 DrawIndexed / 14 Map / 15 Unmap / 16 PSSetConstantBuffers /
@@ -149,7 +151,7 @@ internal static class DxgiFormat
     public const uint R32G32_FLOAT = 16;
     public const uint R32G32B32A32_FLOAT = 2;
     public const uint B8G8R8A8_UNORM = 87;
-    public const uint R16_UINT = 57;
+    public const uint R16_UINT = 57; // DXGI_FORMAT_R16_UINT（53 TYPELESS/54 FLOAT/55 D16/56 UNORM/57 UINT/58 SNORM/59 SINT）
 }
 
 internal static class D3D11Usage

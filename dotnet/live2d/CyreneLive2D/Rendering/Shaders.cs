@@ -9,11 +9,13 @@
 //   - 蒙版：缓冲清 1，setup 以 ZERO/ONE_MINUS_SRC_COLOR 写入 channelFlag*a，
 //     masked 采样 (1-mask)*channelFlag 求和乘到颜色（inverted 取反）。
 //
-// 与 Framework 的两处有意偏差（像素等价，文档见 docs/design/2026-11-17-live2d-dotnet-sidecar.md）：
+// 与 Framework 的有意偏差（像素等价，文档见 docs/design/2026-11-17-live2d-dotnet-sidecar.md）：
 //   1. 蒙版缓冲：每个唯一蒙版组一张全尺寸 RT（R 通道），不做 RGBA×9 宫格打包——
-//      省掉 layout 矩阵链，正确性相同（打包只是性能优化）。
-//   2. UV 不翻转：PNG 按行序（顶行在前）上传，Cubism UV 原点即左上——D3D 天然一致
-//      （Framework 的 1-uv 翻转是其 GL 遗留纹理上传约定，D3D11 样例同策）。
+//      省掉 layout 矩阵链。分组/绘制语义对齐 web 轨低精度路径（pld 默认
+//      _useHighPrecisionMask=false）：组序=创建序，蒙版 drawable 按无蒙版绘制。
+//   2. UV 的 V 翻转：Cubism Core 的 drawable UV 原点在左下（GL 约定），而 D3D11
+//      纹理顶行序上传（v=0=顶行），故 VS 内 uv.y=1-uv.y。经沙箱真渲染验证：
+//      不翻转时部件采样到图集透明 padding → 画面碎片；翻转后角色完整。
 //   3. Cubism 5 Core 无 culling API——全部按双面绘制（csmIsDoubleSided 语义）。
 
 namespace CyreneLive2D.Rendering;
@@ -56,7 +58,7 @@ internal static class Shaders
             VS_OUT Out;
             Out.pos = mul(float4(In.pos, 0.0f, 1.0f), mvp);
             Out.clipPos = Out.pos;
-            Out.uv = In.uv;
+            Out.uv = float2(In.uv.x, 1.0f - In.uv.y);
             return Out;
         }
         """;
@@ -198,8 +200,9 @@ internal static class Shaders
         """;
 
     /// <summary>
-    /// 嵌套蒙版：蒙版 drawable 自身也被蒙版时的 setup 变体
-    /// （channelFlag * alpha * maskVal）。混合态仍为 ZERO/ONE_MINUS_SRC_COLOR。
+    /// 嵌套蒙版 setup 变体（预留，当前未编译使用）：web 轨低精度蒙版路径
+    /// 不处理嵌套蒙版（蒙版 drawable 按无蒙版绘制），本实现与之对齐。
+    /// 若未来移植高精度路径再启用（channelFlag * alpha * maskVal）。
     /// </summary>
     public const string PixelSetupMaskMaskedSource = """
         cbuffer Constants : register(b0)

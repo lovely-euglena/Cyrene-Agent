@@ -7,17 +7,20 @@
 //   C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /optimize+ /unsafe /out:gpu-probe.exe gpu-probe.cs
 // 运行：gpu-probe.exe，把 gpu-probe-log.txt 发回。
 //
-// vtable 布局（mingw-w64 d3d11.h 权威核对，2026-11）：
-//   ID3D11Device 无 DeviceChild 前缀：CreateBuffer=3, Texture2D=5, SRV=7,
-//     RTV=9, InputLayout=11, VS=12, PS=15, Blend=20, Rasterizer=22, Sampler=23；
-//     GetImmediateContext=41（Win8+ 含 CheckMultisampleQualityLevels1）或 40（旧）。
-//   ID3D11DeviceContext 有 DeviceChild 前缀（3=GetDevice）：VSSetCB=7,
+// vtable 布局（Wine d3d11.idl 逐条核对 + 沙箱/真机双探针实证，2026-11）：
+//   ID3D11Device : IUnknown（无 DeviceChild 前缀！PrivateData 三方法在尾部 34-36）：
+//     CreateBuffer=3, Texture2D=5, SRV=7, RTV=9, InputLayout=11, VS=12, PS=15,
+//     Blend=20, Rasterizer=22, Sampler=23；GetFeatureLevel=37, GetCreationFlags=38,
+//     GetDeviceRemovedReason=39, GetImmediateContext=40（恒定，与 Windows 版本无关）。
+//   ID3D11DeviceContext : ID3D11DeviceChild（有前缀，3=GetDevice）：VSSetCB=7,
 //     PSSetSRV=8, PSSetShader=9, PSSetSamplers=10, VSSetShader=11, DrawIndexed=12,
 //     Map=14, Unmap=15, PSSetCB=16, IASetLayout=17, IASetVB=18, IASetIB=19,
 //     Topology=24, OMSetRT=33, OMSetBlend=35, RSSetState=43, RSSetViewports=44,
 //     CopyResource=47, ClearRTV=50。
-//   易错点：取槽位必须先解引用 vtable 指针——(*(void***)obj)[i]；
-//   ((void***)obj)[i] 读的是对象自身字段（少一层 *）→ 0xC0000005。
+//   易错点 1：取槽位必须先解引用 vtable 指针——(*(void***)obj)[i]；
+//     ((void***)obj)[i] 读的是对象自身字段（少一层 *）→ 0xC0000005。
+//   易错点 2：输入布局语义名——HLSL `: TEXCOORD0` 的签名是 "TEXCOORD"+索引 0，
+//     布局写 "TEXCOORD0" 会 E_INVALIDARG（#257 根因，曾误判为沙箱环境缺陷）。
 
 using System;
 using System.IO;
@@ -264,7 +267,9 @@ static unsafe class GpuProbe
             Log("calling CreateInputLayout(slot11)...");
             IntPtr layout;
             IntPtr pPos = Marshal.StringToHGlobalAnsi("POSITION");
-            IntPtr pUv = Marshal.StringToHGlobalAnsi("TEXCOORD0");
+            // HLSL `: TEXCOORD0` 编译后签名是 "TEXCOORD" + 索引 0——布局语义名必须是
+            // "TEXCOORD"（写 "TEXCOORD0" 匹配不到签名 → E_INVALIDARG，#257 根因）。
+            IntPtr pUv = Marshal.StringToHGlobalAnsi("TEXCOORD");
             var elems = stackalloc InputElementDesc[2];
             elems[0] = new InputElementDesc { SemanticName = (byte*)pPos, Format = 16, AlignedByteOffset = 0 };
             elems[1] = new InputElementDesc { SemanticName = (byte*)pUv, Format = 16, AlignedByteOffset = 8 };
@@ -301,7 +306,7 @@ static unsafe class GpuProbe
                             Log("ISGN elementCount=" + n);
                             for (uint ei = 0; ei < n && ei < 8; ei++)
                             {
-                                byte* e = d + 4 + ei * 24;
+                                byte* e = d + 8 + ei * 24; // ISGN 头 = count(4) + reserved(4)
                                 uint nameOff = (uint)(e[0] | (e[1] << 8) | (e[2] << 16) | (e[3] << 24));
                                 uint nameIdx = (uint)(e[4] | (e[5] << 8) | (e[6] << 16) | (e[7] << 24));
                                 uint sysVal = (uint)(e[8] | (e[9] << 8) | (e[10] << 16) | (e[11] << 24));

@@ -80,8 +80,10 @@ public static class RenderTest
                 }
                 model.SetParameterValueById(id, value);
             }
-            model.Update();
         }
+        // 必须 csmUpdateModel 后 drawable 顶点/不透明度/动态标志才有效；
+        // 静态基准（无 --params）同样需要按默认参数求值一次。
+        model.Update();
 
         using var renderer = new CubismRenderer(model, manifest, modelDir);
         var pixels = renderer.Render(width, height, zoom);

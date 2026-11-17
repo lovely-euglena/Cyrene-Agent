@@ -5,7 +5,8 @@
 //      与 Framework Vulkan DrawObjectLoop 同式）；
 //   2. 蒙版 pass：每个唯一蒙版组一张全尺寸 RT，清 (1,1,1,1)，
 //      ZERO/INV_SRC_COLOR 混合写入 channelFlag*alpha（组内按渲染序叠加）；
-//      嵌套蒙版（蒙版本身被蒙版）按组依赖拓扑序先渲父组；
+//      组序=创建序，蒙版 drawable 按无蒙版绘制——与 web 轨低精度蒙版路径
+//      一致（pld 默认 _useHighPrecisionMask=false，不处理嵌套蒙版）；
 //   3. 主 pass：清 (0,0,0,0)，按序绘制；Normal/Add/Multiply 三混合态，
 //      multiply/screen 色 + 不透明度在 PS 内合成（预乘约定）；
 //   4. 回读主 RT（BGRA 顶行序，与 DIB/PNG 一致）。
@@ -36,7 +37,7 @@ internal sealed unsafe class CubismRenderer : IDisposable
     private readonly TextureAtlas[] _atlases;
 
     private readonly D3D11VertexShader _vs;
-    private readonly D3D11PixelShader _psNormal, _psSetupMask, _psMasked, _psMaskedInverted, _psSetupMaskMasked;
+    private readonly D3D11PixelShader _psNormal, _psSetupMask, _psMasked, _psMaskedInverted;
     private readonly D3D11InputLayout _layout;
     private readonly D3D11BlendState _blendNormal, _blendAdd, _blendMultiply, _blendMaskSetup;
     private readonly D3D11RasterizerState _rasterizer;
@@ -70,7 +71,9 @@ internal sealed unsafe class CubismRenderer : IDisposable
         {
             _vs = _device.CreateVertexShader(vsBlob.BufferPointer, vsBlob.BufferSize);
             fixed (byte* pos = "POSITION\0"u8)
-            fixed (byte* uv = "TEXCOORD0\0"u8)
+            // HLSL `: TEXCOORD0` 是语义 "TEXCOORD" + 索引 0 的简写；输入布局必须用
+            // "TEXCOORD" + SemanticIndex=0。写成 "TEXCOORD0" 会签名匹配失败 → E_INVALIDARG。
+            fixed (byte* uv = "TEXCOORD\0"u8)
             {
                 var elements = stackalloc InputElementDesc[2];
                 elements[0] = new InputElementDesc { SemanticName = pos, Format = DxgiFormat.R32G32_FLOAT, AlignedByteOffset = 0 };
@@ -82,7 +85,6 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _psSetupMask = CompilePixel(Shaders.PixelSetupMaskSource);
         _psMasked = CompilePixel(Shaders.PixelMaskedSource);
         _psMaskedInverted = CompilePixel(Shaders.PixelMaskedInvertedSource);
-        _psSetupMaskMasked = CompilePixel(Shaders.PixelSetupMaskMaskedSource);
 
         // ── 状态对象（混合态表逐条对照 Framework CubismRenderState_D3D11.cpp） ──
         _blendNormal = MakeBlend(D3D11Blend.One, D3D11Blend.InvSrcAlpha, D3D11Blend.One, D3D11Blend.InvSrcAlpha);
@@ -158,14 +160,16 @@ internal sealed unsafe class CubismRenderer : IDisposable
     private sealed class MaskGroup
     {
         public int[] Members = Array.Empty<int>();     // 蒙版 drawable（渲染序）
-        public int[] Dependencies = Array.Empty<int>(); // 嵌套蒙版：成员自身所属的组
         public RenderTarget Target = null!;
     }
 
     /// <summary>
-    /// 相同蒙版集合（无序）的 drawable 共享一张蒙版 RT——与 Framework
-    /// CubismClippingManager 的分组语义一致（打包方式不同，像素等价）。
-    /// 返回按依赖拓扑序排列的组（嵌套蒙版先渲父组）。
+    /// 相同蒙版集合（无序）的 drawable 共享一张蒙版 RT——分组语义与 web 轨
+    /// CubismClippingManager.initialize（findSameClip）一致。渲染顺序 = 创建顺序
+    /// （drawable 索引扫描的首现序），与 web 轨 setupClippingContext 的遍历顺序一致。
+    /// web 轨低精度蒙版路径不处理嵌套蒙版（蒙版 drawable 自身按无蒙版绘制，
+    /// 见 cubism4.es.js setupClippingContext 低精度分支），故此处不做依赖分析——
+    /// Cyrene 模型唯一蒙版组的成员被自身组蒙版（自依赖），拓扑排序会误报环。
     /// </summary>
     private (MaskGroup[] renderOrder, MaskGroup[] byIndex) DiscoverMaskGroups()
     {
@@ -175,61 +179,31 @@ internal sealed unsafe class CubismRenderer : IDisposable
 
         var groupIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         var groups = new List<MaskGroup>();
-        var memberSets = new List<List<int>>();
 
         for (var i = 0; i < n; i++)
         {
             if (maskCounts[i] <= 0) continue;
-            var set = new int[maskCounts[i]];
-            new Span<int>(masks[i], maskCounts[i]).CopyTo(set);
-            Array.Sort(set);
-            var key = string.Join(",", set);
+            var cnt = maskCounts[i];
+            // 分组键 = 蒙版集合（无序）；组成员 = 蒙版形状本身（masks[i]，保持原序）。
+            // 与 web 轨 CubismClippingContext 一致：_clippingIdList=蒙版形状，
+            // _clippedDrawableIndexList=被蒙版 drawable（此处用 _drawableGroup 反查）。
+            var keyArr = new int[cnt];
+            new Span<int>(masks[i], cnt).CopyTo(keyArr);
+            Array.Sort(keyArr);
+            var key = string.Join(",", keyArr);
             if (!groupIndex.TryGetValue(key, out var gi))
             {
                 gi = groups.Count;
                 groupIndex[key] = gi;
-                groups.Add(new MaskGroup());
-                memberSets.Add(new List<int>());
+                var members = new int[cnt];
+                new Span<int>(masks[i], cnt).CopyTo(members);
+                groups.Add(new MaskGroup { Members = members });
             }
             _drawableGroup[i] = gi;
         }
 
-        // 成员按渲染序收集（蒙版叠加顺序与 Framework 一致）
-        foreach (var d in _sortedDrawables)
-        {
-            var gi = _drawableGroup[d];
-            if (gi >= 0) memberSets[gi].Add(d);
-        }
-        for (var g = 0; g < groups.Count; g++) groups[g].Members = memberSets[g].ToArray();
-
-        // 依赖：蒙版 drawable 自身若被蒙版 → 依赖其组
-        for (var g = 0; g < groups.Count; g++)
-        {
-            var deps = new HashSet<int>();
-            foreach (var m in groups[g].Members)
-            {
-                if (_drawableGroup[m] >= 0) deps.Add(_drawableGroup[m]);
-            }
-            groups[g].Dependencies = deps.ToArray();
-        }
-
-        // 拓扑排序（DFS 后序：依赖先渲；有效模型无环——Core 一致性已校验）
-        var order = new List<int>(groups.Count);
-        var state = new int[groups.Count]; // 0=未访问 1=访问中 2=完成
-        void Visit(int g)
-        {
-            if (state[g] == 2) return;
-            if (state[g] == 1) throw new D3D11Exception("蒙版组依赖出现环（模型数据异常）。");
-            state[g] = 1;
-            foreach (var d in groups[g].Dependencies) Visit(d);
-            state[g] = 2;
-            order.Add(g);
-        }
-        for (var g = 0; g < groups.Count; g++) Visit(g);
-
-        var renderOrder = new MaskGroup[order.Count];
-        for (var i = 0; i < order.Count; i++) renderOrder[i] = groups[order[i]];
-        return (renderOrder, groups.ToArray());
+        var arr = groups.ToArray();
+        return (arr, arr);
     }
 
     // ── 几何缓冲 ────────────────────────────────────────────
@@ -311,7 +285,7 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _ctx.VSSetConstantBuffers(0, _constants.Handle);
         _ctx.PSSetConstantBuffers(0, _constants.Handle);
 
-        // ── 蒙版 pass（拓扑序） ──
+        // ── 蒙版 pass（创建序） ──
         foreach (var g in _maskGroups)
         {
             _ctx.OMSetRenderTargets(g.Target.Rtv.Handle);
@@ -319,16 +293,8 @@ internal sealed unsafe class CubismRenderer : IDisposable
             _ctx.OMSetBlendState(_blendMaskSetup.Handle, 0, 0, 0, 0, 0xFFFFFFFF);
             foreach (var d in g.Members)
             {
-                var selfGroup = _drawableGroup[d];
-                if (selfGroup >= 0)
-                {
-                    // 嵌套蒙版：setup × 自身蒙版
-                    DrawDrawable(d, _psSetupMaskMasked, _atlases, GroupSrv(selfGroup));
-                }
-                else
-                {
-                    DrawDrawable(d, _psSetupMask, _atlases, IntPtr.Zero);
-                }
+                // web 轨低精度路径：蒙版 drawable 按无蒙版绘制（不处理嵌套）
+                DrawDrawable(d, _psSetupMask, _atlases, IntPtr.Zero);
             }
         }
 
@@ -447,7 +413,6 @@ internal sealed unsafe class CubismRenderer : IDisposable
         _psSetupMask.Dispose();
         _psMasked.Dispose();
         _psMaskedInverted.Dispose();
-        _psSetupMaskMasked.Dispose();
         foreach (var a in _atlases) a?.Dispose();
         _device.Dispose();
     }

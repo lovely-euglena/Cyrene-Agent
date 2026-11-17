@@ -152,7 +152,7 @@ public static class Program
     private static unsafe void D3D11InputLayoutProbe(Rendering.D3D11.D3D11Device device, Rendering.D3D11.ShaderBlob vsBlob)
     {
         fixed (byte* pos = "POSITION\0"u8)
-        fixed (byte* uv = "TEXCOORD0\0"u8)
+        fixed (byte* uv = "TEXCOORD\0"u8) // 语义名 TEXCOORD + 索引 0（非 "TEXCOORD0"）
         {
             var elements = stackalloc Rendering.D3D11.InputElementDesc[2];
             elements[0] = new Rendering.D3D11.InputElementDesc { SemanticName = pos, Format = Rendering.D3D11.DxgiFormat.R32G32_FLOAT, AlignedByteOffset = 0 };
