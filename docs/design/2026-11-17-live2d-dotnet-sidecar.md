@@ -2,7 +2,7 @@
 
 > 状态：T0–T5 已落地；T6 静态基准帧逐像素对照**沙箱 0.0065% / GPU 真机同卡 0.004%**
 > （RTX 2080 Ti：web ANGLE/NVIDIA GL vs dotnet NVIDIA D3D11，远低于 2% 阈值）；
-> 真机 selftest 302/0/2。动作/口型时序、多 DPI、内存/帧率/启动时延等
+> 真机 selftest 302/0/2（当时计数；审核修复后当前 309/0/2）。动作/口型时序、多 DPI、内存/帧率/启动时延等
 > 完整应用手动清单待后续。
 > 分支：`issue/257-live2d`。双轨开关：`LIVE2D_ENGINE=dotnet|web`（默认 `web`）。
 
@@ -144,6 +144,10 @@ E_BAD_ARGS / E_RENDER / E_WINDOW / E_INTERNAL`。
   固定步长 1/Fps + 剩余时间插值。
 - **expression-reset**：3min「表情回正」；expressions 持久（fade 1.0s）。
 - **idle-fps**：60 → 24@60s → 12@300s，5s 活动看门狗。
+- **真实时间计时器**：expression-reset / idle-fps 的时间基 = 宿主 Stopwatch
+  真实时间（`PetEngine.RealTimeMsProvider`），与 web 轨 setInterval /
+  performance.now() 对齐——暂停期（隐藏/拖拽）计时不冻结，恢复后首帧即按
+  真实经过时间回正/定档。其余行为时钟（_nowMs）暂停期冻结（dt 不累计）。
 - **interaction**：5px 阈值 touch×4；Cyrene 9 个命中区全为表情伪动作；
   重复设置同一表情返回 false。
 - **click-through**：alpha≥10 命中，50ms 光标轮询，幂等翻转 + interactive 事件。
@@ -162,8 +166,14 @@ Live2D Proprietary：开发免费；个人/小规模企业发布豁免 Publicati
   逐像素一致（5-r.5=Core 6.0.1 引入非刚性形变差，且 pld 不兼容 Core 6）。
 - 探测序（`CoreLibrary`）：env `CYRENE_CUBISM_CORE_DLL` → dataDir/live2d-core →
   模型目录(+core/) → exe 目录(+live2d-core/) → PATH。用户可自备 DLL。
-- load 时 Core 缺失且指定 dataDir → 自动下载后重试；否则 E_CORE_MISSING /
-  E_CORE_DOWNLOAD（Electron 回退 web 轨）。
+- **许可同意闸门**（审计 #1362 发现 2）：官方下载页要求先同意 Live2D
+  Proprietary License，程序化下载不能绕过同意动作。load 帧带可选
+  `coreDownloadConsent`：Core 缺失且未同意 → `E_CORE_CONSENT`（不下载）；
+  Electron 门面捕获后弹同意窗（window-manager `confirmCoreDownload`，含许可
+  链接），同意 → 带 `coreDownloadConsent=true` 重试 load 触发下载；拒绝/
+  下载失败 → 回退 web 轨。Core 落盘后后续加载不再弹窗（已安装即已同意）。
+- load 时 Core 缺失且指定 dataDir 且已同意 → 下载后重试；否则 E_CORE_MISSING /
+  E_CORE_CONSENT / E_CORE_DOWNLOAD（Electron 回退 web 轨）。
 
 ## 7. 构建与打包
 
@@ -182,7 +192,7 @@ pnpm run package:win:dir  # 已含 build:live2d
 
 ## 8. 测试矩阵
 
-- **C# 自测**：`cyrene-live2d.exe --selftest`（294 项；无 Core 174 项；
+- **C# 自测**：`cyrene-live2d.exe --selftest`（309 项；无 Core 176 项；
   GPU/桌面缺失优雅 SKIP）。`--core-smoke / --gpu-smoke / --render-test` 诊断模式。
 - **TS 单测**：契约扫描（live2d-contract.test.ts）、客户端（live2d-host-client.test.ts）、
   门面（pet-sidecar-backend.test.ts）、双轨接线（window-manager-sidecar.test.ts）、
@@ -200,9 +210,13 @@ pnpm run package:win:dir  # 已含 build:live2d
   全屏应用之上的行为略有差异）。
 - dotnet 轨无桌宠 BrowserWindow → `onPetWindowReady` 不触发，
   live2dWindowLifecycle 诊断为空（侧车诊断走 getDiagnostics op）。
-- mouth-sync 直读 CyreneVoice PCM（同域化）为后续优化项；当前沿用
-  主进程计算时长 + mouthStart 语义（与 web 轨一致）。
+- mouth-sync 直读 CyreneVoice PCM（同域化）为后续优化项，已单开 #265
+  （审计 #1362 发现 1）；当前沿用主进程计算时长 + mouthStart 语义（与 web 轨一致）。
 - 物理 stabilization 已实现未接线（web 轨未启用，保真优先）。
+- 辅助文件去留：`Rendering/Matrix2D.cs` 为纯矩阵逻辑自测基准（自测引用，
+  渲染热路径走 shader 矩阵，保留作回归基准）；`dotnet/live2d/probe/gpu-probe.cs`
+  为 T2 期一次性诊断脚本（vtable 槽位实证），不参与构建，保留作 interop
+  核对参考；两者均非生产路径。
 
 ## 10. T6 验收（沙箱 0.0065% / GPU 真机同卡 0.004%）
 
@@ -211,7 +225,8 @@ pnpm run package:win:dir  # 已含 build:live2d
 早期 `CreateInputLayout` 返回 E_INVALIDARG（HARDWARE/WARP 皆然）曾被误判为
 沙箱环境缺陷。GPU 真机探针复现同样错误后，对照 Wine `d3d11.idl` 与 pld
 `cubism4.es.js` 逐条排查，确认是三个代码 bug，修复后沙箱 WARP 渲染出完整角色
-（`--render-test` 43669 不透明像素，`--selftest` 302 PASS/0 FAIL/2 SKIP）：
+（`--render-test` 47770 不透明像素——最终对齐口径，角色初完整阶段为 43669；
+`--selftest` 309 PASS/0 FAIL/2 SKIP——当前计数，含审核修复新增断言）：
 
 1. **输入布局语义名**：HLSL `: TEXCOORD0` 编译后的输入签名是 `"TEXCOORD"` +
    索引 0；布局误写 `"TEXCOORD0"` 导致签名匹配失败 → E_INVALIDARG。
@@ -320,7 +335,8 @@ web 侧同卡强制：Chromium 的 `--gpu-vendor-id/--gpu-device-id` 在本 Elec
 | 跨设备 | Basic Render Driver | NVIDIA D3D11 | 0.008%（16px） |
 | 沙箱（前轮） | SwiftShader 软件 GL | WARP | 0.0065%（13px） |
 
-真机 selftest（NVIDIA）：PASS=302 FAIL=0 SKIP=2（SKIP 为 pose.fade/
+真机 selftest（NVIDIA）：PASS=302 FAIL=0 SKIP=2（当时计数；审核修复 +7 项
+断言后当前 309 项，见 §8）。SKIP 为 pose.fade/
 interaction.motionFire 条件项，与 GPU 无关）。差异像素均为 AA 边缘噪声。
 
 ### 当前状态
@@ -329,10 +345,10 @@ interaction.motionFire 条件项，与 GPU 无关）。差异像素均为 AA 边
 | --- | --- |
 | 工具链自验证（编解码往返/0%/1%/5%/容差/尺寸守卫） | ✅ 6/6（沙箱） |
 | 协议链路（load→setParam→tick×120→diagnostics→shutdown） | ✅ nowMs=2000 精确（沙箱） |
-| C# 自测矩阵（含 Core） | ✅ PASS=302 FAIL=0 SKIP=2（GPU 渲染项已跑通） |
-| T5 TS 单测（7 文件） | ✅ 61/61 |
+| C# 自测矩阵（含 Core） | ✅ PASS=309 FAIL=0 SKIP=2（最新，含审核修复断言；真机轮当时 302） |
+| T5 TS 单测（7 文件） | ✅ 55/55（运行时=顶层静态 it/test 55，无 it.each；含许可闸门 4 场景） |
 | dotnet 静态基准帧渲染（沙箱 WARP） | ✅ 角色完整，47770 不透明像素 |
 | dotnet 静态基准帧渲染（真机 NVIDIA） | ✅ adapter=RTX 2080 Ti，RENDER_TEST_OK |
 | 静态基准帧逐像素对照（diff_pct < 2%） | ✅ 沙箱 **0.0065%** / 真机同卡 **0.004%**（四口径全 pass，见上表） |
-| 真机 selftest（NVIDIA） | ✅ PASS=302 FAIL=0 SKIP=2 |
+| 真机 selftest（NVIDIA） | ✅ PASS=302 FAIL=0 SKIP=2（当时计数，当前 309 项） |
 | 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（完整应用手动清单） |

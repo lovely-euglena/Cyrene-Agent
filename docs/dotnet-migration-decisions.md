@@ -998,3 +998,32 @@
   `dotnet-tools-matrix.py` **152/152**；`dual-track-diff.ts` **PASS**（download 段 12 例，
   含 `images/..` 与 `/etc/x.png` 拒绝）；「修复前失败」回退验证：stale lamport 落盘 /
   unpair 立即中止两用例在还原修复后各自失败。
+
+## 2026-11-18 增量：Live2D 桌宠渲染 .NET sidecar 双轨增量（#257）——取舍与回退
+
+- **背景**：桌宠 Live2D 渲染/行为原在 Electron renderer（pixi.js + pixi-live2d-display）。
+  #257 将其迁到独立 .NET 10 sidecar `cyrene-live2d`（与七 host 架构并轨），T0–T6 落地，
+  PR #262。设计稿：`docs/design/2026-11-17-live2d-dotnet-sidecar.md`。
+- **路线取舍（路线 A 纯托管）**：Cubism Core P/Invoke + 手写 D3D11 COM vtable interop +
+  JSON 自解析，零 NuGet、零 C++ 编译链——部署纯净（任务书硬约束），代价是 interop
+  面积大（vtable 槽位经 Wine idl 核对 + 沙箱/真机双探针实证）。
+- **双轨增量不是替代（铁律）**：`LIVE2D_ENGINE=dotnet|web`（默认 `web`，唯一解析入口
+  `src/main/dotnet-backend/config.ts`）。web 轨代码路径零改动；exe 缺失/Core 不可用/
+  模型加载失败 → 一次性回退 web 轨，不留孤儿进程。回退即回滚方案，无需数据迁移。
+- **Core 版本 pin 5-r.4 = Core 5.1.0**：与 web 轨内置 JS Core 同版本，保证两轨顶点
+  求值逐像素一致（T6 对照沙箱 0.0065% / 真机同卡 0.004%，阈值 2%）。5-r.5=Core 6.0.1
+  引入非刚性形变差且 pld 不兼容 Core 6——升级须两轨同步并重新验收。
+- **License 合规**：Live2D Proprietary——Core/Framework 二进制不随仓再分发；运行时
+  官方源下载（SHA256 pin + .part 续传 + 原子改名）或用户自备（探测序：env → dataDir →
+  模型目录 → exe 目录 → PATH）。**许可同意闸门**：官方下载页要求先同意许可，
+  程序化下载不绕过同意动作——Core 缺失时侧车回 E_CORE_CONSENT，Electron 弹
+  同意窗（含许可链接），同意后带 coreDownloadConsent=true 重试才下载；拒绝回退
+  web 轨；Core 落盘后不再弹窗（审计 #1362 发现 2 闭环）。
+- **行为保真（不重调参）**：逐式移植 web 轨/pld 帧序与怪癖（focus atan2 单位圆、
+  物理 6 怪癖、口型 τ70ms、秋千 350ms 恢复、表情回正 3min、空闲帧率 60→24→12）；
+  表情回正/空闲分档两计时器用宿主真实时间（对齐 web setInterval，暂停期不冻结）。
+- **真机盲区修复**：多适配器机器（云桌面/无头独显）DXGI 默认适配器可能是软件
+  （Microsoft Basic Render Driver）——显式枚举选专用显存适配器，保留原回退链。
+- **验证**：C# selftest 309/0/2（无 Core 176 项）；TS live2d 55/55 + 接线 9/9 + 开关 5/5
+  （合计 9 文件 69/69）；
+  打包链 publish live2d + verify:installer 断言随包 exe；dotnet-backend CI 补编译覆盖。

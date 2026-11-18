@@ -61,7 +61,7 @@
 > 2026-10-02 批次（本地音乐播放器 / OCR / shell 命令守卫 / token 统计 / Pandoc / 聊天导出 / 云存储）・2026-10-03 模型一键下载窗・密钥迁移 .NET（Phase 1 已实施 + llm-host H0–H4 MVP，issue/IKJM7D）・云端昔涟 RFC（架构章节先行）・LLM 服务化（.NET 作业 + 轮询）・写类工具 evidence 帧协议 v1（fs 三件接线落地）・2026-10-04 手机 PWA（查看 / 续聊 / 离线只读）・2026-10-05 RAG 第二引擎（Multilingual-E5-Small 向量 + bge-reranker-v2-m3 重排）・2026-10-05 定时任务常驻化（调度下沉 .NET tray）・服务端渠道 24/7（Phase 2 渠道批：微信 iLink 试点 / 归属权唯一调度 / 飞书 / QQ，冻结设计）・2026-10-06 记忆与心情事件化（同步协议 v0.1：+`memory.write` / `mood.shift`，IKJK2O）・2026-10-06 桌面端云接线（CTA 导出器 / 存量迁移 / 旁路事件库 / 同步客户端 / 合并读模型，IKJK2I）。
 
 <details>
-<summary>全部 62 篇 + 2 个子目录（按时间序）</summary>
+<summary>全部 68 篇 + 2 个子目录（按时间序）</summary>
 
 - [2026-08-08-cyreneHarnessloopdesign.md](./design/2026-08-08-cyreneHarnessloopdesign.md)
 - [2026-08-09-cyreneHarness-construction-plan.md](./design/2026-08-09-cyreneHarness-construction-plan.md)
@@ -101,17 +101,22 @@
 - [2026-09-26-agent-orchestration-plan-b.md](./design/2026-09-26-agent-orchestration-plan-b.md)
 - [2026-09-26-rag-backend-dotnet-migration.md](./design/2026-09-26-rag-backend-dotnet-migration.md)
 - [2026-09-26-vectorstore-sqlite-evaluation.md](./design/2026-09-26-vectorstore-sqlite-evaluation.md)
+- [2026-10-01-browser-control-design.md](./design/2026-10-01-browser-control-design.md)
 - [2026-10-02-chat-export-embed-design.md](./design/2026-10-02-chat-export-embed-design.md)
 - [2026-10-02-cloud-storage-tool-design.md](./design/2026-10-02-cloud-storage-tool-design.md)
+- [2026-10-02-global-wiki-memory-design.md](./design/2026-10-02-global-wiki-memory-design.md)
 - [2026-10-02-local-music-player-design.md](./design/2026-10-02-local-music-player-design.md)
 - [2026-10-02-ocr-local-and-cloud-reserved.md](./design/2026-10-02-ocr-local-and-cloud-reserved.md)
 - [2026-10-02-pandoc-document-integration-plan.md](./design/2026-10-02-pandoc-document-integration-plan.md)
 - [2026-10-02-shell-command-guard.md](./design/2026-10-02-shell-command-guard.md)
+- [2026-10-02-summary-memory-mode-plan.md](./design/2026-10-02-summary-memory-mode-plan.md)
 - [2026-10-02-token-stats-integration.md](./design/2026-10-02-token-stats-integration.md)
 - [2026-10-03-model-download-window.md](./design/2026-10-03-model-download-window.md)
 - [2026-10-03-secrets-migration-to-dotnet.md](./design/2026-10-03-secrets-migration-to-dotnet.md)
 - [2026-10-03-cloud-cyrene-rfc.md](./design/2026-10-03-cloud-cyrene-rfc.md)
+- [2026-10-03-git-tools-dotnet-migration.md](./design/2026-10-03-git-tools-dotnet-migration.md)
 - [2026-10-03-llm-service-dotnet-job-polling.md](./design/2026-10-03-llm-service-dotnet-job-polling.md)
+- [2026-10-03-local-knowledge-base-design.md](./design/2026-10-03-local-knowledge-base-design.md)
 - [2026-10-03-tool-evidence-frame-protocol.md](./design/2026-10-03-tool-evidence-frame-protocol.md)
 - [2026-10-04-pwa-mobile-client-design.md](./design/2026-10-04-pwa-mobile-client-design.md)
 - [2026-10-04-cloud-server-forms.md](./design/2026-10-04-cloud-server-forms.md)
@@ -120,6 +125,7 @@
 - [2026-10-05-server-channel.md](./design/2026-10-05-server-channel.md)
 - [2026-10-06-memory-mood-events.md](./design/2026-10-06-memory-mood-events.md)
 - [2026-10-06-desktop-cloud-wiring.md](./design/2026-10-06-desktop-cloud-wiring.md)
+- [2026-11-17-live2d-dotnet-sidecar.md](./design/2026-11-17-live2d-dotnet-sidecar.md) — 桌宠 Live2D .NET sidecar 化（#257，双轨增量；T6 像素对照沙箱 0.0065% / 真机同卡 0.004%）
 - [gamebot-Honkai-Star-Rail.md](./design/gamebot-Honkai-Star-Rail.md)
 - [plugin-marketplace.md](./design/plugin-marketplace.md)
 - [react-frontend-visual-guidelines.md](./design/react-frontend-visual-guidelines.md)
