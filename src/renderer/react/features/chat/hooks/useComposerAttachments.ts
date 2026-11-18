@@ -168,6 +168,10 @@ export function useComposerAttachments(input: {
           ...current,
           [targetScope]: [...(current[targetScope] ?? []), ...attachments],
         }));
+      } else {
+        // !136 审查 P0 配套：主进程未识别到文件（异常/格式不支持）时给反馈，
+        // 不静默丢弃（preventDefault 已拦截默认粘贴行为）。
+        feedback.notice({ tone: "info", message: t("chatPage.pasteNoFiles") });
       }
     } catch (error) {
       feedback.notice({ tone: "error", message: t("chatPage.ingestFilesFailed", { error: error instanceof Error ? error.message : String(error) }) });

@@ -106,6 +106,7 @@
     "setWorkspaceFailedTitle": "设置工作区失败",
     "setWorkspaceFailed": "设置工作区失败：{{error}}",
     "ingestFilesFailed": "文件摄入失败：{{error}}",
+    "pasteNoFiles": "剪贴板中没有可识别的文件",
     "dropNoFiles": "没有识别到可添加的文件。",
     "pastedImageTooLargeSkipped": "粘贴的图片超过 20MB，已跳过。",
     "pastedImageTooLarge": "粘贴的图片超过 20MB。",

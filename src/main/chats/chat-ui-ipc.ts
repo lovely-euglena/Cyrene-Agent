@@ -185,24 +185,28 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     const attachments: ReturnType<typeof describePendingAttachment>[] = [];
     const seenPaths = new Set<string>();
     try {
-      for (const item of await clipboard.read()) {
-        if (!item.types.includes("text/uri-list")) continue;
-        const uriList = await (await item.getType("text/uri-list")).text();
-        for (const line of uriList.split(/\r?\n/)) {
-          const value = line.trim();
-          if (!value || value.startsWith("#")) continue;
-          try {
-            const url = new URL(value);
-            if (url.protocol !== "file:") continue;
-            const filePath = fileURLToPath(url);
-            if (seenPaths.has(filePath)) continue;
-            const fileStat = await stat(filePath);
-            if (!fileStat.isFile()) continue;
-            seenPaths.add(filePath);
-            attachments.push(describePendingAttachment(filePath));
-          } catch {
-            // 忽略无效 URI、已删除文件和目录。
-          }
+      // Electron 43 兼容（!136 审查 P0）：无参 clipboard.read(): ClipboardItem[] 是 Electron 44
+      // 才有的 API——本仓依赖 ^43（d.ts 仅 read(format: string): string），运行时同样拿不到
+      // ClipboardItem。文件粘贴的 uri-list 场景（渲染层已按 types 守卫 preventDefault）改用
+      // availableFormats() 探测 + read(format) 单格式读取。Windows 的 CF_HDROP 场景不走此
+      // handler（渲染层 web File 对象直取，见 ChatComposer paste 分支）。
+      const formats = clipboard.availableFormats();
+      if (!formats.includes("text/uri-list")) return attachments;
+      const uriList = clipboard.read("text/uri-list");
+      for (const line of uriList.split(/\r?\n/)) {
+        const value = line.trim();
+        if (!value || value.startsWith("#")) continue;
+        try {
+          const url = new URL(value);
+          if (url.protocol !== "file:") continue;
+          const filePath = fileURLToPath(url);
+          if (seenPaths.has(filePath)) continue;
+          const fileStat = await stat(filePath);
+          if (!fileStat.isFile()) continue;
+          seenPaths.add(filePath);
+          attachments.push(describePendingAttachment(filePath));
+        } catch {
+          // 忽略无效 URI、已删除文件和目录。
         }
       }
     } catch (err: any) {

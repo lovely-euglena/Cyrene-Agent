@@ -122,6 +122,7 @@
     "setWorkspaceFailedTitle": "ワークスペースの設定に失敗しました",
     "setWorkspaceFailed": "ワークスペースの設定に失敗しました：{{error}}",
     "ingestFilesFailed": "ファイルの取り込みに失敗しました：{{error}}",
+    "pasteNoFiles": "クリップボードに認識可能なファイルがありません",
     "dropNoFiles": "追加できるファイルを認識できませんでした。",
     "pastedImageTooLargeSkipped": "貼り付けた画像が 20MB を超えているため、スキップしました。",
     "pastedImageTooLarge": "貼り付けた画像が 20MB を超えています。",

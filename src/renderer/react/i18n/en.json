@@ -106,6 +106,7 @@
     "setWorkspaceFailedTitle": "Failed to set workspace",
     "setWorkspaceFailed": "Failed to set workspace: {{error}}",
     "ingestFilesFailed": "Failed to ingest files: {{error}}",
+    "pasteNoFiles": "No recognizable files in the clipboard",
     "dropNoFiles": "No files were recognized to attach.",
     "pastedImageTooLargeSkipped": "The pasted image is over 20MB, so it was skipped.",
     "pastedImageTooLarge": "The pasted image is over 20MB.",
