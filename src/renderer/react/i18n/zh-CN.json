@@ -349,6 +349,9 @@
     "toggle": "展开/收起右侧面板"
   },
   "browserPanel": {
+      "detach": "弹出为独立窗口",
+      "reattach": "收回主窗口",
+      "detachedHint": "浏览器已弹出为独立窗口——在独立窗口中操作；点击工具栏「收回主窗口」返回。",
     "title": "浏览器",
     "open": "打开浏览器",
     "newTab": "新标签页",

@@ -349,6 +349,9 @@
     "toggle": "Toggle right panel"
   },
   "browserPanel": {
+      "detach": "Pop out to window",
+      "reattach": "Return to panel",
+      "detachedHint": "Browser is in a separate window — interact there, or use the toolbar to return to the panel.",
     "title": "Browser",
     "open": "Open browser",
     "newTab": "New tab",

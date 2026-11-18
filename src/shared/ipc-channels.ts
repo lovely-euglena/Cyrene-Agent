@@ -73,6 +73,8 @@ export const IPC = {
   BROWSER_PANEL_RELOAD: "browser-panel:reload",
   BROWSER_PANEL_STOP: "browser-panel:stop",
   BROWSER_PANEL_CLEAR_COOKIES: "browser-panel:clear-cookies",
+  BROWSER_PANEL_DETACH: "browser-panel:detach",
+  BROWSER_PANEL_REATTACH: "browser-panel:reattach",
   BROWSER_PANEL_NEW_TAB: "browser-panel:new-tab",
   BROWSER_PANEL_OPEN_IN_NEW_TAB: "browser-panel:open-in-new-tab",
   BROWSER_PANEL_OPEN_EXAM: "browser-panel:open-exam",

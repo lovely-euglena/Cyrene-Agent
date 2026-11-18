@@ -219,3 +219,15 @@
   font-size: 12px;
 }
 .cy-browser-panel__error button { display: inline-flex; border: 0; background: none; color: inherit; cursor: pointer; }
+
+/* issue #146：detach 独立窗口后的面板占位提示 */
+.cy-browser-panel__detached-hint {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--rb-text-secondary, #8a8287);
+  font: 500 13px/1.6 var(--rb-font-sans, sans-serif);
+  text-align: center;
+  padding: 20px;
+}

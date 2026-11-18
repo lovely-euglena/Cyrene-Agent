@@ -198,6 +198,9 @@ interface BrowserPanelApi {
   reload: () => Promise<boolean>;
   stop: () => Promise<boolean>;
   clearCookies: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  /** issue #146：独立窗口形态切换 */
+  detach: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
+  reattach: () => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
   newTab: () => Promise<boolean>;
   openInNewTab: (url: string) => Promise<import("../shared/browser-panel-types").BrowserPanelResult>;
   openExam: (examId: string, conversationId: string) => Promise<boolean>;
