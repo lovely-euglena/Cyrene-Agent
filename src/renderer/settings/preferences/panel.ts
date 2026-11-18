@@ -4,6 +4,8 @@
 
 import { setPreferencesSaveStatus } from "../shared/save-status";
 import { screenshotHotkeyInput, screenshotBackendSelect, snipastePathInput, snipastePathRow } from "../appearance/dom";
+import { snipastePathBrowseBtn } from "../appearance/dom";
+import { normalizePathDisplay } from "../shared/format";
 import { preferencesState } from "./state";
 import { stickerAddError, stickerAddConfirm, stickerAddCancel, stickerAddPickBtn, stickerAddFileName, stickerAddId, stickerAddDesc, stickerAddPhrases, stickerAddOverlay } from "./dom";
 import { addStickerBtn, openStickerManagerBtn } from "../shared/shell";
@@ -177,4 +179,27 @@ stickerAddConfirm.addEventListener("click", async () => {
     stickerAddError.textContent = "添加失败：" + (err as Error).message;
     stickerAddError.classList.remove("is-hidden");
   }
+});
+// ── #125：Snipaste 路径"浏览…"（通用路径浏览对话框，文件型，exe 过滤）──
+snipastePathBrowseBtn?.addEventListener("click", async () => {
+  try {
+    const picked = await window.settings?.browsePath?.({
+      kind: "file",
+      title: "选择 Snipaste.exe",
+      filters: [{ name: "Snipaste.exe", extensions: ["exe"] }],
+      defaultPath: snipastePathInput?.value.trim() || undefined,
+    });
+    if (picked) snipastePathInput!.value = normalizePathDisplay(picked);
+  } catch {
+    // 对话框失败静默——保留手填能力（与热键捕获同策略）
+  }
+});
+
+// ── #202：路径输入框统一显示归一化（paste/blur 双触发，清除 \\ 转义残留与分隔符混排）──
+// 存储真值由主进程 path.normalize 负责，这里只保证用户看到/提交的是同一可读字符串。
+document.addEventListener("change", (event) => {
+  const target = event.target as HTMLInputElement | null;
+  if (!target || !target.classList.contains("path-input")) return;
+  const normalized = normalizePathDisplay(target.value);
+  if (normalized !== target.value) target.value = normalized;
 });

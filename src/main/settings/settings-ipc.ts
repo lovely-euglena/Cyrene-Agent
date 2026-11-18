@@ -207,6 +207,30 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   ipc.handle(IPC.UI_FONT_GET, () => getGeneralSettings().uiFont);
 
+  // #125：通用路径浏览——目录（openDirectory+createDirectory）或文件（filters 可选）。
+  // 渲染端各路径填写框的"浏览…"统一走这里；取消返回 null。
+  ipc.handle(IPC.SETTINGS_PATH_BROWSE, async (event, payload: unknown) => {
+    const raw = (payload ?? {}) as { kind?: unknown; title?: unknown; filters?: unknown; defaultPath?: unknown };
+    const kind = raw.kind === "directory" ? "directory" : "file";
+    const options: Electron.OpenDialogOptions = kind === "directory"
+      ? { properties: ["openDirectory", "createDirectory"] }
+      : { properties: ["openFile"] };
+    if (typeof raw.title === "string" && raw.title.trim()) options.title = raw.title.trim();
+    if (Array.isArray(raw.filters)) {
+      const filters = (raw.filters as unknown[]).filter((f): f is { name: string; extensions: string[] } =>
+        typeof f === "object" && f !== null
+          && typeof (f as { name?: unknown }).name === "string"
+          && Array.isArray((f as { extensions?: unknown }).extensions)
+          && (f as { extensions: unknown[] }).extensions.every((e) => typeof e === "string"),
+      );
+      if (filters.length > 0) options.filters = filters;
+    }
+    if (typeof raw.defaultPath === "string" && raw.defaultPath.trim()) options.defaultPath = raw.defaultPath.trim();
+    const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+
   ipc.handle(IPC.SETTINGS_PICK_UI_FONT, async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openFile"],

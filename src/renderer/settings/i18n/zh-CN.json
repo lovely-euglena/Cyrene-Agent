@@ -240,7 +240,8 @@
           },
           "path": {
             "title": "Snipaste 路径",
-            "desc": "留空自动检测；也可填写 Snipaste.exe 的完整路径。"
+            "desc": "留空自动检测；也可填写 Snipaste.exe 的完整路径。",
+            "browse": "浏览…"
           }
         },
         "saveStatus": "等待保存",

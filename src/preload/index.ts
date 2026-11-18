@@ -450,6 +450,9 @@ const settingsApi = {
   copyGlobalGitConfig: () => ipcRenderer.invoke(IPC.SETTINGS_GIT_CONFIG_COPY_GLOBAL),
   // 便携模式：数据目录状态 / 选择目录 / 应用变更（主进程弹迁移确认后重启）
   getPortableStatus: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_GET),
+  // #125：通用路径浏览（目录/文件），返回绝对路径或 null（取消）
+  browsePath: (options: { kind: "directory" | "file"; title?: string; filters?: Array<{ name: string; extensions: string[] }>; defaultPath?: string }) =>
+    ipcRenderer.invoke(IPC.SETTINGS_PATH_BROWSE, options) as Promise<string | null>,
   pickPortableDir: () => ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_PICK_DIR) as Promise<string | null>,
   applyPortableMode: (payload: { enabled: boolean; dir: string }) =>
     ipcRenderer.invoke(IPC.SETTINGS_PORTABLE_APPLY, payload),

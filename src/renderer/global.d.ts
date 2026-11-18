@@ -100,6 +100,8 @@ interface SettingsWindowApi {
   // 便携模式 / 缓存目录（通用设置「数据与存储」）
   getPortableStatus?: () => Promise<import("../shared/portable-mode").PortableDataLocationStatus>;
   pickPortableDir?: () => Promise<string | null>;
+  // #125：通用路径浏览对话框（目录/文件），取消返回 null
+  browsePath?: (options: { kind: "directory" | "file"; title?: string; filters?: Array<{ name: string; extensions: string[] }>; defaultPath?: string }) => Promise<string | null>;
   applyPortableMode?: (payload: { enabled: boolean; dir: string }) =>
     Promise<import("../shared/portable-mode").PortableApplyResult>;
   getCacheDirStatus?: () => Promise<{ effectiveDir: string; override: string | null; portableActive: boolean }>;

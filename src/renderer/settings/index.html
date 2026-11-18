@@ -475,7 +475,10 @@
                 <strong><span data-i18n="panel.preferences.screenshot.path.title">Snipaste 路径</span></strong>
                 <span><span data-i18n="panel.preferences.screenshot.path.desc">留空自动检测；也可填写 Snipaste.exe 的完整路径。</span></span>
               </div>
-              <input type="text" id="snipaste-path-input" class="path-input" placeholder="自动检测（如 C:\Program Files\Snipaste\Snipaste.exe）" />
+              <div class="settings-actions-inline">
+                <input type="text" id="snipaste-path-input" class="path-input" placeholder="自动检测（如 C:\Program Files\Snipaste\Snipaste.exe）" />
+                <button type="button" class="ghost-btn" id="snipaste-path-browse"><span data-i18n="panel.preferences.screenshot.path.browse">浏览…</span></button>
+              </div>
             </div>
             <!-- TODO: 截图功能重构中，暂时禁用 -->
             <!-- <div class="setting-row">
