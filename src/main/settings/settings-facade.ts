@@ -67,6 +67,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   chatParaSpacing: 0.5,
   petAlwaysOnTop: true,
   petVisible: true,
+  conversationSortMode: "last-opened",
   petZoom: 1,
   toastSoundEnabled: true,
   launchAtLogin: false,
@@ -294,6 +295,10 @@ export function normalizeGeneralSettings(
     petVisible: input?.petVisible === undefined
       ? DEFAULT_GENERAL_SETTINGS.petVisible
       : Boolean(input.petVisible),
+    // 对话列表排序口径（#194）：非法值回落「打开就算」
+    conversationSortMode: input?.conversationSortMode === "last-message"
+      ? "last-message"
+      : "last-opened",
     petZoom: typeof input?.petZoom === "number"
       ? Math.max(0.5, Math.min(2, input.petZoom))
       : DEFAULT_GENERAL_SETTINGS.petZoom,

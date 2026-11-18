@@ -100,6 +100,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   petAlwaysOnTop: boolean;
   rememberWindowState: boolean;
   petVisible: boolean;
+  /** 对话列表排序口径（#194）。 */
+  conversationSortMode: "last-opened" | "last-message";
   petZoom: number;
   disableGpuElectron?: boolean;
   sidebarVisible: boolean;

@@ -31,3 +31,4 @@ export const sidebarVisibleInput = document.getElementById("sidebar-visible") as
 export const tasksVisibleInput = document.getElementById("tasks-visible") as HTMLInputElement;
 export const rememberWindowStateInput = document.getElementById("remember-window-state") as HTMLInputElement;
 export const toastSoundEnabledInput = document.getElementById("toast-sound-enabled") as HTMLInputElement;
+export const conversationSortModeSelect = document.getElementById("conversation-sort-mode") as HTMLSelectElement;

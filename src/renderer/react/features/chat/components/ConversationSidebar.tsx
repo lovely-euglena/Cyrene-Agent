@@ -9,6 +9,8 @@ import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, 
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "../../../i18n";
+import { conversationSortTimeKey, normalizeConversationSortMode, type ConversationSortMode } from "../../../../../shared/chat-ui";
+import { chatStore } from "../pages/chat-page-bridge";
 import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 import { SettingsSegmented } from "../../../components/ui/SettingsControls";
 import { reportChatPerfRender } from "./chat-perf-probe";
@@ -476,14 +478,25 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     input.select();
   }, [editing]);
 
+  // #194：排序口径（默认「打开就算」）。初始读设置 + 订阅变化即时重排。
+  const [sortMode, setSortMode] = useState<ConversationSortMode>("last-opened");
+  useEffect(() => {
+    let alive = true;
+    void window.settings?.getGeneral?.().then((cfg) => {
+      if (alive && cfg) setSortMode(normalizeConversationSortMode((cfg as { conversationSortMode?: unknown }).conversationSortMode));
+    }).catch(() => {});
+    const off = chatStore()?.onConversationSortModeChanged?.((mode) => setSortMode(normalizeConversationSortMode(mode)));
+    return () => { alive = false; off?.(); };
+  }, []);
+
   const sortedSessions = useMemo(
     () =>
       [...sessions].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
-        return b.updatedAt - a.updatedAt;
+        return conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode);
       }),
-    [sessions],
+    [sessions, sortMode],
   );
 
   const [sidebarView, setSidebarView] = useState<"projects" | "groups">(() => {
@@ -526,14 +539,14 @@ export const ConversationSidebar = memo(function ConversationSidebar({
         title: sidebarSessions.find((session) => session.workspaceRoot && session.workspaceRoot.replace(/[\\/]+$/, "").toLocaleLowerCase("en-US") === rootKey)?.workspaceDisplayName
           ?? project.workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1)
           ?? project.workspaceRoot,
-        sessions: (sessionsByRoot.get(rootKey) ?? []).sort((a, b) => b.updatedAt - a.updatedAt),
+        sessions: (sessionsByRoot.get(rootKey) ?? []).sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode)),
       };
     });
     const unbound = sidebarSessions.filter((session) => !session.workspaceRoot && !session.pinned)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode));
     if (unbound.length) result.push({ id: "__unbound__", root: "", title: t("sidebar.unboundProject"), sessions: unbound });
     return result;
-  }, [organization, sidebarSessions, t]);
+  }, [organization, sidebarSessions, t, sortMode]);
   const projectIds = useMemo(() => projectRows.map((project) => project.id), [projectRows]);
   const collapsibleProjectIds = useMemo(() => projectIds.filter((id) => id !== "__unbound__"), [projectIds]);
   const projectCategoryRows = useMemo(() => {
@@ -972,7 +985,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     );
   }
 
-  const pinnedSidebarSessions = sidebarSessions.filter((session) => session.pinned).sort((a, b) => b.updatedAt - a.updatedAt);
+  const pinnedSidebarSessions = sidebarSessions.filter((session) => session.pinned).sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode));
 
   useEffect(() => {
     if (!contextMenu.open) return;

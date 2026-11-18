@@ -73,6 +73,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   chatParaSpacing: number;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
+  /** 对话列表排序口径（#194）：last-opened=打开会话即算（默认）；last-message=发消息才算（旧行为）。 */
+  conversationSortMode: "last-opened" | "last-message";
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */
   petZoom: number;
   /** 桌宠窗口 X 坐标，未保存时为 undefined */

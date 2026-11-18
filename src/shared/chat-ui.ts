@@ -4,6 +4,25 @@
 // 因为两个入口的 DOM 结构和交互不同（settings=跨窗口 openInReactChatWindow，
 // chat=本地 loadSessionIntoUI），各自 build，但时间格式化/类型/默认标签统一。
 
+/** 对话列表排序口径（#194）：last-opened=打开会话即算（默认）；last-message=发消息才算（旧行为）。 */
+export type ConversationSortMode = "last-opened" | "last-message";
+
+/**
+ * #194：排序时间键。last-opened 口径回落 updatedAt（旧会话/从未记录打开时间）；
+ * last-message 口径直接用 updatedAt（旧行为，仅消息写入刷新）。
+ */
+export function conversationSortTimeKey(
+  meta: { lastOpenedAt?: number; updatedAt: number },
+  mode: ConversationSortMode,
+): number {
+  return mode === "last-opened" ? (meta.lastOpenedAt ?? meta.updatedAt) : meta.updatedAt;
+}
+
+/** #194：非法口径回落「打开就算」。 */
+export function normalizeConversationSortMode(value: unknown): ConversationSortMode {
+  return value === "last-message" ? "last-message" : "last-opened";
+}
+
 export interface ChatSessionMetaUI {
   id: string;
   title: string;

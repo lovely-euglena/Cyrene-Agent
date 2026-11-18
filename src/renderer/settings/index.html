@@ -632,6 +632,17 @@
 
             <label class="setting-row">
               <div>
+                <strong><span data-i18n="panel.general.conversationSort.title">对话列表排序</span></strong>
+                <span><span data-i18n="panel.general.conversationSort.desc">「按最后使用」= 切换到会话即算；「按最近消息」= 有新消息才置顶。</span></span>
+              </div>
+              <select id="conversation-sort-mode" class="settings-select">
+                <option value="last-opened"><span data-i18n="panel.general.conversationSort.lastOpened">按最后使用</span></option>
+                <option value="last-message"><span data-i18n="panel.general.conversationSort.lastMessage">按最近消息</span></option>
+              </select>
+            </label>
+
+            <label class="setting-row">
+              <div>
                 <strong><span data-i18n="panel.general.launchAtLogin.title">开机自启</span></strong>
                 <span><span data-i18n="panel.general.launchAtLogin.desc">系统启动时自动打开昔涟。</span></span>
               </div>
