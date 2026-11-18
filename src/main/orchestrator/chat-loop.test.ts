@@ -900,3 +900,88 @@ describe("ChatLoop transcript cross-loop continuity", () => {
     }
   });
 });
+
+// ── !133 审查 P1-1：response 返回后的取消检查分支（移植上游 aca21531） ──
+describe("ChatLoop cancel-after-response defence (!133)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function minimalOptions(controller: AbortController, sink: TranscriptSink): ChatLoopOptions {
+    return {
+      systemPrompt: "test",
+      messages: [{ role: "user", content: "你好" }],
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter: new FakeAdapter(),
+      vendorConfig: {
+        provider: "test",
+        baseUrl: "https://test",
+        model: "m",
+        apiKey: "k",
+      } as unknown as ChatLoopOptions["vendorConfig"],
+      transcriptSink: sink,
+      signal: controller.signal,
+      // 显式注入 fake：wrapper 默认 testSdkStream 不走 vendors mock，abort 无法生效
+      streamChat: fakeStreamChatWithSdk as unknown as ChatLoopOptions["streamChat"],
+    };
+  }
+
+  it("streamChat 返回前 abort → 终局防线抛 E_SOUL_ONLY_CANCELLED 且不提交 assistant 历史", async () => {
+    // 清掉 skip 用例 beforeEach 遗留的 mockImplementationOnce 队列（-t 过滤时 pollution）
+    fakeStreamChatWithSdk.mockReset();
+    const controller = new AbortController();
+    const sink = fakeSink();
+    fakeStreamChatWithSdk.mockImplementationOnce(async () => {
+      // 模拟「模型已成功返回，但落盘前的耗时窗口里用户取消」
+      controller.abort();
+      return {
+        assistantMessage: { role: "assistant", content: "不应被提交" },
+        text: "不应被提交",
+        toolCalls: [],
+        finishReason: "stop",
+        raw: {},
+      };
+    });
+
+    await expect(runChatLoop(minimalOptions(controller, sink))).rejects.toThrow(
+      "E_SOUL_ONLY_CANCELLED",
+    );
+    expect(sink.appendAssistant).not.toHaveBeenCalled();
+  });
+
+  it("harness 路径：response 返回后 abort → cancelledResult 终态且不写回 transcript", async () => {
+    fakeStreamChatWithSdk.mockReset();
+    const controller = new AbortController();
+    fakeStreamChatWithSdk.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        assistantMessage: { role: "assistant", content: "不应被提交" },
+        text: "不应被提交",
+        toolCalls: [],
+        finishReason: "stop",
+        raw: {},
+      };
+    });
+    const sink = fakeSink();
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "查天气" }],
+      tools: [],
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      vendorConfig: {
+        provider: "test",
+        baseUrl: "https://test",
+        model: "m",
+        apiKey: "k",
+      } as unknown as Parameters<typeof runCyreneHarness>[0]["vendorConfig"],
+      transcriptSink: sink,
+      signal: controller.signal,
+    });
+    // 终态为 cancelled：finalAnswer 保持为空、terminal=user_cancelled，assistant 不入权威轨迹
+    expect(result.finalAnswer).toBe("");
+    expect(result.terminated).toBe(true);
+    expect(result.terminateReason).toBe("cancelled");
+    expect(result.terminal).toEqual(expect.objectContaining({ status: "cancelled", reason: "user_cancelled" }));
+    expect(sink.appendAssistant).not.toHaveBeenCalled();
+  });
+});

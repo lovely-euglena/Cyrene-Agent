@@ -169,7 +169,9 @@ describe("chats store", () => {
     listed = store.listSessions().find((item) => item.id === session.id);
     expect(listed).toEqual(expect.objectContaining({ messageCount: 2 }));
 
-    // 重复同步无害：计数不回退，时间戳单调不减（两次调用间 Date.now 前进属正常）
+    // 重复同步无害：计数不回退，时间戳单调不减
+    // （!133 修：同毫秒+同计数时实现按"无变化"返回 false——先让时钟前进再断言）
+    await new Promise((resolve) => setTimeout(resolve, 2));
     expect(store.syncSessionStats(session.id, 2)).toBe(true);
     disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
     expect(disk.messageCount).toBe(2);
@@ -839,3 +841,62 @@ describe("chats store", () => {
     expect(store.getSessionRecord(second.id)).toMatchObject({ modelProfileId: "p-c", model: "c1" });
   });
 });
+
+  // !133 审查 P1-1 反例：后续认领不得覆盖已生成/自定义标题（移植上游 a65f272f）
+  it("v1 标题首条判定：已生成标题与 titleIsCustom 均不被后续认领覆盖", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "新任务" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+
+    // 第一笔认领：标题 = 首条用户消息
+    store.enqueuePendingMessage(session.id, {
+      id: "first",
+      rawContent: "第一笔",
+      visibleContent: "第一笔",
+    });
+    expect(store.claimPendingMessage(session.id)).toEqual(
+      expect.objectContaining({ ok: true, claimed: true }),
+    );
+    // 派发完成：清占位，否则后续 claim 报 already-dispatching
+    expect(store.completePendingDispatch(session.id, "first")).toEqual(
+      expect.objectContaining({ ok: true, cleared: true }),
+    );
+    expect(store.setGeneratedTitle(session.id, "first", "第一笔的生成标题")).toBe(true);
+    expect((JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>).title).toBe(
+      "第一笔的生成标题",
+    );
+
+    // 第二笔认领：不得覆盖已生成标题（v1 首条判定——已有 user 消息 → userMessageIsFirst=false）
+    store.enqueuePendingMessage(session.id, {
+      id: "second",
+      rawContent: "第二笔",
+      visibleContent: "第二笔",
+    });
+    expect(store.claimPendingMessage(session.id)).toEqual(
+      expect.objectContaining({ ok: true, claimed: true }),
+    );
+    expect(store.completePendingDispatch(session.id, "second")).toEqual(
+      expect.objectContaining({ ok: true, cleared: true }),
+    );
+    let disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    expect(disk.title).toBe("第一笔的生成标题");
+    expect(disk.titleIsCustom).toBeFalsy();
+
+    // 手动改名（titleIsCustom=true）后：新认领恒跳过标题初始化
+    expect(store.renameSession(session.id, "手动改名")).not.toBeNull();
+    store.enqueuePendingMessage(session.id, {
+      id: "third",
+      rawContent: "第三笔",
+      visibleContent: "第三笔",
+    });
+    expect(store.claimPendingMessage(session.id)).toEqual(
+      expect.objectContaining({ ok: true, claimed: true }),
+    );
+    expect(store.completePendingDispatch(session.id, "third")).toEqual(
+      expect.objectContaining({ ok: true, cleared: true }),
+    );
+    disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    expect(disk.title).toBe("手动改名");
+    expect(disk.titleIsCustom).toBe(true);
+  });
