@@ -29,6 +29,7 @@ import type {
   ScreenshotResult,
 } from "./helper-client";
 import { SNIPASTE_EXE_NAME } from "./snipaste-detect";
+import { detectSnipasteCliSupport, isQuickExit, type SnipasteCliSupport } from "./snipaste-cli-support";
 
 export interface SnipasteChildProcess {
   on(event: "error", listener: (error: Error) => void): unknown;
@@ -48,6 +49,8 @@ export interface SnipasteClientOptions {
   writeFileImpl?: (filePath: string, data: Buffer) => Promise<void>;
   sleepImpl?: (ms: number) => Promise<void>;
   platform?: NodeJS.Platform;
+  /** 读 exe 版本字符串（测试注入用；默认 electron app.getFileVersion）。 */
+  readVersionImpl?: (executable: string) => string | null;
   now?: () => number;
   createRequestId?: () => string;
   logger?: Pick<Console, "debug" | "warn" | "error">;
@@ -150,6 +153,8 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
   /** 在途截图互斥（P1 修复）：chat-button 与 hotkey 并发触发时防止
    * before/after 剪贴板判定交叉污染（A 的基准被 B 的截图判成取消）。 */
   private inFlight = false;
+  /** 最近一次预检的 CLI 支持度（start 内刷新；unknown 时启用秒退行为探测）。 */
+  private cliSupport: SnipasteCliSupport = "unknown";
 
   async start(
     mode: ScreenshotMode,
@@ -158,6 +163,15 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
     await this.ensureStarted();
     const executable = this.executable;
     if (!executable) throw new Error("SNIPASTE_NOT_FOUND");
+
+    // 版本预检（#178）：稳定版没有 `snip` CLI，直接发参数会让 Snipaste 本体
+    // 弹"命令行参数错误"。预检命中稳定版时给可读错误，不再触发弹窗。
+    const cliSupport = detectSnipasteCliSupport(executable, this.options.readVersionImpl);
+    this.cliSupport = cliSupport;
+    if (cliSupport === "stable") {
+      this.options.logger?.debug("[Snipaste] 版本预检：稳定版无命令行截图支持", executable);
+      throw new Error("SNIPASTE_CLI_UNSUPPORTED");
+    }
 
     await this.ensureResidentRunning(executable);
 
@@ -175,7 +189,7 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
         executable,
         ["snip", "--block", "-o", "clipboard"],
       );
-      await this.waitChild(child);
+      const elapsedMs = await this.waitChild(child);
 
       this.currentCaptureState = "committing";
       // 剪贴板就绪轮询（P1 修复）：`snip --block` 的 CLI 进程若走「转发给
@@ -185,6 +199,13 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
       //   - 持续无变化满窗口 → 判定用户取消（取消判定延迟 = 窗口时长，可接受）
       const after = await this.waitForClipboardChange(before);
       if (!after || (before !== null && before.equals(after))) {
+        // 行为探测兜底（#178）：版本信息读不出（unknown）时，"CLI 进程秒退 +
+        // 剪贴板无变化"大概率是稳定版拒绝了参数（弹窗后退出）——报可读的
+        // CLI 不支持，而不是误导性的"已取消"。Beta 转发秒退属正常路径，
+        // 用户真取消时走原 SCREENSHOT_CANCELLED 语义，不受影响。
+        if (this.cliSupport === "unknown" && isQuickExit(elapsedMs)) {
+          throw new Error("SNIPASTE_CLI_UNSUPPORTED");
+        }
         throw new Error("SCREENSHOT_CANCELLED:user");
       }
       const size = readPngSize(after);
@@ -259,9 +280,12 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
     throw new Error("SNIPASTE_START_FAILED");
   }
 
-  private waitChild(child: SnipasteChildProcess): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+  /** 等待 CLI 进程退出；返回存活毫秒数（秒退探测用，#178）。
+   * 超时仍 reject SNIPASTE_TIMEOUT。 */
+  private waitChild(child: SnipasteChildProcess): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
       let settled = false;
+      const startedAt = Date.now();
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
@@ -277,7 +301,7 @@ export class SnipasteScreenshotClient implements ScreenshotHelperClient {
         finish(() => reject(new Error("SNIPASTE_TIMEOUT")));
       }, this.options.maxInteractionMs ?? 10 * 60_000);
       child.on("error", (error) => finish(() => reject(new Error(`SNIPASTE_FAILED:${error.message}`))));
-      child.on("exit", () => finish(() => resolve()));
+      child.on("exit", () => finish(() => resolve(Date.now() - startedAt)));
     });
   }
 }
