@@ -9,6 +9,10 @@ import type { ChatAppearanceSettings } from "../../../shared/chat-appearance";
 import type { UiThemeChoice } from "../../../shared/ui-theme";
 import type { UiFont } from "../../../shared/ui-font";
 import type { UiIcon } from "../../../shared/ui-icon";
+import type { SecuritySettings } from "../../../shared/security-settings";
+
+// 外部资源安全字段与 shared/security-settings.ts 同构（#192），此处声明式保持单文件大接口惯例
+export type SecuritySettingsFields = SecuritySettings;
 import type {
   DefaultChatMode,
   MobileMessageSegmentationMode,
@@ -106,6 +110,12 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   tasksVisible: boolean;
   /** 提醒中心音效总开关：关闭后所有 toast 静音 */
   toastSoundEnabled: boolean;
+  /** 外部资源安全（#192）：拦截聊天中的远程图片（http(s) img），默认开 */
+  chatRemoteImageBlockEnabled: boolean;
+  /** 外部资源安全（#192）：允许 file:// 图片子资源。默认关（本地路径探测侧信道风险） */
+  chatFileImageAllowed: boolean;
+  /** 外部资源安全（#192）：始终允许的远程资源域（规范化 hostname），与占位卡「始终允许此域」同一存储 */
+  chatRemoteImageWhitelist: string[];
   launchAtLogin: boolean;
   language: "zh-CN";
   uiTheme: UiThemeChoice;

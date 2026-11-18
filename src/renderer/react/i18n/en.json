@@ -81,6 +81,14 @@
       }
     }
   },
+  "security": {
+    "remoteImageBlockedLabel": "Remote image blocked",
+    "remoteImageFrom": "from",
+    "allowOnce": "Allow once",
+    "allowSession": "Allow this session",
+    "allowPersistent": "Always allow this domain",
+    "imageFailed": "Image failed to load"
+  },
   "chatPage": {
     "scrollToBottom": "Scroll to bottom",
     "screenshotAttachmentName": "screenshot_{{ts}}.png",

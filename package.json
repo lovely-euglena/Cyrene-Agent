@@ -168,6 +168,7 @@
     "react-day-picker": "^9.12.0",
     "react-dom": "^19.3.0",
     "react-resizable-panels": "^4.12.4",
+    "rehype-sanitize": "^6.0.0",
     "remark-parse": "^11.0.0",
     "rxjs": "^7.8.1",
     "shiki": "^4.3.1",

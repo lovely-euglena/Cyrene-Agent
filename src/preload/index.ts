@@ -114,6 +114,12 @@ const chatApi = {
   getImageSendStrategy: (sessionId?: string) =>
     ipcRenderer.invoke(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, sessionId ? { sessionId } : undefined),
   getGeneralSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL),
+  /** GeneralSettings 保存广播（含聊天窗安全拦截白名单等即时生效场景，#192）。返回退订函数 */
+  onGeneralSettingsChanged: (callback: (settings: unknown) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, settings: unknown): void => callback(settings);
+    ipcRenderer.on(IPC.SETTINGS_GENERAL_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.SETTINGS_GENERAL_CHANGED, listener);
+  },
   getReasoningState: (payload?: { sessionId?: string }) => ipcRenderer.invoke(IPC.CHAT_GET_REASONING_STATE, payload),
   setReasoning: (payload: { sessionId?: string; providerKey: string; preference: unknown }) => ipcRenderer.invoke(IPC.CHAT_SET_REASONING, payload),
   // 截图

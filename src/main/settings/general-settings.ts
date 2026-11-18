@@ -84,6 +84,12 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   tasksVisible: boolean;
   /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
   toastSoundEnabled: boolean;
+  /** 外部资源安全（#192）：类型与 shared/security-settings.ts 的 SecuritySettings 同构 */
+  chatRemoteImageBlockEnabled: boolean;
+  /** 外部资源安全（#192） */
+  chatFileImageAllowed: boolean;
+  /** 外部资源安全（#192）：始终允许的远程资源域 */
+  chatRemoteImageWhitelist: string[];
   launchAtLogin: boolean;
   /** 界面语言：已支持中文、英文、日文，其余语言待翻译补齐后开放。 */
   language: UiLanguage;

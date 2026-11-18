@@ -47,7 +47,15 @@ interface ChatWindowApi {
     currentStyleId?: string;
     ttsEarlyReadSplitEnabled?: boolean;
     ttsEarlyReadSplitMode?: "sentence" | "paragraph";
+    /** 外部资源安全（#192） */
+    chatRemoteImageBlockEnabled?: boolean;
+    chatFileImageAllowed?: boolean;
+    chatRemoteImageWhitelist?: string[];
   }>;
+  /** GeneralSettings 保存后的全窗广播（settings-ipc 广播，安全拦截白名单等即时生效场景订阅，#192） */
+  onGeneralSettingsChanged?: (callback: (settings: Record<string, unknown>) => void) => (() => void) | void;
+  /** 渲染端写回 GeneralSettings 局部补丁（占位卡「始终允许此域」写白名单，#192） */
+  saveGeneral?: (patch: Record<string, unknown>) => Promise<unknown>;
 }
 
 /** 设置窗口通过 contextBridge 暴露的 window.settings（对应 preload 的 settingsApi）。

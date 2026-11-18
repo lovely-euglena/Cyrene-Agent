@@ -81,6 +81,14 @@
       }
     }
   },
+  "security": {
+    "remoteImageBlockedLabel": "已拦截远程图片",
+    "remoteImageFrom": "来自",
+    "allowOnce": "仅本次允许",
+    "allowSession": "本会话允许",
+    "allowPersistent": "始终允许此域",
+    "imageFailed": "图片加载失败"
+  },
   "chatPage": {
     "scrollToBottom": "滚动到底部",
     "screenshotAttachmentName": "截图_{{ts}}.png",

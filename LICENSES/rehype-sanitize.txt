@@ -1,0 +1,9 @@
+# rehype-sanitize
+
+- 版本：6.0.0（^6.0.0）
+- 许可：MIT
+- 版权：Copyright (c) 2015-2025 Titus Wormer <tituswormer@gmail.com>
+- 仓库：https://github.com/rehypejs/rehype-sanitize
+- 用途：Cyrene-Agent 聊天渲染管线的可配置 sanitize 层（issue #192）——替换 streamdown 内置 sanitize，扩展 img.src 协议白名单（local-sticker:/moment-media:/local-font:/data:image/），供外部资源安全拦截的渲染层过滤使用。
+- 许可兼容性：主项目 GPL-2.0，MIT 依赖可合法引入（与既有 Apache-2.0.txt 先例同批次登记）。
+- 引入批次：PR #192（外部资源安全标准，2026-10-21）

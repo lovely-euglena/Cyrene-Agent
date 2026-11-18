@@ -120,7 +120,8 @@ import "./plugins/panel";  // 副作用导入：执行事件绑定 + 初始加�
 import "./plugins/permission";  // 副作用导入：权限档位 UI + 风险确认弹窗
 import "./tts/panel";  // 副作用导入：TTS 配置加载 + 引擎切换 + 测试发音 + 音色复刻
 import "./rag/panel";  // 副作用导入：RAG 模型切换 + Embedding 下载/删除 + Reranker 模式
-import { applyScreenshotBackendSelection, getScreenshotBackendValue } from "./preferences/panel";  // 副作用导入：截图热键捕获 + 截图方式 + 表情包列表/添加/删除
+import { applyScreenshotBackendSelection, getScreenshotBackendValue } from "./preferences/panel";
+import { initSecurityPanel } from "./security/panel";  // 副作用导入：截图热键捕获 + 截图方式 + 表情包列表/添加/删除
 import { loadPortableStatus } from "./general/portable";  // 副作用导入：便携模式设置行（事件绑定）
 import "./mcp/panel";  // 副作用导入：MCP Server 添加/删除/启停 + 自定义端点接入说明
 import "./tokens/panel";  // 副作用导入：Token 用量图表 + 时间范围切换
@@ -323,6 +324,7 @@ const NAV_LABELS: Record<string, { emoji: string; title: string; hint: string }>
   ocr: { emoji: "🔍", title: t("settings.nav.ocr"), hint: t("settings.nav.ocrHint") },
   "cloud-storage": { emoji: "☁️", title: t("settings.nav.cloudStorage"), hint: t("settings.nav.cloudStorageHint") },
 	  tokens: { emoji: `<svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true" style="vertical-align:-3px"><title>Token 用量</title><path d="M4 42H44" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><rect x="8" y="28" width="6" height="14" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="21" y="18" width="6" height="24" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><rect x="34" y="6" width="6" height="36" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/></svg>`, title: "Token 用量", hint: "查看 API 调用统计与消耗" },
+	  security: { emoji: `<svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true" style="vertical-align:-3px"><title>安全</title><path d="M24 4L7 11V23C7 34.5 13.9 43.2 24 44C34.1 43.2 41 34.5 41 23V11L24 4Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M16 23L22 29L33 17" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`, title: "安全", hint: "外部资源拦截与放行" },
 	  disclaimer: { emoji: `<svg width="24" height="24" viewBox="0 0 48 48" fill="none" aria-hidden="true" style="vertical-align:-3px"><title>免责声明</title><rect x="13" y="10" width="28" height="34" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M35 10V4H8C7.44772 4 7 4.44772 7 5V38H13" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 22H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 30H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`, title: "免责声明", hint: "使用条款与隐私说明" },
 };
 
@@ -1623,6 +1625,7 @@ function switchSection(section: string): void {
   const isPreferences = section === "preferences";
   const isCyrene = section === "cyrene";
   const isDisclaimer = section === "disclaimer";
+  const isSecurity = section === "security";
   const isMemory = section === "memory";
   const isUser = section === "user";
   const isTasks = section === "tasks";
@@ -1640,6 +1643,11 @@ function switchSection(section: string): void {
   preferencesForm.classList.toggle("is-hidden", !isPreferences);
   cyrenePanel.classList.toggle("is-hidden", !isCyrene);
   disclaimerPanel.classList.toggle("is-hidden", !isDisclaimer);
+  const securityPanel = document.getElementById("security-panel");
+  if (securityPanel) {
+    securityPanel.classList.toggle("is-hidden", !isSecurity);
+    if (isSecurity) initSecurityPanel();
+  }
   const memoryPanel = document.getElementById("memory-panel");
   if (memoryPanel) memoryPanel.classList.toggle("is-hidden", !isMemory);
   const userPanel = document.getElementById("user-panel");
@@ -1665,7 +1673,7 @@ function switchSection(section: string): void {
   if (isCloudStorage) void loadCloudStoragePanel();
   placeholderPanel.classList.toggle(
     "is-hidden",
-    isApi || isApiAdvanced || isAppearance || isGeneral || isPreferences || isCyrene || isDisclaimer || isMemory || isUser || isTasks || isPlugins || isTokens || isChannels || isTts || isAsr || isOcr || isCloudStorage,
+    isApi || isApiAdvanced || isAppearance || isGeneral || isPreferences || isCyrene || isDisclaimer || isSecurity || isMemory || isUser || isTasks || isPlugins || isTokens || isChannels || isTts || isAsr || isOcr || isCloudStorage,
   );
 
   if (
@@ -1676,6 +1684,7 @@ function switchSection(section: string): void {
     !isPreferences &&
     !isCyrene &&
     !isDisclaimer &&
+    !isSecurity &&
     !isMemory &&
     !isUser &&
     !isTasks &&
