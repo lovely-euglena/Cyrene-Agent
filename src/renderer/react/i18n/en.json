@@ -1234,7 +1234,10 @@
       "title": "Sticker management",
       "empty": "No stickers yet.",
       "builtin": "Built-in",
-      "toggleLabel": "Toggle {{id}}"
+      "toggleLabel": "Toggle {{id}}",
+      "deleteLabel": "Delete {{id}}",
+      "deleteConfirm": "Delete sticker {{id}}? This cannot be undone.",
+      "deleteFailed": "Delete failed"
     },
     "disclaimer": {
       "navLabel": "Disclaimer",
@@ -2510,5 +2513,21 @@
       "reaction_exists": "You already liked this",
       "moments_disabled": "Moments are turned off"
     }
+  },
+  "settingsSearch": {
+    "unavailable": "The related settings page is open. This option may require enabling its feature first, or may still be loading.",
+    "title": "Search settings",
+    "placeholder": "Search settings or keywords",
+    "results": "Search results",
+    "empty": "No matching settings",
+    "history": "Search history",
+    "manage": "Manage",
+    "done": "Done",
+    "clear": "Clear history",
+    "delete": "Delete “{{query}}”",
+    "noHistory": "No search history yet",
+    "clearConfirm": "Clear all search history?",
+    "clearDescription": "All saved searches will be permanently deleted.",
+    "cancel": "Cancel"
   }
 }
