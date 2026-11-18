@@ -1,3 +1,4 @@
+import { getReranker } from "../rag/reranker";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
@@ -66,9 +67,10 @@ function sourceExcerpt(text: string, query: string): { line?: number; excerpt: s
     const matches = [needle, ...parts].map((part) => normalized.indexOf(part)).filter((position) => position >= 0);
     if (matches.length) {
       const position = Math.min(...matches);
-      const from = Math.max(0, position - 120);
-      const excerpt = value.slice(from, from + 400).trim();
-      return { line, excerpt: `${from > 0 ? "…" : ""}${excerpt}${from + 400 < value.length ? "…" : ""}` };
+      // issue #222：命中预览 400→800 字符（前后各 400），"召回的文本多几行"
+      const from = Math.max(0, position - 400);
+      const excerpt = value.slice(from, from + 800).trim();
+      return { line, excerpt: `${from > 0 ? "…" : ""}${excerpt}${from + 800 < value.length ? "…" : ""}` };
     }
     line++;
     start = i + 1;
@@ -457,9 +459,13 @@ export class KnowledgeBaseService {
     });
     const names = new Map(collections.map((item) => [item.id, item.name]));
     const collectionById = new Map(collections.map((item) => [item.id, item]));
-    const hits: KnowledgeSearchHit[] = [];
+    // issue #222：先全量读候选文本，rerank 可用时按相关性重排再取前 10——
+    // 此前知识库检索完全没接重排序（worker sqlite FTS 独立链路），与
+    // rag/memory 链（HybridRetriever.rerankCandidates）不一致。
+    const reranker = getReranker();
+    type Scored = { candidate: KnowledgeDocument; text: string };
+    const scored: Scored[] = [];
     for (const candidate of candidates) {
-      if (hits.length >= 10) break;
       const collection = collectionById.get(candidate.collectionId);
       if (!collection || !isRegisteredPath(collection, candidate.path)) continue;
       try {
@@ -468,11 +474,26 @@ export class KnowledgeBaseService {
         const current = this.manifest.collections.find((item) => item.id === collection.id && item.enabled);
         if (!current || !isRegisteredPath(current, candidate.path) ||
           (options.forModel && !this.visibleCollections(options.workspaceRoot).some((item) => item.id === collection.id))) continue;
-        const match = sourceExcerpt(text, normalized);
-        hits.push({ documentId: candidate.id, collectionId: candidate.collectionId,
-          collectionName: names.get(candidate.collectionId) ?? "", path: candidate.path, name: candidate.name,
-          ...(match.line ? { line: match.line } : {}), excerpt: match.excerpt, contentHash: candidate.contentHash! });
+        scored.push({ candidate, text });
       } catch { /* Changed or missing sources are never returned as current evidence. */ }
+    }
+    let ordered = scored;
+    if (reranker && scored.length > 1) {
+      try {
+        const reranked = await reranker.rerank(normalized, scored.map((item) => item.text));
+        const scoreMap = new Map(reranked.map((r) => [r.text, r.score]));
+        ordered = [...scored].sort((a, b) => (scoreMap.get(b.text) ?? 0) - (scoreMap.get(a.text) ?? 0));
+      } catch (error) {
+        console.warn("[knowledge-base] reranker failed, keeping worker order:", error);
+      }
+    }
+    const hits: KnowledgeSearchHit[] = [];
+    for (const { candidate, text } of ordered) {
+      if (hits.length >= 10) break;
+      const match = sourceExcerpt(text, normalized);
+      hits.push({ documentId: candidate.id, collectionId: candidate.collectionId,
+        collectionName: names.get(candidate.collectionId) ?? "", path: candidate.path, name: candidate.name,
+        ...(match.line ? { line: match.line } : {}), excerpt: match.excerpt, contentHash: candidate.contentHash! });
     }
     return hits;
   }

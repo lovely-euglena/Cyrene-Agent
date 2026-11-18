@@ -6,7 +6,10 @@
 .cy-knowledge-collection { display: grid; gap: 4px; width: 100%; padding: 12px; border: 1px solid var(--rb-border-subtle); border-radius: 10px; background: var(--rb-surface-elevated); color: var(--rb-text-primary); text-align: left; cursor: pointer; }
 .cy-knowledge-collection.is-active { border-color: var(--rb-accent); }
 .cy-knowledge-collection span, .cy-knowledge-collection small, .cy-knowledge-detail-header small, .cy-knowledge-document small, .cy-knowledge-result small, .cy-knowledge-result span { color: var(--rb-text-secondary); overflow-wrap: anywhere; }
-.cy-knowledge-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* issue #222：详情卡内容贴边（截图中边框紧贴标题文字）——给 Card 内内容
+   留出呼吸感，header 与后续区块拉开间距 */
+.cy-knowledge-settings .ant-card .ant-card-body { padding: 18px 20px; }
+.cy-knowledge-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .cy-knowledge-detail-header > div { display: grid; gap: 3px; }
 .cy-knowledge-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
 .cy-knowledge-warning { margin-bottom: 12px; }
