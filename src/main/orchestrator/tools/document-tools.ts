@@ -82,6 +82,21 @@ function resolveOutputPath(filename: string, workspaceRoot?: string): string | n
   const relative = path.relative(outputRoot, fullPath);
   // 最终校验：必须仍在可信工作区/桌面根目录下，不能靠前缀碰撞绕过。
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  // v1.3.5 吸收（3c7d9ea7）：目标已存在时按真实路径复检——workspace 内的
+  // symlink 指向外部会导致 path.resolve 校验失效，写盘静默逃逸。
+  try {
+    const real = fs.realpathSync(fullPath);
+    const realRelative = path.relative(outputRoot, real);
+    if (realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) return null;
+    return real;
+  } catch {
+    // 目标尚不存在（常规新建）：对父目录解析，防已存在父级是 symlink。
+    try {
+      const realParent = fs.realpathSync(path.dirname(fullPath));
+      const parentRelative = path.relative(outputRoot, realParent);
+      if (parentRelative === ".." || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative)) return null;
+    } catch { /* 父目录尚不存在时沿用原判定 */ }
+  }
   return fullPath;
 }
 

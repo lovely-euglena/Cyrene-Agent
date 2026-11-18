@@ -93,6 +93,20 @@ function resolveOutputPath(filename: string, workspaceRoot?: string): string | n
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     return null;
   }
+  // v1.3.5 吸收（3c7d9ea7）：目标已存在时按真实路径复检，防 symlink 逃逸。
+  try {
+    const real = fs.realpathSync(fullPath);
+    const realRelative = path.relative(root, real);
+    if (realRelative === "" || realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) return null;
+    return real;
+  } catch {
+    try {
+      const realParent = fs.realpathSync(path.dirname(fullPath));
+      const parentRelative = path.relative(root, realParent);
+      // 父目录 = root 本身（""）是文件直接放根目录的正常情况，不拒绝。
+      if (parentRelative === ".." || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative)) return null;
+    } catch { /* 父目录尚不存在时沿用原判定 */ }
+  }
   return fullPath;
 }
 

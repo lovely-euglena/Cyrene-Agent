@@ -213,10 +213,17 @@ function collectFiles(
   workspaceRoot: string,
   inputPaths: string[],
   language?: string,
-): { files: CollectedFile[]; skipped: string[] } {
+): { files: CollectedFile[]; skipped: string[]; permissionErrors: string[] } {
   const langExts = language ? LANG_TO_EXTENSIONS[language] : undefined;
   const files: CollectedFile[] = [];
   const skipped: string[] = [];
+  // v1.3.5 吸收（3b662ee5）：权限拒绝/越界不是零匹配——单独保留原因，
+  // 全部拒绝时向执行器返回可识别失败而非成功零匹配。
+  const permissionErrors: string[] = [];
+  const rejectPath = (displayPath: string, reason: string): void => {
+    skipped.push(displayPath);
+    permissionErrors.push(`${displayPath}: ${reason}`);
+  };
 
   const walk = (absDir: string, relDir: string): void => {
     if (files.length >= MAX_FILES) return;
@@ -247,7 +254,7 @@ function collectFiles(
   for (const inputPath of inputPaths) {
     const abs = path.resolve(workspaceRoot, inputPath);
     if (!isWithinWorkspace(abs, workspaceRoot)) {
-      skipped.push(inputPath);
+      rejectPath(inputPath, "workspace boundary denied");
       continue;
     }
     let stat: fs.Stats;
@@ -274,7 +281,20 @@ function collectFiles(
     }
   }
 
-  return { files, skipped };
+  return { files, skipped, permissionErrors };
+}
+
+/** 没有处理任何文件且存在权限拒绝时，向执行器返回可识别的失败，而非正常零匹配。 */
+function permissionFailure(permissionErrors: string[], processedFiles: number) {
+  if (processedFiles > 0 || permissionErrors.length === 0) return {};
+  return {
+    success: false,
+    errorCode: "E_AST_PERMISSION_DENIED",
+    category: "permission_denied",
+    error: permissionErrors.slice(0, 10).join("\n"),
+    matches: [],
+    skipped: permissionErrors.map((entry) => entry.split(":")[0]),
+  };
 }
 
 // ── 单文件搜索/重写 ──────────────────────────────────────
@@ -436,7 +456,7 @@ async function executeAstGrepSearch(
     ? (args.maxMatches as number)
     : MAX_MATCHES_DEFAULT;
 
-  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language);
+  const { files, skipped, permissionErrors } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language);
 
   const matches: (SingleMatch & { file: string })[] = [];
   const errors: string[] = [];
@@ -470,6 +490,10 @@ async function executeAstGrepSearch(
   }
 
   console.log(LOG_PREFIX, `search "${common.pattern.slice(0, 40)}" → ${matches.length} 处 / ${filesWithMatches} 个文件`);
+
+  // v1.3.5 吸收（3b662ee5）：零文件 + 全部拒绝 → 可识别失败而非成功零匹配
+  const denied = permissionFailure(permissionErrors, files.length);
+  if (denied.success === false) return JSON.stringify(denied);
 
   return JSON.stringify({
     success: true,
@@ -506,7 +530,7 @@ async function executeAstGrepReplace(
   const rewrite = String(args.rewrite ?? "");
   const dryRun = args.dryRun !== false; // 默认 true 只预览
 
-  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language);
+  const { files, skipped, permissionErrors } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language);
 
   interface PlannedChange {
     file: string;

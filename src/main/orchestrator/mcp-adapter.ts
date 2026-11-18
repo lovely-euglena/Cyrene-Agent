@@ -5,6 +5,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ToolDefinition, toolRegistry, type ToolEffectKind } from "./tools/registry/tool-registry";
+import { ToolExecutionError } from "./tools/registry/tool-execution-error";
 import type { ToolRiskLevel } from "../permission";
 import { mcpDotnetHost } from "./mcp-dotnet-host";
 
@@ -89,10 +90,12 @@ export function resolveMcpRisk(
     if (override === "unknown") return "undeclared";
     return "fs-write";
   }
-  if (!annotations) return "undeclared";
+  // v1.3.5 吸收（6eebe829）：MCP 不经过 Shell 沙箱，第三方 annotations/
+  // readOnlyHint 不能证明权限边界——readOnlyHint 不再降为 fs-read，
+  // 未显式 override 的工具一律 input-control（仅完全访问/逐次审批可用）。
+  if (!annotations) return "input-control";
   if (annotations.destructiveHint === true) return "fs-write";
-  if (annotations.readOnlyHint === true) return "fs-read";
-  return "undeclared";
+  return "input-control";
 }
 
 /**
@@ -260,8 +263,21 @@ export async function connectMcpServer(config: McpServerConfig): Promise<string[
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(LOG_PREFIX, "工具调用失败 [" + toolId + "]:", msg);
-          if (msg.startsWith("E_MCP_TOOL_FAILED")) throw err;
-          throw new Error(`E_MCP_TOOL_FAILED: ${msg}`);
+          // v1.3.5 吸收（b9a5e2f5+745e79d0）：请求已进入第三方执行边界，
+          // 响应错误不能证明副作用未发生——非只读保留 unknown 效果让
+          // Harness 登记并阻止未核实的重复调用；只读调用保留原错误路径
+          // 由 Harness 分类重试，不覆盖已有超时语义。
+          if (resolvedEffectKind === "read") {
+            if (msg.startsWith("E_MCP_TOOL_FAILED")) throw err;
+            throw new Error(`E_MCP_TOOL_FAILED: ${msg}`);
+          }
+          throw new ToolExecutionError(
+            "E_MCP_TOOL_FAILED",
+            msg.startsWith("E_MCP_TOOL_FAILED") ? msg : `E_MCP_TOOL_FAILED: ${msg}`,
+            "partial_failure",
+            false,
+            "unknown",
+          );
         }
       },
     };
