@@ -1056,6 +1056,9 @@
   不改生产代码。
 - **Chromium CLI 怪癖（探针工程事实）**：「空格分隔的含冒号值 + 后续空格分隔开关」
   被误判 URL 参数组合 → app 加载前退出 -1；带值参数一律等号形态（--play=...）。
-- **验证**：selftest 309/0/2 + 无 Core 176/0/9；check:main；TS live2d 子集 63 +
-  接线/开关 14 全过；publish 重建。28 对经 eval-log --diff 落盘（JSONL 70 轮），
-  汇总 docs/eval/257-motion-probe-summary.json。
+- **验证**：selftest 309/0/2 + 无 Core 176/0/9；check:main；TS live2d 55/55 +
+  接线 9/9 + 开关 5/5（合计 9 文件 69/69；vitest 实跑 63 含参数化展开，口径
+  与 scripts/live2d/README.md / 设计稿 §10 一致）；publish 重建。动作态探针 28 对
+  经 eval-log --diff 落盘（JSONL 98 轮：1–42 静态/渲染轮；43–70 动作态首轮〔旧
+  target 口径=本地绝对路径 png 对，不可复现，历史轮次保留〕；71–98 命令口径轮
+  #1416 P1-4 修复），汇总 docs/eval/257-motion-probe-summary.json。

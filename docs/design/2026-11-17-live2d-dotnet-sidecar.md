@@ -403,6 +403,12 @@ Param19–30 对齐 ~1e-4（物理移植忠实）。`MapWindowPointAtLoad` 修�
 --diff` 落盘 JSONL（result 取退出码、diff_pct 取脚本输出），汇总
 `docs/eval/257-motion-probe-summary.json`。
 
+**JSONL 口径注记**（#1416 P1-3/P1-4）：`docs/eval/257-live2d.jsonl` 1–42 行为静态/
+渲染轮；43–70 行为动作态首轮（target=本地绝对路径 png 对，他机不可复现，历史轮次
+保留不改）；71–98 行为 #1416 修复轮重跑（target=可直接粘贴执行的完整命令
+`node scripts/live2d/motion-probe.mjs --only "<spec>"`，eval-log `--target` 覆盖
+默认 png 对路径）。计数以最新实际输出为准（TS 69 集合 / selftest 309 / JSONL 98 轮）。
+
 **探针侧 web bug 绕行**（不改生产代码，#266 / #267 跟进，见 §9）：① resolveURL 补丁
 编码 `#`→`%23`；② 直驱 `model.motion(group,index)`（索引取 `mm.definitions`，
 绕过恒空的 motionIndexMap）。表情-only 伪动作双轨一致 played=false（忠实），
@@ -420,5 +426,6 @@ Param19–30 对齐 ~1e-4（物理移植忠实）。`MapWindowPointAtLoad` 修�
 | dotnet 静态基准帧渲染（真机 NVIDIA） | ✅ adapter=RTX 2080 Ti，RENDER_TEST_OK |
 | 静态基准帧逐像素对照（diff_pct < 2%） | ✅ 沙箱 **0.0065%** / 真机同卡 **0.004%**（四口径全 pass，见上表） |
 | 动作态探针逐像素对照（28 对，diff_pct < 2%） | ✅ 全 pass，max **0.517%**（软件适配器同口径；focus onLoad 怪癖移植后，见上节） |
+| 打包链 live2d 随包（package:win:dir + verify:installer） | ✅ 分段验证（本机缺 cargo，全链以 CI tag 构建为替代证据）：TS 全量 build + publish exe 162304 bytes + extraResources live2d 配置 + verify:installer live2d 断言核对（JSONL 101 行，#1416 P2-5） |
 | 真机 selftest（NVIDIA） | ✅ PASS=302 FAIL=0 SKIP=2（当时计数，当前 309 项） |
 | 口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（完整应用手动清单） |

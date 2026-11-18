@@ -9,11 +9,23 @@
 | 脚本 | 作用 |
 | --- | --- |
 | `pixel-diff.mjs` | PNG 逐像素 diff（内置 8-bit PNG 解码器，零依赖）；`--selftest` 自验证 |
-| `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/tick/setParameter/captureFrame）；`--diag-only` 无 GPU 可跑 |
-| `web-capture.cjs` | web 侧取帧：`npx electron` 起 400×500 透明桌宠窗，冻结 ticker（清零 deltaTime）+ 参数回默认 + 裸 core update + 单帧渲染；`--extract` 软件 GL 下 readPixels 读回 |
+| `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/tick/setParameter/captureFrame）；`--diag-only` 无 GPU 可跑；`--warmup N` play 前预热、`--params-out` 中帧参数快照 |
+| `web-capture.cjs` | web 侧取帧：`npx electron` 起 400×500 透明桌宠窗，冻结 ticker（清零 deltaTime）+ 参数回默认 + 裸 core update + 单帧渲染；`--extract` 软件 GL 下 readPixels 读回；drive 模式（`--play/--warmup/--ticks`，等号形态传参）确定性推进 + 中帧参数 stash |
 | `eval-log.mjs` | 测评 JSONL 落盘（`docs/eval/257-live2d.jsonl`）：`--run` 取退出码、`--diff` 取脚本 diff_pct |
+| `motion-probe.mjs` | 动作态双轨探针：28 对矩阵编排（5 真实 motion3 ×4 时刻 + 4 表情 ×2 时刻）+ 逐对 eval-log 落盘（target=可直接执行的完整命令）+ 汇总 `docs/eval/257-motion-probe-summary.json` |
+| `diff-heatmap.mjs` | 差异分布可视化（热图 + bbox + delta 分桶 + 行列直方图），定位系统偏差 vs 局部噪声 |
+| `param-compare.mjs` | 双轨中帧参数数值对照（web midParams vs dotnet includeParameters），隔离行为层差异 |
 
 侧车另有免 Node 的取帧形态：`cyrene-live2d.exe --render-test --model-dir <dir> --out dotnet.png [--params k=v,...]`。
+
+动作态探针需 Electron（`npx electron` 或 `CYRENE_ELECTRON_EXE` 指向任意 Electron 二进制；
+本仓未装 electron 时用后者）与 Core DLL（`CYRENE_CUBISM_CORE_DLL`，许可闸门不程序化下载）：
+
+```bash
+$env:CYRENE_CUBISM_CORE_DLL = "<Core r.4 dll>"
+$env:CYRENE_ELECTRON_EXE = "<electron.exe>"        # 可选；缺省取仓库 node_modules
+node scripts/live2d/motion-probe.mjs [--only Wink] [--skip-log] [--out-dir <dir>]
+```
 
 ## GPU 机器验收流程
 
@@ -40,15 +52,22 @@ node scripts/live2d/pixel-diff.mjs web.png dotnet.png --out diff.json
 node scripts/live2d/eval-log.mjs --task T6 --action diff --note "静态基准对照" --diff web.png dotnet.png
 ```
 
-带参数/动作的对照：两侧同传 `--params ParamAngleX=15,ParamEyeLOpen=0.5`；
-动作序列用 `sidecar-capture.mjs --play expression:墨镜 --ticks 60`，web 侧
-`--no-freeze --wait <ms>` 近似（行为层时序对照属 T6 后续项，静态帧先行）。
+带参数对照：两侧同传 `--params ParamAngleX=15,ParamEyeLOpen=0.5`。动作/表情态对照已由
+`motion-probe.mjs` 落地（2026-11-18，28 对全 pass，max diff_pct 0.517%）：双轨同确定性
+时间轴（load → t=0 重置 → warmup 60 帧 → play → M 帧 → 截帧），逐对 eval-log 落盘 +
+汇总 `docs/eval/257-motion-probe-summary.json`；差异形态用 `diff-heatmap.mjs` 看热图、
+数值残差用 `param-compare.mjs` 对照中帧参数（53 参数 max 1.6e-4，物理浮点噪声级）。
 
-## 沙箱验证状态（静态基准帧逐像素对照已达成）
+## 沙箱验证状态（静态 + 动作态均已达成）
 
 开发沙箱（WARP 软件渲染 + 软件 WebGL）**已完成静态基准帧逐像素对照：
 diff_pct=0.0065%**（13/200000 px，远低于 2% 阈值），无需 GPU 真机。
-`--selftest` 302 PASS/0 FAIL/2 SKIP。
+`--selftest` **309** PASS/0 FAIL/2 SKIP（当前计数；2026-11-17 真机轮当时 302，
+审核修复 +7 断言后为 309）。
+
+动作态探针（软件适配器同口径：web SwiftShader / dotnet WARP）：**28 对全 pass，
+max 0.517%**（5 真实 motion3 ×4 时刻 + 4 表情 ×2 时刻；多数 0.004–0.01% 静态级，
+个别 0.1–0.5% 为移动手部/发丝边缘物理/AA 噪声）。
 
 达成要点（详见设计文档 §10「逐像素对齐」）：
 - **Core 版本锁定 5-r.4 = Core 5.1.0**，与 web 轨内置 JS Core 同版本（顶点求值

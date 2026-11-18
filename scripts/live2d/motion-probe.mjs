@@ -3,7 +3,9 @@
  * #257 动作态双轨探针：不同动作/表情下 web vs dotnet 逐像素对照。
  *
  * T6 静态基准帧口径的增量：双方跑同一动作/表情、同一确定性时间轴——
- *   load → t=0 重置 → warmup 60 帧 → play（生产路径）→ 推进 M 帧 → 截帧 → diff。
+ *   load → t=0 重置 → warmup 60 帧 → play → 推进 M 帧 → 截帧 → diff。
+ *   play 为探针直驱 model.motion/model.expression（绕 manager.playAction——
+ *   web 轨 buildMotionIndexMap 恒空 #267 的探针绕行；生产路径不变，见设计稿 §9）。
  *
  * 确定性对齐依据（pld 源码实证，见 web-capture.cjs 头注）：
  *   - pld 动作/表情时间基 = Live2DModel.elapsedTime（dt 累积）；startMotion 的
@@ -11,10 +13,12 @@
  *     _nowMs tick 累积逐帧同序（dt=1000/60ms）。
  *   - 眨眼：web BlinkController 用 Math.random（跨轨不可复现）→ 晚注册
  *     beforeModelUpdate 钩子强制 eyes=1；侧车首眨间隔 >=2500ms，故总虚拟时长
- *     (warmup+M)×16.67ms 上限 2400ms（M<=80）保证双轨 eyes=1 同态。
+ *     (warmup+M)×16.67ms 上限 2334ms（M<=80）保证双轨 eyes=1 同态。
  *   - 物理/pose 初态：web 加载后自动 ticker 已走数帧 → warmup 60 帧阻尼衰减
  *     （~0.9^60≈0.002）；呼吸时钟 web 显式清零、侧车从 0 起 → 相位同步。
- *   - 注视：双轨 load 即 focusCenter(instant) → (1,0) 静止（atan2 怪癖同移植）。
+ *   - 注视：双轨 load 即 focusCenter(instant) → onLoad 怪癖同移植：首帧前
+ *     worldTransform 仍单位矩阵 → 窗口中心按画布尺寸归一化得固定偏心目标
+ *     (-0.726, 0.688)（非 (1,0)；MapWindowPointAtLoad，见设计稿 §9）。
  *
  * 矩阵：5 个真实 motion3 动作 × 4 时刻（0.25/0.5/1.0/1.33s into motion）
  *       + 4 个代表表情 × 2 时刻（fade 完成 0.5s / 稳态 1.33s）= 28 对。
@@ -61,12 +65,9 @@ function resolveElectron() {
   if (process.env.CYRENE_ELECTRON_EXE && fs.existsSync(process.env.CYRENE_ELECTRON_EXE)) {
     return process.env.CYRENE_ELECTRON_EXE;
   }
-  for (const p of [
-    path.join(REPO_ROOT, "node_modules", "electron", "dist", "electron.exe"),
-    // 开发机布局：本仓未装 electron 二进制时借同机主仓（web-capture 历史口径）
-    "D:\\code\\cyrene-agent\\node_modules\\electron\\dist\\electron.exe",
-  ]) if (fs.existsSync(p)) return p;
-  return null;
+  // 仅仓库相对查找（跨平台约定）：本仓未装 electron 时 set CYRENE_ELECTRON_EXE 指向任意 Electron 二进制
+  const p = path.join(REPO_ROOT, "node_modules", "electron", "dist", "electron.exe");
+  return fs.existsSync(p) ? p : null;
 }
 
 function run(cmd, args, opts = {}) {
@@ -164,8 +165,12 @@ function main() {
         row.diff_pct = pj ? pj.diff_pct : null;
       } else {
         const note = `动作态探针 ${entry.spec} warmup=${WARMUP} ticks=${ticks} 虚拟${virtualMs}ms（软件适配器同口径）`;
+        // 审核 #1416 P1-4：target = 可直接粘贴执行的完整命令（旧轮次为本地绝对
+        // 路径 png 对，不可复现；历史行保留，见 docs/eval/257-live2d.jsonl 口径注记）
+        const target = `node scripts/live2d/motion-probe.mjs --only ${JSON.stringify(entry.spec)}`;
         const el = run(process.execPath, [
           evalLog, "--task", "T6", "--action", "diff", "--note", note,
+          "--target", target,
           "--diff", webPng, dotnetPng,
         ]);
         const ej = lastJsonLine(el.stdout);
