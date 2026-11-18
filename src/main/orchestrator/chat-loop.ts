@@ -373,6 +373,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     }
 
     const response = result.response;
+    // 已取消的请求不得提交 assistant 历史（移植上游 aca21531）
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
 
     if (result.needsReveal && response.thinking) {
       startReasoning();
@@ -388,6 +390,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     if (response.usage) {
       usageRecorder(response.usage.input, response.usage.output, 1, response.usage.cachedInput, response.usage.cacheCreation);
     }
+    // 推理展示回调也可能触发取消，不提交已取消请求的 assistant 历史。
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
     const reply = stripLeakedChatTimeContext(stripToolProtocol(response.text))
       || "刚才没有生成正常回复，请再试一次。";
     // 权威轨迹：归一化后的可见回复作为 canonical assistant 提交。
@@ -397,6 +401,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       role: "assistant",
       content: reply,
     };
+    // 终局防线：appendAssistant 前的取消检查（等价上游 persist 后检查点）。
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
     await options.transcriptSink?.appendAssistant({ message: canonicalAssistant });
     // 终态快照：把最终回复并入历史口径（与下一轮进入历史的文本一致）。
     emitContextUsage("terminal", reply);

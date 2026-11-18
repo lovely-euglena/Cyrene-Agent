@@ -189,6 +189,10 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         : failed;
     }
 
+    // 推理结束回调可能触发取消；模型成功返回不代表本轮仍允许提交历史。
+    // （移植上游 aca21531：我方无 persist 生成图片步骤，此处单一检查点已覆盖全部耗时窗口）
+    if (input.signal?.aborted) return cancelledResult(run);
+
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
     const assistantMessage = toAssistantMessage(response);
     run.messages.push(assistantMessage);
