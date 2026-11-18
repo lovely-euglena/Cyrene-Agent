@@ -217,6 +217,20 @@ pnpm run package:win:dir  # 已含 build:live2d
   渲染热路径走 shader 矩阵，保留作回归基准）；`dotnet/live2d/probe/gpu-probe.cs`
   为 T2 期一次性诊断脚本（vtable 槽位实证），不参与构建，保留作 interop
   核对参考；两者均非生产路径。
+- **web 轨两处潜在 bug（动作态探针发现，#266 / #267 跟进；本 PR 不改 web 轨）**：
+  ① motion 文件名含 `#`（`动作#6_*.motion3.json`）被 file:// XHR 解析为 URL
+  fragment → 路径截断、真动作加载失败（#266；dotnet 磁盘读取不受影响）；②
+  `buildMotionIndexMap`/`buildHitAreaDefs` 读 `json.Motions`（实际在
+  `FileReferences.Motions`）恒空 → `playAction` 的动作目标全落 expression 回退、
+  真动作永不播放（#267）。当前命中区全为表情伪动作（名称恰匹配）、秋千走 speaking-motion
+  直连（Tick3_3 无 `#`），故生产被掩盖；LLM playAction 真动作在 web 轨实为死路。
+- **focus onLoad 怪癖已忠实移植**（`FocusBehavior.MapWindowPointAtLoad`）：pld
+  `Live2DModel.focus` 恒 `toModelPosition(skipUpdate:true)`，onLoad `focusCenter(true)`
+  时模型尚未首帧渲染 → `worldTransform` 仍单位矩阵（`localTransform` 亦单位，
+  Cyrene Layout 空）→ 窗口中心直接按 `originalWidth/Height`(4200×3500) 归一化得
+  固定偏心目标 (-0.726, 0.688)，**并非 (1,0)**；运行时（首帧后）worldTransform
+  已更新 → 真实布局反演 → 窗口中心 (1,0)。dotnet 区分 load/运行时两态对齐
+  （探针实证 identity 假设重算与 web target 全精度一致）。
 
 ## 10. T6 验收（沙箱 0.0065% / GPU 真机同卡 0.004%）
 
@@ -294,9 +308,12 @@ pnpm run package:win:dir  # 已含 build:live2d
 | 脚本 | 作用 |
 | --- | --- |
 | `pixel-diff.mjs` | PNG 逐像素 diff（内置 8-bit PNG 解码器，全 5 种 filter）；`--selftest` 6 项自验证 |
-| `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/setBounds/setZoom/setParameter/play/tick/captureFrame）；`--diag-only` 无 GPU 可跑协议链路 |
-| `web-capture.cjs` | web 侧取帧：`npx electron` 起同规格透明桌宠窗，冻结 ticker（清零 deltaTime）+ 参数回默认 + 裸 core update（保留脏标志）+ 单帧渲染；`--extract` 软件 GL 下 readPixels 读回 |
+| `sidecar-capture.mjs` | dotnet 侧取帧：走生产 JSON 行协议（load/setBounds/setZoom/setParameter/play/tick/captureFrame）；`--diag-only` 无 GPU 可跑协议链路；`--warmup N` play 前预热、`--params-out` 中帧参数快照（getDiagnostics includeParameters） |
+| `web-capture.cjs` | web 侧取帧：`npx electron` 起同规格透明桌宠窗，冻结 ticker（清零 deltaTime）+ 参数回默认 + 裸 core update（保留脏标志）+ 单帧渲染；`--extract` 软件 GL 下 readPixels 读回；drive 模式（`--play/--warmup/--ticks`，等号形态传参）t=0 重置 + 确定性推进 + 中帧 stash |
 | `eval-log.mjs` | 测评 JSONL 落盘 `docs/eval/257-live2d.jsonl`（ts/task/action/target/result/diff_pct/note） |
+| `motion-probe.mjs` | 动作态探针：28 对矩阵编排（双轨同时间轴）+ 逐对 eval-log 落盘 + 汇总 `docs/eval/257-motion-probe-summary.json` |
+| `diff-heatmap.mjs` | 差异分布可视化（热图 + bbox + delta 分桶 + 行列直方图），定位系统偏差 vs 局部噪声 |
+| `param-compare.mjs` | 双轨中帧参数数值对照（web midParams vs dotnet includeParameters），隔离行为层差异 |
 
 侧车免 Node 取帧：`cyrene-live2d.exe --render-test --out dotnet.png [--params k=v,...]`。
 GPU 机器完整流程见 `scripts/live2d/README.md`。
@@ -339,6 +356,58 @@ web 侧同卡强制：Chromium 的 `--gpu-vendor-id/--gpu-device-id` 在本 Elec
 断言后当前 309 项，见 §8）。SKIP 为 pose.fade/
 interaction.motionFire 条件项，与 GPU 无关）。差异像素均为 AA 边缘噪声。
 
+### 动作态探针（2026-11-18，28 对全 pass，max 0.517%）
+
+T6 静态基准帧口径的增量：双方跑**同一动作/表情、同一确定性时间轴**，补上动作/
+表情态的逐像素对照。协议：`load → t=0 重置 → warmup 60 帧 → play → 推进 M 帧 →
+截帧 → diff`（dt=1000/60ms）。矩阵 = 5 个真实 motion3 动作 ×4 时刻（0.25/0.5/1.0/
+1.33s）+ 4 个代表表情 ×2 时刻（fade 完成/稳态）= **28 对**。
+
+**确定性对齐依据**（pld 源码实证）：
+
+- **时间基**：pld 动作/表情时间基 = `Live2DModel.elapsedTime`（dt 累积）；
+  `startMotion` 的 `performance.now()` 参数被忽略，`startTime` 首次 update 惰性
+  设定 → 与侧车 `_nowMs` tick 累积逐帧同序，无需patch 真实时钟。
+- **眨眼**：web `BlinkController` 用 `Math.random`（跨轨不可复现）→ 晚注册
+  `beforeModelUpdate` 钩子强制 eyes=1；侧车首眨间隔 ≥2500ms，总虚拟时长
+  (60+M)×16.67ms ≤2333ms（M≤80）保证双轨 eyes=1 同态。
+- **物理/呼吸初态**：web 加载后自动 ticker 已走数帧，激发了 `delay=1` 的无阻尼
+  自由粒子（头发/双腿/秋千），初态相位差会永久保留 → 重建 physics rig 回静止
+  初态（与侧车 load 即静止同起点）；呼吸时钟 web 显式清零、侧车从 0 起 → 相位同步。
+- **注视**：load 即 `focusCenter(instant)` → 双轨同移植 onLoad 怪癖（见 §9）。
+
+**根因定位**：初跑全 28 对均匀 6.7–8.7%（含简单表情）= 系统偏差，非动作引擎差。
+热图集中于发丝/叶冠/翅膀边缘 → 中帧参数对照（侧车 `getDiagnostics
+includeParameters` 中帧快照 + web `beforeModelUpdate` stash；`loadParameters` 每帧
+回滚 transient 写入，故帧末快照无意义，须中帧）隔离出 **focus 漂移**：web
+(-0.726, 0.688) vs dotnet (1,0)，AngleX/Y/Z/EyeBall 差异全由其解释。物理输出
+Param19–30 对齐 ~1e-4（物理移植忠实）。`MapWindowPointAtLoad` 修复后全 pass，
+53 参数最大残差 1.6e-4（物理浮点噪声）。
+
+**结果**（软件适配器同口径：web SwiftShader / dotnet WARP；容差 8/255，阈值 2%）：
+
+| 动作/表情 | 时刻数 | max diff_pct |
+| --- | --- | --- |
+| 动作#6:动作回正（0.5s） | 4 | 0.0085% |
+| 动作#6:Wink~（3s） | 4 | 0.0365% |
+| 动作#6:我可爱吧~（4s） | 4 | **0.517%** |
+| 动作#6:笑一笑吧~（3s） | 4 | 0.2585% |
+| Tick3:荡秋千（待机）（60.333s 早期） | 4 | 0.011% |
+| expression:墨镜 | 2 | 0.0065% |
+| expression:圈圈眼 | 2 | 0.1245% |
+| expression:星星眼 | 2 | 0.008% |
+| expression:拽秋千1 | 2 | 0.004% |
+
+多数 0.004–0.01%（静态级）；个别 0.1–0.5% 为特定帧移动手部/发丝边缘的物理/AA
+噪声（热图局部小簇，无 129–255 大差异桶，非结构偏移）。28 对经 `eval-log.mjs
+--diff` 落盘 JSONL（result 取退出码、diff_pct 取脚本输出），汇总
+`docs/eval/257-motion-probe-summary.json`。
+
+**探针侧 web bug 绕行**（不改生产代码，#266 / #267 跟进，见 §9）：① resolveURL 补丁
+编码 `#`→`%23`；② 直驱 `model.motion(group,index)`（索引取 `mm.definitions`，
+绕过恒空的 motionIndexMap）。表情-only 伪动作双轨一致 played=false（忠实），
+探针用真文件动作 + kind=expression。
+
 ### 当前状态
 
 | 项 | 状态 |
@@ -350,5 +419,6 @@ interaction.motionFire 条件项，与 GPU 无关）。差异像素均为 AA 边
 | dotnet 静态基准帧渲染（沙箱 WARP） | ✅ 角色完整，47770 不透明像素 |
 | dotnet 静态基准帧渲染（真机 NVIDIA） | ✅ adapter=RTX 2080 Ti，RENDER_TEST_OK |
 | 静态基准帧逐像素对照（diff_pct < 2%） | ✅ 沙箱 **0.0065%** / 真机同卡 **0.004%**（四口径全 pass，见上表） |
+| 动作态探针逐像素对照（28 对，diff_pct < 2%） | ✅ 全 pass，max **0.517%**（软件适配器同口径；focus onLoad 怪癖移植后，见上节） |
 | 真机 selftest（NVIDIA） | ✅ PASS=302 FAIL=0 SKIP=2（当时计数，当前 309 项） |
-| 动作/口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（完整应用手动清单） |
+| 口型时序对照、多 DPI、内存/帧率/启动时延对照表 | ⏳ T6 后续（完整应用手动清单） |

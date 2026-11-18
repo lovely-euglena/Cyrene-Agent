@@ -1027,3 +1027,35 @@
 - **验证**：C# selftest 309/0/2（无 Core 176 项）；TS live2d 55/55 + 接线 9/9 + 开关 5/5
   （合计 9 文件 69/69）；
   打包链 publish live2d + verify:installer 断言随包 exe；dotnet-backend CI 补编译覆盖。
+
+## 2026-11-18 增量（二）：Live2D 动作态探针（#257 T6）——focus onLoad 怪癖移植 + web 潜在 bug
+
+- **背景**：T6 静态基准帧（双方不跑行为层）已对齐 0.0065%。用户要求「探测不同动作
+  下的差异」→ 补动作/表情态逐像素对照。新增 `motion-probe.mjs`（28 对矩阵）+
+  `diff-heatmap.mjs` + `param-compare.mjs`；采集器加 `--warmup/--params-out`（侧车）
+  与 drive 模式（web）。
+- **确定性时间轴**：load → t=0 重置 → warmup 60 帧 → play → M 帧 → 截帧（dt=1000/60）。
+  pld 动作/表情时间基 = elapsedTime 累积（startMotion 的 performance.now() 被忽略，
+  startTime 首次 update 惰性设定）→ 与侧车 _nowMs 同序。眨眼 web Math.random 不可
+  复现 → 晚注册 beforeModelUpdate 钩子强制 eyes=1；总虚拟时长 ≤2333ms < 首眨 2500ms
+  保证双轨同态。物理初态重建 rig 回静止（delay=1 无阻尼粒子初态相位差永久保留）。
+- **根因与裁决（focus onLoad 怪癖，忠实移植不重调参）**：初跑全 28 对均匀 6.7–8.7%
+  系统偏差。中帧参数对照（loadParameters 每帧回滚 transient 写入 → 须中帧快照，
+  侧车 getDiagnostics 加 opt-in includeParameters + Tick 中帧 stash）隔离出 focus
+  漂移：web onLoad focusCenter(true) 在首帧渲染前 worldTransform 仍单位矩阵 →
+  窗口中心按 originalWidth/Height(4200×3500) 归一化得偏心目标 (-0.726,0.688)，
+  非 (1,0)；运行时（首帧后）才走真实布局反演 → (1,0)。**裁决**：dotnet 区分两态，
+  新增 `FocusBehavior.MapWindowPointAtLoad`（load 瞬间）vs `MapWindowPoint`（运行时），
+  原样保留 web 怪癖。修复后 28 对全 pass，max 0.517%（多数 0.004–0.01%），53 参数
+  最大残差 1.6e-4。物理输出 Param19–30 对齐 ~1e-4 → 物理移植忠实。
+- **web 轨两处潜在 bug（探针发现，#266 / #267 跟进；本 PR 不改 web，双轨增量铁律）**：
+  ① motion 文件名含 # 被 file:// XHR 当 URL fragment → 真动作加载失败（#266）；
+  ② buildMotionIndexMap/buildHitAreaDefs 读 json.Motions（实际 FileReferences.Motions）
+  恒空 → playAction 真动作永不播放（#267）。生产被掩盖（命中区全表情伪动作、秋千走
+  speaking-motion 直连）。探针侧绕行（resolveURL 编码 %23 + 直驱 model.motion），
+  不改生产代码。
+- **Chromium CLI 怪癖（探针工程事实）**：「空格分隔的含冒号值 + 后续空格分隔开关」
+  被误判 URL 参数组合 → app 加载前退出 -1；带值参数一律等号形态（--play=...）。
+- **验证**：selftest 309/0/2 + 无 Core 176/0/9；check:main；TS live2d 子集 63 +
+  接线/开关 14 全过；publish 重建。28 对经 eval-log --diff 落盘（JSONL 70 轮），
+  汇总 docs/eval/257-motion-probe-summary.json。
