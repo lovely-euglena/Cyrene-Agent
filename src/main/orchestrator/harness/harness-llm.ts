@@ -11,6 +11,7 @@
 
 import { getAdapterForConfig, streamChatWithSdk, resolveTransport } from "../vendors";
 import { recordUsage, recordRequest } from "../../token-usage-store";
+import { computeUsageCost } from "../../pricing/cost-engine";
 import type {
   ChatMessage,
   ChatRequest,
@@ -93,6 +94,15 @@ export async function callLLM(
       response.usage.cachedInput,
       vendorConfig.model,
       response.usage.cacheCreation,
+      // issue #212 自查补齐：harness 路径（工具密集模式）此前漏计成本——
+      // 只有 chat-loop 记账，统计页对 harness 会话全显"—"。
+      computeUsageCost({
+        model: vendorConfig.model,
+        input: response.usage.input,
+        output: response.usage.output,
+        cachedInput: response.usage.cachedInput,
+        cacheCreation: response.usage.cacheCreation,
+      }),
     );
     return response;
   };
@@ -268,7 +278,32 @@ export async function summarizeHistory(
       });
     }
 
-    return adapter.parseResponse(await response.json()).text;
+    const payload = (await response.json()) as { usage?: ChatResponse["usage"] };
+    // !221 审查 P1：压缩/摘要请求同口径落账（含成本）——此前 usage 直接丢弃。
+    // 统计旁路 try/catch：落账失败不打断压缩链路。
+    try {
+      recordRequest(vendorConfig.model);
+      if (payload.usage) {
+        recordUsage(
+          payload.usage.input,
+          payload.usage.output,
+          1,
+          payload.usage.cachedInput,
+          vendorConfig.model,
+          payload.usage.cacheCreation,
+          computeUsageCost({
+            model: vendorConfig.model,
+            input: payload.usage.input,
+            output: payload.usage.output,
+            cachedInput: payload.usage.cachedInput,
+            cacheCreation: payload.usage.cacheCreation,
+          }),
+        );
+      }
+    } catch (error) {
+      console.warn("[harness-llm] summary usage 记账失败（不影响压缩）:", error instanceof Error ? error.message : String(error));
+    }
+    return adapter.parseResponse(payload).text;
   }, {
     provider: adapter.id,
     model: vendorConfig.model,
