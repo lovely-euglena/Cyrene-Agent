@@ -9,6 +9,7 @@
 
 import type { IpcScope } from "./ipc-scope";
 import type { StartupReadiness } from "./readiness";
+import { checkStartupActive, isCancelledPageLoad, StartupCancelledError } from "./startup-cancellation";
 import type { ShutdownCoordinator } from "./shutdown";
 import type { WindowActivationBroker } from "./window-activation";
 import type { ShellResult } from "./shell-bootstrap";
@@ -139,36 +140,49 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // 升级迁移：必须在任何 prompts/skills 读取之前
   deps.migrateStagedExternalContent();
 
+  checkStartupActive(shutdown);
+
   // Skill 系统：失败只降级，不阻塞聊天
   try {
     await timedStep("initSkills", () => deps.initSkills());
   } catch (error) {
+    if (error instanceof StartupCancelledError) throw error;
     console.error("[Core] initSkills failed:", error);
     readiness.markDegraded({ capability: "skills", message: degradedMessage(error), at: Date.now(), error });
   }
 
+  checkStartupActive(shutdown);
+
   // 低成本服务（runtimeState/tts/embedding/proactive/git/lsp/screenshot/update）
   const services = deps.createLowCostServices();
+
+  checkStartupActive(shutdown);
 
   // SRT 沙箱：失败不阻塞启动（fallback 到直接 spawn）
   try {
     await timedStep("initSandbox", () => deps.initSandbox());
   } catch (error) {
+    if (error instanceof StartupCancelledError) throw error;
     console.error("[Core] initSandbox failed at startup:", error);
     readiness.markDegraded({ capability: "sandbox", message: degradedMessage(error), at: Date.now(), error });
   }
 
+  checkStartupActive(shutdown);
   deps.initPlanMode();
   deps.registerAllTools(services);
+
+  checkStartupActive(shutdown);
 
   // RAG：失败记录降级，聊天仍允许启动
   try {
     await timedStep("initRag", () => deps.initRag());
   } catch (error) {
+    if (error instanceof StartupCancelledError) throw error;
     console.error("[Core] RAG init FAILED:", error);
     readiness.markDegraded({ capability: "rag", message: degradedMessage(error), at: Date.now(), error });
   }
 
+  checkStartupActive(shutdown);
   const runtime = deps.createRuntime(services);
 
   // channels 只装配并同步注册内置 adapter；网络启动仍在 background 阶段。
