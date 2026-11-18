@@ -54,7 +54,7 @@ describe("web_search native 轨", () => {
 
     expect(out).toBe('{"success":true,"query":"上海天气"}');
     expect(nativeMocks.setRuntimeSettings).toHaveBeenCalledWith({
-      webSearch: { engine: "bocha", bochaKey: "bocha-key-1", tavilyKey: "", anySearchKey: "" },
+      webSearch: { engine: "bocha", bochaKey: "bocha-key-1", tavilyKey: "", anySearchKey: "", deepseekKey: "", zhipuKey: "" },
     });
     expect(nativeMocks.calls).toEqual([
       {
@@ -75,10 +75,10 @@ describe("web_search native 轨", () => {
     await webSearchTool.execute({ query: "b" }, undefined);
 
     expect(nativeMocks.setRuntimeSettings).toHaveBeenNthCalledWith(1, {
-      webSearch: { engine: "bocha", bochaKey: "k1", tavilyKey: "", anySearchKey: "" },
+      webSearch: { engine: "bocha", bochaKey: "k1", tavilyKey: "", anySearchKey: "", deepseekKey: "", zhipuKey: "" },
     });
     expect(nativeMocks.setRuntimeSettings).toHaveBeenNthCalledWith(2, {
-      webSearch: { engine: "tavily", bochaKey: "", tavilyKey: "k2", anySearchKey: "" },
+      webSearch: { engine: "tavily", bochaKey: "", tavilyKey: "k2", anySearchKey: "", deepseekKey: "", zhipuKey: "" },
     });
   });
 
