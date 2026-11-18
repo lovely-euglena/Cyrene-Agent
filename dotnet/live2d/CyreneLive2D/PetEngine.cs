@@ -339,7 +339,7 @@ public sealed class PetEngine : IDisposable
         _breath = Breath.CreateDefault();
 
         _focus = new FocusController();
-        FocusCenter(instant: true); // web onLoad：focus.focusCenter(true)
+        FocusCenterAtLoad(); // web onLoad：focus.focusCenter(true)（首帧前陈旧单位矩阵怪癖）
         _blink = new BlinkController(_model!, _nowMs);
         _mouth = new MouthSyncController(_model!);
         _swing = new SpeakingMotionController(_model!, _motions);
@@ -511,6 +511,18 @@ public sealed class PetEngine : IDisposable
     private float ComputeBaseScale()
         => Math.Min(BaseWindowWidth / _model!.CanvasWidth, Math.Min(BaseWindowHeight / _model.CanvasHeight, 1f));
 
+    /// <summary>
+    /// load 瞬间居中注视（web onLoad focus.focusCenter(true)）：首帧渲染前
+    /// worldTransform 仍单位矩阵 → 走 MapWindowPointAtLoad 偏心目标怪癖。
+    /// </summary>
+    private void FocusCenterAtLoad()
+    {
+        if (_model == null || _focus == null) return;
+        var (tx, ty) = FocusBehavior.MapWindowPointAtLoad(_winW, _winH, _model.CanvasWidth, _model.CanvasHeight);
+        _focus.Focus(tx, ty, instant: true);
+    }
+
+    /// <summary>运行时居中注视（拖拽 pointerdown focus.pause(true) → focusCenter）：首帧后 worldTransform 已更新，走真实布局反演。</summary>
     private void FocusCenter(bool instant)
     {
         if (_model == null || _focus == null) return;
