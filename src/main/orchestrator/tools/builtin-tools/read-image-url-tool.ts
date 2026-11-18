@@ -27,14 +27,6 @@ export function clearImageCaptionCache(): void {
   captionCache.clear();
 }
 
-/** 懒加载图片转述视觉配置：动态 import，规避注册期副作用。路由判定收口在 image-router。 */
-async function loadCaptionVisionConfigLazy(): Promise<import("../../image-router").CaptionVisionConfig> {
-  const settingsMod = await import("../../../settings/model-settings");
-  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
-  const router = await import("../../image-router");
-  return router.resolveCaptionVisionConfig(settings);
-}
-
 async function executeReadImageUrl(
   args: Record<string, unknown>,
   ctx?: ToolContext,
@@ -53,16 +45,39 @@ async function executeReadImageUrl(
     return "[缓存] 此描述生成于 " + generatedAt + "，30 分钟内复用\n\n" + hit.value;
   }
 
-  const captionVision = await loadCaptionVisionConfigLazy();
-  if (!captionVision.ok) {
-    return "[错误·配置] " + captionVision.error;
+  // 多模态直发（IKLRQH）：URL 直接作为 image_url 块挂 tool 结果，厂商拉图一次完成；
+  // 纯文本主模型：URL 直传独立视觉模型转述（本机不下载）
+  const settingsMod = await import("../../../settings/model-settings");
+  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
+  const router = await import("../../image-router");
+  const delivery = router.resolveToolImageDelivery(settings);
+
+  if (delivery.mode === "direct") {
+    if (!ctx?.contextRefs) {
+      return "[错误] 当前运行上下文不支持图片直发，请改用纯文本主模型或配置独立视觉模型。";
+    }
+    const ref = ctx.contextRefs.issue({
+      conversationId: ctx.conversationId ?? "unknown",
+      domain: "tool-image",
+      kind: "image",
+      expiresAt: Date.now() + 15 * 60_000,
+      value: { url },
+    });
+    console.log(LOG_PREFIX, "read_image_url: direct ->", ref);
+    return `[网络图片已读取直发主模型；${url}]\n` +
+      `[图片直发:${ref}]\n图片已随本条工具结果附带，请直接结合图片回答，不要为此再调用看图工具。` +
+      (userQuery ? `\n用户问题：${userQuery}` : "");
+  }
+
+  if (delivery.mode === "reject") {
+    return "[错误·配置] " + delivery.reason;
   }
 
   console.log(LOG_PREFIX, "read_image_url:", url);
 
   // URL 直传：厂商服务器自行拉图，本机不下载
   const { captionImage } = await import("../../vision-captioner");
-  const result = await captionImage({ url }, userQuery, captionVision.config);
+  const result = await captionImage({ url }, userQuery, delivery.config);
   // 只有成功描述才写缓存；错误描述（[错误 开头）不缓存，下次重试
   if (!result.startsWith("[错误")) {
     captionCache.set(cacheKey, result);

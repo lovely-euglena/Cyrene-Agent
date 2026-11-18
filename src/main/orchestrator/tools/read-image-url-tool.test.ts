@@ -9,7 +9,7 @@ vi.mock("../../settings/model-settings", () => ({
 }));
 
 vi.mock("../image-router", () => ({
-  resolveCaptionVisionConfig: vi.fn(),
+  resolveToolImageDelivery: vi.fn(),
 }));
 
 vi.mock("../vision-captioner", () => ({
@@ -18,11 +18,11 @@ vi.mock("../vision-captioner", () => ({
 
 import { readImageUrlTool } from "./builtin-tools/read-image-url-tool";
 import { captionImage } from "../vision-captioner";
-import { resolveCaptionVisionConfig } from "../image-router";
+import { resolveToolImageDelivery } from "../image-router";
 import type { ToolContext } from "./registry/tool-context";
 
 const mockedCaption = vi.mocked(captionImage);
-const mockedResolveCaptionVision = vi.mocked(resolveCaptionVisionConfig);
+const mockedResolveDelivery = vi.mocked(resolveToolImageDelivery);
 
 const FAKE_CONFIG = { baseUrl: "https://api.example.com/v1", apiKey: "k", model: "gpt-4o" };
 const CTX: ToolContext = { userQuery: "这图里是什么" };
@@ -39,9 +39,9 @@ describe("read_image_url 拒绝路径", () => {
   });
 
   it("路由拒绝时返回配置错误（纯文本主模型 + 未配视觉模型）", async () => {
-    mockedResolveCaptionVision.mockReturnValue({
-      ok: false,
-      error: "当前主模型不是多模态，且未配置独立视觉模型。请在「设置 → API 设置 → 视觉模型」中配置，或切换到多模态主模型。",
+    mockedResolveDelivery.mockReturnValue({
+      mode: "reject",
+      reason: "当前主模型不是多模态，且未配置独立视觉模型。请在「设置 → API 设置 → 视觉模型」中配置，或切换到多模态主模型。",
     });
     const result = await readImageUrlTool.execute({ url: "https://example.com/a.png" }, CTX);
     expect(result).toContain("[错误·配置]");
@@ -50,9 +50,9 @@ describe("read_image_url 拒绝路径", () => {
   });
 
   it("多模态 Anthropic 主模型未配视觉模型时明确拒绝（原为必然 404）", async () => {
-    mockedResolveCaptionVision.mockReturnValue({
-      ok: false,
-      error: "主模型走 Anthropic 协议，工具读图需要 OpenAI 兼容的独立视觉模型。请在「设置 → API 设置 → 视觉模型」中配置。",
+    mockedResolveDelivery.mockReturnValue({
+      mode: "reject",
+      reason: "主模型走 Anthropic 协议，工具读图需要 OpenAI 兼容的独立视觉模型。请在「设置 → API 设置 → 视觉模型」中配置。",
     });
     const result = await readImageUrlTool.execute({ url: "https://example.com/a.png" }, CTX);
     expect(result).toContain("Anthropic");
@@ -62,7 +62,7 @@ describe("read_image_url 拒绝路径", () => {
 
 describe("read_image_url URL 直传", () => {
   it("以 { url } 形式调 captionImage，不走 base64", async () => {
-    mockedResolveCaptionVision.mockReturnValue({ ok: true, config: FAKE_CONFIG });
+    mockedResolveDelivery.mockReturnValue({ mode: "caption", config: FAKE_CONFIG });
     mockedCaption.mockResolvedValue("一只橘猫趴在键盘上");
 
     const result = await readImageUrlTool.execute(
@@ -80,7 +80,7 @@ describe("read_image_url URL 直传", () => {
   });
 
   it("无 ToolContext 时 userQuery 回退空串", async () => {
-    mockedResolveCaptionVision.mockReturnValue({ ok: true, config: FAKE_CONFIG });
+    mockedResolveDelivery.mockReturnValue({ mode: "caption", config: FAKE_CONFIG });
     mockedCaption.mockResolvedValue("描述");
 
     await readImageUrlTool.execute({ url: "https://example.com/a.jpg" });
