@@ -30,7 +30,10 @@ html body {
   width: 100vw;
   background: var(--rb-surface-page);
   box-sizing: border-box;
-  padding: 50px 10px 10px 262px;
+  /* issue #224：内容区左缘偏移同时供 padding-left 与标题栏居中计算消费，
+     两处必须同源——见底部 --page-left-offset 各态定义 */
+  --page-left-offset: 262px;
+  padding: 50px 10px 10px var(--page-left-offset);
   position: relative;
   display: flex;
   gap: 10px;
@@ -97,7 +100,8 @@ html body {
 }
 
 .cy-page.is-collapsed {
-  padding-left: 10px;
+  --page-left-offset: 10px;
+  padding-left: var(--page-left-offset);
 }
 
 .cy-page-toggle {
@@ -115,7 +119,9 @@ html body {
 .cy-page-top-center {
   position: absolute;
   top: 7px;
-  left: 50%;
+  /* issue #224：居中于内容区（而非全窗）——内容区 = [offset, 100% - 10px]，
+     中心 = (100% + offset - 10px) / 2，随 --page-left-offset 各态联动 */
+  left: calc((100% + var(--page-left-offset, 262px) - 10px) / 2);
   z-index: 51;
   display: flex;
   align-items: center;
@@ -162,7 +168,8 @@ html body {
   }
 
   .cy-page {
-    padding-left: 182px;
+    --page-left-offset: 182px;
+    padding-left: var(--page-left-offset);
   }
 }
 
@@ -343,10 +350,8 @@ html body {
   pointer-events: none;
 }
 
-/* 侧栏收起时，给左上角控件留出空间。 */
-.cy-page.is-collapsed .cy-page-top-center {
-  left: calc(50% - 85px);
-}
+/* issue #224：收起态居中已由 --page-left-offset: 10px 联动，
+   删除旧布局遗产的 85px 魔数补偿（旧 170px 侧栏时代产物，与现行几何不匹配）。 */
 
 .cy-workspace::before {
   content: "";

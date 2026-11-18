@@ -1138,3 +1138,41 @@
   line-height: var(--cy-msg-line-height, 1.85);
   letter-spacing: var(--cy-msg-spacing, 0.8px);
 }
+
+/* 桌面图标选择器（issue #227）：组件随旧设置窗迁移时样式漏带——
+   旧窗 settings.css:1018-1048 有完整定义，此处按 React 窗 token 对齐重写。 */
+.cy-settings-icon-options {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.cy-settings-icon-option {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  padding: 3px;
+  overflow: hidden;
+  border: 1px solid var(--rb-border-subtle, color-mix(in srgb, var(--rb-text-primary) 14%, transparent));
+  border-radius: 30%;
+  background: var(--rb-surface-elevated, transparent);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.cy-settings-icon-option:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--rb-text-primary) 30%, transparent);
+}
+
+.cy-settings-icon-option.is-active {
+  border-color: var(--rb-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--rb-accent) 24%, transparent);
+}
+
+.cy-settings-icon-option img {
+  width: 100%;
+  height: 100%;
+  border-radius: 30%;
+  object-fit: cover;
+}
