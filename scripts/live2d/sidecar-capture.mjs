@@ -11,9 +11,11 @@
  *   node scripts/live2d/sidecar-capture.mjs --model-dir <dir> --out frame.png
  *        [--exe <path>] [--data-dir <dir>] [--width 400 --height 500] [--zoom 1]
  *        [--params ParamAngleX=10,ParamEyeLOpen=0.5] [--play expression:墨镜]
- *        [--ticks 60] [--diag-only]
+ *        [--warmup 60] [--ticks 60] [--diag-only]
  *
- *   --ticks N     确定性推进 N 帧（每帧 dt=1000/60ms），再截帧
+ *   --warmup N    play 之前先确定性推进 N 帧（动作探针用：与 web 轨同预热，
+ *                 物理初态差异经阻尼衰减；呼吸相位从 0 同步推进）
+ *   --ticks N     play 之后确定性推进 N 帧（每帧 dt=1000/60ms），再截帧
  *   --diag-only   只 load/tick/getDiagnostics（无渲染，无 GPU 环境可跑通协议链路）
  *   --exe         缺省自动找 publish/构建输出（与 live2d-host-client 同序）
  *
@@ -128,6 +130,7 @@ async function main() {
   const width = Number(getArg(argv, "--width", "400"));
   const height = Number(getArg(argv, "--height", "500"));
   const zoom = Number(getArg(argv, "--zoom", "1"));
+  const warmup = Number(getArg(argv, "--warmup", "0"));
   const ticks = Number(getArg(argv, "--ticks", "0"));
   const diagOnly = argv.includes("--diag-only");
   const paramsSpec = getArg(argv, "--params");
@@ -149,12 +152,14 @@ async function main() {
         await driver.call("setParameter", { id: pair.slice(0, eq).trim(), value: Number(pair.slice(eq + 1)) });
       }
     }
+    for (let i = 0; i < warmup; i++) await driver.call("tick", { dtMs: 1000 / 60 });
     if (playSpec) {
       const [kind, ...rest] = playSpec.split(":");
       const target = kind === "expression"
         ? { kind: "expression", name: rest.join(":") }
         : { kind: "motion", group: rest[0], motionName: rest.slice(1).join(":") };
-      await driver.call("play", { target });
+      const played = await driver.call("play", { target });
+      console.error(`[capture] play ${playSpec} played=${played.played}`);
     }
     for (let i = 0; i < ticks; i++) await driver.call("tick", { dtMs: 1000 / 60 });
 
@@ -162,9 +167,14 @@ async function main() {
       const diag = await driver.call("getDiagnostics");
       console.log(JSON.stringify(diag, null, 2));
     } else {
+      const paramsOut = getArg(argv, "--params-out");
+      if (paramsOut) {
+        const diag = await driver.call("getDiagnostics", { includeParameters: true });
+        fs.writeFileSync(paramsOut, JSON.stringify({ nowMs: diag.nowMs, motion: diag.motion, expression: diag.expression, controllers: diag.controllers, params: diag.parameterValues }, null, 1));
+      }
       const frame = await driver.call("captureFrame", { width, height }, 60_000);
       fs.writeFileSync(out, Buffer.from(frame.png, "base64"));
-      console.log(JSON.stringify({ out: path.resolve(out), width: frame.width, height: frame.height, ticks }));
+      console.log(JSON.stringify({ out: path.resolve(out), width: frame.width, height: frame.height, warmup, ticks }));
     }
     console.error("CAPTURE_OK");
   } catch (err) {

@@ -15,6 +15,22 @@
  *   npx electron scripts/live2d/web-capture.cjs --out web.png
  *        [--params ParamAngleX=15,ParamEyeLOpen=0.5] [--no-freeze] [--wait 500]
  *
+ * 动作/表情探针模式（与 sidecar-capture --warmup/--play/--ticks 对齐）：
+ *   npx electron scripts/live2d/web-capture.cjs --play=motion:动作#6:Wink~ \
+ *        --warmup=60 --ticks=30 --extract --out=web.png
+ *   ⚠️ 带值参数必须用等号形态：Chromium 把「空格分隔的含冒号值 + 后续空格
+ *   分隔开关」误判为 URL 参数组合，app 加载前即退出 -1（实测）。
+ *   t=0 重置（参数回默认/elapsedTime/breath 时钟清零）→ warmup 帧 → playAction
+ *   （生产路径）→ 确定性推进 ticks 帧 → readPixels 取帧。pld 动作/表情时间基
+ *   = elapsedTime 累积（startMotion 的 performance.now() 参数被忽略，startTime
+ *   首次 update 惰性设定）→ 与侧车 _nowMs tick 累积同序。眨眼用晚注册
+ *   beforeModelUpdate 钩子强制 eyes=1 中和（侧车首眨 >=2500ms，总虚拟时长
+ *   (warmup+ticks)×16.67ms 须 <2500ms 保证双轨同态）。
+ *   探针侧两处 web 轨潜在 bug 绕行（不改生产代码，#266 / #267）：
+ *   ① motion 文件名含 # 被 file:// XHR 当 URL fragment → resolveURL 补丁编码 %23；
+ *   ② manager.playAction 的 motionIndexMap 读 json.Motions（实际在
+ *      FileReferences.Motions）恒空 → 直驱 model.motion(group,index)。
+ *
  * 退出码：0 成功 / 1 失败 / 2 前置缺失（dist/renderer）。
  */
 const { app, BrowserWindow } = require("electron");
@@ -25,13 +41,22 @@ const REPO_ROOT = path.resolve(__dirname, "../..");
 
 function getArg(name, dflt = null) {
   const i = process.argv.indexOf(name);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : dflt;
+  if (i >= 0 && i + 1 < process.argv.length) return process.argv[i + 1];
+  // 等号形态（--play=motion:组:名）：Chromium 命令行把「空格分隔的含冒号值 +
+  // 后续空格分隔开关」误判为 URL 参数组合 → 加载 app 前退出 -1（实测）。
+  // 探针一律用等号形态传带值参数（冒号值安全）。
+  const eq = process.argv.find((a) => a.startsWith(name + "="));
+  return eq ? eq.slice(name.length + 1) : dflt;
 }
 
 const out = getArg("--out", path.join(require("node:os").tmpdir(), "cyrene-web-capture.png"));
 const paramsSpec = getArg("--params");
 const freeze = !process.argv.includes("--no-freeze");
 const settleMs = Number(getArg("--wait", "500"));
+const playSpec = getArg("--play");
+const warmupTicks = Number(getArg("--warmup", "60"));
+const driveTicks = Number(getArg("--ticks", "0"));
+const driveMode = Boolean(playSpec);
 
 const rendererIndex = path.join(REPO_ROOT, "dist", "renderer", "index.html");
 if (!fs.existsSync(rendererIndex)) {
@@ -93,6 +118,119 @@ function freezeAndRenderScript(paramsSpec, freeze) {
   })()`;
 }
 
+/** 解析 --play expression:NAME / motion:GROUP:NAME（与 sidecar-capture 同语义）。 */
+function parsePlayTarget(spec) {
+  const [kind, ...rest] = spec.split(":");
+  return kind === "expression"
+    ? { kind: "expression", name: rest.join(":") }
+    : { kind: "motion", group: rest[0], motionName: rest.slice(1).join(":") };
+}
+
+/**
+ * 动作/表情探针：t=0 重置 → warmup → playAction（生产路径）→ 确定性推进 → 诊断。
+ * 与侧车 load→warmup ticks→play→ticks 逐帧同序（dt=1000/60ms）。
+ */
+async function driveMotion(win, spec, warmup, ticks) {
+  const setup = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.__cyrene && window.__cyrene.manager;
+    if (!m) return { error: "manager 未就绪" };
+    const model = m.getModel();
+    if (!model) return { error: "model 未就绪" };
+    const cm = model.internalModel.coreModel;
+    m.pause();
+    // 探针侧 URL 修复（不改生产代码）：motion 文件名含 #（动作#6_*.motion3.json）
+    // 被 file:// XHR 解析为 URL fragment → 路径截断 Status 0。web 轨生产同病
+    // （潜在 bug，#266）；dotnet 磁盘读取不受影响。编码 # 使双轨可比。
+    const settings = model.internalModel.settings;
+    if (!settings.__probeResolvePatched) {
+      const orig = settings.resolveURL.bind(settings);
+      settings.resolveURL = (u) => orig(String(u).replace(/#/g, "%23"));
+      settings.__probeResolvePatched = true;
+    }
+    model.deltaTime = 0;
+    model.elapsedTime = 0;
+    const breath = model.internalModel.breath;
+    if (breath) breath._currentTime = 0;
+    // 物理初态归零：加载后自动 ticker 已走数帧，激发了 delay=1 的无阻尼自由
+    // 粒子（头发/双腿/秋千），初态相位差会永久保留。重建 physics rig 回静止
+    // 初态，与侧车 load 即静止同起点（探针确定性对齐，非引擎差异）。
+    // settings.physics 是路径字符串（pld 不保留原始 JSON）→ 重 fetch。
+    const phys = model.internalModel.physics;
+    if (phys && phys.constructor && typeof phys.constructor.create === "function") {
+      const purl = model.internalModel.settings.resolveURL(model.internalModel.settings.physics);
+      const pj = await fetch(purl).then((r) => r.json());
+      model.internalModel.physics = phys.constructor.create(pj);
+    }
+    const n = cm.getParameterCount();
+    let paramsReset = 0;
+    for (let i = 0; i < n; i++) {
+      const d = typeof cm.getParameterDefaultValue === "function" ? cm.getParameterDefaultValue(i) : undefined;
+      if (typeof d === "number") { cm.setParameterValueByIndex(i, d); paramsReset++; }
+    }
+    // 晚于 BlinkController 注册 → 帧末覆盖眼参数（中和随机眨眼；侧车虚拟 t<2500ms 恒 eyes=1）
+    if (!window.__probeEyesHook) {
+      window.__probeEyesHook = () => {
+        cm.setParameterValueById("ParamEyeLOpen", 1);
+        cm.setParameterValueById("ParamEyeROpen", 1);
+        // 中帧参数 stash（全部写入完成、coreModel.update/loadParameters 前）
+        const ids = cm._model.parameters.ids;
+        const arr = [];
+        for (let i = 0; i < cm.getParameterCount(); i++) arr.push(ids[i] + "=" + cm.getParameterValueByIndex(i));
+        window.__probeMidParams = arr;
+      };
+      model.internalModel.on("beforeModelUpdate", window.__probeEyesHook);
+    }
+    const dt = 1000 / 60;
+    for (let i = 0; i < ${warmup}; i++) { model.update(dt); m.app.renderer.render(m.app.stage); }
+    return { paramsReset, warmup: ${warmup}, elapsedTime: model.elapsedTime, breathTime: breath ? breath._currentTime : null };
+  })()`);
+  if (setup && setup.error) throw new Error(setup.error);
+
+  const target = parsePlayTarget(spec);
+  const playState = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.__cyrene.manager;
+    const model = m.getModel();
+    const mm = model.internalModel.motionManager;
+    const target = ${JSON.stringify(target)};
+    let played = false;
+    if (target.kind === "motion") {
+      // 探针直驱 model.motion(group,index)（pld 生产动作管线：状态机+队列）。
+      // 不走 manager.playAction：web 轨 motionIndexMap 读 json.Motions（实际在
+      // FileReferences.Motions）恒空 → 动作目标全落 expression 回退、真动作永不
+      // 播放（潜在 bug，#267；dotnet 轨解析正确）。索引从 mm.definitions
+      // （pld CubismModelSettingsJson 正确解析）取，与 dotnet FindMotionIndex 同序。
+      const defs = mm.definitions[target.group] || [];
+      const index = defs.findIndex((d) => d && d.Name === target.motionName);
+      if (index >= 0) played = await model.motion(target.group, index);
+    } else {
+      played = await model.expression(target.name);
+    }
+    return {
+      played,
+      playing: mm.playing,
+      motionQueue: mm.queueManager ? mm.queueManager._motions.length : -1,
+      expressionQueue: mm.expressionManager && mm.expressionManager.queueManager ? mm.expressionManager.queueManager._motions.length : -1,
+    };
+  })()`);
+  const queued = target.kind === "expression" ? playState.expressionQueue > 0 : playState.motionQueue > 0;
+  if (!queued) throw new Error(`play 未入队: ${spec} ${JSON.stringify(playState)}`);
+
+  const drive = await win.webContents.executeJavaScript(`(() => {
+    const m = window.__cyrene.manager;
+    const model = m.getModel();
+    const dt = 1000 / 60;
+    for (let i = 0; i < ${ticks}; i++) { model.update(dt); m.app.renderer.render(m.app.stage); }
+    const cm = model.internalModel.coreModel;
+    const ids = cm._model.parameters.ids;
+    const params = [];
+    for (let i = 0; i < cm.getParameterCount(); i++) params.push(ids[i] + "=" + cm.getParameterValueByIndex(i));
+    const fc = model.internalModel.focusController;
+    return { ticks: ${ticks}, elapsedTime: model.elapsedTime, playing: model.internalModel.motionManager.playing, params, midParams: window.__probeMidParams || null,
+      focus: { tx: fc.targetX, ty: fc.targetY, x: fc.x, y: fc.y } };
+  })()`);
+  return { mode: "drive", play: spec, setup, playState, ...drive };
+}
+
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 400,
@@ -123,17 +261,22 @@ app.whenReady().then(async () => {
     }
     if (!ready) throw new Error("模型加载超时（60s）");
 
-    const diag = await win.webContents.executeJavaScript(freezeAndRenderScript(paramsSpec, freeze));
-    if (diag && diag.error) throw new Error(diag.error);
-    await new Promise((r) => setTimeout(r, settleMs));
-    if (freeze) {
-      // 冻结后再渲一帧，确保呈现的是冻结态
-      await win.webContents.executeJavaScript(
-        "(() => { const m = window.__cyrene.manager; m.getModel().deltaTime = 0; m.app.renderer.render(m.app.stage); return true; })()",
-      );
+    let diag;
+    if (driveMode) {
+      diag = await driveMotion(win, playSpec, warmupTicks, driveTicks);
+    } else {
+      diag = await win.webContents.executeJavaScript(freezeAndRenderScript(paramsSpec, freeze));
+      if (diag && diag.error) throw new Error(diag.error);
+      await new Promise((r) => setTimeout(r, settleMs));
+      if (freeze) {
+        // 冻结后再渲一帧，确保呈现的是冻结态
+        await win.webContents.executeJavaScript(
+          "(() => { const m = window.__cyrene.manager; m.getModel().deltaTime = 0; m.app.renderer.render(m.app.stage); return true; })()",
+        );
+      }
     }
     let pngBuf, width, height;
-    if (process.argv.includes("--extract")) {
+    if (process.argv.includes("--extract") || driveMode) {
       // 软件 GL（--disable-gpu）下 capturePage 不合成 WebGL 层（得全透明帧）。
       // 改读回 GL framebuffer：render+readPixels 同任务，drawing buffer 有效。
       // pixi context 为 premultipliedAlpha，readPixels 得预乘 RGBA——与侧车
