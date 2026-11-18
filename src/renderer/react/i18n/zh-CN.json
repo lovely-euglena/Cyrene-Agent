@@ -945,6 +945,10 @@
     "noReadableContent": "这条消息没有可朗读的内容"
   },
   "settingsPage": {
+      "unsavedGuard": {
+        "title": "有未保存的设置", "content": "当前页有未保存的修改，离开后将丢失。确定离开吗？",
+        "leave": "离开", "stay": "继续编辑"
+      },
       "knowledgeBase": {
         "title": "知识库",
         "description": "管理本地资料集，按原文件路径检索和引用内容。",
@@ -1526,6 +1530,8 @@
       "windowsDescription": "记住工作区、音乐等窗口的位置与大小，重启后恢复。",
       "rememberWindowState": "记住窗口位置",
       "rememberWindowStateDescription": "记住工作区和音乐窗口的位置与大小，重启后恢复。",
+      "unsavedGuard": "未保存修改提醒",
+      "unsavedGuardDescription": "离开设置页前，若有未保存的修改将弹窗确认（默认开启）。",
       "sidebarVisible": "状态栏窗口",
       "sidebarVisibleDescription": "显示或隐藏桌面状态栏；关闭后可从托盘重新打开。",
       "tasksVisible": "日程栏窗口",

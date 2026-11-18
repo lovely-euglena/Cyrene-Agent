@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useRegisterUnsaved } from "./unsaved-guard";
 import { Alert, Button, Input } from "antd";
 import { AudioLines, Cloud, FileAudio, Headphones, Laptop, ListMusic, Mic2, Volume2, WandSparkles } from "lucide-react";
 import { siMinimax, siXiaomi } from "simple-icons";
@@ -155,6 +156,9 @@ export function TtsSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState<Record<Provider, boolean>>({ minimax: false, gptsovits: false, "custom-cloud": false, mimo: false, mossland: false });
+  // issue #226：任一 provider 有未保存配置即上报守卫（离开设置页前弹确认）
+  const anyDirty = Object.values(dirty).some(Boolean);
+  useRegisterUnsaved("tts", anyDirty);
   const [saveStatus, setSaveStatus] = useState<Partial<Record<Provider, string>>>({});
   const [busy, setBusy] = useState("");
   const [cloneState, setCloneState] = useState({ file: "", promptFile: "", promptText: "", text: testText, voiceId: createUniqueMiniMaxVoiceId(), status: "" });

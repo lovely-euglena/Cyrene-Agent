@@ -945,6 +945,10 @@
     "noReadableContent": "This message has nothing to read aloud"
   },
   "settingsPage": {
+      "unsavedGuard": {
+        "title": "Unsaved settings", "content": "You have unsaved changes on this page. They will be lost if you leave. Leave anyway?",
+        "leave": "Leave", "stay": "Keep editing"
+      },
       "knowledgeBase": {
         "title": "Knowledge Base",
         "description": "Manage local collections and search content at its original file path.",
@@ -1526,6 +1530,8 @@
       "windowsDescription": "Remember workspace and music window bounds, restored after restart.",
       "rememberWindowState": "Remember window positions",
       "rememberWindowStateDescription": "Restore workspace and music window size and position after restart.",
+      "unsavedGuard": "Unsaved changes guard",
+      "unsavedGuardDescription": "Confirm before leaving the settings page when there are unsaved changes (on by default).",
       "sidebarVisible": "Sidebar window",
       "sidebarVisibleDescription": "Show or hide the desktop sidebar; reopen it from the tray when closed.",
       "tasksVisible": "Schedule window",

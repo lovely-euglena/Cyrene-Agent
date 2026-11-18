@@ -12,6 +12,8 @@ import { DataStorageSettings } from "./DataStorageSettings";
 
 interface GeneralValues {
   rememberWindowState: boolean;
+  /** issue #226：离开设置页前，未保存修改弹窗确认（默认开）。 */
+  unsavedGuardEnabled: boolean;
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   disableGpuElectron: boolean;
@@ -25,6 +27,7 @@ interface GeneralValues {
 
 const defaults: GeneralValues = {
   rememberWindowState: true,
+  unsavedGuardEnabled: true,
   toastSoundEnabled: true,
   launchAtLogin: false,
   disableGpuElectron: false,
@@ -40,6 +43,7 @@ function readGeneral(value: unknown): GeneralValues {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
     rememberWindowState: typeof input.rememberWindowState === "boolean" ? input.rememberWindowState : defaults.rememberWindowState,
+    unsavedGuardEnabled: typeof input.unsavedGuardEnabled === "boolean" ? input.unsavedGuardEnabled : defaults.unsavedGuardEnabled,
     toastSoundEnabled: typeof input.toastSoundEnabled === "boolean" ? input.toastSoundEnabled : defaults.toastSoundEnabled,
     launchAtLogin: typeof input.launchAtLogin === "boolean" ? input.launchAtLogin : defaults.launchAtLogin,
     disableGpuElectron: typeof input.disableGpuElectron === "boolean" ? input.disableGpuElectron : defaults.disableGpuElectron,
@@ -211,6 +215,7 @@ export function GeneralSettingsPanel() {
           <div className="cy-settings-section__heading"><h2><Settings2 size={18} />{t("settingsPage.general.windows")}</h2><p>{t("settingsPage.general.windowsDescription")}</p></div>
           <Card>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.rememberWindowState")}</strong><span>{t("settingsPage.general.rememberWindowStateDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.rememberWindowState")} checked={values.rememberWindowState} onChange={(checked) => void saveImmediate("rememberWindowState", checked)} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.unsavedGuard")}</strong><span>{t("settingsPage.general.unsavedGuardDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.unsavedGuard")} checked={values.unsavedGuardEnabled} onChange={(checked) => void saveImmediate("unsavedGuardEnabled", checked)} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.sidebarVisible")}</strong><span>{t("settingsPage.general.sidebarVisibleDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.sidebarVisible")} checked={values.sidebarVisible} onChange={(checked) => void saveImmediate("sidebarVisible", checked)} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.tasksVisible")}</strong><span>{t("settingsPage.general.tasksVisibleDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.tasksVisible")} checked={values.tasksVisible} onChange={(checked) => void saveImmediate("tasksVisible", checked)} /></div>
           </Card>
