@@ -30,6 +30,10 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
       - name: Build CyreneVoice
         run: dotnet build dotnet/voice/CyreneVoice -c Release
+      - name: Build cyrene-live2d（Live2D 渲染侧车，#257；EnableWindowsTargeting 交叉编译）
+        run: dotnet build dotnet/live2d/CyreneLive2D -c Release
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
       - name: Build smoke-host + Linux 协议套件（冒烟/边缘/矩阵/循环）
         run: |
           sudo apt-get update && sudo apt-get install -y libfontconfig1
