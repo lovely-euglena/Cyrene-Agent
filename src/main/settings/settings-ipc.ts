@@ -354,6 +354,12 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     deps.windowManager?.applyPetWindowZoom(saved.petZoom);
   });
 
+  // #195：桌宠高 DPI 渲染开关。PIXI resolution 不能热改，切换后 reload 桌宠窗重建。
+  ipc.on(IPC.SETTINGS_SET_PET_RENDER_HIDPI, (_event, value: boolean) => {
+    saveGeneralSettings({ ...getGeneralSettings(), petRenderHighDpi: Boolean(value) });
+    deps.windowManager?.reloadPetWindow();
+  });
+
   ipc.handle(IPC.MODEL_CONFIG_GET, () => getPublicModelConfig());
 
   ipc.handle(IPC.RUNTIME_STATE_GET, () => runtimeStateService.getState());

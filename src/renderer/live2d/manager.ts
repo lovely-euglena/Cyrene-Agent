@@ -82,13 +82,15 @@ function buildMotionIndexMap(json: ModelJsonShape): Map<string, Map<string, numb
 }
 
 /**
- * 桌宠渲染最大像素比：Live2D 的后备缓冲/纹理按 DPR² 增长（实测 1.25×DPR 时
- * 渲染进程稳态 ~452MB WS、GPU 侧纹理 ~280MB WS）。钳到 1.0：模型观感差异
- * 很小，但省 ~20% 纹理工位（内存基线见 docs/internal-issue/2026-09-27-memory-baseline.md）。
+ * 桌宠渲染最大像素比。历史值 1（4K 高 DPI 下模糊，issue #195）：当年按内存基线
+ * （docs/internal-issue/2026-09-27-memory-baseline.md，1.25×DPR 实测 ~452MB WS）
+ * 钳到 1.0 省纹理工位——代价是 DPR>1 屏幕上 drawing buffer 被 CSS 放大导致模糊。
+ * 现默认 2（覆盖 4K 常见 DPR 1.5/2），显存回落需求走设置项 petRenderHighDpi
+ * （关=回到 DPR 1 省内存模式，运行时切换由主进程 reload 桌宠窗口生效）。
  * ⚠️ click-through 的 CSS→buffer 坐标换算必须按实际缓冲比例推导，不能直接用
- * window.devicePixelRatio（见 click-through.ts）。
+ * window.devicePixelRatio（见 click-through.ts；换算是动态的，DPR 提高无需改动）。
  */
-export const PET_RENDER_MAX_DPR = 1;
+export const PET_RENDER_MAX_DPR = 2;
 
 export class Live2DManager {
   private app: PIXI.Application | null = null;
@@ -97,6 +99,8 @@ export class Live2DManager {
   /** group -> motionName -> index in internalModel.motionManager.definitions[group]. */
   private motionIndexMap: Map<string, Map<string, number>> = new Map();
   private options: Live2DManagerOptions;
+  /** 本实例渲染 DPR 上限（init 前可改）：renderer 入口按设置项 petRenderHighDpi 覆写。 */
+  renderMaxDpr: number = PET_RENDER_MAX_DPR;
   private disposed = false;
   private initPromise: Promise<void> | null = null;
   /** Scale that fits the model into the base window (zoom=1.0). Cached once
@@ -135,8 +139,8 @@ export class Live2DManager {
       // under the cursor to decide transparent vs. opaque). Without this the
       // WebGL framebuffer is cleared after each frame and readPixels is UB.
       preserveDrawingBuffer: true,
-      // Cap DPR to keep the WebGL drawing buffer small (see PET_RENDER_MAX_DPR).
-      resolution: Math.min(window.devicePixelRatio || 1, PET_RENDER_MAX_DPR),
+      // Cap DPR to keep the WebGL drawing buffer small（上限可被 renderMaxDpr 覆写，见 PET_RENDER_MAX_DPR 注释）。
+      resolution: Math.min(window.devicePixelRatio || 1, this.renderMaxDpr),
       autoDensity: true,
     });
     this.startIdleFpsWatch();
