@@ -5,3 +5,6 @@
 }
 .cy-browser-control-page .cy-settings-row__copy strong svg { color: var(--rb-accent); }
 .cy-browser-control-page__status { margin-top: 14px; }
+
+/* issue #142：地址栏搜索引擎下拉 */
+.cy-browser-control-page__engine { min-width: 150px; }

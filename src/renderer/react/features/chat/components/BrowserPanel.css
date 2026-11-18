@@ -119,6 +119,7 @@
 .cy-browser-panel__toolbar {
   display: flex;
   flex: none;
+  flex-wrap: wrap; /* issue #142：窄面板下地址栏换行占满次行，不再被图标挤没 */
   align-items: center;
   gap: 5px;
   min-height: 42px;
@@ -150,7 +151,7 @@
 
 .cy-browser-panel__address {
   flex: 1;
-  min-width: 40px;
+  min-width: 150px; /* issue #142：可视宽度加宽（原 40px 过窄，长 URL 不可读；hover tooltip 补全貌） */
   height: 30px;
   padding: 0 10px;
   border: 1px solid var(--rb-border-default, #eee8eb);

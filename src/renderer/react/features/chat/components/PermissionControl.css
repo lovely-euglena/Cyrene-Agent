@@ -56,3 +56,12 @@
 /* 选中底色由选项自身颜色稀释而来，跟着每个等级的语义色走，
    深浅主题自动适配（原先写死的浅色在深色主题下会露出白块） */
 .cy-permission-panel__option.is-active { background: color-mix(in srgb, currentColor 12%, transparent); }
+
+/* issue #170：收起态按钮 hover/展开菜单时不再被 ChatComposer 的通用 accent 粉红覆盖——
+   `.cy-composer__footer-button:hover` 与 `.cy-permission-control.is-<level>` 同特异性（0-2-0），
+   加载顺序险胜导致「展开粉红、收起橙」两态不一致。此处提高特异性，档位语义色两态恒一。 */
+.cy-composer__footer-button.cy-permission-control.is-project-read-only:hover,
+.cy-composer__footer-button.cy-permission-control.is-read-only:hover { color: #21a366; }
+.cy-composer__footer-button.cy-permission-control.is-scoped:hover { color: #3b82f6; }
+.cy-composer__footer-button.cy-permission-control.is-per-action:hover { color: var(--rb-text-primary); }
+.cy-composer__footer-button.cy-permission-control.is-full:hover { color: #d49d16; }
