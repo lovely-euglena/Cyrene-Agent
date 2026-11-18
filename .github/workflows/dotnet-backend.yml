@@ -1,4 +1,9 @@
 # B7：服务器侧 .NET 10 SDK 编译 + 双轨基线（Gitee Go 兼容 GitHub Actions 语法）
+#
+# 平台策略（issue #263）：.NET 全链迁 windows-latest（落实「流水线改 win 容器」
+# 决策——Windows API 原生语义，协议层/渠道/Edge e2e 在真 Windows 语义下实测）；
+# ubuntu 保留跨平台价值：cyrene-core 洁净性 linux 编译验证 + smoke-host 跨平台
+# 编译 + TS/PWA/node 侧。
 name: dotnet-backend
 on:
   push:
@@ -10,9 +15,14 @@ on:
 permissions:
   contents: read
 
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  # ── windows：.NET 全链主构建（win 容器决策） ──
+  build-windows:
+    runs-on: windows-latest
+    if: github.repository == 'lovely-euglena/Cyrene-Agent'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -20,25 +30,57 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Build cyrene-core（跨平台核心）
         run: dotnet build dotnet/cyrene-core -c Release
-        env:
-          DOTNET_CLI_TELEMETRY_OPTOUT: 1
       - name: cyrene-core 洁净断言（无 net10.0-windows / WPF / WinForms）
-        run: python3 scripts/check-cyrene-core-clean.py
+        run: python scripts/check-cyrene-core-clean.py
       - name: Build cyrene-native
         run: dotnet build dotnet/native-windows -c Release
-        env:
-          DOTNET_CLI_TELEMETRY_OPTOUT: 1
       - name: Build CyreneVoice
         run: dotnet build dotnet/voice/CyreneVoice -c Release
-      - name: Build smoke-host + Linux 协议套件（冒烟/边缘/矩阵/循环）
+      - name: Build smoke-host
+        run: dotnet build dotnet/smoke-host -c Release
+      - name: 协议套件（冒烟/边缘/矩阵/循环——Windows 语义实测）
+        run: |
+          python scripts/dotnet-smoke-linux.py
+          python scripts/dotnet-edge-test.py
+          python scripts/dotnet-tools-matrix.py
+          python scripts/dotnet-agent-loop-test.py
+      - name: sync-protocol v0/v0.1 + channels 契约（C# 读取器/物化器跑共享 fixtures）
+        run: |
+          dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-protocol fixtures/sync-protocol/cases
+          dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-materialize fixtures/sync-protocol/materialize-cases
+          dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest channel-contract fixtures/channels
+      - name: cloud-server 发布（裸跑产物）+ 同步收敛冒烟（并发 push/fetch）
+        run: |
+          dotnet publish dotnet/cloud-server -c Release -o artifacts/cyrene-cloud
+          python scripts/dotnet-cloud-sync-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
+      - name: 渠道套件：C# 五套自测 + mock e2e 冒烟（iLink/飞书 webhook/QQ 网关/归属）
+        run: |
+          dotnet artifacts/cyrene-cloud/cyrene-cloud-server.dll channel-selftest all
+          python scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
+      - name: PWA 端到端冒烟（Edge 通道：配对 / 查看 / 续聊 / 离线缓存）
+        run: |
+          dotnet publish dotnet/cloud-server -c Release -o artifacts/cyrene-cloud --no-build
+          npx playwright install msedge
+          node scripts/pwa-e2e-test.mjs artifacts/cyrene-cloud/cyrene-cloud-server.dll
+
+  # ── linux：跨平台编译验证 + TS/PWA/node 侧 ──
+  build-linux:
+    runs-on: ubuntu-latest
+    if: github.repository == 'lovely-euglena/Cyrene-Agent'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build cyrene-core（linux 编译验证纯托管洁净性）
+        run: dotnet build dotnet/cyrene-core -c Release
+      - name: cyrene-core 洁净断言（无 net10.0-windows / WPF / WinForms）
+        run: python3 scripts/check-cyrene-core-clean.py
+      - name: Build smoke-host（跨平台编译验证）
         run: |
           sudo apt-get update && sudo apt-get install -y libfontconfig1
           dotnet build dotnet/smoke-host -c Release
-          python3 scripts/dotnet-smoke-linux.py
-          python3 scripts/dotnet-edge-test.py
-          python3 scripts/dotnet-tools-matrix.py
-          python3 scripts/dotnet-agent-loop-test.py
-      - name: sync-protocol v0/v0.1 + channels 契约（C# 读取器/物化器跑共享 fixtures）
+      - name: sync-protocol v0/v0.1 + channels 契约（linux 侧实测跨平台语义）
         run: |
           dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-protocol fixtures/sync-protocol/cases
           dotnet dotnet/smoke-host/bin/Release/net10.0/cyrene-smoke.dll --selftest sync-materialize fixtures/sync-protocol/materialize-cases
@@ -51,14 +93,6 @@ jobs:
           cd src/pwa
           npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
           npm run build
-      - name: cloud-server 发布（裸跑产物）+ 同步收敛冒烟（并发 push/fetch）
-        run: |
-          dotnet publish dotnet/cloud-server -c Release -o artifacts/cyrene-cloud
-          python3 scripts/dotnet-cloud-sync-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
-      - name: 渠道套件：C# 五套自测 + mock e2e 冒烟（iLink/飞书 webhook/QQ 网关/归属）
-        run: |
-          dotnet artifacts/cyrene-cloud/cyrene-cloud-server.dll channel-selftest all
-          python3 scripts/channel-smoke-test.py artifacts/cyrene-cloud/cyrene-cloud-server.dll
       - name: TS 类型检查 + 工具单测 + 双轨基线 + sync-protocol/渠道契约（TS 侧）
         run: |
           npm ci --registry=https://registry.npmmirror.com || npm install --registry=https://registry.npmmirror.com
@@ -67,7 +101,3 @@ jobs:
           npx vitest run src/main/sync src/pwa
           npx vitest run src/main/channels src/main/proactive
           npx tsx scripts/dual-track-diff.ts
-      - name: PWA 端到端冒烟（Edge 通道：配对 / 查看 / 续聊 / 离线缓存）
-        run: |
-          npx playwright install msedge
-          node scripts/pwa-e2e-test.mjs artifacts/cyrene-cloud/cyrene-cloud-server.dll
