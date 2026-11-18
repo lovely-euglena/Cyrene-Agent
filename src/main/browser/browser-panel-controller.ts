@@ -387,17 +387,19 @@ export class BrowserPanelController {
   }
 
   private async validateTargetAt(contents: WebContents, target: RuntimeSnapshot["elements"][number], observationId: string): Promise<{ ok: true; x: number; y: number } | { ok: false; reason: string }> {
-    const [x, y, width, height] = target.bounds;
     try {
       const valid = await validatePlaywrightSnapshotTarget(contents, {
         observationId,
         ref: target.ref,
         description: target.description,
-        x: x + width / 2,
-        y: y + height / 2,
+        bounds: target.bounds,
       });
       if (valid.ok && Number.isFinite(valid.x) && Number.isFinite(valid.y)) return { ok: true, x: valid.x!, y: valid.y! };
-      return { ok: false, reason: `无法确认 ${target.ref} 仍是快照中的同一个可见 DOM 元素，已拒绝操作。请重新读取页面。` };
+      // issue #144：失败信息升级——报告遮挡元素让模型自行决策（关浮层/换选择器），不再只说"拒绝操作"
+      const blocker = valid.ok ? undefined : (valid as { blocker?: string }).blocker;
+      return { ok: false, reason: blocker
+        ? `无法在 ${target.ref} 的采样点（中心+四角+边中点）命中目标元素：最上层是 ${blocker}。元素可能被浮层/弹窗遮盖——可先关闭遮盖层再点击，或重新读取页面后换可命中元素。`
+        : `无法确认 ${target.ref} 仍是快照中的同一个可见 DOM 元素，已拒绝操作。请重新读取页面。` };
     } catch (error) {
       return { ok: false, reason: `验证网页元素失败：${error instanceof Error ? error.message : String(error)}` };
     }
