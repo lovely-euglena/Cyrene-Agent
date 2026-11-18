@@ -283,8 +283,11 @@ public sealed class PetEngine : IDisposable
             _manifest = Model3Json.Load(modelPath);
             _renderer?.Dispose();
             _renderer = null;
+            // 审核 #1416 P2-2：先构造新模型再 Dispose 旧模型——右侧抛异常时
+            // _model 不会指向已释放的原生对象（后续 Tick 访问会崩）。
+            var nextModel = CubismModel.FromMoc3(Path.Combine(_modelDir!, _manifest.Moc));
             _model?.Dispose();
-            _model = CubismModel.FromMoc3(Path.Combine(_modelDir!, _manifest.Moc));
+            _model = nextModel;
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or JsonException)
         {

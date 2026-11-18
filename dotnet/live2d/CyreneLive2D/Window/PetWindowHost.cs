@@ -135,8 +135,21 @@ public sealed class PetWindowHost : IWindowControl, IDisposable
             if (_boundsDirty && _window.IsVisible && _lastFrame != null
                 && _lastFrame.Length == _window.Width * _window.Height * 4)
             {
-                _window.Present(_lastFrame);
-                _boundsDirty = false;
+                try
+                {
+                    _window.Present(_lastFrame);
+                    _boundsDirty = false;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or D3D11Exception)
+                {
+                    // ULW 落位失败（UpdateLayeredWindow 抛 InvalidOperationException）：限频
+                    // 日志，保留窗口与脏位，下轮重试（审核 #1416 P2-3）
+                    if (nowMs - _lastRenderErrorLogAt > 1000)
+                    {
+                        _lastRenderErrorLogAt = nowMs;
+                        _io.Log("error", $"暂停期落位失败: {ex.Message}");
+                    }
+                }
             }
             return;
         }
@@ -157,9 +170,10 @@ public sealed class PetWindowHost : IWindowControl, IDisposable
             _frameCount++;
             _frameMsAccum += sw.Elapsed.TotalMilliseconds;
         }
-        catch (D3D11Exception ex)
+        catch (Exception ex) when (ex is D3D11Exception or InvalidOperationException)
         {
-            // GPU 失败：限频日志，保留窗口（不崩溃）；下一帧重试
+            // GPU 失败 / ULW Present 失败：限频日志，保留窗口（不崩溃）；下一帧重试
+            // （审核 #1416 P2-3：异常冒到 Live2DHost 主循环会致侧车退出、桌宠丢失）
             if (nowMs - _lastRenderErrorLogAt > 1000)
             {
                 _lastRenderErrorLogAt = nowMs;
