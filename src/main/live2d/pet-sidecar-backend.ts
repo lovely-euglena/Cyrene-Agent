@@ -23,7 +23,7 @@ import {
   type PetWindowSettingsSlice,
 } from "../startup/create-pet-window";
 import type { Live2DHostClient } from "./live2d-host-client";
-import { LIVE2D_EVENTS } from "./live2d-host-protocol";
+import { LIVE2D_ERRORS, LIVE2D_EVENTS } from "./live2d-host-protocol";
 
 export interface PetSidecarDeps {
   client: Live2DHostClient;
@@ -37,6 +37,10 @@ export interface PetSidecarDeps {
   getDisplayScaleFactor: (bounds: { x: number; y: number; width: number; height: number }) => number;
   /** 位置变更通知（window-manager movedHandlers 等价）。 */
   onMoved?: (position: { x: number; y: number }) => void;
+  /** Core 缺失时的许可同意弹窗（Live2D Proprietary License 合规闸门）。
+   *  返回 true = 用户同意下载（带 coreDownloadConsent 重试 load）；
+   *  false/未注入 = 不同意 → 回退 web 轨。 */
+  confirmCoreDownload?: () => Promise<boolean>;
   log?: (message: string, error?: unknown) => void;
 }
 
@@ -115,30 +119,30 @@ export class PetSidecarBackend {
       try {
         await client.load(modelPath);
       } catch (error) {
+        // Live2D 许可合规闸门：Core 缺失须先同意再下载（审计 #257 发现 2）
+        if ((error as { errorCode?: string })?.errorCode === LIVE2D_ERRORS.coreConsent) {
+          const consented = this.deps.confirmCoreDownload ? await this.deps.confirmCoreDownload() : false;
+          if (consented) {
+            try {
+              await client.load(modelPath, { coreDownloadConsent: true });
+              // 同意 + 重试成功 → 继续正常初始化（落到下方 settings 流程）
+              return await this.finishReady(client, showOnReady);
+            } catch (retryError) {
+              this.log("[Live2D] Core 下载/加载失败（已同意），回退 web 轨:", retryError);
+              await this.shutdownClient();
+              return false;
+            }
+          }
+          this.log("[Live2D] 未同意 Live2D Core 下载许可，回退 web 轨");
+          await this.shutdownClient();
+          return false;
+        }
         this.log("[Live2D] 侧车加载失败，回退 web 轨:", error);
         await this.shutdownClient();
         return false;
       }
 
-      const settings = this.deps.loadSettings();
-      this.zoom = clampZoom(typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1);
-      const width = Math.round(PET_WINDOW_BASE_WIDTH * this.zoom);
-      const height = Math.round(PET_WINDOW_BASE_HEIGHT * this.zoom);
-      const pos = this.deps.resolveInitialPosition(settings, width, height);
-      this.bounds = { x: pos.x, y: pos.y, width, height };
-      await client.setBounds({ ...this.bounds });
-      await client.setZoom(this.zoom);
-      await client.setAlwaysOnTop(settings.petAlwaysOnTop !== false);
-
-      this.ready = true;
-      if (showOnReady) {
-        this.visible = true;
-        await client.show();
-        await client.resume();
-      } else {
-        await client.pause();
-      }
-      return true;
+      return await this.finishReady(client, showOnReady);
     })();
     this.starting = starting;
     try {
@@ -146,6 +150,29 @@ export class PetSidecarBackend {
     } finally {
       this.starting = null;
     }
+  }
+
+  /** load 成功后的初始化（设置/几何/显隐）；同意重试成功路径复用。 */
+  private async finishReady(client: Live2DHostClient, showOnReady: boolean): Promise<boolean> {
+    const settings = this.deps.loadSettings();
+    this.zoom = clampZoom(typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1);
+    const width = Math.round(PET_WINDOW_BASE_WIDTH * this.zoom);
+    const height = Math.round(PET_WINDOW_BASE_HEIGHT * this.zoom);
+    const pos = this.deps.resolveInitialPosition(settings, width, height);
+    this.bounds = { x: pos.x, y: pos.y, width, height };
+    await client.setBounds({ ...this.bounds });
+    await client.setZoom(this.zoom);
+    await client.setAlwaysOnTop(settings.petAlwaysOnTop !== false);
+
+    this.ready = true;
+    if (showOnReady) {
+      this.visible = true;
+      await client.show();
+      await client.resume();
+    } else {
+      await client.pause();
+    }
+    return true;
   }
 
   // ── 窗口控制面（DIP） ─────────────────────────────────────

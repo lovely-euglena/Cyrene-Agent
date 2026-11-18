@@ -98,9 +98,15 @@ export class Live2DHostClient extends LineHostClient {
 
   // ── 生命周期 ──────────────────────────────────────────────
 
-  /** 加载模型（含 Core 解析/自动下载）。失败错误码见 LIVE2D_ERRORS。 */
-  async load(modelPath: string): Promise<Live2DLoadResult> {
-    return (await this.call(LIVE2D_OPS.load, { modelPath }, LIVE2D_LOAD_TIMEOUT_MS)) as Live2DLoadResult;
+  /** 加载模型（含 Core 解析）。Core 缺失时侧车回 E_CORE_CONSENT，须用户同意
+   *  Live2D 许可后带 coreDownloadConsent=true 重试才下载（合规闸门）。
+   *  失败错误码见 LIVE2D_ERRORS。 */
+  async load(modelPath: string, opts?: { coreDownloadConsent?: boolean }): Promise<Live2DLoadResult> {
+    return (await this.call(
+      LIVE2D_OPS.load,
+      { modelPath, ...(opts?.coreDownloadConsent ? { coreDownloadConsent: true } : {}) },
+      LIVE2D_LOAD_TIMEOUT_MS,
+    )) as Live2DLoadResult;
   }
 
   // ── 窗口控制面（DIP 坐标） ────────────────────────────────

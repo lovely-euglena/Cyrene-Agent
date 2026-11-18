@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, screen, type NativeImage } from "electron";
+import { app, BrowserWindow, dialog, nativeImage, screen, type NativeImage } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, resolvePetWindowPosition, type PetWindowSettingsSlice } from "../startup/create-pet-window";
 import { resolveDotnetConfig } from "../dotnet-backend/config";
@@ -123,6 +123,27 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         persistPosition: options.persistPetWindowPosition,
         resolveInitialPosition: resolvePetWindowPosition,
         getDisplayScaleFactor: (bounds) => screen.getDisplayMatching(bounds).scaleFactor,
+        // Live2D 许可合规闸门（#257 审计发现 2）：Core 二进制不随仓，首次从
+        // 官方源下载前须用户同意 Live2D Proprietary Software License——
+        // 官方下载页的同意动作不能由程序化下载绕过。同意后 Core 落盘，
+        // 后续加载不再弹窗；拒绝则本次回退 web 轨。
+        confirmCoreDownload: async () => {
+          const { response } = await dialog.showMessageBox({
+            type: "info",
+            title: "Live2D Cubism Core 下载许可",
+            message: "桌宠 Live2D 渲染（dotnet 轨）需要 Cubism Core 运行库。",
+            detail:
+              "Core 二进制不随应用分发，首次使用需从 Live2D 官方源下载（约 26MB，SHA256 校验）。\n" +
+              "下载即表示您已阅读并同意 Live2D Proprietary Software License：\n" +
+              "https://www.live2d.com/en/sdk/license/\n\n" +
+              "选择「不同意」将使用 web 渲染轨（功能不受影响）。",
+            buttons: ["同意并下载", "不同意（使用 web 轨）"],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+          });
+          return response === 0;
+        },
         onMoved: (position) => {
           for (const handler of movedHandlers) {
             try { handler(position); } catch (err) { console.error("[WindowManager] moved handler failed:", err); }

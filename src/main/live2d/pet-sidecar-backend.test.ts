@@ -152,6 +152,47 @@ describe("ensureReady 装配与回退", () => {
     expect(b4.isReady()).toBe(false);
   });
 
+  it("E_CORE_CONSENT 许可闸门：同意→带 consent 重试成功；拒绝/未注入→回退（#257 审计发现 2）", async () => {
+    const consentError = () => Object.assign(new Error("须同意 Live2D 许可"), { errorCode: "E_CORE_CONSENT" });
+
+    // 同意：首次 load 拒绝 → 弹窗 true → 带 coreDownloadConsent 重试 → 就绪
+    const c1 = makeClient();
+    c1.load.mockRejectedValueOnce(consentError()).mockResolvedValueOnce({});
+    const confirm1 = vi.fn(async () => true);
+    const b1 = new PetSidecarBackend(makeDeps(c1, { confirmCoreDownload: confirm1 }));
+    await expect(b1.ensureReady(true)).resolves.toBe(true);
+    expect(confirm1).toHaveBeenCalledTimes(1);
+    expect(c1.load).toHaveBeenCalledTimes(2);
+    expect(c1.load).toHaveBeenNthCalledWith(2, "C:\\models\\cyrene\\Cyrene.model3.json", { coreDownloadConsent: true });
+    expect(c1.shutdown).not.toHaveBeenCalled();
+    expect(b1.isReady()).toBe(true);
+    await b1.dispose();
+
+    // 拒绝：回退 web 轨 + shutdown，不重试
+    const c2 = makeClient();
+    c2.load.mockRejectedValue(consentError());
+    const b2 = new PetSidecarBackend(makeDeps(c2, { confirmCoreDownload: async () => false }));
+    await expect(b2.ensureReady(true)).resolves.toBe(false);
+    expect(c2.load).toHaveBeenCalledTimes(1);
+    expect(c2.shutdown).toHaveBeenCalledTimes(1);
+
+    // 未注入弹窗（无头/测试）：视同拒绝
+    const c3 = makeClient();
+    c3.load.mockRejectedValue(consentError());
+    const b3 = new PetSidecarBackend(makeDeps(c3));
+    await expect(b3.ensureReady(true)).resolves.toBe(false);
+    expect(c3.shutdown).toHaveBeenCalledTimes(1);
+
+    // 同意但下载/重试仍失败：回退 + shutdown
+    const c4 = makeClient();
+    c4.load.mockRejectedValueOnce(consentError())
+      .mockRejectedValueOnce(Object.assign(new Error("下载失败"), { errorCode: "E_CORE_DOWNLOAD" }));
+    const b4 = new PetSidecarBackend(makeDeps(c4, { confirmCoreDownload: async () => true }));
+    await expect(b4.ensureReady(true)).resolves.toBe(false);
+    expect(c4.load).toHaveBeenCalledTimes(2);
+    expect(c4.shutdown).toHaveBeenCalledTimes(1);
+  });
+
   it("重复 ensureReady 复用就绪状态；进程死亡后 isReady false", async () => {
     const client = makeClient();
     const backend = new PetSidecarBackend(makeDeps(client));
