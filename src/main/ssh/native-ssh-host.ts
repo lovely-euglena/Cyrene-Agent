@@ -31,6 +31,12 @@ export class NativeSshHostClient {
     this.spawnImpl = spawnImpl ?? spawn;
   }
 
+  /** 宿主进程内存态（prompt 组装期可用性判定用，零 IO）。
+   * starting 中视为可用：工具即将就绪，避免拉起瞬间目录闪烁消失。 */
+  isRunning(): boolean {
+    return this.proc !== null && !this.exited;
+  }
+
   async ensureStarted(): Promise<void> {
     if (this.proc && !this.exited) return;
     if (this.starting) return this.starting;
