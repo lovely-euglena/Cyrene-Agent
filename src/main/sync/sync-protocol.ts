@@ -16,8 +16,11 @@
  * 校验规则、错误码与上述语义必须与 C# 侧逐字一致，由 fixtures 锁定。
  */
 
-export const SYNC_EVENT_TYPES = ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift"] as const;
+export const SYNC_EVENT_TYPES = ["session.create", "message.append", "turn_rewind", "tombstone", "memory.write", "mood.shift", "webhook.received"] as const;
 export type SyncEventTypeV0 = (typeof SYNC_EVENT_TYPES)[number];
+
+/** webhook.received 载荷 body 上限（字符；与 C# 侧 WebhookBodyMaxChars 一致，fixtures 锁定）。 */
+export const SYNC_WEBHOOK_BODY_MAX_CHARS = 65_536;
 
 /** 非会话事件的保留伪 sessionId（v0.1；不匹配 → E_SYNC_PAYLOAD）。 */
 export const SYNC_MEMORY_SESSION_ID = "__memory__";
@@ -160,7 +163,26 @@ function validatePayload(type: SyncEventTypeV0, payload: Record<string, unknown>
         && hasOnlyKeys(payload, ["feeling"])
         && typeof payload.feeling === "string"
         && (SYNC_MOOD_FEELINGS as readonly string[]).includes(payload.feeling);
+    case "webhook.received":
+      return isWebhookReceivedPayload(payload);
   }
+}
+
+/**
+ * webhook.received 载荷（闭合键）：endpointId / body / receivedAt 必填，source / truncated 可选。
+ * body 为 UTF-8 解码后的原始请求体（服务端按字节限幅后截断）；truncated=true 标记已截断。
+ */
+function isWebhookReceivedPayload(payload: Record<string, unknown>): boolean {
+  if (!hasOnlyKeys(payload, ["endpointId", "source", "receivedAt", "body", "truncated"])) return false;
+  if (!isId(payload.endpointId)) return false;
+  if (typeof payload.body !== "string" || payload.body.length > SYNC_WEBHOOK_BODY_MAX_CHARS) return false;
+  if (!isIsoUtc(payload.receivedAt)) return false;
+  if (payload.source !== undefined
+    && (typeof payload.source !== "string" || payload.source.length > 200)) {
+    return false;
+  }
+  return !Object.prototype.hasOwnProperty.call(payload, "truncated")
+    || typeof payload.truncated === "boolean";
 }
 
 /**

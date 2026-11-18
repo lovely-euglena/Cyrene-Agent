@@ -10,6 +10,7 @@ using CyreneCloud.Channels.Adapters.WeChat;
 using CyreneCloud.Channels.Adapters.Feishu;
 using CyreneCloud.Dialog;
 using CyreneCloud.Storage;
+using CyreneCloud.Webhook;
 using CyreneNative.Channels;
 using CyreneNative.Sync;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -160,6 +161,14 @@ if (channelOptions.ChannelsEnabled)
     builder.Services.AddHostedService<ChannelHostedService>();
 }
 
+// 通用 webhook 入站（IKKIZR）：端点静态 env 声明（CLOUD_WEBHOOK_ENDPOINTS），空 = 整体关闭；
+// 独立于渠道层开关（webhook 不依赖 CLOUD_CHANNELS）。
+var webhookInboundOptions = WebhookInboundOptions.FromEnvironment();
+builder.Services.AddSingleton(webhookInboundOptions);
+builder.Services.AddSingleton(sp => new WebhookInboundProcessor(
+    sp.GetRequiredService<WebhookInboundOptions>(),
+    TimeProvider.System));
+
 // capabilities.channels（§2.6）：hosted = 已配置且生成可用的渠道（R6：无生成则空）。
 // 阶段 3-6 适配器注册后自动点亮；ownership/proactive 供桌面降级 UI。
 var channelRegistrations = ChannelAdapterCatalog.All;
@@ -269,7 +278,10 @@ app.Use(async (context, next) =>
     var isFeishuWebhook = HttpMethods.IsPost(context.Request.Method)
         && (path.Equals(FeishuWebhookEndpoint.WebhookPath, StringComparison.OrdinalIgnoreCase)
             || path.Equals(FeishuWebhookEndpoint.AliasPath, StringComparison.OrdinalIgnoreCase));
-    if (isPairRedeem || isCapabilities || isFeishuWebhook
+    // 通用 webhook 入站公开路由（IKKIZR）：自带 HMAC 签名/时间戳校验（WebhookInboundProcessor）
+    var isWebhookInbound = HttpMethods.IsPost(context.Request.Method)
+        && path.StartsWithSegments(WebhookInboundEndpoint.PathPrefix);
+    if (isPairRedeem || isCapabilities || isFeishuWebhook || isWebhookInbound
         || (!path.StartsWithSegments("/v1") && !isHealthz))
     {
         await next();
@@ -341,6 +353,8 @@ app.MapGet("/v1/capabilities", () => Results.Json(new
         voice = false,
         mediaMaxMB = channelOptions.WeChatMediaMaxMb,
     },
+    // 通用 webhook 入站（IKKIZR）：声明的 endpointId 列表（不含密钥；空 = 未启用）
+    webhooks = webhookInboundOptions.Endpoints.Select(item => item.Id).ToArray(),
 }));
 
 // 飞书 webhook（公开路由，§6.2）：渠道层启用且飞书在 CLOUD_CHANNELS 内才挂载；
@@ -348,6 +362,13 @@ app.MapGet("/v1/capabilities", () => Results.Json(new
 if (channelOptions.ChannelsEnabled && channelOptions.IsChannelEnabled(ChannelIds.Feishu))
 {
     FeishuWebhookEndpoint.Map(app);
+}
+
+// 通用 webhook 入站（IKKIZR）：端点经 CLOUD_WEBHOOK_ENDPOINTS 声明才挂载（空 = 关闭）；
+// 校验/入流逻辑见 WebhookInboundProcessor，验签同步完成后事件写入（deviceId="server"）。
+if (webhookInboundOptions.Endpoints.Count > 0)
+{
+    WebhookInboundEndpoint.Map(app);
 }
 
 // ── 配对与设备（IKJK2K） ──
@@ -696,6 +717,11 @@ internal static class CloudApi
     // 渠道控制面（阶段 3 微信；错误码冻结见设计 §5.2）
     public const string ChannelNotHosted = "E_CHANNEL_NOT_HOSTED";
     public const string ChannelLogin = "E_CHANNEL_LOGIN";
+
+    // 通用 webhook 入站（IKKIZR）
+    public const string WebhookEndpointNotFound = "E_WEBHOOK_ENDPOINT_NOT_FOUND";
+    public const string WebhookSignatureInvalid = "E_WEBHOOK_SIGNATURE_INVALID";
+    public const string WebhookWriteFailed = "E_WEBHOOK_WRITE_FAILED";
 }
 
 /// <summary>POST /v1/pair 请求体。</summary>
