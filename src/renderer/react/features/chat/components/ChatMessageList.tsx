@@ -1,4 +1,5 @@
 import { Bubble, Think, ThoughtChain, type BubbleItemType } from "@ant-design/x";
+import { createScrollFollowController, takeContentGrew } from "./chat-scroll-follow";
 import { Component, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
 import { t, useTranslation } from "../../../i18n";
 import { normalizeModelMarkdown } from "./markdown-normalize";
@@ -1452,7 +1453,13 @@ export function ChatMessageList({
     });
   }, [editDraft, editingMessageId, onEditLastUserMessage, revisionBusy]);
   const containerRef = useRef<HTMLDivElement>(null);
+  // 纯距离判定（底部按钮可见性）；跟随意图由 followController 维护，两者分离：
+  // 流式增高会把距离拉大，若用距离兼做跟随判定会在贴底瞬间跟丢（issue #175）
   const isNearBottomRef = useRef(true);
+  // 跟随意图镜像（布尔）：上滚锁 / 回底解 / 会话切换重置，供虚拟列表 stick 判定
+  const followRef = useRef(true);
+  const followController = useRef(createScrollFollowController()).current;
+  const lastScrollHeightRef = useRef(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = containerRef.current;
@@ -1468,11 +1475,38 @@ export function ChatMessageList({
   const updateScrollState = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = distance < 100;
+    const nearBottom = followController.onScroll(el);
+    followRef.current = followController.isFollowing();
     isNearBottomRef.current = nearBottom;
     onScrollToBottomVisibilityChange?.(!nearBottom);
-  }, [onScrollToBottomVisibilityChange]);
+  }, [followController, onScrollToBottomVisibilityChange]);
+
+  // 用户上滚意图检测：wheel 向上滚动即暂停跟随（程序化贴底不触发 wheel，不会误锁）
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      followController.onWheel(event.deltaY, el.scrollTop <= 0);
+      followRef.current = followController.isFollowing();
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [followController]);
+
+  // 图片/代码块等异步渲染的高度跳变不经过 items 引用变化，ResizeObserver 兜底
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const grewBy = takeContentGrew(el, lastScrollHeightRef);
+      if (grewBy !== 0) {
+        followController.onContentGrew(el, grewBy);
+        followRef.current = followController.isFollowing();
+      }
+    });
+    observer.observe(el.firstElementChild ?? el);
+    return () => observer.disconnect();
+  }, [followController]);
 
   // 打开/切换会话时滚动到底部
   useEffect(() => {
@@ -1480,9 +1514,12 @@ export function ChatMessageList({
     // 内容渲染后再次兜底滚动
     const timer = window.setTimeout(() => scrollToBottom("auto"), 100);
     isNearBottomRef.current = true;
+    followController.reset();
+    followRef.current = true;
+    lastScrollHeightRef.current = 0;
     onScrollToBottomVisibilityChange?.(false);
     return () => window.clearTimeout(timer);
-  }, [conversationId, onScrollToBottomVisibilityChange, scrollToBottom]);
+  }, [conversationId, followController, onScrollToBottomVisibilityChange, scrollToBottom]);
 
   // roles 不闭包 lastTurn（footer 动作组件经 LastTurnIdsContext 读取）：流式阶段边界
   // （推理结束/正文开始/运行结束）lastTurn 在 null 与非 null 间切换是真实值变化，若进入
@@ -1545,6 +1582,19 @@ export function ChatMessageList({
       : assembled.items;
   }, [messages, enabledStickers, compacting]);
   const channelConversationLabel = resolveChannelConversationLabel(messages);
+
+  // items 渲染后统一接管跟底（Bubble.List autoScroll 已关）：跟随中贴底；
+  // 阅读中用高度增量补偿锚定视口。与 ResizeObserver 通道共用高度基线防重复补偿。
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const grewBy = takeContentGrew(el, lastScrollHeightRef);
+    if (grewBy !== 0) {
+      followController.onContentGrew(el, grewBy);
+      followRef.current = followController.isFollowing();
+    }
+  }, [items, followController]);
+
   const shouldVirtualizeMessages = items.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const fileLinkEnv = useMemo<FileLinkEnv>(
     () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink, openWebLink: onOpenWebLink }),
@@ -1577,11 +1627,13 @@ export function ChatMessageList({
                 items={items}
                 roles={roles}
                 scrollRef={containerRef}
-                nearBottomRef={isNearBottomRef}
+                followRef={followRef}
                 layoutKey={channelConversationLabel}
               />
             ) : (
-              <Bubble.List items={items} role={roles} autoScroll />
+              // autoScroll 关闭：antd 内建跟底不问用户意图（上滚阅读被强拉回），
+              // 由上方 items effect + followController 统一接管（issue #175）
+              <Bubble.List items={items} role={roles} autoScroll={false} />
             )}
           </div>
         </LastTurnIdsContext.Provider>

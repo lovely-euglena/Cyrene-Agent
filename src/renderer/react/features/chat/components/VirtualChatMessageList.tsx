@@ -26,13 +26,14 @@ export function VirtualChatMessageList({
   items,
   roles,
   scrollRef,
-  nearBottomRef,
+  followRef,
   layoutKey,
 }: {
   items: BubbleItemType[];
   roles: NonNullable<BubbleListProps["role"]>;
   scrollRef: RefObject<HTMLDivElement | null>;
-  nearBottomRef: RefObject<boolean>;
+  /** 跟随意图（issue #175）：用户上滚即 false（暂停贴底），回底恢复 true——语义取代原 nearBottomRef 纯距离判定，避免流式增高把距离拉大时误判跟丢 */
+  followRef: RefObject<boolean>;
   layoutKey: string | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -76,11 +77,11 @@ export function VirtualChatMessageList({
   }, [items.length, layoutKey, scrollRef]);
 
   useLayoutEffect(() => {
-    if (!nearBottomRef.current) return;
+    if (!followRef.current) return;
     const scroll = scrollRef.current;
     // 行高增长可能先触发滚动事件；在布局阶段贴底，避免误判为用户滚离底部。
     if (scroll) scroll.scrollTop = scroll.scrollHeight;
-  }, [items, nearBottomRef, scrollRef, totalSize]);
+  }, [items, followRef, scrollRef, totalSize]);
 
   return (
     <div ref={listRef} className="cy-message-list__virtual-list">
