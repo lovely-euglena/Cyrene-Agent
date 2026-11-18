@@ -32,5 +32,8 @@ export function describeSchedule(schedule: ScheduleConfig): string {
     const names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     return `${names[schedule.dayOfWeek]} ${schedule.timeOfDay}`;
   }
+  if (schedule.kind === "weekdays") return `工作日 ${schedule.timeOfDay}`;
+  if (schedule.kind === "monthly") return `每月 ${schedule.dayOfMonth} 日 ${schedule.timeOfDay}`;
+  if (schedule.kind === "yearly") return `每年 ${schedule.month} 月 ${schedule.dayOfMonth} 日 ${schedule.timeOfDay}`;
   return `每隔 ${schedule.every} ${schedule.unit === "minutes" ? "分钟" : "小时"}`;
 }

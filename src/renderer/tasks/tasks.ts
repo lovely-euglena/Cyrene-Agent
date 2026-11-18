@@ -1,10 +1,11 @@
 import "../ui/base.css";
 import "./tasks.css";
 import "../ui/theme";
-import { getSchedulePanelItems, type ScheduledTask } from "./task-filter";
+import { getSchedulePanelItems } from "./task-filter";
+import type { ScheduledTask } from "../settings/scheduler/types";
 
 // ── 类型（后端契约） ──────────────────────────────────────────
-interface TokenDayData {
+export interface TokenDayData {
   date: string;       // "06-24"
   weekday: string;   // "周三"
   input: number;
@@ -15,17 +16,6 @@ interface TokenDayData {
   cacheUsageRequests: number;
 }
 
-// ── preload 桥接（全部由共享 preload 暴露） ─────────────────
-declare global {
-  interface Window {
-    tasks?: { minimize: () => void; close: () => void };
-    tokenUsage?: { get: (days: number) => Promise<TokenDayData[]> };
-    cyreneScheduler?: { list: () => Promise<{ ok: boolean; value?: ScheduledTask[]; error?: string }> };
-    schedulerEvents?: { onEvent: (cb: (event: unknown) => void) => () => void };
-    tasks?: { onSchedulerChanged?: (callback: () => void) => () => void };
-    sidebar?: { openSettings: (section?: string) => void };
-  }
-}
 
 // 安全兜底：preload 未注入时不崩
 if (!window.tasks) {

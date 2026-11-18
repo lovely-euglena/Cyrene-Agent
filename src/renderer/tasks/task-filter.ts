@@ -1,26 +1,9 @@
-export interface ScheduleConfig {
-  kind: "once" | "daily" | "weekly" | "interval";
-  runAt?: string;
-  timeOfDay?: string;
-  dayOfWeek?: number;
-  every?: number;
-  unit?: "minutes" | "hours";
-}
-
-export interface ScheduledTask {
-  id: string;
-  title: string;
-  prompt: string;
-  enabled: boolean;
-  schedule: ScheduleConfig;
-  nextFireAt: string | null;
-  lastFiredAt?: string;
-}
-
-export type SchedulePanelMode = "today" | "upcoming" | "empty";
+// 类型统一自 settings/scheduler（IPC 真实来源）；本文件只做展示过滤（不依赖 schedule.kind 分支）。
+export type { ScheduledTask } from "../settings/scheduler/types";
+import type { ScheduledTask } from "../settings/scheduler/types";
 
 export interface SchedulePanelItems {
-  mode: SchedulePanelMode;
+  mode: "today" | "upcoming" | "empty";
   totalCount: number;
   items: ScheduledTask[];
 }
