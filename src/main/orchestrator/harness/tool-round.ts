@@ -17,6 +17,7 @@
 
 import type { ChatMessage, ToolCall } from "../vendors/types";
 import type { ToolCallResult } from "../types";
+import { contextRefRegistry } from "../tools/registry/tool-context";
 import { TranscriptWriteError } from "../transcript-sink";
 import type { HarnessToolFinishedEvent, SideEffectKind, ToolCallOutcome, ToolObservation } from "./types";
 import type { ToolRiskLevel } from "../../permission-policy";
@@ -359,7 +360,7 @@ async function commitToolResult(
     // Diff Review 卡片证据走独立字段，不受 preview 截断影响
     changes: extractFileChangesFromOutput(result.output),
   });
-  const message = toolResultMessage(call, result);
+  const message = toolResultMessage(call, result, input.toolContext?.conversationId);
   await commitToolResultMessage(run, {
     call,
     message,
@@ -401,13 +402,51 @@ async function commitToolResult(
 // ── 内部工具 ─────────────────────────────────────────────
 
 /**
+ * 从工具输出中提取图片直发标记（issue IKLRQH）。
+ * 工具在多模态主模型下经 contextRef 侧信道投图，输出文本携带 [图片直发:ctx_xxx]；
+ * 这里解析出 ref 并取回图片数据，把 tool 消息升级为 text + image_url 内容块。
+ * resolve 失败（过期/找不到）时降级为纯文本，图片信息丢失显式告知模型。
+ */
+const DIRECT_IMAGE_REF_PATTERN = /\[图片直发:(ctx_[A-Za-z0-9-]+)\]/;
+
+function buildDirectImageBlocks(
+  observation: { outcome: string; reason?: string; output?: string; message?: string; preview?: string },
+  conversationId: string,
+): { text: string; image: { url: string } | null } {
+  const raw = observation.output ?? observation.message ?? observation.preview ?? observation.reason ?? "";
+  const match = DIRECT_IMAGE_REF_PATTERN.exec(raw);
+  if (!match) return { text: raw, image: null };
+  const ref = match[1];
+  let resolved: { dataUrl?: string; url?: string } | null = null;
+  try {
+    resolved = contextRefRegistry.resolve<{ dataUrl?: string; url?: string }>(ref, conversationId, "image");
+  } catch {
+    resolved = null;
+  }
+  const image = resolved?.dataUrl?.startsWith("data:")
+    ? { url: resolved.dataUrl }
+    : resolved?.url && /^https?:\/\//.test(resolved.url)
+      ? { url: resolved.url }
+      : null;
+  if (!image) {
+    return {
+      text: raw.replace(DIRECT_IMAGE_REF_PATTERN, "[图片直发失效：图片数据已过期，请重新调用工具获取]"),
+      image: null,
+    };
+  }
+  return { text: raw, image };
+}
+
+/**
  * 构造模型可见的 tool result 消息。
  * 未截断的内置工具输出（例如 ask_user 的答案）仍是下一轮决策所需事实；
  * 长工具输出则必须只写入剪枝后的 preview，不能绕过截断再次注入模型上下文。
+ * 图片直发标记解析后 content 升级为 text+image_url 块数组（协议适配在 vendors 层）。
  */
 function toolResultMessage(
   call: ToolCall,
   observation: ToolObservation | { outcome: string; reason: string },
+  conversationId?: string,
 ): ChatMessage {
   const modelObservation = { ...observation } as Record<string, unknown>;
   if (modelObservation.truncated === true) {
@@ -415,6 +454,17 @@ function toolResultMessage(
   }
   delete modelObservation.rawResult;
   delete modelObservation.toolOutputRef;
+  if (conversationId && typeof modelObservation.output === "string" && modelObservation.output.includes("[图片直发:")) {
+    const { text, image } = buildDirectImageBlocks(modelObservation as { output?: string }, conversationId);
+    if (image) {
+      const content: ChatMessage["content"] = [
+        { type: "text", text: text },
+        { type: "image_url", image_url: { url: image.url } },
+      ];
+      return { role: "tool", toolCallId: call.id, name: call.name, content };
+    }
+    modelObservation.output = text;
+  }
   return {
     role: "tool",
     toolCallId: call.id,

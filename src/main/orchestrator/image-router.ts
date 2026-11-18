@@ -31,6 +31,33 @@ export type ImageRoute =
   | { mode: "reject"; reason: string };
 
 /**
+ * 工具图片（browser_screenshot / read_image / read_image_url）的投递路由。
+ *
+ * 与 resolveCaptionVisionConfig 的差异：
+ * - 旧接口在 direct（多模态主模型）时仍返回"主模型兼职看图"的调用配置——
+ *   工具链用它对同一张图**再调一次模型 API** 做文字转述（成本/延迟双损，
+ *   且转述本身有损），issue IKLRQH。
+ * - 本接口 direct 时直接告知调用方"图片随 tool 结果直发主模型"，
+ *   不产生第二次模型调用；caption/reject 语义不变。
+ */
+export type ToolImageDelivery =
+  | { mode: "direct" }
+  | { mode: "caption"; config: VisionConfig }
+  | { mode: "reject"; reason: string };
+
+/** responses transport 的 tool 消息无法直带图片块（tool output 为纯文本字段），直发降级为转述。 */
+const DIRECT_UNSUPPORTED_TRANSPORTS = new Set(["responses"]);
+
+export function resolveToolImageDelivery(settings: ImageRouteSettings): ToolImageDelivery {
+  if (settings.multimodal !== false && !DIRECT_UNSUPPORTED_TRANSPORTS.has(settings.explicitTransport ?? "")) {
+    return { mode: "direct" };
+  }
+  const route = resolveImageRoute("tool", settings);
+  if (route.mode === "caption") return { mode: "caption", config: route.config };
+  return { mode: "reject", reason: route.reason };
+}
+
+/**
  * 统一路由判定。
  * @param source 图片来源
  * @param settings 已展开档案的模型设置（调用方负责 resolveModelSettingsProfile）

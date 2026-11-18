@@ -151,10 +151,12 @@ function toWireMessages(messages: ChatMessage[], options?: { cacheBreakpoints?: 
         wire.push({ role: "assistant", content: blocks.length > 0 ? blocks : "" });
       }
     } else if (m.role === "tool") {
+      // IKLRQH：tool content 支持 text+image_url 块数组（工具图片直发），
+      // Anthropic 原生 tool_result.content 即块数组，image_url 块由 toAnthropicContent 转换
       const block: ContentBlock = {
         type: "tool_result",
         tool_use_id: m.toolCallId,
-        content: m.content ?? "",
+        content: toAnthropicContent(m.content ?? ""),
       };
       const last = wire[wire.length - 1];
       if (last && last.role === "user" && Array.isArray(last.content)) {

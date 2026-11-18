@@ -12,6 +12,9 @@ vi.mock("../../../settings/model-settings", () => ({
   resolveModelSettingsProfile: () => ({}),
 }));
 vi.mock("../../image-router", () => ({
+  // IKLRQH 后 read_image_url 默认路径（测试 settings 无 multimodal=false）走 caption，
+  // 与旧 resolveCaptionVisionConfig 行为一致
+  resolveToolImageDelivery: () => ({ mode: "caption", config: { model: "vision-test" } }),
   resolveCaptionVisionConfig: () => ({ ok: true, config: { model: "vision-test" } }),
 }));
 vi.mock("../../vision-captioner", () => ({

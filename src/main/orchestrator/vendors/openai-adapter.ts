@@ -16,19 +16,38 @@ import { buildStableCacheFingerprint } from "../prompt-layers";
 
 /** 把统一消息翻译成 OpenAI wire messages。 */
 function toWireMessages(messages: ChatMessage[]): unknown[] {
-  return messages.map(m => {
-    if (m.role === "system") return { role: "system", content: m.content ?? "" };
-    if (m.role === "user") return { role: "user", content: m.content ?? "" };
+  return messages.flatMap(m => {
+    if (m.role === "system") return [{ role: "system", content: m.content ?? "" }];
+    if (m.role === "user") return [{ role: "user", content: m.content ?? "" }];
     if (m.role === "tool") {
+      // IKLRQH：tool content 带 text+image_url 块数组（工具图片直发）时，
+      // text 留在 tool 消息（官方 tool content 仅支持 string），image 块剥成
+      // 紧随其后的 user 多模态消息——结果完整性按 tool_use_id 对齐，不受影响。
+      const content = m.content;
+      if (Array.isArray(content)) {
+        const text = content.filter(b => b.type === "text").map(b => b.text).join("\n");
+        const images = content.filter(b => b.type === "image_url");
+        const out: Array<Record<string, unknown>> = [{ role: "tool", _id: m.toolCallId, content: text }];
+        if (images.length > 0) {
+          out.push({
+            role: "user",
+            content: [
+              { type: "text", text: `[以下图片来自工具 ${m.name ?? ""} 的执行结果，请结合上一条工具结果理解]` },
+              ...images,
+            ],
+          });
+        }
+        return out;
+      }
       const wire: Record<string, unknown> = {
         role: "tool",
-        tool_call_id: m.toolCallId,
-        content: m.content ?? "",
+        _id: m.toolCallId,
+        content: content ?? "",
       };
       if (m.name) wire.name = m.name;
-      return wire;
+      return [wire];
     }
-    // assistant：回传 content + tool_calls（OpenAI 多轮要求 assistant 消息带 tool_calls）
+    // assistant：回传 content + （OpenAI 多轮要求 assistant 消息带 ）
     const wire: Record<string, unknown> = { role: "assistant", content: m.content || null };
     if (m.toolCalls && m.toolCalls.length > 0) {
       wire.tool_calls = m.toolCalls.map(tc => ({
@@ -37,7 +56,7 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
         function: { name: tc.name, arguments: tc.arguments },
       }));
     }
-    return wire;
+    return [wire];
   });
 }
 

@@ -397,6 +397,13 @@ export class BrowserPanelController {
         y: y + height / 2,
       });
       if (valid.ok && Number.isFinite(valid.x) && Number.isFinite(valid.y)) return { ok: true, x: valid.x!, y: valid.y! };
+      const occludedBy = (!valid.ok && "occludedBy" in valid && valid.occludedBy) || "";
+      if (occludedBy) {
+        return {
+          ok: false,
+          reason: `${target.ref} 当前被其他元素遮挡（${occludedBy}），无法点击。请先关闭对应的浮层/弹窗，或重新读取页面元素选择其他目标。`,
+        };
+      }
       return { ok: false, reason: `无法确认 ${target.ref} 仍是快照中的同一个可见 DOM 元素，已拒绝操作。请重新读取页面。` };
     } catch (error) {
       return { ok: false, reason: `验证网页元素失败：${error instanceof Error ? error.message : String(error)}` };

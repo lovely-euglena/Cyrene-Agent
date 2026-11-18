@@ -404,10 +404,14 @@ export async function capturePlaywrightPageSnapshot(contents: WebContents): Prom
 }
 
 /** Validate the original node kept in the same isolated world as Playwright's aria-ref map. */
+export type SnapshotTargetValidation =
+  | { ok: true; x: number; y: number }
+  | { ok: false; occludedBy?: string };
+
 export async function validatePlaywrightSnapshotTarget(
   contents: WebContents,
   input: { observationId: string; ref: string; description: string; x: number; y: number },
-): Promise<{ ok: true; x: number; y: number } | { ok: false }> {
+): Promise<SnapshotTargetValidation> {
   const serialized = JSON.stringify(input);
   const result = await contents.executeJavaScriptInIsolatedWorld(PLAYWRIGHT_WORLD_ID, [{
     code: `(() => {
@@ -425,16 +429,62 @@ export async function validatePlaywrightSnapshotTarget(
       const style = getComputedStyle(node);
       if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") return { ok: false };
       if (rect.width <= 0 || rect.height <= 0 || style.visibility === "hidden" || style.display === "none" || style.pointerEvents === "none") return { ok: false };
-      let hit = document.elementFromPoint(expected.x, expected.y);
-      for (let depth = 0; hit && depth < 8; depth += 1, hit = hit.parentElement) {
-        if (hit === node) return { ok: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      // 命中判断：从命中元素沿祖先链（含 shadow host 边界）爬升到根，任一层等于目标即视为命中。
+      const isHit = (el) => {
+        for (let cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+          if (cur === node) return true;
+        }
+        return false;
+      };
+      const describeBlocker = (el) => {
+        if (!el || el.nodeType !== 1) return "";
+        const tag = el.tagName ? el.tagName.toLowerCase() : "?";
+        const role = el.getAttribute ? el.getAttribute("role") : null;
+        const cls = typeof el.className === "string" && el.className
+          ? "." + el.className.trim().split(/\\s+/).slice(0, 2).join(".")
+          : "";
+        return (tag + (role ? "[role=" + role + "]" : "") + cls).slice(0, 80);
+      };
+      // 多点采样：中心 + 四角内缩 + 边中点。遮盖层常只挡住中心区域，人工会自适应点边缘。
+      // 坐标统一 clamp 进视口（elementFromPoint 对视口外坐标返回 null）。
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
+      const points = [];
+      const addPoint = (px, py) => {
+        const vx = Math.max(0, Math.min(vw - 1, Math.round(px)));
+        const vy = Math.max(0, Math.min(vh - 1, Math.round(py)));
+        points.push([vx, vy]);
+      };
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const ix = Math.min(2, rect.width / 4);
+      const iy = Math.min(2, rect.height / 4);
+      addPoint(cx, cy);
+      addPoint(rect.left + ix, rect.top + iy);
+      addPoint(rect.right - ix, rect.top + iy);
+      addPoint(rect.left + ix, rect.bottom - iy);
+      addPoint(rect.right - ix, rect.bottom - iy);
+      if (rect.width > 8) {
+        addPoint(rect.left + rect.width * 0.25, cy);
+        addPoint(rect.left + rect.width * 0.75, cy);
       }
-      return { ok: false };
+      if (rect.height > 8) {
+        addPoint(cx, rect.top + rect.height * 0.25);
+        addPoint(cx, rect.bottom - rect.height * 0.25);
+      }
+      let firstBlocker = null;
+      for (const [px, py] of points) {
+        const hit = document.elementFromPoint(px, py);
+        if (!hit) continue;
+        if (isHit(hit)) return { ok: true, x: px, y: py };
+        if (!firstBlocker) firstBlocker = describeBlocker(hit);
+      }
+      return { ok: false, occludedBy: firstBlocker || undefined };
     })()`,
   }]);
   return result && typeof result === "object" && (result as { ok?: boolean }).ok === true
     ? result as { ok: true; x: number; y: number }
-    : { ok: false };
+    : (result && typeof result === "object" ? result as SnapshotTargetValidation : { ok: false });
 }
 
 export async function startPlaywrightElementPicker(contents: WebContents): Promise<RuntimeSnapshot> {
