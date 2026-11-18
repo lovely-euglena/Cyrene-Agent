@@ -329,6 +329,12 @@
           "title": "提醒音效",
           "desc": "昔涟有事等你确认或任务跑完时，右下角弹窗的提示音。"
         },
+        "conversationSort": {
+          "title": "对话列表排序",
+          "desc": "「按最后使用」= 切换到会话即算；「按最近消息」= 有新消息才置顶。",
+          "lastOpened": "按最后使用",
+          "lastMessage": "按最近消息"
+        },
         "launchAtLogin": {
           "title": "开机自启",
           "desc": "系统启动时自动打开昔涟。"

@@ -333,6 +333,8 @@ export interface ChatSession {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  /** 最近一次打开/切换到本会话的时间（#194 排序口径「打开就算」用）；旧会话缺省回落 updatedAt。 */
+  lastOpenedAt?: number;
   schemaVersion: 1;
   /** 系统用途会话的稳定标识；普通用户会话不设置。 */
   purpose?: ChatSessionPurpose;
@@ -411,6 +413,8 @@ export interface ChatSessionMeta {
   identityId: string | null;
   createdAt: number;
   updatedAt: number;
+  /** #194：排序口径「打开就算」用；缺省回落 updatedAt（旧索引）。 */
+  lastOpenedAt?: number;
   messageCount: number;
   purpose?: ChatSessionPurpose;
   mode: ConversationMode;

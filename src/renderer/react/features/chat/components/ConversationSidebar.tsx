@@ -4,11 +4,13 @@ import { ColorPicker, Dropdown, Input, Menu, Modal, Popover, Tooltip } from "ant
 import type { InputRef } from "antd";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { Folder, FolderInput, FolderOpen, FolderPlus, Hash, Maximize2, Minimize2 } from "lucide-react";
+import { Folder, FolderInput, FolderOpen, FolderPlus, Hash, Layers, Maximize2, Minimize2 } from "lucide-react";
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "../../../i18n";
+import { conversationSortTimeKey, conversationTimeBucket, normalizeConversationSortMode, type ConversationSortMode } from "../../../../../shared/chat-ui";
+import { chatStore } from "../pages/chat-page-bridge";
 import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 import { SettingsSegmented } from "../../../components/ui/SettingsControls";
 import { reportChatPerfRender } from "./chat-perf-probe";
@@ -476,18 +478,37 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     input.select();
   }, [editing]);
 
+  // #194：排序口径（默认「打开就算」）。初始读设置 + 订阅变化即时重排。
+  const [sortMode, setSortMode] = useState<ConversationSortMode>("last-opened");
+  useEffect(() => {
+    let alive = true;
+    void window.settings?.getGeneral?.().then((cfg) => {
+      if (alive && cfg) setSortMode(normalizeConversationSortMode((cfg as { conversationSortMode?: unknown }).conversationSortMode));
+    }).catch(() => {});
+    const off = chatStore()?.onConversationSortModeChanged?.((mode) => setSortMode(normalizeConversationSortMode(mode)));
+    return () => { alive = false; off?.(); };
+  }, []);
+
   const sortedSessions = useMemo(
     () =>
       [...sessions].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
-        return b.updatedAt - a.updatedAt;
+        return conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode);
       }),
-    [sessions],
+    [sessions, sortMode],
   );
 
-  const [sidebarView, setSidebarView] = useState<"projects" | "groups">(() => {
-    try { return localStorage.getItem("cyrene.chat.sidebar.view") === "groups" ? "groups" : "projects"; } catch { return "projects"; }
+  // #196：三态视图（projects/groups/all），localStorage 旧值兼容
+  const [sidebarView, setSidebarView] = useState<"projects" | "groups" | "all">(() => {
+    try {
+      const stored = localStorage.getItem("cyrene.chat.sidebar.view");
+      return stored === "groups" || stored === "all" ? stored : "projects";
+    } catch { return "projects"; }
+  });
+  // #196：「全部」视图时间分组头折叠状态（按桶存）
+  const [collapsedAllBuckets, setCollapsedAllBuckets] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("cyrene.chat.sidebar.all.collapsed") ?? "[]") as string[]; } catch { return []; }
   });
   const [expandedProjects, setExpandedProjects] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("cyrene.chat.sidebar.projects.expanded") ?? "[]") as string[]; } catch { return []; }
@@ -526,14 +547,14 @@ export const ConversationSidebar = memo(function ConversationSidebar({
         title: sidebarSessions.find((session) => session.workspaceRoot && session.workspaceRoot.replace(/[\\/]+$/, "").toLocaleLowerCase("en-US") === rootKey)?.workspaceDisplayName
           ?? project.workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1)
           ?? project.workspaceRoot,
-        sessions: (sessionsByRoot.get(rootKey) ?? []).sort((a, b) => b.updatedAt - a.updatedAt),
+        sessions: (sessionsByRoot.get(rootKey) ?? []).sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode)),
       };
     });
     const unbound = sidebarSessions.filter((session) => !session.workspaceRoot && !session.pinned)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode));
     if (unbound.length) result.push({ id: "__unbound__", root: "", title: t("sidebar.unboundProject"), sessions: unbound });
     return result;
-  }, [organization, sidebarSessions, t]);
+  }, [organization, sidebarSessions, t, sortMode]);
   const projectIds = useMemo(() => projectRows.map((project) => project.id), [projectRows]);
   const collapsibleProjectIds = useMemo(() => projectIds.filter((id) => id !== "__unbound__"), [projectIds]);
   const projectCategoryRows = useMemo(() => {
@@ -570,9 +591,18 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     try { localStorage.setItem("cyrene.chat.sidebar.groups.expanded", JSON.stringify(expandedGroups)); } catch { /* optional preference */ }
   }, [expandedGroups]);
 
-  function selectSidebarView(next: "projects" | "groups") {
+  function selectSidebarView(next: "projects" | "groups" | "all") {
     setSidebarView(next);
     try { localStorage.setItem("cyrene.chat.sidebar.view", next); } catch { /* preference is optional */ }
+  }
+
+  // #196：「全部」视图分组头折叠切换
+  function toggleAllBucket(bucket: string) {
+    setCollapsedAllBuckets((current) => {
+      const next = current.includes(bucket) ? current.filter((b) => b !== bucket) : [...current, bucket];
+      try { localStorage.setItem("cyrene.chat.sidebar.all.collapsed", JSON.stringify(next)); } catch { /* preference is optional */ }
+      return next;
+    });
   }
 
   function toggleAllProjectFolders() {
@@ -972,7 +1002,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     );
   }
 
-  const pinnedSidebarSessions = sidebarSessions.filter((session) => session.pinned).sort((a, b) => b.updatedAt - a.updatedAt);
+  const pinnedSidebarSessions = sidebarSessions.filter((session) => session.pinned).sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode));
 
   useEffect(() => {
     if (!contextMenu.open) return;
@@ -1003,8 +1033,9 @@ export const ConversationSidebar = memo(function ConversationSidebar({
             options={[
               { label: <span className="cy-sidebar-view-label"><Folder size={12} />{t("sidebar.projectsView")}</span>, value: "projects" },
               { label: <span className="cy-sidebar-view-label"><Hash size={12} />{t("sidebar.groupsView")}</span>, value: "groups" },
+              { label: <span className="cy-sidebar-view-label"><Layers size={12} />{t("sidebar.allView")}</span>, value: "all" },
             ]}
-            onChange={(value) => selectSidebarView(value as "projects" | "groups")}
+            onChange={(value) => selectSidebarView(value as "projects" | "groups" | "all")}
           />
           {sidebarView === "projects" && (
             <>
@@ -1043,7 +1074,52 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                 {pinnedSidebarSessions.map((session) => renderSidebarSession(session))}
               </section>
             )}
-            {sidebarView === "projects" ? (
+            {sidebarView === "all" ? (
+              // #196：「全部」视图——按最后使用时间分桶（今天/昨天/最近7天/更早），无拖拽（时间分组与手动排序冲突）
+              (() => {
+                const bucketOrder: Array<"today" | "yesterday" | "last7" | "older"> = ["today", "yesterday", "last7", "older"];
+                const bucketLabelKey: Record<string, string> = { today: "sidebar.today", yesterday: "sidebar.yesterday", last7: "sidebar.last7", older: "sidebar.older" };
+                const now = Date.now();
+                const buckets = new Map<string, ChatSessionMeta[]>();
+                for (const session of sidebarSessions.filter((session) => !session.pinned)) {
+                  const bucket = conversationTimeBucket(conversationSortTimeKey(session, sortMode), now);
+                  const list = buckets.get(bucket) ?? [];
+                  list.push(session);
+                  buckets.set(bucket, list);
+                }
+                for (const list of buckets.values()) {
+                  list.sort((a, b) => conversationSortTimeKey(b, sortMode) - conversationSortTimeKey(a, sortMode));
+                }
+                const hasAny = bucketOrder.some((bucket) => (buckets.get(bucket)?.length ?? 0) > 0);
+                return (
+                  <>
+                    {!hasAny && sidebarSessions.length === 0 && (
+                      <div className="cy-conversation-sidebar__empty">{t("sidebar.allViewEmpty")}</div>
+                    )}
+                    {bucketOrder.map((bucket) => {
+                      const members = buckets.get(bucket) ?? [];
+                      if (members.length === 0) return null;
+                      const collapsed = collapsedAllBuckets.includes(bucket);
+                      return (
+                        <section className="cy-sidebar-all-bucket" key={bucket}>
+                          <button
+                            type="button"
+                            className="cy-sidebar-section-label cy-sidebar-all-bucket__header"
+                            aria-expanded={!collapsed}
+                            onClick={() => toggleAllBucket(bucket)}
+                          >
+                            {t(bucketLabelKey[bucket])}
+                            <span className="cy-sidebar-all-bucket__count">{members.length}</span>
+                            <span className="cy-sidebar-all-bucket__chevron">{collapsed ? "▸" : "▾"}</span>
+                          </button>
+                          {!collapsed && members.map((session) => renderSidebarSession(session))}
+                        </section>
+                      );
+                    })}
+                  </>
+                );
+              })()
+            ) : sidebarView === "projects" ? (
               <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={handleProjectDragEnd}>
                 <SortableContext items={sortableProjectIds} strategy={verticalListSortingStrategy}>
                   {projectCategoryRows.categories.map((category) => (

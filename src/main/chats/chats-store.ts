@@ -292,6 +292,9 @@ function metaFromSession(session: ChatSession | ChatSessionRecordV2): ChatSessio
     identityId: session.identityId,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    // #194：排序口径「打开就算」。索引条目固定写数值（无打开记录回落 updatedAt），
+    // 避免 undefined 被 JSON.stringify 丢弃后被误判为旧格式索引。
+    lastOpenedAt: typeof session.lastOpenedAt === "number" ? session.lastOpenedAt : session.updatedAt,
     messageCount: session.schemaVersion === 2 ? session.messageCount : session.messages.length,
     purpose: session.purpose,
     mode: isConversationMode(session.mode) ? session.mode : inferLegacyMode(session.purpose),
@@ -586,6 +589,32 @@ export function getSessionView(id: string): ChatSession | null {
       at: claimed.at,
     }] : [],
   };
+}
+
+/**
+ * #194：会话打开/切换时刷新 lastOpenedAt（排序口径「打开就算」）。
+ * 只动 lastOpenedAt，不碰 updatedAt（「最近聊天时间」展示语义不变）。
+ */
+export function touchSessionOpened(id: string): ChatSessionMeta | null {
+  const session = readSessionRecordFile(id);
+  if (!session) return null;
+  const now = Date.now();
+  if (typeof session.lastOpenedAt === "number" && now - session.lastOpenedAt < 1000) {
+    return metaFromSession(session); // 1s 内重复打开不落盘（快速切换防抖）
+  }
+  session.lastOpenedAt = now;
+  try {
+    writeWritableSession(session);
+  } catch (err) {
+    console.warn("[chats-store] lastOpenedAt 落盘失败:", id, err);
+    return metaFromSession(session);
+  }
+  try {
+    upsertMeta(metaFromSession(session));
+  } catch (err) {
+    console.warn("[chats-store] lastOpenedAt 索引写入失败:", id, err);
+  }
+  return metaFromSession(session);
 }
 
 export function setSessionPinned(id: string, pinned: boolean): ChatSession | null {

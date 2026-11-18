@@ -163,6 +163,10 @@ export function handleGeneralSettingsChanged(
   if (before.uiTheme !== after.uiTheme) {
     deps.windowManager?.broadcast(IPC.UI_THEME_CHANGED, getEffectiveUiTheme(after.uiTheme));
   }
+  // #194：对话列表排序口径变化 → 全窗广播（侧栏即时重排）
+  if (before.conversationSortMode !== after.conversationSortMode) {
+    deps.windowManager?.broadcast(IPC.CHAT_CONVERSATION_SORT_MODE_CHANGED, after.conversationSortMode);
+  }
   if (before.uiThemeRadius !== after.uiThemeRadius) {
     deps.windowManager?.broadcast(IPC.UI_THEME_RADIUS_CHANGED, after.uiThemeRadius);
   }

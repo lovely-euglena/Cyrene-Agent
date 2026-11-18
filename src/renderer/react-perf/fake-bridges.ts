@@ -123,6 +123,9 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
 
   const fakeStore: ChatStoreApi = {
     list: async () => [perfSessionMeta(session)],
+    // #194：perf 桩——排序口径触发与 lastOpenedAt 刷新均为 no-op
+    touchOpened: async () => null,
+    onConversationSortModeChanged: () => () => {},
     // perf 环境没有真实导出：桩返回空结果，不触碰文件系统
     exportChats: async () => ({ ok: true, dir: "", files: [], errors: [] }),
     revealExportPath: async () => ({ ok: true }),

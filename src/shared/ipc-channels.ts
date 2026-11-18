@@ -243,6 +243,8 @@ export const IPC = {
   // 调整：把待发条目插入当前运行的下一步（绑定 active run，由 agui-bridge 处理）
   CHATS_PENDING_ADJUST: "chats:pending-adjust",
   CHATS_SET_PINNED: "chats:set-pinned",
+  CHATS_TOUCH_OPENED: "chats:touch-opened",
+  CHAT_CONVERSATION_SORT_MODE_CHANGED: "chat:conversation-sort-mode-changed",
   CHATS_SET_MODEL_PROFILE: "chats:set-model-profile",
   // 会话级当前模型窄 IPC：只写会话单字段组（绑定+模型），不碰档案
   CHATS_SET_SESSION_MODEL: "chats:set-session-model",

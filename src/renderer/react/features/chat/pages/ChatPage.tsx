@@ -782,6 +782,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const session = await store.get(sessionId);
     if (!session || generation !== sessionSelectionGeneration.current) return;
     setActiveSession(session);
+    // #194：打开即算「最后使用」——fire-and-forget 刷新 lastOpenedAt，侧栏据此重排
+    void store.touchOpened?.(sessionId)?.catch?.(() => { /* 只影响排序，失败不打扰 */ });
     // 环形图快照初始化：session 级（压缩后写入）与消息级（最近 run 留下）取最新；
     // 分母统一换成主进程实时解析的窗口容量，避免展示陈旧值。
     setSessionContextUsageBySession((current) => {
