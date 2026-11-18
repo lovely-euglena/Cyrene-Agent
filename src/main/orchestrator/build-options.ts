@@ -838,18 +838,6 @@ export async function buildAgentRunOptions(
     )
     : modeEnabledTools;
 
-  // 三模适配层：skill 按 resolvedMode 过滤，chat 模式不暴露 skill。
-  // ⚠️ 注意：下面这组 enabledSkills/skillCatalog/autoInjected*/availableSkills 计算
-  // 在 resolveRunCapabilities 存在时会被整体覆盖重算（见下方"权威路径"注释）。
-  // 这里的第一次计算只为 fallbackCapabilities 服务（调用方未提供
-  // resolveRunCapabilities 时的兼容路径），两条路径过滤条件不同——
-  // 禁止当成重复代码"去重合并"，除非先把 fallback 路径显式化并补测试。
-  let enabledSkills = resolvedMode === "chat"
-    ? []
-    : deps.skillRegistry.getEnabledForMode(resolvedMode, styleSettings.skillModeOverrides);
-  let skillCatalog = deps.buildSkillCatalog(enabledSkills);
-  let autoInjectedSkillContext = deps.buildAutoInjectedSkillContext(enabledSkills);
-  let autoInjectedSoulContext = deps.buildAutoInjectedSoulContext?.(enabledSkills) ?? "";
 
   // Plan Mode 条件注入：cyrene-plan-mode skill 的 SKILL.md 正文只在
   // PLAN_DISCUSSING / PLAN_REVIEW 时注入。不拼进 stablePrefix（autoInjectedSkillContext
@@ -866,14 +854,6 @@ export async function buildAgentRunOptions(
     }
   }
 
-  // 可用 Skill 列表（供 Skill 路由判断 direct/plan 与 Skill 加载用）
-  let availableSkills: SkillRouteInfo[] = (enabledSkills as Array<Record<string, unknown>>).map((s) => ({
-    id: String(s.id ?? ""),
-    description: String(s.description ?? ""),
-    ...((s.manifest as Record<string, unknown>)?.defaultExecutionMode
-      ? { defaultExecutionMode: (s.manifest as Record<string, unknown>).defaultExecutionMode as "direct" | "plan" }
-      : {}),
-  })).filter((s) => s.id);
 
   // 三模适配层：slash 命令激活也按 resolvedMode 过滤。
   const slashMode = resolvedMode === "chat" ? undefined : resolvedMode;
@@ -886,40 +866,35 @@ export async function buildAgentRunOptions(
   // 搜索后端互斥过滤：每轮只暴露当前后端对应的搜索工具
   const generalSettings = deps.loadGeneralSettings();
   const activeSearchBackend = ((generalSettings as Record<string, unknown>).searchEngine as string ?? "off") as SearchBackend;
-  // Chat 模式 fallbackCapabilities 路径：人格内置工具直接开放；
-  // 文件工具仍要求本轮带附件。
-  const hasFileAttachments = (input.attachments?.length ?? 0) > 0 || (input.imageAttachments?.length ?? 0) > 0;
-  const builtinChatTools = isChatMode
-    ? (modeEnabledTools as readonly ToolDefinition[]).filter(
-      (tool) => tool.chatBuiltin === true
-        && (!tool.requiresFileAttachments || hasFileAttachments)
-        && styleSettings.toolModeOverrides?.[tool.id]?.chat !== false,
-    )
-    : [];
-  const chatOptInTools = isChatMode
-    ? [
-      ...builtinChatTools,
-      ...((styleSettings.chatToolsEnabled === true)
-        ? (modeEnabledTools as readonly ToolDefinition[]).filter(
-          (tool) => styleSettings.toolModeOverrides?.[tool.id]?.chat === true
-            && !builtinChatTools.some((builtinTool) => builtinTool.id === tool.id),
-        )
-        : []),
-    ]
-    : [];
-  const filteredBySearch = isChatMode
-    ? filterToolsBySearchBackend(chatOptInTools as unknown as Array<{ id: string }>, activeSearchBackend)
-    : filterToolsBySearchBackend(
-      enabledTools as unknown as Array<{ id: string }>,
+
+  // #167（原 #161 瘦身⑤）收敛完成：旧的 fallback 影子逻辑（skills 四件套顶置计算 +
+  // chat 模式手算过滤 + fallbackCapabilities 重复组装）已收敛为单一纯降级函数——
+  // 仅当调用方未提供 resolveRunCapabilities 时才执行；chat 过滤语义（chatBuiltin
+  // 默认放行 + override.chat === false 显式关闭）统一实现在 run-capabilities.ts，
+  // 两路径自此共用同一套规则，影子漂移不再可能。requiresFileAttachments 附件条件
+  // 为死代码（全仓库无工具设置该标志），收敛时移除，行为不变。
+  const buildFallbackCapabilities = (): RunCapabilities => {
+    const enabledSkills = resolvedMode === "chat"
+      ? []
+      : deps.skillRegistry.getEnabledForMode(resolvedMode, styleSettings.skillModeOverrides);
+    const chatToolSource = isChatMode
+      ? (modeEnabledTools as readonly ToolDefinition[]).filter(
+        (tool) => tool.chatBuiltin === true
+          || (styleSettings.chatToolsEnabled === true
+            && styleSettings.toolModeOverrides?.[tool.id]?.chat === true),
+      )
+      : enabledTools;
+    const filteredBySearch = filterToolsBySearchBackend(
+      chatToolSource as unknown as Array<{ id: string }>,
       activeSearchBackend,
     );
-
-  const fallbackCapabilities: RunCapabilities = {
-    mode: resolvedMode,
-    tools: filteredBySearch as unknown as ToolDefinition[],
-    toolIds: new Set(filteredBySearch.map((tool) => tool.id)),
-    skills: enabledSkills as never[],
-    skillIds: new Set((enabledSkills as Array<{ id?: unknown }>).map((skill) => String(skill.id ?? "")).filter(Boolean)),
+    return {
+      mode: resolvedMode,
+      tools: filteredBySearch as unknown as ToolDefinition[],
+      toolIds: new Set(filteredBySearch.map((tool) => tool.id)),
+      skills: enabledSkills as never[],
+      skillIds: new Set((enabledSkills as Array<{ id?: unknown }>).map((skill) => String(skill.id ?? "")).filter(Boolean)),
+    };
   };
   const capabilities = deps.resolveRunCapabilities?.({
     mode: resolvedMode,
@@ -927,13 +902,14 @@ export async function buildAgentRunOptions(
     toolModeOverrides: styleSettings.toolModeOverrides,
     skillModeOverrides: styleSettings.skillModeOverrides,
     chatToolsEnabled: styleSettings.chatToolsEnabled === true,
-  }) ?? fallbackCapabilities;
-  // ⚠️ resolveRunCapabilities 存在时的权威路径：覆盖上面 fallback 组的计算。
-  enabledSkills = capabilities.skills;
-  skillCatalog = deps.buildSkillCatalog(enabledSkills);
-  autoInjectedSkillContext = deps.buildAutoInjectedSkillContext(enabledSkills);
-  autoInjectedSoulContext = deps.buildAutoInjectedSoulContext?.(enabledSkills) ?? "";
-  availableSkills = (enabledSkills as Array<Record<string, unknown>>).map((s) => ({
+  }) ?? buildFallbackCapabilities();
+
+  const enabledSkills = capabilities.skills;
+  const skillCatalog = deps.buildSkillCatalog(enabledSkills);
+  const autoInjectedSkillContext = deps.buildAutoInjectedSkillContext(enabledSkills);
+  const autoInjectedSoulContext = deps.buildAutoInjectedSoulContext?.(enabledSkills) ?? "";
+  // 可用 Skill 列表（供 Skill 路由判断 direct/plan 与 Skill 加载用）
+  const availableSkills: SkillRouteInfo[] = (enabledSkills as unknown as Array<Record<string, unknown>>).map((s) => ({
     id: String(s.id ?? ""),
     description: String(s.description ?? ""),
     ...((s.manifest as Record<string, unknown>)?.defaultExecutionMode
@@ -941,7 +917,7 @@ export async function buildAgentRunOptions(
       : {}),
   })).filter((s) => s.id);
   const runTools = capabilities.tools;
-  const searchToolIds = filteredBySearch
+  const searchToolIds = (runTools as unknown as Array<{ id: string }>)
     .filter((t) => t.id === "web_search" || t.id.startsWith("minimax-web-search-"))
     .map((t) => t.id);
   console.log(`[Cyrene] 搜索后端=${activeSearchBackend} 暴露搜索工具=[${searchToolIds.join(", ") || "无"}]`);
