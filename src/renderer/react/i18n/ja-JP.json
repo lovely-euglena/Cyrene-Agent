@@ -362,6 +362,7 @@
   },
   "rightInspector": {
     "panelAria": "右側インスペクターパネル",
+      "summary": "このラウンドで {{count}} 件のファイルを変更",
     "toggle": "右側パネルを展開／折りたたむ"
   },
   "browserPanel": {

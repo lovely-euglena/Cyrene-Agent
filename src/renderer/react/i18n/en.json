@@ -346,6 +346,7 @@
   },
   "rightInspector": {
     "panelAria": "Inspector panel",
+      "summary": "{{count}} files changed this round",
     "toggle": "Toggle right panel"
   },
   "browserPanel": {
