@@ -1,6 +1,8 @@
 // 空闲帧率分档（T4）——逐式移植 src/renderer/live2d/manager.ts 的 idle FPS 策略。
 // 满帧 60 → 空闲 60s 后 24 → 300s 后 12；看门狗 5s 评估一次；
 // 互动信号（鼠标扫过/hit-test/交互）markActivity 立即回满帧。
+// 时间基 = 宿主真实时间（PetEngine.RealNowMs）：web 走 performance.now()，
+// 暂停期空闲计时不冻结（隐藏超 5min 恢复后起始档位与 web 一致）。
 
 namespace CyreneLive2D.Behavior;
 

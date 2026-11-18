@@ -12,7 +12,7 @@
  * 桌宠页对 window.cyrene 有桩回退）。
  *
  * 用法（仓库根）：
- *   npx electron scripts/live2d/web-capture.mjs --out web.png
+ *   npx electron scripts/live2d/web-capture.cjs --out web.png
  *        [--params ParamAngleX=15,ParamEyeLOpen=0.5] [--no-freeze] [--wait 500]
  *
  * 退出码：0 成功 / 1 失败 / 2 前置缺失（dist/renderer）。

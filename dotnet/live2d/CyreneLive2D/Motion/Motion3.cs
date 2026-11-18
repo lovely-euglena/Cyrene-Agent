@@ -66,6 +66,9 @@ public sealed class Motion3 : ACubismMotion
     private MotionData _data = new();
     private string[] _eyeBlinkParameterIds = Array.Empty<string>();
     private string[] _lipSyncParameterIds = Array.Empty<string>();
+    // 帧循环热路径复用（避免每帧分配；SetEffectIds 时按目标数定长）
+    private bool[] _eyeBlinkFlags = Array.Empty<bool>();
+    private bool[] _lipSyncFlags = Array.Empty<bool>();
     private float _modelOpacity = 1.0f;
     private float _lastWeight;
     private float _sourceFrameRate = 30.0f;
@@ -87,6 +90,8 @@ public sealed class Motion3 : ACubismMotion
     {
         _eyeBlinkParameterIds = eyeBlinkParameterIds;
         _lipSyncParameterIds = lipSyncParameterIds;
+        _eyeBlinkFlags = new bool[Math.Min(eyeBlinkParameterIds.Length, MaxTargetSize)];
+        _lipSyncFlags = new bool[Math.Min(lipSyncParameterIds.Length, MaxTargetSize)];
     }
 
     // ── 创建 / 解析 ─────────────────────────────────────────
@@ -336,8 +341,10 @@ public sealed class Motion3 : ACubismMotion
 
         float lipSyncValue = FltMax;
         float eyeBlinkValue = FltMax;
-        var eyeBlinkFlags = new bool[Math.Min(_eyeBlinkParameterIds.Length, MaxTargetSize)];
-        var lipSyncFlags = new bool[Math.Min(_lipSyncParameterIds.Length, MaxTargetSize)];
+        var eyeBlinkFlags = _eyeBlinkFlags;
+        var lipSyncFlags = _lipSyncFlags;
+        Array.Clear(eyeBlinkFlags);
+        Array.Clear(lipSyncFlags);
 
         float tmpFadeIn = FadeInSeconds <= 0.0f
             ? 1.0f
@@ -356,10 +363,11 @@ public sealed class Motion3 : ACubismMotion
         }
 
         // Model 曲线（EyeBlink / LipSync / Opacity）
-        foreach (var curve in _data.Curves)
+        for (int c = 0; c < _data.Curves.Length; c++)
         {
+            var curve = _data.Curves[c];
             if (curve.Target != MotionCurveTarget.Model) continue;
-            float value = EvaluateCurve(Array.IndexOf(_data.Curves, curve), time, isCorrection, duration);
+            float value = EvaluateCurve(c, time, isCorrection, duration);
             if (curve.Id == "EyeBlink") eyeBlinkValue = value;
             else if (curve.Id == "LipSync") lipSyncValue = value;
             else if (curve.Id == "Opacity")
@@ -444,12 +452,13 @@ public sealed class Motion3 : ACubismMotion
         }
 
         // PartOpacity 曲线（直接写，无淡入淡出）
-        foreach (var curve in _data.Curves)
+        for (int c = 0; c < _data.Curves.Length; c++)
         {
+            var curve = _data.Curves[c];
             if (curve.Target != MotionCurveTarget.PartOpacity) continue;
             int parameterIndex = model.GetParameterIndex(curve.Id);
             if (parameterIndex == -1) continue;
-            float value = EvaluateCurve(Array.IndexOf(_data.Curves, curve), time, isCorrection, duration);
+            float value = EvaluateCurve(c, time, isCorrection, duration);
             model.SetParameterValueByIndex(parameterIndex, value);
         }
 

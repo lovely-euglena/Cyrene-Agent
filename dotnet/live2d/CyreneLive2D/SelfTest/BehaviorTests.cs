@@ -256,6 +256,32 @@ public static class BehaviorTests
         SelfTestRunner.Check(defs.All(d => d.Group.Length > 0 && d.MotionName.Length > 0), "interaction.defsParsed");
         SelfTestRunner.Check(defs.Any(d => d.MotionIndex >= 0), "interaction.someRealMotions");
 
+        // ── 第三方模型容错：缺 Name/Id/Motion 跳过；重名不抛（对齐 web buildHitAreaDefs） ──
+        var badManifestPath = Path.Combine(Path.GetTempPath(), $"cyrene-hitareas-{Guid.NewGuid():N}.json");
+        File.WriteAllText(badManifestPath, """
+        {
+          "HitAreas": [
+            { "Id": "D1", "Motion": "G:M" },
+            { "Name": "N2", "Motion": "G:M" },
+            { "Name": "", "Id": "D3", "Motion": "G:M" },
+            { "Name": "N4", "Id": "D4" },
+            { "Name": "OK", "Id": "D5", "Motion": "G:M" },
+            { "Name": "OK", "Id": "D6", "Motion": "G:M" }
+          ],
+          "Motions": { "G": [ { "Name": "M" } ] }
+        }
+        """);
+        try
+        {
+            var badDefs = InteractionController.BuildHitAreaDefs(Model3Json.Load(badManifestPath));
+            SelfTestRunner.Check(badDefs.Length == 2, "interaction.badEntriesSkipped", badDefs.Length.ToString());
+            var badManifest = Model3Json.Load(badManifestPath);
+            _ = new InteractionController(new MotionManager(badManifest, modelDir),
+                new ExpressionManager(badManifest, modelDir), badDefs); // 重名构造不抛
+            SelfTestRunner.Check(true, "interaction.duplicateNamesTolerated");
+        }
+        finally { try { File.Delete(badManifestPath); } catch { /* 清理失败不影响结论 */ } }
+
         var motions = new MotionManager(manifest, modelDir);
         var em = new ExpressionManager(manifest, modelDir);
         var interaction = new InteractionController(motions, em, defs);

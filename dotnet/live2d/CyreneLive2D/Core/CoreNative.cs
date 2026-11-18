@@ -1,9 +1,9 @@
 // Cubism Core C API 的 P/Invoke 封装（T0/T1）。
 //
 // 签名权威来源：Cubism SDK for Native 5-r.4 的 Core/include/Live2DCubismCore.h
-// （Core 5.1.0，与 web 轨对齐；csmGetRenderOrders 在 Core 6 改名，经 CoreLibrary
-// 函数指针兼容 csmGetDrawableRenderOrders 旧名）。
-// （Core 版本 06.00.0001）。要点：
+// （Core 5.1.0，与 web 轨对齐；下载 pin 的 SHA256 见 CoreDownloader.SdkSha256；
+// csmGetRenderOrders 在 Core 6 改名，经 CoreLibrary 函数指针兼容
+// csmGetDrawableRenderOrders 旧名）。要点：
 //   - Core 不分配内存：moc 缓冲按 csmAlignofMoc=64 对齐、model 缓冲按
 //     csmAlignofModel=16 对齐，由调用方提供（NativeMemory.AlignedAlloc）。
 //   - csmReviveMocInPlace 就地改写缓冲——文件字节必须先拷贝进对齐缓冲。

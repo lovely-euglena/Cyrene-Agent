@@ -96,6 +96,30 @@ public static unsafe class EngineTests
         Call(engine, "tick", new { dtMs = 100.0 });
         SelfTestRunner.Check(NowMs(log, engine) == before + 100, "engine.dragEndThaws");
 
+        // ── 真实时间计时器：暂停期表情回正/空闲分档不冻结（对齐 web setInterval） ──
+        using (var rtLog = new FrameLog())
+        using (var rtEngine = new PetEngine(rtLog.Io, null))
+        {
+            double realNow = 1000;
+            rtEngine.RealTimeMsProvider = () => realNow; // 注入假真实时钟（确定性）
+            Call(rtEngine, "load", new { modelPath = manifestPath });
+            Call(rtEngine, "play", new { target = new { kind = "expression", name = "墨镜" } });
+            Call(rtEngine, "tick", new { dtMs = 16.0 });
+            SelfTestRunner.Check(GetDiagnostics(rtLog, rtEngine).GetProperty("expression").GetString() == "墨镜",
+                "engine.rtExprApplied");
+
+            Call(rtEngine, "pause"); // 隐藏暂停：行为时钟冻结
+            realNow += 5 * 60 * 1000; // 真实时间过去 5min（>3min 回正、>300s 最深档）
+            Call(rtEngine, "tick", new { dtMs = 16.0 }); // 暂停期早退
+            Call(rtEngine, "resume");
+            Call(rtEngine, "tick", new { dtMs = 16.0 }); // 恢复首帧
+            var rtDiag = GetDiagnostics(rtLog, rtEngine);
+            SelfTestRunner.Check(rtDiag.GetProperty("expression").GetString() == "表情回正",
+                "engine.rtPauseExprReset", rtDiag.GetProperty("expression").GetString());
+            SelfTestRunner.Check(rtDiag.GetProperty("idleFps").GetInt32() == 12,
+                "engine.rtPauseIdleTier", rtDiag.GetProperty("idleFps").GetInt32().ToString());
+        }
+
         // ── setZoom ──
         Call(engine, "setZoom", new { zoom = 1.5 });
         SelfTestRunner.Check(Math.Abs(LastResult(log).Data.GetProperty("zoom").GetDouble() - 1.5) < 1e-6, "engine.setZoom");

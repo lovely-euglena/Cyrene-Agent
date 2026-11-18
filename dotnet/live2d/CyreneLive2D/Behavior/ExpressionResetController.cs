@@ -1,6 +1,8 @@
 // 表情定时回正（T4）——逐式移植 src/renderer/live2d/expression-reset.ts。
 // 每 3min 应用「表情回正」；交互触发（hit）时 restart 重计时。
 // web 用 setInterval（首次触发在 +interval）；sidecar 用显式时间驱动。
+// 时间基 = 宿主真实时间（PetEngine.RealNowMs）：web 的 setInterval 不受
+// ticker 暂停影响，暂停期计时不冻结（隐藏超 3min 恢复后首帧即回正）。
 
 using CyreneLive2D.Motion;
 

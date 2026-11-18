@@ -65,6 +65,15 @@ public static class WindowHostTests
         host.Pump(350);
         SelfTestRunner.Check(HasEvent(log, "dragMove"), "windowHost.dragMoveEvent");
 
+        // ── 拖拽暂停期 setBounds 即时落位（P1：不能等松手才跳位） ──
+        // 无头自测无模型渲染 → 注入上一帧，验证暂停分支的复呈落位路径。
+        host.SeedLastFrameForTest(new byte[win.Width * win.Height * 4], win.Width, win.Height);
+        host.SetBoundsDip(-9950, -9900, 400, 500); // 拖拽中主进程下发新位置（尺寸不变）
+        host.Pump(360);
+        SelfTestRunner.Check(engine.IsPaused, "windowHost.dragStillPaused");
+        SelfTestRunner.Check(win.X == (int)Math.Round(-9950 * s) && win.Y == (int)Math.Round(-9900 * s),
+            "windowHost.dragBoundsImmediate", $"{win.X},{win.Y}");
+
         Win32.PostMessageW(win.Handle, Win32.WM_LBUTTONUP, IntPtr.Zero, MakeLParam(100, 100));
         host.Pump(400);
         SelfTestRunner.Check(HasEvent(log, "dragEnd"), "windowHost.dragEndEvent");

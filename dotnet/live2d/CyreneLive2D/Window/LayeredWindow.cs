@@ -51,8 +51,16 @@ public sealed class LayeredWindow : IDisposable
     public bool IsClickThrough => _clickThrough;
     public bool IsTopMost => _topMost;
 
-    /// <summary>窗口 DPI（PerMonitorV2；失败回退 96）。宿主层 DIP 换算用。</summary>
-    public uint Dpi => _hwnd != IntPtr.Zero ? Win32.GetDpiForWindow(_hwnd) : 96u;
+    /// <summary>窗口 DPI（PerMonitorV2；无效窗口/查询失败回退 96）。宿主层 DIP 换算用。</summary>
+    public uint Dpi
+    {
+        get
+        {
+            if (_hwnd == IntPtr.Zero) return 96u;
+            var dpi = Win32.GetDpiForWindow(_hwnd);
+            return dpi == 0 ? 96u : dpi; // 无效窗口返回 0——不能传导到下游除法
+        }
+    }
 
     public LayeredWindow(int x, int y, int width, int height)
     {
@@ -74,7 +82,18 @@ public sealed class LayeredWindow : IDisposable
 
         _clickThrough = true; // 初始穿透（模型加载前不拦截鼠标）
         Instances[_hwnd] = this;
-        CreateDib(width, height);
+        try
+        {
+            CreateDib(width, height);
+        }
+        catch
+        {
+            // 构造失败不会被 Dispose——就地释放已建窗口，避免 HWND/GDI 泄漏
+            Instances.TryRemove(_hwnd, out _);
+            Win32.DestroyWindow(_hwnd);
+            _hwnd = IntPtr.Zero;
+            throw;
+        }
     }
 
     private static void EnsureDpiAwareness()
@@ -162,7 +181,12 @@ public sealed class LayeredWindow : IDisposable
         _memDc = Win32.CreateCompatibleDC(IntPtr.Zero);
         _dib = Win32.CreateDIBSection(_memDc, ref bmi, Win32.DIB_RGB_COLORS, out _dibBits, IntPtr.Zero, 0);
         if (_dib == IntPtr.Zero || _dibBits == IntPtr.Zero)
-            throw new InvalidOperationException($"CreateDIBSection 失败: Win32Error={Marshal.GetLastWin32Error()}");
+        {
+            // 中途失败：释放已建 DC，不把错误面推迟到渲染帧（_dibBits=0 的 Marshal.Copy）
+            var err = Marshal.GetLastWin32Error();
+            DestroyDib();
+            throw new InvalidOperationException($"CreateDIBSection 失败: Win32Error={err}");
+        }
         _oldBitmap = Win32.SelectObject(_memDc, _dib);
     }
 
@@ -192,6 +216,8 @@ public sealed class LayeredWindow : IDisposable
     public void Present(byte[] pixels)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_dibBits == IntPtr.Zero)
+            throw new InvalidOperationException("DIB 未就绪（创建失败），无法呈现。");
         if (pixels.Length != _width * _height * 4)
             throw new ArgumentException($"像素缓冲长度 {pixels.Length} ≠ {_width}×{_height}×4。");
 

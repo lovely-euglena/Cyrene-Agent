@@ -47,6 +47,10 @@ export const LIVE2D_OPS = {
   // 响应帧 op
   ready: "ready",
   result: "result",
+  /** 事件信封（name 段为具体事件名，见 LIVE2D_EVENTS）。 */
+  event: "event",
+  /** 日志信封（level/message）。 */
+  log: "log",
 } as const;
 
 export const LIVE2D_EVENTS = {
@@ -65,6 +69,8 @@ export const LIVE2D_EVENTS = {
 export const LIVE2D_ERRORS = {
   coreMissing: "E_CORE_MISSING",
   coreDownload: "E_CORE_DOWNLOAD",
+  /** Core 缺失且未获下载同意（Live2D 许可合规闸门；宿主弹窗确认后重试）。 */
+  coreConsent: "E_CORE_CONSENT",
   modelLoad: "E_MODEL_LOAD",
   notLoaded: "E_NOT_LOADED",
   badArgs: "E_BAD_ARGS",

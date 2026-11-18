@@ -55,9 +55,9 @@ describe("live2d-host 契约（Live2DContracts.cs ↔ live2d-host-protocol.ts）
 
   it("宿主分发覆盖全部请求 op（PetEngine.cs switch 分支）", () => {
     const engine = fs.readFileSync(PET_ENGINE_CS, "utf8");
-    // ready/result 是响应帧 op，shutdown 在 Live2DHost 主循环处理
+    // ready/result/event/log 是响应/信封帧 op，shutdown 在 Live2DHost 主循环处理
     const requestOps = Object.values(LIVE2D_OPS).filter(
-      (op) => op !== "ready" && op !== "result" && op !== "shutdown",
+      (op) => op !== "ready" && op !== "result" && op !== "shutdown" && op !== "event" && op !== "log",
     );
     const constNameByValue = new Map(
       [...cs.matchAll(/public const string (\w+) = "([^"]+)"/g)].map((m) => [m[2], m[1]]),

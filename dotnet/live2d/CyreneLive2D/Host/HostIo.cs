@@ -60,12 +60,16 @@ public sealed class HostIo : IDisposable
         => Send(new { op = Live2DOps.Result, callId, ok = false, error, errorCode });
 
     public void SendEvent(string name, object? payload = null)
-        => Send(new { op = "event", name, payload });
+        => Send(new { op = Live2DOps.Event, name, payload });
 
     public void Log(string level, string message)
-        => Send(new { op = "log", level, message });
+        => Send(new { op = Live2DOps.Log, level, message });
 
-    public void Dispose() => _writeLock.Dispose();
+    public void Dispose()
+    {
+        _writeLock.Dispose();
+        _stdout.Dispose(); // 复制出的协议流随宿主释放（OpenRobustStdout 的副本）
+    }
 
     /// <summary>NaN/±Infinity → null（System.Text.Json 默认抛异常，JS 侧 JSON.stringify 得 null）。</summary>
     private sealed class SafeDoubleJsonConverter : JsonConverter<double>

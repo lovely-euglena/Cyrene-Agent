@@ -76,26 +76,36 @@ public sealed unsafe class CubismModel : IDisposable
 
         _mocSize = (uint)bytes.Length;
         _mocBuffer = NativeMemory.AlignedAlloc((nuint)_mocSize, CoreNative.AlignofMoc);
-        new Span<byte>(bytes).CopyTo(new Span<byte>(_mocBuffer, (int)_mocSize));
-
-        // 一致性校验（Core 4.2+ 提供；失败不致命——旧模型可能误报，仅警告）
-        if (CoreNative.csmHasMocConsistency(_mocBuffer, _mocSize) == 0)
+        try
         {
-            // 不抛：csmHasMocConsistency 对部分合法旧模型返回 0（见 Core CHANGELOG 2023-03-16）
+            new Span<byte>(bytes).CopyTo(new Span<byte>(_mocBuffer, (int)_mocSize));
+
+            // 一致性校验（Core 4.2+ 提供；失败不致命——旧模型可能误报，仅警告）
+            if (CoreNative.csmHasMocConsistency(_mocBuffer, _mocSize) == 0)
+            {
+                // 不抛：csmHasMocConsistency 对部分合法旧模型返回 0（见 Core CHANGELOG 2023-03-16）
+            }
+
+            MocVersion = CoreNative.csmGetMocVersion(_mocBuffer, _mocSize);
+            _moc = CoreLibrary.ReviveMocInPlace(_mocBuffer, _mocSize);
+            if (_moc == null) throw new InvalidDataException("csmReviveMocInPlace 失败：moc3 损坏或版本不受支持。");
+
+            var modelSize = CoreNative.csmGetSizeofModel(_moc);
+            if (modelSize == 0) throw new InvalidDataException("csmGetSizeofModel 返回 0。");
+            _modelBuffer = NativeMemory.AlignedAlloc(modelSize, CoreNative.AlignofModel);
+            _model = CoreNative.csmInitializeModelInPlace(_moc, _modelBuffer, modelSize);
+            if (_model == null) throw new InvalidDataException("csmInitializeModelInPlace 失败。");
+
+            CacheMetadata();
+            CoreNative.csmUpdateModel(_model);
         }
-
-        MocVersion = CoreNative.csmGetMocVersion(_mocBuffer, _mocSize);
-        _moc = CoreLibrary.ReviveMocInPlace(_mocBuffer, _mocSize);
-        if (_moc == null) throw new InvalidDataException("csmReviveMocInPlace 失败：moc3 损坏或版本不受支持。");
-
-        var modelSize = CoreNative.csmGetSizeofModel(_moc);
-        if (modelSize == 0) throw new InvalidDataException("csmGetSizeofModel 返回 0。");
-        _modelBuffer = NativeMemory.AlignedAlloc(modelSize, CoreNative.AlignofModel);
-        _model = CoreNative.csmInitializeModelInPlace(_moc, _modelBuffer, modelSize);
-        if (_model == null) throw new InvalidDataException("csmInitializeModelInPlace 失败。");
-
-        CacheMetadata();
-        CoreNative.csmUpdateModel(_model);
+        catch
+        {
+            // 构造失败不会被 Dispose——就地释放已分配的对齐缓冲，避免永久泄漏
+            if (_modelBuffer != null) { NativeMemory.AlignedFree(_modelBuffer); _modelBuffer = null; _model = null; }
+            NativeMemory.AlignedFree(_mocBuffer); _mocBuffer = null; _moc = null;
+            throw;
+        }
     }
 
     private void CacheMetadata()

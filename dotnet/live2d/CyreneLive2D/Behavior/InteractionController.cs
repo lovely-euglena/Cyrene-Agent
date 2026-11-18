@@ -39,7 +39,10 @@ public sealed class InteractionController
         _motions = motions;
         _expressions = expressions;
         _clickThreshold = clickThreshold;
-        _byName = hitAreaDefs.ToDictionary(a => a.Name, StringComparer.Ordinal);
+        // 重名容错（首个生效）：web 轨 defs 为数组不按名建索引，
+        // 第三方模型重名不应在加载期抛异常
+        _byName = new Dictionary<string, ResolvedHitArea>(StringComparer.Ordinal);
+        foreach (var a in hitAreaDefs) _byName.TryAdd(a.Name, a);
     }
 
     /// <summary>model3.json HitAreas → 解析定义（trigger "group:motionName"）。</summary>
@@ -48,7 +51,9 @@ public sealed class InteractionController
         var defs = new List<ResolvedHitArea>();
         foreach (var area in manifest.HitAreas)
         {
-            if (area.Motion == null) continue;
+            // 对齐 web buildHitAreaDefs：Name/Id/Motion 任一缺失即跳过
+            //（第三方/自定义模型条目可能不全，不能加载期抛异常）
+            if (string.IsNullOrEmpty(area.Name) || string.IsNullOrEmpty(area.Id) || area.Motion == null) continue;
             int sep = area.Motion.IndexOf(':');
             if (sep <= 0) continue;
             string group = area.Motion[..sep];

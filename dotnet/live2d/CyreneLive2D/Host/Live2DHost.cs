@@ -59,6 +59,8 @@ public static class Live2DHost
         // 提升定时器精度（Sleep(1)≈1ms），保证 60fps 帧节拍平滑
         Win32.timeBeginPeriod(1);
         var sw = Stopwatch.StartNew();
+        // 表情回正/空闲帧率计时用真实时间（web 轨 setInterval 不受 ticker 暂停影响）
+        engine.RealTimeMsProvider = () => sw.Elapsed.TotalMilliseconds;
         try
         {
             while (true)

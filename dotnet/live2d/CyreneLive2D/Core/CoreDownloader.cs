@@ -1,7 +1,9 @@
 // Cubism Core 运行时下载器（T0）。
 //
 // License 合规：Core 二进制不随仓分发（任务书硬约束）。首次 load 缺 Core 时
-// 从 Live2D 官方源下载 SDK zip → SHA256 校验 → 仅提取 windows/x86_64 Core DLL
+// 须已获用户许可同意（load 帧 coreDownloadConsent=true，Electron 弹窗确认；
+// 未同意回 E_CORE_CONSENT 不下载——官方下载页的同意动作不被程序化绕过），
+// 再从 Live2D 官方源下载 SDK zip → SHA256 校验 → 仅提取 windows/x86_64 Core DLL
 // 落盘 {dataDir}/live2d-core/Live2DCubismCore.dll（CoreLibrary 解析位 2）。
 // zip 用后即删（26MB，不留存）。
 //
@@ -79,12 +81,12 @@ public static class CoreDownloader
         Emit("downloading", received, null, force: true);
         try
         {
-            (received, total) = await DownloadAttemptAsync(http, part, start, ct, r => Emit("downloading", r, total));
+            (received, total) = await DownloadAttemptAsync(http, part, start, ct, (r, t) => Emit("downloading", r, t));
         }
         catch (Exception ex) when (start > 0 && ex is not OperationCanceledException)
         {
             try { File.Delete(part); } catch { /* 清理失败则覆盖写 */ }
-            (received, total) = await DownloadAttemptAsync(http, part, 0, ct, r => Emit("downloading", r, total));
+            (received, total) = await DownloadAttemptAsync(http, part, 0, ct, (r, t) => Emit("downloading", r, t));
         }
         Emit("downloading", received, total, force: true);
 
@@ -123,12 +125,20 @@ public static class CoreDownloader
         var parent = Path.GetDirectoryName(dest);
         if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
         var dllPart = dest + ".part";
-        using (var src = entry.Open())
-        using (var dst = new FileStream(dllPart, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize))
+        try
         {
-            src.CopyTo(dst, BufferSize);
+            using (var src = entry.Open())
+            using (var dst = new FileStream(dllPart, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize))
+            {
+                src.CopyTo(dst, BufferSize);
+            }
+            File.Move(dllPart, dest, overwrite: true);
         }
-        File.Move(dllPart, dest, overwrite: true);
+        catch
+        {
+            try { File.Delete(dllPart); } catch { /* 尽力清理残片 */ }
+            throw;
+        }
     }
 
     /// <summary>流式 SHA256（小写十六进制）。自测可离线调用。</summary>
@@ -141,7 +151,7 @@ public static class CoreDownloader
     }
 
     private static async Task<(long received, long? total)> DownloadAttemptAsync(
-        HttpClient http, string part, long start, CancellationToken ct, Action<long> onReceived)
+        HttpClient http, string part, long start, CancellationToken ct, Action<long, long?> onReceived)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, SdkUrl);
         if (start > 0) request.Headers.Range = new RangeHeaderValue(start, null);
@@ -173,7 +183,7 @@ public static class CoreDownloader
             if (read <= 0) break;
             await file.WriteAsync(buffer.AsMemory(0, read), ct);
             received += read;
-            onReceived(received);
+            onReceived(received, total); // total 在响应头即已知——进度事件带 full/percent
         }
         await file.FlushAsync(ct);
         return (received, total);

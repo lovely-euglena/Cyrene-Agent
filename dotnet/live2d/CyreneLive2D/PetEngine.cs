@@ -51,6 +51,15 @@ public sealed class PetEngine : IDisposable
     private int _winW = (int)BaseWindowWidth, _winH = (int)BaseWindowHeight;
     private float _lastClickX, _lastClickY;
 
+    /// <summary>
+    /// 真实时间时钟源（宿主 Stopwatch 注入）。web 轨的表情回正（setInterval）与
+    /// 空闲帧率分档走 performance.now()，不受 ticker 暂停影响；sidecar 的 _nowMs
+    /// 在暂停期冻结，故这两个计时器须用真实时间驱动才与 web 对齐。
+    /// 未注入（无头自测）回退 _nowMs，保持确定性驱动。
+    /// </summary>
+    public Func<double>? RealTimeMsProvider { get; set; }
+    private double RealNowMs => RealTimeMsProvider?.Invoke() ?? _nowMs;
+
     public PetEngine(HostIo io, string? dataDir)
     {
         _io = io;
@@ -226,8 +235,11 @@ public sealed class PetEngine : IDisposable
         var dataDir = frame.TryGetProperty("dataDir", out var dEl) ? dEl.GetString() : null;
         var effectiveDataDir = dataDir ?? _dataDir;
 
-        // T0：Core 解析。缺失且有 dataDir → 官方源自动下载（SHA256 校验）后重试；
-        // 无 dataDir 或下载失败 → E_CORE_MISSING / E_CORE_DOWNLOAD（Electron 回退 web 轨）。
+        // T0：Core 解析。缺失且有 dataDir → 须已获下载同意（Live2D Proprietary
+        // License 合规：官方下载页要求先同意许可，程序化下载不能绕过同意动作）
+        // 才从官方源下载（SHA256 校验）后重试；未同意 → E_CORE_CONSENT（宿主
+        // 弹窗确认后带 coreDownloadConsent=true 重试）；无 dataDir 或下载失败 →
+        // E_CORE_MISSING / E_CORE_DOWNLOAD（Electron 回退 web 轨）。
         try
         {
             CoreLibrary.Load(effectiveDataDir, _modelDir);
@@ -237,6 +249,14 @@ public sealed class PetEngine : IDisposable
             if (string.IsNullOrWhiteSpace(effectiveDataDir))
             {
                 _io.SendError(callId, "Core 缺失且未指定 dataDir，无法自动下载", Live2DErrors.CoreMissing);
+                return;
+            }
+            var consent = frame.TryGetProperty("coreDownloadConsent", out var cEl) && cEl.ValueKind == JsonValueKind.True;
+            if (!consent)
+            {
+                _io.SendError(callId,
+                    "Cubism Core 缺失：从 Live2D 官方源下载前须同意 Live2D Proprietary Software License（首次使用同意弹窗）",
+                    Live2DErrors.CoreConsent);
                 return;
             }
             try
@@ -320,14 +340,14 @@ public sealed class PetEngine : IDisposable
         _blink = new BlinkController(_model!, _nowMs);
         _mouth = new MouthSyncController(_model!);
         _swing = new SpeakingMotionController(_model!, _motions);
-        _exprReset = new ExpressionResetController(_expressions, _nowMs);
-        _idleFps = new IdleFpsGovernor(_nowMs);
+        _exprReset = new ExpressionResetController(_expressions, RealNowMs);
+        _idleFps = new IdleFpsGovernor(RealNowMs);
 
         var hitDefs = InteractionController.BuildHitAreaDefs(_manifest);
         _interaction = new InteractionController(_motions, _expressions, hitDefs);
         _interaction.Trigger += area =>
         {
-            _exprReset!.Restart(_nowMs);
+            _exprReset!.Restart(RealNowMs);
             _io.SendEvent(Live2DOps.Hit, new { areas = new[] { area.Name }, x = _lastClickX, y = _lastClickY });
         };
         _interaction.Miss += area =>
@@ -349,7 +369,7 @@ public sealed class PetEngine : IDisposable
         float dtSec = (float)(dtMs / 1000.0);
         float nowSec = (float)(_nowMs / 1000.0);
 
-        _idleFps!.Update(_nowMs);
+        _idleFps!.Update(RealNowMs); // 真实时间：暂停期空闲计时不冻结（对齐 web）
         _focus!.Update((float)dtMs);
 
         _motions!.Update(_model, nowSec);
@@ -365,7 +385,7 @@ public sealed class PetEngine : IDisposable
         if (_mouth!.IsActive) _mouth.Tick(_nowMs);
         _blink!.Tick(_nowMs);
         _swing!.Tick(_nowMs);
-        _exprReset!.Tick(_nowMs);
+        _exprReset!.Tick(RealNowMs); // 真实时间：隐藏超 3min 恢复即回正（对齐 web）
 
         _model.Update();
         _model.LoadParameters();
@@ -383,7 +403,7 @@ public sealed class PetEngine : IDisposable
     }
 
     /// <summary>互动信号（鼠标扫过窗面）：回满帧率。</summary>
-    public void MarkActivity() => _idleFps?.MarkActivity(_nowMs);
+    public void MarkActivity() => _idleFps?.MarkActivity(RealNowMs);
 
     // ── 播放 / 命中 ─────────────────────────────────────────
 

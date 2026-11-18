@@ -2,7 +2,9 @@
 // src/main/live2d/live2d-host-protocol.ts，契约测试锁定两侧一致）。
 //
 // 请求（Electron → 侧车）：
-//   load            {modelPath, dataDir?}                加载模型（含 Core 解析/下载）
+//   load            {modelPath, dataDir?, coreDownloadConsent?}  加载模型（含 Core 解析；
+//                     Core 缺失时须 coreDownloadConsent=true 才从官方源下载——
+//                     Live2D 许可同意闸门，未同意回 E_CORE_CONSENT 由宿主弹窗）
 //   show / hide                                          窗口显隐
 //   setBounds       {x,y,width,height}                   DIP 坐标（主进程窗口语义）
 //   setZoom         {zoom}                               0.5–2
@@ -60,6 +62,10 @@ public static class Live2DOps
     public const string Ready = "ready";
     /// <summary>响应帧 op（result 信封；HostIo.SendResult/SendError 使用）。</summary>
     public const string Result = "result";
+    /// <summary>事件信封 op（HostIo.SendEvent 使用；name 段为具体事件名）。</summary>
+    public const string Event = "event";
+    /// <summary>日志信封 op（HostIo.Log 使用）。</summary>
+    public const string Log = "log";
     public const string Loaded = "loaded";
     public const string LoadFailed = "loadFailed";
     public const string Hit = "hit";
@@ -75,6 +81,8 @@ public static class Live2DErrors
 {
     public const string CoreMissing = "E_CORE_MISSING";
     public const string CoreDownload = "E_CORE_DOWNLOAD";
+    /// <summary>Core 缺失且未获下载同意（Live2D 许可合规：首次下载前须用户同意）。</summary>
+    public const string CoreConsent = "E_CORE_CONSENT";
     public const string ModelLoad = "E_MODEL_LOAD";
     public const string NotLoaded = "E_NOT_LOADED";
     public const string BadArgs = "E_BAD_ARGS";

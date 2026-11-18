@@ -30,9 +30,10 @@ public sealed class PetWindowHost : IWindowControl, IDisposable
     // DIP 几何（setBounds 下发；默认基准窗口）
     private int _xDip, _yDip, _wDip = 400, _hDip = 500;
 
-    // 最近一帧（点击穿透 alpha 采样用）
+    // 最近一帧（点击穿透 alpha 采样 + 暂停期落位复呈用）
     private byte[]? _lastFrame;
     private int _frameW, _frameH;
+    private bool _boundsDirty; // setBounds 后尚未落位（暂停期无渲染帧泵送）
 
     private readonly ClickThroughState _clickState = new();
     private double _lastCursorPollAt;
@@ -79,6 +80,15 @@ public sealed class PetWindowHost : IWindowControl, IDisposable
         _wDip = Math.Max(1, width); _hDip = Math.Max(1, height);
         var win = EnsureWindow();
         ApplyPhysicalBounds(win);
+        _boundsDirty = true;
+    }
+
+    /// <summary>自测钩子：注入上一帧（无头自测无模型渲染，验证暂停期落位用）。</summary>
+    internal void SeedLastFrameForTest(byte[] pixels, int width, int height)
+    {
+        _lastFrame = pixels;
+        _frameW = width;
+        _frameH = height;
     }
 
     public void SetAlwaysOnTop(bool value) => EnsureWindow().SetTopMost(value);
@@ -119,6 +129,15 @@ public sealed class PetWindowHost : IWindowControl, IDisposable
         if (!_engine.IsLoaded || _engine.IsPaused || !_window.IsVisible)
         {
             _lastTickAt = nowMs; // 暂停期不累计 dt
+            // 拖拽/暂停期 setBounds 仍须即时落位：ULW 窗口的位置只能由
+            // UpdateLayeredWindow 落定（SetWindowPos 对 ULW 窗不可靠），
+            // 故用上一帧复呈（不 Tick、不重渲）。尺寸变化则等恢复后重渲。
+            if (_boundsDirty && _window.IsVisible && _lastFrame != null
+                && _lastFrame.Length == _window.Width * _window.Height * 4)
+            {
+                _window.Present(_lastFrame);
+                _boundsDirty = false;
+            }
             return;
         }
 
@@ -180,6 +199,7 @@ public sealed class PetWindowHost : IWindowControl, IDisposable
         _lastFrame = pixels;
         _frameW = pw;
         _frameH = ph;
+        _boundsDirty = false;
     }
 
     private static void PumpMessages()
