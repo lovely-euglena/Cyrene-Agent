@@ -10,6 +10,10 @@
 
 export type VadMode = "local" | "hybrid" | "cloud";
 
+/** Live2D 渲染引擎双轨（#257 T5）：web = Electron renderer（pixi.js + pld，默认）；
+ *  dotnet = cyrene-live2d sidecar（D3D11 + Win32 分层窗口）。web 轨保留为外部通道。 */
+export type Live2dEngine = "dotnet" | "web";
+
 export interface DotnetBackendConfig {
   toolHost: boolean;
   agentHost: boolean;
@@ -26,6 +30,8 @@ export interface DotnetBackendConfig {
   vad: VadMode;
   /** 定时任务调度宿主（IKJK51；双轨 opt-in，默认 0——托盘不可用时自动回退 TS scheduler） */
   schedulerHost: boolean;
+  /** Live2D 渲染引擎（#257 T5；双轨开关，默认 web——sidecar 缺失/加载失败时回退 web 轨） */
+  live2dEngine: Live2dEngine;
 }
 
 const DEFAULTS: DotnetBackendConfig = {
@@ -41,6 +47,7 @@ const DEFAULTS: DotnetBackendConfig = {
   mcpHttp: false,
   vad: "hybrid",
   schedulerHost: false,
+  live2dEngine: "web",
 };
 
 const BOOL_KEYS: Record<keyof DotnetBackendConfig, string> = {
@@ -56,6 +63,8 @@ const BOOL_KEYS: Record<keyof DotnetBackendConfig, string> = {
   mcpHttp: "CYRENE_MCP_HTTP",
   vad: "CYRENE_VAD",
   schedulerHost: "CYRENE_SCHEDULER_HOST",
+  // 任务书 #257 指定开关名（不带 CYRENE_ 前缀，与其余开关同入口解析）
+  live2dEngine: "LIVE2D_ENGINE",
 };
 
 /** conf 文件解析（KEY=VALUE，# 注释，空白容错）。包内导出供测试。 */
@@ -88,6 +97,8 @@ export function resolveDotnetConfigFrom(
     const raw = read(BOOL_KEYS[k]);
     if (k === "vad") {
       cfg.vad = raw === "local" || raw === "hybrid" || raw === "cloud" ? raw : DEFAULTS.vad;
+    } else if (k === "live2dEngine") {
+      cfg.live2dEngine = raw?.toLowerCase() === "dotnet" ? "dotnet" : DEFAULTS.live2dEngine;
     } else {
       cfg[k] = toBool(raw, DEFAULTS[k] as boolean) as never;
     }

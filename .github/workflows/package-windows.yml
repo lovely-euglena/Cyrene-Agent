@@ -79,6 +79,11 @@ jobs:
       - name: Publish OCR sidecar
         run: dotnet publish -c Release -r win-x64 /p:SelfContained=false --nologo dotnet/ocr-sidecar/CyreneOcr.csproj
 
+      # Live2D 渲染 sidecar（extraResources: resources/live2d/，#257）：
+      # LIVE2D_ENGINE=dotnet 的执行件；缺此步发布件内 dotnet 轨恒回退 web
+      - name: Publish live2d sidecar
+        run: dotnet publish -c Release -r win-x64 /p:SelfContained=false --nologo dotnet/live2d/CyreneLive2D/CyreneLive2D.csproj
+
       - name: Build screenshot helper (Rust, --locked)
         run: pnpm run build:screenshot-helper
 

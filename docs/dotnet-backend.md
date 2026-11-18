@@ -39,12 +39,18 @@ git commit 漏子命令、IPC argv 双传。
 | 语音 | `CyreneVoice.exe --voice-host` | F/G | TTS 四引擎 + minimax 骨架 + Silero VAD 三模式 + 自动校准 |
 | 密钥库 | `cyrene-native --secrets-host` | Phase 1（IKJM7D A1） | DPAPI vault（原子写/.bak/迁移标记）+ secret.get/put/delete/list/import/status/mark-migrated（帧契约测试锁定） |
 | LLM 作业 | `cyrene-native --llm-host` | Phase 2（IKJM7D H0–H4 MVP） | 作业式厂商服务：鉴权注入/bearer+raw、OpenAI SSE 解析、重试集中（429/5xx/网络/超时）、未确认量反压、TTL 回收、lanes 4/2/1、指标出口（stderr + status） |
+| Live2D 渲染 | `cyrene-live2d.exe`（JSON 行协议宿主） | #257 T0–T6 | 双轨增量：`LIVE2D_ENGINE=dotnet` 才启用（默认 web）；Core P/Invoke + 手写 D3D11 + Win32 分层窗口 + 行为引擎；exe 缺失/Core 不可用/加载失败一次性回退 web 轨；Core 二进制不随仓（运行时官方源下载 SHA256 pin 或用户自备）；见 `docs/design/2026-11-17-live2d-dotnet-sidecar.md` |
 
 ## 双轨开关（唯一解析入口 `src/main/dotnet-backend/config.ts`）
 
 环境变量 > `./config/cyrene.conf` > 默认（表见 decisions 文档）。
 所有 TS 客户端（native-tool-host/host-clients/agent-process-manager）在
 开关=0/无 exe/超时/崩溃 时自动回退 TS 原路——无灰度直切（P10）。
+
+`LIVE2D_ENGINE=dotnet|web`（默认 `web`，#257）：桌宠 Live2D 渲染双轨开关，
+同入口解析（`resolveDotnetConfigFrom` → `live2dEngine`）。dotnet 轨 exe 缺失/
+Core 不可用/模型加载失败 → 一次性回退 web 轨（铁律：内置化是增量不是替代，
+web 轨代码路径原样保留）。
 
 ## 铁律落实位（P 检查）
 

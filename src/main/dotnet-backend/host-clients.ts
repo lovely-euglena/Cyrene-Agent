@@ -57,8 +57,9 @@ export class LineHostClient {
       const exe = this.resolveExe();
       if (!exe) return false;
       // mode 支持数组（["dotnet", dll, "--tool-host"] 形态——argv[0] 是
-      // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）
-      const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : [this.mode]), ...this.extraArgs()];
+      // 可执行本身，其余是参数；单字符串时 exe+mode 两段式不变）；
+      // 空字符串 = 无 mode 参数（sidecar 默认形态即宿主，如 live2d-host）
+      const argv = [...(Array.isArray(this.mode) ? this.mode.slice(1) : this.mode ? [this.mode] : []), ...this.extraArgs()];
       const child = spawn(exe, argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       // 启动不可用分支：子进程已 spawn，必须杀掉再返回——否则孤儿进程
       // 存活到应用退出（本模块子进程未登记 trackChildProcess，退出兜底不覆盖，IKJSNF）
@@ -87,6 +88,33 @@ export class LineHostClient {
         if (this.proc !== child) return; // 旧实例迟到帧忽略（幽灵结果不路由）
         this.onLine(line);
       });
+      // 审核 #1416 P1-1：stderr 必须消费——侧车 Core 下载期每 250ms 一行进度
+      // （26MB 慢网络可写满 64KB 管道 → 侧车阻塞在 stderr 写 → load 超时强杀）。
+      // stderr 不参与帧协议；限流转发：每秒最多落 1 行，其余聚合计数随下一行带出。
+      const stderr = child.stderr;
+      if (stderr) {
+        let stderrLastFlush = 0;
+        let stderrSuppressed = 0;
+        let stderrPending = "";
+        stderr.setEncoding("utf-8");
+        stderr.on("data", (chunk: string) => {
+          if (this.proc !== child) return; // 旧实例迟到数据忽略
+          stderrPending += chunk;
+          const lines = stderrPending.split("\n");
+          stderrPending = lines.pop() ?? "";
+          const now = Date.now();
+          for (const line of lines) {
+            if (!line) continue;
+            stderrSuppressed++;
+            if (now - stderrLastFlush >= 1000) {
+              stderrLastFlush = now;
+              const n = stderrSuppressed;
+              stderrSuppressed = 0;
+              console.error(`[live2d-sidecar] ${line}${n > 1 ? `（本轮 +${n - 1} 行已抑制）` : ""}`);
+            }
+          }
+        });
+      }
       child.on("exit", () => {
         // 强杀兜底计时器：exit 到达即取消该 child 自己的补杀（此 child 可能已被 killAndReset 摘引用）
         this.cancelKillEscalation(child);
@@ -165,7 +193,8 @@ export class LineHostClient {
       } else {
         p.resolve(frame.data ?? frame);
       }
-    } else if (op === "ready" || op === "log" || op === "vad_result" || op === "asr_partial" || op === "asr_final" || op === "tts_meta") {
+    } else if (op === "ready" || op === "log" || op === "event" || op === "vad_result" || op === "asr_partial" || op === "asr_final" || op === "tts_meta") {
+      // "event"：live2d-host 事件信封 {op:"event",name,payload}（#257 T5）
       this.onEvent(frame);
     }
   }
@@ -189,16 +218,18 @@ export class LineHostClient {
     if (idx >= 0) this.eventListeners.splice(idx, 1);
   }
 
-  call(op: string, args: Record<string, unknown>): Promise<unknown> {
+  /** timeoutMs 覆盖：长耗时 op 单独放宽（如 live2d load 含 Core 自动下载）。 */
+  call(op: string, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     const callId = `h${++this.seq}-${Math.random().toString(36).slice(2, 7)}`;
+    const effectiveTimeout = timeoutMs ?? this.timeoutMs;
     return new Promise((resolve, reject) => {
       if (!this.proc || this.exited) { reject(new Error("host 未运行")); return; }
       const timer = setTimeout(() => {
         this.pending.delete(callId);
         this.exited = true;          // 先标记，防新 call 拿到垂死 proc
         this.killAndReset();
-        reject(new Error(`${op} 超时（${this.timeoutMs}ms，host 已重置）`));
-      }, this.timeoutMs);
+        reject(new Error(`${op} 超时（${effectiveTimeout}ms，host 已重置）`));
+      }, effectiveTimeout);
       this.pending.set(callId, { resolve, reject, timer });
       try {
         this.proc.stdin!.write(`${JSON.stringify({ op, callId, ...args })}\n`);
