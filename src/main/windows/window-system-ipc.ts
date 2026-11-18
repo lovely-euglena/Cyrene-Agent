@@ -176,6 +176,11 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
 
   ipc.on(IPC.LIVE2D_SPEECH_PREPARE, () => {
     deps.windowManager?.sendToPetWindow(IPC.LIVE2D_SPEECH_PREPARE);
+    // issue #147：点击桌宠气泡 → 聚焦聊天主窗（manager 现成通道）
+    ipc.on(IPC.PET_BUBBLE_FOCUS_CHAT, (event) => {
+      if (!event.sender.isDestroyed()) return; // 仅 pet 窗可发
+      void deps.windowManager?.openReactChatWindow();
+    });
   });
   ipc.on(IPC.LIVE2D_MOUTH_START, (_event, payload: { durationMs?: number }) => {
     deps.windowManager?.sendToPetWindow(IPC.LIVE2D_MOUTH_START, { durationMs: Number(payload?.durationMs ?? 0) });

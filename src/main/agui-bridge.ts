@@ -12,6 +12,13 @@ import { getHarnessRunStore } from "./orchestrator/harness/run-store";
 import { IPC } from "../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "./application/ipc-scope";
 import { Subscription } from "rxjs";
+import { loadGeneralSettings } from "./settings/settings-facade";
+
+/** issue #147：桌宠气泡通道注入（default-dependencies 装配 sendToPetWindow；缺省 no-op）。 */
+let sendToPetBubble: ((channel: string, payload?: unknown) => void) | null = null;
+export function setPetBubbleSender(sender: ((channel: string, payload?: unknown) => void) | null): void {
+  sendToPetBubble = sender;
+}
 import { AgentRuntimeError } from "./orchestrator/agent-runtime-error";
 import {
   CyreneAgent,
@@ -367,6 +374,21 @@ export function registerAgUiIpc(
           console.error("[AgUiBridge] send 失败:", (err instanceof Error ? err.message : String(err)), "事件类型=", (baseEvent as { type?: string })?.type);
         }
       }
+      // issue #147：桌宠气泡——回复 delta 流式转发到桌宠窗（无注入时 no-op）。
+      // 只挑正文事件（TEXT_MESSAGE_CONTENT/END + 终态），reasoning/工具事件不打扰桌宠。
+      try {
+        const ev = eventWithRunId as { type?: string };
+        // issue #147：总开关（默认开）；关掉后桌宠窗零打扰
+        if (sendToPetBubble && (ev?.type === "TEXT_MESSAGE_CONTENT" || ev?.type === "TEXT_MESSAGE_END" || ev?.type === "RUN_FINISHED")) {
+          if (loadGeneralSettings().petBubbleEnabled) {
+            if (ev.type === "TEXT_MESSAGE_CONTENT") {
+              sendToPetBubble(IPC.PET_BUBBLE_TEXT, { delta: (eventWithRunId as { delta?: string }).delta ?? "" });
+            } else {
+              sendToPetBubble(IPC.PET_BUBBLE_END, { status: ev.type === "RUN_FINISHED" ? "finished" : "message_end" });
+            }
+          }
+        }
+      } catch { /* 气泡是旁路，绝不影响主事件流 */ }
     };
 
     // ── 顶层模式分流：读取 ChatSession.mode（唯一可信来源） ──

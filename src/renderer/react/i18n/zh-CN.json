@@ -1534,6 +1534,8 @@
       "systemDescription": "配置提醒、启动方式和图形渲染选项。",
       "toastSound": "提醒音效",
       "toastSoundDescription": "有事项等待确认或任务完成时，右下角弹窗会播放提示音。",
+      "petBubble": "桌宠气泡对话",
+      "petBubbleDescription": "桌宠在头顶气泡中流式显示回复；点击气泡打开完整对话。",
       "launchAtLogin": "开机自启",
       "launchAtLoginDescription": "系统启动时自动打开昔涟。",
       "language": "界面语言",

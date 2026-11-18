@@ -1558,6 +1558,8 @@
       "systemDescription": "通知、起動方法、グラフィック描画オプションを設定します。",
       "toastSound": "通知音",
       "toastSoundDescription": "確認待ちの項目やタスク完了時に、右下の通知でサウンドを再生します。",
+      "petBubble": "ペット吹き出し会話",
+      "petBubbleDescription": "デスクトップペットの吹き出しに返信を表示。クリックで完全な会話を開きます。",
       "launchAtLogin": "ログイン時に起動",
       "launchAtLoginDescription": "システム起動時にキュレネを自動で開きます。",
       "language": "UI 言語",

@@ -1776,6 +1776,10 @@ createTray: (input) => {
 
         // Live2D 桌宠窗口发送器
         setLive2dWindowSender((channel, payload) => shell.windowManager.sendToPetWindow(channel, payload));
+        // issue #147：桌宠气泡回复流（agui-bridge → 桌宠窗）
+        void import("../agui-bridge").then(({ setPetBubbleSender }) => {
+          setPetBubbleSender((channel, payload) => shell.windowManager.sendToPetWindow(channel, payload));
+        }).catch((err) => console.warn("[PetBubble] sender 注入失败:", err));
 
         // Git：服务对象预创建；仓库监听只在打开仓库后启动
         // 探测结果在进程内缓存：成功过一次就不再重复探测，避免启动高峰期
