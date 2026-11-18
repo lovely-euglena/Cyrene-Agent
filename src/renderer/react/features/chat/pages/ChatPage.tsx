@@ -438,6 +438,28 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const composerInteraction = activeInteraction?.interaction;
   const interactionBusy = activeInteraction?.busy ?? false;
   const hasMessages = messages.length > 0;
+
+  // 后台 Shell 任务终态通知（#182 第一刀）：会话空闲时轻提示，引导用户
+  // 让 agent 用 shell_job 查询结果（不自动续轮——不制造用户发言）。
+  const interactionBusyRef = useRef(false);
+  interactionBusyRef.current = interactionBusy;
+  useEffect(() => {
+    const api = window.shellJobEvents;
+    if (!api) return;
+    const off = api.onTerminal((event) => {
+      if (interactionBusyRef.current) return; // 运行中不打扰：下轮对话 shell_job 可查
+      const statusText = event.status === "exited" && event.exitCode === 0
+        ? "已完成"
+        : event.status === "exited"
+          ? `已退出（exitCode=${event.exitCode}）`
+          : event.status === "stopped" ? "已被终止" : event.status === "timed_out" ? "已超时" : "已失败";
+      feedback.notice({
+        tone: event.status === "exited" && event.exitCode === 0 ? "info" : "error",
+        message: `后台任务 ${event.command} ${statusText}（${event.jobId}）——需要结果的话，直接让我查看即可`,
+      });
+    });
+    return off;
+  }, []);
   const {
     attachments,
     attachmentBusy,

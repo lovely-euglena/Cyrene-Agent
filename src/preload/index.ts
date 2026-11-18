@@ -256,6 +256,22 @@ const schedulerEventsApi = {
 
 contextBridge.exposeInMainWorld("schedulerEvents", schedulerEventsApi);
 
+const shellJobEventsApi = {
+  onTerminal: (callback: (event: unknown) => void) => {
+    const listener = (_e: unknown, event: unknown) => {
+      try {
+        callback(event);
+      } catch (err) {
+        console.error("[Preload] shell job listener抛错:", err);
+      }
+    };
+    ipcRenderer.on(IPC.SHELL_JOB_TERMINAL, listener);
+    return () => ipcRenderer.off(IPC.SHELL_JOB_TERMINAL, listener);
+  },
+};
+
+contextBridge.exposeInMainWorld("shellJobEvents", shellJobEventsApi);
+
 // 用户选择卡片（歧义消解器）：渲染端回传用户选择给主进程
 // 卡片展示走 AGUI_EVENT 的 CUSTOM 事件（与天气卡片同通道），resolve 走独立 IPC
 const choiceApi = {
@@ -705,15 +721,15 @@ const schedulerApi = {
 contextBridge.exposeInMainWorld("cyreneScheduler", schedulerApi);
 
 const stickerManagerApi = {
-	  minimize: () => ipcRenderer.send(IPC.STICKERS_MINIMIZE),
-	  close: () => ipcRenderer.send(IPC.STICKERS_CLOSE),
-	  getConfig: () => ipcRenderer.invoke(IPC.STICKERS_GET_CONFIG),
-	  setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.STICKERS_SET_ENABLED, { id, enabled }),
-	  pickFile: () => ipcRenderer.invoke(IPC.STICKERS_PICK_FILE),
-	  addSticker: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) =>
-	    ipcRenderer.invoke(IPC.STICKERS_ADD, payload),
-	  deleteSticker: (id: string) => ipcRenderer.invoke(IPC.STICKERS_DELETE, id),
-	};
+          minimize: () => ipcRenderer.send(IPC.STICKERS_MINIMIZE),
+          close: () => ipcRenderer.send(IPC.STICKERS_CLOSE),
+          getConfig: () => ipcRenderer.invoke(IPC.STICKERS_GET_CONFIG),
+          setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.STICKERS_SET_ENABLED, { id, enabled }),
+          pickFile: () => ipcRenderer.invoke(IPC.STICKERS_PICK_FILE),
+          addSticker: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) =>
+            ipcRenderer.invoke(IPC.STICKERS_ADD, payload),
+          deleteSticker: (id: string) => ipcRenderer.invoke(IPC.STICKERS_DELETE, id),
+        };
 
 contextBridge.exposeInMainWorld("stickerManager", stickerManagerApi);
 

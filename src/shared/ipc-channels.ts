@@ -320,14 +320,14 @@ export const IPC = {
   WORKSPACE_OPEN_IN: "workspace-open-in:open",
 
 // sticker manager window
-	  STICKERS_MINIMIZE: "stickers:minimize",
-	  STICKERS_CLOSE: "stickers:close",
-	  STICKERS_GET_CONFIG: "stickers:get-config",
-	  STICKERS_SET_ENABLED: "stickers:set-enabled",
-	  STICKERS_PICK_FILE: "stickers:pick-file",
-	  STICKERS_ADD: "stickers:add",
-	  STICKERS_DELETE: "stickers:delete",
-	  STICKERS_GET_ENABLED: "stickers:get-enabled",
+          STICKERS_MINIMIZE: "stickers:minimize",
+          STICKERS_CLOSE: "stickers:close",
+          STICKERS_GET_CONFIG: "stickers:get-config",
+          STICKERS_SET_ENABLED: "stickers:set-enabled",
+          STICKERS_PICK_FILE: "stickers:pick-file",
+          STICKERS_ADD: "stickers:add",
+          STICKERS_DELETE: "stickers:delete",
+          STICKERS_GET_ENABLED: "stickers:get-enabled",
 
   // public model config updates (no API key)
   MODEL_CONFIG_GET: "model-config:get",
@@ -609,5 +609,8 @@ export const IPC = {
   NEWS_GET: "news:get",
   /** 主进程拉到新版本时反向推送给窗口，渲染端据此更新未读提示 */
   NEWS_UPDATED: "news:updated",
+
+  /** 后台 Shell 任务终态通知（#182）：主进程广播，渲染端做轻提示 */
+  SHELL_JOB_TERMINAL: "shell-job:terminal",
 
 } as const;

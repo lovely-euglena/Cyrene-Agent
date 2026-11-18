@@ -223,6 +223,16 @@ declare global {
     };
     system?: SystemApi;
     news?: import("../shared/news-types").NewsApi;
+    shellJobEvents?: {
+      onTerminal: (callback: (event: {
+        jobId: string;
+        status: "exited" | "timed_out" | "stopped" | "failed";
+        exitCode: number | null;
+        reason: string | null;
+        command: string;
+        logFile: string;
+      }) => void) => () => void;
+    };
     review?: ReviewApi;
     workspaceFiles?: WorkspaceFilesApi;
     openInApp?: OpenInAppApi;
