@@ -1,6 +1,7 @@
 import { app, BrowserWindow, screen, type NativeImage } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, type PetWindowSettingsSlice } from "../startup/create-pet-window";
+import { loadGeneralSettings, saveGeneralSettings } from "../settings/settings-facade";
 import {
   createCallWindow,
   createReactChatWindowShell,
@@ -52,6 +53,8 @@ export interface WindowManager {
   showPetWindow(): void;
   hidePetWindow(): void;
   togglePetWindow(): void;
+  /** 托盘「临时隐藏/显示桌宠」（IKM0TM）：同 toggle 但任何情况下不回写 petVisible。 */
+  togglePetWindowTemp(): void;
   minimizePetWindow(): void;
   setPetWindowAlwaysOnTop(alwaysOnTop: boolean): void;
   setPetWindowInteractive(interactive: boolean): void;
@@ -102,6 +105,22 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
   function getUsablePetWindow(): BrowserWindow | null {
     if (!petWindow || petWindow.isDestroyed()) return null;
     return petWindow;
+  }
+
+  /**
+   * 桌宠显隐回写通用设置（IKLZKS-B）：托盘 toggle / 桌宠窗口关闭与设置页开关共用同一持久状态。
+   * IKM0TM：受 petVisibilityPersist 控制——关闭时窗口侧操作仅会话内生效（设置页路径不经此函数）。
+   * 幂等：值未变化不落盘；lifecycle 侧 diff 相同值不再触发窗口操作，无循环。
+   */
+  function persistPetVisible(visible: boolean): void {
+    try {
+      if (!loadGeneralSettings().petVisibilityPersist) return;
+      const current = loadGeneralSettings();
+      if (current.petVisible === visible) return;
+      saveGeneralSettings({ ...current, petVisible: visible });
+    } catch (error) {
+      console.error("[Cyrene] persist petVisible failed:", error instanceof Error ? error.message : error);
+    }
   }
 
   function cancelPetWindowResourceRelease(): void {
@@ -313,10 +332,12 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       const win = getUsablePetWindow();
       if (win) {
         win.show();
+        persistPetVisible(true);
         return;
       }
       // 隐藏时窗口（含渲染进程）已被销毁：再次显示按需重建，不闪空窗
       ensurePetWindow(true);
+      persistPetVisible(true);
     },
     hidePetWindow(): void {
       const win = getUsablePetWindow();
@@ -324,12 +345,33 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       // hide 触发 setPetWindow 的延迟回收：30s 内再次显示则取消，否则销毁窗口
       // （连同桌宠渲染进程，Live2D 常驻内存大头），显示时按需重建
       win.hide();
+      persistPetVisible(false);
     },
     togglePetWindow(): void {
       if (!hasCurrentDisclaimerConsent()) {
         this.hidePetWindow();
         return;
       }
+      const win = getUsablePetWindow();
+      if (!win) {
+        ensurePetWindow(true);
+        persistPetVisible(true);
+        return;
+      }
+      if (win.isVisible()) {
+        win.hide();
+        persistPetVisible(false);
+      } else {
+        win.show();
+        persistPetVisible(true);
+      }
+    },
+    /**
+     * 托盘「临时隐藏/显示桌宠」（IKM0TM）：与 togglePetWindow 相同的窗口操作，
+     * 但任何情况下不回写 petVisible——仅当前会话生效，重启后按持久化状态恢复。
+     */
+    togglePetWindowTemp(): void {
+      if (!hasCurrentDisclaimerConsent()) return;
       const win = getUsablePetWindow();
       if (!win) {
         ensurePetWindow(true);

@@ -17,6 +17,8 @@ import { acquireTrayPipeLink, isTrayPipeAvailable } from "./tray-pipe";
 export type TrayLike = Pick<Tray, "isDestroyed" | "destroy" | "setImage" | "setToolTip"> & {
   /** Windows 托盘气泡（内置 Tray 与分离托盘同名，宿主通知统一走这里） */
   displayBalloon?(options: { title: string; content: string }): void;
+  /** IKM0TM：分离托盘「临时隐藏/显示桌宠」菜单项显隐同步（内置托盘右键重建，无需此方法） */
+  setPetTempToggleEnabled?(enabled: boolean): void;
 };
 
 /** 系统级托盘气泡参数（Electron DisplayBalloonOptions 的最小投影）。 */
@@ -44,9 +46,13 @@ export function showTrayBalloon(tray: Tray | TrayLike | null | undefined, option
 export interface DetachedTrayInput {
   requestActivation(request: WindowActivationRequest): void;
   togglePetWindow(): void;
+  /** IKM0TM：托盘「临时隐藏/显示桌宠」——同 toggle 但不回写设置。 */
+  togglePetWindowTemp?(): void;
   setPetDragMode?(enabled: boolean): boolean;
   /** 当前桌宠拖动模式状态（连接建立时同步一次勾选；缺省按 false）。 */
   getPetDragMode?(): boolean;
+  /** IKM0TM：连接握手同步「临时开关」项显隐（缺省按 false）。 */
+  getPetTrayTempToggle?(): boolean;
   /** IKJK51：托盘「隐藏窗口」——隐藏全部应用窗口（调度继续常驻）。 */
   hideWindows?(): void;
   quit(): void;
@@ -54,16 +60,22 @@ export interface DetachedTrayInput {
 
 /** Electron → 托盘的状态帧：拖动模式勾选以宿主实际状态为准。 */
 type TrayDragModeStateFrame = { op: "tray.drag-mode-state"; checked: boolean };
+/** IKM0TM 状态帧：托盘「临时开关」菜单项是否显示（旧版 TrayHost 静默忽略未知 op）。 */
+type TrayPetTempToggleStateFrame = { op: "tray.pet-temp-toggle-state"; enabled: boolean };
 
 /**
  * 连接建立时发送的握手帧（导出供测试锁定协议）：
  *   tray.ready 后同步一次拖动模式勾选——TrayHost 常驻、Electron 可独立退出
  *   重启，托盘菜单勾选可能停留在上一次 Electron 会话（拖动模式不持久化）。
+ * IKM0TM：同时同步「临时开关」项显隐（默认关，仅 petTrayTempToggle=true 时显示）。
  */
-export function buildConnectFrames(input: Pick<DetachedTrayInput, "getPetDragMode">): Array<Record<string, unknown>> {
+export function buildConnectFrames(
+  input: Pick<DetachedTrayInput, "getPetDragMode" | "getPetTrayTempToggle">,
+): Array<Record<string, unknown>> {
   return [
     { op: "tray.ready" },
     { op: "tray.drag-mode-state", checked: input.getPetDragMode?.() ?? false },
+    { op: "tray.pet-temp-toggle-state", enabled: input.getPetTrayTempToggle?.() ?? false },
   ];
 }
 
@@ -136,6 +148,9 @@ export function connectDetachedTray(input: DetachedTrayInput): TrayLike | null {
       }
     },
     setToolTip: (text: string) => send({ op: "tray.tooltip", text }),
+    setPetTempToggleEnabled: (enabled: boolean) =>
+      // IKM0TM：设置变化 → 托盘「临时开关」项显隐；旧版 TrayHost 忽略未知 op（default 分支）
+      send({ op: "tray.pet-temp-toggle-state", enabled }),
     displayBalloon: (options: { title: string; content: string }) =>
       send({ op: "tray.notify", title: options.title, content: options.content }),
   };
@@ -169,6 +184,10 @@ export function dispatchLine(
       break;
     case "toggle-pet":
       input.togglePetWindow();
+      break;
+    case "toggle-pet-temp":
+      // IKM0TM：临时开关（永不回写设置）；旧版 Electron 协议无此命令不受影响
+      input.togglePetWindowTemp?.();
       break;
     case "hide-windows":
       input.hideWindows?.();

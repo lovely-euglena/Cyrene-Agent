@@ -57,6 +57,10 @@ interface AppearanceValues {
   assistantBubbleEnabled: boolean;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
+  /** IKM0TM：桌宠显隐操作是否回写设置（托盘/窗口侧）；设置页路径不受影响。 */
+  petVisibilityPersist: boolean;
+  /** IKM0TM：托盘是否显示「临时隐藏/显示桌宠」入口（临时路径，永不回写）。 */
+  petTrayTempToggle: boolean;
   petZoom: number;
 }
 
@@ -69,6 +73,8 @@ const defaults: AppearanceValues = {
   assistantBubbleEnabled: false,
   petAlwaysOnTop: false,
   petVisible: true,
+  petVisibilityPersist: true,
+  petTrayTempToggle: false,
   petZoom: 1,
 };
 
@@ -94,6 +100,12 @@ function readAppearance(value: unknown): AppearanceValues {
       : defaults.assistantBubbleEnabled,
     petAlwaysOnTop: typeof input.petAlwaysOnTop === "boolean" ? input.petAlwaysOnTop : defaults.petAlwaysOnTop,
     petVisible: typeof input.petVisible === "boolean" ? input.petVisible : defaults.petVisible,
+    petVisibilityPersist: typeof input.petVisibilityPersist === "boolean"
+      ? input.petVisibilityPersist
+      : defaults.petVisibilityPersist,
+    petTrayTempToggle: typeof input.petTrayTempToggle === "boolean"
+      ? input.petTrayTempToggle
+      : defaults.petTrayTempToggle,
     petZoom: finiteNumber(input.petZoom, defaults.petZoom),
   };
 }
@@ -285,10 +297,12 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     void savePatch({ messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY }, t("settingsPage.messageTypographyReset"));
   }
 
-  function updatePetBoolean(key: "petAlwaysOnTop" | "petVisible", checked: boolean) {
+  function updatePetBoolean(key: "petAlwaysOnTop" | "petVisible" | "petVisibilityPersist" | "petTrayTempToggle", checked: boolean) {
     setValues((current) => ({ ...current, [key]: checked }));
     if (key === "petAlwaysOnTop") window.settings?.setPetAlwaysOnTop(checked);
-    else window.settings?.setPetVisible(checked);
+    else if (key === "petVisible") window.settings?.setPetVisible(checked);
+    else if (key === "petVisibilityPersist") window.settings?.setPetVisibilityPersist(checked);
+    else window.settings?.setPetTrayTempToggle(checked);
     setStatus(t("settingsPage.applied"));
   }
 
@@ -478,6 +492,15 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.petVisible")}</strong><span>{t("settingsPage.petVisibleDescription")}</span></div>
                     <SettingsSwitch ariaLabel={t("settingsPage.petVisible")} checked={values.petVisible} onChange={(checked) => updatePetBoolean("petVisible", checked)} />
+                  </div>
+                  {/* IKM0TM：显隐操作持久化 + 托盘临时开关入口 */}
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.petVisibilityPersist")}</strong><span>{t("settingsPage.petVisibilityPersistDescription")}</span></div>
+                    <SettingsSwitch ariaLabel={t("settingsPage.petVisibilityPersist")} checked={values.petVisibilityPersist} onChange={(checked) => updatePetBoolean("petVisibilityPersist", checked)} />
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.petTrayTempToggle")}</strong><span>{t("settingsPage.petTrayTempToggleDescription")}</span></div>
+                    <SettingsSwitch ariaLabel={t("settingsPage.petTrayTempToggle")} checked={values.petTrayTempToggle} onChange={(checked) => updatePetBoolean("petTrayTempToggle", checked)} />
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.petZoom")}</strong><span>{t("settingsPage.petZoomDescription")}</span></div>

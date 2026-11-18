@@ -146,6 +146,7 @@ describe("buildConnectFrames（连接建立握手帧）", () => {
     expect(buildConnectFrames({})).toEqual([
       { op: "tray.ready" },
       { op: "tray.drag-mode-state", checked: false },
+      { op: "tray.pet-temp-toggle-state", enabled: false },
     ]);
   });
 

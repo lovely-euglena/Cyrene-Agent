@@ -135,16 +135,34 @@ export function useComposerAttachments(input: {
     try {
       const results = await chat.ingestDroppedFiles(files);
       if (results.length > 0) {
-        const hydratedResults = results.map((attachment) => {
-          if (attachment.kind !== "image") return attachment;
-          const previews = previewsByName.get(attachment.name);
-          const localPreview = previews?.shift();
-          return localPreview ? { ...attachment, previewUrl: localPreview } : attachment;
-        });
-        setAttachmentsByScope((current) => ({
-          ...current,
-          [targetScope]: [...(current[targetScope] ?? []), ...hydratedResults],
-        }));
+        // 不支持的类型（压缩包/可执行等白名单外文件）即时明示，不进附件列表——
+        // 旧行为：error 附件渲染成普通附件条，发送时才被入队守卫拒绝，
+        // 用户视角就是「拖了文件→发送失败」，等同于拖放无效。
+        const unsupportedNames = results
+          .filter((result) => result.status === "error")
+          .map((result) => result.name);
+        if (unsupportedNames.length > 0) {
+          feedback.notice({
+            tone: "warning",
+            message: t("chatPage.dropUnsupported", { names: unsupportedNames.join("、") }),
+          });
+        }
+        const hydratable = results.filter((result) => result.status !== "error");
+        if (hydratable.length > 0) {
+          const hydratedResults = hydratable.map((attachment) => {
+            if (attachment.kind !== "image") return attachment;
+            const previews = previewsByName.get(attachment.name);
+            const localPreview = previews?.shift();
+            return localPreview ? { ...attachment, previewUrl: localPreview } : attachment;
+          });
+          setAttachmentsByScope((current) => ({
+            ...current,
+            [targetScope]: [...(current[targetScope] ?? []), ...hydratedResults],
+          }));
+        }
+      } else {
+        // 全部路径提取失败（虚拟文件/受限来源拖出）：可见反馈而非静默
+        feedback.notice({ tone: "warning", message: t("chatPage.dropNoIngest") });
       }
     } catch (error) {
       // 导入失败：简短失败反馈，非阻塞错误轻提示
@@ -335,6 +353,10 @@ export function useComposerAttachments(input: {
     setIsDraggingFiles(false);
     const files = Array.from(event.dataTransfer.files);
     if (files.length > 0) {
+      // 拖放链路诊断日志：实机排查「拖放无效」时定位断点（dragenter→drop→ingest）
+      console.log(
+        `[composer-drop] files=${files.length} [${files.map((file) => file.name).join(", ")}]`,
+      );
       void chooseFiles(files);
     } else {
       // 声称携带文件但实际为空（部分应用拖出的富内容）：给出提示而非静默丢弃

@@ -7,6 +7,10 @@ export interface CreateTrayDependencies {
   requestActivation(request: WindowActivationRequest): void;
   /** 桌宠开关保持立即执行：桌宠不接收通用主窗口激活请求。 */
   togglePetWindow(): void;
+  /** IKM0TM：托盘「临时隐藏/显示桌宠」——同 toggle 但不回写设置。 */
+  togglePetWindowTemp?(): void;
+  /** IKM0TM：托盘是否显示「临时隐藏/显示桌宠」项（默认关，读 petTrayTempToggle）。 */
+  getPetTrayTempToggle?(): boolean;
   /**
    * 桌宠拖动模式兜底开关（Windows 透明窗 forward 竞态的保险）：
    * 开启后桌宠窗口整体进入交互态（关穿透），鼠标任意位置可拖动。
@@ -36,6 +40,11 @@ export function buildTrayMenuTemplate(deps: CreateTrayDependencies): MenuItemCon
       label: "显示/隐藏桌宠",
       click: () => { deps.togglePetWindow(); },
     },
+    // IKM0TM：临时开关（任何情况下不回写设置），仅 petTrayTempToggle=true 时显示
+    ...(deps.getPetTrayTempToggle?.() ? [{
+      label: "临时隐藏/显示桌宠",
+      click: () => { deps.togglePetWindowTemp?.(); },
+    } satisfies MenuItemConstructorOptions] : []),
     {
       label: "桌宠拖动模式",
       type: "checkbox",

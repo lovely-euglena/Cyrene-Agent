@@ -51,6 +51,8 @@ export interface ShellDependencies {
   createTray(input: {
     requestActivation(request: WindowActivationRequest): void;
     togglePetWindow(): void;
+    /** IKM0TM：托盘「临时隐藏/显示桌宠」（不回写设置）。 */
+    togglePetWindowTemp?(): void;
     /** 桌宠拖动模式兜底（Windows 透明窗 forward 竞态保险）。 */
     setPetDragMode?(enabled: boolean): boolean;
     /** 桌宠拖动模式当前状态（分离托盘连接建立时同步勾选）。 */
@@ -143,6 +145,7 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
   const tray: Tray | TrayLike = deps.createTray({
     requestActivation: (request) => activation.request(request),
     togglePetWindow: () => windowManager.togglePetWindow(),
+    togglePetWindowTemp: () => windowManager.togglePetWindowTemp(),
     setPetDragMode: (enabled) => windowManager.setPetDragMode(enabled),
     getPetDragMode: () => windowManager.getPetDragMode(),
   });

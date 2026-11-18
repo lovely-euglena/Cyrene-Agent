@@ -89,11 +89,17 @@ const chatApi = {
    *  同时携带 File.type（MIME）：主进程图片判定按「扩展名或 MIME」，与渲染端预览口径一致。 */
   ingestDroppedFiles: async (files: File[]): Promise<unknown[]> => {
     const entries: Array<{ path: string; mime: string }> = [];
+    let skipped = 0;
     for (const f of files) {
       try {
         const p = webUtils.getPathForFile(f);
         if (p) entries.push({ path: p, mime: f.type });
-      } catch { /* 跳过无法识别路径的文件 */ }
+        else skipped += 1;
+      } catch { skipped += 1; }
+    }
+    // 诊断日志：路径提取失败（虚拟文件/受限来源）曾经是静默吞掉，实机排查无从下手
+    if (skipped > 0) {
+      console.log(`[ingest] path-extract skipped=${skipped}/${files.length}（无磁盘路径：虚拟文件或受限来源）`);
     }
     if (entries.length === 0) return [];
     return ipcRenderer.invoke(IPC.CHAT_INGEST_FILES, entries);
@@ -487,6 +493,8 @@ const settingsApi = {
   openChromeGpu: () => ipcRenderer.send(IPC.SETTINGS_OPEN_CHROME_GPU),
   setPetAlwaysOnTop: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_ALWAYS_ON_TOP, value),
   setPetVisible: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_VISIBLE, value),
+  setPetVisibilityPersist: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_VISIBILITY_PERSIST, value),
+  setPetTrayTempToggle: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_TRAY_TEMP_TOGGLE, value),
   setPetZoom: (value: number) => ipcRenderer.send(IPC.SETTINGS_SET_PET_ZOOM, value),
   previewRuntimeSync: (value: "off" | "local" | "llm") => ipcRenderer.send(IPC.SETTINGS_PREVIEW_RUNTIME_SYNC, value),
   openStickerManager: () => ipcRenderer.invoke(IPC.SETTINGS_OPEN_STICKER_MANAGER),
@@ -705,15 +713,15 @@ const schedulerApi = {
 contextBridge.exposeInMainWorld("cyreneScheduler", schedulerApi);
 
 const stickerManagerApi = {
-	  minimize: () => ipcRenderer.send(IPC.STICKERS_MINIMIZE),
-	  close: () => ipcRenderer.send(IPC.STICKERS_CLOSE),
-	  getConfig: () => ipcRenderer.invoke(IPC.STICKERS_GET_CONFIG),
-	  setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.STICKERS_SET_ENABLED, { id, enabled }),
-	  pickFile: () => ipcRenderer.invoke(IPC.STICKERS_PICK_FILE),
-	  addSticker: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) =>
-	    ipcRenderer.invoke(IPC.STICKERS_ADD, payload),
-	  deleteSticker: (id: string) => ipcRenderer.invoke(IPC.STICKERS_DELETE, id),
-	};
+          minimize: () => ipcRenderer.send(IPC.STICKERS_MINIMIZE),
+          close: () => ipcRenderer.send(IPC.STICKERS_CLOSE),
+          getConfig: () => ipcRenderer.invoke(IPC.STICKERS_GET_CONFIG),
+          setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.STICKERS_SET_ENABLED, { id, enabled }),
+          pickFile: () => ipcRenderer.invoke(IPC.STICKERS_PICK_FILE),
+          addSticker: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) =>
+            ipcRenderer.invoke(IPC.STICKERS_ADD, payload),
+          deleteSticker: (id: string) => ipcRenderer.invoke(IPC.STICKERS_DELETE, id),
+        };
 
 contextBridge.exposeInMainWorld("stickerManager", stickerManagerApi);
 

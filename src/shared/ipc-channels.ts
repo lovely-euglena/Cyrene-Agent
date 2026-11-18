@@ -209,6 +209,8 @@ export const IPC = {
   UI_WINDOW_CORNER_RADIUS_CHANGED: "ui-window-corner-radius:changed",
   SETTINGS_SET_PET_ALWAYS_ON_TOP: "settings:set-pet-always-on-top",
   SETTINGS_SET_PET_VISIBLE: "settings:set-pet-visible",
+  SETTINGS_SET_PET_VISIBILITY_PERSIST: "settings:set-pet-visibility-persist",
+  SETTINGS_SET_PET_TRAY_TEMP_TOGGLE: "settings:set-pet-tray-temp-toggle",
   SETTINGS_SET_PET_ZOOM: "settings:set-pet-zoom",
   // debugging
   SETTINGS_OPEN_CHROME_GPU: "settings:open-chrome-gpu",
@@ -320,14 +322,14 @@ export const IPC = {
   WORKSPACE_OPEN_IN: "workspace-open-in:open",
 
 // sticker manager window
-	  STICKERS_MINIMIZE: "stickers:minimize",
-	  STICKERS_CLOSE: "stickers:close",
-	  STICKERS_GET_CONFIG: "stickers:get-config",
-	  STICKERS_SET_ENABLED: "stickers:set-enabled",
-	  STICKERS_PICK_FILE: "stickers:pick-file",
-	  STICKERS_ADD: "stickers:add",
-	  STICKERS_DELETE: "stickers:delete",
-	  STICKERS_GET_ENABLED: "stickers:get-enabled",
+          STICKERS_MINIMIZE: "stickers:minimize",
+          STICKERS_CLOSE: "stickers:close",
+          STICKERS_GET_CONFIG: "stickers:get-config",
+          STICKERS_SET_ENABLED: "stickers:set-enabled",
+          STICKERS_PICK_FILE: "stickers:pick-file",
+          STICKERS_ADD: "stickers:add",
+          STICKERS_DELETE: "stickers:delete",
+          STICKERS_GET_ENABLED: "stickers:get-enabled",
 
   // public model config updates (no API key)
   MODEL_CONFIG_GET: "model-config:get",

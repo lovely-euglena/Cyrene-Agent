@@ -73,6 +73,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   chatParaSpacing: number;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
+  /** 桌宠显隐操作是否回写设置（IKM0TM）：托盘/窗口侧开关受此控制；false 时仅会话内生效。设置页桌宠开关是权威路径，不受此影响。 */
+  petVisibilityPersist: boolean;
+  /** 托盘菜单是否显示「临时隐藏/显示桌宠」入口（IKM0TM）：临时路径任何情况下不回写设置。 */
+  petTrayTempToggle: boolean;
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */
   petZoom: number;
   /** 桌宠窗口 X 坐标，未保存时为 undefined */
