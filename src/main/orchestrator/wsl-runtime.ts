@@ -37,12 +37,17 @@ export interface ResolvedWslExecutable extends WslTarget {
   kind: "wsl";
 }
 
+/** WSL 版本形态：store = 新版（`wsl --version` 可用）；inbox-legacy = 旧内置版；unknown = 探测失败。 */
+export type WslVersionKind = "store" | "inbox-legacy" | "unknown";
+
 /** WSL 探测结果：可执行文件与已安装发行版列表。 */
 export interface WslDiscovery {
   /** wsl.exe 路径；null = 本机找不到 wsl.exe */
   executable: string | null;
   /** 已安装发行版名（`wsl -l -q` 的解析结果，已去 BOM/NUL/空行） */
   distros: string[];
+  /** 版本形态（IKKNG7：低版本/不支持时设置页给出升级指引） */
+  version: WslVersionKind;
 }
 
 /** WSL 调用规格：与 cmd/bash 的 buildDirectShellInvocation 返回结构对齐。 */
@@ -147,12 +152,67 @@ export function listWslDistros(
 
 // ── 探测缓存 ────────────────────────────────────────────
 // 关闭态零开销：调用方（设置页/首次 shell:wsl）主动探测时才 spawn，结果缓存 30s。
-let discoveryCache: { executable: string; distros: string[]; at: number } | null = null;
+let discoveryCache: { executable: string; distros: string[]; version: WslVersionKind; at: number } | null = null;
+
+/**
+ * 版本形态探测（IKKNG7）：新版 WSL（Store 版）支持 `wsl --version`；旧内置版
+ * （inbox legacy）不认识该参数（非零退出）。判定只看进程退出码，不解析输出文案
+ * （本地化输出不稳定）。失败/超时归 unknown（宁可不提示版本问题，不误报）。
+ */
+/**
+ * 审查 !131 P1-1：退出码与输出 → 版本态判定（纯函数，可测）。
+ * 非零退出 ≠ inbox-legacy——服务未启动/权限/安装损坏/瞬时错误同样非零，
+ * 一律归 unknown（宁可不提示版本问题，不误报"版本过低"并禁用发行版选择）；
+ * 仅当退出码为 0，或输出中确有 WSL 版本号（某些构建非零退出但输出正常）时判 store。
+ */
+export function classifyVersionProbe(code: number | null, stdout: string): WslVersionKind {
+  if (code === 0) return "store";
+  return WSL_VERSION_OUTPUT_PATTERN.test(stdout) ? "store" : "unknown";
+}
+
+/** store 版 `wsl --version` 输出形如 "WSL 版本: 2.2.4.0"（本地化文案 + 三/四段版本号）。 */
+const WSL_VERSION_OUTPUT_PATTERN = /WSL[^\n]{0,24}\d+\.\d+\.\d+(\.\d+)?/;
+
+export function probeWslVersionKind(
+  executable: string,
+  timeoutMs: number = WSL_PROBE_TIMEOUT_MS,
+): Promise<WslVersionKind> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (value: WslVersionKind) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+
+    let child: ChildProcess;
+    try {
+      child = spawn(executable, ["--version"], {
+        windowsHide: true,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      finish("unknown");
+      return;
+    }
+    let stdoutText = "";
+    child.stdout?.on("data", (chunk: Buffer | string) => { stdoutText += chunk.toString(); });
+    child.on("error", () => finish("unknown"));
+    child.on("close", (code) => finish(classifyVersionProbe(code, stdoutText)));
+    timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* 已退出则忽略 */ }
+      finish("unknown");
+    }, timeoutMs);
+  });
+}
 
 /** 探测 WSL：定位 wsl.exe 并枚举发行版，带短 TTL 缓存。 */
 export async function discoverWsl(timeoutMs: number = WSL_PROBE_TIMEOUT_MS): Promise<WslDiscovery> {
   const executable = resolveWslExecutablePath();
-  if (!executable) return { executable: null, distros: [] };
+  if (!executable) return { executable: null, distros: [], version: "unknown" };
 
   const now = Date.now();
   if (
@@ -160,12 +220,15 @@ export async function discoverWsl(timeoutMs: number = WSL_PROBE_TIMEOUT_MS): Pro
     && discoveryCache.executable === executable
     && now - discoveryCache.at < WSL_DISCOVERY_CACHE_TTL_MS
   ) {
-    return { executable, distros: discoveryCache.distros };
+    return { executable, distros: discoveryCache.distros, version: discoveryCache.version };
   }
 
-  const distros = await listWslDistros(executable, timeoutMs);
-  discoveryCache = { executable, distros, at: Date.now() };
-  return { executable, distros };
+  const [distros, version] = await Promise.all([
+    listWslDistros(executable, timeoutMs),
+    probeWslVersionKind(executable, timeoutMs),
+  ]);
+  discoveryCache = { executable, distros, version, at: Date.now() };
+  return { executable, distros, version };
 }
 
 /** 清空探测缓存（设置变更/测试用）。 */

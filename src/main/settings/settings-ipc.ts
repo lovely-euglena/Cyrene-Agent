@@ -273,10 +273,10 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     detectPandoc(typeof pandocPath === "string" ? pandocPath : ""),
   );
 
-  // WSL：设置页只读探测（定位 wsl.exe + 枚举发行版，带 30s 缓存，不触发安装）
+  // WSL：设置页只读探测（定位 wsl.exe + 枚举发行版 + 版本形态，带 30s 缓存，不触发安装）
   ipc.handle(IPC.SETTINGS_WSL_DETECT, async () => {
     const discovery = await discoverWsl();
-    return { executable: discovery.executable, distros: discovery.distros };
+    return { executable: discovery.executable, distros: discovery.distros, version: discovery.version };
   });
 
   // WSL：设置页「重启 WSL」（wsl --shutdown）。由用户 UI 显式触发，用于让 Windows 侧
