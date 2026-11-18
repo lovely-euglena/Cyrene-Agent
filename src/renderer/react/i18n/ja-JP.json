@@ -1558,6 +1558,8 @@
       "systemDescription": "通知、起動方法、グラフィック描画オプションを設定します。",
       "toastSound": "通知音",
       "toastSoundDescription": "確認待ちの項目やタスク完了時に、右下の通知でサウンドを再生します。",
+      "notifications": "システム通知",
+      "notificationsDescription": "タスク完了や入力待ちのときにシステム通知を送ります。ウィンドウが前面にある間は控えめにします。",
       "launchAtLogin": "ログイン時に起動",
       "launchAtLoginDescription": "システム起動時にキュレネを自動で開きます。",
       "language": "UI 言語",

@@ -1534,6 +1534,8 @@
       "systemDescription": "配置提醒、启动方式和图形渲染选项。",
       "toastSound": "提醒音效",
       "toastSoundDescription": "有事项等待确认或任务完成时，右下角弹窗会播放提示音。",
+      "notifications": "系统通知",
+      "notificationsDescription": "任务完成或昔涟等待你输入时发送 Windows 系统通知；窗口在前台时保持安静。",
       "launchAtLogin": "开机自启",
       "launchAtLoginDescription": "系统启动时自动打开昔涟。",
       "language": "界面语言",

@@ -282,6 +282,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    * 全局配置副本（一键复制） → 实时 include 用户全局配置 → 身份/初始化覆盖（见 dedicated-git-config.ts）。
    */
   gitUseDedicatedConfig: boolean;
+  /** 系统通知总开关（issue #153）：任务终态/等待输入时发系统通知；前台聚焦时始终静默。 */
+  notificationsEnabled: boolean;
   /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
   recentProjects: string[];
   /** 用户明确接受的免责声明版本；空字符串表示尚未接受当前条款。 */

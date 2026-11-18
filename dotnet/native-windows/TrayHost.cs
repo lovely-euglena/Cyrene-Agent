@@ -267,6 +267,11 @@ public sealed class TrayHost
         }));
     }
 
+    /// <summary>.NET 版通知后端（issue #153）：core 终态意图 → 托盘气泡适配器。
+    /// 供 agent-host 链路注入（无托盘进程的宿主传 null 静默）。</summary>
+    public CyreneNative.Notifications.INotificationSink? CreateNotificationSink() =>
+        _notifyIcon is null ? null : new TrayNotificationSink(_dispatcher, _notifyIcon);
+
     /// <summary>系统级气泡通知（Electron tray.notify）：托盘是常驻进程，
     /// 通知不依赖 Electron 窗口是否可见。</summary>
     private void ShowTrayBalloon(string title, string content)

@@ -11,6 +11,7 @@ import { app, IpcMainInvokeEvent, WebContents } from "electron";
 import { getHarnessRunStore } from "./orchestrator/harness/run-store";
 import { IPC } from "../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "./application/ipc-scope";
+import { notifyAgentEvent } from "./notifications/desktop-notifications";
 import { Subscription } from "rxjs";
 import { AgentRuntimeError } from "./orchestrator/agent-runtime-error";
 import {
@@ -367,6 +368,16 @@ export function registerAgUiIpc(
           console.error("[AgUiBridge] send 失败:", (err instanceof Error ? err.message : String(err)), "事件类型=", (baseEvent as { type?: string })?.type);
         }
       }
+      // issue #153：系统通知旁路（任务终态/等待输入）——内部全吞错，不影响主事件流。
+      notifyAgentEvent(eventWithRunId, {
+        isForeground: () => targets.some((t) => {
+          try {
+            return !t.isDestroyed() && t.isFocused();
+          } catch {
+            return false;
+          }
+        }),
+      });
     };
 
     // ── 顶层模式分流：读取 ChatSession.mode（唯一可信来源） ──

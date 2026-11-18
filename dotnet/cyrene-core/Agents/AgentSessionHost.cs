@@ -198,7 +198,7 @@ internal sealed class AgentSessionHost
 
     // ── 进程入口（协议循环）──
 
-    public static int RunProtocolLoop()
+    public static int RunProtocolLoop(CyreneNative.Notifications.INotificationSink? notificationSink = null)
     {
         var stdout = Console.OpenStandardOutput();
         var ioLock = new SemaphoreSlim(1, 1);
@@ -299,10 +299,14 @@ internal sealed class AgentSessionHost
                                 {
                                     // 白名单全拒：回 Idle（上层可续步）或连续 3 轮硬终止
                                     Send(new { op = "result", callId, ok = true, data = new { state = outcome, denied = true } });
+                                    // done_denied 是硬终态值得通知；idle_denied 静默（可续步）
+                                    CyreneNative.Notifications.AgentNotificationDispatcher.DispatchOutcome(notificationSink, outcome);
                                 }
                                 else
                                 {
                                     Send(new { op = "result", callId, ok = true, data = new { state = outcome } });
+                                    // issue #153：.NET 版通知后端——终态意图经 sink 吐给宿主平台
+                                    CyreneNative.Notifications.AgentNotificationDispatcher.DispatchOutcome(notificationSink, outcome);
                                 }
                             }
                             else
@@ -311,6 +315,10 @@ internal sealed class AgentSessionHost
                                 var sid = root.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null;
                                 if (sid is not null) host.MarkFailed(sid, err ?? "llm 失败");
                                 Send(new { op = "result", callId, ok = false, error = err });
+                                // issue #153：llm 失败终态同样通知
+                                notificationSink?.Show(CyreneNative.Notifications.NotificationKind.TaskFailed,
+                                    CyreneNative.Notifications.AgentNotificationDispatcher.DefaultText(CyreneNative.Notifications.NotificationKind.TaskFailed).Title,
+                                    CyreneNative.Notifications.AgentNotificationDispatcher.DefaultText(CyreneNative.Notifications.NotificationKind.TaskFailed).Body);
                             }
                         }
                         break;
