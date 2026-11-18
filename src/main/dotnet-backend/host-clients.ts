@@ -88,6 +88,33 @@ export class LineHostClient {
         if (this.proc !== child) return; // 旧实例迟到帧忽略（幽灵结果不路由）
         this.onLine(line);
       });
+      // 审核 #1416 P1-1：stderr 必须消费——侧车 Core 下载期每 250ms 一行进度
+      // （26MB 慢网络可写满 64KB 管道 → 侧车阻塞在 stderr 写 → load 超时强杀）。
+      // stderr 不参与帧协议；限流转发：每秒最多落 1 行，其余聚合计数随下一行带出。
+      const stderr = child.stderr;
+      if (stderr) {
+        let stderrLastFlush = 0;
+        let stderrSuppressed = 0;
+        let stderrPending = "";
+        stderr.setEncoding("utf-8");
+        stderr.on("data", (chunk: string) => {
+          if (this.proc !== child) return; // 旧实例迟到数据忽略
+          stderrPending += chunk;
+          const lines = stderrPending.split("\n");
+          stderrPending = lines.pop() ?? "";
+          const now = Date.now();
+          for (const line of lines) {
+            if (!line) continue;
+            stderrSuppressed++;
+            if (now - stderrLastFlush >= 1000) {
+              stderrLastFlush = now;
+              const n = stderrSuppressed;
+              stderrSuppressed = 0;
+              console.error(`[live2d-sidecar] ${line}${n > 1 ? `（本轮 +${n - 1} 行已抑制）` : ""}`);
+            }
+          }
+        });
+      }
       child.on("exit", () => {
         // 强杀兜底计时器：exit 到达即取消该 child 自己的补杀（此 child 可能已被 killAndReset 摘引用）
         this.cancelKillEscalation(child);

@@ -55,6 +55,8 @@ interface DragOrigin {
 export class PetSidecarBackend {
   private ready = false;
   private visible = false;
+  /** 显隐意图（hide/show 早于 ready 到达时记录，finishReady 落盘，审核 #1416 P2-2）。 */
+  private desiredVisible = true;
   private disposed = false;
   private starting: Promise<boolean> | null = null;
   private zoom = 1;
@@ -117,32 +119,49 @@ export class PetSidecarBackend {
         return false;
       }
       try {
-        await client.load(modelPath);
-      } catch (error) {
-        // Live2D 许可合规闸门：Core 缺失须先同意再下载（审计 #257 发现 2）
-        if ((error as { errorCode?: string })?.errorCode === LIVE2D_ERRORS.coreConsent) {
-          const consented = this.deps.confirmCoreDownload ? await this.deps.confirmCoreDownload() : false;
-          if (consented) {
+        try {
+          await client.load(modelPath);
+        } catch (error) {
+          // Live2D 许可合规闸门：Core 缺失须先同意再下载（审计 #257 发现 2）
+          if ((error as { errorCode?: string })?.errorCode === LIVE2D_ERRORS.coreConsent) {
+            let consented = false;
             try {
-              await client.load(modelPath, { coreDownloadConsent: true });
-              // 同意 + 重试成功 → 继续正常初始化（落到下方 settings 流程）
-              return await this.finishReady(client, showOnReady);
-            } catch (retryError) {
-              this.log("[Live2D] Core 下载/加载失败（已同意），回退 web 轨:", retryError);
+              consented = this.deps.confirmCoreDownload ? await this.deps.confirmCoreDownload() : false;
+            } catch (consentError) {
+              // 同意弹窗自身异常（窗口销毁/IPC 失败）同样回退，不得外抛
+              this.log("[Live2D] Core 下载许可确认异常，回退 web 轨:", consentError);
               await this.shutdownClient();
               return false;
             }
+            if (consented) {
+              try {
+                await client.load(modelPath, { coreDownloadConsent: true });
+                // 同意 + 重试成功 → 继续正常初始化（落到下方 finishReady）
+              } catch (retryError) {
+                this.log("[Live2D] Core 下载/加载失败（已同意），回退 web 轨:", retryError);
+                await this.shutdownClient();
+                return false;
+              }
+              return await this.finishReady(client, showOnReady);
+            }
+            this.log("[Live2D] 未同意 Live2D Core 下载许可，回退 web 轨");
+            await this.shutdownClient();
+            return false;
           }
-          this.log("[Live2D] 未同意 Live2D Core 下载许可，回退 web 轨");
+          this.log("[Live2D] 侧车加载失败，回退 web 轨:", error);
           await this.shutdownClient();
           return false;
         }
-        this.log("[Live2D] 侧车加载失败，回退 web 轨:", error);
+
+        return await this.finishReady(client, showOnReady);
+      } catch (error) {
+        // 审核 #1416 P1-2：finishReady 的 setBounds/setZoom/setAlwaysOnTop/show/resume
+        // 任一失败/超时不得外抛（window-manager 只挂 then 不挂 catch 时会变 unhandled
+        // rejection 且不回退、留孤儿进程）→ 内收：记日志 + 关停侧车 + return false。
+        this.log("[Live2D] 侧车初始化失败，回退 web 轨:", error);
         await this.shutdownClient();
         return false;
       }
-
-      return await this.finishReady(client, showOnReady);
     })();
     this.starting = starting;
     try {
@@ -154,6 +173,7 @@ export class PetSidecarBackend {
 
   /** load 成功后的初始化（设置/几何/显隐）；同意重试成功路径复用。 */
   private async finishReady(client: Live2DHostClient, showOnReady: boolean): Promise<boolean> {
+    if (this.disposed) return false; // 与 dispose() 并发：不再 show/resume 已释放门面的协议 op
     const settings = this.deps.loadSettings();
     this.zoom = clampZoom(typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1);
     const width = Math.round(PET_WINDOW_BASE_WIDTH * this.zoom);
@@ -166,9 +186,16 @@ export class PetSidecarBackend {
 
     this.ready = true;
     if (showOnReady) {
-      this.visible = true;
-      await client.show();
-      await client.resume();
+      if (this.desiredVisible) {
+        this.visible = true;
+        await client.show();
+        await client.resume();
+      } else {
+        // 启动加载期间收到 hide（sidecarActive() 为空时旧逻辑直接 return 丢请求）
+        this.visible = false;
+        await client.hide();
+        await client.pause();
+      }
     } else {
       await client.pause();
     }
@@ -178,14 +205,16 @@ export class PetSidecarBackend {
   // ── 窗口控制面（DIP） ─────────────────────────────────────
 
   show(): void {
-    if (!this.isReady()) return;
+    this.desiredVisible = true;
+    if (!this.isReady()) return; // 未 ready：desiredVisible 记录，finishReady 按此显隐
     this.visible = true;
     this.fire(this.deps.client.show());
     this.fire(this.deps.client.resume());
   }
 
   hide(): void {
-    if (!this.isReady()) return;
+    this.desiredVisible = false;
+    if (!this.isReady()) return; // 同上（审核 #1416 P2-2：启动加载期 hide 不得丢）
     this.visible = false;
     this.fire(this.deps.client.hide());
     this.fire(this.deps.client.pause());

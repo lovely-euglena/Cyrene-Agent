@@ -151,14 +151,23 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
         },
       });
     }
-    void petSidecar.ensureReady(showOnReady).then((ok) => {
-      if (ok) return;
+    const fallbackToWeb = () => {
       // 回退 web 轨：清理门面（关停侧车进程）后按原逻辑建 BrowserWindow
       const failed = petSidecar;
       petSidecar = null;
       sidecarFailed = true;
       void failed?.dispose();
       ensurePetWindow(showOnReady);
+    };
+    // 审核 #1416 P1-2：ensureReady 已内收异常（catch → return false），
+    // 此处 .catch 为兜底——门面实现回归外抛时同样回退，不得变 unhandled
+    // rejection 且不回退（桌宠不可见）。
+    void petSidecar.ensureReady(showOnReady).then((ok) => {
+      if (ok) return;
+      fallbackToWeb();
+    }).catch((err) => {
+      console.error("[WindowManager] ensurePetSidecar 异常，回退 web 轨:", err);
+      fallbackToWeb();
     });
   }
 

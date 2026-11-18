@@ -193,6 +193,55 @@ describe("ensureReady 装配与回退", () => {
     expect(c4.shutdown).toHaveBeenCalledTimes(1);
   });
 
+  it("finishReady 阶段异常（setBounds/show reject）→ 回退 false 不外抛（#1416 P1-2）", async () => {
+    // setBounds reject：window-manager 只挂 then 不挂 catch 时不得变 unhandled rejection
+    const c1 = makeClient();
+    c1.setBounds.mockRejectedValue(new Error("E_WINDOW"));
+    const b1 = new PetSidecarBackend(makeDeps(c1));
+    await expect(b1.ensureReady(true)).resolves.toBe(false);
+    expect(c1.shutdown).toHaveBeenCalledTimes(1);
+    expect(b1.isReady()).toBe(false);
+
+    // show reject（ready 已置位后失败）：同样内收回退
+    const c2 = makeClient();
+    c2.show.mockRejectedValue(new Error("show 超时"));
+    const b2 = new PetSidecarBackend(makeDeps(c2));
+    await expect(b2.ensureReady(true)).resolves.toBe(false);
+    expect(c2.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirmCoreDownload 弹窗自身异常 → 回退 false（#1416 P1-2）", async () => {
+    const client = makeClient();
+    client.load.mockRejectedValueOnce(Object.assign(new Error("须同意 Live2D 许可"), { errorCode: "E_CORE_CONSENT" }));
+    const backend = new PetSidecarBackend(makeDeps(client, {
+      confirmCoreDownload: () => Promise.reject(new Error("dialog 失败")),
+    }));
+    await expect(backend.ensureReady(true)).resolves.toBe(false);
+    expect(client.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("启动加载期 hide 不丢：desiredVisible 记录，finishReady 落 hide+pause（#1416 P2-2）", async () => {
+    const client = makeClient();
+    const backend = new PetSidecarBackend(makeDeps(client));
+    backend.hide(); // isReady()=false → 仅记录意图
+    expect(client.hide).not.toHaveBeenCalled();
+    await expect(backend.ensureReady(true)).resolves.toBe(true);
+    expect(client.show).not.toHaveBeenCalled();
+    expect(client.hide).toHaveBeenCalledTimes(1);
+    expect(client.pause).toHaveBeenCalledTimes(1);
+    expect(backend.isVisible()).toBe(false);
+    await backend.dispose();
+  });
+
+  it("load 成功后 dispose 并发：finishReady 开头守卫不再发 show/resume（#1416 P2-2）", async () => {
+    const client = makeClient();
+    const backend = new PetSidecarBackend(makeDeps(client));
+    client.load.mockImplementation(async () => { await backend.dispose(); return {}; });
+    await expect(backend.ensureReady(true)).resolves.toBe(false);
+    expect(client.show).not.toHaveBeenCalled();
+    expect(client.resume).not.toHaveBeenCalled();
+  });
+
   it("重复 ensureReady 复用就绪状态；进程死亡后 isReady false", async () => {
     const client = makeClient();
     const backend = new PetSidecarBackend(makeDeps(client));
