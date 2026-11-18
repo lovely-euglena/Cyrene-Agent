@@ -71,6 +71,31 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("callLLM retries", () => {
+  it("没有可见增量时，接收数据活动仍能保持 Harness 模型请求运行", async () => {
+    vi.useFakeTimers();
+    try {
+      fakeStreamChat.mockImplementationOnce((input) => new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException("aborted", "AbortError"));
+        input.signal.addEventListener("abort", onAbort, { once: true });
+        setTimeout(() => input.onStreamActivity?.(), 40);
+        setTimeout(() => input.onStreamActivity?.(), 80);
+        setTimeout(() => {
+          input.signal.removeEventListener("abort", onAbort);
+          resolve(makeResponse("done"));
+        }, 120);
+      }));
+      const outcome = callLLM(vendorConfig, promptLayers, messages, [], {
+        ...harnessConfig, modelRequestIdleTimeoutMs: 100, modelRequestMaxRetries: 0,
+      }).then((response) => ({ response }), (error) => ({ error }));
+
+      await vi.advanceTimersByTimeAsync(130);
+      expect(await outcome).toMatchObject({ response: { text: "done" } });
+      expect(fakeRecordRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries a MiniMax-style 529 even when its vendor code is classified as unknown", async () => {
     const minimax529 = new AgentRuntimeError("E_MODEL_REQUEST_FAILED", "HTTP 529 server_error", {
       modelFailure: { provider: "minimax", model: "MiniMax-M3", category: "UNKNOWN", status: 529, vendorCode: "server_error" },

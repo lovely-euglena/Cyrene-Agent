@@ -351,6 +351,13 @@
   object-fit: cover;
 }
 
+.cy-composer__attachment .cy-composer__attachment-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  object-fit: contain;
+}
+
 .cy-composer__attachment.is-image {
   position: relative;
   display: block;

@@ -100,6 +100,7 @@ const chatApi = {
   },
   processDocuments: (filePaths: string[], query: string) =>
     ipcRenderer.invoke(IPC.CHAT_PROCESS_DOCUMENTS, { filePaths, query }),
+  pasteClipboardFiles: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.CHAT_PASTE_FILES),
   onDocumentIndexProgress: (callback: (progress: DocumentIndexProgress) => void) => {
     const listener = (_event: unknown, progress: DocumentIndexProgress) => callback(progress);
     ipcRenderer.on(IPC.CHAT_DOCUMENT_INDEX_PROGRESS, listener);
@@ -705,15 +706,15 @@ const schedulerApi = {
 contextBridge.exposeInMainWorld("cyreneScheduler", schedulerApi);
 
 const stickerManagerApi = {
-	  minimize: () => ipcRenderer.send(IPC.STICKERS_MINIMIZE),
-	  close: () => ipcRenderer.send(IPC.STICKERS_CLOSE),
-	  getConfig: () => ipcRenderer.invoke(IPC.STICKERS_GET_CONFIG),
-	  setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.STICKERS_SET_ENABLED, { id, enabled }),
-	  pickFile: () => ipcRenderer.invoke(IPC.STICKERS_PICK_FILE),
-	  addSticker: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) =>
-	    ipcRenderer.invoke(IPC.STICKERS_ADD, payload),
-	  deleteSticker: (id: string) => ipcRenderer.invoke(IPC.STICKERS_DELETE, id),
-	};
+          minimize: () => ipcRenderer.send(IPC.STICKERS_MINIMIZE),
+          close: () => ipcRenderer.send(IPC.STICKERS_CLOSE),
+          getConfig: () => ipcRenderer.invoke(IPC.STICKERS_GET_CONFIG),
+          setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.STICKERS_SET_ENABLED, { id, enabled }),
+          pickFile: () => ipcRenderer.invoke(IPC.STICKERS_PICK_FILE),
+          addSticker: (payload: { sourcePath: string; id: string; description: string; phrases: string[] }) =>
+            ipcRenderer.invoke(IPC.STICKERS_ADD, payload),
+          deleteSticker: (id: string) => ipcRenderer.invoke(IPC.STICKERS_DELETE, id),
+        };
 
 contextBridge.exposeInMainWorld("stickerManager", stickerManagerApi);
 

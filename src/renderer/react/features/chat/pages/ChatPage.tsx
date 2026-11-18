@@ -444,6 +444,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     isDraggingFiles,
     chooseFiles,
     handlePastedImage,
+    handlePastedFiles,
     handleScreenshot,
     removeAttachment,
     prepareImageAttachments,
@@ -2047,6 +2048,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onRemoveAttachment={removeAttachment}
             onScreenshot={() => void handleScreenshot()}
             onPasteImage={(file) => void handlePastedImage(file)}
+            onPasteFiles={() => void handlePastedFiles()}
             onChooseSticker={(id) => {
               const separator = draft && !draft.endsWith(" ") ? " " : "";
               setDrafts((current) => ({ ...current, [scopeKey]: `${draft}${separator}[sticker:${id}]` }));

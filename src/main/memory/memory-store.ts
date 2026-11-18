@@ -129,7 +129,7 @@ class MemoryStoreManager {
     // 回流（Obsidian→PMRS）期间同步跳过，避免双向循环。标志读取是同步的（leaf 模块），
     // 动态 import 仅为避免循环依赖（obsidian-exporter 反向依赖 memoryStore）。
     if (isImportingMemory()) return
-    import("./obsidian-exporter").then(({ notifyMemoryChanged }) => notifyMemoryChanged()).catch(() => {})
+    import("./obsidian-exporter.js").then(({ notifyMemoryChanged }) => notifyMemoryChanged()).catch(() => {})
   }
 
   async getL0(): Promise<L0Profile> {

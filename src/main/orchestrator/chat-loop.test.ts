@@ -14,6 +14,8 @@ vi.mock("./vendors", async (importOriginal) => {
 });
 
 import { runChatLoop as runChatLoopProduction, type ChatLoopOptions } from "./chat-loop";
+import * as timeoutManager from "../timeout-manager";
+import { DEFAULT_TIMEOUT_SETTINGS } from "../../shared/timeout-types";
 import { createSseReader } from "./vendors";
 import { ConversationTranscriptStore } from "./conversation-transcript-store";
 import { materializeTranscript } from "./conversation-transcript-context";
@@ -190,6 +192,38 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("runChatLoop", () => {
+  it("接收数据活动能让普通聊天请求跨过默认空闲期限", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = new FakeAdapter();
+      const streamChat: NonNullable<ChatLoopOptions["streamChat"]> = (input) => new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException("aborted", "AbortError"));
+        input.signal!.addEventListener("abort", onAbort, { once: true });
+        setTimeout(() => input.onStreamActivity?.(), 20_000);
+        setTimeout(() => input.onStreamActivity?.(), 40_000);
+        setTimeout(() => {
+          input.signal!.removeEventListener("abort", onAbort);
+          input.onDelta?.({ type: "text_delta", delta: "done" });
+          resolve(adapter.parseResponse({ text: "done" }));
+        }, 80_000);
+      });
+      vi.spyOn(timeoutManager, "getTimeoutSettings").mockReturnValue({
+        ...DEFAULT_TIMEOUT_SETTINGS,
+        modelRequestTimeoutSec: 60,
+      });
+      const outcome = runChatLoop({
+        settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000, modelRequestMaxRetries: 0 },
+        adapter, messages: [{ role: "user", content: "hi" }], soulSystemBaseContent: "system",
+        timeoutMs: 120_000, fallbackRevealIntervalMs: 0, streamChat,
+      }).then((response) => ({ response }), (error) => ({ error }));
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(await outcome).toMatchObject({ response: { reply: "done" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the chat system prefix stable while appending runtime context as a wire-only suffix", async () => {
     const adapter = new FakeAdapter();
     await runChatLoop({

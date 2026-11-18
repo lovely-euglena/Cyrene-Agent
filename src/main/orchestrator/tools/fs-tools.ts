@@ -632,9 +632,9 @@ toolRegistry.register({
 // 懒加载图片转述视觉配置：动态 import，规避注册期副作用。
 // 路由判定收口在 image-router（全项目唯一），本文件不再自行判断。
 async function loadCaptionVisionConfigLazy(): Promise<import("../image-router").CaptionVisionConfig> {
-  const settingsMod = await import("../../settings/model-settings");
+  const settingsMod = await import("../../settings/model-settings.js");
   const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
-  const router = await import("../image-router");
+  const router = await import("../image-router.js");
   return router.resolveCaptionVisionConfig(settings);
 }
 

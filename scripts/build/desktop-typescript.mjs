@@ -3,6 +3,7 @@ import { copyFileSync, cpSync, globSync, mkdirSync, readFileSync, rmSync, statSy
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { assertRelativeDynamicImports } from "./verify-dynamic-imports.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const target = process.argv[2];
@@ -80,6 +81,7 @@ if (target === "main") {
       source.endsWith("native-import.cjs"),
   });
   cpSync(path.join(repoRoot, "src", "main", "plugin-panel"), path.join(outDir, "plugin-panel"), { recursive: true });
+  assertRelativeDynamicImports(outDir);
 }
 
 console.log(`[desktop] built ${entryPoints.length} ${target} TypeScript files`);

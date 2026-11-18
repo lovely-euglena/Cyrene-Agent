@@ -55,6 +55,7 @@ export const IPC = {
   CHAT_TOGGLE_MAXIMIZE: "chat:toggle-maximize",
   CHAT_IS_MAXIMIZED: "chat:is-maximized",
   CHAT_INGEST_FILES: "chat:ingest-files",
+  CHAT_PASTE_FILES: "chat:paste-files",
   CHAT_PROCESS_DOCUMENTS: "chat:process-documents",
   CHAT_DOCUMENT_INDEX_PROGRESS: "chat:document-index-progress",
   CHAT_CANCEL_DOCUMENT_INDEX: "chat:cancel-document-index",
@@ -320,14 +321,14 @@ export const IPC = {
   WORKSPACE_OPEN_IN: "workspace-open-in:open",
 
 // sticker manager window
-	  STICKERS_MINIMIZE: "stickers:minimize",
-	  STICKERS_CLOSE: "stickers:close",
-	  STICKERS_GET_CONFIG: "stickers:get-config",
-	  STICKERS_SET_ENABLED: "stickers:set-enabled",
-	  STICKERS_PICK_FILE: "stickers:pick-file",
-	  STICKERS_ADD: "stickers:add",
-	  STICKERS_DELETE: "stickers:delete",
-	  STICKERS_GET_ENABLED: "stickers:get-enabled",
+          STICKERS_MINIMIZE: "stickers:minimize",
+          STICKERS_CLOSE: "stickers:close",
+          STICKERS_GET_CONFIG: "stickers:get-config",
+          STICKERS_SET_ENABLED: "stickers:set-enabled",
+          STICKERS_PICK_FILE: "stickers:pick-file",
+          STICKERS_ADD: "stickers:add",
+          STICKERS_DELETE: "stickers:delete",
+          STICKERS_GET_ENABLED: "stickers:get-enabled",
 
   // public model config updates (no API key)
   MODEL_CONFIG_GET: "model-config:get",

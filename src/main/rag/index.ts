@@ -441,7 +441,7 @@ async function searchMemoryEntriesEnabled(
   let allowedEntryIds: string[] | undefined;
   if (source === "user_memory") {
     try {
-      const { memoryStore } = await import("../memory/memory-store");
+      const { memoryStore } = await import("../memory/memory-store.js");
       const memories = await memoryStore.getAllL2();
       const recallableById = new Map(
         memories.filter(isL2LocallyRecallable).map((memory) => [memory.id, memory]),
@@ -478,7 +478,7 @@ async function recordUserMemoryRecalls(results: Array<{ entry: MemoryEntry }>): 
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   if (l2Ids.length === 0) return;
   try {
-    const { memoryStore } = await import("../memory/memory-store");
+    const { memoryStore } = await import("../memory/memory-store.js");
     for (const l2Id of new Set(l2Ids)) {
       await memoryStore.updateL2RecallStats(l2Id, 1);
     }

@@ -16,6 +16,8 @@ import {
 } from "./client-config";
 import { normalizeOpenAIChunk } from "./openai-normalizer";
 import { normalizeResponsesEvent } from "./responses-normalizer";
+import { createResponsesTrace } from "./responses-trace";
+import { createStreamActivityFetch } from "./stream-activity-fetch";
 import {
   ProviderProtocolError,
   type StreamDiagnostic,
@@ -49,6 +51,8 @@ export interface SdkStreamRunInput {
   config: VendorConfig;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** 收到非空响应数据时报告活动；包括 SDK/normalizer 会过滤的保活和进度事件。 */
+  onStreamActivity?: () => void;
   onDelta?: (delta: UnifiedStreamDelta) => void;
   onDiagnostic?: (diagnostic: StreamDiagnostic) => void;
 }
@@ -120,6 +124,14 @@ function responsesTerminalResponse(event: unknown): Record<string, unknown> | un
   return response as Record<string, unknown>;
 }
 
+function withStreamActivityFetch<T extends { fetch?: typeof fetch }>(
+  client: T,
+  onStreamActivity?: () => void,
+): T {
+  if (!onStreamActivity) return client;
+  return { ...client, fetch: createStreamActivityFetch(onStreamActivity, client.fetch ?? fetch) };
+}
+
 export async function streamChatWithSdk(
   input: SdkStreamRunInput,
   deps: SdkStreamRuntimeDeps = defaultDeps,
@@ -140,6 +152,7 @@ export async function streamChatWithSdk(
   const taggedThinkFilter = createThinkFilter("leading-only");
   // LLM 调用原文 traceId —— 即使 dump 关闭也会生成，方便上层日志关联。
   let traceId = "";
+  let responsesTrace: ReturnType<typeof createResponsesTrace> = undefined;
   // 本次请求的完整地址 —— 失败日志要带上；catch 块读不到 try 内的局部变量，提升到外层。
   let requestEndpoint = "";
   const commitDelta = (delta: UnifiedStreamDelta) => {
@@ -188,7 +201,9 @@ export async function streamChatWithSdk(
     });
     if (input.adapter.transport === "openai") {
       const chunks = await deps.openAI({
-        client: deriveOpenAIClientConfig(prepared.endpoint, input.config.apiKey),
+        client: withStreamActivityFetch(
+          deriveOpenAIClientConfig(prepared.endpoint, input.config.apiKey), input.onStreamActivity,
+        ),
         body: prepared.body,
         signal: controller.signal,
       });
@@ -212,13 +227,18 @@ export async function streamChatWithSdk(
     }
 
     if (input.adapter.transport === "responses") {
+      responsesTrace = createResponsesTrace(traceId);
+      responsesTrace?.request(prepared.body);
       const chunks = await deps.responses({
-        client: deriveResponsesClientConfig(prepared.endpoint, input.config.apiKey),
+        client: withStreamActivityFetch(
+          deriveResponsesClientConfig(prepared.endpoint, input.config.apiKey), input.onStreamActivity,
+        ),
         body: prepared.body,
         signal: controller.signal,
       });
       let finalResponse: Record<string, unknown> | undefined;
       for await (const event of chunks) {
+        responsesTrace?.event(event);
         const terminal = responsesTerminalResponse(event);
         if (terminal) finalResponse = terminal;
         for (const delta of normalizeResponsesEvent(event)) dispatch(delta);
@@ -240,6 +260,7 @@ export async function streamChatWithSdk(
         throw protocolFailure;
       }
       flushTaggedThink();
+      responsesTrace?.parsed(accumulator.snapshot());
       const finalized = accumulator.finalize(finalResponse);
       // rawAssistant 补挂：完整 output items 是 Responses 多轮保真的核心（accumulator 不产出该字段）。
       // 无终态事件已在上方按协议失败结算，成功响应始终有完整 rawAssistant。
@@ -252,6 +273,7 @@ export async function streamChatWithSdk(
             assistantMessage: { ...finalized.assistantMessage, rawAssistant: outputItems },
           }
         : finalized;
+      responsesTrace?.result(responsesFinal);
       dumpResponse(traceId, {
         transport: "responses",
         ok: true,
@@ -266,7 +288,9 @@ export async function streamChatWithSdk(
 
     const authStyle = input.adapter.capability.anthropicAuthStyle ?? input.adapter.capability.authStyle;
     const stream = await deps.anthropic({
-      client: deriveAnthropicClientConfig(prepared.endpoint, input.config.apiKey, authStyle),
+      client: withStreamActivityFetch(
+        deriveAnthropicClientConfig(prepared.endpoint, input.config.apiKey, authStyle), input.onStreamActivity,
+      ),
       body: prepared.body,
       signal: controller.signal,
     });
@@ -293,6 +317,7 @@ export async function streamChatWithSdk(
     });
     return reconciled;
   } catch (error) {
+    responsesTrace?.failure(error, accumulator.snapshot());
     // [image-send] 链路日志④（流式）：失败时带上模型名、请求地址、错误码，
     // 排查"谁挂了、挂在哪"不用再翻设置或记账文件。
     console.error(
