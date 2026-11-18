@@ -405,7 +405,14 @@ export function ChatComposer({
         onRemove={onRemoveQueuedMessage}
       />
       {mainModelFailure && <ModelFailureNotice failure={mainModelFailure} />}
-      <div className="cy-composer-shell">
+      <div
+        className="cy-composer-shell"
+        // 兜底：输入框是 contenteditable，浏览器默认可能拒绝/改写拖放效果。
+        // 这里只 preventDefault 让 drop 正常派发（处理仍单点在 main 的 handleDrop，不重复触发）。
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        }}
+      >
         <input
           ref={fileInputRef}
           className="cy-composer__file-input"
@@ -443,7 +450,11 @@ export function ChatComposer({
         header={hasComposerHeader ? (
           <div className="cy-composer__attachments" aria-label={t("composer.attachmentsLabel")}>
             {attachments.map((attachment, index) => (
-              <div className={`cy-composer__attachment ${attachment.kind === "image" && attachment.previewUrl ? "is-image" : ""}${attachment.kind === "web-element" ? " is-web-element" : ""}`} key={`${attachment.filePath ?? attachment.name}-${index}`}>
+              <div
+                className={`cy-composer__attachment ${attachment.kind === "image" && attachment.previewUrl ? "is-image" : ""}${attachment.kind === "web-element" ? " is-web-element" : ""}${attachment.status === "error" ? " is-error" : ""}`}
+                title={attachment.status === "error" ? (attachment.reason ?? t("chatPage.dropNoIngest")) : undefined}
+                key={`${attachment.filePath ?? attachment.name}-${index}`}
+              >
                 {attachment.kind === "web-element" && attachment.element ? (
                   <span className="cy-composer__web-element" title={attachment.element.snapshotLine}>
                     <ScanLine size={15} />
@@ -452,7 +463,10 @@ export function ChatComposer({
                 ) : attachment.kind === "image" && attachment.previewUrl ? (
                   <img src={attachment.previewUrl} alt="" draggable={false} />
                 ) : (
-                  <span title={attachment.name}>{attachment.name}</span>
+                  <span className="cy-composer__attachment-file">
+                    {attachment.status === "error" && <AlertTriangle size={13} aria-hidden="true" />}
+                    <span>{attachment.name}</span>
+                  </span>
                 )}
                 <button type="button" aria-label={t("composer.removeAttachment", { name: attachment.name })} onClick={() => onRemoveAttachment(index)}>×</button>
               </div>

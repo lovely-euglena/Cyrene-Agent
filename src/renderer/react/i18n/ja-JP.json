@@ -123,6 +123,8 @@
     "setWorkspaceFailed": "ワークスペースの設定に失敗しました：{{error}}",
     "ingestFilesFailed": "ファイルの取り込みに失敗しました：{{error}}",
     "dropNoFiles": "追加できるファイルを認識できませんでした。",
+    "dropUnsupported": "サポートされていないファイル形式です：{{names}}",
+    "dropNoIngest": "ドロップされたファイルを読み取れませんでした（仮想パスまたは制限付きソースの可能性）。",
     "pastedImageTooLargeSkipped": "貼り付けた画像が 20MB を超えているため、スキップしました。",
     "pastedImageTooLarge": "貼り付けた画像が 20MB を超えています。",
     "pastedImageInvalid": "貼り付けた内容は有効な画像ではありません。",
