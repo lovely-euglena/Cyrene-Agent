@@ -57,6 +57,39 @@ function normalizeToolCalls(value: unknown): UnifiedStreamDelta[] {
   return output;
 }
 
+/**
+ * 服务端托管工具块识别（双探形态，真网首测后收敛）：
+ * a) delta.server_tool_use 直挂对象
+ * b) delta.tool_calls[] 中 type 非缺省 function 的项（如 type:"read_link"）
+ * signature 为服务端续接凭证——字段原样保留（不重命名/不重组）。
+ */
+function serverToolCallDeltas(delta: Record<string, unknown>): UnifiedStreamDelta[] {
+  const out: UnifiedStreamDelta[] = [];
+  const push = (callId: unknown, tool: unknown, input: unknown, signature: unknown): void => {
+    if (typeof tool !== "string" || tool.length === 0) return;
+    out.push({
+      type: "server_tool_call",
+      ...(typeof callId === "string" && callId ? { callId } : {}),
+      tool,
+      ...(input !== undefined ? { input } : {}),
+      ...(typeof signature === "string" && signature ? { signature } : {}),
+    });
+  };
+  if (isRecord(delta.server_tool_use)) {
+    const u = delta.server_tool_use;
+    push(u.id ?? u.call_id, u.tool ?? u.name, u.input, u.signature);
+  }
+  if (Array.isArray(delta.tool_calls)) {
+    for (const tc of delta.tool_calls) {
+      if (!isRecord(tc)) continue;
+      if (typeof tc.type === "string" && tc.type !== "function" && tc.type !== "") {
+        push(tc.id ?? tc.call_id, tc.type, tc.input ?? tc.arguments, tc.signature);
+      }
+    }
+  }
+  return out;
+}
+
 export function normalizeOpenAIChunk(chunk: unknown): UnifiedStreamDelta[] {
   if (!isRecord(chunk)) return [];
   const output: UnifiedStreamDelta[] = [];
@@ -77,6 +110,9 @@ export function normalizeOpenAIChunk(chunk: unknown): UnifiedStreamDelta[] {
 
       const refusal = nonEmptyString(delta.refusal);
       if (refusal) output.push({ type: "refusal", reason: refusal });
+
+      // 服务端托管工具往返块（DeepSeek 全家桶）：signature 原样直通，不做任何加工。
+      output.push(...serverToolCallDeltas(delta));
     }
 
     const finishReason = nonEmptyString(choice.finish_reason);

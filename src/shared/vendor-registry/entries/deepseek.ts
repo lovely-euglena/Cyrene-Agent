@@ -18,6 +18,11 @@ export const DEEPSEEK_REGISTRY = defineVendor({
     testStrategy: "text",
     // 三格式原生全支持（官方文档）
     supportedTransports: ["openai", "anthropic", "responses"],
+    // DeepSeek 全家桶应用 API（2026-11-13，新闻 news261113）：服务端托管工具。
+    // webSearch：tools 注入 {type:"deepseek_web_search"}，服务端执行+引用块；
+    // readUrl 暂不开——需 read_link 调用+signature 回传链（issue #253）。
+    // safety_check 不吸收（TA 2026-11-14）。
+    serverTools: { webSearch: true, readUrl: false },
   },
   shortName: "DeepSeek",
   // 厂商怪癖：思考时拒绝一切 tool_choice（must-call 也省略字段），

@@ -465,3 +465,19 @@ describe("AnthropicAdapter", () => {
     expect(body.messages[0].content.map((b) => b.type)).toEqual(["image", "image"]);
   });
 });
+
+describe("AnthropicAdapter serverTools", () => {
+  test("appends server tools after FC tools mapping (not overridden)", () => {
+    const adapter = new AnthropicAdapter("deepseek", anthropicCap);
+    const req = adapter.buildRequest({
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "read_file", description: "read", parameters: { type: "object" } }],
+      serverTools: [{ type: "deepseek_web_search" }],
+    }, { provider: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-flash", apiKey: "k" });
+    const body = JSON.parse(req.body);
+    expect(body.tools).toHaveLength(2);
+    expect(body.tools[0].name).toBe("read_file");
+    expect(body.tools[1]).toEqual({ type: "deepseek_web_search" });
+  });
+});

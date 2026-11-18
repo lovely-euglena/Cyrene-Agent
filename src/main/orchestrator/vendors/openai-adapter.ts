@@ -30,6 +30,15 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
     }
     // assistant：回传 content + tool_calls（OpenAI 多轮要求 assistant 消息带 tool_calls）
     const wire: Record<string, unknown> = { role: "assistant", content: m.content || null };
+    // 服务端托管工具往返块原样回传（signature 是服务端续接凭证，不做任何加工——issue #253）
+    if (m.serverToolTrace && m.serverToolTrace.length > 0) {
+      wire.server_tool_use = m.serverToolTrace.map((t) => ({
+        type: t.tool,
+        ...(t.callId !== undefined ? { id: t.callId } : {}),
+        ...(t.input !== undefined ? { input: t.input } : {}),
+        ...(t.signature !== undefined ? { signature: t.signature } : {}),
+      }));
+    }
     if (m.toolCalls && m.toolCalls.length > 0) {
       wire.tool_calls = m.toolCalls.map(tc => ({
         id: tc.id,
@@ -99,6 +108,12 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
       }) === "auto") {
         body.tool_choice = "auto";
       }
+    }
+    // 服务端托管工具 append（不覆盖 FC tools）：DeepSeek 全家桶 API（2026-11-13）
+    // 等厂商在服务端执行这些工具（无 FC 循环）；引用/搜索结果块由流解析层处理。
+    // 注意顺序：在 FC tools 赋值之后、extraBody 之前——extraBody.tools 仍可整体覆盖（既有语义）。
+    if (req.serverTools?.length) {
+      body.tools = [...(Array.isArray(body.tools) ? body.tools as unknown[] : []), ...req.serverTools];
     }
     if (req.extraBody) Object.assign(body, req.extraBody);
     if (req.structuredOutput?.mode === "json_schema") {

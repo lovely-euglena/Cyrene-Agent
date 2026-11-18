@@ -19,6 +19,7 @@ export class CyreneStreamAccumulator {
   private readonly toolCalls = new Map<number, MutableToolCall>();
   private finishReason: string | undefined;
   private refusal: string | undefined;
+  private readonly serverToolCalls: Array<{ callId?: string; tool: string; input?: unknown; signature?: string }> = [];
   private inputTokens: number | undefined;
   private outputTokens: number | undefined;
   private cachedInputTokens: number | undefined;
@@ -50,6 +51,14 @@ export class CyreneStreamAccumulator {
         toolCall.ended = true;
         return;
       }
+      case "server_tool_call":
+        this.serverToolCalls.push({
+          ...(delta.callId !== undefined ? { callId: delta.callId } : {}),
+          tool: delta.tool,
+          ...(delta.input !== undefined ? { input: delta.input } : {}),
+          ...(delta.signature !== undefined ? { signature: delta.signature } : {}),
+        });
+        return;
       case "usage":
         if (delta.inputTokens !== undefined) this.inputTokens = delta.inputTokens;
         if (delta.outputTokens !== undefined) this.outputTokens = delta.outputTokens;
@@ -70,6 +79,7 @@ export class CyreneStreamAccumulator {
       text: this.text,
       ...(this.thinking ? { thinking: this.thinking } : {}),
       toolCalls: this.sortedToolCalls().map((toolCall) => ({ ...toolCall })),
+      serverToolCalls: this.serverToolCalls.map((c) => ({ ...c })),
       ...(this.finishReason !== undefined ? { finishReason: this.finishReason } : {}),
       ...(this.refusal !== undefined ? { refusal: this.refusal } : {}),
       ...(this.inputTokens !== undefined || this.outputTokens !== undefined || this.cachedInputTokens !== undefined || this.cacheCreationTokens !== undefined
@@ -90,6 +100,7 @@ export class CyreneStreamAccumulator {
       content: this.text,
       ...(this.thinking ? { thinking: this.thinking } : {}),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      ...(this.serverToolCalls.length > 0 ? { serverToolTrace: [...this.serverToolCalls] } : {}),
     };
 
     return {

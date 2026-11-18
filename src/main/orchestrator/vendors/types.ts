@@ -36,6 +36,12 @@ export interface VendorConfig {
   reasoning?: ReasoningPreference;
   /** 当前模型在档案中显式配置的推理规则。 */
   manualReasoning?: ManualReasoningConfig;
+  /**
+   * 服务端托管工具开关（厂商侧执行，无 FC 循环）。目前仅 DeepSeek 全家桶 API
+   * （2026-11-13）支持；adapter 按能力表把这些条目 append 进 wire tools 数组，
+   * 与客户端 FC 工具并存。read_url 需消息回传链（signature 语义）后再开放。
+   */
+  serverTools?: { webSearch?: boolean };
 }
 
 export type OpenAIContentBlock =
@@ -68,6 +74,12 @@ export interface ChatMessage {
   thinking?: string;
   /** Anthropic 多轮必须原样回传 assistant.content block 数组；OpenAI transport 不读。 */
   rawAssistant?: unknown;
+  /**
+   * 服务端托管工具往返块（DeepSeek 全家桶；issue #253）——多轮回放
+   * **原样回传**（signature 是服务端续接凭证，Adapter 不得重组/重命名）。
+   * Anthropic transport 走 rawAssistant 通道，OpenAI transport 读本字段。
+   */
+  serverToolTrace?: Array<{ callId?: string; tool: string; input?: unknown; signature?: string }>;
   /** 仅供本地 transcript / UI 使用；Adapter 序列化时不得发送。 */
   visibility?: "user" | "internal";
   /** 仅供本地持久化和去重使用；Adapter 序列化时不得发送。 */
@@ -112,6 +124,12 @@ export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
   tools?: ToolSpec[];
+  /**
+   * 服务端托管工具条目（wire 原样形态，如 {type:"deepseek_web_search"}）。
+   * adapter 会把它们 append 进请求 tools 数组；extraBody.tools 会整体覆盖
+   * 合并结果（既有语义保留），故服务端工具不经过 extraBody。
+   */
+  serverTools?: unknown[];
   /** Runtime semantic intent; the active Adapter maps it to named/required/any/auto/omitted wire syntax. */
   toolChoiceIntent?: { mode: "must_call"; toolName: string };
   temperature?: number;
