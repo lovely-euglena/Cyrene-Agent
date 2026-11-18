@@ -434,6 +434,8 @@ const settingsApi = {
   testConnection: (config: { provider: string; baseUrl: string; model: string; apiKey: string; profileId?: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_CONNECTION, config),
   previewReasoning: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_PREVIEW_REASONING, config),
   testVision: (config: { baseUrl: string; apiKey: string; model: string }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_VISION, config),
+  dsFilesQuota: (config: { baseUrl: string; apiKey: string }) => ipcRenderer.invoke(IPC.SETTINGS_DS_FILES_QUOTA, config),
+  dsFilesCleanup: (config: { baseUrl: string; apiKey: string; protectedIds?: string[] }) => ipcRenderer.invoke(IPC.SETTINGS_DS_FILES_CLEANUP, config),
   // main → settings：要求切到指定标签（窗口已打开时由 main 发这个事件）
   onSwitchSection: (callback: (section: string) => void) => {
     const listener = (_e: unknown, section: string) => callback(section);

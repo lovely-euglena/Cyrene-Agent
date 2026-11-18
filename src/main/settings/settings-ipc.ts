@@ -8,6 +8,7 @@ import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { DEFAULT_UI_FONT, isSupportedFontFileName } from "../../shared/ui-font";
 import type { GeneralSettings } from "./general-settings";
+import { aggregateQuota, cleanupDeepSeekFiles, listDeepSeekFiles } from "../orchestrator/vendors/deepseek-files";
 import type { TimeoutSettings } from "../../shared/timeout-types";
 import { ensureCustomStylePrompt } from "../style-prompt";
 import { copyGlobalConfigToDedicated } from "../code-git/dedicated-git-config";
@@ -404,6 +405,22 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   // 视觉模型连通性测试（实现与 native 设置窗共用：settings/vision-test.ts）
   // vault 模式下掩码空 key → keyring vision 槽回填（resolveVisionTestApiKey，与 WPF 同口径）
+  ipc.handle(IPC.SETTINGS_DS_FILES_QUOTA, async (_event, cfg: { baseUrl: string; apiKey: string }) => {
+    try {
+      const files = await listDeepSeekFiles(cfg.baseUrl, cfg.apiKey);
+      return { ok: true as const, quota: aggregateQuota(files) };
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  ipc.handle(IPC.SETTINGS_DS_FILES_CLEANUP, async (_event, cfg: { baseUrl: string; apiKey: string; protectedIds?: string[] }) => {
+    try {
+      const result = await cleanupDeepSeekFiles(cfg.baseUrl, cfg.apiKey, { protectedIds: new Set(cfg.protectedIds ?? []) });
+      return { ok: true as const, result };
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
   ipc.handle(IPC.SETTINGS_TEST_VISION, async (_event, cfg: { baseUrl: string; apiKey: string; model: string }) => {
     return testVisionConnection({ ...cfg, apiKey: resolveVisionTestApiKey(cfg.apiKey ?? "") });
   });
