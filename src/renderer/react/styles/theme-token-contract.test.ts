@@ -10,6 +10,7 @@ const requiredTokens = [
   "--rb-surface-hover",
   "--rb-surface-active",
   "--rb-surface-soft",
+  "--rb-surface-secondary",
   "--rb-text-primary",
   "--rb-text-secondary",
   "--rb-text-disabled",
@@ -48,6 +49,16 @@ describe("React 主题令牌契约", () => {
       for (const stylesheet of stylesheets) {
         expect(stylesheet).toContain(`${token}:`);
       }
+    }
+  });
+
+  it("每个主题都为次级表面角色提供自己的颜色（上游 bd09be4a）", () => {
+    const themesDir = resolve(uiRoot, "themes");
+    const files = readdirSync(themesDir).filter((f) => f.endsWith(".css"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const css = readStyle(resolve(themesDir, file));
+      expect(css, `${file} 缺少 --rb-surface-secondary 定义`).toContain("--rb-surface-secondary:");
     }
   });
 
