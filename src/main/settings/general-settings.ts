@@ -15,6 +15,7 @@ import type { CustomStyleConfig, StyleId } from "../../shared/style-sampling";
 import type { ToolModeOverrides } from "../orchestrator/tools/registry/tool-registry";
 import type { SkillModeOverrides } from "../skills/types";
 import type { LspServerOverride } from "../lsp/types";
+import type { DayType } from "../pricing/holidays";
 
 /**
  * 通用设置（GeneralSettings）：与模型配置无关的 UI、TTS、工具开关、快捷键等。
@@ -286,4 +287,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   recentProjects: string[];
   /** 用户明确接受的免责声明版本；空字符串表示尚未接受当前条款。 */
   disclaimerAcceptedVersion?: string;
+  /**
+   * 法定节假日手动 override（issue #210，三层叠加最高优先层）。
+   * key = ISO 日期（YYYY-MM-DD），value = 日类型。覆盖内置年度表，
+   * 用于兜底次年安排公布滞后的窗口与特殊安排。峰谷判定（#211）消费。
+   */
+  holidayDayTypeOverrides?: Record<string, DayType>;
 }
