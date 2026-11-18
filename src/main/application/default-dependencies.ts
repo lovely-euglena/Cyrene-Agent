@@ -2194,15 +2194,31 @@ createTray: (input) => {
         // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
         registerOpenInAppIpc(ipc);
         const examPaperStore = createExamPaperStore(app.getPath("userData"));
+        const browserAdblock = createBrowserAdblock(app.getPath("userData"), {
+          loadPrebuilt: (caching) => ElectronBlocker.fromPrebuiltAdsAndTracking(caching),
+          parseRules: (text) => ElectronBlocker.parse(text),
+          mergeEngines: (engines) => FiltersEngine.merge(engines),
+          deserialize: (buffer) => ElectronBlocker.deserialize(buffer),
+        });
         const browserPanel = registerBrowserPanelIpc({
           ipc,
           getWindow: () => reactChatWindow,
           getExamRecord: (examId) => examPaperStore.get(examId),
+          onBrowserSessionCreated: (session) => { void browserAdblock.onSessionCreated(session); },
+        });
+        // 广告拦截（#143）：设置变更热应用；初始装配由 onBrowserSessionCreated 触发
+        onGeneralSettingsChanged((_before, after) => {
+          void browserAdblock.applyConfig(loadAdblockConfig(after));
         });
         shutdown.register({
           id: "browser-panel-session",
           phase: "flushPersistence",
           dispose: async () => { await browserPanel.persistSessionForShutdown(); },
+        });
+        shutdown.register({
+          id: "browser-adblock",
+          phase: "stopExternalConsumers",
+          dispose: async () => { browserAdblock.dispose(); },
         });
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传

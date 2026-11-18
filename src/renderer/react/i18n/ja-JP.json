@@ -1029,6 +1029,11 @@
     "backToWorkspace": "ワークスペースに戻る",
     "basicSettings": "基本設定",
     "browserControl": {
+      "adblockTitle": "広告ブロック",
+      "adblockDescription": "内蔵ブラウザで広告・トラッキング リクエストをブロック（uBlock/EasyList ルール）",
+      "adblockAllowlist": "許可ドメイン",
+      "adblockAllowlistDescription": "カンマ区切り。一致したドメインはブロックしません",
+      "adblockAllowlistPlaceholder": "例: example.com, news.example.org",
       "navLabel": "ブラウザー管理",
       "title": "ブラウザー管理",
       "description": "Cyrene 内蔵ブラウザーのセッションデータを管理します。",

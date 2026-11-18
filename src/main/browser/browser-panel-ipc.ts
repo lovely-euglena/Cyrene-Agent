@@ -25,6 +25,8 @@ export function registerBrowserPanelIpc(input: {
   ipc: IpcScope;
   getWindow: () => BrowserWindow | null;
   getExamRecord?: (examId: string) => Promise<LearnExamRecord | null>;
+  /** 会话首次创建回调（#143）：广告拦截等 session 级能力在此挂载 */
+  onBrowserSessionCreated?: (session: Electron.Session) => void;
 }): BrowserPanelController {
   const controller = new BrowserPanelController(input.getWindow, (state) => {
     const win = input.getWindow();
@@ -32,7 +34,7 @@ export function registerBrowserPanelIpc(input: {
   }, (element) => {
     const win = input.getWindow();
     if (win && !win.isDestroyed()) win.webContents.send(IPC.BROWSER_PANEL_ELEMENT_SELECTED, element);
-  });
+  }, input.onBrowserSessionCreated);
   setBrowserPanelController(controller);
   controller.setOpenPanelForControl(() => {
     const win = input.getWindow();

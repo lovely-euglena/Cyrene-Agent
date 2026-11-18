@@ -1,0 +1,19 @@
+The prebuilt filter lists embedded in @ghostery/adblocker
+(fromPrebuiltAdsAndTracking) are built from the EasyList family
+of filter lists, distributed from https://easylist.to/
+
+Source repositories:
+  - EasyList:     https://easylist.to/easylist/easylist.txt
+  - EasyPrivacy:  https://easylist.to/easylist/easyprivacy.txt
+
+Licence (per https://easylist.to/pages/licence.html):
+
+  The contents of the EasyList repository (https://github.com/easylist)
+  is dual licensed under the GNU General Public License version 3 or
+  (at your option) any later version, and Creative Commons
+  Attribution-ShareAlike 3.0 Unported, or (at your option) any later
+  version. You may use and/or modify the files as permitted by either
+  licence; if required, "The EasyList authors (https://easylist.to/)"
+  should be attributed as the source of the material.
+
+Attribution: The EasyList authors (https://easylist.to/)
