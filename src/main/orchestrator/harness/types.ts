@@ -172,7 +172,7 @@ export type HarnessEvent =
   | { type: "reasoning_end"; messageId: string }
   | { type: "tool_start"; toolCallId: string; toolName: string; args: Record<string, unknown>; displayName?: string }
   | ({ type: "tool_output"; toolCallId: string } & import("../tools/registry/tool-context").ShellOutputUpdate)
-  | { type: "tool_end"; toolCallId: string; outcome: ToolCallOutcome; preview: string; changes?: ToolFileChange[] }
+  | { type: "tool_end"; toolCallId: string; outcome: ToolCallOutcome; preview: string; changes?: ToolFileChange[]; actionHint?: string }
   | { type: "todo_update"; items: TodoItem[] }
   | { type: "context_usage"; snapshot: ContextUsageSnapshot }
   | { type: "ask_user"; card: unknown }

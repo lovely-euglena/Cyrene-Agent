@@ -30,14 +30,17 @@ describe("executeToolDefinition", () => {
   it("preserves typed failure facts", async () => {
     const error = new ToolExecutionError("E_REMOTE_TIMEOUT", "unknown outcome", "timeout", false, "unknown");
     const outcome = await executeToolDefinition(fakeTool(vi.fn(async () => { throw error; })), {});
+    // issue #139：模型面结构化文本——message 不再裸透传，formatter 产出含原因+修正建议
     expect(outcome).toMatchObject({
       status: "failed",
       errorCode: "E_REMOTE_TIMEOUT",
       category: "timeout",
       retryable: false,
       effectState: "unknown",
-      output: "unknown outcome",
     });
+    expect(outcome.output).toContain("code=E_REMOTE_TIMEOUT");
+    expect(outcome.output).toContain("原因: unknown outcome");
+    expect(outcome.output).toContain("修正建议:");
   });
 
   it("keeps compatibility with legacy JSON success:false", async () => {

@@ -111,6 +111,7 @@ export function sendHarnessEventAsAgui(
         changes: event.changes,
         role: "tool",
         status: event.outcome === "success" ? "success" : "failed",
+        actionHint: event.actionHint,
         threadId,
         runId,
       } as BaseEvent);

@@ -8,11 +8,13 @@ import {
   type ToolErrorCategory,
 } from "./tool-execution-error";
 import type { ToolExecutionOutcome } from "../../types";
+import { formatToolErrorForModel } from "./tool-error-formatting";
 
 function isCategory(value: unknown): value is ToolErrorCategory {
   return typeof value === "string" && [
     "transient", "timeout", "rate_limited", "not_found", "permission_denied",
     "invalid_arguments", "semantic_failure", "partial_failure", "fatal", "runtime_safety",
+    "config_error", "environment_missing",
   ].includes(value);
 }
 
@@ -94,11 +96,20 @@ export async function executeToolDefinition(
     if (error instanceof ToolExecutionError) {
       return normalizeToolExecutionOutcome({
         status: "failed",
-        output: error.message,
+        // issue #139 模型面：结构化错误文本（code+category+retryable+原因+修正建议）
+        output: formatToolErrorForModel({
+          code: error.code,
+          category: error.category,
+          message: error.message,
+          retryable: error.retryable,
+          effectState: error.effectState,
+          remediation: error.remediation,
+        }),
         errorCode: error.code,
         category: error.category,
         retryable: error.retryable,
         effectState: error.effectState,
+        actionHint: error.actionHint,
       });
     }
 

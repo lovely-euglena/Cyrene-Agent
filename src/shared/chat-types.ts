@@ -50,6 +50,8 @@ export interface ToolExecutionRecord {
   changes?: ToolFileChange[];
   /** run 内单调递增的时间线序号：保证推理/正文/工具跨类别按实际发生顺序排列。 */
   seq?: number;
+  /** issue #139 用户面：失败时的可行动指引（"去设置页配置 X"）。 */
+  actionHint?: string;
 }
 
 /** Diff Review 卡片：单行展示（hunk=@@ 头，context=未变行）。 */

@@ -17,6 +17,8 @@ export interface ToolCallResult {
   retryable?: boolean;
   // 本次调用未真正执行，是 ExecutionLedger 缓存命中
   deduplicated?: boolean;
+  /** issue #139 用户面：可行动指引（"去设置页配置 X"），UI 失败卡片展示。 */
+  actionHint?: string;
   /** false means the failure happened before Tool Runtime was invoked. */
   toolExecuted?: false;
   /** 稳定能力标识（从 ToolDefinition.capability ?? toolId 取值） */
@@ -41,4 +43,6 @@ export interface ToolExecutionOutcome {
   terminal?: boolean;
   // 完成语义：失败后是否值得重试（默认 false，由 normalizer 推导）
   retryable?: boolean;
+  /** issue #139 用户面：可行动指引（"去设置页配置 X"），UI 失败卡片展示。 */
+  actionHint?: string;
 }

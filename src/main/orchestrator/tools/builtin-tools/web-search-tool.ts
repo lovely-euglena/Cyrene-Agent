@@ -9,6 +9,7 @@
 
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { ToolExecutionError } from "../registry/tool-execution-error";
 import { TtlResultCache } from "./ttl-result-cache";
 import { nativeFirst, nativeToolHost } from "../native-tool-host";
 
@@ -233,12 +234,28 @@ async function anySearchSearch(query: string, key: string, signal?: AbortSignal)
 async function executeWebSearch(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const engine = searchEngineGetter?.() ?? "off";
   if (engine === "off") {
-    throw new Error("E_SEARCH_NOT_ENABLED");
+    // issue #139：配置错误两面包——模型面告诉它该开什么，用户面给设置页指引
+    throw new ToolExecutionError(
+      "E_SEARCH_NOT_ENABLED",
+      "联网搜索未启用",
+      "config_error",
+      false,
+      "not_applied",
+      "web_search 需要先启用搜索源。请改用其他工具完成任务，或提示用户到设置页启用搜索。",
+      "去 设置 → 工具 页开启联网搜索并选择搜索源。",
+    );
   }
 
   const query = String(args.query ?? "").trim();
   if (!query) {
-    throw new Error("E_SEARCH_QUERY_EMPTY");
+    throw new ToolExecutionError(
+      "E_SEARCH_QUERY_EMPTY",
+      "搜索词为空",
+      "invalid_arguments",
+      false,
+      "not_applied",
+      "query 是必填字段。请提供非空搜索词后重新调用。",
+    );
   }
 
   // 缓存命中：标注 cached/cachedAt，让模型自知结果的新鲜度，
@@ -257,13 +274,29 @@ async function executeWebSearch(args: Record<string, unknown>, ctx?: ToolContext
   if (engine === "bocha") {
     const key = searchBochaKeyGetter?.() ?? "";
     if (!key) {
-      throw new Error("E_SEARCH_KEY_MISSING");
+      throw new ToolExecutionError(
+        "E_SEARCH_KEY_MISSING",
+        `搜索源 bocha 的 API key 未配置`,
+        "config_error",
+        false,
+        "not_applied",
+        "当前搜索源缺少 API key，重试不会成功。请提示用户配置，或改用不需要 key 的方式。",
+        "去 设置 → 工具 页填写 Bocha API key。",
+      );
     }
     output = await bochaSearch(query, key, ctx?.signal);
   } else if (engine === "tavily") {
     const key = searchTavilyKeyGetter?.() ?? "";
     if (!key) {
-      throw new Error("E_SEARCH_KEY_MISSING");
+      throw new ToolExecutionError(
+        "E_SEARCH_KEY_MISSING",
+        `搜索源 tavily 的 API key 未配置`,
+        "config_error",
+        false,
+        "not_applied",
+        "当前搜索源缺少 API key，重试不会成功。请提示用户配置，或改用不需要 key 的方式。",
+        "去 设置 → 工具 页填写 Tavily API key。",
+      );
     }
     output = await tavilySearch(query, key, ctx?.signal);
   } else if (engine === "anySearch") {

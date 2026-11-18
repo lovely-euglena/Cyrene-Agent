@@ -122,6 +122,9 @@ export function ToolOutputTerminal({ tool, result }: { tool: ToolExecutionRecord
       <div className="cy-command-terminal__body" ref={scrollerRef}>
         <pre className="cy-command-terminal__output"><Ansi>{output}</Ansi>{tool.status === "running" && <span className="cy-command-terminal__cursor" aria-hidden="true" />}</pre>
       </div>
+      {tool.status === "error" && tool.actionHint && (
+        <div className="cy-command-terminal__action-hint" role="note">{tool.actionHint}</div>
+      )}
     </section>
   );
 }
