@@ -140,8 +140,8 @@ export class Live2DHostClient extends LineHostClient {
   async captureFrame(): Promise<Live2DCaptureResult> {
     return (await this.call(LIVE2D_OPS.captureFrame, {})) as Live2DCaptureResult;
   }
-  async getDiagnostics(): Promise<Live2DDiagnostics> {
-    return (await this.call(LIVE2D_OPS.getDiagnostics, {})) as Live2DDiagnostics;
+  async getDiagnostics(opts?: { includeParameters?: boolean }): Promise<Live2DDiagnostics> {
+    return (await this.call(LIVE2D_OPS.getDiagnostics, opts ?? {})) as Live2DDiagnostics;
   }
   setParameter(id: string, value: number): Promise<unknown> {
     return this.call(LIVE2D_OPS.setParameter, { id, value });

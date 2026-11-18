@@ -3,6 +3,7 @@
 // 本类把协议 op 落到各层；帧循环顺序与 pixi-live2d-display 逐帧对齐（见 Tick）。
 
 using System.Text.Json;
+using System.Linq;
 using CyreneLive2D.Behavior;
 using CyreneLive2D.Core;
 using CyreneLive2D.Host;
@@ -35,6 +36,7 @@ public sealed class PetEngine : IDisposable
 
     // 行为层（T4）
     private FocusController? _focus;
+    private float[] _midFrameParams = Array.Empty<float>();
     private BlinkController? _blink;
     private MouthSyncController? _mouth;
     private SpeakingMotionController? _swing;
@@ -89,7 +91,8 @@ public sealed class PetEngine : IDisposable
                 break;
 
             case Live2DOps.GetDiagnostics:
-                _io.SendResult(callId, GetDiagnostics());
+                _io.SendResult(callId, GetDiagnostics(
+                    frame.TryGetProperty("includeParameters", out var ipEl) && ipEl.ValueKind == JsonValueKind.True));
                 break;
 
             case Live2DOps.SetParameter:
@@ -387,6 +390,11 @@ public sealed class PetEngine : IDisposable
         _swing!.Tick(_nowMs);
         _exprReset!.Tick(RealNowMs); // 真实时间：隐藏超 3min 恢复即回正（对齐 web）
 
+        // 中帧参数快照（全部写入完成、Update/loadParameters 回滚前）——
+        // 双轨行为数值对照用（getDiagnostics includeParameters）。
+        if (_midFrameParams.Length != _model.ParameterCount) _midFrameParams = new float[_model.ParameterCount];
+        _model.ParameterValuesSpan.CopyTo(_midFrameParams);
+
         _model.Update();
         _model.LoadParameters();
     }
@@ -602,7 +610,7 @@ public sealed class PetEngine : IDisposable
         }
     }
 
-    private object GetDiagnostics() => new
+    private object GetDiagnostics(bool includeParameters = false) => new
     {
         loaded = IsLoaded,
         coreVersion = CoreLibrary.IsLoaded ? CoreLibrary.VersionString : null,
@@ -635,6 +643,13 @@ public sealed class PetEngine : IDisposable
             focusX = _focus!.X,
             focusY = _focus.Y,
         },
+        // 探针/诊断用参数快照（opt-in；中帧值=全部写入完成、loadParameters 回滚前，
+        // 双轨行为数值对照，#257 动作态探针）
+        parameterValues = includeParameters && _model != null && _midFrameParams.Length == _model.ParameterCount
+            ? Enumerable.Range(0, _model.ParameterCount)
+                .Select(i => new { id = _model.ParameterIds[i], value = _midFrameParams[i] })
+                .ToArray()
+            : null,
     };
 
     public void Dispose()

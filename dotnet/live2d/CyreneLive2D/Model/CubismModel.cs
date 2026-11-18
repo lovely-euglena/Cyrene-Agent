@@ -159,6 +159,9 @@ public sealed unsafe class CubismModel : IDisposable
     public int GetDrawableIndex(string id) => _drawableIndex.TryGetValue(id, out var i) ? i : -1;
 
     public float* ParameterValues => CoreNative.csmGetParameterValues(_model);
+
+    /// <summary>当前参数值 Span（中帧快照/诊断用）。</summary>
+    public unsafe Span<float> ParameterValuesSpan => new(ParameterValues, ParameterCount);
     public float* PartOpacities => CoreNative.csmGetPartOpacities(_model);
 
     public float GetParameterValue(int index) => ParameterValues[index];

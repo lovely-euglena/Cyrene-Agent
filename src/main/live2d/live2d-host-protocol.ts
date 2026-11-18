@@ -178,6 +178,8 @@ export interface Live2DDiagnostics {
     focusX: number;
     focusY: number;
   };
+  /** opt-in（includeParameters=true）：当前参数值快照，双轨行为数值对照用。 */
+  parameterValues?: { id: string; value: number }[];
 }
 
 // ── 事件载荷（event 帧 payload 段） ──────────────────────────
