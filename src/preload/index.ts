@@ -1152,6 +1152,9 @@ const ttsApi = {
     expectedCacheKey?: string;
   }) => ipcRenderer.invoke(IPC.TTS_SYNTHESIZE_CACHED_MIMO, payload),
   // Mossland TTS（api.mosi.cn，POST /v1/audio/speech）
+  synthesizeDeepseek: (payload: {
+    apiKey: string; voiceId: "stella" | "tide"; text: string;
+  }) => ipcRenderer.invoke(IPC.TTS_SYNTHESIZE_DEEPSEEK, payload),
   synthesizeMossland: (payload: {
     apiKey: string; voiceId: string; text: string;
     model?: string; format?: "mp3" | "wav";

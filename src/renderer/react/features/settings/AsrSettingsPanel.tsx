@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, AudioLines, Headphones, LoaderCircle, Mic2, X } from "lucide-react";
-import { siAlibabacloud, siMinimax } from "simple-icons";
+import { siAlibabacloud, siDeepseek, siMinimax } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import { Card } from "../../components/ui/Card";
 
-type AsrEngine = "off" | "aliyun" | "mossland" | "minimax" | "local";
+type AsrEngine = "off" | "aliyun" | "mossland" | "minimax" | "local" | "deepseek";
 type AsrLanguage = "zh" | "en";
-type SecretField = "asrAliyunAppKey" | "asrAliyunAccessKeyId" | "asrAliyunAccessKeySecret" | "ttsMosslandKey" | "asrMinimaxKey";
+type SecretField = "asrAliyunAppKey" | "asrAliyunAccessKeyId" | "asrAliyunAccessKeySecret" | "ttsMosslandKey" | "asrMinimaxKey" | "asrDeepseekKey";
 type AsrValues = {
   asrEngine: AsrEngine;
   asrAliyunAppKey: string;
@@ -16,6 +16,7 @@ type AsrValues = {
   asrAliyunAccessKeySecret: string;
   ttsMosslandKey: string;
   asrMinimaxKey: string;
+  asrDeepseekKey: string;
   asrLanguage: AsrLanguage;
   asrVadSilenceMs: number;
   asrVadThreshold: number;
@@ -29,6 +30,7 @@ const defaults: AsrValues = {
   asrAliyunAccessKeySecret: "",
   ttsMosslandKey: "",
   asrMinimaxKey: "",
+  asrDeepseekKey: "",
   asrLanguage: "zh",
   asrVadSilenceMs: 1000,
   asrVadThreshold: 0.01,
@@ -37,12 +39,13 @@ const defaults: AsrValues = {
 
 function readAsrValues(config: Record<string, unknown>): AsrValues {
   return {
-    asrEngine: config.asrEngine === "aliyun" || config.asrEngine === "mossland" || config.asrEngine === "minimax" || config.asrEngine === "local" ? config.asrEngine : "off",
+    asrEngine: config.asrEngine === "aliyun" || config.asrEngine === "mossland" || config.asrEngine === "minimax" || config.asrEngine === "local" || config.asrEngine === "deepseek" ? config.asrEngine : "off",
     asrAliyunAppKey: typeof config.asrAliyunAppKey === "string" ? config.asrAliyunAppKey : "",
     asrAliyunAccessKeyId: typeof config.asrAliyunAccessKeyId === "string" ? config.asrAliyunAccessKeyId : "",
     asrAliyunAccessKeySecret: typeof config.asrAliyunAccessKeySecret === "string" ? config.asrAliyunAccessKeySecret : "",
     ttsMosslandKey: typeof config.ttsMosslandKey === "string" ? config.ttsMosslandKey : "",
     asrMinimaxKey: typeof config.asrMinimaxKey === "string" ? config.asrMinimaxKey : "",
+    asrDeepseekKey: typeof config.asrDeepseekKey === "string" ? config.asrDeepseekKey : "",
     asrLanguage: config.asrLanguage === "en" ? "en" : "zh",
     asrVadSilenceMs: typeof config.asrVadSilenceMs === "number" ? config.asrVadSilenceMs : 1000,
     asrVadThreshold: typeof config.asrVadThreshold === "number" ? config.asrVadThreshold : 0.01,
@@ -121,7 +124,7 @@ export function AsrSettingsPanel() {
 
   function update<K extends keyof AsrValues>(key: K, value: AsrValues[K]) {
     setValues((current) => ({ ...current, [key]: value }));
-    if (key === "asrAliyunAppKey" || key === "asrAliyunAccessKeyId" || key === "asrAliyunAccessKeySecret" || key === "ttsMosslandKey" || key === "asrMinimaxKey") {
+    if (key === "asrAliyunAppKey" || key === "asrAliyunAccessKeyId" || key === "asrAliyunAccessKeySecret" || key === "ttsMosslandKey" || key === "asrMinimaxKey" || key === "asrDeepseekKey") {
       scheduleSecret(key, String(value));
     } else {
       void persist(key, value);
@@ -141,6 +144,7 @@ export function AsrSettingsPanel() {
             { value: "aliyun", label: t("settingsPage.asr.engineAliyun"), icon: <BrandIcon icon={siAlibabacloud} size={20} label="Alibaba Cloud" /> },
             { value: "mossland", label: t("settingsPage.asr.engineMossland"), icon: <Mic2 size={19} /> },
             { value: "minimax", label: t("settingsPage.asr.engineMinimax"), icon: <BrandIcon icon={siMinimax} size={20} label="MiniMax" /> },
+            { value: "deepseek", label: t("settingsPage.asr.engineDeepseek"), icon: <BrandIcon icon={siDeepseek} size={20} label="DeepSeek" /> },
             { value: "local", label: t("settingsPage.asr.engineLocal"), icon: <Headphones size={19} /> },
           ] as const).map((engine) => <button key={engine.value} type="button" aria-pressed={values.asrEngine === engine.value} className={`cy-asr-engine ${values.asrEngine === engine.value ? "is-active" : ""}`} onClick={() => update("asrEngine", engine.value)}>
             <span className="cy-asr-engine__icon">{engine.icon}</span><span>{engine.label}</span>
@@ -161,6 +165,11 @@ export function AsrSettingsPanel() {
       {values.asrEngine === "mossland" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Mic2 size={18} />{t("settingsPage.asr.mosslandTitle")}</h2><p>{t("settingsPage.asr.mosslandHint")}</p></div>
         <Card className="cy-asr-fields"><label><span>{t("settingsPage.asr.mosslandKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.ttsMosslandKey} onChange={(event) => update("ttsMosslandKey", event.target.value)} onBlur={() => flushSecret("ttsMosslandKey")} autoComplete="off" /></label></Card>
+      </section>}
+
+      {values.asrEngine === "deepseek" && <section className="cy-settings-section">
+        <div className="cy-settings-section__heading"><h2><Mic2 size={18} />{t("settingsPage.asr.deepseekTitle")}</h2><p>{t("settingsPage.asr.deepseekHint")}</p></div>
+        <Card className="cy-asr-fields"><label><span>{t("settingsPage.asr.deepseekKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.asrDeepseekKey} onChange={(event) => update("asrDeepseekKey", event.target.value)} onBlur={() => flushSecret("asrDeepseekKey")} autoComplete="off" /></label></Card>
       </section>}
 
       {values.asrEngine === "minimax" && <section className="cy-settings-section">

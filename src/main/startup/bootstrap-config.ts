@@ -147,6 +147,9 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
     if (s.asrEngine === "minimax") {
       return { engine: "minimax", apiKey: s.asrMinimaxKey };
     }
+    if (s.asrEngine === "deepseek") {
+      return { engine: "deepseek", apiKey: s.asrDeepseekKey };
+    }
     if (s.asrEngine === "aliyun") {
       return { engine: "aliyun", appKey: s.asrAliyunAppKey, accessKeyId: s.asrAliyunAccessKeyId, accessKeySecret: s.asrAliyunAccessKeySecret, language: s.asrLanguage };
     }
@@ -182,6 +185,7 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
         ttsMimoKey: s.ttsMimoKey,
         ttsMimoVoiceAudioPath: s.ttsMimoVoiceAudioPath,
         ttsMimoStylePrompt: s.ttsMimoStylePrompt,
+        ttsDeepseekKey: s.ttsDeepseekKey, ttsDeepseekVoiceId: s.ttsDeepseekVoiceId,
       };
     },
     // 通话专用 system prompt 构建器

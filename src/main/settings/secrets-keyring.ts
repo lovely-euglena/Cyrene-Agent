@@ -525,6 +525,8 @@ export const SECRET_GENERAL_FIELDS: Array<{ jsonField: string; vaultKey: string 
   { jsonField: "asrAliyunAccessKeyId", vaultKey: "asr:aliyun-access-key-id" },
   { jsonField: "asrAliyunAccessKeySecret", vaultKey: "asr:aliyun-access-key-secret" },
   { jsonField: "asrMinimaxKey", vaultKey: "asr:minimax" },
+  { jsonField: "ttsDeepseekKey", vaultKey: "tts:deepseek" },
+  { jsonField: "asrDeepseekKey", vaultKey: "asr:deepseek" },
 ];
 
 /**

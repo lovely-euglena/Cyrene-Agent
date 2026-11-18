@@ -21,6 +21,8 @@ internal sealed class AsrDispatcher : IDisposable
     private readonly SendFrame _send;
     private readonly Dictionary<string, ClientWebSocket> _sockets = new();
     private readonly Dictionary<string, string> _mosslandTasks = new();
+    // deepseek：缓冲式会话（官方一次性接口 ≤120s/≤8MiB；config+PCM 累积，Stop 封 WAV 整段上传）
+    private readonly Dictionary<string, (string Config, MemoryStream Pcm, int TotalMs)> _deepseekBuffers = new();
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     public AsrDispatcher(SendFrame send) => _send = send;
@@ -35,6 +37,11 @@ internal sealed class AsrDispatcher : IDisposable
                 break;
             case "mossland":
                 _mosslandTasks[callId] = root.GetProperty("config").GetRawText();
+                _send(new { op = "asr_ready", callId, engine });
+                break;
+            case "deepseek":
+                _deepseekBuffers[callId] = (root.GetProperty("config").GetRawText(),
+                    new MemoryStream(), 0);
                 _send(new { op = "asr_ready", callId, engine });
                 break;
             default:
@@ -108,6 +115,16 @@ internal sealed class AsrDispatcher : IDisposable
 
     public async Task Audio(string callId, string pcmBase64)
     {
+        // deepseek：缓冲式（VAD 门控在宿主侧；帧 32B/ms @16kHz16bitmono）
+        if (_deepseekBuffers.TryGetValue(callId, out var buf))
+        {
+            var pcm = Convert.FromBase64String(pcmBase64);
+            buf.Pcm.Write(pcm);
+            buf.TotalMs += pcm.Length / 32;
+            if (buf.TotalMs > DeepSeekVoice.AsrMaxDurationMs)
+                throw new EngineException("E_ASR_SERVER", "DeepSeek ASR 音频超过 120s 限额");
+            return;
+        }
         if (!_sockets.TryGetValue(callId, out var ws) || ws.State != WebSocketState.Open) return;
         var pcm = Convert.FromBase64String(pcmBase64);
         await ws.SendAsync(new ArraySegment<byte>(pcm), WebSocketMessageType.Binary, true, CancellationToken.None);
@@ -120,6 +137,27 @@ internal sealed class AsrDispatcher : IDisposable
             try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
             catch { /* ignore */ }
             _sockets.Remove(callId);
+        }
+        if (_deepseekBuffers.Remove(callId, out var ds))
+        {
+            var pcmBytes = ds.Pcm.ToArray();
+            ds.Pcm.Dispose();
+            if (pcmBytes.Length == 0)
+            {
+                _send(new { op = "asr_final", callId, text = "" });
+                return;
+            }
+            var wav = DeepSeekVoice.EncodePcm16MonoWav(pcmBytes);
+            if (wav.Length > DeepSeekVoice.AsrMaxBytes)
+                throw new EngineException("E_ASR_SERVER", $"DeepSeek ASR WAV 超过 {DeepSeekVoice.AsrMaxBytes / 1024 / 1024}MiB 限额");
+            using var cfgDoc = JsonDocument.Parse(ds.Config);
+            var apiKey = cfgDoc.RootElement.TryGetProperty("apiKey", out var ak) ? ak.GetString() ?? "" : "";
+            if (apiKey.Length == 0)
+                throw new EngineException("E_ASR_AUTH", "DeepSeek ASR 缺 apiKey");
+            var baseUrl = cfgDoc.RootElement.TryGetProperty("baseUrl", out var bu) ? bu.GetString() : null;
+            var text = await DeepSeekVoice.TranscribeWav(apiKey, wav, baseUrl);
+            _send(new { op = "asr_final", callId, text });
+            return;
         }
         if (_mosslandTasks.Remove(callId, out var cfgRaw))
         {

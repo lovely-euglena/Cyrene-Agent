@@ -465,3 +465,4 @@ describe("AnthropicAdapter", () => {
     expect(body.messages[0].content.map((b) => b.type)).toEqual(["image", "image"]);
   });
 });
+
