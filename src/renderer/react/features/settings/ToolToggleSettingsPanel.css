@@ -231,3 +231,40 @@
 .tool-card__pill.is-on .tool-card__pill-knob {
   transform: translateX(16px);
 }
+
+/* ── 分组（#187）：组头可折叠，组序/组内序恒定 ── */
+.tool-panel__group { margin-bottom: 10px; }
+
+.tool-panel__group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--rb-surface-hover, rgba(127, 127, 127, 0.08));
+  cursor: pointer;
+  color: var(--rb-text-secondary, inherit);
+  font: 600 12.5px/1.3 var(--rb-font-sans, sans-serif);
+  text-align: left;
+}
+
+.tool-panel__group-head:hover { background: var(--rb-surface-hover, rgba(127, 127, 127, 0.14)); }
+
+.tool-panel__group-chevron {
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+
+.tool-panel__group-chevron.is-collapsed { transform: rotate(0deg); }
+.tool-panel__group-chevron:not(.is-collapsed) { transform: rotate(90deg); }
+
+.tool-panel__group-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--rb-surface-hover, rgba(127, 127, 127, 0.16));
+  font-size: 11px;
+  text-align: center;
+}

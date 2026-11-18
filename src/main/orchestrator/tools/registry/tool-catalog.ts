@@ -6,6 +6,7 @@
 // - 不依赖全局 toolRegistry；接受传入的工具列表，测试时可注入。
 
 import type { ToolDefinition } from "./tool-registry";
+import { groupByToolGroup, TOOL_GROUP_LABELS } from "../../../../shared/tool-groups";
 
 /**
  * 提取工具的目录用途。
@@ -21,16 +22,25 @@ function extractHint(tool: ToolDefinition): string {
 }
 
 /**
- * 生成工具目录文本。
+ * 生成工具目录文本（#187）：按组分节（组名 → 组内工具 id/用途/风险），
+ * 分组规则与设置页共用 shared/tool-groups。组序恒定，组内保持传入顺序
+ * （调用方的 registry 注册序 = 现有目录顺序，不额外重排）。
  * 空工具列表返回提示占位。
  */
 export function buildToolCatalog(tools: ReadonlyArray<ToolDefinition>): string {
   if (tools.length === 0) return "（当前没有可用工具）";
-  return tools
-    .map((tool) => {
-      const hint = extractHint(tool);
-      const risk = tool.risk ?? "undeclared";
-      return `- ${tool.id}\n  用途：${hint}\n  风险：${risk}`;
+  const sections = groupByToolGroup(tools);
+  return sections
+    .map((section) => {
+      const header = `## ${TOOL_GROUP_LABELS[section.key]}（${section.tools.length}）`;
+      const items = section.tools
+        .map((tool) => {
+          const hint = extractHint(tool);
+          const risk = tool.risk ?? "undeclared";
+          return `- ${tool.id}\n  用途：${hint}\n  风险：${risk}`;
+        })
+        .join("\n");
+      return `${header}\n${items}`;
     })
-    .join("\n");
+    .join("\n\n");
 }
