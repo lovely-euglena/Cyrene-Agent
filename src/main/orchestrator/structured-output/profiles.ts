@@ -17,7 +17,7 @@ interface ProfileDefinition {
   requestHints?: Partial<StructuredOutputProfile["requestHints"]>;
 }
 
-const KIMI_SLOW_MODEL_PATTERN = /^(?:kimi-for-coding|kimi-(?:k3|k2\.7-code(?:-highspeed)?))(?:$|-)/i;
+const KIMI_SLOW_MODEL_PATTERN = /^(?:kimi-for-coding|kimi-(?:k3(?:\.1-pro(?:-highspeed)?)?|k2\.7-code(?:-highspeed)?))(?:$|-)/i;
 
 const DEFINITIONS: readonly ProfileDefinition[] = [
   {
@@ -35,7 +35,9 @@ const DEFINITIONS: readonly ProfileDefinition[] = [
     id: "claude-structured-output",
     provider: "claude",
     transport: "anthropic",
-    modelPattern: /^claude-(?:fable-5|mythos(?:-5|-preview)|opus-4-[5-8]|sonnet-(?:5|4-[56])|haiku-4-5)(?:$|-\d{8})/i,
+    // v1.3.5 吸收（06c49749）：Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 output_config.format
+    // 结构化输出（官方文档 2026-11-01 核验）；完整名精确段与历史日期后缀并存。
+    modelPattern: /^claude-(?:fable-5(?:-1)?|mythos(?:-5|-preview)|opus-(?:5(?:-5)?|4-[5-8])|sonnet-(?:5(?:-5)?|4-[56])|haiku-4-5)(?:$|-\d{8})/i,
     tier: "A",
     mode: "provider_json_schema",
     verification: "official",
@@ -44,7 +46,9 @@ const DEFINITIONS: readonly ProfileDefinition[] = [
     id: "kimi-structured-output",
     provider: "kimi",
     transport: "openai",
-    modelPattern: /^(?:kimi-for-coding|kimi-(?:k3|k2\.(?:6|7-code(?:-highspeed)?)))(?:$|-)/i,
+    // v1.3.5 吸收（c5e4b21f）：K3.1 Pro / Pro Highspeed 走 provider_json_schema（官方 2026-10-24），
+    // 修复预算沿用 kimi-slow（KIMI_SLOW_MODEL_PATTERN 同步扩展）。
+    modelPattern: /^(?:kimi-for-coding|kimi-(?:k3(?:\.1-pro(?:-highspeed)?)?|k2\.(?:6|7-code(?:-highspeed)?)))(?:$|-)/i,
     tier: "A",
     mode: "provider_json_schema",
     verification: "official",

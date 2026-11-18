@@ -21,6 +21,16 @@ export const CLAUDE_REGISTRY = defineVendor({
   shortName: "Claude",
   reasoningRules: [
     // ── claude（Anthropic）──
+    // v1.3.5 吸收（06c49749）：Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 对 tool_choice
+    // any/tool 返回 400 且思考不能关闭（即使用户选「关闭」must-call 也必须落 auto）。
+    // 完整名精确规则在前，历史 fable-5/sonnet-5 宽规则只兜日期后缀。
+    { providerId: "claude", modelPattern: /^claude-(?:fable-5-1|opus-5(?:-5)?|sonnet-5-5)$/i, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "high",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: false,
+    } },
     { providerId: "claude", modelPattern: /^claude-fable-5/i, capability: {
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
