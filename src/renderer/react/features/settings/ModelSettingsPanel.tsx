@@ -46,6 +46,7 @@ import type { ApiTransport } from "../../../../shared/api-endpoint";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../../../shared/task-session";
 import { resolveApiEndpoint } from "../../../../shared/api-endpoint";
 import type { ReasoningEffort, ReasoningPreference } from "../../../../shared/reasoning";
+import { lookupBuiltinPricing, type ModelPricing } from "../../../../shared/pricing/model-pricing";
 import { normalizeManualReasoningConfig, type ManualReasoningConfig, type ManualReasoningStyle } from "../../../../shared/manual-reasoning";
 import type { TimeoutSettings } from "../../../../shared/timeout-types";
 import { DEFAULT_TIMEOUT_SETTINGS } from "../../../../shared/timeout-types";
@@ -74,7 +75,7 @@ interface ModelProfile {
   reasoning?: ReasoningPreference;
   contextWindowTokens?: number;
   multimodal?: boolean;
-  modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean; manualReasoning?: ManualReasoningConfig }>;
+  modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean; manualReasoning?: ManualReasoningConfig; pricing?: ModelPricing }>;
   /** 档案内可切换的模型清单；缺省 = 单模型档案 */
   models?: string[];
 }
@@ -167,6 +168,73 @@ interface ModelOptionDraft {
   multimodal: boolean;
   contextWindowTokens: string;
   manualReasoning?: ManualReasoningConfig;
+  pricing?: ModelPricing;
+}
+
+/** 单价弹窗编辑态（string 形态）；空价 = 未配置（不计成本，统计页显示"—"）。 */
+interface PricingDraft {
+  currency: string;
+  unit: "per1M" | "per1K";
+  inputPrice: string;
+  outputPrice: string;
+  cacheHitInputPrice: string;
+}
+
+const EMPTY_PRICING_DRAFT: PricingDraft = { currency: "", unit: "per1M", inputPrice: "", outputPrice: "", cacheHitInputPrice: "" };
+
+function pricingDraftOf(pricing?: ModelPricing): PricingDraft {
+  if (!pricing) return { ...EMPTY_PRICING_DRAFT };
+  return {
+    currency: pricing.currency,
+    unit: pricing.unit,
+    inputPrice: String(pricing.inputPrice),
+    outputPrice: String(pricing.outputPrice),
+    cacheHitInputPrice: pricing.cacheHitInputPrice === undefined ? "" : String(pricing.cacheHitInputPrice),
+  };
+}
+
+/**
+ * 编辑态 → 单价。全空 = undefined（未配置）；
+ * 数值与内置快照一致 = 跟内置走（不标 custom，版本更新可刷新）；
+ * 有差值 = 用户自定义（custom: true，版本更新不冲）。
+ * 返回 string = 校验错误文案键。
+ */
+function pricingFromDraft(modelId: string, draft: PricingDraft): ModelPricing | string | undefined {
+  const currency = draft.currency.trim().toUpperCase();
+  const inputPrice = draft.inputPrice.trim();
+  const outputPrice = draft.outputPrice.trim();
+  const cacheHit = draft.cacheHitInputPrice.trim();
+  if (!currency && !inputPrice && !outputPrice && !cacheHit) return undefined;
+  if (!/^[A-Za-z]{3}$/.test(currency)) return "settingsPage.modelSettings.pricingInvalid";
+  const positive = (v: string): number | undefined => {
+    const n = Number(v);
+    return v !== "" && Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const input = positive(inputPrice);
+  const output = positive(outputPrice);
+  if (input === undefined || output === undefined) return "settingsPage.modelSettings.pricingInvalid";
+  let cacheHitPrice: number | undefined;
+  if (cacheHit) {
+    const hit = positive(cacheHit);
+    if (hit === undefined || hit > input) return "settingsPage.modelSettings.pricingInvalid";
+    cacheHitPrice = hit;
+  }
+  const builtin = lookupBuiltinPricing(modelId);
+  const sameAsBuiltin = builtin
+    && builtin.currency === currency
+    && builtin.unit === draft.unit
+    && builtin.inputPrice === input
+    && builtin.outputPrice === output
+    && (builtin.cacheHitInputPrice ?? undefined) === cacheHitPrice;
+  if (sameAsBuiltin) return builtin;
+  return {
+    currency,
+    unit: draft.unit,
+    inputPrice: input,
+    outputPrice: output,
+    ...(cacheHitPrice !== undefined ? { cacheHitInputPrice: cacheHitPrice } : {}),
+    custom: true,
+  };
 }
 
 interface ModelProfileDraft {
@@ -232,6 +300,7 @@ export function ModelSettingsPanel() {
   const [modelOptionModelId, setModelOptionModelId] = useState("");
   const [modelOptionMultimodal, setModelOptionMultimodal] = useState(true);
   const [modelOptionContextWindow, setModelOptionContextWindow] = useState("256K");
+  const [modelOptionPricing, setModelOptionPricing] = useState<PricingDraft>(EMPTY_PRICING_DRAFT);
   const [manualEnabled, setManualEnabled] = useState(false);
   const [manualStyle, setManualStyle] = useState<ManualReasoningStyle>("openai-effort");
   const [manualEfforts, setManualEfforts] = useState<ReasoningEffort[]>(["low", "medium", "high"]);
@@ -337,6 +406,7 @@ export function ModelSettingsPanel() {
         multimodal: option?.multimodal ?? profile.multimodal ?? true,
         contextWindowTokens: String(option?.contextWindowTokens ?? profile.contextWindowTokens ?? 256000),
         manualReasoning: option?.manualReasoning,
+        pricing: option?.pricing,
       }];
     }));
     setModelOptions(nextModelOptions);
@@ -413,6 +483,8 @@ export function ModelSettingsPanel() {
     setModelOptionModelId(modelValue.trim());
     setModelOptionMultimodal(true);
     setModelOptionContextWindow("256000");
+    // 新模型预填内置价目快照（deepseek 等已收录厂商直接带价；未收录 = 空待填）
+    setModelOptionPricing(pricingDraftOf(lookupBuiltinPricing(modelValue.trim())));
     loadManualOption(undefined);
     setModelOptionError("");
     setModelOptionModalOpen(true);
@@ -424,6 +496,8 @@ export function ModelSettingsPanel() {
     setModelOptionModelId(modelId);
     setModelOptionMultimodal(option.multimodal);
     setModelOptionContextWindow(option.contextWindowTokens);
+    // 手改过用手改值；没改过预填内置价目（方便直接改数）
+    setModelOptionPricing(pricingDraftOf(option.pricing ?? lookupBuiltinPricing(modelId)));
     loadManualOption(option.manualReasoning);
     setModelOptionError("");
     setModelOptionModalOpen(true);
@@ -520,7 +594,12 @@ export function ModelSettingsPanel() {
       setModelOptionError(error instanceof Error ? error.message : String(error));
       return;
     }
-    const nextOption = { multimodal: modelOptionMultimodal, contextWindowTokens: String(contextWindowTokens), manualReasoning };
+    const pricing = pricingFromDraft(value, modelOptionPricing);
+    if (typeof pricing === "string") {
+      setModelOptionError(t(pricing));
+      return;
+    }
+    const nextOption = { multimodal: modelOptionMultimodal, contextWindowTokens: String(contextWindowTokens), manualReasoning, pricing };
     if (editingModelId) {
       setModelOptions((current) => ({ ...current, [editingModelId]: nextOption }));
     } else {
@@ -579,6 +658,7 @@ export function ModelSettingsPanel() {
       multimodal: modelOptions[item]?.multimodal ?? true,
       contextWindowTokens: parseContextWindow(modelOptions[item]?.contextWindowTokens ?? "") ?? 256000,
       manualReasoning: modelOptions[item]?.manualReasoning,
+      pricing: modelOptions[item]?.pricing,
     }]));
     const defaultOption = savedModelOptions[model.trim()] ?? Object.values(savedModelOptions)[0] ?? { multimodal: true, contextWindowTokens: 256000 };
     setSaving(true);
@@ -1056,7 +1136,74 @@ export function ModelSettingsPanel() {
             />
             <small>{t("settingsPage.modelSettings.contextWindowHint")}</small>
           </label>
-          <Collapse items={[{
+          <Collapse items={[
+          {
+            key: "pricing",
+            label: t("settingsPage.modelSettings.pricingTitle"),
+            children: <div className="cy-model-option-form">
+              <div>
+                <strong>{t("settingsPage.modelSettings.pricingTitle")}</strong>
+                <small>{t("settingsPage.modelSettings.pricingHint")}</small>
+              </div>
+              <div className="cy-model-option-form__grid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.pricingCurrency")}</span>
+                  <Input
+                    value={modelOptionPricing.currency}
+                    onChange={(event) => { setModelOptionPricing((c) => ({ ...c, currency: event.target.value })); setModelOptionError(""); }}
+                    maxLength={3}
+                    placeholder="CNY"
+                  />
+                </label>
+                <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.pricingUnit")}</span>
+                  <Select
+                    aria-label={t("settingsPage.modelSettings.pricingUnit")}
+                    value={modelOptionPricing.unit}
+                    onChange={(value: "per1M" | "per1K") => setModelOptionPricing((c) => ({ ...c, unit: value }))}
+                    options={[
+                      { value: "per1M", label: t("settingsPage.modelSettings.pricingUnitPer1M") },
+                      { value: "per1K", label: t("settingsPage.modelSettings.pricingUnitPer1K") },
+                    ]}
+                  />
+                </label>
+                <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.pricingInput")}</span>
+                  <Input
+                    value={modelOptionPricing.inputPrice}
+                    onChange={(event) => { setModelOptionPricing((c) => ({ ...c, inputPrice: event.target.value })); setModelOptionError(""); }}
+                    type="number"
+                    min={0}
+                    step="any"
+                    placeholder="0.00"
+                  />
+                </label>
+                <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.pricingOutput")}</span>
+                  <Input
+                    value={modelOptionPricing.outputPrice}
+                    onChange={(event) => { setModelOptionPricing((c) => ({ ...c, outputPrice: event.target.value })); setModelOptionError(""); }}
+                    type="number"
+                    min={0}
+                    step="any"
+                    placeholder="0.00"
+                  />
+                </label>
+                <label className="cy-model-field" style={{ gridColumn: "1 / -1" }}>
+                  <span>{t("settingsPage.modelSettings.pricingCacheHit")}</span>
+                  <Input
+                    value={modelOptionPricing.cacheHitInputPrice}
+                    onChange={(event) => { setModelOptionPricing((c) => ({ ...c, cacheHitInputPrice: event.target.value })); setModelOptionError(""); }}
+                    type="number"
+                    min={0}
+                    step="any"
+                    placeholder={t("settingsPage.modelSettings.pricingCacheHitPlaceholder")}
+                  />
+                </label>
+              </div>
+            </div>,
+          },
+          {
             key: "reasoning",
             label: t("settingsPage.modelSettings.manualReasoningTitle"),
             children: <div className="cy-model-option-form">
