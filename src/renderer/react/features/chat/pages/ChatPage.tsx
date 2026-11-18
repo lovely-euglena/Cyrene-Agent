@@ -205,8 +205,12 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   >({});
   // 最近绑定的项目文件夹：工作文件夹下拉的候选，打开下拉时再懒加载
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
-  // 欢迎页（无会话）暂存的模型选择：ensureSession 建会话后落地（与 pendingWorkspaceByMode 同构）。
+  // 欢迎页（无会话）暂存档案选择：ensureSession 建会话后落地（与 pendingWorkspaceByMode 同构）。
   const [pendingModelProfileByMode, setPendingModelProfileByMode] = useState<
+    Partial<Record<ConversationMode, string>>
+  >({});
+  // 欢迎页暂存的档案内模型选择；创建会话后在档案写入完成时落地。
+  const [pendingSessionModelByMode, setPendingSessionModelByMode] = useState<
     Partial<Record<ConversationMode, string>>
   >({});
   const [sessionsByMode, setSessionsByMode] = useState<Partial<Record<ConversationMode, ChatSessionMeta[]>>>({});
@@ -1192,6 +1196,15 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
         return next;
       });
     }
+    const pendingSessionModel = pendingSessionModelByMode[targetMode];
+    if (pendingSessionModel) {
+      await store.setSessionModel(session.id, pendingSessionModel);
+      setPendingSessionModelByMode((current) => {
+        const next = { ...current };
+        delete next[targetMode];
+        return next;
+      });
+    }
     await refreshSessions(targetMode, false);
     await selectSession(session.id, targetMode);
     return session.id;
@@ -2056,18 +2069,27 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 ? activeSession.modelProfileId
                 : pendingModelProfileByMode[mode]
             }
-            activeSessionModel={activeSession && activeSession.id === activeSessionId ? activeSession.model : undefined}
+            activeSessionModel={activeSession && activeSession.id === activeSessionId
+              ? activeSession.model
+              : pendingSessionModelByMode[mode]}
             contextUsage={latestContextUsage}
             mainModelFailure={activeSessionId ? mainModelFailureBySession[activeSessionId] : undefined}
             onSelectSessionModel={(model) => {
-              // 子下拉只在有会话时由 ModelSelector 渲染，这里防御性兜底
-              if (!activeSessionId) return;
+              if (!activeSessionId) {
+                setPendingSessionModelByMode((current) => ({ ...current, [mode]: model }));
+                return;
+              }
               modelSwitcher.switchModel(activeSessionId, model);
             }}
             onSelectModelProfile={(modelProfileId) => {
               // 欢迎页（无会话）：暂存选择，ensureSession 建会话后落地；不再静默丢弃。
               if (!activeSessionId) {
                 setPendingModelProfileByMode((current) => ({ ...current, [mode]: modelProfileId }));
+                setPendingSessionModelByMode((current) => {
+                  const next = { ...current };
+                  delete next[mode];
+                  return next;
+                });
                 return;
               }
               // operation token（决策 11）：最新一次切换独占 UI 更新权，迟到回调丢弃
