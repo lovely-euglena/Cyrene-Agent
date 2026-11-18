@@ -462,7 +462,6 @@ public static class LlmStreamSelfTest
 
         // ── 6. 超水位暂停恢复（复审 P0-2：慢流 4000 事件不 poll → 暂停上游 → 恢复 poll → 无丢弃收口）──
         {
-            var chunkOnce = false;
             using var server = new MockSseServer(async (ctx, n) =>
             {
                 // 一次性吐 4000 个 delta（> LowWater 1024 反压阈值）+ finish/done，再慢慢关
