@@ -36,6 +36,8 @@ jobs:
         run: dotnet build dotnet/native-windows -c Release
       - name: Build CyreneVoice
         run: dotnet build dotnet/voice/CyreneVoice -c Release
+      - name: Build live2d sidecar（#262 审计 P1：Live2D 工程零 CI 覆盖）
+        run: dotnet build dotnet/live2d/CyreneLive2D -c Release
       - name: Build smoke-host
         run: dotnet build dotnet/smoke-host -c Release
       - name: 协议套件（冒烟/边缘/矩阵/循环——Windows 语义实测）
