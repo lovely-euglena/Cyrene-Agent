@@ -1,18 +1,31 @@
-# B7：服务器侧 .NET 10 SDK 编译 + 双轨基线（Gitee Go 兼容 GitHub Actions 语法）
+# CI：服务器侧 .NET 10 SDK 编译 + 双平台基线 + Linux 协议套件
+# 沿革：B7 时期建（Gitee Go 兼容 GitHub Actions 语法）；主阵地迁 Gitea 后由
+# GitHub 镜像（lovely-euglena/Cyrene-Agent，Gitea push mirror 自动同步）承接。
+# runner 策略：public 仓库 Actions 免费——Linux 跑协议/契约/e2e 全链，Windows
+# 跑 WPF/WinForms 原生编译（EnableWindowsTargeting 只能"能编"，真平台才算数）。
 name: dotnet-backend
+
 on:
   push:
     branches: [main]
-    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/dotnet-backend/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py', '.github/workflows/dotnet-backend.yml']
   pull_request:
-    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py']
+    paths: ['dotnet/**', 'src/main/orchestrator/tools/**', 'src/main/sync/**', 'src/main/channels/**', 'src/main/proactive/**', 'src/pwa/**', 'fixtures/**', 'scripts/dual-track-diff.ts', 'scripts/dotnet-*.py', 'scripts/channel-*.py', 'scripts/pwa-e2e-test.mjs', 'scripts/check-cyrene-core-clean.py', '.github/workflows/dotnet-backend.yml']
+  # 手动入口：PR 分支经镜像同步后，在 Actions 页选分支 dispatch 验证（镜像仓无人发 PR，pull_request 仅保留语义）
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
+# 守卫：只在镜像主仓执行——上游吸收带下来的 workflow、他人 fork 均不空跑
+env:
+  CI_GUARD_REPO: lovely-euglena/Cyrene-Agent
+
 jobs:
-  build:
+  # ── Linux：编译 + 洁净断言 + 协议/契约/e2e 全链（B7 原套件，原样保留） ──
+  build-linux:
     runs-on: ubuntu-latest
+    if: github.repository == 'lovely-euglena/Cyrene-Agent'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -24,11 +37,7 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
       - name: cyrene-core 洁净断言（无 net10.0-windows / WPF / WinForms）
         run: python3 scripts/check-cyrene-core-clean.py
-      - name: Build cyrene-native
-        run: dotnet build dotnet/native-windows -c Release
-        env:
-          DOTNET_CLI_TELEMETRY_OPTOUT: 1
-      - name: Build CyreneVoice
+      - name: Build CyreneVoice（net10.0 跨平台）
         run: dotnet build dotnet/voice/CyreneVoice -c Release
       - name: Build smoke-host + Linux 协议套件（冒烟/边缘/矩阵/循环）
         run: |
@@ -46,6 +55,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
       - name: PWA 构建（Vite；Node 仅构建期，产物进 cloud-server wwwroot）
         run: |
           cd src/pwa
@@ -71,3 +81,30 @@ jobs:
         run: |
           npx playwright install msedge
           node scripts/pwa-e2e-test.mjs artifacts/cyrene-cloud/cyrene-cloud-server.dll
+      - name: 留存 cloud-server 产物（失败诊断用）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyrene-cloud-artifacts
+          path: artifacts/cyrene-cloud
+          retention-days: 7
+
+  # ── Windows：WPF/WinForms 原生编译（此前在 Linux 靠 EnableWindowsTargeting"能编"，真平台才算数） ──
+  build-windows:
+    runs-on: windows-latest
+    if: github.repository == 'lovely-euglena/Cyrene-Agent'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build cyrene-core（真 Windows 交叉验证，与 Linux 洁净断言互补）
+        run: dotnet build dotnet/cyrene-core -c Release
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      - name: Build cyrene-native（WPF/WinForms 原生平台）
+        run: dotnet build dotnet/native-windows -c Release
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      - name: Build CyreneVoice
+        run: dotnet build dotnet/voice/CyreneVoice -c Release

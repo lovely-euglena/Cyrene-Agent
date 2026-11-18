@@ -18,6 +18,9 @@ permissions:
 
 jobs:
   package:
+    # 守卫：只在镜像主仓执行——tag 经 push mirror 同步会触发本工作流，
+    # 其他 fork/上游仓库无构建依赖（mingit/mpv prepare、secrets），不空跑
+    if: github.repository == 'lovely-euglena/Cyrene-Agent'
     runs-on: windows-latest
     env:
       NODE_OPTIONS: --max-old-space-size=4096
