@@ -180,7 +180,9 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       ...buildRequest(messages, false),
     };
     const effectiveRequest = options.adapter.applyCacheHints?.(request, vendorConfig) ?? request;
-    const http = options.adapter.buildRequest(effectiveRequest, options.settings);
+    // issue #205/#207：DS Files 通道大图预处理（非 DS 通道原样返回；失败回退在 deepseek-files 内留痕）
+    const preparedRequest = await options.adapter.prepareRequest?.(effectiveRequest, options.settings) ?? effectiveRequest;
+    const http = options.adapter.buildRequest(preparedRequest, options.settings);
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
@@ -262,6 +264,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
   }> => {
     const request = buildRequest(messages, true);
     const effectiveRequest = options.adapter.applyCacheHints?.(request, vendorConfig) ?? request;
+    // issue #205/#207：DS Files 通道大图预处理（非 DS 通道原样返回；失败回退在 deepseek-files 内留痕）
+    const preparedRequest = await options.adapter.prepareRequest?.(effectiveRequest, options.settings) ?? effectiveRequest;
     const timePrefixFilter = new ChatTimeStreamPrefixFilter();
     let text = "";
     const emitTextDelta = (delta: string) => {
