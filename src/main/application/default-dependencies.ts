@@ -238,6 +238,9 @@ import {
 } from "../settings/native-voice-actions";
 import { pickAndSaveUserAvatar } from "../memory/user-avatar";
 import { createExamPaperStore } from "../learn/exam-paper-store";
+import { FiltersEngine } from "@ghostery/adblocker";
+import { ElectronBlocker } from "@ghostery/adblocker-electron";
+import { initAdblock, loadAdblockConfig, type AdblockDeps, type AdblockEngine, type AdblockCaching } from "../browser/adblock-service";
 import { createExamDraftStore } from "../learn/exam-draft";
 import { registerExamPaperIpc } from "../learn/exam-paper-ipc";
 import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
@@ -2194,21 +2197,33 @@ createTray: (input) => {
         // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
         registerOpenInAppIpc(ipc);
         const examPaperStore = createExamPaperStore(app.getPath("userData"));
-        const browserAdblock = createBrowserAdblock(app.getPath("userData"), {
-          loadPrebuilt: (caching) => ElectronBlocker.fromPrebuiltAdsAndTracking(caching),
-          parseRules: (text) => ElectronBlocker.parse(text),
-          mergeEngines: (engines) => FiltersEngine.merge(engines),
-          deserialize: (buffer) => ElectronBlocker.deserialize(buffer),
-        });
+        // 广告拦截（#143，!189 修复 P1：接线点与 adblock-service 现接口对齐——
+        // initAdblock 为 per-session 形态 (session, deps, getConfig) → {applyConfig, dispose}；
+        // 旧 createBrowserAdblock 全局形态已被重构淘汰，本处同步装配/热应用/释放三链）
+        const adblockDeps: AdblockDeps = {
+          loadPrebuilt: (caching) => ElectronBlocker.fromPrebuiltAdsAndTracking(caching as unknown as Parameters<typeof ElectronBlocker.fromPrebuiltAdsAndTracking>[0]),
+          parseRules: (text) => ElectronBlocker.parse(text) as unknown as AdblockEngine,
+          // merge 返回 FilterEngine 基类型；运行时依赖 ElectronBlocker 子类特性（enableBlockingInSession），
+          // 契约由 initAdblock 的 AdblockEngine 鸭子接口约束——双跳断言，前提见 adblock-service 注释
+          mergeEngines: (engines) => FiltersEngine.merge(engines as never) as unknown as AdblockEngine,
+          deserialize: (buffer) => ElectronBlocker.deserialize(buffer) as unknown as AdblockEngine,
+          cachePath: path.join(app.getPath("userData"), "adblock-engine-cache"),
+        };
+        const adblockInstances = new Map<unknown, ReturnType<typeof initAdblock>>();
         const browserPanel = registerBrowserPanelIpc({
           ipc,
           getWindow: () => reactChatWindow,
           getExamRecord: (examId) => examPaperStore.get(examId),
-          onBrowserSessionCreated: (session) => { void browserAdblock.onSessionCreated(session); },
+          onBrowserSessionCreated: (session) => {
+            const instance = initAdblock(session, adblockDeps, () => { const g = loadGeneralSettings(); return loadAdblockConfig({ adblockEnabled: g.adblockEnabled, adblockAllowlist: g.adblockAllowlist }); });
+            adblockInstances.set(session, instance);
+            void instance.applyConfig();
+          },
         });
-        // 广告拦截（#143）：设置变更热应用；初始装配由 onBrowserSessionCreated 触发
-        onGeneralSettingsChanged((_before, after) => {
-          void browserAdblock.applyConfig(loadAdblockConfig(after));
+        // 设置变更热应用到全部在册 session 实例
+        onGeneralSettingsChanged((_before, _after) => {
+          void Promise.all([...adblockInstances.values()].map((inst) => inst.applyConfig()))
+            .catch((err) => logger.warn(LogTag.Browser, "[adblock] 热应用失败:", err));
         });
         shutdown.register({
           id: "browser-panel-session",
@@ -2218,7 +2233,7 @@ createTray: (input) => {
         shutdown.register({
           id: "browser-adblock",
           phase: "stopExternalConsumers",
-          dispose: async () => { browserAdblock.dispose(); },
+          dispose: async () => { for (const inst of adblockInstances.values()) inst.dispose(); adblockInstances.clear(); },
         });
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传

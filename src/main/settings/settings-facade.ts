@@ -50,6 +50,8 @@ import {
 
 const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   assistantBubbleEnabled: false,
+    adblockEnabled: false,
+    adblockAllowlist: "",
   plugins: {},
   pluginRuntimeEnabled: false,
   rememberWindowState: true,
@@ -374,6 +376,8 @@ export function normalizeGeneralSettings(
     searchTavilyKey: typeof input?.searchTavilyKey === "string" ? input.searchTavilyKey : "",
     searchMinimaxKey: typeof input?.searchMinimaxKey === "string" ? input.searchMinimaxKey : "",
     searchAnySearchKey: typeof input?.searchAnySearchKey === "string" ? input.searchAnySearchKey : "",
+    adblockEnabled: input?.adblockEnabled === true,
+    adblockAllowlist: typeof input?.adblockAllowlist === "string" ? input.adblockAllowlist : "",
     emailEnabled: Boolean(input?.emailEnabled),
     emailSmtpHost: typeof input?.emailSmtpHost === "string" ? input.emailSmtpHost : "",
     emailSmtpPort: clampPort(input?.emailSmtpPort, DEFAULT_GENERAL_SETTINGS.emailSmtpPort),

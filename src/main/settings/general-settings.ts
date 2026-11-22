@@ -174,6 +174,10 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   searchTavilyKey: string;
   searchMinimaxKey: string;
   searchAnySearchKey: string;
+  /** 广告拦截启用（#143，!189 类型补齐——loadAdblockConfig 入参依赖） */
+  adblockEnabled: boolean;
+  /** 广告拦截白名单（逗号/换行分隔域名） */
+  adblockAllowlist: string;
   /** ✉️邮件发送插件是否启用 */
   emailEnabled: boolean;
   /** SMTP 主机，如 smtp.qq.com */
