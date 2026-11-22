@@ -50,4 +50,23 @@ describe("resolveReasoningCapability — 行为基准", () => {
       expect(cap).toBe(UNKNOWN_REASONING_CAPABILITY);
     }
   });
+
+  // !247 审查补充（与 !134 同教训）：order-snapshot 只证注册表数据顺序——行为面要独立断言。
+  // v1.3.5 吸收（06c49749）：Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 自适应思考，默认 high，不可关闭。
+  test("claude + claude-fable-5-1/opus-5-5/opus-5/sonnet-5-5 → 五档 effort 默认 high 且不可关闭", () => {
+    for (const model of ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"]) {
+      const cap = resolveReasoningCapability("claude", model);
+      expect(cap.control).toBe("toggle-effort");
+      expect(cap.requestStyle).toBe("anthropic-adaptive");
+      expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(cap.defaultEffort).toBe("high");
+      expect(cap.supportsDisable).toBe(false);
+    }
+  });
+
+  test("邻近反例：日期后缀走历史宽规则——fable-5 可关闭（新规则不可关闭，此为规则分界）", () => {
+    const cap = resolveReasoningCapability("claude", "claude-fable-5");
+    expect(cap).not.toBe(UNKNOWN_REASONING_CAPABILITY);
+    expect(cap.supportsDisable).toBe(true);
+  });
 });
