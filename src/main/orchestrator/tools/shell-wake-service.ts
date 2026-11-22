@@ -16,10 +16,10 @@
  * 一发）；不提权（事件本身不携带任何权限）；不制造用户发言（renderer
  * 只做轻提示）。
  */
-import { IPC } from "../../shared/ipc-channels";
+import { IPC } from "../../../shared/ipc-channels";
 import { subscribeShellJobTerminal, clearShellJobTerminalSubscribers, type ShellJobTerminalEvent } from "./builtin-tools/shell-job-manager";
-import { reactChatWindow } from "../windows/window-state";
-import { logger, LogTag } from "../logger";
+import { reactChatWindow } from "../../windows/window-state";
+import { logger, LogTag } from "../../logger";
 
 export interface ShellWakeService {
   /** 应用退出前调用：先停派发（对齐上游资源顺序约定）。 */
