@@ -168,12 +168,18 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   playwrightMcpEnabled: boolean;
   /** 📁 文件系统 MCP（官方 server-filesystem，允许目录为下载文件夹）是否启用。默认 false。 */
   filesystemMcpEnabled: boolean;
-  // 联网搜索：选哪个搜索源 + 对应 key
-  searchEngine: "off" | "bocha" | "tavily" | "minimax" | "anySearch";
+  // 联网搜索：选哪个搜索源 + 对应 key（!186：deepseek/zhipu 类型声明补齐——实现已写）
+  searchEngine: "off" | "bocha" | "tavily" | "minimax" | "anySearch" | "deepseek";
   searchBochaKey: string;
   searchTavilyKey: string;
   searchMinimaxKey: string;
   searchAnySearchKey: string;
+  /** DeepSeek Search API key（searchEngine=deepseek 时使用） */
+  searchDeepseekKey: string;
+  /** 智谱 key 来源：shared=复用模型厂商 key，custom=独立 key（实现口径 L381） */
+  searchZhipuKeySource: "shared" | "custom";
+  /** 智谱搜索 API key（source=independent 时使用） */
+  searchZhipuKey: string;
   /** ✉️邮件发送插件是否启用 */
   emailEnabled: boolean;
   /** SMTP 主机，如 smtp.qq.com */

@@ -151,6 +151,10 @@ export interface WebSearchHostSettings {
   bochaKey: string;
   tavilyKey: string;
   anySearchKey: string;
+  /** DeepSeek Search key（engine=deepseek）——!186 类型声明补齐 */
+  deepseekKey: string;
+  /** 智谱搜索 key（engine=deepseek 同族的智谱源）——!186 类型声明补齐 */
+  zhipuKey: string;
 }
 
 /** weather 宿主侧配置。 */
