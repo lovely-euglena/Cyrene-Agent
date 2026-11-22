@@ -195,5 +195,6 @@ export function registerDisabledNewsIpc(ipc: IpcScope): void {
     version: "",
     fetchedAt: 0,
     ok: true,
+    error: "",
   }));
 }

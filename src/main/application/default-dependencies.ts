@@ -1844,10 +1844,7 @@ createTray: (input) => {
         // 暂无稳定更新源，装配 disabled 实现（UI 显示"已是最新"，check/download/
         // install 全 no-op 零网络请求）。接稳定源（S3 generic provider）后换回
         // createGitHubAppUpdateService 即可。
-        const update = createDisabledAppUpdateService({
-          currentVersion: app.getVersion(),
-          isPackaged: app.isPackaged,
-        });
+        const update = createDisabledAppUpdateService(app.getVersion(), app.isPackaged);
 
         return {
           runtimeState: runtimeStateService,
