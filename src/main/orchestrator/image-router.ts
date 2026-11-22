@@ -54,7 +54,9 @@ export function resolveToolImageDelivery(settings: ImageRouteSettings): ToolImag
   }
   const route = resolveImageRoute("tool", settings);
   if (route.mode === "caption") return { mode: "caption", config: route.config };
-  return { mode: "reject", reason: route.reason };
+  if (route.mode === "reject") return { mode: "reject", reason: route.reason };
+  // direct 不可达（上面 direct 分支已返回）；防御性兜底，保持判别联合窄化完备
+  return { mode: "reject", reason: "unknown-route" };
 }
 
 /**

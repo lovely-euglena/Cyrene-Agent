@@ -455,7 +455,7 @@ function toolResultMessage(
   delete modelObservation.rawResult;
   delete modelObservation.toolOutputRef;
   if (conversationId && typeof modelObservation.output === "string" && modelObservation.output.includes("[图片直发:")) {
-    const { text, image } = buildDirectImageBlocks(modelObservation as { output?: string }, conversationId);
+    const { text, image } = buildDirectImageBlocks(modelObservation as { outcome: string; output?: string }, conversationId);
     if (image) {
       const content: ChatMessage["content"] = [
         { type: "text", text: text },
