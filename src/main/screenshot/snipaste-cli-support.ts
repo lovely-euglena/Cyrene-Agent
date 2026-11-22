@@ -8,13 +8,11 @@ export type SnipasteCliSupport = "beta" | "stable" | "unknown";
 
 const QUICK_EXIT_MS = 1500;
 
-/** 读取可执行文件版本字符串；读不到返回 null（判 unknown，走行为探测兜底）。 */
-export function defaultReadVersion(executable: string): string | null {
-  try {
-    return app.getFileVersion(executable) || null;
-  } catch {
-    return null;
-  }
+/** 读取可执行文件版本字符串；读不到返回 null（判 unknown，走行为探测兜底）。
+ * !180 修复：Electron 无读取第三方 PE 版本资源的 API（app.getFileVersion 不存在，
+ * app.getVersion 只返回应用自身版本，语义不符）——直接走 null → 行为探测兜底。 */
+export function defaultReadVersion(_executable: string): string | null {
+  return null;
 }
 
 /** 版本字符串 → CLI 支持度。版本信息缺失/读取失败/注入实现抛错 = unknown。 */
