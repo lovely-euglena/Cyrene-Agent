@@ -20,6 +20,16 @@ export const QWEN_REGISTRY = defineVendor({
   },
   shortName: "Qwen",
   reasoningRules: [
+    // ── Qwen4-Max（v1.3.6 吸收 17f67e4e，核验 2026-11-17）：混合思考，默认开启。
+    // reasoning_effort 支持 low/high/xhigh（默认 high），"none" 关闭思考。只覆盖正式版完整名称；
+    // 仅 Token Plan 可用的 qwen4-max-preview 默认 xhigh，规格不同，不在此列。
+    { providerId: "qwen", modelPattern: /^qwen4-max$/i, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "high", "xhigh"],
+      defaultEffort: "high",
+      requestStyle: "openai-effort",
+      supportsDisable: true,
+    } },
     // ── qwen（通义千问）──
     // /-thinking$/ 必须在 /^qwen3/ 之前。
     { providerId: "qwen", modelPattern: /-thinking$/i, capability: {

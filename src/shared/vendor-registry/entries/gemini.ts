@@ -24,15 +24,6 @@ export const GEMINI_REGISTRY = defineVendor({
   },
   shortName: "Gemini",
   reasoningRules: [
-    // ── Gemini 4 Neon（v1.3.6 吸收 316a02bb，核验 2026-11-19）：四档含 xhigh，默认 high，不可关闭。
-    // 官方兼容层 reasoning_effort 的 xhigh 映射到 Neon 与 Hydrogen；拒绝 minimal。
-    { providerId: "gemini", modelPattern: /^gemini-4-neon/i, capability: {
-      control: "effort",
-      supportedEfforts: ["low", "medium", "high", "xhigh"],
-      defaultEffort: "high",
-      requestStyle: "openai-effort",
-      supportsDisable: false,
-    } },
     // ── gemini（Google）──
     // 官方兼容文档：reasoning_effort 仅 low/medium/high 三档（映射 thinking_level）。
     // Gemini 3 系与 2.5 Pro 官方明确"思考不可关闭" → supportsDisable=false。
@@ -58,6 +49,15 @@ export const GEMINI_REGISTRY = defineVendor({
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: true,
+    } },
+    // ── Gemini 4 Neon（v1.3.6 吸收 316a02bb，核验 2026-11-19）：四档含 xhigh，默认 high，不可关闭。
+    // 官方兼容层 reasoning_effort 的 xhigh 映射到 Neon 与 Hydrogen；拒绝 minimal。
+    { providerId: "gemini", modelPattern: /^gemini-4-neon/i, capability: {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh"],
+      defaultEffort: "high",
+      requestStyle: "openai-effort",
+      supportsDisable: false,
     } },
     // 2.5 之前的老系列（2.0 / 1.5）不支持思考，走通配兜底
     { providerId: "gemini", modelPattern: /.*/, capability: UNKNOWN_REASONING_CAPABILITY },

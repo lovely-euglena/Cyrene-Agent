@@ -40,6 +40,16 @@ const DEFINITIONS: readonly ProfileDefinition[] = [
     mode: "provider_json_schema",
     verification: "official",
   },
+  // Claude Haiku 5.5（!134 吸收 306ef7b7）：家族规则匹配不到 5.5，需专用行。
+  {
+    id: "claude-haiku-5-5-structured-output",
+    provider: "claude",
+    transport: "anthropic",
+    modelPattern: /^claude-haiku-5-5$/i,
+    tier: "A",
+    mode: "provider_json_schema",
+    verification: "official",
+  },
   {
     id: "kimi-structured-output",
     provider: "kimi",

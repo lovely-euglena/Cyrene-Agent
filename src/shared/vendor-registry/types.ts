@@ -59,6 +59,8 @@ export interface ReasoningCapability {
   supportsProMode?: boolean;
   /** 旧能力表的默认档位兜底；优先使用 defaultEffort。 */
   autoEffort?: ReasoningEffort;
+  /** GPT-6.2 类：显式 off/minimal 但不支持时改用的低档（见 ModelReasoningRule.lowEffortFallback） */
+  lowEffortFallback?: ReasoningEffort;
 }
 
 export interface ReasoningPreference {

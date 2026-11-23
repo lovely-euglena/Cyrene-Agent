@@ -28,6 +28,15 @@ export const CLAUDE_REGISTRY = defineVendor({
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
     } },
+    // Claude Haiku 5.5（v1.3.6 吸收 306ef7b7，核验 2026-10-08）：只接受自适应思考，五档 effort，默认 medium。
+    // high 及以下可关闭，xhigh/max 关闭返回 400；本项目关闭时不发 effort（服务端取默认 medium）。
+    { providerId: "claude", modelPattern: /^claude-haiku-5-5/i, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: true,
+    } },
     { providerId: "claude", modelPattern: /^claude-sonnet-5/i, capability: {
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high", "xhigh", "max"],

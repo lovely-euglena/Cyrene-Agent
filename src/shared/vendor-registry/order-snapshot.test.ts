@@ -11,6 +11,22 @@ const EXPECTED = [
   {
     "providerId": "chatgpt",
     "pattern": {
+      "source": "^gpt-6\\.2-(?:astra|sol)$",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "medium",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false,
+      "supportsProMode": true,
+      "lowEffortFallback": "low"
+    }
+  },
+  {
+    "providerId": "chatgpt",
+    "pattern": {
       "source": "^gpt-6\\.1",
       "flags": "i"
     },
@@ -29,6 +45,7 @@ const EXPECTED = [
       "supportsProMode": true
     }
   },
+
   {
     "providerId": "chatgpt",
     "pattern": {
@@ -422,6 +439,21 @@ const EXPECTED = [
       "supportsDisable": false
     }
   },
+
+  {
+    "providerId": "qwen",
+    "pattern": {
+      "source": "^qwen4-max$",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "toggle-effort",
+      "supportedEfforts": ["low", "high", "xhigh"],
+      "defaultEffort": "high",
+      "requestStyle": "openai-effort",
+      "supportsDisable": true
+    }
+  },
   {
     "providerId": "qwen",
     "pattern": {
@@ -800,6 +832,20 @@ const EXPECTED = [
       "defaultEffort": "medium",
       "requestStyle": "openai-effort",
       "supportsDisable": true
+    }
+  },
+  {
+    "providerId": "gemini",
+    "pattern": {
+      "source": "^gemini-4-neon",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": ["low", "medium", "high", "xhigh"],
+      "defaultEffort": "high",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false
     }
   },
   {
