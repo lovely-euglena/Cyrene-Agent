@@ -1,0 +1,744 @@
+{
+  "ts": "2026-11-18T12:30:08.880Z",
+  "task": "#257 T6 动作态探针",
+  "protocol": {
+    "warmup": 60,
+    "dtMs": 16.666666666666668,
+    "blinkNeutralized": true,
+    "adapter": "software（web SwiftShader / dotnet WARP）"
+  },
+  "total": 28,
+  "pass": 28,
+  "fail": 0,
+  "maxDiffPct": 0.517,
+  "rows": [
+    {
+      "spec": "motion:动作#6:动作回正",
+      "warmup": 60,
+      "ticks": 15,
+      "virtualMs": 1250,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1250,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.006
+    },
+    {
+      "spec": "motion:动作#6:动作回正",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0085
+    },
+    {
+      "spec": "motion:动作#6:动作回正",
+      "warmup": 60,
+      "ticks": 60,
+      "virtualMs": 2000,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2000.0000000000034,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0065
+    },
+    {
+      "spec": "motion:动作#6:动作回正",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0055
+    },
+    {
+      "spec": "motion:动作#6:Wink~",
+      "warmup": 60,
+      "ticks": 15,
+      "virtualMs": 1250,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1250,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0075
+    },
+    {
+      "spec": "motion:动作#6:Wink~",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0365
+    },
+    {
+      "spec": "motion:动作#6:Wink~",
+      "warmup": 60,
+      "ticks": 60,
+      "virtualMs": 2000,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2000.0000000000034,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0075
+    },
+    {
+      "spec": "motion:动作#6:Wink~",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0095
+    },
+    {
+      "spec": "motion:动作#6:我可爱吧~",
+      "warmup": 60,
+      "ticks": 15,
+      "virtualMs": 1250,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1250,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.4145
+    },
+    {
+      "spec": "motion:动作#6:我可爱吧~",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.517
+    },
+    {
+      "spec": "motion:动作#6:我可爱吧~",
+      "warmup": 60,
+      "ticks": 60,
+      "virtualMs": 2000,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2000.0000000000034,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0045
+    },
+    {
+      "spec": "motion:动作#6:我可爱吧~",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0065
+    },
+    {
+      "spec": "motion:动作#6:笑一笑吧~",
+      "warmup": 60,
+      "ticks": 15,
+      "virtualMs": 1250,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1250,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0075
+    },
+    {
+      "spec": "motion:动作#6:笑一笑吧~",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0065
+    },
+    {
+      "spec": "motion:动作#6:笑一笑吧~",
+      "warmup": 60,
+      "ticks": 60,
+      "virtualMs": 2000,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2000.0000000000034,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.2585
+    },
+    {
+      "spec": "motion:动作#6:笑一笑吧~",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.004
+    },
+    {
+      "spec": "motion:Tick3:荡秋千（待机）",
+      "warmup": 60,
+      "ticks": 15,
+      "virtualMs": 1250,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1250,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.004
+    },
+    {
+      "spec": "motion:Tick3:荡秋千（待机）",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0095
+    },
+    {
+      "spec": "motion:Tick3:荡秋千（待机）",
+      "warmup": 60,
+      "ticks": 60,
+      "virtualMs": 2000,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2000.0000000000034,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.005
+    },
+    {
+      "spec": "motion:Tick3:荡秋千（待机）",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": true,
+        "playState": {
+          "played": true,
+          "playing": true,
+          "motionQueue": 1,
+          "expressionQueue": 0
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.011
+    },
+    {
+      "spec": "expression:墨镜",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0065
+    },
+    {
+      "spec": "expression:墨镜",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0045
+    },
+    {
+      "spec": "expression:圈圈眼",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.1245
+    },
+    {
+      "spec": "expression:圈圈眼",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.004
+    },
+    {
+      "spec": "expression:星星眼",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.008
+    },
+    {
+      "spec": "expression:星星眼",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.006
+    },
+    {
+      "spec": "expression:拽秋千1",
+      "warmup": 60,
+      "ticks": 30,
+      "virtualMs": 1500,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 1500.0000000000011,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.0025
+    },
+    {
+      "spec": "expression:拽秋千1",
+      "warmup": 60,
+      "ticks": 80,
+      "virtualMs": 2333,
+      "sidecarExit": 0,
+      "webExit": 0,
+      "sidecar": {
+        "width": 400,
+        "height": 500
+      },
+      "web": {
+        "width": 400,
+        "height": 500,
+        "elapsedTime": 2333.3333333333344,
+        "playing": false,
+        "playState": {
+          "played": true,
+          "playing": false,
+          "motionQueue": 0,
+          "expressionQueue": 1
+        }
+      },
+      "result": "pass",
+      "diff_pct": 0.004
+    }
+  ]
+}

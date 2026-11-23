@@ -27,6 +27,8 @@ vi.mock("./create-music-player-window", () => ({ createMusicPlayerWindow: vi.fn(
 vi.mock("./broadcast", () => ({ broadcastToAllWindows: vi.fn() }));
 vi.mock("../pet-window-movement", () => ({ PetWindowMoveController: class { dispose() {} finishDragging() {} moveRelative() {} queueAbsolute() {} } }));
 vi.mock("../../shared/disclaimer", () => ({ CURRENT_DISCLAIMER_VERSION: "current" }));
+// 本文件只测 web 轨：锁定开关，不受环境 LIVE2D_ENGINE 影响（dotnet 轨见 window-manager-sidecar.test.ts）
+vi.mock("../dotnet-backend/config", () => ({ resolveDotnetConfig: () => ({ live2dEngine: "web" }) }));
 
 function createFakeWindow() {
   const listeners = new Map<string, Array<(...args: any[]) => void>>();

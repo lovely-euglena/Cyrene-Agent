@@ -75,6 +75,13 @@ extraResources:
   # silero_vad.onnx 由 csproj Content 带进 publish 的 models/ 子目录
   - from: dotnet/voice/CyreneVoice/bin/Release/net10.0/win-x64/publish
     to: voice
+  # Live2D 渲染 sidecar（#257 T5：D3D11 + Win32 分层窗口 + 行为引擎）。
+  # 目录名必须是 live2d：live2d-host-client.ts 打包态按 resources/live2d/ 找 exe。
+  # framework-dependent（需 .NET 10 Desktop Runtime）；LIVE2D_ENGINE=dotnet 才启用，
+  # exe 缺失/加载失败自动回退 web 轨。Cubism Core DLL 不打进包（License：
+  # 运行时官方源下载 SHA256 校验，或用户自备放模型目录，见侧车 CoreLibrary 探测序）
+  - from: dotnet/live2d/CyreneLive2D/bin/Release/net10.0-windows/win-x64/publish
+    to: live2d
   # .NET embedding sidecar（bge-m3 ORT 加速；exe 存在时默认启用，缺失回退 worker）
   - from: dotnet/embedding-sidecar/bin/Release/net10.0/win-x64/publish
     to: embed-sidecar

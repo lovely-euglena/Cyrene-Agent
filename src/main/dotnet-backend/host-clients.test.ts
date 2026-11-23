@@ -183,6 +183,52 @@ describe("LineHostClient 生命周期（IKJSNF）", () => {
     expect(child2.kill.mock.calls[1]).toEqual(["SIGKILL"]);
   });
 
+  it("stderr 被消费转发（限流：1s 窗口首行落日志，其余聚合计数；审核 #1416 P1-1）", async () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const child = new FakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const client = new LineHostClient("--tool-host", 1_000);
+    await boot(client, child);
+
+    // Core 下载进度 250ms 一行：同窗口第二行被抑制（计数留到下次 flush 带出）
+    child.stderr.write("[core-download] phase 100/26000000 0%\n");
+    child.stderr.write("[core-download] phase 200/26000000 1%\n");
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    const first = String(errSpy.mock.calls[0][0]);
+    expect(first).toContain("[live2d-sidecar]");
+    expect(first).toContain("phase 100/26000000 0%");
+    expect(first).not.toContain("行已抑制");
+
+    // 窗口过后积压 flush：带出抑制计数
+    await vi.advanceTimersByTimeAsync(1_001);
+    child.stderr.write("[core-download] phase 300/26000000 2%\n");
+    expect(errSpy).toHaveBeenCalledTimes(2);
+    const second = String(errSpy.mock.calls[1][0]);
+    expect(second).toContain("phase 300/26000000 2%");
+    expect(second).toContain("+1 行已抑制");
+    errSpy.mockRestore();
+  });
+
+  it("exit 后旧 child 迟到 stderr：不转发（幽灵数据不落日志）", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const child1 = new FakeChild();
+    mocks.spawn.mockReturnValueOnce(child1);
+    const client = new LineHostClient("--tool-host", 1_000);
+    await boot(client, child1);
+    child1.emit("exit", 0, null);
+
+    const child2 = new FakeChild();
+    mocks.spawn.mockReturnValueOnce(child2);
+    await boot(client, child2);
+
+    child1.stderr.write("迟到行\n"); // 旧实例：守卫拦截
+    child2.stderr.write("新实例行\n");
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    expect(String(errSpy.mock.calls[0][0])).toContain("新实例行");
+    errSpy.mockRestore();
+  });
+
   it("addEventListener/removeEventListener 成对：移除后不再收帧", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();

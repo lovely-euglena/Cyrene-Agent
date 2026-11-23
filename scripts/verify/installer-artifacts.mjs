@@ -90,6 +90,11 @@ export async function verifyInstallerArtifacts(options = {}) {
   if (vadModel.size < 1024 * 1024) {
     throw new Error(`silero_vad.onnx 体积异常（${vadModel.size} bytes）：应不小于 1MB`);
   }
+  // Live2D 渲染 sidecar（#257：LIVE2D_ENGINE=dotnet 执行件；缺失则发布件 dotnet 轨恒回退 web）
+  const live2dExe = await stat(path.join(resourcesDir, "live2d", "cyrene-live2d.exe"));
+  if (live2dExe.size <= 0) {
+    throw new Error(`cyrene-live2d.exe 体积异常（${live2dExe.size} bytes）`);
+  }
 
   return {
     installerPath,
@@ -100,6 +105,7 @@ export async function verifyInstallerArtifacts(options = {}) {
     screenshotSize: screenshot.size,
     voiceExeSize: voiceExe.size,
     vadModelSize: vadModel.size,
+    live2dExeSize: live2dExe.size,
   };
 }
 
@@ -120,6 +126,7 @@ if (isDirectRun) {
       console.log(
         `[installer] voice sidecar: ${result.voiceExeSize} bytes + VAD model ${result.vadModelSize} bytes`,
       );
+      console.log(`[installer] live2d sidecar: ${result.live2dExeSize} bytes`);
     })
     .catch((error) => {
       console.error(`[installer] verification failed: ${error.message}`);

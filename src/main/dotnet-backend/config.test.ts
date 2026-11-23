@@ -24,6 +24,7 @@ describe("resolveDotnetConfigFrom", () => {
     expect(c.toolHost).toBe(true);
     expect(c.agentHost).toBe(false);
     expect(c.vad).toBe("hybrid");
+    expect(c.live2dEngine).toBe("web");
   });
 
   it("环境变量覆盖 conf，conf 覆盖默认", () => {
@@ -44,5 +45,17 @@ describe("resolveDotnetConfigFrom", () => {
     expect(c.vad).toBe("hybrid");
     expect(c.agentHost).toBe(true);
     expect(c.loopHost).toBe(true);
+  });
+
+  it("LIVE2D_ENGINE 双轨开关（#257 T5）：env/conf 覆盖，非法值回退 web", () => {
+    expect(resolveDotnetConfigFrom({ LIVE2D_ENGINE: "dotnet" }, null).live2dEngine).toBe("dotnet");
+    expect(resolveDotnetConfigFrom({}, "LIVE2D_ENGINE=dotnet").live2dEngine).toBe("dotnet");
+    // env 赢 conf
+    expect(
+      resolveDotnetConfigFrom({ LIVE2D_ENGINE: "web" }, "LIVE2D_ENGINE=dotnet").live2dEngine,
+    ).toBe("web");
+    // 大小写宽松；非法值回退默认 web
+    expect(resolveDotnetConfigFrom({ LIVE2D_ENGINE: "DOTNET" }, null).live2dEngine).toBe("dotnet");
+    expect(resolveDotnetConfigFrom({ LIVE2D_ENGINE: "weird" }, null).live2dEngine).toBe("web");
   });
 });
