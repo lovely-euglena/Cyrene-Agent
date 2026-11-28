@@ -17,6 +17,8 @@ export interface UsageDay {
 }
 
 export interface UsageModel {
+  /** issue #212：按币种聚合成本。 */
+  costs?: Record<string, number>;
   model: string;
   input: number;
   output: number;
@@ -277,6 +279,8 @@ export interface ModelSlice {
   requests: number;
   share: number;
   color: string;
+  /** issue #212：模型累计成本（按币种；未配价模型无此字段）。 */
+  costs?: Record<string, number>;
 }
 
 const MODEL_COLORS = ["#ec4899", "#8b7cf6", "#4db6ac", "#f4a261", "#5b8def", "#f88fbc"];
@@ -294,6 +298,7 @@ export function buildModelSlices(models: UsageModel[], otherLabel: string): Mode
     requests: item.requests,
     share: (item.input + item.output) / total,
     color: MODEL_COLORS[index % MODEL_COLORS.length],
+    ...(item.costs && Object.keys(item.costs).length > 0 ? { costs: item.costs } : {}),
   }));
   if (restTokens > 0) {
     slices.push({ model: otherLabel, tokens: restTokens, requests: 0, share: restTokens / total, color: "#94a3b8" });
